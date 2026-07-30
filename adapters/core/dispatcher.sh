@@ -127,7 +127,7 @@ codex | cursor)
     codex --profile worker \
       -m "${model:-gpt-5.6-sol}" \
       -c "model_reasoning_effort=\"${effort:-high}\"" \
-      -c "service_tier=\"default\"" \
+      -c 'service_tier="default"' \
       --dangerously-bypass-approvals-and-sandbox "$prompt"
   else
     # kimi-k3-high: third-family model, strong agentic tool use. --effort is

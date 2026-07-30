@@ -23,6 +23,10 @@
         inputs.git-hooks-nix.flakeModule
       ];
 
+      # Consumed as `inputs.dispatcher.homeManagerModules.default`. Takes `self`
+      # so it can reach the adapter trees and the per-system packages.
+      flake.homeManagerModules.default = import ./nix/hm-module.nix inputs.self;
+
       perSystem = {
         pkgs,
         config,
@@ -30,6 +34,19 @@
       }: {
         treefmt = {
           projectRootFile = "flake.nix";
+          # Vendored shell is payload, not our source: it must stay
+          # byte-identical to upstream so this extraction can prove it changed
+          # no behaviour. They happen to be shfmt-clean today, so nothing is
+          # rewritten right now — the exclude is what keeps a future upstream
+          # edit from being silently reformatted on its way in.
+          # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
+          settings.global.excludes = [
+            "adapters/core/crew.sh"
+            "adapters/core/dispatch.sh"
+            "adapters/core/dispatch-notify.sh"
+            "adapters/claude-code/plugin/scripts/*"
+            "adapters/codex/plugin/scripts/*"
+          ];
           programs = {
             alejandra.enable = true;
             shfmt = {
@@ -75,6 +92,38 @@
           };
           check-merge-conflicts.enable = true;
           trim-trailing-whitespace.enable = true;
+        };
+
+        packages = let
+          protocols = ./adapters/core/protocols;
+          # @protocolDir@ is the build-time default for the env-overridable
+          # PROTOCOL_DIR in dispatch.sh / dispatcher.sh. Substituting a store
+          # path here is what frees them from the old ~/nix-config literal.
+          sub = builtins.replaceStrings ["@protocolDir@"] ["${protocols}"];
+        in rec {
+          crew = pkgs.writeShellApplication {
+            name = "crew";
+            runtimeInputs = with pkgs; [git jq coreutils gnugrep tmux];
+            # No substitution: crew never references the protocols.
+            text = builtins.readFile ./adapters/core/crew.sh;
+          };
+
+          dispatch = pkgs.writeShellApplication {
+            name = "dispatch";
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatch.sh);
+          };
+
+          dispatcher = pkgs.writeShellApplication {
+            name = "dispatcher";
+            runtimeInputs = (with pkgs; [git jq coreutils tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatcher.sh);
+          };
+
+          default = pkgs.symlinkJoin {
+            name = "dispatcher-all";
+            paths = [crew dispatch dispatcher];
+          };
         };
 
         devShells.default = pkgs.mkShell {
