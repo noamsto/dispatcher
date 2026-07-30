@@ -54,7 +54,14 @@
           };
           prettier = {
             enable = true;
-            excludes = ["\\.bats$"];
+            # .bats: prettier has no bats formatter and mangles the DSL.
+            # adapters/core/protocols/: vendored payload, not our markdown to
+            # restyle. These files are fed to models as system prompts
+            # (--append-system-prompt-file / first-prompt injection), so their
+            # bytes are content; prettier rewrote *is* to _is_ and re-padded
+            # tables. Byte-identity with the upstream source is also how this
+            # extraction proves it changed no behaviour.
+            excludes = ["\\.bats$" "^adapters/core/protocols/"];
           };
           check-merge-conflicts.enable = true;
           trim-trailing-whitespace.enable = true;
