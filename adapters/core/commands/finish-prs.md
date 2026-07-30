@@ -9,9 +9,9 @@ You are the **team lead**. You select a batch of the user's already-open PRs, sp
 
 This is the third member of the autopilot family:
 
-- `/autopilot` — single Linear ticket → PR → green (creates the PR)
-- `/project-autopilot` — multi-ticket fan-out (creates PRs)
-- `/finish-prs` — multi-PR fan-out for **already-open** PRs (shepherds existing PRs)
+- `/dispatcher:autopilot` — single Linear ticket → PR → green (creates the PR)
+- `/dispatcher:project-autopilot` — multi-ticket fan-out (creates PRs)
+- `/dispatcher:finish-prs` — multi-PR fan-out for **already-open** PRs (shepherds existing PRs)
 
 **Argument:** `$ARGUMENTS`
 
@@ -288,17 +288,17 @@ command -v claude-status-update >/dev/null && claude-status-update issue done <I
 
 This command is invocation-driven. To shepherd PRs continuously:
 
-- **Local loop** (you're at the machine): `/loop 30m /finish-prs` — re-runs every 30 minutes, scoped to whatever repo you're in. Add `--all` to sweep everything. The `Green` skip in Step 1 makes repeat runs cheap.
-- **Remote schedule**: `/schedule` → create a routine that runs `/finish-prs --repo <OWNER/REPO>` (or `--all`) on cron (min interval 1h). The routine has its own git source repo, so always pass the scope explicitly. Needs the Linear MCP connector if any of your PRs are in `factify-inc/*`.
+- **Local loop** (you're at the machine): `/loop 30m /dispatcher:finish-prs` — re-runs every 30 minutes, scoped to whatever repo you're in. Add `--all` to sweep everything. The `Green` skip in Step 1 makes repeat runs cheap.
+- **Remote schedule**: `/schedule` → create a routine that runs `/dispatcher:finish-prs --repo <OWNER/REPO>` (or `--all`) on cron (min interval 1h). The routine has its own git source repo, so always pass the scope explicitly. Needs the Linear MCP connector if any of your PRs are in `factify-inc/*`.
 
 ---
 
 ## Important Rules
 
-- **Never merge PRs** — same as `/autopilot`
+- **Never merge PRs** — same as `/dispatcher:autopilot`
 - **No nested teams** — teammates don't spawn their own teammates
 - **One PR per teammate** — fresh context per PR, less drift
 - **Concurrency cap is real** — >5 simultaneous CI runs against the same repo saturates the runner pool. Default 3 is conservative on purpose.
-- **Default scope is the current repo** — auto-detected via `gh repo view`. Use `--all` for cross-repo, `--repo OWNER/REPO` for an explicit override. Unlike `/autopilot` and `/project-autopilot` (which hard-code `factify-inc/mono`), this command supports any repo. Always pass `--repo` to `gh` commands inside teammate prompts.
+- **Default scope is the current repo** — auto-detected via `gh repo view`. Use `--all` for cross-repo, `--repo OWNER/REPO` for an explicit override. Unlike `/dispatcher:autopilot` and `/dispatcher:project-autopilot` (which hard-code `factify-inc/mono`), this command supports any repo. Always pass `--repo` to `gh` commands inside teammate prompts.
 - **Apps Sanity Gate** flaky exception applies to `factify-inc/mono` only.
 - **Defer non-trivial unrelated work, fix trivial unrelated work** — the user's explicit rule. When in doubt, defer with a tracking ticket and a polite reply.

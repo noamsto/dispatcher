@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Project the shared command bodies in adapters/core/commands/ into each
-# engine's native shape. Idempotent — CI regenerates and asserts no diff.
+# engine's native shape, and ship the protocols inside each plugin tree.
+# Idempotent — CI regenerates and asserts no diff.
 #
 #   claude-code : commands/<name>.md   (native slash commands)
 #   cursor      : commands/<name>.md   (native slash commands)
@@ -12,12 +13,18 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src="$root/adapters/core/commands"
+protocols="$root/adapters/core/protocols"
 
 cc="$root/adapters/claude-code/plugin/commands"
 cx="$root/adapters/codex/plugin/skills"
 cu="$root/adapters/cursor/commands"
 
-rm -rf "$cc" "$cu"
+# Clear ALL generated trees, codex skills included. Only clearing the command
+# dirs would leave an orphaned codex skill behind whenever a command is renamed
+# or removed: the idempotence test never exercises removal (it reruns with an
+# unchanged source), and the CI drift gate sees no diff for a stale dir nobody
+# rewrote — so the orphan would persist silently and forever.
+rm -rf "$cc" "$cu" "$cx"
 mkdir -p "$cc" "$cu" "$cx"
 
 for f in "$src"/*.md; do
@@ -29,21 +36,21 @@ for f in "$src"/*.md; do
   # codex: same body, re-fronted as a skill.
   mkdir -p "$cx/$name"
 
-  # Descriptions routinely contain ": " (e.g. "Autonomous dev workflow: Linear
-  # ticket -> ...") which is invalid as a bare YAML scalar, so always emit a
-  # double-quoted scalar with backslashes and quotes escaped. Take everything
-  # after `description:` rather than splitting on quotes, so an embedded quote
-  # cannot silently truncate the value.
-  desc="$(sed -n 's/^description:[[:space:]]*//p' "$f" | head -1)"
-  desc="${desc#\"}"
-  desc="${desc%\"}"
-  desc="${desc//\\/\\\\}"
-  desc="${desc//\"/\\\"}"
+  # Read the description through a YAML parser and re-emit through one, rather
+  # than hand-rolling quote/backslash escaping. Descriptions routinely contain
+  # ": " (invalid as a bare YAML scalar), and naive re-escaping of an
+  # already-escaped source value silently corrupts it — a `\"` in the source
+  # became a literal backslash in the output. jq owns the escaping, yq -P owns
+  # the YAML quoting, so both are correct by construction.
+  desc="$(
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" |
+      yq -r '.description // ""'
+  )"
 
   {
     printf -- '---\n'
-    printf 'name: %s\n' "$name"
-    printf 'description: "%s"\n' "$desc"
+    jq -n --arg name "$name" --arg description "$desc" \
+      '{name: $name, description: $description}' | yq -P -
     printf -- '---\n\n'
     # Body with the source frontmatter stripped, if it has any.
     if [ "$(head -1 "$f")" = "---" ]; then
@@ -54,11 +61,16 @@ for f in "$src"/*.md; do
   } >"$cx/$name/SKILL.md"
 done
 
-# Copy the notify hook into both plugin trees.
+# Ship the notify hook and the protocols inside both plugin trees, so a plugin
+# is self-contained: the command bodies tell the agent to fall back to the
+# plugin-local protocols when $DISPATCHER_PROTOCOL_DIR is unset (a non-Nix
+# install, where nothing exports it).
 for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   mkdir -p "$d/scripts"
   cp "$root/adapters/core/dispatch-notify.sh" "$d/scripts/dispatch-notify.sh"
   chmod +x "$d/scripts/dispatch-notify.sh"
+  rm -rf "$d/protocols"
+  cp -r "$protocols" "$d/protocols"
 done
 
 # codex gets spec-plan-critic as a skill; it can express neither agents nor

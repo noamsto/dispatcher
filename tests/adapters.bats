@@ -89,6 +89,60 @@ setup() {
   [[ "$output" == *"alwaysApply: true"* ]]
 }
 
+@test "protocols ship inside both plugin trees" {
+  # The command bodies tell the agent to fall back to a plugin-local protocol
+  # when $DISPATCHER_PROTOCOL_DIR is unset. That fallback has to exist, or a
+  # non-Nix install has no way to resolve the protocol at all.
+  for tree in claude-code codex; do
+    [ -f "$ROOT/adapters/$tree/plugin/protocols/DISPATCHER_PROTOCOL.md" ]
+    [ -f "$ROOT/adapters/$tree/plugin/protocols/WORKER_PROTOCOL.md" ]
+  done
+}
+
+@test "the generator removes a codex skill whose command is gone" {
+  # Only clearing the command dirs would orphan a codex skill on rename/removal
+  # forever: the idempotence test reruns with an unchanged source so never
+  # exercises removal, and the CI drift gate sees no diff for a stale dir
+  # nobody rewrote.
+  work="$BATS_TEST_TMPDIR/gen"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -d "$work/adapters/codex/plugin/skills/dispatcher" ]
+  mv "$work/adapters/core/commands/dispatcher.md" "$work/adapters/core/commands/dispatcher-v2.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ ! -d "$work/adapters/codex/plugin/skills/dispatcher" ]
+  [ -d "$work/adapters/codex/plugin/skills/dispatcher-v2" ]
+  # spec-plan-critic is written after the clear, so it must survive.
+  [ -d "$work/adapters/codex/plugin/skills/spec-plan-critic" ]
+}
+
+@test "a description with an embedded quote or backslash round-trips exactly" {
+  # Hand-rolled re-escaping of an already-escaped YAML value silently corrupted
+  # it (a source \" became a literal backslash). jq owns the escaping and yq -P
+  # owns the quoting, so this must survive untouched.
+  work="$BATS_TEST_TMPDIR/esc"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  printf -- '---\ndescription: "Say \\"hi\\" to it: C:\\\\p\\\\q end"\n---\n\n# Body\n' \
+    >"$work/adapters/core/commands/edgecase.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' \
+    "$work/adapters/codex/plugin/skills/edgecase/SKILL.md" >"$work/fm.yaml"
+  run yq -r '.description' "$work/fm.yaml"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'Say "hi" to it: C:\p\q end' ]
+}
+
+@test "no command body references a plugin command without its namespace" {
+  # All four commands ship namespaced under the dispatcher plugin, so a bare
+  # /autopilot or /finish-prs cross-reference resolves to nothing. /loop and
+  # /schedule are deliberately excluded — those skills stay outside this plugin.
+  run grep -rnoE '/(autopilot|finish-prs|project-autopilot)\b' "$ROOT/adapters/core/commands/"
+  filtered="$(printf '%s\n' "$output" | grep -v '/dispatcher:' || true)"
+  [ -z "$filtered" ]
+}
+
 @test "no adapter file hardcodes a path into the old nix-config location" {
   # Narrower than a bare 'nix-config' grep: finish-prs.md legitimately shows
   # `noamsto/nix-config#42` as example report output. What must not survive is a

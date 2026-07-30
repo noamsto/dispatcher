@@ -1,6 +1,6 @@
 ---
 name: project-autopilot
-description: "Fan out /dispatcher:autopilot across a Linear project: one teammate per ticket → PR per ticket"
+description: 'Fan out /dispatcher:autopilot across a Linear project: one teammate per ticket → PR per ticket'
 ---
 
 

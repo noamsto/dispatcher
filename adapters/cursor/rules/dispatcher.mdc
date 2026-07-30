@@ -10,7 +10,9 @@ alwaysApply: true
   tier + engine + model + effort, scaffolds one worker per task via `dispatch`,
   and watches the `crew` bus. A dispatcher never implements, gates, or opens PRs.
 - A dispatched worker reads `WORKER_PROTOCOL.md` and runs its task end-to-end.
-  It ships with this harness at `$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md`.
+  `dispatch` passes that path to the worker on the command line, so a worker
+  never has to resolve it. To read it yourself, use
+  `$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md` when that variable is set.
 - Cursor workers run single-agent: no plan-critic and no code-review gate. Emit
   `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` so a
   run is never mistaken for reviewed-and-clean.

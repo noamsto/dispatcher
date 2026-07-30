@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: "Autonomous dev workflow: Linear ticket → implement → PR → CI green"
+description: 'Autonomous dev workflow: Linear ticket → implement → PR → CI green'
 ---
 
 

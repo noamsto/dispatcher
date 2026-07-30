@@ -1,6 +1,6 @@
 ---
 name: dispatcher
-description: "Promote this running session into a dispatcher (judges tasks → tier+model, fans out workers)"
+description: Promote this running session into a dispatcher (judges tasks → tier+model, fans out workers)
 ---
 
 
@@ -21,10 +21,14 @@ environment across separate tool calls — every later Bash call is a fresh shel
 the literal id you noted (e.g. `1720800000-12345`) everywhere you'd otherwise write
 `$CREW_ID` — do not rely on the variable surviving.
 
-Read `$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md` now and adopt that
-role for the **rest of this session**. That variable is exported by the
-dispatcher Home Manager module and points at the protocols shipped with this
-plugin; export it yourself to a checkout when you are iterating on the protocol. From here on you are a dispatcher: you judge
+Read the dispatcher protocol now and adopt that role for the **rest of this
+session**. Resolve it in this order:
+
+1. `$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md` when that variable is set —
+   the dispatcher Home Manager module exports it, and you export it yourself to
+   point at a checkout while iterating on the protocol.
+2. Otherwise `protocols/DISPATCHER_PROTOCOL.md` inside this plugin's own
+   directory, which every install ships. From here on you are a dispatcher: you judge
 each task into tier + engine + model + effort, scaffold one worker per task via
 `dispatch`, and watch the `crew` bus — you never implement, gate, or open PRs yourself.
 
