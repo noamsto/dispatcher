@@ -35,9 +35,7 @@ setup() {
   [ "$output" = "0" ]
 }
 
-@test "the home-manager module evaluates and declares its options" {
-  # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
-  # in the module would otherwise surface only when a consumer imports it.
+@test "the module declares its options" {
   run nix eval --impure --raw --expr "
     let
       self = builtins.getFlake (toString $ROOT);
@@ -54,14 +52,37 @@ setup() {
   [[ "$output" == *"profile"* ]]
 }
 
-@test "the module exports DISPATCHER_PROTOCOL_DIR, not just DISPATCH_PROFILE" {
-  # The dispatcher slash command and the cursor rule read the protocol through
-  # this variable at runtime; a build-time substitution into the shell scripts
-  # cannot reach markdown an agent reads live.
-  run grep -c 'DISPATCHER_PROTOCOL_DIR' "$ROOT/nix/hm-module.nix"
-  [ "$output" -ge 1 ]
-  run grep -c 'DISPATCH_PROFILE' "$ROOT/nix/hm-module.nix"
-  [ "$output" -ge 1 ]
+@test "the module's config body evaluates, and wires the protocol dir for real" {
+  # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
+  # here would otherwise surface only in a consumer's rebuild. Forcing `options`
+  # alone does NOT catch that — this forces the config body.
+  #
+  # home-manager extends lib with lib.hm; stub the single helper the module uses
+  # so config can be forced without taking a home-manager dependency. Forcing
+  # sessionVariables + file + activation is what catches a typo'd option, a bad
+  # importJSON path, or a broken interpolation.
+  #
+  # Returns the resolved value rather than grepping the source, so it proves the
+  # variable is actually wired into sessionVariables — not merely that the token
+  # appears somewhere in the file.
+  run nix eval --impure --raw --expr "
+    let
+      self = builtins.getFlake (toString $ROOT);
+      nixlib = (import <nixpkgs> {}).lib;
+      lib = nixlib // { hm.dag.entryAfter = _: data: { inherit data; }; };
+      pkgs = import <nixpkgs> {};
+      applied = self.homeManagerModules.default {
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; }; };
+        inherit lib pkgs;
+      };
+      c = applied.config.content;
+    in
+      builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}\"
+  "
+  [ "$status" -eq 0 ]
+  [[ "$output" == work\|/nix/store/* ]]
+  [[ "$output" == */adapters/core/protocols ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {

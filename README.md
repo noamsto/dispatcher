@@ -94,7 +94,11 @@ nix flake check   # pre-commit + formatting checks
 ```
 
 `nix flake check` reports `homeManagerModules` as **unchecked** — it does not
-evaluate the module. `tests/module.bats` covers that gap explicitly.
+evaluate the module. `tests/module.bats` covers that gap: one test forces the
+`options`, another forces the `config` body (session variables, files and the
+activation script) and asserts the resolved protocol path, stubbing the single
+`lib.hm` helper the module uses so no home-manager dependency is needed. Forcing
+`options` alone would not catch an eval error inside `config`.
 
 After changing anything under `adapters/core/commands/`, regenerate:
 
