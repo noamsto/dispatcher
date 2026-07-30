@@ -33,7 +33,6 @@ for f in "$src"/*.md; do
   cp "$f" "$cc/$name.md"
   cp "$f" "$cu/$name.md"
 
-  # codex: same body, re-fronted as a skill.
   mkdir -p "$cx/$name"
 
   # Read the description through a YAML parser and re-emit through one, rather

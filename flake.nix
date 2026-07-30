@@ -73,21 +73,12 @@
             enable = true;
             # .bats: prettier has no bats formatter and mangles the DSL.
             #
-            # ^adapters/: nothing under it is hand-authored source in this repo —
-            # it is all vendored payload (protocols, agents, skills, workflows)
-            # or generator output (commands, codex skills, hook scripts). Two
-            # reasons it must not be reformatted:
-            #   1. It is content, not style. These files are fed to models as
-            #      system prompts and instructions. Prettier rewrote *is* to
-            #      _is_, re-padded tables, and — worse — rewrote nested code
-            #      fences (``` -> ````), restructuring a teammate prompt
-            #      template. Byte-identity with upstream is also how this
-            #      extraction proves it changed no behaviour.
-            #   2. It would deadlock the drift gate. CI regenerates the adapters
-            #      and asserts `git diff --exit-code`; if prettier reformats the
-            #      generated output after the generator writes it, committed
-            #      output can never match a fresh run, and the gate fails
-            #      forever.
+            # ^adapters/: all vendored payload or generator output, never
+            # hand-authored here. Reformatting it broke two things — it rewrote
+            # nested code fences inside a teammate prompt template (these files
+            # are instructions a model reads, so their bytes are content), and
+            # it would deadlock CI's drift gate, which regenerates the adapters
+            # and asserts no diff.
             excludes = ["\\.bats$" "^adapters/"];
           };
           check-merge-conflicts.enable = true;
