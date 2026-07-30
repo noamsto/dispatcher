@@ -35,8 +35,19 @@ setup() {
   [ "$output" = "0" ]
 }
 
+# Evaluate a nix expression from a file, returning stdout only.
+#
+# Two reasons not to inline `nix eval --expr`: bats' `run` merges stderr into
+# $output, and `nix eval --impure` emits warnings in some environments (a CI
+# checkout does, a clean local tree does not) that would prefix the value and
+# break an anchored match. A file also avoids nesting three levels of quotes.
+nix_eval() {
+  printf '%s\n' "$1" >"$BATS_TEST_TMPDIR/expr.nix"
+  nix eval --impure --raw --file "$BATS_TEST_TMPDIR/expr.nix" 2>/dev/null
+}
+
 @test "the module declares its options" {
-  run nix eval --impure --raw --expr "
+  run nix_eval "
     let
       self = builtins.getFlake (toString $ROOT);
       lib = (import <nixpkgs> {}).lib;
@@ -65,7 +76,7 @@ setup() {
   # Returns the resolved value rather than grepping the source, so it proves the
   # variable is actually wired into sessionVariables — not merely that the token
   # appears somewhere in the file.
-  run nix eval --impure --raw --expr "
+  run nix_eval "
     let
       self = builtins.getFlake (toString $ROOT);
       nixlib = (import <nixpkgs> {}).lib;
