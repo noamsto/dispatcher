@@ -1,0 +1,124 @@
+setup() {
+  load helpers
+  ROOT="$BATS_TEST_DIRNAME/.."
+}
+
+@test "generator is idempotent" {
+  # Compare checksums across two runs rather than `git diff --exit-code`: that
+  # conflates generator drift with any unrelated uncommitted edit, and is
+  # vacuous while the generated files are still untracked. CI's separate
+  # "adapters are in sync" step is what catches committed output drifting from
+  # its source, which is the right place for a git-based check (clean checkout).
+  gen_paths=(
+    adapters/claude-code/plugin/commands
+    adapters/cursor/commands
+    adapters/codex/plugin/skills
+    adapters/claude-code/plugin/scripts
+    adapters/codex/plugin/scripts
+  )
+  "$ROOT/scripts/gen-adapters.sh" >/dev/null
+  before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
+  "$ROOT/scripts/gen-adapters.sh" >/dev/null
+  after="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
+  [ -n "$before" ]
+  [ "$before" = "$after" ]
+}
+
+@test "all four commands reach claude-code and cursor" {
+  for n in dispatcher autopilot finish-prs project-autopilot; do
+    [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
+    [ -f "$ROOT/adapters/cursor/commands/$n.md" ]
+  done
+}
+
+@test "all four commands reach codex as skills" {
+  for n in dispatcher autopilot finish-prs project-autopilot; do
+    [ -f "$ROOT/adapters/codex/plugin/skills/$n/SKILL.md" ]
+  done
+}
+
+@test "codex skills carry name and description frontmatter" {
+  run head -4 "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md"
+  [[ "$output" == *"name: autopilot"* ]]
+  [[ "$output" == *"description:"* ]]
+}
+
+@test "every codex skill frontmatter is parseable YAML" {
+  # Descriptions routinely contain ": " which is invalid as a bare YAML scalar.
+  # An unquoted `description: Autonomous dev workflow: Linear ...` is a hard
+  # parse error, so codex would reject the skill outright — assert the
+  # generator's quoting rather than trusting it by eye.
+  for f in "$ROOT"/adapters/codex/plugin/skills/*/SKILL.md; do
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "codex skill bodies drop the source frontmatter" {
+  # The source commands carry an argument-hint key codex skills don't use; if it
+  # survives, the body was pasted in with its old frontmatter intact.
+  run grep -c 'argument-hint' "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md"
+  [ "$output" = "0" ]
+}
+
+@test "every manifest is valid json" {
+  jq -e . "$ROOT/adapters/claude-code/plugin/.claude-plugin/plugin.json"
+  jq -e . "$ROOT/adapters/codex/plugin/.codex-plugin/plugin.json"
+  jq -e . "$ROOT/adapters/codex/.agents/plugins/marketplace.json"
+  jq -e . "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  jq -e . "$ROOT/adapters/codex/plugin/hooks/hooks.json"
+}
+
+@test "each engine's hooks use that engine's plugin-root variable" {
+  run grep -F 'CLAUDE_PLUGIN_ROOT' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+  run grep -F '$PLUGIN_ROOT' "$ROOT/adapters/codex/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+  run grep -c 'CLAUDE_PLUGIN_ROOT' "$ROOT/adapters/codex/plugin/hooks/hooks.json"
+  [ "$output" = "0" ]
+}
+
+@test "the notify hook ships executable in both plugin trees" {
+  [ -x "$ROOT/adapters/claude-code/plugin/scripts/dispatch-notify.sh" ]
+  [ -x "$ROOT/adapters/codex/plugin/scripts/dispatch-notify.sh" ]
+}
+
+@test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
+  run head -3 "$ROOT/adapters/cursor/rules/dispatcher.mdc"
+  [[ "$output" == *"alwaysApply: true"* ]]
+}
+
+@test "no adapter file hardcodes a path into the old nix-config location" {
+  # Narrower than a bare 'nix-config' grep: finish-prs.md legitimately shows
+  # `noamsto/nix-config#42` as example report output. What must not survive is a
+  # filesystem path pointing back at the pre-extraction home.
+  run grep -rn '~/nix-config\|nix-config/home/ai' "$ROOT/adapters/"
+  [ "$status" -ne 0 ]
+}
+
+@test "project-autopilot points teammates at the namespaced autopilot" {
+  run grep -F '/dispatcher:autopilot' "$ROOT/adapters/core/commands/project-autopilot.md"
+  [ "$status" -eq 0 ]
+  # And no bare /autopilot survives, which would resolve to nothing once the
+  # command ships namespaced inside the plugin.
+  run grep -E '(^|[^:])/autopilot' "$ROOT/adapters/core/commands/project-autopilot.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "the dispatcher command resolves its protocol via the env var" {
+  run grep -F '$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md' "$ROOT/adapters/core/commands/dispatcher.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "codex adapter ships no agents and no workflows" {
+  [ ! -d "$ROOT/adapters/codex/plugin/agents" ]
+  [ ! -d "$ROOT/adapters/codex/plugin/workflows" ]
+}
+
+@test "claude-code adapter ships the critic pipeline codex cannot express" {
+  [ -f "$ROOT/adapters/claude-code/plugin/agents/spec-critic.md" ]
+  [ -f "$ROOT/adapters/claude-code/plugin/agents/plan-critic.md" ]
+  [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
+  [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
+}

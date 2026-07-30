@@ -1,0 +1,18 @@
+---
+alwaysApply: true
+---
+
+# Dispatcher harness
+
+`crew`, `dispatch` and `dispatcher` are on your PATH.
+
+- `dispatcher` promotes a session into an orchestrator: it judges each task into
+  tier + engine + model + effort, scaffolds one worker per task via `dispatch`,
+  and watches the `crew` bus. A dispatcher never implements, gates, or opens PRs.
+- A dispatched worker reads `WORKER_PROTOCOL.md` and runs its task end-to-end.
+  It ships with this harness at `$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md`.
+- Cursor workers run single-agent: no plan-critic and no code-review gate. Emit
+  `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` so a
+  run is never mistaken for reviewed-and-clean.
+
+Run `crew` with no arguments for the full subcommand surface.

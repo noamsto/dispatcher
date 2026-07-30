@@ -1,0 +1,20 @@
+{
+  "name": "dispatcher",
+  "version": "0.1.0",
+  "description": "Judge tasks into tier + engine + model, fan out one worker per task, coordinate over a git-backed crew bus.",
+  "author": { "name": "Noam Stolero" },
+  "skills": "./skills",
+  "interface": {
+    "displayName": "dispatcher",
+    "shortDescription": "Agent fan-out harness with a git-backed crew bus.",
+    "longDescription": "Promotes a session into a dispatcher: judges each task into tier + engine + model + effort, scaffolds one worker per task in its own worktree and tmux window, and coordinates over a git-backed crew bus.",
+    "developerName": "Noam Stolero",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Become a dispatcher and fan out my open tasks",
+      "Dispatch a worker for this ticket",
+      "Show me the crew roster"
+    ]
+  }
+}

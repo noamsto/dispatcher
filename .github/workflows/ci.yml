@@ -12,7 +12,11 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: shellcheck
-        run: nix develop -c shellcheck adapters/core/*.sh
+        run: nix develop -c shellcheck adapters/core/*.sh scripts/*.sh
+      - name: adapters are in sync
+        run: |
+          nix develop -c ./scripts/gen-adapters.sh
+          git diff --exit-code
       - name: bats
         run: nix develop -c bats tests/
       - name: flake check

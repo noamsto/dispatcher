@@ -55,13 +55,23 @@
           prettier = {
             enable = true;
             # .bats: prettier has no bats formatter and mangles the DSL.
-            # adapters/core/protocols/: vendored payload, not our markdown to
-            # restyle. These files are fed to models as system prompts
-            # (--append-system-prompt-file / first-prompt injection), so their
-            # bytes are content; prettier rewrote *is* to _is_ and re-padded
-            # tables. Byte-identity with the upstream source is also how this
-            # extraction proves it changed no behaviour.
-            excludes = ["\\.bats$" "^adapters/core/protocols/"];
+            #
+            # ^adapters/: nothing under it is hand-authored source in this repo —
+            # it is all vendored payload (protocols, agents, skills, workflows)
+            # or generator output (commands, codex skills, hook scripts). Two
+            # reasons it must not be reformatted:
+            #   1. It is content, not style. These files are fed to models as
+            #      system prompts and instructions. Prettier rewrote *is* to
+            #      _is_, re-padded tables, and — worse — rewrote nested code
+            #      fences (``` -> ````), restructuring a teammate prompt
+            #      template. Byte-identity with upstream is also how this
+            #      extraction proves it changed no behaviour.
+            #   2. It would deadlock the drift gate. CI regenerates the adapters
+            #      and asserts `git diff --exit-code`; if prettier reformats the
+            #      generated output after the generator writes it, committed
+            #      output can never match a fresh run, and the gate fails
+            #      forever.
+            excludes = ["\\.bats$" "^adapters/"];
           };
           check-merge-conflicts.enable = true;
           trim-trailing-whitespace.enable = true;
@@ -76,6 +86,11 @@
               pkgs.bats
               pkgs.shellcheck
               pkgs.jq
+              # yq-go: tests/adapters.bats parses generated codex skill
+              # frontmatter to prove it is valid YAML. Without it here the test
+              # silently uses whatever yq leaks in from the user profile and
+              # fails in CI.
+              pkgs.yq-go
               pkgs.git
               pkgs.tmux
               pkgs.gh
