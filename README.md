@@ -100,6 +100,14 @@ activation script) and asserts the resolved protocol path, stubbing the single
 `lib.hm` helper the module uses so no home-manager dependency is needed. Forcing
 `options` alone would not catch an eval error inside `config`.
 
+`tests/live/` holds checks that need a live tmux server and the ambient `wt`, so
+they are deliberately outside the bats suite and CI. Run them by hand from
+inside tmux:
+
+```bash
+./tests/live/dispatch-window.sh   # one dispatched worker => exactly one tmux window
+```
+
 After changing anything under `adapters/core/commands/`, regenerate:
 
 ```bash
