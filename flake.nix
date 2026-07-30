@@ -45,7 +45,12 @@
           alejandra.enable = true;
           shellcheck = {
             enable = true;
-            excludes = ["^\\.envrc$"];
+            # .envrc: sourced by direnv, no shebang (SC2148).
+            # .bats: a test DSL, not plain bash — shellcheck misparses `done`
+            # as a loop keyword (SC1010), the `VAR= cmd` idiom (SC1007), and
+            # bats-invoked helpers as dead (SC2329). CI lints core shell
+            # explicitly via `shellcheck adapters/core/*.sh`, not the tests.
+            excludes = ["^\\.envrc$" "\\.bats$"];
           };
           prettier = {
             enable = true;
