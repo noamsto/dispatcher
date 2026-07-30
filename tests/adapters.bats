@@ -138,7 +138,16 @@ setup() {
   # All four commands ship namespaced under the dispatcher plugin, so a bare
   # /autopilot or /finish-prs cross-reference resolves to nothing. /loop and
   # /schedule are deliberately excluded — those skills stay outside this plugin.
-  run grep -rnoE '/(autopilot|finish-prs|project-autopilot)\b' "$ROOT/adapters/core/commands/"
+  #
+  # Scans the SHIPPED trees as well as the source, not source alone: the source
+  # is what a fix edits, but the generated copies are what each engine actually
+  # loads. The drift gate would catch a divergence eventually; asserting on what
+  # ships makes this test mean what its name claims.
+  run grep -rnoE '/(autopilot|finish-prs|project-autopilot)\b' \
+    "$ROOT/adapters/core/commands/" \
+    "$ROOT/adapters/claude-code/plugin/commands/" \
+    "$ROOT/adapters/codex/plugin/skills/" \
+    "$ROOT/adapters/cursor/commands/"
   filtered="$(printf '%s\n' "$output" | grep -v '/dispatcher:' || true)"
   [ -z "$filtered" ]
 }
@@ -152,12 +161,19 @@ setup() {
 }
 
 @test "project-autopilot points teammates at the namespaced autopilot" {
-  run grep -F '/dispatcher:autopilot' "$ROOT/adapters/core/commands/project-autopilot.md"
-  [ "$status" -eq 0 ]
-  # And no bare /autopilot survives, which would resolve to nothing once the
-  # command ships namespaced inside the plugin.
-  run grep -E '(^|[^:])/autopilot' "$ROOT/adapters/core/commands/project-autopilot.md"
-  [ "$status" -ne 0 ]
+  # The two load-bearing ones: the lead tells each teammate what to run, so a
+  # bare /autopilot here resolves to nothing and the fan-out silently stalls.
+  # Asserted on every shipped copy, not just the source.
+  for f in \
+    "$ROOT/adapters/core/commands/project-autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/project-autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/project-autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/project-autopilot.md"; do
+    run grep -F '/dispatcher:autopilot' "$f"
+    [ "$status" -eq 0 ]
+    run grep -E '(^|[^:])/autopilot' "$f"
+    [ "$status" -ne 0 ]
+  done
 }
 
 @test "the dispatcher command resolves its protocol via the env var" {
