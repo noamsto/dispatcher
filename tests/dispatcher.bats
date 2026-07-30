@@ -82,6 +82,20 @@ teardown() {
 
 @test "registers and deregisters around the agent launch" {
   CREW_ID=c1 run_launcher
-  run grep -c 'register' "$STUB_LOG"
-  [ "$output" -ge 2 ]
+  # Match each call exactly. A bare `grep -c register` also matches
+  # `deregister`, so a count of 2 could mean "registered twice, never
+  # deregistered" — it would pass while the bus leaked stale entries.
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = "1" ]
+  run grep -cx 'deregister' "$STUB_LOG"
+  [ "$output" = "1" ]
+}
+
+@test "registers with a live pid whose liveness tracks the session" {
+  # fish used $fish_pid; the port uses $$. Both must name a process that
+  # outlives the agent launch, since crew's stale-reclaim keys on it.
+  CREW_ID=c1 run_launcher
+  pid="$(grep -x 'register [0-9][0-9]*' "$STUB_LOG" | awk '{print $2}')"
+  [ -n "$pid" ]
+  [ "$pid" -gt 0 ]
 }
