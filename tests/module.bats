@@ -81,7 +81,12 @@ setup() {
         \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}\"
   "
   [ "$status" -eq 0 ]
-  [[ "$output" == work\|/nix/store/* ]]
+  # Assert the wiring, not the flavour of path it resolves to: whether `self`
+  # lands in the store or stays a source path depends on how the flake was
+  # evaluated (a CI checkout differs from a local dev tree), and that is not the
+  # behaviour under test. Removing either export still fails here — a missing
+  # attribute makes the eval itself error, so $status catches it.
+  [[ "$output" == work\|* ]]
   [[ "$output" == */adapters/core/protocols ]]
 }
 

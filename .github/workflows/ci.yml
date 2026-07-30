@@ -10,9 +10,11 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      # No magic-nix-cache: it now requires a FlakeHub account and fails to
+      # authenticate on a plain public repo, adding a red annotation for a
+      # build this small does not need.
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh scripts/*.sh
       - name: adapters are in sync
