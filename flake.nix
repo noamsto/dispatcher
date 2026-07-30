@@ -103,7 +103,11 @@
         in rec {
           crew = pkgs.writeShellApplication {
             name = "crew";
-            runtimeInputs = with pkgs; [git jq coreutils gnugrep tmux];
+            # gh + gtrash are for `reap`: it reads PR state via gh and trashes
+            # the finished worker's task doc via gtrash so a post-mortem can
+            # still recover it. `wt` stays ambient, as in dispatch — reap checks
+            # for it and degrades to a notice when absent.
+            runtimeInputs = with pkgs; [git jq coreutils gnugrep tmux gh gtrash];
             # No substitution: crew never references the protocols.
             text = builtins.readFile ./adapters/core/crew.sh;
           };
