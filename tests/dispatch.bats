@@ -3,6 +3,12 @@ setup() {
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
+  # A work shell exports DISPATCH_PROFILE and any dispatcher session exports
+  # CREW_ID; bats inherits both, so without this the suite passes on a work box
+  # and fails on a personal one. HOME points at the throwaway repo so the codex
+  # cache fixture and the --mcp config paths cannot reach the developer's own.
+  export HOME="$TEST_REPO"
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
   stub_bin tmux
   stub_bin crew
   stub_bin gh
@@ -62,6 +68,14 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/crew"
+}
+
+# Mirrors the real cache: `jq -r '.models[].slug' ~/.codex/models_cache.json`.
+write_codex_cache() {
+  mkdir -p "$HOME/.codex"
+  cat >"$HOME/.codex/models_cache.json" <<'EOF'
+{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-terra"},{"slug":"codex-auto-review"},{"slug":"gpt-5.6-luna"},{"slug":"gpt-5.5"},{"slug":"gpt-5.4"},{"slug":"gpt-5.4-mini"}]}
+EOF
 }
 
 @test "rejects an unknown tier" {
@@ -150,6 +164,267 @@ EOF
   [ "$status" -eq 0 ]
   launch="$(grep 'send-keys' "$STUB_LOG")"
   [[ "$launch" == *'cursor-agent'* ]]
-  [[ "$launch" == *'--model kimi-k3-high'* ]]
+  [[ "$launch" == *"--model 'kimi-k3-high'"* ]]
   [[ "$launch" == *'Process authority:'* ]]
+}
+
+@test "task headers preserve the authoritative launch tuple for every engine" {
+  stub_launch_bins
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "metadata claude"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-claude/WORKER_TASK.md"
+  grep -Fx 'engine: claude' "$task"
+  grep -Fx 'model: sonnet' "$task"
+  grep -Fx 'effort: medium' "$task"
+
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "metadata codex"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-codex/WORKER_TASK.md"
+  grep -Fx 'engine: codex' "$task"
+  grep -Fx 'model: gpt-5.6-terra' "$task"
+  grep -Fx 'effort: high' "$task"
+
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "metadata cursor"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-cursor/WORKER_TASK.md"
+  grep -Fx 'engine: cursor' "$task"
+  grep -Fx 'model: composer-2.5' "$task"
+  grep -Fx 'effort: low' "$task"
+}
+
+@test "rejects a codex slug on --agent claude" {
+  run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent claude"* ]]
+}
+
+@test "rejects an effort-suffixed cursor id on --agent claude" {
+  run run_dispatch standard claude-opus-4-8-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort-suffixed cursor id"* ]]
+}
+
+@test "the model gate outranks the effort-ultra gate" {
+  # Ordering pin: the mistake is the engine/model pairing, not the effort, so
+  # moving the gate below the ultra check masks it.
+  run run_dispatch deep gpt-5.6-sol --agent claude --effort ultra --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent claude"* ]]
+  [[ "$output" != *"effort ultra is codex-only"* ]]
+}
+
+@test "accepts claude aliases and full claude-* ids" {
+  # Distinct titles are load-bearing: the title becomes the branch, and a reused
+  # one makes the second `git worktree add -b` collide.
+  stub_launch_bins
+  run run_dispatch deep claude-fable-5 --agent claude --effort high --crew-id c1 42 "fable row"
+  [ "$status" -eq 0 ]
+  run run_dispatch trivial haiku --agent claude --effort low --crew-id c1 42 "haiku row"
+  [ "$status" -eq 0 ]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK bypasses the gate for that exact model" {
+  stub_launch_bins
+  DISPATCH_SKIP_MODEL_CHECK=kimi-k3-high run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"model check skipped"* ]]
+}
+
+@test "rejects a bare gpt generation on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "the model gate fires before any worktree is scaffolded" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  # Mirrors the profile-gate test: the gate rejects before any stub runs, so
+  # $STUB_LOG may not exist at all. Non-vacuous for *this* gate because the row
+  # reaches it (profile is work, crew id supplied) — move the gate below
+  # dispatch.sh's `wt switch -c` and `switch` lands in the log.
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "rejects a claude alias on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch standard opus --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "rejects a cursor-shaped id on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol-high --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "accepts codex variant slugs and the legacy bare generations" {
+  # Distinct titles: see the claude-alias test.
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "terra row"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.5 --agent codex --effort medium --crew-id c1 42 "legacy row"
+  [ "$status" -eq 0 ]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK is exact-match, not a boolean" {
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=1 run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "an exported DISPATCH_SKIP_MODEL_CHECK does not blanket-disable the gate" {
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch standard opus --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK lets its own model through to launch" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"model check skipped"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "the codex cache rejects a well-shaped slug this account lacks" {
+  write_codex_cache
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"models_cache.json"* ]]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  # The advertised list is filtered to what the grammar accepts, so it must not
+  # suggest the internal review model.
+  [[ "$output" != *"codex-auto-review"* ]]
+}
+
+@test "the codex cache admits a slug it holds" {
+  stub_launch_bins
+  write_codex_cache
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+}
+
+@test "the grammar floor holds with no codex cache" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "an absent codex cache is a skip, not a hard fail" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "an unparseable codex cache never blocks codex dispatch" {
+  stub_launch_bins
+  mkdir -p "$HOME/.codex"
+  printf 'not json' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+}
+
+# Parses fine and the container shape is right, so a probe that stops at
+# `.models|arrays` calls it usable — then `.slug` on a string is a hard jq error
+# that set -e turns into a dead dispatch, rejecting a valid slug.
+@test "a codex cache with drifted element shape never blocks codex dispatch" {
+  stub_launch_bins
+  mkdir -p "$HOME/.codex"
+  printf '{"models":["gpt-5.6-sol","gpt-5.6-terra"]}' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Cannot index string"* ]]
+}
+
+# The advertised list is echoed to a terminal, so a slug carrying an escape
+# sequence would be interpreted rather than displayed. jq writes the control
+# bytes here, keeping this file free of literal ones.
+@test "control characters in a cached slug never reach the terminal" {
+  mkdir -p "$HOME/.codex"
+  jq -n '{models:[{slug:"gpt-5.6-sol"},{slug:("gpt-9.9-" + "" + "]0;title" + "" + "x")}]}' \
+    >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  [[ "$output" == *"gpt-9.9-]0;titlex"* ]]
+  printf '%s' "$output" | grep -qP '[\x00-\x1f]' && return 1
+  return 0
+}
+
+# The advertised-slug list is built after the membership check fails, so a
+# non-string slug there crashes the rejection path itself: the caller gets jq's
+# raw error and exit 5 instead of the actionable message.
+@test "a non-string slug does not derail the rejection message" {
+  mkdir -p "$HOME/.codex"
+  printf '{"models":[{"slug":123},{"slug":"gpt-5.6-sol"}]}' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not in this account's codex model list"* ]]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  [[ "$output" != *"startswith() requires string inputs"* ]]
+}
+
+@test "rejects a claude alias on --agent cursor" {
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent cursor"* ]]
+}
+
+@test "rejects a cursor claude-*/gpt-* id with no effort rung" {
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort suffix"* ]]
+}
+
+@test "a bracket block exempts the effort rule only by naming effort" {
+  DISPATCH_PROFILE=work run run_dispatch standard 'gpt-5.6[detail=x]' --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort suffix"* ]]
+}
+
+@test "cursor accepts a no-effort-variant id and single-quotes it at launch" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"--model 'composer-2.5'"* ]]
+}
+
+@test "cursor accepts the parameterised bracket form" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-4-8[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  # Single-quoted, so the glob-active brackets never reach the worker's shell.
+  [[ "$launch" == *"--model 'claude-opus-4-8[context=1m,effort=high,fast=false]'"* ]]
+}
+
+# Asserts only that the gate stayed silent — a full launch per model would need
+# a distinct branch per row and buys nothing the acceptance tests do not cover.
+assert_gate_silent() { # <engine> <model>
+  DISPATCH_PROFILE=work run run_dispatch standard "$2" --agent "$1" --effort medium --crew-id c1 42 "map row $2"
+  if [[ "$output" == *"Model gate"* ]]; then
+    printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
+    return 1
+  fi
+}
+
+@test "every model the docs name passes its engine's arm" {
+  # Hand-copied from dispatch-orchestration.md: the model map, the cursor
+  # alternatives prose, the codex legacy generations, and the orchestrator
+  # table. Copied, so it makes drift loud rather than impossible.
+  for m in opus sonnet haiku claude-fable-5; do
+    assert_gate_silent claude "$m"
+  done
+  for m in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini; do
+    assert_gate_silent codex "$m"
+  done
+  for m in kimi-k3-high cursor-grok-4.5-high cursor-grok-4.5-medium-fast \
+    cursor-grok-4.5-low-fast composer-2.5 composer-2.5-fast \
+    claude-opus-4-8-high gpt-5.6-sol-high; do
+    assert_gate_silent cursor "$m"
+  done
 }

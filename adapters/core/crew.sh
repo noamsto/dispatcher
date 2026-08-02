@@ -550,6 +550,12 @@ rate)
               elif $ls == "done" then "failed"
               else "incomplete" end),
             rework_count: ($m.rework_count // null),
+            replanned: (
+              if $m == null or (($m | has("replanned")) | not)
+              then null
+              else $m.replanned
+              end
+            ),
             review_high: ($m.review_high // null),
             review_mode: ($m.review_mode // null),
             plan_critic_first_pass: ($m.plan_critic_first_pass // null),

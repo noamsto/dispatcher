@@ -8,9 +8,11 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 ## First action
 
-Read `WORKER_TASK.md`. It stamps `tier:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, and `agent_name:` (your FleetView-style codename — use it in human-facing pings). `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
+Read `WORKER_TASK.md`. It stamps `tier:`, authoritative `engine:`, `model:`, and `effort:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, and `agent_name:` (your FleetView-style codename — use it in human-facing pings). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
 `crew status "worker:$(git branch --show-current)" working`
 Use `worker:$(git branch --show-current)` as your agent id for every bus call below.
+
+Before the startup bus drain, initialize `replanned = false` for this run. This value is available to every stopping path before execute begins.
 
 **Then drain the bus once, unbounded, before any pipeline work:**
 
@@ -40,7 +42,7 @@ Before running any plan phase, read `plan:` from `WORKER_TASK.md`:
 - **`plan: provided`** — the dispatcher wrote the plan into the task doc (root cause/mechanism, explicit file list, named approach, acceptance criteria). The doc **is** your plan of record. Do **not** run the `spec-plan-critic` **plan** phase (a **deep** worker still runs its spec-critic / orchestration consult — see **Scope** below). Extract the doc into a bite-sized step list and go straight to execute → fast gate → review. (Your launch prompt says the same thing; per **Process authority** this is not a skill you may override into re-planning.)
 - **`plan: required`** — run the tier's plan phase as described above.
 - **Field absent (legacy / hand-authored doc)** — self-assess by _extraction_, not judgement: can you (i) quote the exact file list, (ii) state the mechanism in one sentence quoting the doc, and (iii) enumerate the acceptance criteria as checkboxes? If **all three** succeed, that extraction **is** your plan of record — proceed as `provided` (but audit it as `self-gate`, not `provided` — see rule 5). If **any** fails, treat it as `required` and run the plan phase.
-- **Re-entry (both skip paths).** If, at execute time, the plan of record is contradicted by the repo (a named file doesn't exist, the approach doesn't fit the code), stop improvising: run `spec-plan-critic` once, normally, from what you now know. This is a single explicit fallback (mirrors the deep false-negative recovery), not a loop.
+- **Re-entry (both skip paths).** If, at execute time, the plan of record is contradicted by the repo (a named file doesn't exist, the approach doesn't fit the code), stop improvising. This is the provided/legacy contradiction transition in **Bounded plan-shaped recovery**: at the current rung, consume the shared execute-time budget and set `replan_used = true` and `replanned = true` when the planning episode begins, then run `spec-plan-critic` once, normally, from what you now know. If that budget is already spent, block instead of re-entering. This is a single explicit fallback (mirrors the deep false-negative recovery), not a loop.
 - **Scope.** The skip applies to the **plan** phase only. A **deep** worker may skip the plan-critic under these rules but **never** its spec-critic / orchestration consult — deep is chosen when the _framing_ needs adversarial pressure, which a task doc doesn't settle.
 - **Retain the checkpoint-peek** after you produce the extracted plan of record, same as after a normal plan.
 
@@ -86,6 +88,41 @@ After `execute` and **before** any model reviewer sees the diff, run the cheap d
 - **Prefer a real test over a synthetic demo.** When the change has a runnable behavior surface, the highest-value proof-of-work is a regression test that pins the acceptance criteria — especially the boundary/edge input a bug report names (a `page > totalPages` case, an empty list, a second call). Write it here so it runs in the gate and in CI forever. Do **not** reach for a manual/visual demo (a throwaway Storybook story, a screenshot walk-through) as the *primary* proof: it exercises the happy path an operator picks, not the edge that breaks, and it never runs again. Manual/visual verification stays a **fallback** for changes with genuinely no test surface, or a **supplement** when a reviewer must *see* rendered output — never the main gate.
 - If the change has **no runnable build/test surface** (a docs- or protocol-only diff), say so explicitly and fall through to the review gate — do not invent a command.
 
+### Bounded plan-shaped recovery
+
+On entry to execute, initialize execute-local `replan_used = false`; do not initialize it earlier. Initial planning, critic revisions, and deep consult false-negative recovery are before execute and never consume this budget. The skipped-plan contradiction fallback and plan-shaped recovery share one execute-time budget.
+
+An episode starts on the first scoped deterministic-gate failure and lasts until all discovered build/lint/unit/other subgates are green. Moving between commands or subgates preserves the episode and its count; an entirely green scoped gate ends the episode and discards its count. A gate identity is its exact command plus stable subgate name. A target is the most-specific stable deterministic identifier — named test/check, module or package, file+rule, then file — normalized by stripping volatile diagnostics and sorting/deduplicating target sets.
+
+Before fixing, a qualifying ledger row requires a confirmed deterministic failure, stable target, exact quoted old plan statement, and one amendment category: `scope`, `invariant/interface`, or `dependency/order`. Record:
+
+```text
+gate: <command/subgate>
+target: <normalized target set>
+old_plan: <exact quoted plan statement>
+amendment: <replacement statement and scope|invariant|dependency>
+```
+
+After initialization or any reset, the first qualifying amendment seeds the consecutive count at `1`. It becomes the immediately previous qualifying row; it needs no predecessor against which to prove movement. Mechanical fixes, same or overlapping adjacent targets, overlap with the immediately previous quoted plan element, unclassifiable failures, or an actual intervening mechanical/unclassifiable observation reset the count to zero. A subgate pass or unchanged flakiness probe preserves it but adds no row.
+
+Each later qualifying row increments only when both its target and quoted plan element differ from the immediately previous qualifying row. If either overlaps, reset rather than increment. Global uniqueness is irrelevant: `A(scope step 2) → B(interface step 4) → A(scope step 2)` reaches `1 → 2 → 3` and transfers control before the third fix. `A → A` resets. Apply/amend/fix the first two rows; on the third, record the proposed row but do not amend or fix, then transfer to recovery. Healthy in-plan `A → B → C`, same-target `A → A`, cross-subgate movement, overlapping-plan movement, and the two-element oscillation above are deliberate classifier cases. The classifier applies to worker-authored plans (`plan: required`, plans created by skipped-plan re-entry, and accepted replacements); an untouched provided/legacy plan uses the direct contradiction fallback.
+
+| Transition | Rung | Budget |
+| --- | --- | --- |
+| Missing lower execute rung | Same-rung implementation | Not consumed; `replanned` unchanged |
+| Provided/legacy contradiction | Same-rung planning re-entry | Consume at episode start |
+| Three qualifying amendments | Exactly one stronger planning rung | Consume at launch start |
+
+A worker may autonomously take only one of the two planning transitions. After a replacement, clear only the consecutive count, preserve the ledger and `replan_used = true`, checkpoint-peek, then execute. A later full three-row sequence blocks. Mechanical convergence remains uncapped before and after replanning.
+
+For three qualifying amendments, use one fresh planning-only context and the authoritative engine/model/effort tuple from `WORKER_TASK.md`; never change engine, skip a rung, or guess an unlisted tuple. A higher planner must be strictly above the authoritative tuple; a top or unavailable rung blocks without launching planning, and `replanned` remains false only when no earlier execute-time planning episode began.
+
+- **Claude:** Agent model override `haiku → sonnet → opus → fable`; `opus → fable` retains the hard, well-specified, long-horizon eligibility check. Fable, ineligible opus, unknown full ids, and unavailable launches block. Effort is metadata because the Agent override cannot change it. Claude may use its bounded critic within this single episode.
+- **Codex:** on the exact model, increase `low → medium → high → xhigh → max`; at max move one family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`, preserving max. Never use ultra. Sol/max, legacy/unknown families, outside-table tuples, and unavailable native planning launches block. Use plain replanning, not Claude critics.
+- **Cursor:** Task model override `cursor-grok-4.5-low-fast → cursor-grok-4.5-medium-fast → cursor-grok-4.5-high`. High, Kimi, Composer, cross-vendor ids, unknown ids, and unavailable Task launches block. Use plain replanning.
+
+A replacement is viable only when it accounts for all three ledger rows, names allowed files/components, gives a finite ordered implementation list plus deterministic validation commands, and leaves no choice for execute-time improvisation. Refusal, timeout, failed extraction/critic, unavailable launch, or non-viable output blocks without falling back to the original plan or a second planner.
+
 ## Code review gate (standard/deep)
 
 After the fast deterministic gate is green and **before** `/deslop` + push, get an **independent** review of your diff — never review your own work in your own context (same reason the critics run fresh; rule 2).
@@ -106,6 +143,8 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
 
 Append your lifecycle to the crew bus — this is the contract, not optional:
 
+Immediately before every stopping path, emit one complete latest-state metrics snapshot. This includes a startup-drain dispatcher stop; spec, plan, or consult terminal failure; done; terminal gate failure; dispatcher-requested stop; permission stop; the first blocked-timeout stop; and the final failed stop after the second timeout. Do not emit for a temporary blocked state that continues awaiting. A resumed run emits a newer snapshot, and `crew rate` selects the latest timestamp. Every pre-execute snapshot has `replanned: false`.
+
 - on start: `crew status worker:<branch> working`
 - on PR open: `crew status worker:<branch> pr_open "" <pr_url>`
 - on finish: `crew status worker:<branch> done`
@@ -115,13 +154,14 @@ Append your lifecycle to the crew bus — this is the contract, not optional:
   crew msg worker:<branch> dispatcher:<crew_id> "<question>"
   crew await worker:<branch> --timeout 300
   ```
+  - **plan-shaped gate rework:** post `crew status worker:<branch> blocked "plan-shaped gate rework: <reason>"`, then `crew msg worker:<branch> dispatcher:<crew_id> "<concrete question and evidence>"`, then await as above. The message must include the gate identity, all three ledger rows, fixes attempted, authoritative engine/model/effort, budget state, and the missing rung or failed viability condition. Ask for a concrete replacement or supported higher rung. A dispatcher-supplied replacement is external direction: set `replanned = true`, retain the post-replan cap, checkpoint-peek, then resume execute.
   Run `crew await` from your bash tool with a tool timeout above `--timeout` (e.g. 360000ms) so the tool doesn't kill it first. It blocks at **zero token cost** (a held bash call, not a spin loop) and prints the dispatcher's reply.
   - **reply arrives (non-empty stdout):** re-stamp `crew status worker:<branch> working`, incorporate the answer, resume the pipeline from where you paused.
   - **times out (empty stdout):** re-stamp `crew status worker:<branch> blocked "<why> — awaited 300s, no reply"` and **stop**. Your question stays durable in the bus; the dispatcher answers from the roster (you resume on next activation) or re-dispatches. **Cap block→await cycles at 2** — after a second timeout, `crew status worker:<branch> failed "blocked, no dispatcher reply"` and stop.
   - **`trivial`/`standard` only:** if the blocker is low-risk, instead pick a safe default on timeout, document it in the PR body under "## Assumptions", and continue. `deep`/security-sensitive must wait for a real answer.
   - **Always fold in stragglers after await, before advancing the cursor.** `crew await` keys off its own internal `start=now`, not your seen-cursor, so a directive posted _before_ the await started is not matched by that await. On **every** await return — reply (non-empty stdout) **or** timeout (empty stdout) — and **before** you advance the seen-cursor past the await reply's `.ts`, run `crew inbox "worker:$(git branch --show-current)" --since <seen-cursor>` to catch it. Ordering is load-bearing: advancing the cursor from the reply's `.ts` first would leapfrog a pre-await directive (the exact bug this fold prevents). Handle any directive with the same receiving-code-review discipline, then advance the seen-cursor only over messages you handled (fold results **and** the await reply).
-- if a step hits a **permission prompt you can't resolve** (no human watches your window; `--permission-mode auto` auto-denies): do NOT hang — `crew status worker:<branch> blocked "permission: <what>"`, surface it, stop.
-- on terminal failure (gate won't pass, etc.): `crew status worker:<branch> failed "<why>"`, then stop.
+- if a step hits a **permission prompt you can't resolve** (no human watches your window; `--permission-mode auto` auto-denies): do NOT hang — `crew status worker:<branch> blocked "permission: <what>"`, surface it, emit the snapshot, stop.
+- on terminal failure (gate won't pass, etc.): `crew status worker:<branch> failed "<why>"`, emit the snapshot, then stop.
 
 ## Rules
 
@@ -137,6 +177,8 @@ Append your lifecycle to the crew bus — this is the contract, not optional:
    - **codex** — native subagents; `dispatch` pins `agents.enabled`, `agents.max_concurrent_threads_per_session=3`, and `agents.default_subagent_reasoning_effort` one rung below the session (floor `low`, never `ultra`). Prefer the ladder's execute model (terra on deep, luna on standard); escalate to the worker's own model family. Session effort `ultra` already auto-delegates — do **not** layer a second harness orchestration on top; still never pass `ultra` as a subagent effort.
    - **cursor** — Task-tool subagents with an explicit `model` slug from the ladder (pinning is supported; there is no CLI concurrency flag, so the cap of 3 is protocol-only). Cursor `deep` is asymmetric: Kimi plans, Grok implements — escalate to `cursor-grok-4.5-high`, not back to Kimi. Rung-down is the model id (Grok `-low`/`-medium`/`-high`, optional `-fast`; `kimi-k3` has no lower-effort Cursor slug — only `kimi-k3-high`).
 
+   If the execute ladder has no lower rung, implement at the current worker rung; this never consumes the planning budget. It is an implementation fallback, not a planning transition, so never reuse it for plan-shaped recovery and never change `replan_used` or `replanned`.
+
    Execute-subagent prompts grant **implementation authority only**. They do not read `WORKER_PROTOCOL.md`; stamp process-authority into every spawn so a subagent cannot re-derive worker process via skills, open PRs, or act as the worker.
 2. **Critics are independent.** Never self-review — the workflow dispatches `spec-critic`/`plan-critic` in fresh contexts. Ingest their verdicts with receiving-code-review discipline: verify the finding, don't perform agreement.
 3. **Revision cap is 2.** The workflow enforces it. If it returns `escalations[]`, surface them verbatim in the PR body under "## Escalated" — do not silently proceed as if clean.
@@ -146,12 +188,12 @@ Append your lifecycle to the crew bus — this is the contract, not optional:
 
 ## When done
 
-Open the PR, then `crew status worker:<branch> pr_open "" <url>` → `crew status worker:<branch> done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+Open the PR, then `crew status worker:<branch> pr_open "" <url>` → emit the complete metrics snapshot → `crew status worker:<branch> done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - **Every worker — emit outcome metrics before you stop.** On **all** tiers, append a metrics record to the bus so this run can be rated:
   ```
-  crew msg "worker:$(git branch --show-current)" "metrics:$CREW_ID" '{"consulted":<true|false>,"consult_engine":"<fable|codex|cursor|null>","plan_critic_first_pass":"<accept|revise|reject|null>","rework_count":<int>,"review_high":<int>,"review_mode":"<full|downgraded|none>"}'
+  crew msg "worker:$(git branch --show-current)" "metrics:$CREW_ID" '{"consulted":<true|false>,"consult_engine":"<fable|codex|cursor|null>","plan_critic_first_pass":"<accept|revise|reject|null>","rework_count":<int>,"replanned":<true|false>,"review_high":<int>,"review_mode":"<full|downgraded|none>"}'
   ```
-  (`$CREW_ID` is the `crew_id:` from `WORKER_TASK.md`.) `consulted` = whether the orchestration consult ran (deep only; `false` otherwise). `consult_engine` = which consultant ran it — `fable` (subagent), `codex` (gpt-5.6-sol via the read-only MCP), `cursor` (grok-4.5-high one-shot) — `null` whenever `consulted` is `false`. `plan_critic_first_pass` = the plan-critic's verdict on the **first** plan draft, or `null` if you skipped the plan phase (trivial). `rework_count` = execute-stage fixes the gates forced (`0` if none). `review_high` = HIGH-severity review-gate findings (`0` if no reviewer ran, e.g. trivial). `review_mode` = which review depth actually ran (`full`|`downgraded`|`none`, per the Code review gate's repo-aware scaling) — so `review_high` is read in context, never compared across mismatched depths. **Codex and cursor** still run neither the plan-critic nor the claude code-review gate (those stay Claude-only), so they emit `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` — marking the run **ungated**, not unorchestrated: they still delegate execute subagents per rule 1. Emit real `null` (not the string `"null"`) for fields a tier or engine never produces. This is a plain `msg` to a synthetic sink — it does **not** wake the dispatcher (its `watch`/`inbox` filter is `to==dispatcher:<crew>`/`*`, never `metrics:<crew>`). **Every worker emits this**, so the ratings store has one row per run.
+  (`$CREW_ID` is the `crew_id:` from `WORKER_TASK.md`.) `consulted` = whether the orchestration consult ran (deep only; `false` otherwise). `consult_engine` = which consultant ran it — `fable` (subagent), `codex` (gpt-5.6-sol via the read-only MCP), `cursor` (grok-4.5-high one-shot) — `null` whenever `consulted` is `false`. `plan_critic_first_pass` = the plan-critic's verdict on the **first** plan draft, or `null` if you skipped the plan phase (trivial). `rework_count` = execute-stage fixes the gates forced (`0` if none). `replanned` is `false` when no execute-time planning episode began and no dispatcher plan was adopted, including a same-rung implementation fallback and top/no-rung block; it is `true` when same-rung re-entry or strict-upward planning actually began (even if viability later failed), or when a dispatcher replacement was adopted. Initial planning, critics, and consult recovery do not change `replanned`; a recovery-planner launch sets it as defined but never increments `rework_count`. `review_high` = HIGH-severity review-gate findings (`0` if no reviewer ran, e.g. trivial). `review_mode` = which review depth actually ran (`full`|`downgraded`|`none`, per the Code review gate's repo-aware scaling) — so `review_high` is read in context, never compared across mismatched depths. **Codex and cursor** still run neither the plan-critic nor the claude code-review gate (those stay Claude-only), so they emit `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` — marking the run **ungated**, not unorchestrated: they still delegate execute subagents per rule 1. Emit real `null` (not the string `"null"`) for fields a tier or engine never produces. This is a plain `msg` to a synthetic sink — it does **not** wake the dispatcher (its `watch`/`inbox` filter is `to==dispatcher:<crew>`/`*`, never `metrics:<crew>`). **Every worker emits this**, so the ratings store has one row per run.
 
 Then stop.

@@ -132,6 +132,83 @@ if [ "$agent" = cursor ] && [ "$profile" != work ]; then
   echo "dispatch: --agent cursor is work-profile only" >&2
   exit 1
 fi
+
+# Model gate. Reject a slug the chosen engine cannot run before anything is
+# scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
+# worktree, window and issue already paid for. Shape, not a model list: this
+# file bakes into a store path, so a membership table would make every model
+# bump a rebuild.
+# Unanchored at the front on purpose: `gpt-5.5-extra-high` is a real cursor id
+# and matches on its trailing `-high`.
+re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
+if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
+  echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
+else
+  case "$agent" in
+  claude)
+    re_claude_id='^claude-[a-z0-9]+(-[a-z0-9]+)*$'
+    if [[ $model =~ $re_claude_id ]] && [[ $model =~ $re_effort_tail ]]; then
+      echo "dispatch: model '$model' is an effort-suffixed cursor id — on --agent claude pass the bare id and set intensity with --effort. Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
+      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  codex)
+    if [[ ! $model =~ ^gpt-[0-9]+\.[0-9]+-[a-z0-9]+$ ]] && [[ ! $model =~ ^gpt-5\.[45]$ ]]; then
+      if [[ $model =~ ^gpt-[0-9]+\.[0-9]+$ ]]; then
+        gen="${model#gpt-}"
+        echo "dispatch: model '$model' is not a codex slug — the $gen family ships only as variants (gpt-$gen-sol, gpt-$gen-terra, gpt-$gen-luna); there is no bare $model. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # The cache tightens the grammar and is never a prerequisite for it: probe
+    # usability separately so the membership test's non-zero can only mean "not
+    # on this account". Conflated, a rotated or half-written cache would block
+    # every codex dispatch behind a file nobody edits by hand. The `?|strings`
+    # projection is what makes that hold for a file that parses but whose
+    # entries are not `{slug: string}` — a bare `.slug` there is a jq error, and
+    # under `set -e` that kills dispatch even for a valid slug.
+    codex_cache="$HOME/.codex/models_cache.json"
+    if jq -e '[.models[]?|.slug?|strings]|length > 0' "$codex_cache" >/dev/null 2>&1 &&
+      ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
+      # Filtered to what the grammar accepts — the raw list advertises
+      # codex-auto-review, an internal review model the gate rejects anyway.
+      # Controls are stripped because this lands on a terminal, where an escape
+      # sequence in a slug would be interpreted rather than shown.
+      known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
+      echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  cursor)
+    # Cursor fronts other vendors, so membership is unknowable offline and only
+    # id shape is checked. BASH_REMATCH is clobbered by the next [[ =~ ]], so
+    # both groups are captured on the spot.
+    re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+    cursor_base=""
+    cursor_params=""
+    if [[ $model =~ $re_cursor ]]; then
+      cursor_base="${BASH_REMATCH[1]}"
+      cursor_params="${BASH_REMATCH[2]}"
+    fi
+    if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.5-medium-fast, composer-2.5, claude-opus-4-8-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
+    # the id itself; a bracket block exempts only by naming effort= there.
+    if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
+      echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  esac
+fi
 # claude's --effort tops out at max; rejecting `ultra` here fails before the
 # worktree and pane exist, instead of at worker launch.
 if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
@@ -237,8 +314,8 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 {
-  printf 'tier: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
-    "$tier" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
+  printf 'tier: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
+    "$tier" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -317,7 +394,7 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter

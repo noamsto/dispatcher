@@ -78,11 +78,12 @@ uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
 (implements) — escalate to `cursor-grok-4.5-high`, not back to Kimi. **`kimi-k3`
 has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.5 remains the
 default cursor distinct-implementer** — a genuinely non-Claude perspective, which
-is the point of reaching for cursor. `--model` is free, so a cursor worker can
-still front **`composer-2.5`** / **`composer-2.5-fast`** (no effort variants) as
-an alternative, or an effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`.
-`dispatch` does not validate the model slot — the map is enforced by the
-dispatcher's judgment, not by code.
+is the point of reaching for cursor. `--model` is open across cursor's whole
+multi-vendor id space (the gate checks id _shape_, not membership of this
+table), so a cursor worker can still front **`composer-2.5`** /
+**`composer-2.5-fast`** (no effort variants) as an alternative, or an
+effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`. `dispatch` validates the
+model slot against `--agent` before scaffolding — see **Model gate** below.
 
 **Worker-session model vs execute-subagent model.** The first model in each map
 cell is the **worker session** — it does spec / plan / reconcile / judging. The
@@ -94,12 +95,51 @@ sets codex `agents.*` guardrails and a process-authority spawn clause only —
 never model slugs for execute subagents (those stay in this table / rule 1).
 Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.5-low-fast → cursor-grok-4.5-medium-fast → cursor-grok-4.5-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
 **Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.5-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults are work-profile only. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
-`crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"review_high":…}'`.
+`crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
+
+Read `replanned` together with `rework_count`: it distinguishes ordinary mechanical gate convergence from an execute-time planning episode. Workers emit a complete latest-state metrics snapshot immediately before every stopping path; ratings select the latest timestamp. Old metrics bodies without `replanned` remain legacy-null in ratings.
+
+### Model gate
+
+`dispatch` validates `<model>` against `--agent` **before** it scaffolds
+anything — no issue, no branch, no worktree, no window. It checks per-engine id
+_shape_, not membership of the table above, so a model bump needs no
+`dispatch.sh` edit:
+
+- **claude** — an alias (`opus`, `sonnet`, `haiku`, `fable`) or a full
+  `claude-*` id. An effort suffix is rejected: `claude-opus-4-8-high` is a
+  _cursor_ id, and claude takes intensity through `--effort`.
+- **codex** — `gpt-<gen>-<variant>`, variant mandatory, which is what rejects a
+  bare `gpt-5.6`; `gpt-5.5` / `gpt-5.4` pass as legacy bare generations. When
+  `$HOME/.codex/models_cache.json` is readable and holds a non-empty `.models`
+  array, the slug must also appear in it — an absent or unusable cache is
+  skipped, never fatal.
+- **cursor** — an open multi-vendor id space, so shape only: claude CLI aliases
+  are rejected, and a `claude-*` / `gpt-*` id must carry an effort suffix
+  (`gpt-5.6-sol-high`) or name one in a bracket block
+  (`claude-opus-4-8[context=1m,effort=high,fast=false]`). The bracket rule is a
+  conservative guess — `cursor-agent` calls the pairs "overrides", so a block
+  that omits `effort=` may well be legitimate and still get rejected. That is
+  what the override below is for.
+
+The gate enforces **dispatchability, not tier-appropriateness**. Picking the
+rung that fits the task stays the dispatcher's judgment, and the map above stays
+the source of truth for it.
+
+**Override.** `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` skips the gate for
+that one id and warns on stderr. Truthiness is exact string equality with the
+model, not "is set" — exporting it for a session still gates every _other_
+model. Reaching for it means **the map above is stale**: update the map in the
+same session. The map is a protocol file, hot-reloadable through
+`DISPATCHER_PROTOCOL_DIR`, so the doc fix lands immediately; the `dispatch.sh`
+grammar follows on the next rebuild.
 
 ## Orchestrator engines (dispatcher session)
 
