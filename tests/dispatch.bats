@@ -72,16 +72,14 @@ teardown() {
 }
 
 @test "a work-profile codex dispatch reaches its launch line" {
-  # The inert tmux/wt stubs cannot get here: dispatch resolves the worktree via
-  # `git worktree list` (so `wt` must really create one) and reads the pane id
-  # out of `tmux new-window -P` (so tmux must answer). Both richer stubs
-  # overwrite the inert ones in $STUB_DIR.
+  # The richer stubs overwrite the inert ones setup() put in $STUB_DIR; the
+  # commit gives `git worktree add -b` a HEAD to branch from.
   git commit -q --allow-empty -m init
   stub_tmux_window
   stub_wt_worktree
 
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex \
-    --effort medium --crew-id c1 42 "probe title"
+    --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
 
   run grep -F 'send-keys' "$STUB_LOG"
