@@ -271,12 +271,37 @@ if [ "$plan_val" = provided ]; then
   plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
 fi
 
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
+# stamp process-authority into every execute-subagent prompt so a fresh subagent
+# cannot re-derive process via skills. Claude gets the same idea from rule 1 +
+# the Agent tool; this clause is only for engines whose spawn prompt is the
+# sole carrier.
+process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker."
+if [ "$agent" = codex ] && [ "$effort" = ultra ]; then
+  process_authority="$process_authority Session effort is ultra — Codex automatic delegation is the orchestration layer; do not add a second harness execute-subagent orchestration on top."
+fi
+
+# Codex execute-subagent effort: one rung below the session, floor at low,
+# never ultra (ultra auto-delegates and must not nest). Model versions live in
+# dispatch-orchestration.md — dispatch sets guardrails only.
+codex_subagent_effort="$effort"
+case "$effort" in
+ultra) codex_subagent_effort=max ;;
+max) codex_subagent_effort=xhigh ;;
+xhigh) codex_subagent_effort=high ;;
+high) codex_subagent_effort=medium ;;
+medium) codex_subagent_effort=low ;;
+low) codex_subagent_effort=low ;;
+esac
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
   # latency nobody is watching.
+  # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
+  # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
@@ -290,8 +315,9 @@ elif [ "$agent" = cursor ]; then
   # it skips a merkle index build over a large monorepo. Not a stall fix — the
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
+  # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter

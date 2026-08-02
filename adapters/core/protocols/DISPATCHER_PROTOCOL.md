@@ -30,8 +30,9 @@ default-plus-exception:
   self-similarity bias: do not let "X is what I am" become "X is the fit."
 - codex leans: large mechanical refactors, wide-but-shallow multi-file sweeps,
   or a deliberate second-engine perspective on a hard problem.
-- cursor leans: a distinct third-engine perspective on a deep task — default it
-  to **Grok 4.5** (`cursor-grok-4.5-*`, genuinely non-Claude); Composer stays
+- cursor leans: a distinct third-engine perspective on a deep task — default the
+  **worker** to **`kimi-k3-high`** (plans) with **Grok 4.5** execute subagents
+  (`cursor-grok-4.5-*`, genuinely non-Claude implementers); Composer stays
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.
@@ -49,8 +50,14 @@ is a separate REQUIRED flag on `dispatch`, judged independently from tier — it
 the reasoning effort passed to whichever engine you picked (claude/codex; cursor
 folds effort into the model id, so `--effort` is accepted-and-ignored there), it is
 not derived from tier. Ladder: `low|medium|high|xhigh|max` on both engines, plus
-codex-only `ultra` (auto task delegation, `gpt-5.6-sol`/`-terra`) — `dispatch`
-rejects `ultra` for claude.
+codex-only `ultra` (maximum reasoning with **automatic task delegation**,
+`gpt-5.6-sol`/`-terra`) — `dispatch` rejects `ultra` for claude. For codex,
+`dispatch` also pins `agents.enabled`, `agents.max_concurrent_threads_per_session=3`,
+and `agents.default_subagent_reasoning_effort` one rung below the session
+(floor `low`, never `ultra`). Session `ultra` already orchestrates — do not
+choose `ultra` expecting a second harness execute-subagent layer on top; see
+`dispatch-orchestration.md` and `WORKER_PROTOCOL.md` rule 1. Cursor `deep`
+workers use **`kimi-k3-high`** from the model map (Kimi plans, Grok implements).
 
 **Profile constraint:** codex and cursor are both work-profile only — `dispatch`
 aborts `--agent codex` / `--agent cursor` off the work profile. On a
