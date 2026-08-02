@@ -41,11 +41,11 @@ Orchestrator (dispatcher-session) defaults live in "Orchestrator engines" below;
 consult-roster versions live in `WORKER_PROTOCOL.md` → "Orchestration consult".
 Bump the matching table when a new model ships.
 
-| Tier       | claude ladder                                                                                                                                                                                                                                                            | codex ladder      | cursor ladder           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------------------- |
-| `deep`     | **opus** — escalate to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`**   | **`cursor-grok-4.5-high`**        |
-| `standard` | **sonnet**                                                                                                                                                                                                                                                               | **`gpt-5.6-terra`** | **`cursor-grok-4.5-medium-fast`** |
-| `trivial`  | **sonnet** (or **haiku** if truly trivial)                                                                                                                                                                                                                               | **`gpt-5.6-luna`**  | **`cursor-grok-4.5-low-fast`**    |
+| Tier       | claude (worker → execute → escalate)                                                                                                                                                                                                                                     | codex (worker → execute → escalate)                         | cursor (worker → execute → escalate)                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `deep`     | **opus** → **sonnet** → escalated **opus** — escalate worker to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`** → **terra** → escalated **sol**           | **`kimi-k3-high`** → **`cursor-grok-4.5-medium-fast`** → escalated **`cursor-grok-4.5-high`** |
+| `standard` | **sonnet** → **sonnet** → escalated **opus**                                                                                                                                                                                                                             | **`gpt-5.6-terra`** → **luna** → escalated **terra**        | **`cursor-grok-4.5-medium-fast`** → **`cursor-grok-4.5-low-fast`** → escalated **medium-fast** |
+| `trivial`  | **sonnet** (or **haiku** if truly trivial) — no delegation                                                                                                                                                                                                               | **`gpt-5.6-luna`** — no delegation                          | **`cursor-grok-4.5-low-fast`** — no delegation                                                |
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -58,7 +58,12 @@ Codex reasoning effort still scales with tier automatically (deep→high,
 standard→medium, trivial→low), independent of which gpt model is chosen. Above
 `xhigh` the ladder continues with `max` (both engines) and codex-only `ultra`
 (maximum reasoning with automatic task delegation) — `ultra` exists on `-sol` /
-`-terra` only, `-luna` caps at `max`.
+`-terra` only, `-luna` caps at `max`. Session effort `ultra` is itself an
+orchestration layer: `dispatch` still enables `agents.*` but pins
+`agents.default_subagent_reasoning_effort` one rung below the session (floor
+`low`, **never** `ultra` — an ultra subagent would nest automatic delegation).
+The worker must not add a second harness execute-subagent orchestration on top
+of ultra's built-in delegation. See `WORKER_PROTOCOL.md` rule 1.
 
 Both codex launch paths (`dispatch` workers and the `dispatcher --agent codex`
 orchestrator) pin `service_tier="default"` — the interactive `/fast` toggle
@@ -68,16 +73,26 @@ Cursor has **no reasoning-effort flag** — effort is baked into the model id
 suffix and `dispatch`'s `--effort` is accepted-and-ignored for cursor. Grok
 exposes both an effort suffix (`-low`/`-medium`/`-high`) and a throughput
 suffix (`-fast`), so the dispatcher expresses effort by _picking the id_: the
-standard/trivial rows use `-fast` for cheap, high-throughput turns; `deep` drops
-`-fast` for the fuller pass. **Grok 4.5 is the default cursor distinct-implementer**
-— a genuinely non-Claude perspective, which is the point of reaching for cursor.
-`--model` is free, so a cursor worker can still front **`composer-2.5`** /
-**`composer-2.5-fast`** (no effort variants) as an alternative, or an
-effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`. `dispatch` does not
-validate the model slot — the map is enforced by the dispatcher's judgment, not
-by code.
+standard/trivial rows use `-fast` for cheap, high-throughput turns; cursor `deep`
+uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
+(implements) — escalate to `cursor-grok-4.5-high`, not back to Kimi. **`kimi-k3`
+has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.5 remains the
+default cursor distinct-implementer** — a genuinely non-Claude perspective, which
+is the point of reaching for cursor. `--model` is free, so a cursor worker can
+still front **`composer-2.5`** / **`composer-2.5-fast`** (no effort variants) as
+an alternative, or an effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`.
+`dispatch` does not validate the model slot — the map is enforced by the
+dispatcher's judgment, not by code.
 
-**Worker-session model vs execute-subagent model (claude).** The `<model>` in the map above is the **worker session** model — it does spec / plan / reconcile / judging (opus on deep). The worker's **execute subagents default to sonnet**, escalating a single step to opus only when the plan tags it `implement: opus`. So a deep claude worker is opus-orchestrated but sonnet-implemented by default. See `WORKER_PROTOCOL.md` rule 1 (and the fast deterministic gate + parallel review gate it now describes). Codex workers scale reasoning effort by tier instead — the split is claude-specific.
+**Worker-session model vs execute-subagent model.** The first model in each map
+cell is the **worker session** — it does spec / plan / reconcile / judging. The
+second is the **default execute subagent**; the third is the escalated execute
+rung for plan-tagged high-risk steps. All three engines follow this split on
+standard/deep (trivial does not delegate). See `WORKER_PROTOCOL.md` rule 1 (and
+the fast deterministic gate + parallel review gate it describes). `dispatch.sh`
+sets codex `agents.*` guardrails and a process-authority spawn clause only —
+never model slugs for execute subagents (those stay in this table / rule 1).
+Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
@@ -106,7 +121,7 @@ is identical across engines; the crew-watch park primitive is not — see
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with its own automated PR-review gauntlet (Cursor Bugbot / Codex / a review GitHub App) on top of CI makes the worker's internal model review largely redundant, so the worker downgrades it (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). `mono` is such a repo. Tier still sets *planning* depth regardless — the downgrade only touches the post-execute review.
-- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default it to **Grok 4.5** (`cursor-grok-4.5-*`), genuinely non-Claude; Composer stays available as an alternative; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
+- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default the worker to **`kimi-k3-high`** with **Grok 4.5** execute subagents (`cursor-grok-4.5-*`), genuinely non-Claude; Composer stays available as an alternative; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map; codex reasoning effort scales with tier (deep→high, standard→medium, trivial→low) independent of which model is chosen, while cursor folds effort into the model id (no separate knob).
 
 ## MCP is no longer a routing factor
