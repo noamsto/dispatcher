@@ -197,3 +197,60 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"model check skipped"* ]]
 }
+
+@test "rejects a bare gpt generation on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "the model gate fires before any worktree is scaffolded" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  # Mirrors the profile-gate test: the gate rejects before any stub runs, so
+  # $STUB_LOG may not exist at all. Non-vacuous for *this* gate because the row
+  # reaches it (profile is work, crew id supplied) — move the gate below
+  # dispatch.sh's `wt switch -c` and `switch` lands in the log.
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "rejects a claude alias on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch standard opus --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "rejects a cursor-shaped id on --agent codex" {
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol-high --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "accepts codex variant slugs and the legacy bare generations" {
+  # Distinct titles: see the claude-alias test.
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "terra row"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.5 --agent codex --effort medium --crew-id c1 42 "legacy row"
+  [ "$status" -eq 0 ]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK is exact-match, not a boolean" {
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=1 run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "an exported DISPATCH_SKIP_MODEL_CHECK does not blanket-disable the gate" {
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch standard opus --agent codex --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent codex"* ]]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK lets its own model through to launch" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"model check skipped"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}

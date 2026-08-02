@@ -154,6 +154,17 @@ else
       exit 1
     fi
     ;;
+  codex)
+    if [[ ! $model =~ ^gpt-[0-9]+\.[0-9]+-[a-z0-9]+$ ]] && [[ ! $model =~ ^gpt-5\.[45]$ ]]; then
+      if [[ $model =~ ^gpt-[0-9]+\.[0-9]+$ ]]; then
+        gen="${model#gpt-}"
+        echo "dispatch: model '$model' is not a codex slug — the $gen family ships only as variants (gpt-$gen-sol, gpt-$gen-terra, gpt-$gen-luna); there is no bare $model. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
   esac
 fi
 # claude's --effort tops out at max; rejecting `ultra` here fails before the
