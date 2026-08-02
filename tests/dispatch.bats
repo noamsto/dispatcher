@@ -159,3 +159,41 @@ EOF
   [[ "$launch" == *'--model kimi-k3-high'* ]]
   [[ "$launch" == *'Process authority:'* ]]
 }
+
+@test "rejects a codex slug on --agent claude" {
+  run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent claude"* ]]
+}
+
+@test "rejects an effort-suffixed cursor id on --agent claude" {
+  run run_dispatch standard claude-opus-4-8-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort-suffixed cursor id"* ]]
+}
+
+@test "the model gate outranks the effort-ultra gate" {
+  # Ordering pin: the mistake is the engine/model pairing, not the effort, so
+  # moving the gate below the ultra check masks it.
+  run run_dispatch deep gpt-5.6-sol --agent claude --effort ultra --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent claude"* ]]
+  [[ "$output" != *"effort ultra is codex-only"* ]]
+}
+
+@test "accepts claude aliases and full claude-* ids" {
+  # Distinct titles are load-bearing: the title becomes the branch, and a reused
+  # one makes the second `git worktree add -b` collide.
+  stub_launch_bins
+  run run_dispatch deep claude-fable-5 --agent claude --effort high --crew-id c1 42 "fable row"
+  [ "$status" -eq 0 ]
+  run run_dispatch trivial haiku --agent claude --effort low --crew-id c1 42 "haiku row"
+  [ "$status" -eq 0 ]
+}
+
+@test "DISPATCH_SKIP_MODEL_CHECK bypasses the gate for that exact model" {
+  stub_launch_bins
+  DISPATCH_SKIP_MODEL_CHECK=kimi-k3-high run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"model check skipped"* ]]
+}

@@ -132,6 +132,30 @@ if [ "$agent" = cursor ] && [ "$profile" != work ]; then
   echo "dispatch: --agent cursor is work-profile only" >&2
   exit 1
 fi
+
+# Model gate. Reject a slug the chosen engine cannot run before anything is
+# scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
+# worktree, window and issue already paid for. Shape, not a model list: this
+# file bakes into a store path, so a membership table would make every model
+# bump a rebuild.
+re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
+if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
+  echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
+else
+  case "$agent" in
+  claude)
+    re_claude_id='^claude-[a-z0-9]+(-[a-z0-9]+)*$'
+    if [[ $model =~ $re_claude_id ]] && [[ $model =~ $re_effort_tail ]]; then
+      echo "dispatch: model '$model' is an effort-suffixed cursor id — on --agent claude pass the bare id and set intensity with --effort. Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
+      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  esac
+fi
 # claude's --effort tops out at max; rejecting `ultra` here fails before the
 # worktree and pane exist, instead of at worker launch.
 if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
