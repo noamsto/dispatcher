@@ -70,6 +70,14 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
+# The slug set this account actually has, as of writing.
+write_codex_cache() {
+  mkdir -p "$HOME/.codex"
+  cat >"$HOME/.codex/models_cache.json" <<'EOF'
+{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.6-terra"},{"slug":"codex-auto-review"},{"slug":"gpt-5.6-luna"},{"slug":"gpt-5.5"},{"slug":"gpt-5.4"},{"slug":"gpt-5.4-mini"}]}
+EOF
+}
+
 @test "rejects an unknown tier" {
   run run_dispatch bogus sonnet --effort medium "title"
   [ "$status" -eq 1 ]
@@ -253,4 +261,43 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"model check skipped"* ]]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "the codex cache rejects a well-shaped slug this account lacks" {
+  write_codex_cache
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"models_cache.json"* ]]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  # The advertised list is filtered to what the grammar accepts, so it must not
+  # suggest the internal review model.
+  [[ "$output" != *"codex-auto-review"* ]]
+}
+
+@test "the codex cache admits a slug it holds" {
+  stub_launch_bins
+  write_codex_cache
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+}
+
+@test "the grammar floor holds with no codex cache" {
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"there is no bare gpt-5.6"* ]]
+}
+
+@test "an absent codex cache is a skip, not a hard fail" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "an unparseable codex cache never blocks codex dispatch" {
+  stub_launch_bins
+  mkdir -p "$HOME/.codex"
+  printf 'not json' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
 }

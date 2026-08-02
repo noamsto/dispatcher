@@ -164,6 +164,19 @@ else
       echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
+    # The cache tightens the grammar and is never a prerequisite for it: probe
+    # usability separately so the membership test's non-zero can only mean "not
+    # on this account". Conflated, a rotated or half-written cache would block
+    # every codex dispatch behind a file nobody edits by hand.
+    codex_cache="$HOME/.codex/models_cache.json"
+    if jq -e '.models|arrays|length > 0' "$codex_cache" >/dev/null 2>&1 &&
+      ! jq -e --arg m "$model" 'any(.models[]; .slug == $m)' "$codex_cache" >/dev/null; then
+      # Filtered to what the grammar accepts — the raw list advertises
+      # codex-auto-review, an internal review model the gate rejects anyway.
+      known="$(jq -r '[.models[].slug|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
+      echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
     ;;
   esac
 fi
