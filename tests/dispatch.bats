@@ -302,6 +302,31 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# Parses fine and the container shape is right, so a probe that stops at
+# `.models|arrays` calls it usable — then `.slug` on a string is a hard jq error
+# that set -e turns into a dead dispatch, rejecting a valid slug.
+@test "a codex cache with drifted element shape never blocks codex dispatch" {
+  stub_launch_bins
+  mkdir -p "$HOME/.codex"
+  printf '{"models":["gpt-5.6-sol","gpt-5.6-terra"]}' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Cannot index string"* ]]
+}
+
+# The advertised-slug list is built after the membership check fails, so a
+# non-string slug there crashes the rejection path itself: the caller gets jq's
+# raw error and exit 5 instead of the actionable message.
+@test "a non-string slug does not derail the rejection message" {
+  mkdir -p "$HOME/.codex"
+  printf '{"models":[{"slug":123},{"slug":"gpt-5.6-sol"}]}' >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not in this account's codex model list"* ]]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  [[ "$output" != *"startswith() requires string inputs"* ]]
+}
+
 @test "rejects a claude alias on --agent cursor" {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent cursor --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
