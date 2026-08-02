@@ -70,3 +70,22 @@ teardown() {
   run grep -c 'DISPATCHER_PROTOCOL_DIR:-@protocolDir@' "$DISPATCH"
   [ "$output" = "1" ]
 }
+
+@test "a work-profile codex dispatch reaches its launch line" {
+  # The inert tmux/wt stubs cannot get here: dispatch resolves the worktree via
+  # `git worktree list` (so `wt` must really create one) and reads the pane id
+  # out of `tmux new-window -P` (so tmux must answer). Both richer stubs
+  # overwrite the inert ones in $STUB_DIR.
+  git commit -q --allow-empty -m init
+  stub_tmux_window
+  stub_wt_worktree
+
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex \
+    --effort medium --crew-id c1 42 "probe title"
+  [ "$status" -eq 0 ]
+
+  run grep -F 'send-keys' "$STUB_LOG"
+  [[ "$output" == *"codex --profile worker -m gpt-5.6-terra"* ]]
+  [[ "$output" == *"-c model_reasoning_effort=medium"* ]]
+  [[ "$output" == *"-c service_tier=default"* ]]
+}
