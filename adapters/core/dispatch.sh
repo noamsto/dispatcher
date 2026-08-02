@@ -179,7 +179,9 @@ else
       ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
       # Filtered to what the grammar accepts — the raw list advertises
       # codex-auto-review, an internal review model the gate rejects anyway.
-      known="$(jq -r '[.models[]?|.slug?|strings|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
+      # Controls are stripped because this lands on a terminal: a slug carrying
+      # an escape sequence would otherwise be interpreted, not shown.
+      known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
       echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi

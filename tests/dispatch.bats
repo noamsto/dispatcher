@@ -314,6 +314,21 @@ EOF
   [[ "$output" != *"Cannot index string"* ]]
 }
 
+# The advertised list is echoed to a terminal, so a slug carrying an escape
+# sequence would be interpreted rather than displayed. jq writes the control
+# bytes here, keeping this file free of literal ones.
+@test "control characters in a cached slug never reach the terminal" {
+  mkdir -p "$HOME/.codex"
+  jq -n '{models:[{slug:"gpt-5.6-sol"},{slug:("gpt-9.9-" + "" + "]0;title" + "" + "x")}]}' \
+    >"$HOME/.codex/models_cache.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"gpt-5.6-sol"* ]]
+  [[ "$output" == *"gpt-9.9-]0;titlex"* ]]
+  printf '%s' "$output" | grep -qP '[\x00-\x1f]' && return 1
+  return 0
+}
+
 # The advertised-slug list is built after the membership check fails, so a
 # non-string slug there crashes the rejection path itself: the caller gets jq's
 # raw error and exit 5 instead of the actionable message.
