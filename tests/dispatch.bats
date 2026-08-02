@@ -3,6 +3,12 @@ setup() {
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
+  # A work shell exports DISPATCH_PROFILE and any dispatcher session exports
+  # CREW_ID; bats inherits both, so without this the suite passes on a work box
+  # and fails on a personal one. HOME points at the throwaway repo so the codex
+  # cache fixture and the --mcp config paths cannot reach the developer's own.
+  export HOME="$TEST_REPO"
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
   stub_bin tmux
   stub_bin crew
   stub_bin gh

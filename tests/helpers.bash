@@ -4,6 +4,10 @@
 setup_repo() {
   TEST_REPO="$(mktemp -d)"
   cd "$TEST_REPO" || return 1
+  # Overriding $HOME is not enough: $XDG_CONFIG_HOME survives it, so git still
+  # reads ~/.config/git/config, whose commit.gpgSign and tilde-relative
+  # signingkey then re-expand against the new HOME and kill every commit.
+  export GIT_CONFIG_GLOBAL=/dev/null
   git init -q -b main .
   git config user.email test@example.com
   git config user.name test
