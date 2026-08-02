@@ -164,7 +164,7 @@ EOF
   [ "$status" -eq 0 ]
   launch="$(grep 'send-keys' "$STUB_LOG")"
   [[ "$launch" == *'cursor-agent'* ]]
-  [[ "$launch" == *'--model kimi-k3-high'* ]]
+  [[ "$launch" == *"--model 'kimi-k3-high'"* ]]
   [[ "$launch" == *'Process authority:'* ]]
 }
 
@@ -300,4 +300,39 @@ EOF
   printf 'not json' >"$HOME/.codex/models_cache.json"
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
+}
+
+@test "rejects a claude alias on --agent cursor" {
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent cursor"* ]]
+}
+
+@test "rejects a cursor claude-*/gpt-* id with no effort rung" {
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort suffix"* ]]
+}
+
+@test "a bracket block exempts the effort rule only by naming effort" {
+  DISPATCH_PROFILE=work run run_dispatch standard 'gpt-5.6[detail=x]' --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"effort suffix"* ]]
+}
+
+@test "cursor accepts a no-effort-variant id and single-quotes it at launch" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"--model 'composer-2.5'"* ]]
+}
+
+@test "cursor accepts the parameterised bracket form" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-4-8[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  # Single-quoted, so the glob-active brackets never reach the worker's shell.
+  [[ "$launch" == *"--model 'claude-opus-4-8[context=1m,effort=high,fast=false]'"* ]]
 }

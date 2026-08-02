@@ -178,6 +178,28 @@ else
       exit 1
     fi
     ;;
+  cursor)
+    # Cursor fronts other vendors, so membership is unknowable offline and only
+    # id shape is checked. BASH_REMATCH is clobbered by the next [[ =~ ]], so
+    # both groups are captured on the spot.
+    re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+    cursor_base=""
+    cursor_params=""
+    if [[ $model =~ $re_cursor ]]; then
+      cursor_base="${BASH_REMATCH[1]}"
+      cursor_params="${BASH_REMATCH[2]}"
+    fi
+    if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.5-medium-fast, composer-2.5, claude-opus-4-8-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
+    # the id itself; a bracket block exempts only by naming effort= there.
+    if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
+      echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
   esac
 fi
 # claude's --effort tops out at max; rejecting `ultra` here fails before the
@@ -365,7 +387,7 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
