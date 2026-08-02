@@ -336,3 +336,30 @@ EOF
   # Single-quoted, so the glob-active brackets never reach the worker's shell.
   [[ "$launch" == *"--model 'claude-opus-4-8[context=1m,effort=high,fast=false]'"* ]]
 }
+
+# Asserts only that the gate stayed silent — a full launch per model would need
+# a distinct branch per row and buys nothing the acceptance tests do not cover.
+assert_gate_silent() { # <engine> <model>
+  DISPATCH_PROFILE=work run run_dispatch standard "$2" --agent "$1" --effort medium --crew-id c1 42 "map row $2"
+  if [[ "$output" == *"Model gate"* ]]; then
+    printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
+    return 1
+  fi
+}
+
+@test "every model the docs name passes its engine's arm" {
+  # Hand-copied from dispatch-orchestration.md: the model map, the cursor
+  # alternatives prose, the codex legacy generations, and the orchestrator
+  # table. Copied, so it makes drift loud rather than impossible.
+  for m in opus sonnet haiku claude-fable-5; do
+    assert_gate_silent claude "$m"
+  done
+  for m in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini; do
+    assert_gate_silent codex "$m"
+  done
+  for m in kimi-k3-high cursor-grok-4.5-high cursor-grok-4.5-medium-fast \
+    cursor-grok-4.5-low-fast composer-2.5 composer-2.5-fast \
+    claude-opus-4-8-high gpt-5.6-sol-high; do
+    assert_gate_silent cursor "$m"
+  done
+}
