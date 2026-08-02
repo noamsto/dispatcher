@@ -142,6 +142,37 @@ does not validate the model slot, so a cursor worker can be dispatched on `compo
 which has no effort variants. The codex case is narrower (`luna` at `ultra`) and cannot
 arise on the default ladder, where `luna` only ever appears as the executor.
 
+## Considered and rejected: lower the intensity instead of the model rung
+
+For `standard`, an alternative to planning on a mid model is to plan on the **top** model
+at a **lower reasoning effort** — `gpt-5.6-sol` at `low` rather than `gpt-5.6-terra` at
+`medium`. Rejected for three reasons, in the order they weighed:
+
+1. **It already exists as a per-task lever.** `DISPATCHER_PROTOCOL.md:19` — "`--plan` is
+   judged like `--effort`: by the doc you wrote, not by the tier." When the dispatcher
+   passes `--plan provided`, the plan came from the dispatcher session (opus, or
+   `gpt-5.6-sol` at high) at full effort and the worker skips planning entirely. That is
+   the same outcome, per task, on all three engines — without repricing every `standard`
+   dispatch. It does cost dispatcher attention and requires all four elements to really be
+   present, so it depends on dispatcher discipline; it is not free.
+2. **It would contradict the repo's own philosophy.** It introduces a tier→effort coupling
+   ("standard ⇒ low effort") in a system that states twice that effort is judged
+   independently from tier. The model map's tier→model coupling is a deliberate, contained
+   exception; this would be a leakier one.
+3. **Cursor falsifies it as a uniform rule.** For Grok, model and effort are one string —
+   `grok-4.5-medium-fast` *is* both levers at once — so the two options are
+   indistinguishable there, and the rule would become "claude and codex do one thing,
+   cursor does another" in exactly the dimension this spec keeps engine-neutral.
+
+A Fable consult added a fourth argument, believed but unmeasured: on codex, plan quality
+is mostly a function of *which files got read*, exploration is tool-use turns, and low
+effort curtails tool calls — so a low-effort `sol` may plan **worse** than a
+medium-effort `terra`, on the very engine that has no plan-critic to catch it.
+
+The concern behind the question — execution circling on a bad plan — is not answered by
+either option, since both only shift the probability. It is capped structurally instead:
+see #3.
+
 ## Where each knob lives
 
 The division mirrors what `dispatch.sh` already does for claude, where **nothing** in the
