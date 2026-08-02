@@ -15,6 +15,8 @@ setup() {
     adapters/codex/plugin/skills
     adapters/claude-code/plugin/scripts
     adapters/codex/plugin/scripts
+    adapters/claude-code/plugin/protocols
+    adapters/codex/plugin/protocols
   )
   "$ROOT/scripts/gen-adapters.sh" >/dev/null
   before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
@@ -97,6 +99,34 @@ setup() {
     [ -f "$ROOT/adapters/$tree/plugin/protocols/DISPATCHER_PROTOCOL.md" ]
     [ -f "$ROOT/adapters/$tree/plugin/protocols/WORKER_PROTOCOL.md" ]
   done
+}
+
+@test "every canonical protocol exactly matches both shipped protocol trees" {
+  for source in "$ROOT"/adapters/core/protocols/*.md; do
+    name="$(basename "$source")"
+    cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
+    cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
+  done
+}
+
+@test "worker protocol defines bounded plan-shaped gate recovery" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'Before the startup bus drain, initialize `replanned = false` for this run.' \
+    'After initialization or any reset, the first qualifying amendment seeds the consecutive count at `1`.' \
+    '`A(scope step 2) → B(interface step 4) → A(scope step 2)` reaches `1 → 2 → 3` and transfers control before the third fix.' \
+    'The skipped-plan contradiction fallback and plan-shaped recovery share one execute-time budget.' \
+    'If the execute ladder has no lower rung, implement at the current worker rung; this never consumes the planning budget.' \
+    'A higher planner must be strictly above the authoritative tuple; a top or unavailable rung blocks without launching planning, and `replanned` remains false only when no earlier execute-time planning episode began.' \
+    '**Claude:** Agent model override `haiku → sonnet → opus → fable`' \
+    '**Codex:** on the exact model, increase `low → medium → high → xhigh → max`' \
+    '**Cursor:** Task model override `cursor-grok-4.5-low-fast → cursor-grok-4.5-medium-fast → cursor-grok-4.5-high`.' \
+    'Immediately before every stopping path, emit one complete latest-state metrics snapshot.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'Every pre-execute snapshot has `replanned: false`.' "$protocol"
+  [ "$status" -eq 0 ]
 }
 
 @test "the generator removes a codex skill whose command is gone" {

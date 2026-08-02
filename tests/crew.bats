@@ -126,6 +126,36 @@ teardown() {
   [[ "$output" != *"deep"* ]]
 }
 
+@test "rate: projects replanned booleans and legacy null while retaining rework count" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  cat >"$log" <<'EOF'
+{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-true","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"replans"}
+{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-true","body":{"state":"done"}}
+{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-true","to":"metrics:c1","body":"{\"replanned\":true,\"rework_count\":3}"}
+{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-false","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"does not replan"}
+{"ts":2001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-false","body":{"state":"done"}}
+{"ts":2002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-false","to":"metrics:c1","body":"{\"replanned\":false,\"rework_count\":1}"}
+{"ts":3000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-legacy","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"legacy metrics"}
+{"ts":3001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-legacy","body":{"state":"done"}}
+{"ts":3002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-legacy","to":"metrics:c1","body":"{\"rework_count\":2}"}
+EOF
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+
+  run jq -s -e '
+    map({branch, replanned, rework_count, replanned_present: has("replanned")})
+    | sort_by(.branch) == [
+        {branch:"feat/replan-false", replanned:false, rework_count:1, replanned_present:true},
+        {branch:"feat/replan-legacy", replanned:null, rework_count:2, replanned_present:true},
+        {branch:"feat/replan-true", replanned:true, rework_count:3, replanned_present:true}
+      ]
+  ' "$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$status" -eq 0 ]
+}
+
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]

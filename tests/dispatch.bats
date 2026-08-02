@@ -168,6 +168,31 @@ EOF
   [[ "$launch" == *'Process authority:'* ]]
 }
 
+@test "task headers preserve the authoritative launch tuple for every engine" {
+  stub_launch_bins
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "metadata claude"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-claude/WORKER_TASK.md"
+  grep -Fx 'engine: claude' "$task"
+  grep -Fx 'model: sonnet' "$task"
+  grep -Fx 'effort: medium' "$task"
+
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "metadata codex"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-codex/WORKER_TASK.md"
+  grep -Fx 'engine: codex' "$task"
+  grep -Fx 'model: gpt-5.6-terra' "$task"
+  grep -Fx 'effort: high' "$task"
+
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "metadata cursor"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-metadata-cursor/WORKER_TASK.md"
+  grep -Fx 'engine: cursor' "$task"
+  grep -Fx 'model: composer-2.5' "$task"
+  grep -Fx 'effort: low' "$task"
+}
+
 @test "rejects a codex slug on --agent claude" {
   run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
