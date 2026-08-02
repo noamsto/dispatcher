@@ -119,6 +119,29 @@ already prevents this on the default path (`ultra` → `max`); the cap makes it 
 escalation path, where a flagged step would otherwise climb back to the session's `ultra`.
 The worker keeps `ultra`; its subagents never inherit it.
 
+## Intensity coverage is not uniform
+
+The ladder above assumes a rung exists below the worker's. That is not true everywhere:
+
+| Engine / model                                | Intensity rungs                                     | Gap                                                  |
+| --------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| claude, worker session                        | fable > opus > sonnet > haiku; effort `low`…`max`   | — (`ultra` rejected for claude, `dispatch.sh:137`)   |
+| claude, execute subagent                      | model only                                          | no effort axis — the Agent tool has no per-spawn effort parameter |
+| codex                                         | sol > terra > luna; effort `low`…`ultra`            | `luna` caps at `max`                                 |
+| cursor `grok-4.5`                             | `-low`/`-medium`/`-high`, plus `-fast`              | —                                                    |
+| cursor `kimi-k3`                              | `low` / `high` / `max`                              | coarser — no `medium`, `xhigh`, `ultra`              |
+| cursor `composer-2.5`                         | `composer-2.5` / `-fast`                            | **no intensity axis at all**                         |
+| cursor `claude-opus-4-8-*`, `gpt-5.6-sol-*`   | effort-suffixed                                     | —                                                    |
+
+**Fallback rule: when no lower rung exists, delegate at the same rung.** Delegation still
+buys parallelism and context isolation even when it buys no cost reduction, so a missing
+rung must not silently cancel rule 1 — a worker that cannot step down still orchestrates.
+
+This is reachable today, not hypothetical: `dispatch-orchestration.md:76` states `dispatch`
+does not validate the model slot, so a cursor worker can be dispatched on `composer-2.5`,
+which has no effort variants. The codex case is narrower (`luna` at `ultra`) and cannot
+arise on the default ladder, where `luna` only ever appears as the executor.
+
 ## Where each knob lives
 
 The division mirrors what `dispatch.sh` already does for claude, where **nothing** in the
@@ -259,7 +282,11 @@ personal-profile host, so none of this is testable where the spec was written.
    the cursor column degrades to "delegate, inherit the worker's model" and
    kimi-plans/Grok-implements does not survive** — cursor `deep` would revert to
    `cursor-grok-4.5-high` throughout.
-3. **kimi variants.** Whether `kimi-k3` has rungs below `-high`. Nothing depends on it
-   today (cursor escalation uses Grok), but it would open a kimi-internal rung-down.
+3. **kimi variants — resolved.** `kimi-k3` exposes `low` / `high` / `max` (no `medium`,
+   `xhigh`, or `ultra`), so rungs below `-high` do exist. The design still escalates to
+   Grok rather than within kimi, for the family reason above. Worth confirming on the work
+   box that cursor exposes `kimi-k3` natively rather than via a gateway mapping — the repo
+   already runs it as the cursor dispatcher default, so this is a sanity check, not a
+   blocker.
 4. **superpowers in the codex and cursor worker profiles** — see "Superpowers coupling".
    Installed, or does the spawn prompt have to carry the discipline inline?
