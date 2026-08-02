@@ -138,6 +138,8 @@ fi
 # worktree, window and issue already paid for. Shape, not a model list: this
 # file bakes into a store path, so a membership table would make every model
 # bump a rebuild.
+# Unanchored at the front on purpose: `gpt-5.5-extra-high` is a real cursor id
+# and matches on its trailing `-high`.
 re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
 if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
   echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
@@ -167,20 +169,17 @@ else
     # The cache tightens the grammar and is never a prerequisite for it: probe
     # usability separately so the membership test's non-zero can only mean "not
     # on this account". Conflated, a rotated or half-written cache would block
-    # every codex dispatch behind a file nobody edits by hand.
-    #
-    # Every query projects slugs through `.models[]?|.slug?|strings`, which
-    # yields nothing for an entry that is not an object with a string slug. A
-    # container-shape probe alone does not deliver the never-fatal guarantee:
-    # element-schema drift parses fine, then makes `.slug` a hard jq error that
-    # `set -e` turns into a dead dispatch — rejecting even a valid slug.
+    # every codex dispatch behind a file nobody edits by hand. The `?|strings`
+    # projection is what makes that hold for a file that parses but whose
+    # entries are not `{slug: string}` — a bare `.slug` there is a jq error, and
+    # under `set -e` that kills dispatch even for a valid slug.
     codex_cache="$HOME/.codex/models_cache.json"
     if jq -e '[.models[]?|.slug?|strings]|length > 0' "$codex_cache" >/dev/null 2>&1 &&
       ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
       # Filtered to what the grammar accepts — the raw list advertises
       # codex-auto-review, an internal review model the gate rejects anyway.
-      # Controls are stripped because this lands on a terminal: a slug carrying
-      # an escape sequence would otherwise be interpreted, not shown.
+      # Controls are stripped because this lands on a terminal, where an escape
+      # sequence in a slug would be interpreted rather than shown.
       known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
       echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1

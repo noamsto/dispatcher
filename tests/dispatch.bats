@@ -70,7 +70,7 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
-# The slug set this account actually has, as of writing.
+# Mirrors the real cache: `jq -r '.models[].slug' ~/.codex/models_cache.json`.
 write_codex_cache() {
   mkdir -p "$HOME/.codex"
   cat >"$HOME/.codex/models_cache.json" <<'EOF'
