@@ -4,7 +4,7 @@ setup() {
 
 @test "every package builds" {
   run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" \
-    "$ROOT#refresh-scores" "$ROOT#pr-watch"
+    "$ROOT#refresh-scores" "$ROOT#refresh-budget" "$ROOT#pr-watch"
   [ "$status" -eq 0 ]
 }
 

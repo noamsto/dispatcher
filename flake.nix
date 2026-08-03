@@ -130,9 +130,15 @@
             text = builtins.readFile ./adapters/core/refresh-scores.sh;
           };
 
+          refresh-budget = pkgs.writeShellApplication {
+            name = "refresh-budget";
+            runtimeInputs = with pkgs; [curl jq coreutils];
+            text = builtins.readFile ./adapters/core/refresh-budget.sh;
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher refresh-scores pr-watch];
+            paths = [crew dispatch dispatcher refresh-scores refresh-budget pr-watch];
           };
         };
 

@@ -195,6 +195,55 @@ EOF
   [ "$output" = "0" ]
 }
 
+# Write a budget cache with one claude 7d window at the given utilization.
+budget_json() {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson pct "$1" --argjson epoch "$2" \
+    '{fetched_epoch: $epoch, engines: {claude: {source: "t", windows: {"7d": {used_pct: $pct, resets_at: null}}}, codex: null, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
+  export XDG_DATA_HOME="$(mktemp -d)"
+  budget_json 97 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude quota exhausted"* ]]
+  # The gate rejects before scaffolding, same property as the profile gate.
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "budget gate passes below the threshold" {
+  export XDG_DATA_HOME="$(mktemp -d)"
+  budget_json 94 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "budget gate fails open on a stale cache" {
+  export XDG_DATA_HOME="$(mktemp -d)"
+  budget_json 100 "$(($(date +%s) - 10000))"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "budget gate fails open when the cache is silent on the engine" {
+  export XDG_DATA_HOME="$(mktemp -d)"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "--ignore-budget bypasses the gate" {
+  export XDG_DATA_HOME="$(mktemp -d)"
+  budget_json 100 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 --ignore-budget "title"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
 @test "DISPATCHER_PROTOCOL_DIR overrides the baked default" {
   run grep -c 'DISPATCHER_PROTOCOL_DIR:-@protocolDir@' "$DISPATCH"
   [ "$output" = "1" ]
