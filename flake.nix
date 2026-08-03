@@ -115,9 +115,15 @@
             text = sub (builtins.readFile ./adapters/core/dispatcher.sh);
           };
 
+          refresh-scores = pkgs.writeShellApplication {
+            name = "refresh-scores";
+            runtimeInputs = with pkgs; [curl jq coreutils];
+            text = builtins.readFile ./adapters/core/refresh-scores.sh;
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher];
+            paths = [crew dispatch dispatcher refresh-scores];
           };
         };
 

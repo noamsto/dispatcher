@@ -52,6 +52,17 @@ not derived from tier. Ladder: `low|medium|high|xhigh|max` on both engines, plus
 codex-only `ultra` (auto task delegation, `gpt-5.6-sol`/`-terra`) — `dispatch`
 rejects `ultra` for claude.
 
+**External standings are a hint, not a ranking.** `refresh-scores` caches LMArena
+standings (plus OpenRouter/Artificial Analysis indices when keyed) to
+`${XDG_DATA_HOME:-~/.local/share}/crew/model-scores.json`. If that file is
+missing or its `fetched_at` is older than 14 days, run `refresh-scores` once at
+session start — never per task. When judging the model slot, treat the cache as
+one signal among tier/cost/latency: arena Elo is human preference on
+single-turn prompts, not agentic run quality, so it can break a tie between
+adjacent rungs or flag that a rung has fallen behind a newer model worth
+swapping into the map, but it never overrides the tier judgment or the cost
+rules. An absent cache never blocks a dispatch — judge without it.
+
 **Profile constraint:** codex and cursor are both work-profile only — `dispatch`
 aborts `--agent codex` / `--agent cursor` off the work profile. On a
 personal-profile host the engine lever collapses to claude-only; co-equal routing
