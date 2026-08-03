@@ -43,6 +43,16 @@ Bump the matching table when a new model ships. The `refresh-scores` cache
 (`~/.local/share/crew/model-scores.json`) is the external signal for when a
 rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
+**Burn classes.** All three engines are subscriptions, so cost = quota burn,
+and the rungs group into three classes: **premium** — opus (fable ≈2× opus),
+`gpt-5.6-sol`, `cursor-grok-4.5-high`; **standard** — sonnet, `gpt-5.6-terra`,
+`cursor-grok-4.5-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
+`cursor-grok-4.5-low-fast`, `composer-2.5*` (free). Effort multiplies burn
+within a rung (`xhigh`/`max`; codex `ultra` most). When the budget tightens
+(`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
+class before walking down a tier — burn only sets model strength, tier sets
+review depth.
+
 | Tier       | claude ladder                                                                                                                                                                                                                                                            | codex ladder      | cursor ladder           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------------------- |
 | `deep`     | **opus** — escalate to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`**   | **`cursor-grok-4.5-high`**        |

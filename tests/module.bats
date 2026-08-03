@@ -2,8 +2,8 @@ setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
 }
 
-@test "all four packages build" {
-  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" "$ROOT#refresh-scores"
+@test "all five packages build" {
+  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" "$ROOT#refresh-scores" "$ROOT#refresh-budget"
   [ "$status" -eq 0 ]
 }
 

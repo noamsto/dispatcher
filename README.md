@@ -147,9 +147,10 @@ programs.dispatcher = {
 };
 ```
 
-That puts `crew`, `dispatch`, `dispatcher` and `refresh-scores` on `PATH`,
-exports `DISPATCH_PROFILE` and `DISPATCHER_PROTOCOL_DIR`, installs the Codex
-plugin and writes the Cursor rule and commands.
+That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores` and
+`refresh-budget` on `PATH`, exports `DISPATCH_PROFILE` and
+`DISPATCHER_PROTOCOL_DIR`, installs the Codex plugin and writes the Cursor
+rule and commands.
 
 For Claude Code, pass the plugin directory to `claude`:
 
