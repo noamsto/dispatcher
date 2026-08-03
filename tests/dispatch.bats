@@ -428,3 +428,81 @@ assert_gate_silent() { # <engine> <model>
     assert_gate_silent cursor "$m"
   done
 }
+
+
+@test "rejects --pr combined with a GitHub issue token" {
+  run run_dispatch standard sonnet --effort medium --pr 12 34 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr cannot combine"* ]]
+}
+
+@test "rejects --pr combined with a Linear id" {
+  run run_dispatch standard sonnet --effort medium --pr 12 ENG-1 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr cannot combine"* ]]
+}
+
+@test "rejects --pr without a positive integer" {
+  run run_dispatch standard sonnet --effort medium --pr "" "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr needs"* ]]
+}
+
+@test "--pr path calls wt switch without -c and stamps pr: N" {
+  # Real branch in the test repo so show-ref succeeds and the porcelain locate works.
+  git commit --allow-empty -qm init
+  git branch eng-7691-foo
+
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ view\ *)
+  printf '%s\n' '{"headRefName":"eng-7691-foo","isCrossRepository":false}'
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+# switch <branch> -y --config-set ...
+branch="$2"
+mkdir -p "$TEST_REPO/.worktrees"
+git worktree add -q "$TEST_REPO/.worktrees/$branch" "$branch"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+new-window) printf '%s\n' '%1 %2' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -q 'pr view 99' "$STUB_LOG"
+  ! grep -E '(^| )(-c|--create)( |$)' "$STUB_LOG"
+  grep -q 'switch eng-7691-foo' "$STUB_LOG"
+
+  wt_path="$TEST_REPO/.worktrees/eng-7691-foo"
+  grep -qx 'pr: 99' "$wt_path/WORKER_TASK.md"
+  ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
+}
