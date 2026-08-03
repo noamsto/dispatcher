@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
@@ -37,6 +37,7 @@ agent=claude
 effort=""
 linear_id=""
 gh_issue=""
+pr_number=""
 mcp_profile=""
 crew_id_flag=""
 plan_val="required"
@@ -91,6 +92,14 @@ while [ $# -gt 0 ]; do
     esac
     shift 2
     ;;
+  --pr)
+    pr_number="${2:-}"
+    [ -n "$pr_number" ] || {
+      echo "dispatch: --pr needs a PR number" >&2
+      exit 1
+    }
+    shift 2
+    ;;
   *)
     if printf '%s' "$1" | grep -Eq '^[A-Z]{2,}-[0-9]+$'; then
       linear_id="$1"
@@ -109,6 +118,17 @@ done
   echo "dispatch: --effort is required and must be judged independently from tier" >&2
   exit 1
 }
+
+if [ -n "$pr_number" ]; then
+  if ! printf '%s' "$pr_number" | grep -Eq '^[0-9]+$'; then
+    echo "dispatch: --pr needs a PR number" >&2
+    exit 1
+  fi
+  if [ -n "$linear_id" ] || [ -n "$gh_issue" ]; then
+    echo "dispatch: --pr cannot combine with a Linear id or GitHub issue token" >&2
+    exit 1
+  fi
+fi
 
 # Crew id: explicit flag > inherited env > error. Launcher dispatchers inherit
 # $CREW_ID from the claude process env; in-session dispatchers pass --crew-id.
@@ -252,29 +272,6 @@ crew reap --quiet || true
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
-# Identity + closes line. Linear mode derives both from the ticket (no gh); a
-# passed GitHub issue number reuses that issue (no gh call). Otherwise GitHub
-# mode mints an issue and aborts cleanly if that fails (issues disabled) rather
-# than scaffolding a half-broken worker off an empty number.
-if [ -n "$linear_id" ]; then
-  branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
-  closes="Closes $linear_id"
-elif [ -n "$gh_issue" ]; then
-  branch="feat/$gh_issue-$slug"
-  closes="Closes #$gh_issue"
-else
-  url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
-  num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
-  [ -n "$num" ] || {
-    echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
-    exit 1
-  }
-  branch="feat/$num-$slug"
-  closes="Closes #$num"
-fi
-
-sanitized="${branch//\//-}"
-
 # Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
 # ourselves below, and the hook would otherwise open a second, undecorated shell
 # window at the same worktree (#123). Its own `$CLAUDECODE` guard only covers a
@@ -282,7 +279,55 @@ sanitized="${branch//\//-}"
 # identity into a codex/cursor worker. Scoped to `tmux`, so the devshell hook
 # still runs — it materializes .pre-commit-config.yaml, without which the worker
 # cannot commit at all.
-wt switch -c "$branch" -y --config-set 'post-switch.tmux=""'
+wt_post_switch='post-switch.tmux=""'
+
+# Review attach (--pr N): resolve headRefName once, switch by name (no -c). Fall
+# back to wt switch pr:N only for fork / missing-ref. Stamp pr: N, never Closes
+# from the PR number, and never mint a sibling feat/N-review-… branch (#8).
+if [ -n "$pr_number" ]; then
+  pr_json=$(gh pr view "$pr_number" --json headRefName,isCrossRepository)
+  head=$(printf '%s' "$pr_json" | jq -r .headRefName)
+  cross=$(printf '%s' "$pr_json" | jq -r .isCrossRepository)
+  [ -n "$head" ] && [ "$head" != null ] || {
+    echo "dispatch: could not resolve headRefName for PR $pr_number" >&2
+    exit 1
+  }
+  branch="$head"
+  closes="pr: $pr_number"
+  if git show-ref --verify --quiet "refs/heads/$head" ||
+    git show-ref --verify --quiet "refs/remotes/origin/$head"; then
+    wt switch "$head" -y --config-set "$wt_post_switch"
+  elif [ "$cross" = false ]; then
+    git fetch origin "$head"
+    wt switch "$head" -y --config-set "$wt_post_switch"
+  else
+    wt switch "pr:$pr_number" -y --config-set "$wt_post_switch"
+  fi
+else
+  # Identity + closes line. Linear mode derives both from the ticket (no gh); a
+  # passed GitHub issue number reuses that issue (no gh call). Otherwise GitHub
+  # mode mints an issue and aborts cleanly if that fails (issues disabled) rather
+  # than scaffolding a half-broken worker off an empty number.
+  if [ -n "$linear_id" ]; then
+    branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
+    closes="Closes $linear_id"
+  elif [ -n "$gh_issue" ]; then
+    branch="feat/$gh_issue-$slug"
+    closes="Closes #$gh_issue"
+  else
+    url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
+    num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
+    [ -n "$num" ] || {
+      echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
+      exit 1
+    }
+    branch="feat/$num-$slug"
+    closes="Closes #$num"
+  fi
+  wt switch -c "$branch" -y --config-set "$wt_post_switch"
+fi
+
+sanitized="${branch//\//-}"
 
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
