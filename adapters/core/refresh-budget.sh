@@ -49,7 +49,12 @@ probe_claude() {
           else (try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null) end;
         {
           source: "oauth_usage",
-          credits_cover: (.extra_usage // {} | (.is_enabled // false) and ((.spend_limit_reached // true) | not)),
+          # `//` treats false as empty, so it cannot default a boolean: test
+          # presence explicitly. Missing spend_limit_reached -> assume reached
+          # (conservative: no credits cover).
+          credits_cover: ((.extra_usage // {}) as $e
+            | ($e.is_enabled == true)
+              and ((if $e | has("spend_limit_reached") then $e.spend_limit_reached else true end) == false)),
           windows: (
             {}
             + (if .five_hour.utilization != null then {"5h": {used_pct: .five_hour.utilization, resets_at: (.five_hour.resets_at | toepoch)}} else {} end)
