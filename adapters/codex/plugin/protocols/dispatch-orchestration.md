@@ -43,6 +43,19 @@ Bump the matching table when a new model ships. The `refresh-scores` cache
 (`~/.local/share/crew/model-scores.json`) is the external signal for when a
 rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
+**Burn classes.** All three engines are subscriptions, so cost = quota burn,
+and the rungs group into three classes: **premium** — opus (fable ≈2× opus),
+`gpt-5.6-sol`, `cursor-grok-4.5-high`; **standard** — sonnet, `gpt-5.6-terra`,
+`cursor-grok-4.5-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
+`cursor-grok-4.5-low-fast`, `composer-2.5*` (free). Effort multiplies burn
+within a rung (`xhigh`/`max`; codex `ultra` most). Cursor-fronted third-party
+models (Claude/GPT/Gemini via cursor) sit **outside** this ladder — they bill
+as Other Models on top of the plan, real money rather than subscription burn.
+When the budget tightens
+(`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
+class before walking down a tier — burn only sets model strength, tier sets
+review depth.
+
 | Tier       | claude ladder                                                                                                                                                                                                                                                            | codex ladder      | cursor ladder           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------------------- |
 | `deep`     | **opus** — escalate to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`**   | **`cursor-grok-4.5-high`**        |
@@ -79,6 +92,16 @@ effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`. `dispatch` does not
 validate the model slot — the map is enforced by the dispatcher's judgment, not
 by code.
 
+**Capability gates the model slot before quality/cost/budget do.** A task whose
+input is visual (screenshots, UI mocks, diagrams) needs a vision-capable rung —
+no score or budget argument survives the model literally not seeing the task.
+Claude (opus/sonnet/haiku/fable) and the gpt-5.6 family are vision-capable.
+On cursor the traps are: **Grok 4.5 is the only vision-capable _included_
+model**; **Composer is text-only** (cheap but blind); **Kimi K3 has vision
+upstream but Cursor doesn't pass images to it**; and Gemini/Claude/GPT via
+cursor see images but bill as **Other Models ($) on top of the plan** — so a
+visual task on cursor means Grok, or a deliberate $ call you say out loud.
+
 **Worker-session model vs execute-subagent model (claude).** The `<model>` in the map above is the **worker session** model — it does spec / plan / reconcile / judging (opus on deep). The worker's **execute subagents default to sonnet**, escalating a single step to opus only when the plan tags it `implement: opus`. So a deep claude worker is opus-orchestrated but sonnet-implemented by default. See `WORKER_PROTOCOL.md` rule 1 (and the fast deterministic gate + parallel review gate it now describes). Codex workers scale reasoning effort by tier instead — the split is claude-specific.
 
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
@@ -104,6 +127,16 @@ claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor inject it
 the first prompt (neither CLI has an append-system-prompt flag). The judging rubric
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
+
+**A blind orchestrator is fine — blind intake is not.** The dispatcher's loop is
+text (bus, roster, specs), so a text-only model like kimi-k3 orchestrates well
+and cheap. The one break is visual intake: a screenshot pasted into a
+kimi-fronted cursor dispatcher never reaches the model at all (Cursor doesn't
+pass images to it), so it judges blind and can't describe the bug into the
+worker's spec. For a visual task either run the dispatcher on a vision-capable
+model, or — better, since it keeps orchestration cheap — pass the image by
+**file path** in `DISPATCH_SPEC` and let the vision-capable worker read it: the
+worker's vision is the one the task needs.
 
 ## Three orthogonal levers
 

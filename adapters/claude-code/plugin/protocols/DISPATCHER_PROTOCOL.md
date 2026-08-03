@@ -63,6 +63,28 @@ adjacent rungs or flag that a rung has fallen behind a newer model worth
 swapping into the map, but it never overrides the tier judgment or the cost
 rules. An absent cache never blocks a dispatch — judge without it.
 
+**Budget is the fifth lever — quality × cost × quota.** `refresh-budget` caches
+per-engine subscription quota to
+`${XDG_DATA_HOME:-~/.local/share}/crew/engine-budget.json`. Run it once at
+session start; refresh again mid-session if the cache is older than ~2h or a
+worker fails on a limit error. A missing cache never blocks judging.
+
+- **≥85% on any window** — prefer a cheaper burn class on that engine, or
+  rotate to a fitting peer engine (budget turns the neutral-fit rotation into a
+  budgeted rotation). Walk down burn before walking down tier: burn only sets
+  model strength, tier sets review depth.
+- **≥95%** — the engine is full: don't dispatch it (`dispatch` refuses),
+  stop adding workers to it mid-fan-out, and let the roster drain.
+- **Every fitting engine ≥95%** — hold the task, tell the human, cite the
+  earliest `resets_at`, and re-check on the first wake past it. Never dispatch
+  into an exhausted engine to keep momentum.
+- **`credits_cover: true`** means the engine bills real money past the plan
+  limit — the gate still fires, and overriding it (`--ignore-budget`) is the
+  human's spend decision; say so when you take it.
+- **cursor's quota is unobservable** — treat it as neutral, but it's the engine
+  most likely to surprise you; route the work you'd shed first there, not the
+  work you'd shed last.
+
 **Profile constraint:** codex and cursor are both work-profile only — `dispatch`
 aborts `--agent codex` / `--agent cursor` off the work profile. On a
 personal-profile host the engine lever collapses to claude-only; co-equal routing
