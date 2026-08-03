@@ -48,7 +48,10 @@ and the rungs group into three classes: **premium** — opus (fable ≈2× opus)
 `gpt-5.6-sol`, `cursor-grok-4.5-high`; **standard** — sonnet, `gpt-5.6-terra`,
 `cursor-grok-4.5-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
 `cursor-grok-4.5-low-fast`, `composer-2.5*` (free). Effort multiplies burn
-within a rung (`xhigh`/`max`; codex `ultra` most). When the budget tightens
+within a rung (`xhigh`/`max`; codex `ultra` most). Cursor-fronted third-party
+models (Claude/GPT/Gemini via cursor) sit **outside** this ladder — they bill
+as Other Models on top of the plan, real money rather than subscription burn.
+When the budget tightens
 (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
 class before walking down a tier — burn only sets model strength, tier sets
 review depth.
@@ -88,6 +91,16 @@ standard/trivial rows use `-fast` for cheap, high-throughput turns; `deep` drops
 effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`. `dispatch` does not
 validate the model slot — the map is enforced by the dispatcher's judgment, not
 by code.
+
+**Capability gates the model slot before quality/cost/budget do.** A task whose
+input is visual (screenshots, UI mocks, diagrams) needs a vision-capable rung —
+no score or budget argument survives the model literally not seeing the task.
+Claude (opus/sonnet/haiku/fable) and the gpt-5.6 family are vision-capable.
+On cursor the traps are: **Grok 4.5 is the only vision-capable _included_
+model**; **Composer is text-only** (cheap but blind); **Kimi K3 has vision
+upstream but Cursor doesn't pass images to it**; and Gemini/Claude/GPT via
+cursor see images but bill as **Other Models ($) on top of the plan** — so a
+visual task on cursor means Grok, or a deliberate $ call you say out loud.
 
 **Worker-session model vs execute-subagent model (claude).** The `<model>` in the map above is the **worker session** model — it does spec / plan / reconcile / judging (opus on deep). The worker's **execute subagents default to sonnet**, escalating a single step to opus only when the plan tags it `implement: opus`. So a deep claude worker is opus-orchestrated but sonnet-implemented by default. See `WORKER_PROTOCOL.md` rule 1 (and the fast deterministic gate + parallel review gate it now describes). Codex workers scale reasoning effort by tier instead — the split is claude-specific.
 
