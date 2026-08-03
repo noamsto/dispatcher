@@ -14,7 +14,11 @@
 #     statusline.json, used only when its mtime is <2h old.
 #   codex  — `codex app-server --stdio` JSON-RPC account/rateLimits/read
 #     (experimental API; any failure -> null).
-#   cursor — no programmatic usage signal exists; always null.
+#   cursor — always null. Probed cursor-agent 2026.07: `status` is auth-only,
+#     `about` shows the tier string but no numbers, and no usage/quota
+#     subcommand exists. Plan usage is dashboard-only; the Enterprise Admin
+#     API reports org-wide consumption events (admin key required), never a
+#     member's remaining allowance.
 set -euo pipefail
 
 OUT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
