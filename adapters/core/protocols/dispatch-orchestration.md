@@ -128,6 +128,16 @@ the first prompt (neither CLI has an append-system-prompt flag). The judging rub
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
 
+**A blind orchestrator is fine — blind intake is not.** The dispatcher's loop is
+text (bus, roster, specs), so a text-only model like kimi-k3 orchestrates well
+and cheap. The one break is visual intake: a screenshot pasted into a
+kimi-fronted cursor dispatcher never reaches the model at all (Cursor doesn't
+pass images to it), so it judges blind and can't describe the bug into the
+worker's spec. For a visual task either run the dispatcher on a vision-capable
+model, or — better, since it keeps orchestration cheap — pass the image by
+**file path** in `DISPATCH_SPEC` and let the vision-capable worker read it: the
+worker's vision is the one the task needs.
+
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with its own automated PR-review gauntlet (Cursor Bugbot / Codex / a review GitHub App) on top of CI makes the worker's internal model review largely redundant, so the worker downgrades it (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). `mono` is such a repo. Tier still sets *planning* depth regardless — the downgrade only touches the post-execute review.
