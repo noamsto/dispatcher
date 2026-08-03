@@ -38,7 +38,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatcher];
+      packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatcher pkgsFor.refresh-scores];
 
       sessionVariables = {
         DISPATCH_PROFILE = cfg.profile;

@@ -39,7 +39,9 @@ table. This table is the only place concrete **worker** model versions appear �
 prose elsewhere says "the tier-appropriate model from the model map".
 Orchestrator (dispatcher-session) defaults live in "Orchestrator engines" below;
 consult-roster versions live in `WORKER_PROTOCOL.md` → "Orchestration consult".
-Bump the matching table when a new model ships.
+Bump the matching table when a new model ships. The `refresh-scores` cache
+(`~/.local/share/crew/model-scores.json`) is the external signal for when a
+rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
 | Tier       | claude (worker → execute → escalate)                                                                                                                                                                                                                                     | codex (worker → execute → escalate)                         | cursor (worker → execute → escalate)                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
