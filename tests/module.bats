@@ -2,8 +2,9 @@ setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
 }
 
-@test "all four packages build" {
-  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" "$ROOT#refresh-scores"
+@test "every package builds" {
+  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" \
+    "$ROOT#refresh-scores" "$ROOT#pr-watch"
   [ "$status" -eq 0 ]
 }
 
@@ -71,7 +72,9 @@ nix_eval() {
   # home-manager extends lib with lib.hm; stub the single helper the module uses
   # so config can be forced without taking a home-manager dependency. Forcing
   # sessionVariables + file + activation is what catches a typo'd option, a bad
-  # importJSON path, or a broken interpolation.
+  # importJSON path, or a broken interpolation. The package list is read by name
+  # instead — `deepSeq` on a derivation recurses through its self-referential
+  # output attrs and never finishes.
   #
   # Returns the resolved value rather than grepping the source, so it proves the
   # variable is actually wired into sessionVariables — not merely that the token
@@ -89,7 +92,7 @@ nix_eval() {
       c = applied.config.content;
     in
       builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}\"
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}\"
   "
   [ "$status" -eq 0 ]
   # Assert the wiring, not the flavour of path it resolves to: whether `self`
@@ -98,6 +101,9 @@ nix_eval() {
   # behaviour under test. Removing either export still fails here — a missing
   # attribute makes the eval itself error, so $status catches it.
   [[ "$output" == work\|* ]]
+  # Every CLI the module claims to install, resolved from the flake — a package
+  # that isn't in `packages` fails the eval outright, not a grep.
+  [[ "$output" == *"crew,dispatch,dispatcher,refresh-scores,pr-watch"* ]]
   [[ "$output" == */adapters/core/protocols ]]
 }
 

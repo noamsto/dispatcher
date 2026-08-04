@@ -88,14 +88,36 @@ crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
 Full surface: `id`, `identity`, `status`, `msg`, `reply`, `await`, `register`,
-`deregister`, `watch`, `roster`, `inbox`, `stall-watch`, `log`, `report`, `rate`,
-`reap`.
+`deregister`, `watch`, `roster`, `inbox`, `stall-watch`, `pr-watch`, `log`,
+`report`, `rate`, `reap`.
 
 Two design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
 time-based sweep would delete live work. And `stall-watch` exists because a
 wedged worker never reports anything at all: it watches pane output and posts
 `failed` so the dispatcher wakes up instead of waiting forever.
+
+---
+
+## Parking on a PR
+
+`pr-watch` blocks until a PR actually changes, prints one JSON event, and exits
+0 — so babysitting a posted review costs no session and no tokens.
+
+```bash
+pr-watch 3065 --timeout 1800      # head SHA, review, thread reply, checks, merge
+crew pr-watch 3065                # same park, event posted to the crew bus
+```
+
+It is **standalone first**: no crew, no dispatcher, no `CREW_ID`, no bus. A plain
+agent session backgrounds it and handles the event on completion; a human runs it
+at a shell. `crew pr-watch` is a thin wrapper that adds one thing — posting the
+event to `dispatcher:<crew>`, so an armed `crew watch` wakes.
+
+A `--timeout` park that expires also exits 0 with empty stdout, the same contract
+as `crew watch`. A per-PR cursor under `$XDG_DATA_HOME/crew/pr-watch/<repo>/<N>.json`
+means a restart can neither re-deliver a handled event nor miss one that landed
+while nothing was watching.
 
 ---
 
@@ -147,9 +169,9 @@ programs.dispatcher = {
 };
 ```
 
-That puts `crew`, `dispatch`, `dispatcher` and `refresh-scores` on `PATH`,
-exports `DISPATCH_PROFILE` and `DISPATCHER_PROTOCOL_DIR`, installs the Codex
-plugin and writes the Cursor rule and commands.
+That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores` and `pr-watch` on
+`PATH`, exports `DISPATCH_PROFILE` and `DISPATCHER_PROTOCOL_DIR`, installs the
+Codex plugin and writes the Cursor rule and commands.
 
 For Claude Code, pass the plugin directory to `claude`:
 
@@ -261,7 +283,8 @@ generator output. Two reasons it must not be reformatted:
 ```
 adapters/
 ├── core/                    engine-neutral
-│   ├── crew.sh              833 L · the bus
+│   ├── crew.sh              860 L · the bus
+│   ├── pr-watch.sh          177 L · park until a PR changes (standalone)
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher
 │   ├── protocols/           DISPATCHER · WORKER · orchestration

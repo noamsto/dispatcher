@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# File-based coordination bus: id | identity | status | msg | watch | roster | inbox | stall-watch | log
+# File-based coordination bus: id | identity | status | msg | watch | roster | inbox | stall-watch | pr-watch | log
 # A real CLI on PATH (not a fish fn) so BOTH the dispatcher (fish) and workers
 # (their bash tool) can call it. Pure jq + append; the log is the state. The
 # shebang + `set -euo pipefail` are prepended by writeShellApplication, so this
@@ -692,6 +692,27 @@ stall-watch)
     }
   done
   ;;
+pr-watch)
+  # pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]
+  # Thin bus bridge over the standalone `pr-watch` binary, which owns the park,
+  # the change signals and the per-PR cursor — and needs no crew id at all. All
+  # this adds is the post: the event lands as a msg addressed to this crew's
+  # dispatcher, so an armed `crew watch` wakes and can dispatch a verify-and-
+  # approve worker. Stdout stays the event, so the wrapper still composes.
+  crew=$(_crew_id)
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    exit 1
+  }
+  ev=$(pr-watch "$@")
+  # Empty stdout is pr-watch's timeout marker, not a failure — nothing to post.
+  [ -n "$ev" ] || exit 0
+  mkdir -p "$dir"
+  jq -nc --arg crew "$crew" --arg from "pr-watch:${1:-}" --arg body "$ev" \
+    '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
+        kind:"msg", body:$body}' >>"$log"
+  printf '%s\n' "$ev"
+  ;;
 reap)
   # Reclaim window + worktree for workers whose PR has landed. No crew filter:
   # the workers worth reaping are precisely the ones from earlier dispatcher
@@ -833,7 +854,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
   exit 1
   ;;
 esac

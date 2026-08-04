@@ -183,6 +183,14 @@ that streams. A `stalled:` on a worker that also posted a healthy `working`
 seconds earlier warrants a `tmux capture-pane` before you kill anything — that
 combination is a buffered output format, not a wedge.
 
+A `msg` from `pr-watch:<N>` is the other watchdog: `crew pr-watch <N>` parks
+(detached, like `stall-watch`) until that PR's head SHA, reviews, review threads,
+checks or open/merged state actually move, then posts the change event to you, so
+babysitting a PR after a worker posted a review costs no parked session. Its body
+is the event JSON — `changed[]` names which signals moved. Handle it like any
+other question `msg`: read it, decide, and if the PR needs another pass dispatch
+a `trivial` review worker at it (`--pr N`) rather than doing the work yourself.
+
 Two reads remain for detail:
 
 - `crew roster` — at-a-glance dashboard: every worker's latest state + age, its `title` (the task, joined from the dispatch event), plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
