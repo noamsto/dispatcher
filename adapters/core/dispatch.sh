@@ -135,12 +135,11 @@ if [ -n "$pr_number" ]; then
   fi
 fi
 
-# A review worker's whole contract is "the worktree IS the PR head" — without a
-# PR there is nothing to review and no head to attach to, so reject here rather
-# than scaffold a review worker onto a freshly minted feature branch. The
-# contract file is checked here too: $DISPATCHER_PROTOCOL_DIR can point at a
-# checkout that predates it, and a review worker launched without the contract
-# falls back to the implement pipeline and pushes to someone else's PR head.
+# Reject before scaffolding: without a PR there is no head to attach to, and a
+# review worker on a freshly minted feature branch has nothing to review. The
+# contract file is checked here for the same reason — $DISPATCHER_PROTOCOL_DIR
+# can point at a checkout predating it, and a review worker launched without the
+# contract runs the implement pipeline against someone else's PR head.
 review_contract="$PROTOCOL_DIR/REVIEW_TASK.md"
 if [ "$kind" = review ]; then
   [ -n "$pr_number" ] || {
@@ -381,8 +380,8 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
-# A review worker gets the engine-neutral review contract appended after its
-# task body, so the dispatcher never re-authors it as per-worker prose.
+# The review contract is appended so the dispatcher never re-authors it as
+# per-worker prose.
 {
   printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
     "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"

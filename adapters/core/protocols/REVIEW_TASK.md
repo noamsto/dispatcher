@@ -49,7 +49,7 @@ Deslop the **comment prose you wrote** (not the code — the code is not yours):
 Then post **one** review event — not N comment spams:
 
 ```bash
-gh api "repos/$owner/$repo/pulls/$pr/reviews" \
+gh api "repos/{owner}/{repo}/pulls/$pr/reviews" \
   -f event=COMMENT -f body='<one-line tally + any non-line-local finding>' \
   -f 'comments[][path]=<path>' -F 'comments[][line]=<line>' -f 'comments[][body]=<what → fix>'
 ```
