@@ -696,9 +696,8 @@ pr-watch)
   # pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]
   # Thin bus bridge over the standalone `pr-watch` binary, which owns the park,
   # the change signals and the per-PR cursor — and needs no crew id at all. All
-  # this adds is the post: the event lands as a msg addressed to this crew's
-  # dispatcher, so an armed `crew watch` wakes and can dispatch a verify-and-
-  # approve worker. Stdout stays the event, so the wrapper still composes.
+  # this adds is the post: addressed to this crew's dispatcher, so an armed
+  # `crew watch` wakes. Stdout stays the event, so the wrapper still composes.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
