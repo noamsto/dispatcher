@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
@@ -38,6 +38,7 @@ effort=""
 linear_id=""
 gh_issue=""
 pr_number=""
+kind=implement
 mcp_profile=""
 crew_id_flag=""
 plan_val="required"
@@ -100,6 +101,10 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --review)
+    kind=review
+    shift
+    ;;
   *)
     if printf '%s' "$1" | grep -Eq '^[A-Z]{2,}-[0-9]+$'; then
       linear_id="$1"
@@ -128,6 +133,24 @@ if [ -n "$pr_number" ]; then
     echo "dispatch: --pr cannot combine with a Linear id or GitHub issue token" >&2
     exit 1
   fi
+fi
+
+# A review worker's whole contract is "the worktree IS the PR head" — without a
+# PR there is nothing to review and no head to attach to, so reject here rather
+# than scaffold a review worker onto a freshly minted feature branch. The
+# contract file is checked here too: $DISPATCHER_PROTOCOL_DIR can point at a
+# checkout that predates it, and a review worker launched without the contract
+# falls back to the implement pipeline and pushes to someone else's PR head.
+review_contract="$PROTOCOL_DIR/REVIEW_TASK.md"
+if [ "$kind" = review ]; then
+  [ -n "$pr_number" ] || {
+    echo "dispatch: --review requires --pr N" >&2
+    exit 1
+  }
+  [ -f "$review_contract" ] || {
+    echo "dispatch: --review found no review contract at $review_contract" >&2
+    exit 1
+  }
 fi
 
 # Crew id: explicit flag > inherited env > error. Launcher dispatchers inherit
@@ -358,12 +381,18 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
+# A review worker gets the engine-neutral review contract appended after its
+# task body, so the dispatcher never re-authors it as per-worker prose.
 {
-  printf 'tier: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
-    "$tier" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
+  printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
+    "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
+  fi
+  if [ "$kind" = review ]; then
+    printf '\n'
+    cat "$review_contract"
   fi
 } >"$wt_path/WORKER_TASK.md"
 
@@ -391,6 +420,15 @@ fi
 plan_note=""
 if [ "$plan_val" = provided ]; then
   plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+fi
+
+# The launch prompt is a user-turn instruction, so it outranks the protocol: a
+# review worker told to "push and open a PR" here would do exactly that on
+# someone else's PR head. Swap the mandate instead of relying on the contract to
+# talk the worker out of it.
+push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" = review ]; then
+  push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi
 
 # Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
@@ -423,7 +461,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
@@ -439,10 +477,10 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}'" Enter
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no

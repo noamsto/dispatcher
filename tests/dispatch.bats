@@ -70,6 +70,58 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
+# Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the
+# PR head, wt attaches a worktree to that existing branch (no -c), crew/tmux as
+# in stub_launch_bins. $1 is the PR's head branch.
+stub_pr_bins() { # <head-branch>
+  git commit --allow-empty -qm init
+  git branch "$1"
+  export PR_HEAD="$1"
+
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ view\ *)
+  printf '{"headRefName":"%s","isCrossRepository":false}\n' "$PR_HEAD"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+# switch <branch> -y --config-set ...
+branch="$2"
+mkdir -p "$TEST_REPO/.worktrees"
+git worktree add -q "$TEST_REPO/.worktrees/$branch" "$branch"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+new-window) printf '%s\n' '%1 %2' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
 # Mirrors the real cache: `jq -r '.models[].slug' ~/.codex/models_cache.json`.
 write_codex_cache() {
   mkdir -p "$HOME/.codex"
@@ -450,51 +502,7 @@ assert_gate_silent() { # <engine> <model>
 
 @test "--pr path calls wt switch without -c and stamps pr: N" {
   # Real branch in the test repo so show-ref succeeds and the porcelain locate works.
-  git commit --allow-empty -qm init
-  git branch eng-7691-foo
-
-  cat >"$STUB_DIR/gh" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-case "$*" in
-pr\ view\ *)
-  printf '%s\n' '{"headRefName":"eng-7691-foo","isCrossRepository":false}'
-  ;;
-esac
-exit 0
-EOF
-  chmod +x "$STUB_DIR/gh"
-
-  cat >"$STUB_DIR/wt" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-# switch <branch> -y --config-set ...
-branch="$2"
-mkdir -p "$TEST_REPO/.worktrees"
-git worktree add -q "$TEST_REPO/.worktrees/$branch" "$branch"
-exit 0
-EOF
-  chmod +x "$STUB_DIR/wt"
-
-  cat >"$STUB_DIR/crew" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-case "${1:-}" in
-identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
-esac
-exit 0
-EOF
-  chmod +x "$STUB_DIR/crew"
-
-  cat >"$STUB_DIR/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-case "${1:-}" in
-new-window) printf '%s\n' '%1 %2' ;;
-esac
-exit 0
-EOF
-  chmod +x "$STUB_DIR/tmux"
+  stub_pr_bins eng-7691-foo
 
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
@@ -505,4 +513,61 @@ EOF
   wt_path="$TEST_REPO/.worktrees/eng-7691-foo"
   grep -qx 'pr: 99' "$wt_path/WORKER_TASK.md"
   ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
+}
+
+@test "--review without --pr aborts before scaffolding" {
+  run run_dispatch standard sonnet --effort medium --review --crew-id c1 "review something"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--review requires --pr N"* ]]
+  # Same idiom as the profile gate: no stub ran, so $STUB_LOG may not exist.
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "--review rejects a tracker token in place of a PR" {
+  run run_dispatch standard sonnet --effort medium --review ENG-1 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--review requires --pr N"* ]]
+
+  run run_dispatch standard sonnet --effort medium --review --pr 12 34 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr cannot combine"* ]]
+}
+
+@test "--review aborts when the protocol dir carries no review contract" {
+  # Non-vacuous: $DISPATCHER_PROTOCOL_DIR points at a checkout predating
+  # REVIEW_TASK.md, and a review worker with no contract runs the implement
+  # pipeline against someone else's PR head.
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/empty-protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  run run_dispatch standard sonnet --effort medium --pr 99 --review --crew-id c1 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no review contract"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "--review stamps kind: review, appends the contract, and drops the push mandate" {
+  stub_pr_bins pr-head-review
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+
+  task="$TEST_REPO/.worktrees/pr-head-review/WORKER_TASK.md"
+  grep -qx 'kind: review' "$task"
+  # The contract body, not merely a pointer to it.
+  grep -q 'The worktree is the PR head' "$task"
+  grep -q 'Never `REQUEST_CHANGES`' "$task"
+
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"do not edit, commit, push, or open a PR"* ]]
+  [[ "$launch" != *"Push when pre-push passes"* ]]
+}
+
+@test "an implement dispatch stamps kind: implement and keeps the push mandate" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }

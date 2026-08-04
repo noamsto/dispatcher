@@ -8,7 +8,7 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 ## First action
 
-Read `WORKER_TASK.md`. It stamps `tier:`, authoritative `engine:`, `model:`, and `effort:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, and `agent_name:` (your FleetView-style codename — use it in human-facing pings). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
+Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, authoritative `engine:`, `model:`, and `effort:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, and `agent_name:` (your FleetView-style codename — use it in human-facing pings). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
 `crew status "worker:$(git branch --show-current)" working`
 Use `worker:$(git branch --show-current)` as your agent id for every bus call below.
 
@@ -28,6 +28,13 @@ the only one that sees them. If it returns messages, handle them with the
 **receiving-code-review** discipline (verify before acting) and set `seen` to the
 max `.ts` of what you read; if it returns nothing, keep the `seen` you just
 captured. Every later read is `--since $seen` per **Checkpoint-peek**.
+
+## Task kind
+
+`kind:` picks the pipeline; `tier:` only ever sizes it.
+
+- **`kind: implement`** (or the field absent, on a legacy doc) — the rest of this document.
+- **`kind: review`** — `dispatch --review` appended a **Review Task** contract to the end of your task doc. Follow it in place of everything below that presupposes a code change: no spec, plan, execute, fast deterministic gate, code `/deslop`, push, or PR. You terminate at `done` carrying the review you posted — a review worker never reaches `pr_open`, because it opens nothing — and you emit that contract's tally instead of the outcome-metrics record in **When done**. Everything kind-neutral still binds: the startup drain, checkpoint-peek at each seam, block→await, and the bus contract.
 
 ## Pipeline by tier
 
