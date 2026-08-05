@@ -283,7 +283,7 @@ generator output. Two reasons it must not be reformatted:
 ```
 adapters/
 ├── core/                    engine-neutral
-│   ├── crew.sh              860 L · the bus
+│   ├── crew.sh              900 L · the bus
 │   ├── pr-watch.sh          177 L · park until a PR changes (standalone)
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher
