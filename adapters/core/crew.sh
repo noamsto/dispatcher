@@ -73,6 +73,41 @@ WINS
   printf '%s' "$out"
 }
 
+# _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
+# oldest -> newest. Every fold is per SESSION: aggregating across a branch is how
+# three workers came to read as one flip-flopping identity (#17). A session with a
+# dispatch event but no status yet is still listed (state null) — dispatch needs to
+# see a booting worker. No crew filter by default, same reason `reap` has none: the
+# sessions worth inspecting are the ones from earlier dispatcher crews.
+_sessions() {
+  local branch="$1" crewf="$2"
+  [ -f "$log" ] || {
+    printf '[]'
+    return 0
+  }
+  jq -s -c --arg b "$branch" --arg crew "$crewf" '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+      def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+      map(select($crew=="" or .crew_id==$crew))
+      | ( map(select(.kind=="dispatch" and .branch==$b))
+          | map({session:(.session // null), ts:.ts}) ) as $disp
+      | ( map(select(.kind=="status"
+                     and ((.from // "") | startswith("worker:"))
+                     and ((.from) | wid_branch) == $b))
+          | map({session:((.from) | wid_session), state:.body.state, ts:.ts}) ) as $st
+      | ( ($disp + $st) | map(.session) | unique ) as $ids
+      | [ $ids[] as $s
+          | ($st | map(select(.session == $s)) | sort_by(.ts) | last) as $latest
+          | ($disp | map(select(.session == $s)) | sort_by(.ts) | last) as $d
+          | { session: $s,
+              worker_id: ("worker:" + $b + (if $s == null then "" else "#" + $s end)),
+              state: ($latest.state // null),
+              ts: ($latest.ts // $d.ts),
+              terminal: ((["done","failed","exited"] | index($latest.state // "")) != null) } ]
+      | sort_by(.ts)
+      | map(. + {age_s: (((now*1000) - .ts) / 1000 | floor)})' "$log"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
@@ -458,6 +493,33 @@ watch)
     }
     sleep "$interval"
   done
+  ;;
+sessions)
+  branch="${1:-}"
+  shift || true
+  screw=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 1
+      }
+      screw="$2"
+      shift 2
+      ;;
+    *)
+      echo "crew: sessions <branch> [--crew ID]" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -n "$branch" ] || {
+    echo "crew: sessions <branch> [--crew ID]" >&2
+    exit 1
+  }
+  _sessions "$branch" "$screw"
+  printf '\n'
   ;;
 roster)
   crew="${1:-$(_crew_id)}"
@@ -941,7 +1003,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
   exit 1
   ;;
 esac

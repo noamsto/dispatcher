@@ -314,3 +314,71 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"occupants <worktree-path>"* ]]
 }
+
+@test "sessions: folds each session separately, oldest first" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
+  run run_crew sessions feat/x
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r 'length')" = "2" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s1-1" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "done" ]
+  [ "$(echo "$output" | jq -r '.[0].terminal')" = "true" ]
+  [ "$(echo "$output" | jq -r '.[1].session')" = "s2-2" ]
+  [ "$(echo "$output" | jq -r '.[1].state')" = "working" ]
+  [ "$(echo "$output" | jq -r '.[1].terminal')" = "false" ]
+  [ "$(echo "$output" | jq -r '.[1].worker_id')" = "worker:feat/x#s2-2" ]
+}
+
+@test "sessions: pr_open is not terminal" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r '.[0].terminal')" = "false" ]
+}
+
+@test "sessions: a branch with a '#' in its name folds on the last '#'" {
+  CREW_ID=c1 run_crew status "worker:feat/a#b#s1-1" working
+  run run_crew sessions 'feat/a#b'
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s1-1" ]
+}
+
+@test "sessions: legacy branch-keyed events fold in as a null session" {
+  CREW_ID=c1 run_crew status "worker:feat/x" done
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r '.[0].session')" = "null" ]
+  [ "$(echo "$output" | jq -r '.[0].worker_id')" = "worker:feat/x" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "done" ]
+}
+
+@test "sessions: a dispatched session with no status yet has a null state" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s9-9"}' >>"$log"
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s9-9" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "null" ]
+  [ "$(echo "$output" | jq -r '.[0].terminal')" = "false" ]
+}
+
+@test "sessions: --crew scopes the fold" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run run_crew sessions feat/x --crew c2
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s2-2" ]
+}
+
+@test "sessions: an unknown branch is an empty array" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  run run_crew sessions feat/nope
+  [ "$output" = "[]" ]
+}
+
+@test "sessions: needs a branch" {
+  run run_crew sessions
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sessions <branch>"* ]]
+}
