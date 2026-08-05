@@ -562,7 +562,24 @@ The env var — not `WORKER_TASK.md` — is the authority, because the task doc 
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/dispatch.bats`:
+First add this helper to `tests/dispatch.bats`, below `stub_launch_bins()`. `dispatch` starts the stall watchdog with `nohup … &`, so its stub-log line lands after `dispatch` has already exited — a bare `grep` races it:
+
+```bash
+# wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
+# stub (the nohup'd stall-watch). Fails the test after ~2s.
+wait_for_log() {
+  local i
+  for i in $(seq 1 40); do
+    grep -q "$1" "$STUB_LOG" && return 0
+    sleep 0.05
+  done
+  echo "wait_for_log: never saw '$1' in $STUB_LOG" >&2
+  cat "$STUB_LOG" >&2
+  return 1
+}
+```
+
+Then append the tests:
 
 ```bash
 @test "session: stamps worker_id, exports CREW_WORKER_ID and prints the id" {
@@ -589,7 +606,7 @@ Append to `tests/dispatch.bats`:
   stub_launch_bins
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
     standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
-  grep -q 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane' "$STUB_LOG"
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
 }
 
 @test "session: a minted id is epoch-pid shaped" {
@@ -763,6 +780,15 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
+  # stub_launch_bins' wt only handles `switch -c` and exits 1 otherwise; the --pr
+  # path switches by NAME, and the worktree already exists here, so switching is a
+  # no-op success. Without this override every reclaim test dies at the switch.
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
 }
 
 @test "gate: refuses when a live engine occupies the target worktree" {
