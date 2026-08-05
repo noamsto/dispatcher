@@ -223,3 +223,56 @@ setup() {
   [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
 }
+
+@test "worker protocol defines the retro-note vocabulary" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '## Retro notes (all tiers)' \
+    '**Write a note only when one of the branches below is taken.**' \
+    '`command_not_found`' \
+    '`gate_thrash`' \
+    '`approach_abandoned`' \
+    '`consult_failed`' \
+    '`rung_blocked`' \
+    '{"seam":"<stage>","tag":"<tag>","detail":"<what>"}'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol carries retro notes in the metrics snapshot" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '"review_mode":"<full|downgraded|none>","notes":[]' \
+    '`notes` = the retro notes you accumulated this run' \
+    'An empty array is the healthy case.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol emits mid-execute retro notes immediately" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'crew msg "$CREW_WORKER_ID" "retro:$CREW_ID"' \
+    '**Execute is the only stage that emits early**' \
+    'a `tmux kill-window` or a stall-watch hang never reaches a stopping path' \
+    'Like `metrics:`, `retro:` is a synthetic sink — it never wakes the dispatcher.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol points each branch at its retro tag" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'and write an `approach_abandoned` retro note.' \
+    'that is a block, not an abandoned approach, so write no `approach_abandoned` note' \
+    'Write a `consult_failed` retro note naming the consultant and the reason.' \
+    'write a `command_not_found` retro note.' \
+    'emit a `gate_thrash` retro note carrying the ledger rows via the mid-execute path' \
+    'Write a `rung_blocked` retro note naming the rung and the reason.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
