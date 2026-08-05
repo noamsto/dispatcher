@@ -33,6 +33,46 @@ _identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macO
     '{name:$name, color:$color, tmux:$tmux}'
 }
 
+# _occupants <worktree_path> -> [{window,name,pane,engine}] — worker windows
+# rooted at that path. Keyed on @crew_name (dispatch stamps it on every worker
+# window), NOT on the pane's running command: a finished agent drops back to a
+# shell prompt, and a command match would then read its window as empty and let
+# the next dispatch stack a second worker onto the same tree (#17). Excludes the
+# dispatcher's own window — it carries @crew_name too — and the caller's.
+_occupants() {
+  local wtp="$1" self_win="" wins panes out wid nm path pw pid cmd epane
+  if [ -n "${TMUX_PANE:-}" ]; then
+    self_win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null || true)
+  fi
+  wins=$(tmux list-windows -a -F '#{window_id}	#{@crew_name}	#{pane_current_path}' 2>/dev/null || true)
+  panes=$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_command}' 2>/dev/null || true)
+  out='[]'
+  while IFS=$'\t' read -r wid nm path; do
+    [ -n "$wid" ] || continue
+    [ "$path" = "$wtp" ] || continue
+    [ -n "$nm" ] || continue
+    [ "$nm" != dispatcher ] || continue
+    [ "$wid" != "$self_win" ] || continue
+    epane=""
+    while IFS=$'\t' read -r pw pid cmd; do
+      [ "$pw" = "$wid" ] || continue
+      case "$cmd" in
+      claude | codex | cursor-agent)
+        epane="$pid"
+        break
+        ;;
+      esac
+    done <<PANES
+$panes
+PANES
+    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" \
+      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), engine:($p!="")}]')
+  done <<WINS
+$wins
+WINS
+  printf '%s' "$out"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
@@ -118,6 +158,15 @@ if [ "$sub" = identity ]; then
     exit 1
   }
   _identity "$1"
+  exit 0
+fi
+if [ "$sub" = occupants ]; then
+  [ -n "${1:-}" ] || {
+    echo "crew: occupants <worktree-path>" >&2
+    exit 1
+  }
+  _occupants "$1"
+  printf '\n'
   exit 0
 fi
 
@@ -892,7 +941,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
   exit 1
   ;;
 esac

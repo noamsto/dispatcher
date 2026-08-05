@@ -9,6 +9,28 @@ teardown() {
   teardown_repo
 }
 
+# stub_tmux <list-windows-body> <list-panes-body> — a tmux whose list output is
+# fixed text. crew's real tmux calls are `|| true`-tolerant, so without this the
+# occupancy tests would read the developer's live server and flake.
+stub_tmux() {
+  STUB_DIR="${STUB_DIR:-$(mktemp -d)}"
+  STUB_LOG="${STUB_LOG:-$STUB_DIR/calls.log}"
+  printf '%s' "$1" >"$STUB_DIR/wins.txt"
+  printf '%s' "$2" >"$STUB_DIR/panes.txt"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-windows) cat "$STUB_DIR/wins.txt" ;;
+list-panes) cat "$STUB_DIR/panes.txt" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export STUB_DIR STUB_LOG
+  export PATH="$STUB_DIR:$PATH"
+}
+
 @test "id: honours CREW_ID when set" {
   CREW_ID=1720800000-12345 run run_crew id
   [ "$status" -eq 0 ]
@@ -244,4 +266,51 @@ EOF
   [[ "$output" == *"would reap feat/reap-me"* ]]
   run grep -c 'remove' "$STUB_LOG"
   [ "$output" = "0" ]
+}
+
+@test "occupants: reports a worker window with a live engine" {
+  stub_tmux "$(printf '@23\tsage\t/wt/a\n@9\t\t/wt/a\n')" "$(printf '@23\t%%33\tclaude\n')"
+  run run_crew occupants /wt/a
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].window')" = "@23" ]
+  [ "$(echo "$output" | jq -r '.[0].name')" = "sage" ]
+  [ "$(echo "$output" | jq -r '.[0].pane')" = "%33" ]
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
+}
+
+@test "occupants: a finished agent that dropped to a shell is still an occupant" {
+  stub_tmux "$(printf '@23\tsage\t/wt/a\n')" "$(printf '@23\t%%33\tfish\n')"
+  run run_crew occupants /wt/a
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "false" ]
+  [ "$(echo "$output" | jq -r '.[0].pane')" = "null" ]
+}
+
+@test "occupants: ignores other paths, unnamed windows and the dispatcher" {
+  stub_tmux "$(printf '@1\tsage\t/wt/b\n@2\t\t/wt/a\n@3\tdispatcher\t/wt/a\n')" "$(printf '@1\t%%1\tclaude\n@3\t%%3\tclaude\n')"
+  run run_crew occupants /wt/a
+  [ "$output" = "[]" ]
+}
+
+@test "occupants: never reports the caller's own window" {
+  stub_tmux "$(printf '@23\tsage\t/wt/a\n')" "$(printf '@23\t%%33\tclaude\n')"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+list-windows) cat "$STUB_DIR/wins.txt" ;;
+list-panes) cat "$STUB_DIR/panes.txt" ;;
+display-message) printf '%s\n' '@23' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  TMUX_PANE=%33 run run_crew occupants /wt/a
+  [ "$output" = "[]" ]
+}
+
+@test "occupants: needs a path" {
+  run run_crew occupants
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"occupants <worktree-path>"* ]]
 }
