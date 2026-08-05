@@ -171,7 +171,7 @@ Keep a detail well under 2 KB, and prefer the smallest quotation that carries th
 - **You are mid-execute** — emit it immediately, then also keep it for the snapshot:
 
   ```
-  crew msg "worker:$(git branch --show-current)" "retro:$CREW_ID" '{"seam":"execute","tag":"<tag>","detail":"<what>"}'
+  crew msg "$CREW_WORKER_ID" "retro:$CREW_ID" '{"seam":"execute","tag":"<tag>","detail":"<what>"}'
   ```
 
 **Execute is the only stage that emits early**: a `tmux kill-window` or a stall-watch hang never reaches a stopping path, so a note held back for the snapshot would die with the session — and execute is where that risk concentrates. Every other seam ends in a stopping path that snapshots anyway.
