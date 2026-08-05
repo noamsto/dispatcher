@@ -63,6 +63,33 @@ _lock_acquire() {
 
 _lock_release() { rm -rf "$1"; }
 
+# A bus line MUST fit in one write(). `printf '%s\n' … >>"$log"` is atomic under
+# O_APPEND only up to the 4096-byte stdio buffer; above it bash flushes in
+# 4096-byte chunks and a concurrent append lands in the gap, splicing two records
+# into one line (#20).
+_LINE_MAX=4096
+_ELIDED=' …[elided]'
+
+# _fit_line <builder> <text> — echo the line <builder> builds from <text>, with
+# <text> shortened until the ENCODED line fits. Re-measures each pass rather than
+# computing a cut from the input length: JSON escaping is nonlinear (a control byte
+# becomes six characters). `cut -c` cuts on a character boundary, so multibyte text
+# never splits mid-rune. The proportional guess is floored at a 3/4 step so every
+# pass strictly shrinks and the loop terminates.
+_fit_line() {
+  local build="$1" full="$2" text="$2" line n keep
+  line=$("$build" "$text")
+  keep=${#full}
+  while :; do
+    n=$(printf '%s' "$line" | wc -c)
+    { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
+    keep=$(((keep * _LINE_MAX / n) < (keep * 3 / 4) ? (keep * _LINE_MAX / n) : (keep * 3 / 4)))
+    text="$(printf '%s' "$full" | cut -c1-"$keep")$_ELIDED"
+    line=$("$build" "$text")
+  done
+  printf '%s' "$line"
+}
+
 # Resolve the crew id: env wins; else read it from WORKER_TASK.md at the repo
 # root, so a worker just calls `crew status …` with no env prefix to remember.
 _crew_id() {
@@ -137,17 +164,25 @@ status | msg)
       fi
       ;;
     esac
-    line=$(jq -nc --arg crew "$crew" --arg from "${1:-}" --arg state "${2:-}" \
-      --arg detail "${3:-}" --arg pr "${4:-}" \
-      '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
+    from="${1:-}" state="${2:-}" pr="${4:-}"
+    _build_status() {
+      jq -nc --arg crew "$crew" --arg from "$from" --arg state "$state" \
+        --arg detail "$1" --arg pr "$pr" \
+        '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
           kind:"status",
           body:({state:$state}
                 + (if $detail!="" then {detail:$detail} else {} end)
-                + (if $pr!="" then {pr_url:$pr} else {} end))}')
+                + (if $pr!="" then {pr_url:$pr} else {} end))}'
+    }
+    line=$(_fit_line _build_status "${3:-}")
   else
     # msg <from> <to> <body>
-    line=$(jq -nc --arg crew "$crew" --arg from "${1:-}" --arg to "${2:-}" --arg body "${3:-}" \
-      '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:$to, kind:"msg", body:$body}')
+    from="${1:-}" to="${2:-}"
+    _build_msg() {
+      jq -nc --arg crew "$crew" --arg from "$from" --arg to "$to" --arg body "$1" \
+        '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:$to, kind:"msg", body:$body}'
+    }
+    line=$(_fit_line _build_msg "${3:-}")
   fi
   printf '%s\n' "$line" >>"$log"
   ;;
@@ -160,8 +195,12 @@ reply)
     exit 1
   }
   mkdir -p "$dir"
-  line=$(jq -nc --arg crew "$crew" --arg to "${1:-}" --arg body "${2:-}" \
-    '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}')
+  to="${1:-}"
+  _build_reply() {
+    jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
+      '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
+  }
+  line=$(_fit_line _build_reply "${2:-}")
   printf '%s\n' "$line" >>"$log"
   ;;
 await)

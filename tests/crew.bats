@@ -105,6 +105,56 @@ teardown() {
   [ "$output" = "alice|bob|ship it" ]
 }
 
+@test "status: an oversized detail is clipped so the line stays one atomic write" {
+  big="$(head -c 8192 /dev/zero | tr '\0' x)"
+  CREW_ID=c1 run_crew status worker failed "$big"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
+  [ "$line_bytes" -le 4096 ]
+  run jq -e '.body.state == "failed" and (.body.detail | endswith("[elided]"))' "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "msg: an oversized body is clipped so the line stays one atomic write" {
+  big="$(head -c 8192 /dev/zero | tr '\0' x)"
+  CREW_ID=c1 run_crew msg alice bob "$big"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
+  [ "$line_bytes" -le 4096 ]
+  run jq -e '.from == "alice" and .to == "bob" and (.body | endswith("[elided]"))' "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "status: quote-heavy text still fits (JSON escaping is nonlinear)" {
+  big="$(head -c 4000 /dev/zero | tr '\0' '"')"
+  CREW_ID=c1 run_crew status worker failed "$big"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
+  [ "$line_bytes" -le 4096 ]
+  run jq -e . "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "bus: concurrent oversized writes never splice two records into one line" {
+  big="$(head -c 8192 /dev/zero | tr '\0' x)"
+  for i in 1 2 3 4 5 6 7 8; do
+    (
+      for _ in 1 2 3 4 5; do
+        CREW_ID=c1 bash -euo pipefail "$CREW" status "worker:b$i" working "$big"
+      done
+    ) &
+  done
+  wait
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(wc -l <"$log" | tr -d ' ')" -eq 40 ]
+  while IFS= read -r l; do
+    printf '%s' "$l" | jq -e . >/dev/null
+  done <"$log"
+  # A line count alone cannot see a splice: each append contributes exactly one
+  # newline either way, so assert one record per line too.
+  [ "$(grep -o '{"ts"' "$log" | wc -l | tr -d ' ')" -eq 40 ]
+}
+
 @test "register: is idempotent for the same pid" {
   CREW_ID=c1 run run_crew register $$
   [ "$status" -eq 0 ]
