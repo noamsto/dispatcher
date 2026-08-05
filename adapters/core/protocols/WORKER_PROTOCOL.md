@@ -146,6 +146,25 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
   - `deep` — **conditional** second re-review (skipped entirely when the repo-aware downgrade above applies). After the fix + a green fast deterministic gate, run the second review pass **only if** the first pass produced **HIGH-severity** findings that were **non-trivially fixed** (the fix changed real logic — not a comment, rename, or doc tweak). If there were no HIGH findings, or they were only trivially fixed, or the fast gate is not green, **skip** the second pass and proceed to `/deslop` + push. This conditional only ever _removes_ the second pass — the review→fix loop is still capped at 2 (never a third).
 - **Cap the review→fix loop at 2.** Anything still unresolved goes in the PR body under "## Review notes" — never silently drop it.
 
+## Retro notes (all tiers)
+
+A note records **why** something went wrong, in your own words, tagged so notes group across runs. The metrics fields say a gate looped or a consult failed; a note says _which_ gate and _why_ the consult failed. That reason is otherwise lost — the plan-shaped ledger lives only in your context, and `consult_engine` goes `null` on exactly the failure you would want explained.
+
+**Write a note only when one of the branches below is taken.** A run that takes none writes none: silence is the healthy case and costs nothing. Never write a note to report success, and never write one per seam unconditionally.
+
+| tag                  | write it when                                                                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command_not_found`  | a build/vet/lint/unit command you discovered from the repo does not exist or will not run. Detail: the command, and how it failed.                                      |
+| `gate_thrash`        | an episode ends having recorded at least one qualifying ledger row. Detail: for each row, its `gate`, normalized `target`, quoted `old_plan`, and `amendment` category. |
+| `approach_abandoned` | the plan of record is contradicted by the repo and you re-enter planning. Detail: which named file or approach did not hold.                                            |
+| `consult_failed`     | a consultant refuses, times out, or is unavailable. Detail: which consultant, and which of the three.                                                                   |
+| `rung_blocked`       | a recovery transition blocks. Detail: which rung, and why — top or unavailable rung, ineligible opus, failed extraction/critic, or non-viable output.                   |
+| `other`              | something went wrong that no tag above covers. Detail: what.                                                                                                            |
+
+Each note is one object: `{"seam":"<stage>","tag":"<tag>","detail":"<what>"}` — `seam` is the stage you were in (`spec`, `plan`, `execute`, `gate`, `review`).
+
+Keep a detail under ~2 KB. The bus writer truncates an oversized line rather than corrupting the log, so a very long paste loses its tail.
+
 ## Report to the bus (mandatory)
 
 Append your lifecycle to the crew bus — this is the contract, not optional:

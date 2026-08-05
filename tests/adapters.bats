@@ -223,3 +223,19 @@ setup() {
   [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
 }
+
+@test "worker protocol defines the retro-note vocabulary" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '## Retro notes (all tiers)' \
+    '**Write a note only when one of the branches below is taken.**' \
+    '`command_not_found`' \
+    '`gate_thrash`' \
+    '`approach_abandoned`' \
+    '`consult_failed`' \
+    '`rung_blocked`' \
+    '{"seam":"<stage>","tag":"<tag>","detail":"<what>"}'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
