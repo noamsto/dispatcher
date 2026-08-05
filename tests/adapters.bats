@@ -262,3 +262,16 @@ setup() {
     [ "$status" -eq 0 ]
   done
 }
+
+@test "worker protocol points each branch at its retro tag" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'Write an `approach_abandoned` retro note.' \
+    'Write a `consult_failed` retro note naming the consultant and the reason.' \
+    'write a `command_not_found` retro note.' \
+    'Write a `gate_thrash` retro note carrying the ledger rows.' \
+    'Write a `rung_blocked` retro note naming the rung and the reason.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
