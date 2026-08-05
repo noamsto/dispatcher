@@ -148,9 +148,9 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
 
 ## Retro notes (all tiers)
 
-A note records **why** something went wrong, in your own words, tagged so notes group across runs. The metrics fields say a gate looped or a consult failed; a note says _which_ gate and _why_ the consult failed. That reason is otherwise lost — the plan-shaped ledger lives only in your context, and `consult_engine` goes `null` on exactly the failure you would want explained.
+A note records **why** something went wrong, in your own words, tagged so notes group across runs. The metrics fields say a gate looped or a consult failed; a note says _which_ gate and _why_ the consult failed.
 
-**Write a note only when one of the branches below is taken.** A run that takes none writes none: silence is the healthy case and costs nothing. Never write a note to report success, and never write one per seam unconditionally.
+**Write a note only when one of the branches below is taken.** A run that takes none writes none: silence is the healthy case. Never write a note to report success, and never write one per seam unconditionally.
 
 | tag                  | write it when                                                                                                                                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -174,7 +174,7 @@ Keep a detail well under 2 KB, and prefer the smallest quotation that carries th
   crew msg "worker:$(git branch --show-current)" "retro:$CREW_ID" '{"seam":"execute","tag":"<tag>","detail":"<what>"}'
   ```
 
-**Execute is the only stage that emits early**, and the reason is narrow: a `tmux kill-window` or a stall-watch hang never reaches a stopping path, so a note held back for the snapshot would die with the session — and execute is where that risk concentrates. Every other seam ends in a stopping path that snapshots anyway, so holding those costs nothing.
+**Execute is the only stage that emits early**: a `tmux kill-window` or a stall-watch hang never reaches a stopping path, so a note held back for the snapshot would die with the session — and execute is where that risk concentrates. Every other seam ends in a stopping path that snapshots anyway.
 
 Like `metrics:`, `retro:` is a synthetic sink — it never wakes the dispatcher.
 
