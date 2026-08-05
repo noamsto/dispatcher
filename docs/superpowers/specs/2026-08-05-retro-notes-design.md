@@ -84,11 +84,11 @@ concentrates; every other seam ends in a stopping path that already snapshots.
 ### Note schema
 
 ```json
-{ "seam": "execute", "tag": "gate_thrash", "detail": "…", "ts": 1785917772000 }
+{ "seam": "execute", "tag": "gate_thrash", "detail": "…" }
 ```
 
-`ts` is only present on seam notes (`msg` events carry their own `.ts`); notes
-inside a snapshot inherit the snapshot's timestamp.
+Notes carry no `ts` of their own: a seam note's timestamp is the enclosing
+`msg` event's `.ts`, and a note inside a snapshot inherits the snapshot's.
 
 ### Tag validation is reader-side — a deliberate step down from `status`
 

@@ -369,7 +369,7 @@ git commit -m "feat(protocols): point each trouble branch at its retro tag"
 
 ## Done when
 
-- `bats tests/` is green with four new tests (108 total).
+- `bats tests/` is green with four new tests (144 total).
 - `scripts/gen-adapters.sh && git status --short` prints nothing.
 - Every tag in the vocabulary has a pointer at its branch, and every pointer names a tag in the vocabulary.
 - `crew.sh` is untouched — confirm with `git diff origin/extract --name-only`, which must not list `adapters/core/crew.sh`.
