@@ -148,9 +148,9 @@ _ELIDED=' …[elided]'
 # _shrink <text> <keep> — shorten <text> to roughly <keep> characters.
 # A sink body (`metrics:`, `retro:`) is itself JSON, and cutting it as a blob ends
 # the string mid-object: the enclosing bus line stays valid but the body no longer
-# parses, so a reader loses the WHOLE record — every key, not just the long one —
-# and `rate`'s fold used to die on it (#25). So shorten each long string leaf and
-# re-encode instead, which keeps the record's shape and its short keys intact.
+# parses, so a reader loses the WHOLE record — every key, not just the long one
+# (#25). So shorten each long string leaf and re-encode instead, which keeps the
+# record's shape and its short keys intact.
 # Plain-text bodies (a worker's question) and `status` details are not JSON and
 # still get the blob cut. `cut -c` cuts on a character boundary, so multibyte text
 # never splits mid-rune.
