@@ -351,11 +351,10 @@ else
 fi
 
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
-# onto a branch that already has one lands in the SAME directory. Ungated, it
-# opened a second window and a second agent there — two committers on one index,
-# which only stayed safe by luck. Occupancy is a WORKER WINDOW (crew occupants,
-# keyed on @crew_name), not a running engine: a finished agent drops to a shell
-# prompt, and a command-based check would call its window empty.
+# onto a branch that already has one lands in the same directory. Occupancy is a
+# WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a
+# finished agent drops to a shell prompt, and a command-based check would read the
+# window as empty.
 prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
 if [ -n "$prev_wt" ]; then
   occ=$(crew occupants "$prev_wt")
@@ -399,12 +398,9 @@ esac
 
 sanitized="${branch//\//-}"
 
-# Session-scoped worker identity (#17). The worker used to derive its own id from
-# the branch, so N sessions on one branch shared one roster row AND one durable
-# inbox — a directive written for one was drained by its successor. The id is
-# issued here instead and carried in the environment. epoch+pid, because two
-# same-second dispatches on one branch would otherwise collide back into a single
-# identity, which is exactly the bug.
+# Session id is issued here and carried in the environment by all three engine
+# launchers. epoch+pid prevents two same-second dispatches on one branch from
+# sharing an identity (#17).
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
