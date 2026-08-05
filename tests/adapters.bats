@@ -239,3 +239,14 @@ setup() {
     [ "$status" -eq 0 ]
   done
 }
+
+@test "worker protocol carries retro notes in the metrics snapshot" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '"review_mode":"<full|downgraded|none>","notes":[]' \
+    '`notes` = the retro notes you accumulated this run' \
+    'An empty array is the healthy case.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
