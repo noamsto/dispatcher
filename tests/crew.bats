@@ -382,3 +382,51 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"sessions <branch>"* ]]
 }
+
+@test "reply: a branch-only worker target resolves to the newest live session" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
+  CREW_ID=c1 run_crew reply "worker:feat/x" "go"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "worker:feat/x#s2-2" ]
+}
+
+@test "reply: refuses when the newest session is terminal" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"re-dispatch"* ]]
+}
+
+@test "reply: refuses a branch with no sessions" {
+  CREW_ID=c1 run run_crew reply "worker:feat/nope" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no session"* ]]
+}
+
+@test "reply: an explicit session id is honoured verbatim" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run_crew reply "worker:feat/x#s1-1" "go"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "worker:feat/x#s1-1" ]
+}
+
+@test "reply: a non-worker target is untouched" {
+  CREW_ID=c1 run_crew reply "metrics:c1" "{}"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "metrics:c1" ]
+}
+
+@test "reply: a directive for session 1 is not delivered to session 2" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew reply "worker:feat/x" "STOP - do not push"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
+  run run_crew inbox "worker:feat/x#s2-2" c1
+  [ -z "$output" ]
+  run run_crew inbox "worker:feat/x#s1-1" c1
+  [[ "$output" == *"STOP - do not push"* ]]
+}

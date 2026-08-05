@@ -279,7 +279,28 @@ reply)
     exit 1
   }
   mkdir -p "$dir"
+  # A branch-only worker target resolves to the newest session on that branch, so
+  # the dispatcher keeps writing `worker:<branch>` while the message lands on a
+  # session that exists NOW. Resolving at send time is what makes inheritance
+  # impossible: a stopped session's successor has a different id, so a directive
+  # written for the former is never addressed to the latter (#17).
   to="${1:-}"
+  case "$to" in
+  worker:*'#'*) ;; # explicit session — honoured verbatim
+  worker:*)
+    br="${to#worker:}"
+    newest=$(_sessions "$br" "$crew" | jq -c 'last')
+    [ -n "$newest" ] && [ "$newest" != null ] || {
+      echo "crew: no session on $br — dispatch a worker before replying to one" >&2
+      exit 1
+    }
+    if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
+      echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
+      exit 1
+    fi
+    to=$(printf '%s' "$newest" | jq -r .worker_id)
+    ;;
+  esac
   _build_reply() {
     jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
