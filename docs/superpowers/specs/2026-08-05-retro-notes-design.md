@@ -108,7 +108,7 @@ Every tag maps to a branch the protocol already defines. A worker writes a note
 | tag                  | fires on                                                          | why it is additive                                    |
 | -------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
 | `command_not_found`  | a discovered gate command is missing or not runnable (§92, §96)   | nothing captures it; harness bugs surface here        |
-| `gate_thrash`        | an episode ends having recorded ≥1 qualifying ledger row (§98)    | ledger is context-only; bus gets one boolean          |
+| `gate_thrash`        | three qualifying ledger rows force a replacement (§98)            | ledger is context-only; bus gets one boolean          |
 | `approach_abandoned` | provided/legacy contradiction re-entry (§52)                      | `replanned` says it happened, never which file or why |
 | `consult_failed`     | a consultant refuses, times out, or is unavailable (§70)          | `consult_engine` is `null` on failure — reason lost   |
 | `rung_blocked`       | any recovery-ladder block (§118-135)                              | all surface as a bare `failed`                        |
