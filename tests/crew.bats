@@ -620,3 +620,46 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"--idle"* ]]
 }
+
+@test "msg: an oversized JSON body stays parseable JSON" {
+  big="$(head -c 6000 /dev/zero | tr '\0' x)"
+  body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"
+  CREW_ID=c1 run_crew msg worker:feat/1 "retro:c1" "$body"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
+  [ "$line_bytes" -le 4096 ]
+  # The body must still parse, and keep every key — a blob cut loses the tag.
+  run jq -e '(.body | fromjson) | .seam == "execute" and .tag == "gate_thrash" and (.detail | endswith("[elided]"))' "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "msg: a non-JSON oversized body is still clipped as plain text" {
+  big="$(head -c 6000 /dev/zero | tr '\0' y)"
+  CREW_ID=c1 run_crew msg worker:feat/1 dispatcher:c1 "$big"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
+  [ "$line_bytes" -le 4096 ]
+  run jq -e '.body | endswith("[elided]")' "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "rate: one unparseable metrics body does not kill the sweep" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  cat >"$log" <<'EOF'
+{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/bad","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"bad body"}
+{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/bad","body":{"state":"done"}}
+{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/bad","to":"metrics:c1","body":"{\"rework_count\":3,\"detail\":\"trunc …[elided]"}
+{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/good","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"good body"}
+{"ts":2001,"crew_id":"c1","kind":"status","from":"worker:feat/good","body":{"state":"done"}}
+{"ts":2002,"crew_id":"c1","kind":"msg","from":"worker:feat/good","to":"metrics:c1","body":"{\"rework_count\":7}"}
+EOF
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  # Both runs must be recorded; the bad body folds to null metrics, not a crash.
+  run jq -s -e 'map({branch, rework_count}) | sort_by(.branch)
+    == [{branch:"feat/bad",rework_count:null},{branch:"feat/good",rework_count:7}]' \
+    "$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$status" -eq 0 ]
+}
