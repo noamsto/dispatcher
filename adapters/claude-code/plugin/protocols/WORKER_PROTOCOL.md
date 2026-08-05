@@ -165,6 +165,19 @@ Each note is one object: `{"seam":"<stage>","tag":"<tag>","detail":"<what>"}` �
 
 Keep a detail under ~2 KB. The bus writer truncates an oversized line rather than corrupting the log, so a very long paste loses its tail.
 
+**Where a note goes depends on when you learn it.**
+
+- **You are at a stopping path** — put it in the metrics snapshot's `notes` array (see "Report to the bus"). The snapshot already fires before every stopping path, so this costs no extra write and inherits its supersede-on-resume semantics.
+- **You are mid-execute** — emit it immediately, then also keep it for the snapshot:
+
+  ```
+  crew msg "worker:$(git branch --show-current)" "retro:$CREW_ID" '{"seam":"execute","tag":"<tag>","detail":"<what>"}'
+  ```
+
+**Execute is the only stage that emits early**, and the reason is narrow: a `tmux kill-window` or a stall-watch hang never reaches a stopping path, so a note held back for the snapshot would die with the session — and execute is where that risk concentrates. Every other seam ends in a stopping path that snapshots anyway, so holding those costs nothing.
+
+Like `metrics:`, `retro:` is a synthetic sink — it never wakes the dispatcher.
+
 ## Report to the bus (mandatory)
 
 Append your lifecycle to the crew bus — this is the contract, not optional:

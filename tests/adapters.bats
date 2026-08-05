@@ -250,3 +250,15 @@ setup() {
     [ "$status" -eq 0 ]
   done
 }
+
+@test "worker protocol emits mid-execute retro notes immediately" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'crew msg "worker:$(git branch --show-current)" "retro:$CREW_ID"' \
+    '**Execute is the only stage that emits early**' \
+    'a `tmux kill-window` or a stall-watch hang never reaches a stopping path' \
+    'Like `metrics:`, `retro:` is a synthetic sink — it never wakes the dispatcher.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
