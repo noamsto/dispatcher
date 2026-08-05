@@ -593,7 +593,7 @@ assert_gate_silent() { # <engine> <model>
   [[ "$output" == *"worker_id: worker:feat/42-do-a-thing#s7-7"* ]]
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   grep -qx 'worker_id: worker:feat/42-do-a-thing#s7-7' "$wt_path/WORKER_TASK.md"
-  grep -q 'CREW_WORKER_ID=worker:feat/42-do-a-thing#s7-7 claude ' "$STUB_LOG"
+  grep -q 'CREW_WORKER_ID=worker:feat/42-do-a-thing#s7-7' "$STUB_LOG"
 }
 
 @test "session: the dispatch event carries the session" {

@@ -449,7 +449,7 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
   fi
 } >"$wt_path/WORKER_TASK.md"
 
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -P -F '#{window_id} #{pane_id}')
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
@@ -518,7 +518,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
@@ -534,10 +534,10 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}'" Enter
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
