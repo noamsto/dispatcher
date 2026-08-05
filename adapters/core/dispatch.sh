@@ -294,6 +294,9 @@ crew reap --quiet || true
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+mkdir -p "$crew_dir"
+
 # Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
 # ourselves below, and the hook would otherwise open a second, undecorated shell
 # window at the same worktree (#123). Its own `$CLAUDECODE` guard only covers a
@@ -303,9 +306,8 @@ slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/
 # cannot commit at all.
 wt_post_switch='post-switch.tmux=""'
 
-# Review attach (--pr N): resolve headRefName once, switch by name (no -c). Fall
-# back to wt switch pr:N only for fork / missing-ref. Stamp pr: N, never Closes
-# from the PR number, and never mint a sibling feat/N-review-… branch (#8).
+# --pr resolves the head ref; the switch itself happens after the gate below, so
+# a refusal costs no worktree and no window.
 if [ -n "$pr_number" ]; then
   pr_json=$(gh pr view "$pr_number" --json headRefName,isCrossRepository)
   head=$(printf '%s' "$pr_json" | jq -r .headRefName)
@@ -318,12 +320,11 @@ if [ -n "$pr_number" ]; then
   closes="pr: $pr_number"
   if git show-ref --verify --quiet "refs/heads/$head" ||
     git show-ref --verify --quiet "refs/remotes/origin/$head"; then
-    wt switch "$head" -y --config-set "$wt_post_switch"
+    switch_mode=name
   elif [ "$cross" = false ]; then
-    git fetch origin "$head"
-    wt switch "$head" -y --config-set "$wt_post_switch"
+    switch_mode=fetch-name
   else
-    wt switch "pr:$pr_number" -y --config-set "$wt_post_switch"
+    switch_mode=pr-ref
   fi
 else
   # Identity + closes line. Linear mode derives both from the ticket (no gh); a
@@ -346,8 +347,55 @@ else
     branch="feat/$num-$slug"
     closes="Closes #$num"
   fi
-  wt switch -c "$branch" -y --config-set "$wt_post_switch"
+  switch_mode=create
 fi
+
+# Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
+# onto a branch that already has one lands in the SAME directory. Ungated, it
+# opened a second window and a second agent there — two committers on one index,
+# which only stayed safe by luck. Occupancy is a WORKER WINDOW (crew occupants,
+# keyed on @crew_name), not a running engine: a finished agent drops to a shell
+# prompt, and a command-based check would call its window empty.
+prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+if [ -n "$prev_wt" ]; then
+  occ=$(crew occupants "$prev_wt")
+  if [ "$occ" != "[]" ]; then
+    newest=$(crew sessions "$branch" | jq -c 'last')
+    state=$(printf '%s' "$newest" | jq -r '.state // "none"')
+    terminal=$(printf '%s' "$newest" | jq -r '.terminal // false')
+    engine=$(printf '%s' "$occ" | jq -r 'map(select(.engine)) | length')
+    if [ "$engine" -gt 0 ] && [ "$terminal" != true ]; then
+      nm=$(printf '%s' "$occ" | jq -r '.[0].name')
+      win=$(printf '%s' "$occ" | jq -r '.[0].window')
+      wid=$(printf '%s' "$newest" | jq -r '.worker_id // ""')
+      {
+        echo "dispatch: $nm ($wid) is $state in that worktree (window $win) — git allows one worktree per branch."
+        echo "  redirect it:  crew reply worker:$branch \"<directive>\""
+        echo "  or take over: tmux kill-window -t $win, then re-dispatch"
+      } >&2
+      exit 1
+    fi
+    # Finished work squatting the tree (terminal, or the engine is already gone).
+    # Reclaim rather than stack beside it. Best-effort, like reap's kills.
+    for w in $(printf '%s' "$occ" | jq -r '.[].window'); do
+      tmux kill-window -t "$w" 2>/dev/null || true
+      echo "dispatch: reclaimed $w at $prev_wt (session $state)"
+    done
+    jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"reclaim", branch:$branch, state:$state,
+          windows:($occ|map(.window))}' >>"$crew_dir/events.jsonl"
+  fi
+fi
+
+case "$switch_mode" in
+create) wt switch -c "$branch" -y --config-set "$wt_post_switch" ;;
+name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
+fetch-name)
+  git fetch origin "$branch"
+  wt switch "$branch" -y --config-set "$wt_post_switch"
+  ;;
+pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
+esac
 
 sanitized="${branch//\//-}"
 
@@ -370,9 +418,6 @@ if [ -z "$wt_path" ]; then
   echo "dispatch: could not locate worktree for branch $branch" >&2
   exit 1
 fi
-
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-mkdir -p "$crew_dir"
 
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"

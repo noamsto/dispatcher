@@ -618,3 +618,118 @@ assert_gate_silent() { # <engine> <model>
     standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [[ "$output" =~ worker_id:\ worker:feat/42-do-a-thing#s[0-9]+-[0-9]+ ]]
 }
+
+# stub_crew_gate <occupants-json> <sessions-json> — a crew stub that feeds the
+# gate fixed answers while still logging every call.
+stub_crew_gate() {
+  printf '%s' "$1" >"$STUB_DIR/occ.json"
+  printf '%s' "$2" >"$STUB_DIR/sess.json"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"sage","color":"green","tmux":"colour28"}' ;;
+occupants) cat "$STUB_DIR/occ.json" ;;
+sessions) cat "$STUB_DIR/sess.json" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+# An existing worktree for the branch the --pr path resolves to, so the gate has
+# something to find.
+setup_occupied_branch() {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch eng-7691-foo
+  mkdir -p "$TEST_REPO/.worktrees"
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/eng-7691-foo" eng-7691-foo
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ view\ *) printf '%s\n' '{"headRefName":"eng-7691-foo","isCrossRepository":false}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  # stub_launch_bins' wt only handles `switch -c` and exits 1 otherwise; the --pr
+  # path switches by NAME, and the worktree already exists here, so switching is a
+  # no-op success. Without this override every reclaim test dies at the switch.
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "gate: refuses when a live engine occupies the target worktree" {
+  setup_occupied_branch
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":"working","ts":1,"age_s":412,"terminal":false}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"worker:eng-7691-foo#s1-1"* ]]
+  [[ "$output" == *"working"* ]]
+  [[ "$output" == *"@23"* ]]
+  [[ "$output" == *"crew reply worker:eng-7691-foo"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q 'send-keys' "$STUB_LOG"
+  ! grep -q 'kill-window' "$STUB_LOG"
+  ! grep -q '^switch' "$STUB_LOG"
+}
+
+@test "gate: refuses a booting session that has posted no status yet" {
+  setup_occupied_branch
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":null,"ts":1,"age_s":3,"terminal":false}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "gate: reclaims a finished session and proceeds" {
+  setup_occupied_branch
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":"done","ts":1,"age_s":900,"terminal":true}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reclaimed @23"* ]]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="reclaim") | "\(.branch) \(.state) \(.windows[0])"' "$log"
+  [ "$output" = "eng-7691-foo done @23" ]
+}
+
+@test "gate: reclaims a worker window whose engine already exited" {
+  setup_occupied_branch
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":null,"engine":false}]' \
+    '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":"working","ts":1,"age_s":900,"terminal":false}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "gate: an unoccupied existing worktree dispatches normally" {
+  setup_occupied_branch
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  ! grep -q 'kill-window' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "gate: a fresh branch never consults occupants" {
+  stub_launch_bins
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  ! grep -q '^occupants' "$STUB_LOG"
+}
