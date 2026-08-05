@@ -28,6 +28,8 @@ setup() {
   [ -n "$dir" ]
   [ -f "$dir/WORKER_PROTOCOL.md" ]
   [ -f "$dir/DISPATCHER_PROTOCOL.md" ]
+  # dispatch --review resolves this one at dispatch time and aborts without it.
+  [ -f "$dir/REVIEW_TASK.md" ]
 }
 
 @test "crew is not substituted — it never references the protocols" {

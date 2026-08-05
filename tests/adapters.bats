@@ -98,6 +98,7 @@ setup() {
   for tree in claude-code codex; do
     [ -f "$ROOT/adapters/$tree/plugin/protocols/DISPATCHER_PROTOCOL.md" ]
     [ -f "$ROOT/adapters/$tree/plugin/protocols/WORKER_PROTOCOL.md" ]
+    [ -f "$ROOT/adapters/$tree/plugin/protocols/REVIEW_TASK.md" ]
   done
 }
 
