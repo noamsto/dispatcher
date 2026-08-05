@@ -231,7 +231,7 @@ EOF
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]
-  [[ "$output" == *"reap takes --quiet and --dry-run"* ]]
+  [[ "$output" == *"reap takes --quiet, --dry-run and --idle S"* ]]
 }
 
 @test "reap: is a no-op when the bus has no events" {
@@ -533,4 +533,70 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap --dry-run
   [[ "$output" == *"would reap feat/reap-me"* ]]
+}
+
+@test "reap: releases a terminal session's window past --idle, keeping the worktree" {
+  git commit --allow-empty -q -m init
+  git branch feat/idle-me
+  wt_path="$BATS_TEST_TMPDIR/idle-wt"
+  git worktree add -q "$wt_path" feat/idle-me
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
+  CREW_ID=c1 run_crew status "worker:feat/idle-me#s1-1" failed "gate never passed"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"released @23"* ]]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  [ -d "$wt_path" ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="release") | "\(.branch) \(.session) \(.state)"' "$log"
+  [ "$output" = "feat/idle-me s1-1 failed" ]
+}
+
+@test "reap: leaves a terminal session inside --idle alone" {
+  git commit --allow-empty -q -m init
+  git branch feat/idle-me
+  wt_path="$BATS_TEST_TMPDIR/idle-wt"
+  git worktree add -q "$wt_path" feat/idle-me
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
+  CREW_ID=c1 run_crew status "worker:feat/idle-me#s1-1" failed
+  CREW_ID=c1 run run_crew reap --idle 3600
+  [ "$status" -eq 0 ]
+  ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: never releases a non-terminal session" {
+  git commit --allow-empty -q -m init
+  git branch feat/busy
+  wt_path="$BATS_TEST_TMPDIR/busy-wt"
+  git worktree add -q "$wt_path" feat/busy
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tclaude\n')"
+  CREW_ID=c1 run_crew status "worker:feat/busy#s1-1" working
+  CREW_ID=c1 run run_crew reap --idle 0
+  ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: --dry-run only reports the release" {
+  git commit --allow-empty -q -m init
+  git branch feat/idle-me
+  wt_path="$BATS_TEST_TMPDIR/idle-wt"
+  git worktree add -q "$wt_path" feat/idle-me
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
+  CREW_ID=c1 run_crew status "worker:feat/idle-me#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0 --dry-run
+  [[ "$output" == *"would release @23"* ]]
+  ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: rejects a non-numeric --idle" {
+  CREW_ID=c1 run run_crew reap --idle nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--idle"* ]]
 }

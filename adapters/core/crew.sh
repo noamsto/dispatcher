@@ -914,22 +914,72 @@ reap)
   # time; a time-based sweep would delete live work.
   quiet=""
   dry=""
+  idle=3600
   while [ $# -gt 0 ]; do
     case "$1" in
     --quiet) quiet=1 ;;
     --dry-run) dry=1 ;;
+    --idle)
+      [ -n "${2:-}" ] || {
+        echo "crew: --idle needs a value in seconds" >&2
+        exit 1
+      }
+      idle="$2"
+      shift
+      ;;
     *)
-      echo "crew: reap takes --quiet and --dry-run (got '$1')" >&2
+      echo "crew: reap takes --quiet, --dry-run and --idle S (got '$1')" >&2
       exit 1
       ;;
     esac
     shift
   done
+  case "$idle" in '' | *[!0-9]*)
+    echo "crew: --idle must be a non-negative integer number of seconds" >&2
+    exit 1
+    ;;
+  esac
   [ -f "$log" ] || exit 0
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
+
+  # Idle release: a session that reached a terminal state but whose window is
+  # still sitting there keeps the tree occupied, and the PR gate below deliberately
+  # will not touch it while its PR is open. Kill the WINDOW only — the worktree
+  # stays, because a worker legitimately sits in `done` for as long as its PR
+  # takes to merge (#17).
+  while IFS=$'\t' read -r rbranch rsession rstate; do
+    [ -n "$rbranch" ] || continue
+    rwt=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$rbranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    [ -n "$rwt" ] && [ -d "$rwt" ] || continue
+    rocc=$(_occupants "$rwt")
+    [ "$rocc" != '[]' ] || continue
+    for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
+      if [ -n "$dry" ]; then
+        say "would release $w at $rwt ($rbranch $rstate)"
+        continue
+      fi
+      tmux kill-window -t "$w" 2>/dev/null || true
+      say "released $w at $rwt ($rbranch $rstate)"
+    done
+    [ -n "$dry" ] || jq -nc --arg branch "$rbranch" --arg session "$rsession" \
+      --arg state "$rstate" --argjson occ "$rocc" \
+      '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
+          state:$state, windows:($occ|map(.window))}' >>"$log"
+  done <<EOF
+$(jq -s -r --argjson idle "$idle" '
+    def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+    def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+    map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
+    | group_by(.from) | map(max_by(.ts))
+    | group_by(.from | wid_branch) | map(max_by(.ts))
+    | map(select(.body.state as $st | (["done","failed","exited"] | index($st)) != null))
+    | map(select((((now*1000) - .ts) / 1000) >= $idle))
+    | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state] | @tsv' "$log")
+EOF
   # gh reads PR state; wt owns the worktree layout, so it does the removal and
   # resolves from the ambient session PATH (same as in dispatch) — hence checked.
   for tool in gh wt; do
@@ -1048,7 +1098,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
