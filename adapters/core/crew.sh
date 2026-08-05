@@ -690,7 +690,7 @@ report)
     map(select(.crew_id == $crew)) as $all
     | ($all | map(select(.kind == "dispatch")))[]
     | .branch as $b
-    | ($all | map(select(.kind == "status" and ((.from // "") | ltrimstr("worker:")) == $b))) as $st
+    | ($all | map(select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b))) as $st
     | ($st | map(select(.body.state == "working")) | sort_by(.ts) | (.[0].ts // null)) as $start
     | ($st | sort_by(.ts) | (.[-1] // null)) as $last
     | [ .engine, .model, .tier, (.shape // "—"),
@@ -717,7 +717,7 @@ rate)
         | (if $i+1 < ($runs|length) then $runs[$i+1].ts else 9999999999999 end) as $t1
         | (map(select(
               .kind!="dispatch"
-              and (((.from // "") | ltrimstr("worker:")) == $b)
+              and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
               and .ts >= $t0 and .ts < $t1))) as $ev
         | ($ev | map(select(.kind=="status"))) as $st
         | ($st | sort_by(.ts) | (.[-1] // null)) as $last
@@ -731,6 +731,7 @@ rate)
         | {
             run_id: ($repo + ":" + $b + ":" + ($t0|tostring)),
             repo: $repo, branch: $b,
+            session: ($d.session // null),
             engine: $d.engine, model: $d.model, tier: $d.tier,
             effort: $d.effort, title: $d.title,
             reached_pr: ($propen != null),
@@ -942,12 +943,15 @@ reap)
   # pr_url is carried forward because the `done` event itself drops it (same
   # reason roster does this).
   candidates=$(jq -s -r '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
       map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
       | group_by(.from) | map(
           (max_by(.ts)) as $latest
-          | {branch: ($latest.from | sub("^worker:";"")),
+          | {branch: ($latest.from | wid_branch),
+             ts: $latest.ts,
              state: $latest.body.state,
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+      | group_by(.branch) | map(sort_by(.ts) | last)
       | map(select(.state == "done"))
       | .[] | [.branch, (.pr_url // "-")] | @tsv' "$log")
   [ -n "$candidates" ] || {

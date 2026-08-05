@@ -489,3 +489,48 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].branch')" = "feat/x" ]
   [ "$(echo "$output" | jq -r '.[0].session')" = "null" ]
 }
+
+@test "report: rows resolve for a sessioned worker id" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
+           engine:"claude", model:"sonnet", tier:"standard", effort:"medium", title:"T"}' >>"$log"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  run run_crew report c1
+  [[ "$output" == *"done"* ]]
+}
+
+@test "rate: sweeps a sessioned worker and records its session" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
+           engine:"claude", model:"sonnet", tier:"standard", effort:"medium", title:"T"}' >>"$log"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/share"
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  run jq -r '"\(.branch) \(.session) \(.reached_pr)"' "$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$output" = "feat/x s1-1 true" ]
+}
+
+@test "reap: a sessioned worker becomes a candidate" {
+  git commit --allow-empty -q -m init
+  git branch feat/reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt"
+  git worktree add -q "$wt_path" feat/reap-me
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [[ "$output" == *"would reap feat/reap-me"* ]]
+}
