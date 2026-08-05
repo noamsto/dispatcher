@@ -18,7 +18,7 @@
 - **Silence is the healthy case.** A note is written **only** when its branch is taken. Never write a note to report success, and never write one per seam unconditionally.
 - **No writer-side tag validation.** Writes reuse the existing `metrics:`-style synthetic sink, so `crew.sh` is untouched; Phase 2's reader surfaces unknown tags in an explicit `unknown` bucket. Do not add a `crew note` subcommand.
 - **Test idiom for protocol prose:** `tests/adapters.bats` asserts exact strings with `run grep -F "$statement" "$protocol"` where `protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"`. Every asserted string must match the committed prose **byte for byte** — copy it, don't retype it.
-- **Full suite must be green at every commit:** `bats tests/` (104 tests before this plan; each task adds one).
+- **Full suite must be green at every commit:** `bats tests/` (**140** tests on this branch before this plan; each task adds exactly one).
 
 ---
 
