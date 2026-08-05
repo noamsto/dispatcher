@@ -8,9 +8,9 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 ## First action
 
-Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, authoritative `engine:`, `model:`, and `effort:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, and `agent_name:` (your FleetView-style codename — use it in human-facing pings). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
-`crew status "worker:$(git branch --show-current)" working`
-Use `worker:$(git branch --show-current)` as your agent id for every bus call below.
+Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, authoritative `engine:`, `model:`, and `effort:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), and `worker_id:` (your bus identity). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup. Announce yourself:
+`crew status "$CREW_WORKER_ID" working`
+Use `$CREW_WORKER_ID` as your agent id for every bus call below — it is exported into your environment by `dispatch` and identifies **this session**, not just this branch. Never rebuild it from the branch name: several sessions can have run on this branch, and a branch-keyed id let one session drain a directive that was written for another.
 
 Before the startup bus drain, initialize `replanned = false` for this run. This value is available to every stopping path before execute begins.
 
@@ -18,7 +18,7 @@ Before the startup bus drain, initialize `replanned = false` for this run. This 
 
 ```
 seen=$(jq -n 'now*1000|floor')
-crew inbox "worker:$(git branch --show-current)"
+crew inbox "$CREW_WORKER_ID"
 ```
 
 The dispatcher can post a scoping note or a redirect in the gap between
@@ -76,13 +76,13 @@ Before the plan phase, decide **once** whether to bring a top-tier consultant in
 At each pipeline **seam** — after spec, after plan, after execute, after the fast gate, after review, and on **trivial** the single pre-push seam — **before** sinking cost into the next stage, do a non-blocking peek for a dispatcher stop/redirect directive:
 
 ```
-crew inbox "worker:$(git branch --show-current)" --since <seen-cursor>
+crew inbox "$CREW_WORKER_ID" --since <seen-cursor>
 ```
 
 This is a single pass, not a held wait (unlike `crew await`): empty output ⇒ no directive ⇒ proceed to the next stage.
 
 - **Seen-cursor:** already initialized by the **First action** drain (never re-initialize it to `now` here — that re-opens the pre-start blind spot). After a peek (or await) returns messages you **read and handled**, advance `seen` to the max `.ts` of _those_ messages only — `seen=$(printf '%s\n' "$msgs" | jq -s 'map(.ts) | max')` — never to an unrelated max. A peek returning nothing does not move the cursor.
-- **On a directive:** apply **receiving-code-review** discipline — verify the instruction before acting, don't perform agreement. Then redirect the pipeline, or on a "stop" wind down cleanly and stamp `crew status "worker:$(git branch --show-current)" <state>` appropriately (e.g. `failed "stopped by dispatcher"`).
+- **On a directive:** apply **receiving-code-review** discipline — verify the instruction before acting, don't perform agreement. Then redirect the pipeline, or on a "stop" wind down cleanly and stamp `crew status "$CREW_WORKER_ID" <state>` appropriately (e.g. `failed "stopped by dispatcher"`).
 - **Latency is honest, not instant:** a redirect surfaces only at the _next_ seam, so its latency is the remaining time in the current stage. A redirect posted mid-`execute` (the longest stage for deep workers) is not seen until execute finishes. **The peek is NOT a kill switch** — for a hard abort the dispatcher uses `tmux kill-window` (→ SessionEnd `exited`), which stays the reliable stop.
 
 ## Fast deterministic gate (standard/deep)
@@ -152,23 +152,23 @@ Append your lifecycle to the crew bus — this is the contract, not optional:
 
 Immediately before every stopping path, emit one complete latest-state metrics snapshot. This includes a startup-drain dispatcher stop; spec, plan, or consult terminal failure; done; terminal gate failure; dispatcher-requested stop; permission stop; the first blocked-timeout stop; and the final failed stop after the second timeout. Do not emit for a temporary blocked state that continues awaiting. A resumed run emits a newer snapshot, and `crew rate` selects the latest timestamp. Every pre-execute snapshot has `replanned: false`.
 
-- on start: `crew status worker:<branch> working`
-- on PR open: `crew status worker:<branch> pr_open "" <pr_url>`
-- on finish: `crew status worker:<branch> done`
+- on start: `crew status "$CREW_WORKER_ID" working`
+- on PR open: `crew status "$CREW_WORKER_ID" pr_open "" <pr_url>`
+- on finish: `crew status "$CREW_WORKER_ID" done`
 - if blocked on a question only the dispatcher can answer: post the block, then **await the reply in-band** — don't stop dead:
   ```
-  crew status worker:<branch> blocked "<why>"
-  crew msg worker:<branch> dispatcher:<crew_id> "<question>"
-  crew await worker:<branch> --timeout 300
+  crew status "$CREW_WORKER_ID" blocked "<why>"
+  crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<question>"
+  crew await "$CREW_WORKER_ID" --timeout 300
   ```
-  - **plan-shaped gate rework:** post `crew status worker:<branch> blocked "plan-shaped gate rework: <reason>"`, then `crew msg worker:<branch> dispatcher:<crew_id> "<concrete question and evidence>"`, then await as above. The message must include the gate identity, all three ledger rows, fixes attempted, authoritative engine/model/effort, budget state, and the missing rung or failed viability condition. Ask for a concrete replacement or supported higher rung. A dispatcher-supplied replacement is external direction: set `replanned = true`, retain the post-replan cap, checkpoint-peek, then resume execute.
+  - **plan-shaped gate rework:** post `crew status "$CREW_WORKER_ID" blocked "plan-shaped gate rework: <reason>"`, then `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<concrete question and evidence>"`, then await as above. The message must include the gate identity, all three ledger rows, fixes attempted, authoritative engine/model/effort, budget state, and the missing rung or failed viability condition. Ask for a concrete replacement or supported higher rung. A dispatcher-supplied replacement is external direction: set `replanned = true`, retain the post-replan cap, checkpoint-peek, then resume execute.
   Run `crew await` from your bash tool with a tool timeout above `--timeout` (e.g. 360000ms) so the tool doesn't kill it first. It blocks at **zero token cost** (a held bash call, not a spin loop) and prints the dispatcher's reply.
-  - **reply arrives (non-empty stdout):** re-stamp `crew status worker:<branch> working`, incorporate the answer, resume the pipeline from where you paused.
-  - **times out (empty stdout):** re-stamp `crew status worker:<branch> blocked "<why> — awaited 300s, no reply"` and **stop**. Your question stays durable in the bus; the dispatcher answers from the roster (you resume on next activation) or re-dispatches. **Cap block→await cycles at 2** — after a second timeout, `crew status worker:<branch> failed "blocked, no dispatcher reply"` and stop.
+  - **reply arrives (non-empty stdout):** re-stamp `crew status "$CREW_WORKER_ID" working`, incorporate the answer, resume the pipeline from where you paused.
+  - **times out (empty stdout):** re-stamp `crew status "$CREW_WORKER_ID" blocked "<why> — awaited 300s, no reply"` and **stop**. Your question stays durable in the bus; the dispatcher answers from the roster (you resume on next activation) or re-dispatches. **Cap block→await cycles at 2** — after a second timeout, `crew status "$CREW_WORKER_ID" failed "blocked, no dispatcher reply"` and stop.
   - **`trivial`/`standard` only:** if the blocker is low-risk, instead pick a safe default on timeout, document it in the PR body under "## Assumptions", and continue. `deep`/security-sensitive must wait for a real answer.
-  - **Always fold in stragglers after await, before advancing the cursor.** `crew await` keys off its own internal `start=now`, not your seen-cursor, so a directive posted _before_ the await started is not matched by that await. On **every** await return — reply (non-empty stdout) **or** timeout (empty stdout) — and **before** you advance the seen-cursor past the await reply's `.ts`, run `crew inbox "worker:$(git branch --show-current)" --since <seen-cursor>` to catch it. Ordering is load-bearing: advancing the cursor from the reply's `.ts` first would leapfrog a pre-await directive (the exact bug this fold prevents). Handle any directive with the same receiving-code-review discipline, then advance the seen-cursor only over messages you handled (fold results **and** the await reply).
-- if a step hits a **permission prompt you can't resolve** (no human watches your window; `--permission-mode auto` auto-denies): do NOT hang — `crew status worker:<branch> blocked "permission: <what>"`, surface it, emit the snapshot, stop.
-- on terminal failure (gate won't pass, etc.): `crew status worker:<branch> failed "<why>"`, emit the snapshot, then stop.
+  - **Always fold in stragglers after await, before advancing the cursor.** `crew await` keys off its own internal `start=now`, not your seen-cursor, so a directive posted _before_ the await started is not matched by that await. On **every** await return — reply (non-empty stdout) **or** timeout (empty stdout) — and **before** you advance the seen-cursor past the await reply's `.ts`, run `crew inbox "$CREW_WORKER_ID" --since <seen-cursor>` to catch it. Ordering is load-bearing: advancing the cursor from the reply's `.ts` first would leapfrog a pre-await directive (the exact bug this fold prevents). Handle any directive with the same receiving-code-review discipline, then advance the seen-cursor only over messages you handled (fold results **and** the await reply).
+- if a step hits a **permission prompt you can't resolve** (no human watches your window; `--permission-mode auto` auto-denies): do NOT hang — `crew status "$CREW_WORKER_ID" blocked "permission: <what>"`, surface it, emit the snapshot, stop.
+- on terminal failure (gate won't pass, etc.): `crew status "$CREW_WORKER_ID" failed "<why>"`, emit the snapshot, then stop.
 
 ## Rules
 
@@ -195,11 +195,11 @@ Immediately before every stopping path, emit one complete latest-state metrics s
 
 ## When done
 
-Open the PR, then `crew status worker:<branch> pr_open "" <url>` → emit the complete metrics snapshot → `crew status worker:<branch> done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+Open the PR, then `crew status "$CREW_WORKER_ID" pr_open "" <url>` → emit the complete metrics snapshot → `crew status "$CREW_WORKER_ID" done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - **Every worker — emit outcome metrics before you stop.** On **all** tiers, append a metrics record to the bus so this run can be rated:
   ```
-  crew msg "worker:$(git branch --show-current)" "metrics:$CREW_ID" '{"consulted":<true|false>,"consult_engine":"<fable|codex|cursor|null>","plan_critic_first_pass":"<accept|revise|reject|null>","rework_count":<int>,"replanned":<true|false>,"review_high":<int>,"review_mode":"<full|downgraded|none>"}'
+  crew msg "$CREW_WORKER_ID" "metrics:$CREW_ID" '{"consulted":<true|false>,"consult_engine":"<fable|codex|cursor|null>","plan_critic_first_pass":"<accept|revise|reject|null>","rework_count":<int>,"replanned":<true|false>,"review_high":<int>,"review_mode":"<full|downgraded|none>"}'
   ```
   (`$CREW_ID` is the `crew_id:` from `WORKER_TASK.md`.) `consulted` = whether the orchestration consult ran (deep only; `false` otherwise). `consult_engine` = which consultant ran it — `fable` (subagent), `codex` (gpt-5.6-sol via the read-only MCP), `cursor` (grok-4.5-high one-shot) — `null` whenever `consulted` is `false`. `plan_critic_first_pass` = the plan-critic's verdict on the **first** plan draft, or `null` if you skipped the plan phase (trivial). `rework_count` = execute-stage fixes the gates forced (`0` if none). `replanned` is `false` when no execute-time planning episode began and no dispatcher plan was adopted, including a same-rung implementation fallback and top/no-rung block; it is `true` when same-rung re-entry or strict-upward planning actually began (even if viability later failed), or when a dispatcher replacement was adopted. Initial planning, critics, and consult recovery do not change `replanned`; a recovery-planner launch sets it as defined but never increments `rework_count`. `review_high` = HIGH-severity review-gate findings (`0` if no reviewer ran, e.g. trivial). `review_mode` = which review depth actually ran (`full`|`downgraded`|`none`, per the Code review gate's repo-aware scaling) — so `review_high` is read in context, never compared across mismatched depths. **Codex and cursor** still run neither the plan-critic nor the claude code-review gate (those stay Claude-only), so they emit `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` — marking the run **ungated**, not unorchestrated: they still delegate execute subagents per rule 1. Emit real `null` (not the string `"null"`) for fields a tier or engine never produces. This is a plain `msg` to a synthetic sink — it does **not** wake the dispatcher (its `watch`/`inbox` filter is `to==dispatcher:<crew>`/`*`, never `metrics:<crew>`). **Every worker emits this**, so the ratings store has one row per run.
 

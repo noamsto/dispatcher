@@ -294,6 +294,9 @@ crew reap --quiet || true
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+mkdir -p "$crew_dir"
+
 # Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
 # ourselves below, and the hook would otherwise open a second, undecorated shell
 # window at the same worktree (#123). Its own `$CLAUDECODE` guard only covers a
@@ -303,9 +306,8 @@ slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/
 # cannot commit at all.
 wt_post_switch='post-switch.tmux=""'
 
-# Review attach (--pr N): resolve headRefName once, switch by name (no -c). Fall
-# back to wt switch pr:N only for fork / missing-ref. Stamp pr: N, never Closes
-# from the PR number, and never mint a sibling feat/N-review-… branch (#8).
+# --pr resolves the head ref; the switch itself happens after the gate below, so
+# a refusal costs no worktree and no window.
 if [ -n "$pr_number" ]; then
   pr_json=$(gh pr view "$pr_number" --json headRefName,isCrossRepository)
   head=$(printf '%s' "$pr_json" | jq -r .headRefName)
@@ -318,12 +320,11 @@ if [ -n "$pr_number" ]; then
   closes="pr: $pr_number"
   if git show-ref --verify --quiet "refs/heads/$head" ||
     git show-ref --verify --quiet "refs/remotes/origin/$head"; then
-    wt switch "$head" -y --config-set "$wt_post_switch"
+    switch_mode=name
   elif [ "$cross" = false ]; then
-    git fetch origin "$head"
-    wt switch "$head" -y --config-set "$wt_post_switch"
+    switch_mode=fetch-name
   else
-    wt switch "pr:$pr_number" -y --config-set "$wt_post_switch"
+    switch_mode=pr-ref
   fi
 else
   # Identity + closes line. Linear mode derives both from the ticket (no gh); a
@@ -346,10 +347,84 @@ else
     branch="feat/$num-$slug"
     closes="Closes #$num"
   fi
-  wt switch -c "$branch" -y --config-set "$wt_post_switch"
+  switch_mode=create
 fi
 
+# Serialize the gate's check-then-act (occupancy read -> switch -> open window)
+# across concurrent dispatches on ONE branch; ungated, two racers both see an
+# empty worktree and both open a window — the stacking #17 forbids. `ln -s` is an
+# atomic exclusive create that publishes the owner pid (the link target) in the
+# same syscall, so it is the ONLY creator of the lock and exactly one racer wins.
+# A stale (dead-owner) lock is NOT auto-reclaimed: portable shell has no
+# compare-and-delete, so a remove-and-retake path races a fresh acquirer and lets
+# two dispatches proceed — the very stacking this prevents. It refuses instead,
+# which the EXIT/signal trap makes rare: every exit short of SIGKILL clears it.
+# cksum keys the file so a branch name with a `/` can't fold onto another's (#24).
+dispatch_lock="$crew_dir/dispatch-$(printf '%s' "$branch" | cksum | cut -d' ' -f1).lock"
+if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
+  held=$(readlink "$dispatch_lock" 2>/dev/null || true)
+  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+    echo "dispatch: another dispatch is already scaffolding $branch (pid $held) — wait for it or retry" >&2
+  else
+    echo "dispatch: a stale dispatch lock for $branch remains from a hard-killed dispatch — remove $dispatch_lock and retry" >&2
+  fi
+  exit 1
+fi
+trap 'rm -f "$dispatch_lock"' EXIT INT TERM HUP
+
+# Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
+# onto a branch that already has one lands in the same directory. Occupancy is a
+# WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a
+# finished agent drops to a shell prompt, and a command-based check would read the
+# window as empty.
+prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+if [ -n "$prev_wt" ]; then
+  occ=$(crew occupants "$prev_wt")
+  if [ "$occ" != "[]" ]; then
+    newest=$(crew sessions "$branch" | jq -c 'last')
+    state=$(printf '%s' "$newest" | jq -r '.state // "none"')
+    terminal=$(printf '%s' "$newest" | jq -r '.terminal // false')
+    engine=$(printf '%s' "$occ" | jq -r 'map(select(.engine)) | length')
+    if [ "$engine" -gt 0 ] && [ "$terminal" != true ]; then
+      nm=$(printf '%s' "$occ" | jq -r '.[0].name')
+      win=$(printf '%s' "$occ" | jq -r '.[0].window')
+      wid=$(printf '%s' "$newest" | jq -r '.worker_id // ""')
+      {
+        echo "dispatch: $nm ($wid) is $state in that worktree (window $win) — git allows one worktree per branch."
+        echo "  redirect it:  crew reply worker:$branch \"<directive>\""
+        echo "  or take over: tmux kill-window -t $win, then re-dispatch"
+      } >&2
+      exit 1
+    fi
+    # Finished work squatting the tree (terminal, or the engine is already gone).
+    # Reclaim rather than stack beside it. Best-effort, like reap's kills.
+    for w in $(printf '%s' "$occ" | jq -r '.[].window'); do
+      tmux kill-window -t "$w" 2>/dev/null || true
+      echo "dispatch: reclaimed $w at $prev_wt (session $state)"
+    done
+    jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"reclaim", branch:$branch, state:$state,
+          windows:($occ|map(.window))}' >>"$crew_dir/events.jsonl"
+  fi
+fi
+
+case "$switch_mode" in
+create) wt switch -c "$branch" -y --config-set "$wt_post_switch" ;;
+name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
+fetch-name)
+  git fetch origin "$branch"
+  wt switch "$branch" -y --config-set "$wt_post_switch"
+  ;;
+pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
+esac
+
 sanitized="${branch//\//-}"
+
+# Session id is issued here and carried in the environment by all three engine
+# launchers. epoch+pid prevents two same-second dispatches on one branch from
+# sharing an identity (#17).
+session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
+worker_id="worker:$branch#$session"
 
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
@@ -362,15 +437,12 @@ if [ -z "$wt_path" ]; then
   exit 1
 fi
 
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-mkdir -p "$crew_dir"
-
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
-jq -nc --arg crew "$crew_id" --arg branch "$branch" \
+jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}' \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}' \
   >>"$crew_dir/events.jsonl"
 
 # FleetView-style codename+color, derived from the branch (deterministic).
@@ -383,8 +455,8 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
 {
-  printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
-    "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
+  printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
+    "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -395,7 +467,11 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
   fi
 } >"$wt_path/WORKER_TASK.md"
 
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -P -F '#{window_id} #{pane_id}')
+
+# Printed so the dispatcher can address this session in the gap before the worker
+# boots — its startup drain is unbounded, so a scoping note posted now still lands.
+echo "worker_id: $worker_id"
 
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
@@ -491,4 +567,4 @@ fi
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
 # terminal state, or a vanished pane.
-CREW_ID="$crew_id" nohup crew stall-watch "$branch" --pane "$pane" >/dev/null 2>&1 &
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" >/dev/null 2>&1 &

@@ -33,6 +33,81 @@ _identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macO
     '{name:$name, color:$color, tmux:$tmux}'
 }
 
+# _occupants <worktree_path> -> [{window,name,pane,engine}] — worker windows
+# rooted at that path. Keyed on @crew_name (dispatch stamps it on every worker
+# window), NOT on the pane's running command: a finished agent drops back to a
+# shell prompt, and a command match would then read its window as empty and let
+# the next dispatch stack a second worker onto the same tree (#17). Excludes the
+# dispatcher's own window — it carries @crew_name too — and the caller's.
+_occupants() {
+  local wtp="$1" self_win="" wins panes out wid nm path pw pid cmd epane
+  if [ -n "${TMUX_PANE:-}" ]; then
+    self_win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null || true)
+  fi
+  wins=$(tmux list-windows -a -F '#{window_id}	#{@crew_name}	#{pane_current_path}' 2>/dev/null || true)
+  panes=$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_command}' 2>/dev/null || true)
+  out='[]'
+  while IFS=$'\t' read -r wid nm path; do
+    [ -n "$wid" ] || continue
+    [ "$path" = "$wtp" ] || continue
+    [ -n "$nm" ] || continue
+    [ "$nm" != dispatcher ] || continue
+    [ "$wid" != "$self_win" ] || continue
+    epane=""
+    while IFS=$'\t' read -r pw pid cmd; do
+      [ "$pw" = "$wid" ] || continue
+      case "$cmd" in
+      claude | codex | cursor-agent)
+        epane="$pid"
+        break
+        ;;
+      esac
+    done <<PANES
+$panes
+PANES
+    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" \
+      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), engine:($p!="")}]')
+  done <<WINS
+$wins
+WINS
+  printf '%s' "$out"
+}
+
+# _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
+# oldest -> newest. Every fold is per SESSION: aggregating across a branch is how
+# three workers came to read as one flip-flopping identity (#17). A session with a
+# dispatch event but no status yet is still listed (state null) — dispatch needs to
+# see a booting worker. No crew filter by default, same reason `reap` has none: the
+# sessions worth inspecting are the ones from earlier dispatcher crews.
+_sessions() {
+  local branch="$1" crewf="$2"
+  [ -f "$log" ] || {
+    printf '[]'
+    return 0
+  }
+  jq -s -c --arg b "$branch" --arg crew "$crewf" '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+      def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+      map(select($crew=="" or .crew_id==$crew))
+      | ( map(select(.kind=="dispatch" and .branch==$b))
+          | map({session:(.session // null), ts:.ts}) ) as $disp
+      | ( map(select(.kind=="status"
+                     and ((.from // "") | startswith("worker:"))
+                     and ((.from) | wid_branch) == $b))
+          | map({session:((.from) | wid_session), state:.body.state, ts:.ts}) ) as $st
+      | ( ($disp + $st) | map(.session) | unique ) as $ids
+      | [ $ids[] as $s
+          | ($st | map(select(.session == $s)) | sort_by(.ts) | last) as $latest
+          | ($disp | map(select(.session == $s)) | sort_by(.ts) | last) as $d
+          | { session: $s,
+              worker_id: ("worker:" + $b + (if $s == null then "" else "#" + $s end)),
+              state: ($latest.state // null),
+              ts: ($latest.ts // $d.ts),
+              terminal: ((["done","failed","exited"] | index($latest.state // "")) != null) } ]
+      | sort_by(.ts)
+      | map(. + {age_s: (((now*1000) - .ts) / 1000 | floor)})' "$log"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
@@ -120,6 +195,15 @@ if [ "$sub" = identity ]; then
   _identity "$1"
   exit 0
 fi
+if [ "$sub" = occupants ]; then
+  [ -n "${1:-}" ] || {
+    echo "crew: occupants <worktree-path>" >&2
+    exit 1
+  }
+  _occupants "$1"
+  printf '\n'
+  exit 0
+fi
 
 # repo-keyed bus dir; --path-format=absolute so main-checkout and worktrees
 # resolve to a byte-identical path (load-bearing — see #29).
@@ -195,7 +279,36 @@ reply)
     exit 1
   }
   mkdir -p "$dir"
+  # A branch-only worker target resolves to the newest session on that branch, so
+  # the dispatcher keeps writing `worker:<branch>` while the message lands on a
+  # session that exists NOW. Resolving at send time is what makes inheritance
+  # impossible: a stopped session's successor has a different id, so a directive
+  # written for the former is never addressed to the latter (#17).
   to="${1:-}"
+  case "$to" in
+  worker:*)
+    # Distinguish explicit session id from branch-only: extract the suffix after
+    # the last '#' and check whether it has the sid shape s<epoch>-<pid>. A '#'
+    # embedded in the branch name (legal in git) does not match that shape, so
+    # those branch-only addresses fall through to _sessions resolution.
+    _rest="${to##*#}"
+    if [[ "$_rest" =~ ^s[0-9]+-[0-9]+$ ]]; then
+      : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
+    else
+      br="${to#worker:}"
+      newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      [ -n "$newest" ] && [ "$newest" != null ] || {
+        echo "crew: no session on $br — dispatch a worker before replying to one" >&2
+        exit 1
+      }
+      if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
+        echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
+        exit 1
+      fi
+      to=$(printf '%s' "$newest" | jq -r .worker_id)
+    fi
+    ;;
+  esac
   _build_reply() {
     jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
@@ -410,27 +523,67 @@ watch)
     sleep "$interval"
   done
   ;;
+sessions)
+  branch="${1:-}"
+  shift || true
+  screw=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 1
+      }
+      screw="$2"
+      shift 2
+      ;;
+    *)
+      echo "crew: sessions <branch> [--crew ID]" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -n "$branch" ] || {
+    echo "crew: sessions <branch> [--crew ID]" >&2
+    exit 1
+  }
+  _sessions "$branch" "$screw"
+  printf '\n'
+  ;;
 roster)
   crew="${1:-$(_crew_id)}"
   [ -f "$log" ] || exit 0
-  # latest status per agent, decorated with each worker's derived codename
+  # Fold per SESSION first, then collapse per BRANCH for display. Both halves are
+  # load-bearing: aggregating across a branch is what made three workers read as
+  # one flip-flopping identity, and it would also let an older session's `working`
+  # resurrect a newer session's `exited` through prev_state (#17).
   base=$(jq -c -s --arg crew "$crew" '
-      # title lives on the dispatch event (keyed by branch); join it per worker.
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+      def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+      # title lives on the dispatch event (keyed by branch); join it per branch.
       # last wins on re-dispatch. missing (pre-title dispatch events) -> null.
       (map(select(.crew_id==$crew and .kind=="dispatch"))
-        | map({key:("worker:"+.branch), value:(.title // null)}) | from_entries) as $titles
-      | map(select(.crew_id==$crew and .kind=="status"))
-      | group_by(.from) | map(
+        | map({key:.branch, value:(.title // null)}) | from_entries) as $titles
+      | map(select(.crew_id==$crew and .kind=="status"
+                   and ((.from // "") | startswith("worker:"))))
+      | group_by(.from)
+      | map(
           (max_by(.ts)) as $latest
           | {from: $latest.from,
+             branch: ($latest.from | wid_branch),
+             session: ($latest.from | wid_session),
              state: $latest.body.state,
-             title: ($titles[$latest.from] // null),
+             ts: $latest.ts,
              # carry forward last-known pr_url — the terminal `done` event drops it
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last),
              # last state that was NOT the exited backstop, so a spurious exited
              # can be resolved back to what the worker itself last reported.
              prev_state: (map(select(.body.state != "exited")) | max_by(.ts) | .body.state),
-             age_s: ((now - ($latest.ts/1000))|floor)})' "$log")
+             age_s: ((now - ($latest.ts/1000))|floor)})
+      | group_by(.branch)
+      | map((sort_by(.ts) | last)
+            + {title: (.[0].branch as $b | $titles[$b] // null),
+               sessions: (sort_by(.ts) | map({session, state, age_s}))})' "$log")
   # Resolve a false `exited`. SessionEnd fires for more than the worker's own session
   # (a subagent ending, a human closing an auxiliary pane), and the hook sees only a
   # cwd — it cannot tell those apart, nor wait to find out: the worker's real
@@ -443,7 +596,7 @@ roster)
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     st=$(printf '%s' "$row" | jq -r '.state')
-    branch=$(printf '%s' "$row" | jq -r '.from | sub("^worker:";"")')
+    branch=$(printf '%s' "$row" | jq -r '.branch')
     if [ "$st" = exited ] && [ -n "$branch" ]; then
       # awk reads to EOF on purpose: an early `exit` SIGPIPEs git under pipefail.
       wtpath=$(git worktree list --porcelain |
@@ -466,9 +619,9 @@ PANES
 $(printf '%s' "$base" | jq -c '.[]')
 EOF
   idmap='{}'
-  for from in $(printf '%s' "$resolved" | jq -r '.[].from | select(startswith("worker:"))'); do
-    id=$(_identity "${from#worker:}")
-    idmap=$(printf '%s' "$idmap" | jq -c --arg k "$from" --argjson v "$id" '. + {($k): $v}')
+  for br in $(printf '%s' "$resolved" | jq -r '.[].branch'); do
+    id=$(_identity "$br")
+    idmap=$(printf '%s' "$idmap" | jq -c --arg k "$br" --argjson v "$id" '. + {($k): $v}')
   done
   # Disambiguate colliding codenames. identity is a stateless hash, so two live
   # workers can legitimately land on the same name; suffix the issue/ticket token
@@ -477,10 +630,10 @@ EOF
   # prev_state is internal to the resolve step above — drop it unless it explains
   # a row the reader would otherwise mistrust.
   printf '%s' "$resolved" | jq --argjson m "$idmap" '
-      map(. + ($m[.from] // {}))
+      map(. + ($m[.branch] // {}))
       | (map(select(.name != null) | .name) | group_by(.) | map(select(length > 1) | .[0])) as $dupes
       | map(if (.name as $n | $dupes | index($n))
-            then .name = (.name + "·" + ((.from | capture("worker:(?:[a-z]+/)?(?<id>[A-Za-z]+-[0-9]+|[0-9]+)") | .id) // (.from | sub("^worker:";""))))
+            then .name = (.name + "·" + ((.branch | capture("(?:[a-z]+/)?(?<id>[A-Za-z]+-[0-9]+|[0-9]+)") | .id) // .branch))
             else . end)
       | map(if .exit_suspect then . else del(.prev_state) end)'
   ;;
@@ -537,7 +690,7 @@ report)
     map(select(.crew_id == $crew)) as $all
     | ($all | map(select(.kind == "dispatch")))[]
     | .branch as $b
-    | ($all | map(select(.kind == "status" and ((.from // "") | ltrimstr("worker:")) == $b))) as $st
+    | ($all | map(select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b))) as $st
     | ($st | map(select(.body.state == "working")) | sort_by(.ts) | (.[0].ts // null)) as $start
     | ($st | sort_by(.ts) | (.[-1] // null)) as $last
     | [ .engine, .model, .tier, (.shape // "—"),
@@ -564,7 +717,7 @@ rate)
         | (if $i+1 < ($runs|length) then $runs[$i+1].ts else 9999999999999 end) as $t1
         | (map(select(
               .kind!="dispatch"
-              and (((.from // "") | ltrimstr("worker:")) == $b)
+              and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
               and .ts >= $t0 and .ts < $t1))) as $ev
         | ($ev | map(select(.kind=="status"))) as $st
         | ($st | sort_by(.ts) | (.[-1] // null)) as $last
@@ -578,6 +731,7 @@ rate)
         | {
             run_id: ($repo + ":" + $b + ":" + ($t0|tostring)),
             repo: $repo, branch: $b,
+            session: ($d.session // null),
             engine: $d.engine, model: $d.model, tier: $d.tier,
             effort: $d.effort, title: $d.title,
             reached_pr: ($propen != null),
@@ -615,7 +769,7 @@ rate)
   printf '%s' "$records" | jq -c '.[]' >>"$store"
   ;;
 stall-watch)
-  # stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]
+  # stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]
   # A detached liveness watchdog `dispatch` spawns per worker. The crew bus is
   # blind to a hung worker: a worker posts `working` once at launch then nothing
   # until a terminal state, so sticky `working` + climbing age is
@@ -632,10 +786,10 @@ stall-watch)
   # is exactly what `--output-format text` did to cursor workers.
   # CREW_STALL_SAMPLE_CMD overrides the pane sampler (its stdout is the "output",
   # its exit code is pane liveness) so the loop is testable without tmux.
-  branch="${1:-}"
+  me="${1:-}"
   shift || true
-  [ -n "$branch" ] || {
-    echo "crew: stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]" >&2
+  [ -n "$me" ] || {
+    echo "crew: stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]" >&2
     exit 1
   }
   crew=$(_crew_id)
@@ -680,7 +834,6 @@ stall-watch)
     echo "crew: stall-watch needs --pane <id>" >&2
     exit 1
   }
-  me="worker:$branch"
   # Sample the pane: print a hash of its visible output, return non-zero when the
   # pane is gone (worker ended — the `exited` backstop owns that case).
   _sample() {
@@ -761,22 +914,72 @@ reap)
   # time; a time-based sweep would delete live work.
   quiet=""
   dry=""
+  idle=3600
   while [ $# -gt 0 ]; do
     case "$1" in
     --quiet) quiet=1 ;;
     --dry-run) dry=1 ;;
+    --idle)
+      [ -n "${2:-}" ] || {
+        echo "crew: --idle needs a value in seconds" >&2
+        exit 1
+      }
+      idle="$2"
+      shift
+      ;;
     *)
-      echo "crew: reap takes --quiet and --dry-run (got '$1')" >&2
+      echo "crew: reap takes --quiet, --dry-run and --idle S (got '$1')" >&2
       exit 1
       ;;
     esac
     shift
   done
+  case "$idle" in '' | *[!0-9]*)
+    echo "crew: --idle must be a non-negative integer number of seconds" >&2
+    exit 1
+    ;;
+  esac
   [ -f "$log" ] || exit 0
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
+
+  # Idle release: a session that reached a terminal state but whose window is
+  # still sitting there keeps the tree occupied, and the PR gate below deliberately
+  # will not touch it while its PR is open. Kill the WINDOW only — the worktree
+  # stays, because a worker legitimately sits in `done` for as long as its PR
+  # takes to merge (#17).
+  while IFS=$'\t' read -r rbranch rsession rstate; do
+    [ -n "$rbranch" ] || continue
+    rwt=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$rbranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    [ -n "$rwt" ] && [ -d "$rwt" ] || continue
+    rocc=$(_occupants "$rwt")
+    [ "$rocc" != '[]' ] || continue
+    for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
+      if [ -n "$dry" ]; then
+        say "would release $w at $rwt ($rbranch $rstate)"
+        continue
+      fi
+      tmux kill-window -t "$w" 2>/dev/null || true
+      say "released $w at $rwt ($rbranch $rstate)"
+    done
+    [ -n "$dry" ] || jq -nc --arg branch "$rbranch" --arg session "$rsession" \
+      --arg state "$rstate" --argjson occ "$rocc" \
+      '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
+          state:$state, windows:($occ|map(.window))}' >>"$log"
+  done <<EOF
+$(jq -s -r --argjson idle "$idle" '
+    def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+    def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+    map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
+    | group_by(.from) | map(max_by(.ts))
+    | group_by(.from | wid_branch) | map(max_by(.ts))
+    | map(select(.body.state as $st | (["done","failed","exited"] | index($st)) != null))
+    | map(select((((now*1000) - .ts) / 1000) >= $idle))
+    | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state] | @tsv' "$log")
+EOF
   # gh reads PR state; wt owns the worktree layout, so it does the removal and
   # resolves from the ambient session PATH (same as in dispatch) — hence checked.
   for tool in gh wt; do
@@ -790,12 +993,15 @@ reap)
   # pr_url is carried forward because the `done` event itself drops it (same
   # reason roster does this).
   candidates=$(jq -s -r '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
       map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
       | group_by(.from) | map(
           (max_by(.ts)) as $latest
-          | {branch: ($latest.from | sub("^worker:";"")),
+          | {branch: ($latest.from | wid_branch),
+             ts: $latest.ts,
              state: $latest.body.state,
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+      | group_by(.branch) | map(sort_by(.ts) | last)
       | map(select(.state == "done"))
       | .[] | [.branch, (.pr_url // "-")] | @tsv' "$log")
   [ -n "$candidates" ] || {
@@ -892,7 +1098,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

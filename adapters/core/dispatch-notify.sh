@@ -21,7 +21,11 @@ if [[ -n $crew_id ]]; then
   common="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [[ -n $common ]]; then
     log="$common/crew/events.jsonl"
-    me="worker:$branch"
+    # The worker id comes from the environment, never from WORKER_TASK.md: the doc
+    # is overwritten by the next dispatch on this worktree, so reading it here
+    # would post THIS session's `exited` against its successor (#17). A session
+    # launched before this change has no CREW_WORKER_ID and keeps the old id.
+    me="${CREW_WORKER_ID:-worker:$branch}"
     last=""
     if [[ -f $log ]]; then
       last="$(jq -r --arg c "$crew_id" --arg m "$me" \
