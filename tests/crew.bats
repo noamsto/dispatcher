@@ -430,3 +430,16 @@ EOF
   run run_crew inbox "worker:feat/x#s1-1" c1
   [[ "$output" == *"STOP - do not push"* ]]
 }
+
+@test "reply: branch-only address where branch contains '#' resolves via _sessions (not treated as sid)" {
+  local branch="feat/12-a#b"
+  local sid="s1234567890-12345"
+  local worker_id="worker:${branch}#${sid}"
+
+  # seed a live session for the branch
+  CREW_ID=c1 run_crew status "$worker_id" working
+  CREW_ID=c1 run_crew reply "worker:${branch}" "go"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "$worker_id" ]
+}

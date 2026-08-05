@@ -286,19 +286,27 @@ reply)
   # written for the former is never addressed to the latter (#17).
   to="${1:-}"
   case "$to" in
-  worker:*'#'*) ;; # explicit session — honoured verbatim
   worker:*)
-    br="${to#worker:}"
-    newest=$(_sessions "$br" "$crew" | jq -c 'last')
-    [ -n "$newest" ] && [ "$newest" != null ] || {
-      echo "crew: no session on $br — dispatch a worker before replying to one" >&2
-      exit 1
-    }
-    if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
-      echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
-      exit 1
+    # Distinguish explicit session id from branch-only: extract the suffix after
+    # the last '#' and check whether it has the sid shape s<epoch>-<pid>. A '#'
+    # embedded in the branch name (legal in git) does not match that shape, so
+    # those branch-only addresses fall through to _sessions resolution.
+    _rest="${to##*#}"
+    if [[ "$_rest" =~ ^s[0-9]+-[0-9]+$ ]]; then
+      : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
+    else
+      br="${to#worker:}"
+      newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      [ -n "$newest" ] && [ "$newest" != null ] || {
+        echo "crew: no session on $br — dispatch a worker before replying to one" >&2
+        exit 1
+      }
+      if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
+        echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
+        exit 1
+      fi
+      to=$(printf '%s' "$newest" | jq -r .worker_id)
     fi
-    to=$(printf '%s' "$newest" | jq -r .worker_id)
     ;;
   esac
   _build_reply() {
