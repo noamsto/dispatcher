@@ -145,11 +145,29 @@ _lock_release() { rm -rf "$1"; }
 _LINE_MAX=4096
 _ELIDED=' …[elided]'
 
+# _shrink <text> <keep> — shorten <text> to roughly <keep> characters.
+# A sink body (`metrics:`, `retro:`) is itself JSON, and cutting it as a blob ends
+# the string mid-object: the enclosing bus line stays valid but the body no longer
+# parses, so a reader loses the WHOLE record — every key, not just the long one —
+# and `rate`'s fold used to die on it (#25). So shorten each long string leaf and
+# re-encode instead, which keeps the record's shape and its short keys intact.
+# Plain-text bodies (a worker's question) and `status` details are not JSON and
+# still get the blob cut. `cut -c` cuts on a character boundary, so multibyte text
+# never splits mid-rune.
+_shrink() {
+  local text="$1" keep="$2"
+  if printf '%s' "$text" | jq -e 'type=="object" or type=="array"' >/dev/null 2>&1; then
+    printf '%s' "$text" | jq -c --argjson k "$keep" --arg e "$_ELIDED" \
+      'walk(if type=="string" and (length > $k) then .[0:$k] + $e else . end)'
+  else
+    printf '%s%s' "$(printf '%s' "$text" | cut -c1-"$keep")" "$_ELIDED"
+  fi
+}
+
 # _fit_line <builder> <text> — echo the line <builder> builds from <text>, with
 # <text> shortened until the ENCODED line fits. Re-measures each pass rather than
 # computing a cut from the input length: JSON escaping is nonlinear (a control byte
-# becomes six characters). `cut -c` cuts on a character boundary, so multibyte text
-# never splits mid-rune. The proportional guess is floored at a 3/4 step so every
+# becomes six characters). The proportional guess is floored at a 3/4 step so every
 # pass strictly shrinks and the loop terminates.
 _fit_line() {
   local build="$1" full="$2" text="$2" line n keep
@@ -159,7 +177,7 @@ _fit_line() {
     n=$(printf '%s' "$line" | wc -c)
     { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
     keep=$(((keep * _LINE_MAX / n) < (keep * 3 / 4) ? (keep * _LINE_MAX / n) : (keep * 3 / 4)))
-    text="$(printf '%s' "$full" | cut -c1-"$keep")$_ELIDED"
+    text=$(_shrink "$full" "$keep")
     line=$("$build" "$text")
   done
   printf '%s' "$line"
@@ -725,9 +743,12 @@ rate)
         | ($st | map(.body.pr_url) | map(select(.!=null)) | last) as $pr
         | ($st | map(select(.body.state=="pr_open")) | sort_by(.ts) | (.[0] // null)) as $propen
         | ($st | map(select(.body.state=="blocked")) | length) as $blocked
+        # `try fromjson catch null` so ONE unparseable body cannot abort the whole
+        # sweep and lose every other run with it (#25). Such a run folds with null
+        # metrics — the same shape a run that never emitted metrics already takes.
         | ($ev | map(select(.kind=="msg" and ((.to // "") | startswith("metrics:"))))
                | sort_by(.ts) | (.[-1] // null)
-               | if . == null then null else (.body | fromjson) end) as $m
+               | if . == null then null else (.body | try fromjson catch null) end) as $m
         | {
             run_id: ($repo + ":" + $b + ":" + ($t0|tostring)),
             repo: $repo, branch: $b,
