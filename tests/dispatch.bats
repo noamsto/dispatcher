@@ -733,3 +733,64 @@ EOF
   [ "$status" -eq 0 ]
   ! grep -q '^occupants' "$STUB_LOG"
 }
+
+# The gate must fire on the create-mode re-dispatch too (same issue/id again),
+# not only on --pr — that is the path #17 was originally reported through.
+@test "gate: refuses a live occupant on a create-mode re-dispatch" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch feat/42-do-a-thing
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing" feat/42-do-a-thing
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:feat/42-do-a-thing#s1-1","state":"working","ts":1,"age_s":412,"terminal":false}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"worker:feat/42-do-a-thing#s1-1"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q '^switch' "$STUB_LOG"
+}
+
+# lock_path <branch> — the per-branch dispatch lock symlink, keyed exactly as
+# dispatch keys it (cksum of the branch), under the same git-common-dir.
+lock_path() { # <branch>
+  printf '%s/crew/dispatch-%s.lock' \
+    "$(git rev-parse --path-format=absolute --git-common-dir)" \
+    "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+}
+
+@test "lock: a second dispatch on a branch already being scaffolded refuses" {
+  stub_launch_bins
+  stub_crew_gate '[]' '[]'
+  # Pre-hold the lock as a symlink to a live pid (this shell's) so dispatch hits it.
+  lock="$(lock_path feat/42-do-a-thing)"
+  mkdir -p "$(dirname "$lock")"
+  ln -s "$$" "$lock"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already scaffolding feat/42-do-a-thing"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q '^switch' "$STUB_LOG"
+}
+
+@test "lock: a stale lock refuses with a remediation hint, never auto-reclaims" {
+  stub_launch_bins
+  stub_crew_gate '[]' '[]'
+  # PID 2^31-1 is never a live process. Auto-reclaim can't be made race-free in
+  # portable shell, so a dead-owner lock refuses rather than silently retake it.
+  lock="$(lock_path feat/42-do-a-thing)"
+  mkdir -p "$(dirname "$lock")"
+  ln -s 2147483647 "$lock"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"stale dispatch lock"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q '^switch' "$STUB_LOG"
+}
+
+@test "lock: is released after a successful dispatch" {
+  stub_launch_bins
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ ! -L "$(lock_path feat/42-do-a-thing)" ]
+}

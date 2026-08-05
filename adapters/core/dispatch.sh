@@ -350,6 +350,28 @@ else
   switch_mode=create
 fi
 
+# Serialize the gate's check-then-act (occupancy read -> switch -> open window)
+# across concurrent dispatches on ONE branch; ungated, two racers both see an
+# empty worktree and both open a window — the stacking #17 forbids. `ln -s` is an
+# atomic exclusive create that publishes the owner pid (the link target) in the
+# same syscall, so it is the ONLY creator of the lock and exactly one racer wins.
+# A stale (dead-owner) lock is NOT auto-reclaimed: portable shell has no
+# compare-and-delete, so a remove-and-retake path races a fresh acquirer and lets
+# two dispatches proceed — the very stacking this prevents. It refuses instead,
+# which the EXIT/signal trap makes rare: every exit short of SIGKILL clears it.
+# cksum keys the file so a branch name with a `/` can't fold onto another's (#24).
+dispatch_lock="$crew_dir/dispatch-$(printf '%s' "$branch" | cksum | cut -d' ' -f1).lock"
+if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
+  held=$(readlink "$dispatch_lock" 2>/dev/null || true)
+  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+    echo "dispatch: another dispatch is already scaffolding $branch (pid $held) — wait for it or retry" >&2
+  else
+    echo "dispatch: a stale dispatch lock for $branch remains from a hard-killed dispatch — remove $dispatch_lock and retry" >&2
+  fi
+  exit 1
+fi
+trap 'rm -f "$dispatch_lock"' EXIT INT TERM HUP
+
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
 # WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a

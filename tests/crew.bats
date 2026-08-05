@@ -581,6 +581,26 @@ EOF
   ! grep -q 'kill-window' "$STUB_LOG"
 }
 
+# One worktree hosts at most one live window, so idle release must collapse the
+# branch to its NEWEST session before testing terminality. An older `done`
+# session must not release a window a newer `working` session still owns.
+@test "reap: a newer working session masks an older done one on the same branch" {
+  git commit --allow-empty -q -m init
+  git branch feat/two-sess
+  wt_path="$BATS_TEST_TMPDIR/two-sess-wt"
+  git worktree add -q "$wt_path" feat/two-sess
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tclaude\n')"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", from:"worker:feat/two-sess#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$log"
+  jq -nc '{ts:2000, crew_id:"c1", from:"worker:feat/two-sess#s2-2", to:"dispatcher:c1", kind:"status", body:{state:"working"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --idle 0
+  [ "$status" -eq 0 ]
+  ! grep -q 'kill-window' "$STUB_LOG"
+}
+
 @test "reap: --dry-run only reports the release" {
   git commit --allow-empty -q -m init
   git branch feat/idle-me
