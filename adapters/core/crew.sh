@@ -755,7 +755,7 @@ rate)
   printf '%s' "$records" | jq -c '.[]' >>"$store"
   ;;
 stall-watch)
-  # stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]
+  # stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]
   # A detached liveness watchdog `dispatch` spawns per worker. The crew bus is
   # blind to a hung worker: a worker posts `working` once at launch then nothing
   # until a terminal state, so sticky `working` + climbing age is
@@ -772,10 +772,10 @@ stall-watch)
   # is exactly what `--output-format text` did to cursor workers.
   # CREW_STALL_SAMPLE_CMD overrides the pane sampler (its stdout is the "output",
   # its exit code is pane liveness) so the loop is testable without tmux.
-  branch="${1:-}"
+  me="${1:-}"
   shift || true
-  [ -n "$branch" ] || {
-    echo "crew: stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]" >&2
+  [ -n "$me" ] || {
+    echo "crew: stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]" >&2
     exit 1
   }
   crew=$(_crew_id)
@@ -820,7 +820,6 @@ stall-watch)
     echo "crew: stall-watch needs --pane <id>" >&2
     exit 1
   }
-  me="worker:$branch"
   # Sample the pane: print a hash of its visible output, return non-zero when the
   # pane is gone (worker ended — the `exited` backstop owns that case).
   _sample() {
@@ -1032,7 +1031,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <branch> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run]" >&2
   exit 1
   ;;
 esac

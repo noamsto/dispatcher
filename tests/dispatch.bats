@@ -122,6 +122,19 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
+# wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
+# stub (the nohup'd stall-watch). Fails the test after ~2s.
+wait_for_log() {
+  local i
+  for i in $(seq 1 40); do
+    grep -q "$1" "$STUB_LOG" && return 0
+    sleep 0.05
+  done
+  echo "wait_for_log: never saw '$1' in $STUB_LOG" >&2
+  cat "$STUB_LOG" >&2
+  return 1
+}
+
 # Mirrors the real cache: `jq -r '.models[].slug' ~/.codex/models_cache.json`.
 write_codex_cache() {
   mkdir -p "$HOME/.codex"
@@ -570,4 +583,38 @@ assert_gate_silent() { # <engine> <model>
   grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   launch="$(grep 'send-keys' "$STUB_LOG")"
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
+}
+
+@test "session: stamps worker_id, exports CREW_WORKER_ID and prints the id" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"worker_id: worker:feat/42-do-a-thing#s7-7"* ]]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'worker_id: worker:feat/42-do-a-thing#s7-7' "$wt_path/WORKER_TASK.md"
+  grep -q 'CREW_WORKER_ID=worker:feat/42-do-a-thing#s7-7 claude ' "$STUB_LOG"
+}
+
+@test "session: the dispatch event carries the session" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .session' "$log"
+  [ "$output" = "s7-7" ]
+}
+
+@test "session: stall-watch is handed the worker id, not the branch" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
+}
+
+@test "session: a minted id is epoch-pid shaped" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [[ "$output" =~ worker_id:\ worker:feat/42-do-a-thing#s[0-9]+-[0-9]+ ]]
 }
