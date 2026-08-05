@@ -71,7 +71,7 @@ synthetic-sink `msg` pattern, which already provably does not wake the dispatche
 | writer                        | how                                                        |
 | ----------------------------- | ---------------------------------------------------------- |
 | worker, at a stopping path    | a `notes[]` array **inside the existing metrics snapshot** |
-| worker, mid-execute seam      | `crew msg worker:<branch> retro:<crew> '<note json>'`      |
+| worker, mid-execute seam      | `crew msg "$CREW_WORKER_ID" retro:<crew> '<note json>'`    |
 | dispatcher, at roster DRAINED | `crew msg dispatcher:<crew> retro:<crew> '<note json>'`    |
 
 Putting stopping-path notes _inside_ the snapshot is the load-bearing choice: it
