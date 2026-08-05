@@ -443,3 +443,49 @@ EOF
   run jq -r 'select(.kind=="msg") | .to' "$log"
   [ "$output" = "$worker_id" ]
 }
+
+@test "roster: collapses sessions of one branch into a single row" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].branch')" = "feat/x" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "working" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s2-2" ]
+  [ "$(echo "$output" | jq -r '.[0].sessions | length')" = "2" ]
+  [ "$(echo "$output" | jq -r '.[0].sessions[0].state')" = "done" ]
+  [ "$(echo "$output" | jq -r '.[0].sessions[1].state')" = "working" ]
+}
+
+@test "roster: the codename still derives from the branch" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  expected="$(run_crew identity feat/x | jq -r .name)"
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].name')" = "$expected" ]
+}
+
+@test "roster: one session's exited is not resolved from another's history" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" exited
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].state')" = "exited" ]
+  [ "$(echo "$output" | jq -r '.[0].prev_state // "none"')" = "none" ]
+}
+
+@test "roster: joins the title on the branch" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1", title:"Do a thing"}' >>"$log"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].title')" = "Do a thing" ]
+}
+
+@test "roster: a legacy branch-keyed row still renders" {
+  CREW_ID=c1 run_crew status "worker:feat/x" working
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r 'length')" = "1" ]
+  [ "$(echo "$output" | jq -r '.[0].branch')" = "feat/x" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "null" ]
+}

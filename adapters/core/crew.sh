@@ -553,24 +553,37 @@ sessions)
 roster)
   crew="${1:-$(_crew_id)}"
   [ -f "$log" ] || exit 0
-  # latest status per agent, decorated with each worker's derived codename
+  # Fold per SESSION first, then collapse per BRANCH for display. Both halves are
+  # load-bearing: aggregating across a branch is what made three workers read as
+  # one flip-flopping identity, and it would also let an older session's `working`
+  # resurrect a newer session's `exited` through prev_state (#17).
   base=$(jq -c -s --arg crew "$crew" '
-      # title lives on the dispatch event (keyed by branch); join it per worker.
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+      def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+      # title lives on the dispatch event (keyed by branch); join it per branch.
       # last wins on re-dispatch. missing (pre-title dispatch events) -> null.
       (map(select(.crew_id==$crew and .kind=="dispatch"))
-        | map({key:("worker:"+.branch), value:(.title // null)}) | from_entries) as $titles
-      | map(select(.crew_id==$crew and .kind=="status"))
-      | group_by(.from) | map(
+        | map({key:.branch, value:(.title // null)}) | from_entries) as $titles
+      | map(select(.crew_id==$crew and .kind=="status"
+                   and ((.from // "") | startswith("worker:"))))
+      | group_by(.from)
+      | map(
           (max_by(.ts)) as $latest
           | {from: $latest.from,
+             branch: ($latest.from | wid_branch),
+             session: ($latest.from | wid_session),
              state: $latest.body.state,
-             title: ($titles[$latest.from] // null),
+             ts: $latest.ts,
              # carry forward last-known pr_url — the terminal `done` event drops it
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last),
              # last state that was NOT the exited backstop, so a spurious exited
              # can be resolved back to what the worker itself last reported.
              prev_state: (map(select(.body.state != "exited")) | max_by(.ts) | .body.state),
-             age_s: ((now - ($latest.ts/1000))|floor)})' "$log")
+             age_s: ((now - ($latest.ts/1000))|floor)})
+      | group_by(.branch)
+      | map((sort_by(.ts) | last)
+            + {title: (.[0].branch as $b | $titles[$b] // null),
+               sessions: (sort_by(.ts) | map({session, state, age_s}))})' "$log")
   # Resolve a false `exited`. SessionEnd fires for more than the worker's own session
   # (a subagent ending, a human closing an auxiliary pane), and the hook sees only a
   # cwd — it cannot tell those apart, nor wait to find out: the worker's real
@@ -583,7 +596,7 @@ roster)
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     st=$(printf '%s' "$row" | jq -r '.state')
-    branch=$(printf '%s' "$row" | jq -r '.from | sub("^worker:";"")')
+    branch=$(printf '%s' "$row" | jq -r '.branch')
     if [ "$st" = exited ] && [ -n "$branch" ]; then
       # awk reads to EOF on purpose: an early `exit` SIGPIPEs git under pipefail.
       wtpath=$(git worktree list --porcelain |
@@ -606,9 +619,9 @@ PANES
 $(printf '%s' "$base" | jq -c '.[]')
 EOF
   idmap='{}'
-  for from in $(printf '%s' "$resolved" | jq -r '.[].from | select(startswith("worker:"))'); do
-    id=$(_identity "${from#worker:}")
-    idmap=$(printf '%s' "$idmap" | jq -c --arg k "$from" --argjson v "$id" '. + {($k): $v}')
+  for br in $(printf '%s' "$resolved" | jq -r '.[].branch'); do
+    id=$(_identity "$br")
+    idmap=$(printf '%s' "$idmap" | jq -c --arg k "$br" --argjson v "$id" '. + {($k): $v}')
   done
   # Disambiguate colliding codenames. identity is a stateless hash, so two live
   # workers can legitimately land on the same name; suffix the issue/ticket token
@@ -617,10 +630,10 @@ EOF
   # prev_state is internal to the resolve step above — drop it unless it explains
   # a row the reader would otherwise mistrust.
   printf '%s' "$resolved" | jq --argjson m "$idmap" '
-      map(. + ($m[.from] // {}))
+      map(. + ($m[.branch] // {}))
       | (map(select(.name != null) | .name) | group_by(.) | map(select(length > 1) | .[0])) as $dupes
       | map(if (.name as $n | $dupes | index($n))
-            then .name = (.name + "·" + ((.from | capture("worker:(?:[a-z]+/)?(?<id>[A-Za-z]+-[0-9]+|[0-9]+)") | .id) // (.from | sub("^worker:";""))))
+            then .name = (.name + "·" + ((.branch | capture("(?:[a-z]+/)?(?<id>[A-Za-z]+-[0-9]+|[0-9]+)") | .id) // .branch))
             else . end)
       | map(if .exit_suspect then . else del(.prev_state) end)'
   ;;
