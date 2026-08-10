@@ -1110,6 +1110,21 @@ EOF
       jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
         '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}' \
         >>"$log"
+
+      # Release the claim: drop `dispatched` from the issue(s) this PR
+      # closes. Best-effort — a Linear PR closes no GitHub issue, and any gh
+      # failure here must not block the sweep. The resolve call logs its own
+      # failure rather than swallowing it, so it can't be confused with "no
+      # closing issues" and leave the label stuck with no trace.
+      if ! closing_issues=$(gh pr view "$pr" --json closingIssuesReferences \
+        --jq '.closingIssuesReferences[].number' 2>&1); then
+        note "could not resolve closing issues for PR $pr ($branch): $closing_issues"
+        closing_issues=""
+      fi
+      for issue in $closing_issues; do
+        gh issue edit "$issue" --remove-label dispatched >/dev/null 2>&1 ||
+          note "could not remove the dispatched label from #$issue ($branch)"
+      done
     else
       say "keeping $branch — wt remove failed"
     fi

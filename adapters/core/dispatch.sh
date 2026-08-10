@@ -10,6 +10,13 @@ usage() {
   echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--ignore-budget] [LINEAR-ID|#N] <title...>" >&2
 }
 
+# Ensure the `dispatched` claim-marker label exists. A no-op if it already
+# does — must never abort a dispatch on that account.
+_ensure_dispatched_label() {
+  gh label create dispatched --color 1D76DB \
+    --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
+}
+
 # Protocol directory. The env override is the dev loop: point it at a checkout
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
@@ -310,6 +317,30 @@ title="$*"
   exit 1
 }
 
+# Claim: GitHub issue only. $gh_issue is empty for both a Linear dispatch
+# (own status/assignee semantics — every issue here already has an assignee,
+# so that can't double as a claim signal) and a --pr review dispatch
+# (attaches to a PR, not an issue) — reusing the tracker detection below
+# rather than a second one. Read-then-claim runs before ANY scaffolding,
+# reap's sweep included, so a same-issue dispatcher racing at human timescale
+# loses on the label read, not after building a worktree. gh has no
+# compare-and-swap, so this narrows that race rather than closing it.
+if [ -n "$gh_issue" ]; then
+  _ensure_dispatched_label
+  issue_labels="$(gh issue view "$gh_issue" --json labels --jq '.labels[].name')" || {
+    echo "dispatch: could not read labels for issue #$gh_issue" >&2
+    exit 1
+  }
+  if printf '%s\n' "$issue_labels" | grep -qx dispatched; then
+    echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    exit 1
+  fi
+  gh issue edit "$gh_issue" --add-label dispatched || {
+    echo "dispatch: could not claim issue #$gh_issue (adding the 'dispatched' label failed)" >&2
+    exit 1
+  }
+fi
+
 # Reclaim workers whose PR already landed, before adding another one. Cheapest
 # possible cleanup schedule: no daemon, no timer, and it runs exactly when the
 # worktree/window count is about to grow. Non-fatal by construction — a dispatch
@@ -373,6 +404,12 @@ else
     num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
     [ -n "$num" ] || {
       echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
+      exit 1
+    }
+    # A minted issue is claimed by definition — stamp it right away.
+    _ensure_dispatched_label
+    gh issue edit "$num" --add-label dispatched || {
+      echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1
     }
     branch="feat/$num-$slug"
