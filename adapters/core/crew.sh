@@ -591,6 +591,13 @@ roster)
              branch: ($latest.from | wid_branch),
              session: ($latest.from | wid_session),
              state: $latest.body.state,
+             # `detail` is unbounded free text and the roster is an LLM-read
+             # dashboard, so an untruncated row can crowd out the table. 120
+             # fits every reserved prefix plus its payload; the full string
+             # stays in the log. `source` tells a watchdog-posted `blocked`
+             # (nobody is listening) from one the worker posts itself (someone is in await).
+             detail: (($latest.body.detail // null) | if . == null then null else .[0:120] end),
+             source: ($latest.body.source // null),
              ts: $latest.ts,
              # carry forward last-known pr_url — the terminal `done` event drops it
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last),

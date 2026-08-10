@@ -1194,3 +1194,19 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown arg"* ]]
 }
+
+@test "roster: carries source and truncates detail to 120 chars" {
+  long=$(printf 'quiet: %0.sx' $(seq 1 200))
+  seed_raw worker:feat/x blocked "$long" watchdog
+  CREW_ID=c1 run run_crew roster c1
+  [ "$status" -eq 0 ]
+  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail|length)\"'"
+  [ "$output" = "watchdog|120" ]
+}
+
+@test "roster: a worker-posted row has a null source" {
+  CREW_ID=c1 run_crew status worker:feat/x blocked "which approach?"
+  CREW_ID=c1 run run_crew roster c1
+  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail)\"'"
+  [ "$output" = "null|which approach?" ]
+}
