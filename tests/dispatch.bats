@@ -1113,3 +1113,117 @@ lock_path() { # <branch>
   [ "$status" -eq 0 ]
   ! grep -q 'repo view' "$STUB_LOG"
 }
+
+# stub_gh_claim <existing-issue-labels> <mint-issue-number> — a gh stub for the
+# claim path: `issue view --json labels` on an existing token echoes back $1
+# (empty = no labels), `issue create` on a mint mints $2. label create/issue
+# edit calls just log and succeed. `repo view` still answers with the default
+# branch name, same as stub_launch_bins, so callers that go on to reach the
+# create-mode base-resolution path (#41) don't abort for want of it.
+stub_gh_claim() {
+  printf '%s' "$1" >"$STUB_DIR/gh_labels.txt"
+  printf '%s' "$2" >"$STUB_DIR/gh_mint_num.txt"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ view\ *)
+  cat "$STUB_DIR/gh_labels.txt"
+  ;;
+issue\ create\ *)
+  num="$(cat "$STUB_DIR/gh_mint_num.txt")"
+  printf 'https://github.com/o/r/issues/%s\n' "$num"
+  ;;
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+}
+
+@test "claim: aborts when the target issue already carries dispatched, before any scaffolding" {
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"#42"* ]]
+  [[ "$output" == *"already claimed"* ]]
+  ! grep -q '^reap' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "claim: adds dispatched to a free existing issue before crew reap, then proceeds" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  claim_line=$(grep -n 'issue edit 42 --add-label dispatched' "$STUB_LOG" | head -1 | cut -d: -f1)
+  reap_line=$(grep -n '^reap --quiet' "$STUB_LOG" | head -1 | cut -d: -f1)
+  switch_line=$(grep -n 'switch -c' "$STUB_LOG" | head -1 | cut -d: -f1)
+  [ -n "$claim_line" ]
+  [ -n "$reap_line" ]
+  [ -n "$switch_line" ]
+  [ "$claim_line" -lt "$reap_line" ]
+  [ "$claim_line" -lt "$switch_line" ]
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a failed label write fails the dispatch instead of proceeding unclaimed" {
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ edit\ *) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not claim issue #42"* ]]
+  ! grep -q '^reap' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a minted issue is stamped with dispatched at creation" {
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  grep -q 'issue edit 77 --add-label dispatched' "$STUB_LOG"
+  grep -qx 'Closes #77' "$TEST_REPO/.dispatch-wt/feat-77-mint-me/WORKER_TASK.md"
+}
+
+@test "claim: a failed mint claim write fails the dispatch instead of proceeding unclaimed" {
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ create\ *) printf 'https://github.com/o/r/issues/88\n' ;;
+issue\ edit\ *) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not claim it"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a Linear-tracked dispatch never touches gh (byte-for-byte unaffected)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "linear thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'Closes ENG-1234' "$TEST_REPO/.dispatch-wt/eng-1234-linear-thing/WORKER_TASK.md"
+  ! grep -q '^issue' "$STUB_LOG"
+  ! grep -q '^label' "$STUB_LOG"
+}
+
+@test "claim: a --pr dispatch never touches gh issue/label calls" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  ! grep -q '^issue' "$STUB_LOG"
+  ! grep -q '^label' "$STUB_LOG"
+}
