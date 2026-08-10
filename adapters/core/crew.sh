@@ -790,43 +790,61 @@ rate)
   printf '%s' "$records" | jq -c '.[]' >>"$store"
   ;;
 stall-watch)
-  # stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]
-  # A detached liveness watchdog `dispatch` spawns per worker. The crew bus is
-  # blind to a hung worker: a worker posts `working` once at launch then nothing
-  # until a terminal state, so sticky `working` + climbing age is
-  # indistinguishable from a slow-but-live worker — and the SessionEnd `exited`
-  # backstop only fires when a session actually ENDS, which a wedged agent never
-  # does (#103). This automates the manual `tmux capture-pane` that confirmed
-  # that stall: sample the pane's visible output; if it doesn't change for
-  # --stall seconds within the startup --window and the worker hasn't reached a
-  # non-`working` state, post `failed` so `crew watch` wakes the dispatcher to
-  # recover. Windowed to the startup phase (where the observed hang lives) so a
-  # long, legitimately-quiet execute stage later isn't killed. Engine-agnostic,
-  # but it assumes the engine streams to its pane — an engine that buffers until
-  # completion looks stalled from here and gets failed on every real task, which
-  # is exactly what `--output-format text` did to cursor workers.
-  # CREW_STALL_SAMPLE_CMD overrides the pane sampler (its stdout is the "output",
-  # its exit code is pane liveness) so the loop is testable without tmux.
-  me="${1:-}"
+  # stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S]
+  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S]
+  #
+  # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
+  # reflects only what a worker POSTS, so a worker parked on an interactive
+  # prompt, or whose turn died mid-task, is indistinguishable from one that is
+  # working (#31). Four detectors read one pane capture per tick:
+  #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
+  #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
+  #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
+  #   D3 quiet:      byte-identical pane for --idle
+  # Every detector posts `blocked` — recoverable, answerable, and cheap to be
+  # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
+  # after a second evidence check --dead later; a prompt still on screen is
+  # evidence that nobody answered, not that the worker died, so it never
+  # escalates. Engine signatures are the data table below: claude only, because
+  # a guessed signature is a false-positive generator.
+  # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
+  # pane liveness) so the loop is testable without tmux.
+  arg="${1:-}"
   shift || true
-  [ -n "$me" ] || {
-    echo "crew: stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S]" >&2
+  [ -n "$arg" ] || {
+    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S]" >&2
     exit 1
   }
+  # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
+  # BOTH `worker:<branch>#s<session>` and a bare `<branch>`, and a watchdog
+  # cannot know which one launched it. Under exact-string matching every safety
+  # check below silently no-ops and the roster splits into two rows for one
+  # worker (measured: EVIDENCE-2026-08-10.txt).
+  branch="${arg#worker:}"
+  branch="${branch%%#*}"
+  me="worker:$branch"
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
     exit 1
   }
   pane=""
+  engine="unknown"
   grace=45
   stall=300
   window=900
   interval=15
+  idle=1800
+  dead=1800
+  max_life=43200
   while [ $# -gt 0 ]; do
     case "$1" in
     --pane)
       pane="${2:-}"
+      shift 2
+      ;;
+    --engine)
+      engine="${2:-}"
       shift 2
       ;;
     --grace)
@@ -845,6 +863,18 @@ stall-watch)
       interval="${2:-}"
       shift 2
       ;;
+    --idle)
+      idle="${2:-}"
+      shift 2
+      ;;
+    --dead)
+      dead="${2:-}"
+      shift 2
+      ;;
+    --max-life)
+      max_life="${2:-}"
+      shift 2
+      ;;
     *)
       echo "crew: stall-watch: unknown arg '$1'" >&2
       exit 1
@@ -855,54 +885,321 @@ stall-watch)
     echo "crew: stall-watch needs --pane <id>" >&2
     exit 1
   }
-  # Sample the pane: print a hash of its visible output, return non-zero when the
-  # pane is gone (worker ended — the `exited` backstop owns that case).
+  # Signature table. Enabling an engine is DATA, not logic: capture its prompt
+  # and meter frames on a work-profile host, pin them as fixtures, add a row.
+  # codex/cursor deliberately get the frame-free detectors (D0/D3) only — a
+  # cursor footer that permanently contained an `Enter to select`-like string
+  # would pin every cursor worker at `blocked` forever.
+  case "$engine" in
+  claude)
+    sig_prompt=1
+    sig_meter=1
+    ;;
+  *)
+    sig_prompt=0
+    sig_meter=0
+    ;;
+  esac
+  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
+  # bracket expression consumes one BYTE, so a single-character class would
+  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
+  # measured false-positive guard. Hence `+` on the glyph classes and an
+  # alternation rather than a bracket set for `❯`.
+  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
+  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+
+  # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
+  # D0/D3 read the hash, D1/D2 read the text.
   _sample() {
-    local out
     if [ -n "${CREW_STALL_SAMPLE_CMD:-}" ]; then
-      out=$(eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null) || return 1
+      eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
     else
-      out=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || return 1
+      tmux capture-pane -p -t "$pane" 2>/dev/null
     fi
-    printf '%s' "$out" | cksum
   }
-  # The worker proved it's alive once its latest status is anything past the
-  # launch `working` heartbeat (progress, a deliberate `blocked` pause, or a
-  # terminal state) — stop watching then.
-  _progressed() {
-    local st
-    [ -f "$log" ] || return 1
-    st=$(jq -r --arg c "$crew" --arg m "$me" \
-      'select(.crew_id==$c and .kind=="status" and .from==$m) | .body.state' "$log" 2>/dev/null | tail -1 || true)
-    case "$st" in
-    "" | working) return 1 ;;
-    *) return 0 ;;
+
+  # C-3 — every bus read is scoped to THIS run. events.jsonl is append-only per
+  # repo and re-dispatch onto the same branch is a first-class flow, so an
+  # unscoped read lets the PREVIOUS run's failed/exited mute a freshly started
+  # watchdog for its entire life, silently, at exit 0. Since the documented
+  # recovery for every watchdog event is "kill and re-dispatch", that would
+  # guarantee the run after any watchdog event has no watchdog at all.
+  # One second of slack because `date +%s` truncates while bus timestamps are
+  # ms: without it a status the launcher posted a fraction of a second before
+  # this process started sorts below the cutoff and reads as a previous run.
+  # Previous runs are minutes away, so the slack cannot reach one.
+  run_start_ms=$((($(date +%s) - 1) * 1000))
+  bus_ts=0
+  bus_state=""
+  bus_source=""
+  bus_detail=""
+  _bus_refresh() {
+    local l
+    bus_ts=0
+    bus_state=""
+    bus_source=""
+    bus_detail=""
+    [ -f "$log" ] || return 0
+    l=$(jq -r --arg c "$crew" --arg m "$me" --argjson t0 "$run_start_ms" '
+        select(.crew_id==$c and .kind=="status" and .ts>=$t0
+               and (.from==$m or (.from|startswith($m+"#"))))
+        | [(.ts|tostring), .body.state, (.body.source // ""), (.body.detail // "")]
+        | @tsv' "$log" 2>/dev/null | tail -1 || true)
+    [ -n "$l" ] || return 0
+    IFS=$'\t' read -r bus_ts bus_state bus_source bus_detail <<BUSLINE
+$l
+BUSLINE
+    return 0
+  }
+
+  # INV-W1 — the watchdog is a subordinate writer. Re-read the bus immediately
+  # before EVERY append (the hazard lives in the gap between sampling the pane
+  # and writing the line) and abort if the worker has finished. Exempt from the
+  # read cadence below on purpose: appends are rare, staleness here is a lie.
+  _post() { # _post <state> <detail>
+    _bus_refresh
+    case "$bus_state" in
+    done | failed | exited) exit 0 ;;
     esac
+    mkdir -p "$dir"
+    jq -nc --arg crew "$crew" --arg from "$me" --arg state "$1" --arg detail "$2" \
+      '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
+          kind:"status", body:{state:$state, detail:$detail, source:"watchdog"}}' >>"$log"
   }
+
+  # INV-W3 — one open watchdog episode per branch PER PREFIX, checked on the bus
+  # (the only thing two watchdogs on one branch share) rather than in process
+  # memory. Same-prefix, not any-prefix, on purpose: a dead pane must still be
+  # able to raise `quiet:` over an open `stalled:`, because `stalled:` does not
+  # escalate (C-1) and `quiet:` is then the only path that frees fan-out budget.
+  _post_blocked() { # _post_blocked <prefix> <detail>; returns 1 when suppressed
+    _bus_refresh
+    if [ "$bus_state" = blocked ] && [ "$bus_source" = watchdog ]; then
+      case "$bus_detail" in
+      "$1"*) return 1 ;;
+      esac
+    fi
+    _post blocked "$2"
+  }
+
+  # INV-W2 — a clearance never overwrites a later worker statement. `working` is
+  # not in `watch`'s wake set, so this corrects the roster without a second wake.
+  _post_clear() { # _post_clear <prefix>
+    _bus_refresh
+    if [ "$bus_state" = blocked ] && [ "$bus_source" = watchdog ]; then
+      _post working "$1 cleared"
+    fi
+  }
+
+  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
+  # numbered option within the 6 non-empty lines above it. A pane that is not
+  # parked on a prompt ends on its input box, never on transcript text (A3), so
+  # a prompt frame merely scrolling through — this very repo's bats fixtures —
+  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
+  # fixtures become a false-positive source.
+  _is_prompt() {
+    local tail_n last above
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Enter to select"* | *"Enter to confirm"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option"
+  }
+  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
+  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+
   start=$(date +%s)
   sleep "$grace"
-  _progressed && exit 0
-  last_hash=$(_sample) || exit 0
+  fails=0
+  last_hash=""
   last_change=$(date +%s)
+  tick=0
+  d0_at=0
+  d1_hits=0
+  d1_at=0
+  d2_tok=""
+  d2_clock=""
+  d2_since=0
+  d2_moved=0
+  d2_at=0
+  d3_at=0
+  _bus_refresh
   while :; do
     now=$(date +%s)
-    [ $((now - start)) -ge "$window" ] && exit 0
-    if [ $((now - last_change)) -ge "$stall" ]; then
-      mkdir -p "$dir"
-      line=$(jq -nc --arg crew "$crew" --arg from "$me" \
-        --arg detail "stalled: no output for ${stall}s (suspected startup/indexing hang)" \
-        '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
-            kind:"status", body:{state:"failed", detail:$detail}}')
-      printf '%s\n' "$line" >>"$log"
+    # --max-life exists because the watchdog is nohup-detached: without a hard
+    # cap, a bug or an orphaned pane leaves a process polling forever.
+    [ $((now - start)) -ge "$max_life" ] && exit 0
+    # Exit on a terminal state — but NOT on pr_open: a worker in pr_open is
+    # still working (#31's own prompt was rendered by a worker watching PR CI),
+    # and not on `working`, which is a heartbeat.
+    case "$bus_state" in
+    done | failed | exited) exit 0 ;;
+    esac
+
+    if ! text=$(_sample); then
+      # Pane-gone is a quorum, not a single failure: at a 12h lifetime one tmux
+      # hiccup would otherwise disarm liveness for the rest of the run. Three
+      # consecutive failures ≈45s at the default interval, and the `exited`
+      # backstop owns the real case anyway.
+      fails=$((fails + 1))
+      [ "$fails" -ge 3 ] && exit 0
+      sleep "$interval"
+      tick=$((tick + 1))
+      continue
+    fi
+    fails=0
+    hash=$(printf '%s' "$text" | cksum)
+    if [ "$hash" != "$last_hash" ]; then
+      last_hash="$hash"
+      last_change="$now"
+    fi
+
+    # While the worker's own latest word is a SELF-reported `blocked` it is in
+    # `crew await` — the dispatcher is already awake about it, and a held await
+    # leaves a static pane by construction (a D3 false positive waiting).
+    suppressed=0
+    if [ "$bus_state" = blocked ] && [ "$bus_source" != watchdog ]; then
+      suppressed=1
+    fi
+    quiet_for=$((now - last_change))
+
+    # ---- D1: interactive prompt ------------------------------------------
+    # Presence, not transition: the workspace-trust frame is on screen from the
+    # worker's FIRST sample, so an "appeared" conjunct could never fire on the
+    # only frame with measured production occurrences.
+    if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] &&
+      _is_prompt "$text" && [ -z "$(_meter_line "$text")" ]; then
+      d1_hits=$((d1_hits + 1))
+      if [ "$d1_hits" -ge 2 ] && [ "$d1_at" = 0 ]; then
+        if _post_blocked "prompt:" "prompt: interactive prompt in pane $pane — worker is waiting on input nobody can give"; then
+          d1_at="$now"
+        fi
+      fi
+    else
+      if [ "$d1_at" != 0 ]; then
+        _post_clear "prompt:"
+        d1_at=0
+      fi
+      d1_hits=0
+    fi
+
+    # ---- D2: dead turn ----------------------------------------------------
+    # Strings, never numbers: rounding to 0.1k and multi-unit durations make
+    # arithmetic fragile and every parse failure a new branch.
+    if [ "$suppressed" = 0 ] && [ "$sig_meter" = 1 ]; then
+      m=$(_meter_line "$text")
+      if [ -z "$m" ] || _has_subrow "$text"; then
+        # A live subagent row is an UNCONDITIONAL veto: a healthy deep worker in
+        # a subagent batch reproduces D2's exact signature — meter present,
+        # clock rising, token string static — for minutes at a stretch (A1,
+        # measured). The cost is a stated blind spot: a turn that dies with a
+        # row still painted is invisible to D2.
+        if [ "$d2_at" != 0 ]; then
+          _post_clear "turn-stall:"
+          d2_at=0
+        fi
+        d2_since=0
+        d2_tok=""
+        d2_clock=""
+        d2_moved=0
+      else
+        clock=$(printf '%s' "$m" | sed -E 's/^[^(]*\(([^·]*)·.*/\1/')
+        tok=$(printf '%s' "$m" | sed -E 's/.*↓[[:space:]]*([0-9.]+k?)[[:space:]]tokens.*/\1/')
+        if [ "$d2_since" = 0 ] || [ "$tok" != "$d2_tok" ]; then
+          if [ "$d2_at" != 0 ]; then
+            _post_clear "turn-stall:"
+            d2_at=0
+          fi
+          d2_tok="$tok"
+          d2_clock="$clock"
+          d2_since="$now"
+          d2_moved=0
+        elif [ "$clock" != "$d2_clock" ]; then
+          # A rising clock proves the capture is a LIVE frame. A static clock
+          # means a frozen renderer or copy-mode scrollback — evidence we cannot
+          # trust, so the rule stays silent.
+          d2_clock="$clock"
+          d2_moved=1
+        fi
+        # Any status event from the worker in the window is a sign of life —
+        # with the same one-second slack, since the window opens on a truncated
+        # `date +%s` and the event carries ms.
+        if [ "$bus_source" != watchdog ] && [ "$bus_ts" -ge $(((d2_since - 1) * 1000)) ]; then
+          d2_since="$now"
+          d2_moved=0
+        fi
+        if [ "$d2_at" = 0 ] && [ "$d2_moved" = 1 ] && [ $((now - d2_since)) -ge "$idle" ]; then
+          if _post_blocked "turn-stall:" "turn-stall: token count static at $d2_tok for $((now - d2_since))s while the pane clock advanced"; then
+            d2_at="$now"
+          fi
+        fi
+      fi
+    fi
+
+    # ---- D3: quiet pane ---------------------------------------------------
+    # Byte-identity, not "no meter": a healthy claude pane repaints its spinner
+    # every second, so a working worker can never satisfy D3 even if every
+    # claude signature rots to garbage. This is the failsafe for signature rot
+    # and the only steady-state coverage codex and cursor get.
+    if [ "$suppressed" = 0 ] && [ "$d3_at" = 0 ] && [ "$quiet_for" -ge "$idle" ]; then
+      if [ "$bus_source" = watchdog ] || [ "$bus_ts" -lt $((last_change * 1000)) ]; then
+        if _post_blocked "quiet:" "quiet: pane unchanged for ${quiet_for}s"; then
+          d3_at="$now"
+        fi
+      fi
+    fi
+    if [ "$d3_at" != 0 ] && [ "$quiet_for" -lt "$idle" ]; then
+      _post_clear "quiet:"
+      d3_at=0
+    fi
+
+    # ---- D0: startup silence ----------------------------------------------
+    # Classify BEFORE judging. A static pane that is a prompt belongs to D1 and
+    # D0 says nothing about it — that one negative check is the session-3 fix.
+    # The detail carries no diagnosis: the old `(suspected startup/indexing
+    # hang)` was wrong on 3/3 measured workers, and an invented cause reads to
+    # the dispatcher as corroboration.
+    if [ "$suppressed" = 0 ] && [ "$d0_at" = 0 ] &&
+      [ $((now - start)) -lt "$window" ] && [ "$quiet_for" -ge "$stall" ]; then
+      case "$bus_state" in
+      "" | working)
+        if [ "$sig_prompt" = 1 ] && _is_prompt "$text"; then
+          : # D1 owns this frame
+        elif _post_blocked "stalled:" "stalled: no output for ${stall}s"; then
+          d0_at="$now"
+        fi
+        ;;
+      esac
+    fi
+
+    # ---- Escalation --------------------------------------------------------
+    # The only path to `failed`, and it is a SECOND, later, independent evidence
+    # check — not a timer. `prompt:` is exempt (C-1): a frame still on screen
+    # means nobody answered yet, and escalating it would reproduce session 3
+    # with a 30-minute delay. `stalled:` is exempt too — it is the branch that
+    # catches the classifier's misses, so it must stay recoverable; a genuinely
+    # dead pane reaches `failed` through the `quiet:` episode instead.
+    if [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
+      _post failed "dead: turn-stall: unchanged for $((now - d2_at))s"
       exit 0
     fi
+    if [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
+      _post failed "dead: quiet: unchanged for $((now - d3_at))s"
+      exit 0
+    fi
+
     sleep "$interval"
-    _progressed && exit 0
-    cur=$(_sample) || exit 0
-    [ "$cur" != "$last_hash" ] && {
-      last_hash="$cur"
-      last_change=$(date +%s)
-    }
+    tick=$((tick + 1))
+    # Bus-read cadence: a whole-file jq over a growing cross-crew log every tick
+    # for 12h is ~2880 spawns per worker. Every 4th tick costs ≤60s of latency
+    # against an 1800s threshold. _post's pre-write read is exempt.
+    if [ $((tick % 4)) -eq 0 ]; then
+      _bus_refresh
+    fi
   done
   ;;
 pr-watch)
