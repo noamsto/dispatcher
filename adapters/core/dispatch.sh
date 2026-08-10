@@ -626,4 +626,4 @@ fi
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
 # terminal state, or a vanished pane.
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" >/dev/null 2>&1 &
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &
