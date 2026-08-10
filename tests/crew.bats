@@ -765,3 +765,584 @@ EOF
     "$XDG_DATA_HOME/crew/ratings.jsonl"
   [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# stall-watch harness
+# ---------------------------------------------------------------------------
+
+# bus — the raw event log for the test repo. Exported so `run bash -c "bus | ..."`
+# (a new bash process, not a fork) can see it.
+bus() {
+  cat "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" 2>/dev/null || true
+}
+export -f bus
+
+# seed_raw <from> <state> <detail> <source> [ts_ms] — append a status event
+# directly, so a test can plant a `source:"watchdog"` event or one dated into a
+# previous run (things `crew status` cannot express).
+seed_raw() {
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg f "$1" --arg s "$2" --arg d "$3" --arg src "$4" \
+    --argjson ts "${5:-$(($(date +%s) * 1000))}" \
+    '{ts:$ts, crew_id:"c1", from:$f, to:"dispatcher:c1", kind:"status",
+      body:({state:$s}
+            + (if $d!="" then {detail:$d} else {} end)
+            + (if $src!="" then {source:$src} else {} end))}' >>"$logf"
+}
+
+# stall_sampler <frame-file>... — install a CREW_STALL_SAMPLE_CMD that emits the
+# given frames one per call and repeats the last one forever. The literal token
+# GONE makes the sampler exit non-zero from that call on (pane vanished).
+stall_sampler() {
+  SAMPLER_DIR="$BATS_TEST_TMPDIR/sampler.$$"
+  mkdir -p "$SAMPLER_DIR"
+  printf '%s\n' "$@" >"$SAMPLER_DIR/frames"
+  printf '0' >"$SAMPLER_DIR/n"
+  cat >"$SAMPLER_DIR/sample" <<'EOS'
+#!/usr/bin/env bash
+d="$(dirname "$0")"
+n=$(cat "$d/n")
+n=$((n + 1))
+printf '%s' "$n" >"$d/n"
+total=$(wc -l <"$d/frames")
+i="$n"
+[ "$i" -gt "$total" ] && i="$total"
+f=$(sed -n "${i}p" "$d/frames")
+[ "$f" = GONE ] && exit 1
+cat "$f"
+EOS
+  chmod +x "$SAMPLER_DIR/sample"
+  export CREW_STALL_SAMPLE_CMD="$SAMPLER_DIR/sample"
+}
+
+# frame_file <name> — read a frame from stdin, write it, echo its path.
+frame_file() {
+  local f="$BATS_TEST_TMPDIR/frame.$1"
+  cat >"$f"
+  printf '%s' "$f"
+}
+
+# ---- fixtures, pinned from EVIDENCE-2026-08-10.txt ------------------------
+
+# A3/A4 gate capture, pane %118 — a live option-select prompt frame. The footer
+# is the last non-empty line; the nearest numbered option is 2 lines above it.
+fx_prompt_select() {
+  frame_file prompt_select <<'EOF'
+  2. Gate everything on 3.8
+     Detect tmux version once in tmux-remux.tmux; emit the 3.8 hook set.
+  3. Require 3.8, drop legacy
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+EOF
+}
+
+# [field] session 3 — the workspace-trust frame that wedged three healthy
+# workers. Footer is `Enter to confirm`, marker is ASCII `>`, no `Esc to cancel`.
+fx_prompt_trust() {
+  frame_file prompt_trust <<'EOF'
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
+EOF
+}
+
+# The same trust frame scrolled into the transcript: the input box is the last
+# non-empty line, so the geometry anchor must reject it (this is what keeps this
+# very test file from being a false-positive source).
+fx_prompt_scrollback() {
+  frame_file prompt_scrollback <<'EOF'
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)
+EOF
+}
+
+# Same, with the option-select footer, to assert the widening is symmetric.
+fx_select_scrollback() {
+  frame_file select_scrollback <<'EOF'
+  5. Chat about this
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)
+EOF
+}
+
+# A3 — a finished/idle pane: no meter, no prompt, ends on the input box.
+fx_idle_box() {
+  frame_file idle_box <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+EOF
+}
+
+# fx_meter <clock> <tokens> — D2's shape: a live meter with NO live subagent
+# row. The `⎿ Done` history line is included on purpose: it is the decoy that
+# must NOT read as a subagent row, or D2 would be neutered forever.
+fx_meter() {
+  frame_file "meter.$1.$2" <<EOF
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✳ Perusing… ($1 · ↓ $2 tokens · thinking more with high effort)
+EOF
+}
+
+# fx_subbatch <parent-clock> <subagent-elapsed> — A1's measured false-positive
+# driver, pane %129, verbatim shape: meter present, clock rising, parent token
+# string static at 73.2k, and a LIVE subagent row painted throughout.
+fx_subbatch() {
+  frame_file "subbatch.$1.$2" <<EOF
+  ⎿  Done (15 tool uses · 77.2k tokens · 5m 53s)
+✶ Hatching… ($1 · ↓ 73.2k tokens)
+  ◯ general-purpose  Revise spec per critic                              $2 · ↓ 71.5k tokens
+EOF
+}
+
+# [#31]'s transcription — ASCII-fied `·`/`↓`/`…`. Must NOT match the meter ERE.
+fx_meter_transcribed() {
+  frame_file meter_transcribed <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+Considering... 1h 20m - 28.0k tokens
+EOF
+}
+
+# fx_meter_hours <clock> — the reconstructed ≥1h wire form (A2, uncaptured).
+fx_meter_hours() {
+  frame_file "meter_hours.$1" <<EOF
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+Considering… ($1 · ↓ 28.0k tokens)
+EOF
+}
+
+@test "stall-watch: D1 posts blocked/prompt: on the option-select frame" {
+  p=$(fx_prompt_select)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %9 —"* ]]
+}
+
+@test "stall-watch: D1 fires on the workspace-trust frame outside the startup window" {
+  # Criterion 4b — the widened footer set lives in D1's own signature set, not
+  # only in D0's classifier.
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
+}
+
+@test "stall-watch: session-3 regression — a static trust prompt is prompt:, never failed or stalled:" {
+  # The measured 3/3 false positive. A pane byte-static across the whole --stall
+  # window, inside --window, carrying the trust frame.
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'stalled:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D0 posts blocked with a diagnosis-free stalled: detail" {
+  # Full-string match on purpose: a reintroduced `(suspected …)` fails CI.
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
+}
+
+@test "stall-watch: D2 posts blocked/turn-stall: when the clock advances and tokens do not" {
+  a=$(fx_meter "5m 29s" "25.0k")
+  b=$(fx_meter "5m 44s" "25.0k")
+  c=$(fx_meter "5m 59s" "25.0k")
+  d=$(fx_meter "6m 14s" "25.0k")
+  stall_sampler "$a" "$b" "$c" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|watchdog" ]
+  run bash -c "bus | jq -r '.body.detail'"
+  [[ "$output" == "turn-stall: token count static at 25.0k for "* ]]
+}
+
+@test "stall-watch: D2 reads the reconstructed 1h meter and ignores #31's transcription" {
+  # The hours alternative of the meter ERE (A2 is a documented false-negative
+  # risk per C-4, not a gate) — and the ASCII-fied paste must stay unmatched.
+  a=$(fx_meter_hours "1h 20m")
+  stall_sampler "$a" "$a" "$a" "$a"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
+  run bash -c "bus | grep -c 'turn-stall:' || true"
+  [ "$output" = "0" ] # clock never changed: a static capture is not evidence
+
+  rm -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  a=$(fx_meter_hours "1h 20m")
+  b=$(fx_meter_hours "1h 21m")
+  c=$(fx_meter_hours "1h 22m")
+  stall_sampler "$a" "$b" "$c" "$c"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
+  run bash -c "bus | grep -c 'turn-stall:' || true"
+  [ "$output" = "1" ]
+
+  rm -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  t=$(fx_meter_transcribed)
+  stall_sampler "$t" "$t" "$t" "$t"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
+  run bash -c "bus | grep -c 'turn-stall:' || true"
+  [ "$output" = "0" ] # no meter matched → D2 has nothing to read
+}
+
+@test "stall-watch: D3 posts blocked/quiet: on a byte-identical pane in steady state" {
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|quiet: pane unchanged for "* ]]
+}
+
+@test "stall-watch: healthy subagent batch produces ZERO events" {
+  # A1's measured false-positive driver, verbatim: meter present, clock rising,
+  # parent token string static at 73.2k, live subagent row throughout. D2 is
+  # vetoed by the row; D1 is vetoed by the meter; D3 by the byte changes.
+  a=$(fx_subbatch "26m 57s" "3m 29s")
+  b=$(fx_subbatch "27m 12s" "3m 45s")
+  c=$(fx_subbatch "27m 27s" "4m 0s")
+  d=$(fx_subbatch "27m 42s" "4m 15s")
+  e=$(fx_subbatch "27m 58s" "4m 30s")
+  stall_sampler "$a" "$b" "$c" "$d" "$e" "$e"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 6
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: the subagent-row veto survives LC_ALL=C" {
+  # C-5: a single-character bracket expression consumes one BYTE under LC_ALL=C,
+  # so a non-multibyte-safe class would never match `◯` and D2 would lose its
+  # only measured guard — silently.
+  a=$(fx_subbatch "26m 57s" "3m 29s")
+  b=$(fx_subbatch "27m 12s" "3m 45s")
+  c=$(fx_subbatch "27m 27s" "4m 0s")
+  # The sampler repeats its last frame, so the pane goes byte-static here where
+  # test 3a's does not: --idle 3 against a 4s life keeps that from arming D3, so
+  # a non-zero count can only mean the veto failed.
+  stall_sampler "$a" "$b" "$c" "$c" "$c"
+  LC_ALL=C CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 3 --dead 999 --max-life 4
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a meter with rising tokens produces ZERO events" {
+  a=$(fx_meter "5m 29s" "25.0k")
+  b=$(fx_meter "5m 44s" "26.1k")
+  c=$(fx_meter "5m 59s" "27.4k")
+  d=$(fx_meter "6m 14s" "28.8k")
+  stall_sampler "$a" "$b" "$c" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a working heartbeat damps D2" {
+  CREW_ID=c1 run_crew status worker:feat/x working
+  a=$(fx_meter "5m 29s" "25.0k")
+  b=$(fx_meter "5m 44s" "25.0k")
+  c=$(fx_meter "5m 59s" "25.0k")
+  # A heartbeat buys the window exactly one tick, so the tick has to be wider
+  # than the one-second truncation slop for the difference to be observable:
+  # without the damping the second sample fires at 3s, with it nothing fires
+  # before the 6s life runs out.
+  stall_sampler "$a" "$b" "$c" "$c"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 3 --window 0 --idle 3 --dead 999 --max-life 6
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a self-reported blocked suppresses every detector" {
+  CREW_ID=c1 run_crew status worker:feat/x blocked "which approach?"
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 2 --dead 999 --max-life 4
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a prompt frame in scrollback produces ZERO events, both footers" {
+  for fx in fx_prompt_scrollback fx_select_scrollback; do
+    rm -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+    p=$($fx)
+    stall_sampler "$p" "$p" "$p" "$p"
+    CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+      --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+    run bash -c "bus | grep -c . || true"
+    [ "$output" = "0" ]
+  done
+}
+
+@test "stall-watch: --engine codex gets no prompt or meter detector, and never failed" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 4
+  # The static pane is not classifiable for codex, so it falls to D0s.
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
+  run bash -c "bus | grep -c 'prompt:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a missing --engine enables no signature detector" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: one post per episode, then a working clearance that re-arms" {
+  p=$(fx_prompt_trust)
+  q=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$q" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 7
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "${lines[0]}" == blocked\|prompt:* ]]
+  [ "${lines[1]}" = "working|prompt: cleared" ]
+  [[ "${lines[2]}" == blocked\|prompt:* ]]
+}
+
+@test "stall-watch: a quiet: episode escalates to failed after --dead" {
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == blocked\|quiet:* ]]
+  [[ "${lines[1]}" == "failed|dead: quiet: unchanged for "* ]]
+}
+
+@test "stall-watch: a clearance before --dead cancels the escalation" {
+  p=$(fx_idle_box)
+  q=$(fx_meter "5m 29s" "25.0k")
+  stall_sampler "$p" "$p" "$p" "$q" "$q" "$q"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 3 --max-life 6
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet: cleared' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: a prompt: episode NEVER escalates (C-1)" {
+  # An unanswered answerable question is waiting work, not death. Escalating it
+  # would reproduce session 3 with a 30-minute delay.
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'prompt:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: a prompt: episode held past --idle and --dead still never escalates or gets superseded by quiet:" {
+  # C-1's real shape. A frozen prompt frame is byte-identical by construction, so
+  # it satisfies D3 too — and the C-1 test above pins --idle above --max-life, so
+  # it never reaches that. Here --idle and --dead are both crossed while the
+  # prompt: episode is open: quiet: must not supersede it, and the timer must not
+  # launder it into a failed.
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet:' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|prompt:* ]]
+}
+
+@test "stall-watch: INV-W0 a — a bare-id worker terminal state mutes a suffixed watchdog" {
+  CREW_ID=c1 run_crew status worker:feat/x done
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch "worker:feat/x#s1786338213-54181" --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: INV-W0 b — a suffixed-id worker terminal state mutes a bare watchdog" {
+  seed_raw "worker:feat/x#s99" done "" ""
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch feat/x --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: INV-W0 c — a suffixed heartbeat damps a bare-invoked watchdog" {
+  seed_raw "worker:feat/x#s99" working "" ""
+  a=$(fx_meter "5m 29s" "25.0k")
+  b=$(fx_meter "5m 44s" "25.0k")
+  c=$(fx_meter "5m 59s" "25.0k")
+  stall_sampler "$a" "$b" "$c" "$c"
+  CREW_ID=c1 run run_crew stall-watch feat/x --pane %9 --engine claude \
+    --grace 0 --interval 3 --window 0 --idle 3 --dead 999 --max-life 6
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: INV-W0 d — writes normalise from, so roster shows ONE row" {
+  CREW_ID=c1 run_crew status worker:feat/x working
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch "worker:feat/x#s1786338213-54181" --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.body.source==\"watchdog\") | .from'"
+  [ "$output" = "worker:feat/x" ]
+  CREW_ID=c1 run run_crew roster c1
+  run bash -c "printf '%s' '$output' | jq 'length'"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: INV-W1 — a terminal state already on the bus produces zero writes" {
+  CREW_ID=c1 run_crew status worker:feat/x failed "gate red"
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: INV-W3 — a second watchdog does not re-post an open episode" {
+  seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9 — worker is waiting on input nobody can give" watchdog
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | grep -c 'prompt: interactive' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: C-3 — a previous run's terminal state does not mute a new watchdog" {
+  seed_raw worker:feat/x failed "dead: quiet: unchanged for 1800s" watchdog "$((($(date +%s) - 3600) * 1000))"
+  seed_raw worker:feat/x exited "" "" "$((($(date +%s) - 3500) * 1000))"
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | grep -c 'prompt: interactive' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: pr_open does not exit the watchdog, done does" {
+  CREW_ID=c1 run_crew status worker:feat/x pr_open "" https://example.com/pr/1
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | grep -c 'prompt: interactive' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: survives 2 sample failures and exits after the 3rd" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" GONE GONE "$p" "$p" "$p" GONE GONE GONE
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 30
+  [ "$status" -eq 0 ]
+  # It survived the pair at samples 2-3 (the prompt confirmed on 4+5 and posted),
+  # then exited on the triple rather than running to --max-life 30.
+  run bash -c "bus | grep -c 'prompt: interactive' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: writes zero msg events" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | grep -c '\"kind\":\"msg\"' || true"
+  [ "$output" = "0" ]
+  CREW_ID=c1 run run_crew inbox "dispatcher:c1"
+  [ -z "$output" ]
+}
+
+@test "stall-watch: rejects an unknown flag" {
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --bogus 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown arg"* ]]
+}
+
+@test "roster: carries source and truncates detail to 120 chars" {
+  long=$(printf 'quiet: %0.sx' $(seq 1 200))
+  seed_raw worker:feat/x blocked "$long" watchdog
+  CREW_ID=c1 run run_crew roster c1
+  [ "$status" -eq 0 ]
+  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail|length)\"'"
+  [ "$output" = "watchdog|120" ]
+}
+
+@test "roster: a worker-posted row has a null source" {
+  CREW_ID=c1 run_crew status worker:feat/x blocked "which approach?"
+  CREW_ID=c1 run run_crew roster c1
+  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail)\"'"
+  [ "$output" = "null|which approach?" ]
+}
+
+@test "rate: blocked_count excludes watchdog blocks, watchdog_blocked_count counts them" {
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/x",engine:"claude",
+           model:"opus",tier:"deep",effort:"high",title:"t"}' >>"$logf"
+  seed_raw worker:feat/x blocked "which approach?" "" 2
+  seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9 — waiting" watchdog 3
+  seed_raw worker:feat/x blocked "quiet: pane unchanged for 1800s" watchdog 4
+  store="$BATS_TEST_TMPDIR/xdg"
+  XDG_DATA_HOME="$store" CREW_ID=c1 run run_crew rate
+  [ "$status" -eq 0 ]
+  run jq -r '"\(.blocked_count)|\(.watchdog_blocked_count)"' "$store/crew/ratings.jsonl"
+  [ "$output" = "1|2" ]
+}

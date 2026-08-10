@@ -201,6 +201,33 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   - **Always fold in stragglers after await, before advancing the cursor.** `crew await` keys off its own internal `start=now`, not your seen-cursor, so a directive posted _before_ the await started is not matched by that await. On **every** await return — reply (non-empty stdout) **or** timeout (empty stdout) — and **before** you advance the seen-cursor past the await reply's `.ts`, run `crew inbox "$CREW_WORKER_ID" --since <seen-cursor>` to catch it. Ordering is load-bearing: advancing the cursor from the reply's `.ts` first would leapfrog a pre-await directive (the exact bug this fold prevents). Handle any directive with the same receiving-code-review discipline, then advance the seen-cursor only over messages you handled (fold results **and** the await reply).
 - if a step hits a **permission prompt you can't resolve** (no human watches your window; `--permission-mode auto` auto-denies): do NOT hang — `crew status "$CREW_WORKER_ID" blocked "permission: <what>"`, surface it, emit the snapshot, stop.
 - on terminal failure (gate won't pass, etc.): `crew status "$CREW_WORKER_ID" failed "<why>"`, emit the snapshot, then stop.
+- **Never use an interactive question tool** (Claude Code's `AskUserQuestion`, or any
+  engine's option-select prompt). **Nobody watches your pane** — a rendered prompt is
+  invisible to the bus, and it waits for input that can never arrive. The only ask-path
+  is the `crew status blocked` + `crew msg` + `crew await` sequence above; it is
+  durable, it wakes the dispatcher, and it resumes you in place.
+- **Heartbeat at the seams.** Re-stamp
+  `crew status "worker:$(git branch --show-current)" working "<stage>"` at each pipeline
+  seam the checkpoint peek already defines. It costs nothing, it does **not** wake the
+  dispatcher (`crew watch` ignores `working`), it keeps `roster`'s `age_s` meaning "time
+  since last sign of life", and it damps the liveness watchdog below. Its limit, stated
+  so you don't rely on it: a seam heartbeat **cannot** fire from inside a long tool call,
+  so it does not protect a subagent batch — the watchdog's own conjuncts do.
+- **A watchdog may post on your behalf.** `dispatch` spawns `crew stall-watch` per
+  worker; it samples your pane and can append `blocked` with `body.source:"watchdog"`
+  and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`), or
+  `failed` with a `dead:` prefix when the same evidence still holds 30 minutes later. It
+  never posts a `msg` and never answers a prompt for you. If you find a watchdog
+  `blocked` in your own history, you are by definition alive: re-stamp
+  `crew status worker:<branch> working` and carry on — no reply is owed, and none is
+  waiting for you in `crew await`.
+- **Two things a fresh worktree does to you.** Claude Code may draw its workspace-trust
+  question (`Quick safety check: Is this a project you created or one you trust?`) before
+  anything else runs — nothing proceeds until it is answered, and it is answered at the
+  pane, not by you. And `.envrc` may come up blocked
+  (`direnv: error .envrc is blocked. Run `direnv allow``), which leaves the pane with no
+  devshell — no `bats`, no `yq-go`, no `jq`. If your tools are missing, run
+  `direnv allow` in the worktree root before concluding anything is broken.
 
 ## Rules
 

@@ -194,18 +194,41 @@ Partition the roster: `working`+`blocked` = **ACTIVE**; `pr_open`+`done`+`failed
 `{"cursor":<ts>,"events":[…]}`. The terminal states (`done`/`pr_open`/`failed`) free
 fan-out budget, so the same wakeup tells you when to dispatch the next queued task.
 
-A `failed` whose detail starts with `stalled:` is **watchdog-emitted**, not
-self-reported: `dispatch` spawns a per-worker liveness watchdog (`crew
-stall-watch`) that flips a worker to `failed` if its tmux pane produces no output
-through the startup window — catching a hung agent that would otherwise sit in
-`working` forever (#103). Treat it like any other `failed`: recover per rule 4
-(re-dispatch smaller / stronger, intervene, or drop) — the stalled window is
-still open, so kill it before re-dispatching.
+A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
+the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
+self-reported. Its `detail` always begins with one of five reserved prefixes:
 
-It infers liveness from **pane output**, so it only tells the truth for an engine
-that streams. A `stalled:` on a worker that also posted a healthy `working`
-seconds earlier warrants a `tmux capture-pane` before you kill anything — that
-combination is a buffered output format, not a wedge.
+- `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
+  question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
+  watchdog clears the state itself. This never escalates: an unanswered answerable
+  question is waiting work, not a dead worker.
+- `turn-stall:` — the pane's clock advanced for 30 min against a static token count with
+  no live subagent row. A dead turn.
+- `quiet:` — the pane has been byte-identical for 30 min.
+- `stalled:` — a static pane inside the startup window whose frame the watchdog could
+  **not** classify. Deliberately its weakest claim: an unrecognised prompt family, a
+  shell waiting on `direnv allow`, and a dead process all arrive under this prefix.
+- `dead:` — a `turn-stall:`/`quiet:` episode whose evidence still held a further 30 min.
+  This is the **only** watchdog `failed`.
+
+**Every watchdog state except `dead:` is `blocked`, not `failed`.** This replaces the old
+rule that a `stalled:` `failed` was a recovery trigger — that instruction, followed
+literally, would have killed three healthy workers parked on a trust prompt. Recovery is
+**verify, then act**:
+
+1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
+   `detail` exists to make this one command possible.
+2. The pane confirms a prompt → answer it in place.
+3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.
+4. The pane shows work in flight (a live meter, advancing subagent rows) → it is a
+   **false positive. Do not kill.** Post nothing; the watchdog clears itself on the next
+   sample. The glance **is** the guard: "kill and re-dispatch" as an unconditional
+   instruction turns every false positive into destroyed work.
+
+Pane scraping only tells the truth for an engine that streams, and only claude has
+verified frame signatures. **codex and cursor get liveness coverage, not prompt
+coverage** — `stalled:` and `quiet:` only, by decision, until someone pastes a real
+capture of their frames.
 
 A `msg` from `pr-watch:<N>` is the other watchdog: `crew pr-watch <N>` parks
 (detached, like `stall-watch`) until that PR's head SHA, reviews, review threads,
@@ -220,6 +243,10 @@ Two reads remain for detail:
 - `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
 - `crew inbox dispatcher:$CREW_ID` — worker **questions** in full (messages only; status lives in the roster).
 - A worker that's `blocked` has posted its question and is **awaiting your reply in-band** (a bounded ~300s wait). Answer promptly with `crew reply worker:<branch> "<answer>"` — it resumes in place, no tmux, no re-dispatch. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
+  **This applies only to a worker's own `blocked`.** A `blocked` carrying
+  `source: "watchdog"` has no question behind it and nobody in `crew await` — `crew reply`
+  there is a no-op that looks like an answer. Go to the pane instead (verify, then act,
+  above).
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
 
 ## Roster diagram
