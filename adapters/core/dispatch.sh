@@ -438,7 +438,7 @@ if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
   fi
   exit 1
 fi
-trap 'rm -f "$dispatch_lock"' EXIT INT TERM HUP
+trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"' EXIT INT TERM HUP
 
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
@@ -505,6 +505,82 @@ worker_id="worker:$branch#$session"
 wt_path="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
 if [ -z "$wt_path" ]; then
   echo "dispatch: could not locate worktree for branch $branch" >&2
+  exit 1
+fi
+
+# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
+# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
+# — confirmed by inspecting an already-trusted checkout's own entry there, not
+# guessed. A fresh worktree path is unknown to that store, and
+# --permission-mode auto does NOT bypass the resulting trust dialog, so an
+# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
+# trust here so the worker's first turn never sees the prompt. Locked with the
+# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
+# concurrent dispatch on this machine, and an unlocked read-modify-write would
+# lose one racer's stamp to another's. The lock only serializes dispatch
+# invocations against each other — a live claude session's own background
+# writes to ~/.claude.json race it too, same as they'd race any other writer;
+# that residual loss window is accepted, not solved, here. Aborts the dispatch
+# on failure — a worker that can't be pre-trusted just reproduces the wedge
+# this fixes.
+if [ "$agent" = claude ]; then
+  claude_json="$HOME/.claude.json"
+  claude_json_lock_path="$claude_json.dispatch.lock"
+  trusted=1
+  for _ in 1 2 3 4 5; do
+    # claude_json_lock (the trap-visible name at the top-level `trap` above)
+    # is only ever assigned once ln -s has actually made us the owner — a
+    # racer that exhausts all 5 attempts must exit with claude_json_lock still
+    # unset, or the EXIT trap would delete a lock file some other, still-running
+    # dispatch legitimately owns.
+    if ln -s "$$" "$claude_json_lock_path" 2>/dev/null; then
+      claude_json_lock="$claude_json_lock_path"
+      trust_tmp="$(mktemp "$claude_json.tmp.XXXXXX")"
+      if [ -f "$claude_json" ]; then
+        existing="$(cat "$claude_json")"
+      else
+        existing='{}'
+      fi
+      if printf '%s' "$existing" | jq --arg path "$wt_path" \
+        '.projects[$path].hasTrustDialogAccepted = true' >"$trust_tmp" \
+        && mv "$trust_tmp" "$claude_json"; then
+        trusted=0
+      else
+        rm -f "$trust_tmp"
+      fi
+      rm -f "$claude_json_lock"
+      break
+    fi
+    sleep 1
+  done
+  if [ "$trusted" -ne 0 ]; then
+    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
+    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
+    else
+      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
+    fi
+    exit 1
+  fi
+fi
+
+# Pre-allow direnv for the worktree (#40). direnv's allow-list re-validates
+# *content* on every load, keyed by the realpath of the .envrc — so a fresh
+# worktree's byte-identical .envrc is unseen even though the main checkout's
+# copy is already allowed, but a genuinely different .envrc is (correctly)
+# blocked again. A --pr worktree is checked out to the PR's actual head,
+# which can be a fork (isCrossRepository, handled below) carrying
+# attacker-controlled .envrc content — auto-approving there would rubber-stamp
+# code an external PR author wrote, sight unseen, right before the worker's
+# devshell (and the operator's own shell, if direnv-hooked) sources it. Only
+# --pr is skipped: create/name/fetch-name all check out a branch from this
+# machine's own trusted origin, not a fork. Aborts the dispatch on an
+# unexpected direnv failure so a devshell-less worker never gets scaffolded to
+# fail its gate in a confusing way much later.
+if [ -n "$pr_number" ]; then
+  echo "dispatch: --pr worktree — not auto-approving direnv; review $wt_path/.envrc and run \`direnv allow $wt_path\` by hand once you trust it" >&2
+elif ! direnv allow "$wt_path"; then
+  echo "dispatch: direnv allow failed for $wt_path — the worker's devshell will not load" >&2
   exit 1
 fi
 

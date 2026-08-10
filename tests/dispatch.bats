@@ -13,6 +13,7 @@ setup() {
   stub_bin crew
   stub_bin gh
   stub_bin wt
+  stub_bin direnv
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
 }
 
@@ -1105,4 +1106,107 @@ EOF
   [ "$status" -eq 0 ]
   ! grep -q '^issue' "$STUB_LOG"
   ! grep -q '^label' "$STUB_LOG"
+}
+
+# trust/direnv (#40): a fresh worktree is unknown to Claude Code's per-project
+# trust store and to direnv's allow list, so an unattended worker wedges on
+# one dialog or the other before it ever reads WORKER_TASK.md.
+
+# wt_path_for <branch> — the same `git worktree list --porcelain` lookup
+# dispatch.sh itself uses for $wt_path. $TEST_REPO comes from mktemp -d, which
+# on macOS returns a path through the /var -> /private/var symlink; git
+# reports the resolved realpath, so string-building "$TEST_REPO/..." by hand
+# would silently never match what dispatch.sh actually stamped.
+wt_path_for() {
+  git -C "$TEST_REPO" worktree list --porcelain |
+    awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
+}
+
+@test "trust: a claude dispatch stamps hasTrustDialogAccepted for the new worktree" {
+  stub_launch_bins
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  wt="$(wt_path_for feat/42-title)"
+  run jq -e --arg p "$wt" '.projects[$p].hasTrustDialogAccepted == true' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "trust: stamping preserves unrelated projects and top-level keys" {
+  stub_launch_bins
+  jq -n '{userID: "u1", projects: {"/somewhere/else": {hasTrustDialogAccepted: true, allowedTools: ["Bash"]}}}' \
+    >"$TEST_REPO/.claude.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  run jq -e '.userID == "u1" and (.projects["/somewhere/else"].allowedTools == ["Bash"])' "$HOME/.claude.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "trust: a codex dispatch never touches ~/.claude.json" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.claude.json" ]
+}
+
+@test "trust: an unparseable existing ~/.claude.json aborts the dispatch, never launches" {
+  stub_launch_bins
+  printf 'not json' >"$TEST_REPO/.claude.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not pre-trust worktree"* ]]
+  ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "direnv: allow is called with the new worktree path" {
+  stub_launch_bins
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  wt="$(wt_path_for feat/42-title)"
+  grep -qx "allow $wt" "$STUB_LOG"
+}
+
+@test "direnv: allow is called for codex and cursor dispatches too" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  wt="$(wt_path_for feat/42-title)"
+  grep -qx "allow $wt" "$STUB_LOG"
+}
+
+@test "direnv: allow failure aborts the dispatch, never launches" {
+  stub_launch_bins
+  cat >"$STUB_DIR/direnv" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 1
+EOF
+  chmod +x "$STUB_DIR/direnv"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"direnv allow failed"* ]]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "direnv: a --pr dispatch never auto-approves, warns instead, and still launches" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not auto-approving direnv"* ]]
+  ! grep -q '^allow ' "$STUB_LOG"
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "trust: a claude_json_lock held by a live process is never deleted by a losing racer" {
+  stub_launch_bins
+  sleep 100 &
+  holder_pid=$!
+  ln -s "$holder_pid" "$HOME/.claude.json.dispatch.lock"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  kill "$holder_pid" 2>/dev/null || true
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"held by pid $holder_pid"* ]]
+  [ -L "$HOME/.claude.json.dispatch.lock" ]
+  [ "$(readlink "$HOME/.claude.json.dispatch.lock")" = "$holder_pid" ]
+  ! grep -q 'send-keys' "$STUB_LOG"
 }

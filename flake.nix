@@ -114,7 +114,8 @@
 
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux]) ++ [crew];
+            # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
