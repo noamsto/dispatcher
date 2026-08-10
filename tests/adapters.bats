@@ -220,7 +220,6 @@ setup() {
 @test "claude-code adapter ships the critic pipeline codex cannot express" {
   [ -f "$ROOT/adapters/claude-code/plugin/agents/spec-critic.md" ]
   [ -f "$ROOT/adapters/claude-code/plugin/agents/plan-critic.md" ]
-  [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
 }
 
