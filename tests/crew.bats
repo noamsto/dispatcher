@@ -540,6 +540,10 @@ EOF
   git branch feat/idle-me
   wt_path="$BATS_TEST_TMPDIR/idle-wt"
   git worktree add -q "$wt_path" feat/idle-me
+  # $BATS_TEST_TMPDIR sits under macOS's /var, a symlink to /private/var; git
+  # resolves it but a hardcoded stub path here wouldn't, so canonicalize to
+  # match what a real tmux pane_current_path (kernel cwd) always reports.
+  wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   stub_bin wt
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
@@ -606,6 +610,7 @@ EOF
   git branch feat/idle-me
   wt_path="$BATS_TEST_TMPDIR/idle-wt"
   git worktree add -q "$wt_path" feat/idle-me
+  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
   stub_bin gh
   stub_bin wt
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
