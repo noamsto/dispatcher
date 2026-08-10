@@ -1332,7 +1332,11 @@ reap)
 $(jq -s -r --argjson idle "$idle" '
     def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
     def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
-    map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
+    # A dispatch posts a "claim" for a branch before its window even exists.
+    # It has no `body`, so it can never pass the terminal-state filter below —
+    # it can only mask a stale prior `done` by winning the per-branch
+    # max_by(.ts), never cause a release on its own.
+    map(select((.kind=="status" or .kind=="claim") and ((.from // "") | startswith("worker:"))))
     | group_by(.from) | map(max_by(.ts))
     | group_by(.from | wid_branch) | map(max_by(.ts))
     | map(select(.body.state as $st | (["done","failed","exited"] | index($st)) != null))

@@ -866,6 +866,20 @@ assert_gate_silent() { # <engine> <model>
   [ "$output" = "s7-7" ]
 }
 
+@test "session: claims the branch on the bus before the window exists (#32)" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim") | .from' "$log"
+  [ "$output" = "worker:feat/42-do-a-thing#s7-7" ]
+  # Millisecond scale, matching every other bus event — a seconds-scale `ts`
+  # would never win max_by(.ts) against a real status timestamp, silently
+  # defeating the fix while this assertion alone would still pass.
+  run jq -s -r '(map(select(.kind=="claim")) | first | .ts) > 1000000000000' "$log"
+  [ "$output" = "true" ]
+}
+
 @test "session: stall-watch is handed the worker id, not the branch" {
   stub_launch_bins
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
