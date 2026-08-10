@@ -38,10 +38,11 @@ probe_claude() {
     token=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS")
     # The endpoint rate-limits hard (429 or empty 200 after ~1 call/min) —
     # either failure falls through to the statusline cache below.
-    if [[ -n $token ]] && resp=$(curl -sf --max-time 15 \
-      -H "Authorization: Bearer $token" \
-      -H "anthropic-beta: oauth-2025-04-20" \
-      "https://api.anthropic.com/api/oauth/usage") && [[ -n $resp ]]; then
+    # Headers go through -K (stdin) rather than -H "$token" so the bearer
+    # token never appears in this process's argv/`ps`.
+    if [[ -n $token ]] && resp=$(curl -sf --max-time 15 -K - \
+      "https://api.anthropic.com/api/oauth/usage" <<<"header = \"Authorization: Bearer $token\"
+header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
       # resets_at arrives as 2026-08-03T18:59:59.991098+00:00 — fromdateiso8601
       # only accepts Zulu whole seconds, so normalize first; unparseable -> null.
       if ! out=$(jq '
@@ -99,18 +100,23 @@ probe_codex() {
   } | timeout 20 codex app-server --stdio 2>/dev/null) || true
   [[ -n $resp ]] || return 1
   # Window names come from the duration, not the primary/secondary label — the
-  # backend has shipped 5h and 7d windows in the same slots over time.
+  # backend has shipped 5h and 7d windows in the same slots over time. A
+  # missing duration names "unknown" instead of defaulting to 0 (-> "5h"), so
+  # it can't silently overwrite a real 5h window below and hide an exhausted
+  # one behind it — "unknown" still feeds the exhaustion gate, just under its
+  # own key.
   jq -es '
     def wname($s):
-      if $s <= 18600 then "5h" elif $s <= 90000 then "1d" elif $s <= 691200 then "7d" else "other" end;
+      if $s == null then "unknown"
+      elif $s <= 18600 then "5h" elif $s <= 90000 then "1d" elif $s <= 691200 then "7d" else "other" end;
     (map(select(.id == 2)) | .[0].result.rateLimits) as $r
     | {
         source: "app-server",
         credits_cover: ($r.credits.hasCredits // false),
         windows: (
           {}
-          + (if $r.primary.usedPercent != null then {(wname(($r.primary.windowDurationMins // 0) * 60)): {used_pct: $r.primary.usedPercent, resets_at: $r.primary.resetsAt}} else {} end)
-          + (if $r.secondary != null and $r.secondary.usedPercent != null then {(wname(($r.secondary.windowDurationMins // 0) * 60)): {used_pct: $r.secondary.usedPercent, resets_at: $r.secondary.resetsAt}} else {} end)
+          + (if $r.primary.usedPercent != null then {(wname($r.primary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.primary.usedPercent, resets_at: $r.primary.resetsAt}} else {} end)
+          + (if $r.secondary != null and $r.secondary.usedPercent != null then {(wname($r.secondary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.secondary.usedPercent, resets_at: $r.secondary.resetsAt}} else {} end)
         )
       }
   ' <<<"$resp" 2>/dev/null
