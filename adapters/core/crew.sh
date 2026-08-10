@@ -749,7 +749,15 @@ rate)
         | ($last.body.state) as $ls
         | ($st | map(.body.pr_url) | map(select(.!=null)) | last) as $pr
         | ($st | map(select(.body.state=="pr_open")) | sort_by(.ts) | (.[0] // null)) as $propen
-        | ($st | map(select(.body.state=="blocked")) | length) as $blocked
+        # Split rather than replace. `blocked_count` feeds an append-only,
+        # cross-run ratings store whose rows are compared against rows written
+        # before the watchdog existed; changing what populates that field in place
+        # would make old and new rows silently non-comparable in the same field.
+        # A new field leaves historical rows simply absent (null), which every
+        # reader there already tolerates — and watchdog_blocked_count is direct
+        # evidence of how often a model/tier wedges.
+        | ($st | map(select(.body.state=="blocked" and (.body.source // "") != "watchdog")) | length) as $blocked
+        | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog")) | length) as $wblocked
         # `try fromjson catch null` so ONE unparseable body cannot abort the whole
         # sweep and lose every other run with it (#25). Such a run folds with null
         # metrics — the same shape a run that never emitted metrics already takes.
@@ -782,6 +790,7 @@ rate)
             plan_critic_first_pass: ($m.plan_critic_first_pass // null),
             consulted: (if $m == null then null else $m.consulted end),
             blocked_count: $blocked,
+            watchdog_blocked_count: $wblocked,
             reported_ok: (($m != null) and ($ls != null)),
             swept_at: (now*1000|floor)
           } ]' "$log")

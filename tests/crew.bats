@@ -1210,3 +1210,18 @@ EOF
   run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail)\"'"
   [ "$output" = "null|which approach?" ]
 }
+
+@test "rate: blocked_count excludes watchdog blocks, watchdog_blocked_count counts them" {
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/x",engine:"claude",
+           model:"opus",tier:"deep",effort:"high",title:"t"}' >>"$logf"
+  seed_raw worker:feat/x blocked "which approach?" "" 2
+  seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9 — waiting" watchdog 3
+  seed_raw worker:feat/x blocked "quiet: pane unchanged for 1800s" watchdog 4
+  store="$BATS_TEST_TMPDIR/xdg"
+  XDG_DATA_HOME="$store" CREW_ID=c1 run run_crew rate
+  [ "$status" -eq 0 ]
+  run jq -r '"\(.blocked_count)|\(.watchdog_blocked_count)"' "$store/crew/ratings.jsonl"
+  [ "$output" = "1|2" ]
+}
