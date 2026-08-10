@@ -994,6 +994,11 @@ BUSLINE
     if [ "$bus_state" = blocked ] && [ "$bus_source" = watchdog ]; then
       case "$bus_detail" in
       "$1"*) return 1 ;;
+      # C-1's other half: an open `prompt:` is sticky, un-supersedable by any
+      # other prefix. Overwriting it with `quiet:` — which a frozen prompt frame
+      # satisfies by construction — would hand the unanswered prompt an
+      # escalation path `prompt:` itself is forbidden to have.
+      prompt:*) return 1 ;;
       esac
     fi
     _post blocked "$2"
@@ -1001,10 +1006,15 @@ BUSLINE
 
   # INV-W2 — a clearance never overwrites a later worker statement. `working` is
   # not in `watch`'s wake set, so this corrects the roster without a second wake.
+  # Own-prefix only: under the any-prefix override another detector's episode may
+  # be the live one, and clearing it would reset the roster to `working` with no
+  # wake, leaving its later `failed` with no visible `blocked` to explain it.
   _post_clear() { # _post_clear <prefix>
     _bus_refresh
     if [ "$bus_state" = blocked ] && [ "$bus_source" = watchdog ]; then
-      _post working "$1 cleared"
+      case "$bus_detail" in
+      "$1"*) _post working "$1 cleared" ;;
+      esac
     fi
   }
 
@@ -1199,13 +1209,28 @@ BUSLINE
     # with a 30-minute delay. `stalled:` is exempt too — it is the branch that
     # catches the classifier's misses, so it must stay recoverable; a genuinely
     # dead pane reaches `failed` through the `quiet:` episode instead.
+    # The live bus, not the in-process timer, decides: a timer armed before D1
+    # claimed the branch still points at an episode that is no longer the open
+    # one, and escalating it would launder a `prompt:` into a `failed`.
     if [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
-      _post failed "dead: turn-stall: unchanged for $((now - d2_at))s"
-      exit 0
+      _bus_refresh
+      case "$bus_detail" in
+      prompt:*) ;;
+      *)
+        _post failed "dead: turn-stall: unchanged for $((now - d2_at))s"
+        exit 0
+        ;;
+      esac
     fi
     if [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
-      _post failed "dead: quiet: unchanged for $((now - d3_at))s"
-      exit 0
+      _bus_refresh
+      case "$bus_detail" in
+      prompt:*) ;;
+      *)
+        _post failed "dead: quiet: unchanged for $((now - d3_at))s"
+        exit 0
+        ;;
+      esac
     fi
 
     sleep "$interval"

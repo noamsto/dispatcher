@@ -1077,6 +1077,25 @@ EOF
   [ "$output" = "1" ]
 }
 
+@test "stall-watch: a prompt: episode held past --idle and --dead still never escalates or gets superseded by quiet:" {
+  # C-1's real shape. A frozen prompt frame is byte-identical by construction, so
+  # it satisfies D3 too — and the C-1 test above pins --idle above --max-life, so
+  # it never reaches that. Here --idle and --dead are both crossed while the
+  # prompt: episode is open: quiet: must not supersede it, and the timer must not
+  # launder it into a failed.
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet:' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|prompt:* ]]
+}
+
 @test "stall-watch: INV-W0 a — a bare-id worker terminal state mutes a suffixed watchdog" {
   CREW_ID=c1 run_crew status worker:feat/x done
   p=$(fx_prompt_trust)
