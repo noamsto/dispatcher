@@ -197,6 +197,35 @@ _crew_id() {
   fi
 }
 
+# _burn_weight <model> — prints "<class>\t<weight>", or "" for a model this
+# burn table (dispatch-orchestration.md → "Burn classes") does not name.
+# kimi-k3* deliberately falls through to "" — the burn doc does not class it —
+# so the cursor rungs are matched on their exact strings, never on a `*high*`
+# glob that would also swallow kimi-k3-high.
+_burn_weight() {
+  case "$1" in
+  composer-2.5*) printf 'free\t0' ;;
+  *haiku* | gpt-5.6-luna | cursor-grok-4.5-low-fast) printf 'cheap\t1' ;;
+  *sonnet* | gpt-5.6-terra | cursor-grok-4.5-medium-fast) printf 'standard\t2' ;;
+  *opus* | gpt-5.6-sol | cursor-grok-4.5-high) printf 'premium\t4' ;;
+  claude-fable-5 | *fable*) printf 'fable\t8' ;;
+  *) printf '' ;;
+  esac
+}
+
+# _gh_json <gh args…> — print gh's JSON on success, print NOTHING on any
+# failure (network down, 404, expired token, gh absent from PATH). ALWAYS
+# returns 0: call sites are plain `out=$(_gh_json …)` under the ambient
+# `set -e`, where a non-zero return would abort the whole sweep at the first
+# failed call instead of merging the stored t2 forward.
+_gh_json() {
+  local out
+  if out=$(gh "$@" 2>/dev/null); then
+    printf '%s' "$out"
+  fi
+  return 0
+}
+
 sub="${1:-}"
 shift || true
 
@@ -724,22 +753,254 @@ report)
       ] | @tsv' "$log"
   ;;
 rate)
-  # Sweep this repo's bus into the global ratings store. One record per RUN
-  # (a run = a dispatch + the branch events until the next dispatch on that
-  # branch). Append-only; readers fold last-wins by run_id. No crew filter —
-  # ratings are cross-run/cross-crew evidence.
+  # Sweep this repo's bus into the global ratings store, or (--report) render
+  # the global store's per-(engine,model,tier) rollup. The report path never
+  # touches the local bus or the network — see docs/superpowers/specs/
+  # 2026-08-10-crew-rate-reconcile-report-design.md.
+  report=false
+  json=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --report)
+      report=true
+      shift
+      ;;
+    --json)
+      json=true
+      shift
+      ;;
+    *)
+      echo "crew: rate takes --report and --json" >&2
+      exit 1
+      ;;
+    esac
+  done
+  if [ "$json" = true ] && [ "$report" = false ]; then
+    echo "crew: rate takes --report and --json" >&2
+    exit 1
+  fi
+
+  if [ "$report" = true ]; then
+    # Reads the global store only — no local bus, no network (spec §crew
+    # rate --report). The `crew roster` idiom: last row wins per run_id. A
+    # missing or empty store folds to [], which renders as the header alone
+    # so "no data yet" stays visibly distinct from "command did nothing".
+    store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
+    store="$store_dir/ratings.jsonl"
+    rows=$(jq -s -c 'group_by(.run_id) | map(max_by(.swept_at))' "$store" 2>/dev/null || true)
+    rows="${rows:-[]}"
+    # One aggregation shared by both output modes: every column is
+    # computed once as {value, k, n} — k is the aggregate's OWN
+    # denominator, n is the row's total — and only the final branch differs:
+    # --json prints that structure as-is, the table renders and pads it.
+    printf '%s' "$rows" | jq -r --argjson want_json "$json" '
+      def median:
+        sort | length as $l
+        | if $l == 0 then null
+          elif ($l % 2) == 1 then .[($l - 1) / 2 | floor]
+          else (.[($l / 2 | floor) - 1] + .[$l / 2 | floor]) / 2
+          end;
+      def mean: if length == 0 then null else add / length end;
+      def nrows: map(select(.outcome != "running" and .outcome != "incomplete"));
+      def agg(k; n; v): {value: v, k: k, n: n};
+      def fmt1:
+        if . == null then null
+        else
+          (. * 10 | round) as $t
+          | (($t / 10) | floor) as $i
+          | ($t - ($i * 10)) as $f
+          | "\($i).\($f)"
+        end;
+      # One humanised-duration rule, shared by ttpr/ttmerge.
+      def humanize_ms:
+        if . == null then null
+        elif . < 5400000 then ((. / 60000 | round | tostring) + "m")
+        else (((. / 3600000) | fmt1) + "h")
+        end;
+      # Marker rules (spec §Making small samples impossible to miss):
+      # "—" when unmeasured, "(k)" when the own denominator differs from n,
+      # "!" when that denominator is below 5.
+      def render_agg(k; n; text):
+        if k == 0 then "—"
+        else (text + (if k != n then "(\(k))" else "" end) + (if k < 5 then "!" else "" end))
+        end;
+
+      def stats:
+        group_by([.engine, .model, .tier])
+        | map(
+            . as $g
+            | ($g | nrows) as $n
+            | ($n | length) as $ncount
+            | {
+                engine: $g[0].engine, model: $g[0].model, tier: $g[0].tier,
+                n: agg($ncount; $ncount; $ncount),
+                inc: ($g | map(select(.outcome == "incomplete")) | length),
+                run: ($g | map(select(.outcome == "running")) | length),
+                pend: ($n | map(select(.pr_state == "OPEN")) | length),
+                pr_pct: (
+                  ($n | map(select(.reached_pr == true)) | length) as $num
+                  | agg($ncount; $ncount; (if $ncount == 0 then null else (($num / $ncount) * 100 | round) end))
+                ),
+                merge_pct: (
+                  ($n | map(select(.pr_state == "MERGED" or .pr_state == "CLOSED"))) as $settled
+                  | ($settled | length) as $k
+                  | ($settled | map(select(.pr_state == "MERGED")) | length) as $num
+                  | agg($k; $ncount; (if $k == 0 then null else (($num / $k) * 100 | round) end))
+                ),
+                ttpr_ms: (
+                  ($n | map(.time_to_pr_ms) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; ($vals | median))
+                ),
+                ttmerge_ms: (
+                  ($n | map(.time_to_merge_ms) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; ($vals | median))
+                ),
+                rework: (
+                  ($n | map(.rework_count) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; ($vals | mean))
+                ),
+                # review_mode ∉ {none, null} — a downgraded-but-run review
+                # still counts, only "no review happened" is excluded.
+                high: (
+                  ($n | map(select((.review_mode != null) and (.review_mode != "none") and (.review_high != null))) | map(.review_high)) as $vals
+                  | agg(($vals|length); $ncount; ($vals | mean))
+                ),
+                rounds: (
+                  ($n | map(.review_rounds) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; ($vals | mean))
+                ),
+                # blocked_count/watchdog_blocked_count are bus-derived, never
+                # null, so this is the one aggregate whose own denominator is
+                # always n — it never carries a "(k)".
+                blocked: (
+                  ($n | map((.blocked_count // 0) + (.watchdog_blocked_count // 0))) as $vals
+                  | agg($ncount; $ncount; ($vals | mean))
+                ),
+                ci1_pct: (
+                  ($n | map(.first_ci_green) | map(select(. != null))) as $vals
+                  | ($vals | length) as $k
+                  | ($vals | map(select(. == true)) | length) as $num
+                  | agg($k; $ncount; (if $k == 0 then null else (($num / $k) * 100 | round) end))
+                ),
+                notes: (
+                  ($n | map(.unresolved_notes) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; ($vals | mean))
+                ),
+                rev: ($g | map(select(.reverted == true)) | length),
+                cost_hours: (
+                  ($n | map(.cost_proxy) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; (($vals | mean) | if . == null then null else . / 3600000 end))
+                )
+              }
+          )
+        | sort_by([.engine, .model, .tier]);
+
+      ["engine","model","tier","n","inc","run","pend","pr%","merge%","ttpr","ttmerge","rework","high","rounds","blocked","ci1","notes","rev","cost"] as $headers
+      | [true,true,true,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false] as $left
+      | stats as $groups
+      | if $want_json then $groups
+        else
+          ($groups | map(
+              [
+                .engine, .model, .tier,
+                render_agg(.n.k; .n.n; (.n.value|tostring)),
+                (.inc|tostring), (.run|tostring), (.pend|tostring),
+                render_agg(.pr_pct.k; .pr_pct.n; (.pr_pct.value|tostring)),
+                render_agg(.merge_pct.k; .merge_pct.n; (.merge_pct.value|tostring)),
+                render_agg(.ttpr_ms.k; .ttpr_ms.n; (.ttpr_ms.value|humanize_ms)),
+                render_agg(.ttmerge_ms.k; .ttmerge_ms.n; (.ttmerge_ms.value|humanize_ms)),
+                render_agg(.rework.k; .rework.n; (.rework.value|fmt1)),
+                render_agg(.high.k; .high.n; (.high.value|fmt1)),
+                render_agg(.rounds.k; .rounds.n; (.rounds.value|fmt1)),
+                render_agg(.blocked.k; .blocked.n; (.blocked.value|fmt1)),
+                render_agg(.ci1_pct.k; .ci1_pct.n; (.ci1_pct.value|tostring)),
+                render_agg(.notes.k; .notes.n; (.notes.value|fmt1)),
+                (.rev|tostring),
+                render_agg(.cost_hours.k; .cost_hours.n; (.cost_hours.value|fmt1))
+              ]
+            )) as $rows
+          | ([$headers] + $rows) as $all
+          | ($headers | length) as $ncols
+          # Widths and padding computed here — never `column -t`: it is not in
+          # runtimeInputs, and BSD vs util-linux pad "—" differently.
+          | ([range(0; $ncols) | . as $c | ($all | map(.[$c] | length) | max)]) as $widths
+          | ([range(0; $ncols) | . as $c
+              | $headers[$c] as $cell
+              | ($widths[$c] - ($cell|length)) as $pad
+              | if $left[$c] then ($cell + (" " * $pad)) else ((" " * $pad) + $cell) end
+             ] | join("  ")) as $header_line
+          | if ($groups | length) == 0 then $header_line
+            else
+              ($rows | map(
+                  . as $row
+                  | [range(0; $ncols) | . as $c
+                     | $row[$c] as $cell
+                     | ($widths[$c] - ($cell|length)) as $pad
+                     | if $left[$c] then ($cell + (" " * $pad)) else ((" " * $pad) + $cell) end
+                    ] | join("  ")
+                )) as $body_lines
+              | ($groups | map(
+                  [.n.k, .pr_pct.k, .merge_pct.k, .ttpr_ms.k, .ttmerge_ms.k, .rework.k, .high.k,
+                   .rounds.k, .blocked.k, .ci1_pct.k, .notes.k, .cost_hours.k]
+                  | any(. < 5)
+                ) | map(select(.)) | length) as $flagged_count
+              | ($groups | length) as $total
+              | ([$header_line] + $body_lines
+                 + ["", "! own sample < 5 — anecdote, not evidence.   value(k) = measured over k of n runs.   — = unmeasured."]
+                 + ["\($flagged_count) of \($total) rows carry at least one small-sample quantity."]
+                ) | join("\n")
+            end
+        end
+    '
+    exit 0
+  fi
+
+  # One record per RUN (a run = a dispatch + the branch events until the next
+  # dispatch on that branch). Append-only; readers fold last-wins by run_id.
+  # No crew filter — ratings are cross-run/cross-crew evidence.
   [ -f "$log" ] || exit 0
   repo=$(git config --get remote.origin.url 2>/dev/null |
     sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
   repo="${repo:-$(basename "$(git rev-parse --show-toplevel)")}"
-  records=$(jq -s --arg repo "$repo" '
+  # jq cannot call _burn_weight, so resolve each distinct model's burn class
+  # in bash first and hand the result in as one lookup object.
+  models=$(jq -s -r '[.[] | select(.kind=="dispatch") | (.model // "")] | unique | .[]' "$log")
+  costmap='{}'
+  while IFS= read -r model; do
+    [ -n "$model" ] || continue
+    cw=$(_burn_weight "$model")
+    [ -n "$cw" ] || continue
+    class="${cw%%$'\t'*}"
+    weight="${cw#*$'\t'}"
+    costmap=$(printf '%s' "$costmap" | jq -c --arg m "$model" --arg c "$class" --argjson w "$weight" \
+      '. + {($m): [$c, $w]}')
+  done <<<"$models"
+  records=$(jq -s --arg repo "$repo" --argjson costmap "$costmap" '
     (map(select(.kind=="dispatch"))) as $disp
     | [ ($disp | map(.branch) | unique)[] as $b
         | ($disp | map(select(.branch==$b)) | sort_by(.ts)) as $runs
-        | range(0; ($runs|length)) as $i
+        | ($runs|length) as $n
+        # Branch reuse (spec §Branch reuse and t2): the PR owner is the
+        # earliest run on this branch whose OWN window contains a status
+        # carrying a pr_url. Computed once per branch, entirely bus-derived,
+        # before any per-run field depends on it.
+        | ([ range(0; $n) as $k
+            | $runs[$k] as $dk
+            | $dk.ts as $tk0
+            | (if $k+1 < $n then $runs[$k+1].ts else 9999999999999 end) as $tk1
+            | (map(select(
+                  .kind!="dispatch"
+                  and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
+                  and .ts >= $tk0 and .ts < $tk1))
+               | map(select(.kind=="status"))
+               | map(.body.pr_url) | map(select(.!=null)) | last)
+          ]) as $owner_prs
+        | ($owner_prs | to_entries | map(select(.value != null)) | (.[0].key // null)) as $owner_idx
+        | range(0; $n) as $i
         | $runs[$i] as $d
         | ($d.ts) as $t0
-        | (if $i+1 < ($runs|length) then $runs[$i+1].ts else 9999999999999 end) as $t1
+        | (if $i+1 < $n then $runs[$i+1].ts else 9999999999999 end) as $t1
+        | (if $i+1 < $n then $runs[$i+1].ts else null end) as $window_end
         | (map(select(
               .kind!="dispatch"
               and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
@@ -749,6 +1010,14 @@ rate)
         | ($last.body.state) as $ls
         | ($st | map(.body.pr_url) | map(select(.!=null)) | last) as $pr
         | ($st | map(select(.body.state=="pr_open")) | sort_by(.ts) | (.[0] // null)) as $propen
+        | ($pr != null and $i == $owner_idx) as $owns_pr
+        # Narrower than the terminal set below on purpose (spec §Cost): a
+        # zombie has an unbounded wall clock, not a zero one.
+        | ($st | map(select(.body.state=="done" or .body.state=="failed")) | sort_by(.ts) | (.[-1] // null)) as $term
+        | (if $term != null then ($term.ts - $t0) else null end) as $wall
+        | (($d.shape // null) | if . == "" then null else . end) as $shape
+        | ($costmap[$d.model // ""] // null) as $cw
+        | (null) as $pr_state
         # Split rather than replace. `blocked_count` feeds an append-only,
         # cross-run ratings store whose rows are compared against rows written
         # before the watchdog existed; changing what populates that field in place
@@ -770,13 +1039,21 @@ rate)
             session: ($d.session // null),
             engine: $d.engine, model: $d.model, tier: $d.tier,
             effort: $d.effort, title: $d.title,
+            shape: $shape,
+            t0_ms: $t0,
+            window_end_ms: $window_end,
             reached_pr: ($propen != null),
             pr_url: $pr,
-            time_to_pr_ms: (if $propen != null then ($propen.ts - $t0) else null end),
+            owns_pr: $owns_pr,
+            time_to_pr_ms: (if $owns_pr and $propen != null then ($propen.ts - $t0) else null end),
+            wall_clock_ms: $wall,
+            cost_class: (if $cw == null then null else $cw[0] end),
+            cost_proxy: (if $cw == null or $wall == null then null else ($cw[1] * $wall) end),
             outcome: (
-              if $pr != null then "pr_open"
-              elif $ls == "failed" then "failed"
-              elif $ls == "done" then "failed"
+              if ($owns_pr and $pr_state == "MERGED") then "merged"
+              elif ($ls == "working" or $ls == "blocked") then "running"
+              elif ($pr != null) then "pr_open"
+              elif ($ls == "done" or $ls == "failed") then "failed"
               else "incomplete" end),
             rework_count: ($m.rework_count // null),
             replanned: (
@@ -792,18 +1069,237 @@ rate)
             blocked_count: $blocked,
             watchdog_blocked_count: $wblocked,
             reported_ok: (($m != null) and ($ls != null)),
+            # t2 placeholders. Emitted null by the local fold so every row has
+            # one shape from its first sweep; the reconcile below fills them.
+            pr_state: $pr_state,
+            last_query_ok: null,
+            merged: null,
+            closed_at_ms: null,
+            merged_at_ms: null,
+            merge_commit: null,
+            time_to_merge_ms: null,
+            review_rounds: null,
+            first_ci_green: null,
+            unresolved_notes: null,
+            reverted: null,
             swept_at: (now*1000|floor)
           } ]' "$log")
   store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
   store="$store_dir/ratings.jsonl"
   mkdir -p "$store_dir"
   lockd="$store_dir/ratings.lock.d"
+  # The `crew roster` idiom: last row wins per run_id. A missing store folds
+  # to [], not an error.
+  store_fold='group_by(.run_id) | map(max_by(.swept_at))'
+
+  # --- lock window 1: read the store to decide which calls to skip ---------
+  # The lock is never held across the network (spec §Merge-forward): on a repo
+  # with many historical runs the reconcile is minutes long, and every other
+  # repo's sweep would block on it. `_lock_release` is an unconditional
+  # `rm -rf` with no owner check, so the EXIT trap is armed only while this
+  # process actually holds the lock — left armed through the unlocked phase it
+  # would delete a CONCURRENT sweep's lock dir on exit.
   if ! _lock_acquire "$lockd" "$$"; then
     echo "crew: ratings store busy" >&2
     exit 1
   fi
   trap '_lock_release "$lockd"' EXIT
-  printf '%s' "$records" | jq -c '.[]' >>"$store"
+  snapshot=$(jq -s -c "$store_fold" "$store" 2>/dev/null || true)
+  _lock_release "$lockd"
+  trap - EXIT
+  snapshot="${snapshot:-[]}"
+
+  # --- t2: the GitHub reconcile, unlocked ---------------------------------
+  threads_q="query(\$owner:String!,\$name:String!,\$number:Int!){repository(owner:\$owner,name:\$name){pullRequest(number:\$number){reviewThreads(first:100){nodes{isResolved}}}}}"
+  # gh marshals an unset timestamp as Go's zero time rather than null, and a
+  # gh timestamp is an ISO-8601 string while t0_ms/window_end_ms are epoch ms —
+  # comparing the two silently succeeds in jq (every string sorts above every
+  # number), so the conversion happens at ingest, once.
+  ts2ms='def ts2ms: if . == null or . == "" or startswith("0001-01-01") then null else (fromdateiso8601 * 1000) end;'
+  patches='{}'
+  gh_failures=0
+  while IFS=$'\t' read -r run_id pr_url branch t0_ms win_end do_view do_actions do_threads s_commit s_merged; do
+    # The gate is evaluated BEFORE any call: a pr_url that is not a GitHub PR
+    # URL issues zero calls. owner/name come from THIS url, never from the
+    # sweeping checkout, so a store holding several repos never cross-queries.
+    if [[ ! $pr_url =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]]; then
+      continue
+    fi
+    owner="${BASH_REMATCH[1]}"
+    name="${BASH_REMATCH[2]}"
+    number="${BASH_REMATCH[3]}"
+    # `pr_url` is unvalidated worker-written text, so the URL alone must not
+    # decide which repo we spend the developer's gh credential on: a run can
+    # only ever reconcile a PR in the repo it was dispatched from.
+    if [ "$owner/$name" != "$repo" ]; then
+      continue
+    fi
+    patch='{}'
+    tried=false
+    ok=true
+    m_commit=""
+    m_at=""
+    if [ "$s_commit" != - ]; then m_commit="$s_commit"; fi
+    if [ "$s_merged" != - ]; then m_at="$s_merged"; fi
+
+    if [ "$do_view" = true ]; then
+      tried=true
+      # Always with the URL: a bare `gh pr view` resolves the sweeping
+      # checkout's own branch and would write that PR into every row.
+      out=$(_gh_json pr view "$pr_url" --json state,closedAt,mergedAt,mergeCommit,commits,reviews)
+      if [ -n "$out" ]; then
+        patch=$(printf '%s' "$out" | jq -c --argjson p "$patch" "$ts2ms"'
+          ([ (.reviews // [])[]
+             | select(.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+             | (.submittedAt | ts2ms) ] | map(select(. != null))) as $rv
+          | ([ (.commits // [])[] | (.committedDate | ts2ms) ] | map(select(. != null))) as $cm
+          | $p + {
+              pr_state: .state,
+              closed_at_ms: (.closedAt | ts2ms),
+              merged_at_ms: (.mergedAt | ts2ms),
+              merge_commit: (.mergeCommit.oid // null),
+              # A round is a maximal group of rework reviews followed by >=1
+              # later commit, so three reviews before one fix commit is ONE
+              # round: bucket each review by the first commit that answers it
+              # and count the distinct buckets. Reviews never answered by a
+              # commit bucket to null and contribute 0.
+              review_rounds: ([ $rv[] as $r | ($cm | map(select(. > $r)) | min) ]
+                              | map(select(. != null)) | unique | length)
+            }')
+        m_commit=$(printf '%s' "$patch" | jq -r '.merge_commit // ""')
+        m_at=$(printf '%s' "$patch" | jq -r '(.merged_at_ms // "") | tostring')
+      else
+        ok=false
+        gh_failures=$((gh_failures + 1))
+      fi
+    fi
+
+    if [ "$do_actions" = true ]; then
+      tried=true
+      if [ "$win_end" = - ]; then win_end=null; fi
+      out=$(_gh_json api --method GET "repos/$owner/$name/actions/runs" -f branch="$branch" -F per_page=100)
+      if [ -n "$out" ]; then
+        patch=$(printf '%s' "$out" | jq -c --argjson p "$patch" \
+          --argjson t0 "$t0_ms" --argjson we "$win_end" '
+          $p + {
+            # Only the CI this run triggered: the dispatch-boundary window is
+            # what stops run i+1 on a reused branch from inheriting the CI of
+            # run i.
+            first_ci_green: (
+              [ (.workflow_runs // [])[]
+                | {sha: .head_sha, c: (.created_at | fromdateiso8601 * 1000),
+                   status: .status, concl: .conclusion} ]
+              | map(select(.c >= $t0 and ($we == null or .c < $we)))
+              | if length == 0 then null
+                else group_by(.sha) | map({first: (map(.c) | min), runs: .}) | min_by(.first)
+                     | .runs | map(select(.status == "completed"))
+                     | all(.concl == "success" or .concl == "skipped" or .concl == "neutral")
+                end)
+          }')
+      else
+        ok=false
+        gh_failures=$((gh_failures + 1))
+      fi
+    fi
+
+    if [ "$do_threads" = true ]; then
+      tried=true
+      out=$(_gh_json api graphql -f query="$threads_q" -F owner="$owner" -F name="$name" -F number="$number")
+      if [ -n "$out" ]; then
+        patch=$(printf '%s' "$out" | jq -c --argjson p "$patch" '
+          $p + {unresolved_notes: ([ (.data.repository.pullRequest.reviewThreads.nodes // [])[]
+                                     | select(.isResolved == false) ] | length)}')
+      else
+        ok=false
+        gh_failures=$((gh_failures + 1))
+      fi
+    fi
+
+    # `reverted` — local, no API call. The existence probe is what keeps "not
+    # reverted" distinguishable from "merge commit not in this checkout":
+    # without it every unfetched repo would report a clean false.
+    if [ -n "$m_commit" ] && [ -n "$m_at" ]; then
+      if git cat-file -e "$m_commit^{commit}" 2>/dev/null; then
+        # `--since` takes approxidate or @<epoch SECONDS>, and silently falls
+        # back rather than erroring on a bare 13-digit millisecond value.
+        if [ -n "$(git log --all --since="@$((m_at / 1000))" \
+          --grep="This reverts commit $m_commit" --max-count=1 2>/dev/null || true)" ]; then
+          rev=true
+        else
+          rev=false
+        fi
+      else
+        rev=null
+      fi
+      patch=$(printf '%s' "$patch" | jq -c --argjson r "$rev" '. + {reverted: $r}')
+    fi
+
+    if [ "$tried" = true ]; then
+      patch=$(printf '%s' "$patch" | jq -c --argjson ok "$ok" '. + {last_query_ok: $ok}')
+    fi
+    patches=$(printf '%s' "$patches" | jq -c --arg id "$run_id" --argjson p "$patch" '. + {($id): $p}')
+  done < <(printf '%s' "$records" | jq -r --argjson snap "$snapshot" '
+    ($snap | map({key: .run_id, value: .}) | from_entries) as $S
+    | (now * 1000) as $now
+    | .[] as $r
+    | ($S[$r.run_id] // {}) as $s
+    | select($r.owns_pr)
+    # Per-call finality (spec §Per-call finality): a run-level skip would
+    # strand any field whose own call failed on the sweep that first saw the
+    # merge, with no path back.
+    | [ $r.run_id, $r.pr_url, $r.branch, $r.t0_ms, ($r.window_end_ms // "-"),
+        (($s.pr_state == "MERGED")
+         or ($s.pr_state == "CLOSED" and $s.closed_at_ms != null
+             and ($now - $s.closed_at_ms) >= 2592000000) | not),
+        ($s.first_ci_green == null),
+        (($s.pr_state == "MERGED" and $s.unresolved_notes != null) | not),
+        ($s.merge_commit // "-"), ($s.merged_at_ms // "-") ] | @tsv')
+
+  # --- lock window 2: merge forward against a FRESH read, append the diff --
+  if ! _lock_acquire "$lockd" "$$"; then
+    echo "crew: ratings store busy" >&2
+    exit 1
+  fi
+  trap '_lock_release "$lockd"' EXIT
+  fresh=$(jq -s -c "$store_fold" "$store" 2>/dev/null || true)
+  fresh="${fresh:-[]}"
+  printf '%s' "$records" | jq -c --argjson stored "$fresh" --argjson patches "$patches" '
+    # The window-1 snapshot decided which calls to skip; carrying values
+    # forward from it would drop a t2 upgrade another sweep landed while this
+    # one was on the network.
+    ($stored | map({key: .run_id, value: .}) | from_entries) as $S
+    | (now * 1000 | floor) as $sw
+    | ["pr_state","closed_at_ms","merged_at_ms","merge_commit",
+       "review_rounds","first_ci_green","unresolved_notes","reverted"] as $t2keys
+    | .[] as $r
+    | ($S[$r.run_id] // {}) as $s
+    | ($patches[$r.run_id] // {}) as $p
+    # For every field whose call did not succeed, the STORED value carries
+    # forward — writing null instead would let one expired token permanently
+    # degrade every already-reconciled row.
+    | ($t2keys | map(. as $k | {key: $k, value: (
+          if ($r.owns_pr | not) then null
+          elif ($p | has($k)) then $p[$k]
+          else $s[$k] end)}) | from_entries) as $t2
+    | ($r + $t2 + {
+        merged: (if $t2.pr_state == null then null else ($t2.pr_state == "MERGED") end),
+        time_to_merge_ms: (if $t2.merged_at_ms == null then null else ($t2.merged_at_ms - $r.t0_ms) end),
+        last_query_ok: $p.last_query_ok,
+        outcome: (if ($r.owns_pr and $t2.pr_state == "MERGED") then "merged" else $r.outcome end),
+        swept_at: $sw
+      }) as $new
+    # Ignoring swept_at is what makes an unchanged sweep a byte-level no-op;
+    # without it every sweep would append every row forever.
+    | select($S[$r.run_id] == null
+             or ($S[$r.run_id] | del(.swept_at)) != ($new | del(.swept_at)))
+    | $new' >>"$store"
+  _lock_release "$lockd"
+  trap - EXIT
+  # stdout stays clean (spec §crew rate --report renders the store, nothing
+  # else) — an expired token or GitHub outage is signalled on stderr only.
+  if [ "$gh_failures" -gt 0 ]; then
+    echo "crew: rate: $gh_failures gh call(s) failed; those rows kept their stored t2" >&2
+  fi
   ;;
 stall-watch)
   # stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S]
@@ -1472,7 +1968,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
