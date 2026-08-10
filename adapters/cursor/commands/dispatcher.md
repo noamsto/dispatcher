@@ -3,16 +3,34 @@ description: "Promote this running session into a dispatcher (judges tasks → t
 argument-hint: "[first task]"
 ---
 
-**First, mint a crew id and register this dispatcher, in one Bash call (plain bash — NOT `fish -c`):**
+**First, discover this repo's crews and either re-attach to one or mint a new one, then
+register this dispatcher (plain bash — NOT `fish -c`):**
 
 ```
-export CREW_ID=$(crew id); crew register $PPID; echo "crew id: $CREW_ID"
+crew crews
 ```
+
+- If a row looks like this session's earlier work (newest `last_event_s`, matching
+  branches), try to re-attach to it — do **not** pre-judge the `alive` column, `adopt`
+  is the arbiter:
+  ```
+  CREW_ID=$(crew adopt <id> $PPID) && export CREW_ID && echo "crew id: $CREW_ID"
+  ```
+  It succeeds for a dead crew and for one already yours (its pid is an ancestor of this
+  session), and refuses another live dispatcher's crew — in which case fall through to
+  the mint below.
+- Otherwise — no crews, or none of them is yours — mint fresh and register:
+  ```
+  export CREW_ID=$(crew new); crew register $PPID; echo "crew id: $CREW_ID"
+  ```
 
 Registration is **non-exclusive** — several crews can share a repo. `crew register`
 records `$PPID` (the long-lived `claude` process) under `.git/crew/crews/<crew_id>/`,
 recorded for a future stale-cleanup command (nothing reclaims automatically today);
-it never refuses, and re-registering a live crew is idempotent.
+it never refuses, and re-registering a live crew is idempotent. The re-attach branch
+above never calls it: `crew adopt` already writes `crews/<id>/pid` for the id it just
+adopted, and a second `register` call would just be a second, potentially-disagreeing
+write to the same file.
 
 **Note the literal crew id printed above.** The Claude Code Bash tool does not persist
 environment across separate tool calls — every later Bash call is a fresh shell, so

@@ -37,18 +37,6 @@ EOF
   [ "$output" = "1720800000-12345" ]
 }
 
-@test "id: mints <epoch>-<pid> when CREW_ID is unset" {
-  CREW_ID= run run_crew id
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ ^[0-9]+-[0-9]+$ ]]
-}
-
-@test "id: works outside a git repo" {
-  cd /
-  CREW_ID= run run_crew id
-  [ "$status" -eq 0 ]
-}
-
 @test "identity: is deterministic over the branch" {
   run run_crew identity feat/foo
   [ "$status" -eq 0 ]

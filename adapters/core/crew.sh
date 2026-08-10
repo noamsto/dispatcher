@@ -200,9 +200,21 @@ _crew_id() {
 sub="${1:-}"
 shift || true
 
-# `id` and `identity` need no repo / no crew id.
+# `id`, `new` and `identity` need no repo / no crew id.
 if [ "$sub" = id ]; then
-  printf '%s\n' "${CREW_ID:-$(date +%s)-$$}"
+  # Read-only: resolves via _crew_id (env, else WORKER_TASK.md) and never mints.
+  # Capture-then-print normalises _crew_id's inconsistent trailing newline (#29).
+  id=$(_crew_id)
+  if [ -n "$id" ]; then
+    printf '%s\n' "$id"
+    exit 0
+  fi
+  echo "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find this repo's crews, 'crew adopt <id> \$PPID' to re-attach, or 'crew new' to start one" >&2
+  exit 1
+fi
+if [ "$sub" = new ]; then
+  # The old bare-`id` minting behaviour, verbatim — now explicit and opt-in (#29).
+  printf '%s\n' "$(date +%s)-$$"
   exit 0
 fi
 if [ "$sub" = identity ]; then
@@ -407,7 +419,7 @@ register | deregister)
   # pid rewritten).
   crew=$(_crew_id)
   [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id> \$PPID' to re-attach, or 'crew new' to start one" >&2
     exit 1
   }
   cdir="$dir/crews/$crew"
@@ -417,6 +429,159 @@ register | deregister)
   else
     rm -rf "$cdir"
   fi
+  ;;
+crews)
+  # Discovery primitive (#29): union crews/*/ (a crew dir — not necessarily
+  # registered, since `watch` also mkdir -p's one) with distinct crew_id in
+  # events.jsonl (a crew that posted, possibly via --crew-id alone and never
+  # registered). Neither source alone is complete.
+  printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n'
+  ids=""
+  if [ -d "$dir/crews" ]; then
+    for d in "$dir"/crews/*/; do
+      [ -d "$d" ] || continue
+      ids="$ids
+$(basename "$d")"
+    done
+  fi
+  if [ -f "$log" ]; then
+    # Best-effort, like every other read of this log: a hard kill mid-append
+    # leaves a torn trailing line, and that is exactly the crash this command
+    # exists to recover from — a jq parse error must not cost the well-formed
+    # crews above it.
+    ids="$ids
+$(jq -r 'select(.crew_id != null and .crew_id != "") | .crew_id' "$log" 2>/dev/null || true)"
+  fi
+  ids=$(printf '%s\n' "$ids" | sed '/^$/d' | sort -u)
+  [ -n "$ids" ] || exit 0
+  # Per-id metadata (pid + liveness) needs `kill -0`, which jq cannot do, so
+  # it is gathered in bash and merged with the log-derived stats in one
+  # final jq pass — that pass also owns the newest-first sort.
+  meta='[]'
+  while IFS= read -r cid; do
+    pid=$(cat "$dir/crews/$cid/pid" 2>/dev/null || true)
+    alive=null
+    if [ -n "$pid" ]; then
+      alive=false
+      # `kill -0 0` signals the caller's own process group and `kill -0 -1`
+      # broadcasts, so both all but always succeed — a non-positive pid would
+      # report a dead crew as alive. Only a positive integer is a liveness probe.
+      case "$pid" in
+      *[!0-9]* | 0) ;;
+      *) if kill -0 "$pid" 2>/dev/null; then alive=true; fi ;;
+      esac
+    fi
+    meta=$(printf '%s' "$meta" | jq -c --arg id "$cid" --arg pid "$pid" --argjson alive "$alive" \
+      '. + [{id:$id, pid:(if $pid=="" then null else $pid end), alive:$alive}]')
+  done <<<"$ids"
+  stats='{}'
+  if [ -f "$log" ]; then
+    # Same torn-line tolerance as the id scan: lose the age/worker columns
+    # rather than the table.
+    stats=$(jq -c '
+        def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+        map(select(.crew_id != null and .crew_id != ""))
+        | group_by(.crew_id)
+        | map({key: .[0].crew_id,
+               value: {last: (map(.ts) | max), first: (map(.ts) | min),
+                       workers: (map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
+                                 | map(.from | wid_branch) | unique | length)}})
+        | from_entries' -s "$log" 2>/dev/null || echo '{}')
+  fi
+  printf '%s' "$meta" | jq -r --argjson stats "$stats" '
+    (now*1000) as $now
+    | (map(select($stats[.id] != null)) | sort_by(-$stats[.id].last)) as $with
+    | (map(select($stats[.id] == null))) as $without
+    | ($with + $without)[]
+    | ($stats[.id]) as $s
+    | [ .id,
+        (if $s == null then "—" else (($now - $s.last)/1000 | floor | tostring) end),
+        (if $s == null then "—" else (($now - $s.first)/1000 | floor | tostring) end),
+        ($s.workers // 0 | tostring),
+        (.pid // "—"),
+        (if .alive == null then "—" elif .alive then "yes" else "no" end)
+      ] | @tsv'
+  ;;
+adopt)
+  # adopt [--force] <id> [pid] — re-attach to an on-disk crew after a
+  # restart lost CREW_ID (#29). --force is stripped from anywhere in the args
+  # before positionals are read, so `crew adopt <id> --force` cannot leave the
+  # literal string "--force" as the pid.
+  force=""
+  args=()
+  for a in "$@"; do
+    if [ "$a" = --force ]; then
+      force=1
+    else
+      args+=("$a")
+    fi
+  done
+  set -- "${args[@]}"
+  id="${1:-}"
+  [ -n "$id" ] || {
+    echo "crew: adopt [--force] <id> [pid]" >&2
+    exit 1
+  }
+  # The id is caller-supplied (`dispatch --crew-id`) and lands unsanitised in the
+  # shared events.jsonl, which is this command's own "is it known" source — so it
+  # is validated before it becomes a path. `/` or `..` would otherwise mkdir and
+  # write a pid file outside the bus dir, and a leading `-` would be read as a
+  # flag by anything that later interpolates it.
+  case "$id" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 1
+    ;;
+  esac
+  pid="${2:-$PPID}"
+  cdir="$dir/crews/$id"
+  known=""
+  [ -d "$cdir" ] && known=1
+  if [ -z "$known" ] && [ -f "$log" ]; then
+    hit=$(jq -r --arg id "$id" 'select(.crew_id == $id) | .crew_id' "$log" 2>/dev/null | head -1 || true)
+    [ -n "$hit" ] && known=1
+  fi
+  [ -n "$known" ] || {
+    echo "crew: no crew '$id' in this repo — run 'crew crews' to list them, or 'crew new' to start one" >&2
+    exit 1
+  }
+  if [ -z "$force" ]; then
+    epid=$(cat "$cdir/pid" 2>/dev/null || true)
+    live=""
+    case "$epid" in
+    '' | *[!0-9]* | 0) ;;
+    *) if kill -0 "$epid" 2>/dev/null; then live=1; fi ;;
+    esac
+    # A live pid among our own ancestors is *this* session's crew, so re-adopting
+    # is idempotent — the recovery path has to survive being run twice. It is a
+    # heuristic, not proof: `kill -0` only says some process holds that number
+    # now, so a stale pid recycled onto a shared ancestor reads as ours. Benign
+    # in the only case it can occur — a recycled pid means the original
+    # dispatcher is dead, which is exactly when adopting is right — and two live
+    # dispatchers on one crew is independently refused by `watch`'s per-crew
+    # lock. `ps -o ppid= -p` is the one parent-of spelling identical on BSD and GNU.
+    mine=""
+    if [ -n "$live" ]; then
+      p=$$
+      depth=0
+      while [ "$depth" -lt 32 ]; do
+        depth=$((depth + 1))
+        p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+        case "$p" in '' | *[!0-9]* | 0) break ;; esac
+        if [ "$p" = "$epid" ]; then
+          mine=1
+          break
+        fi
+      done
+    fi
+    if [ -n "$live" ] && [ -z "$mine" ]; then
+      echo "crew: crew '$id' still has a live dispatcher — 'crew register <pid>' re-registers a crew that is already yours; 'crew new' starts your own; '--force' overrides if that process is a stale pid reuse" >&2
+      exit 1
+    fi
+  fi
+  mkdir -p "$cdir"
+  printf '%s\n' "$pid" >"$cdir/pid"
+  printf '%s\n' "$id"
   ;;
 watch)
   # watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] — block until
@@ -1472,7 +1637,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

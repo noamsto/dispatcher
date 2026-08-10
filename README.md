@@ -87,9 +87,9 @@ crew inbox dispatcher:<id>   # messages addressed to you
 crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
-Full surface: `id`, `identity`, `status`, `msg`, `reply`, `await`, `register`,
-`deregister`, `watch`, `roster`, `inbox`, `stall-watch`, `pr-watch`, `log`,
-`report`, `rate`, `reap`.
+Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
+`await`, `register`, `deregister`, `watch`, `roster`, `inbox`, `stall-watch`,
+`pr-watch`, `log`, `report`, `rate`, `reap`.
 
 Two design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
