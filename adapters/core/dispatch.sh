@@ -662,7 +662,7 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
   fi
 } >"$wt_path/WORKER_TASK.md"
 
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -P -F '#{window_id} #{pane_id}')
+read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
