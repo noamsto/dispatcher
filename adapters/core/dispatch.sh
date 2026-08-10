@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--ignore-budget] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
@@ -43,6 +43,7 @@ kind=implement
 mcp_profile=""
 crew_id_flag=""
 plan_val="required"
+ignore_budget=""
 while [ $# -gt 0 ]; do
   case "$1" in
   --agent)
@@ -104,6 +105,10 @@ while [ $# -gt 0 ]; do
     ;;
   --review)
     kind=review
+    shift
+    ;;
+  --ignore-budget)
+    ignore_budget=1
     shift
     ;;
   *)
@@ -261,6 +266,25 @@ fi
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   echo "dispatch: --mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
   exit 1
+fi
+
+# Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
+# cache is advisory data from refresh-budget — fail open when it is missing,
+# stale (>2h), or silent on this engine ("unknown" is never "exhausted").
+# --ignore-budget is the manual escape hatch (e.g. credits cover the overage).
+budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
+  exhausted=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
+    if (.fetched_epoch + 7200) < $now then empty
+    elif .engines[$e] == null then empty
+    else .engines[$e].windows | to_entries[]
+      | select(.value.used_pct >= 95)
+      | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
+    end' "$budget_file" 2>/dev/null || true)
+  if [ -n "$exhausted" ]; then
+    echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    exit 1
+  fi
 fi
 
 # Map an additive --mcp profile to its generated config (claude-only).
