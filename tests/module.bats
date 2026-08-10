@@ -105,7 +105,7 @@ nix_eval() {
   [[ "$output" == work\|* ]]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$output" == *"crew,dispatch,dispatcher,refresh-scores,pr-watch"* ]]
+  [[ "$output" == *"crew,dispatch,dispatcher,refresh-scores,refresh-budget,pr-watch"* ]]
   [[ "$output" == */adapters/core/protocols ]]
 }
 
