@@ -621,6 +621,108 @@ EOF
   [[ "$output" == *"--idle"* ]]
 }
 
+@test "reap: removes the dispatched label from the issue a merged PR closes" {
+  git commit -q --allow-empty -m init
+  git branch feat/42-reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt"
+  git worktree add -q "$wt_path" feat/42-reap-me
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '42' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/42-reap-me" done "" "https://example.com/pr/7"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/42-reap-me"* ]]
+  grep -q 'pr view https://example.com/pr/7 --json closingIssuesReferences' "$STUB_LOG"
+  grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+}
+
+@test "reap: a dispatched label-removal failure does not abort the sweep" {
+  git commit -q --allow-empty -m init
+  git branch feat/43-reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt2"
+  git worktree add -q "$wt_path" feat/43-reap-me
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '43' ;;
+*remove-label*) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/43-reap-me" done "" "https://example.com/pr/9"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/43-reap-me"* ]]
+  [[ "$output" == *"could not remove the dispatched label from #43"* ]]
+}
+
+@test "reap: a failed closing-issue resolution is logged, not treated as no closing issue" {
+  git commit -q --allow-empty -m init
+  git branch feat/45-reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt4"
+  git worktree add -q "$wt_path" feat/45-reap-me
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*)
+  echo "gh: rate limited" >&2
+  exit 1
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/45-reap-me" done "" "https://example.com/pr/11"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/45-reap-me"* ]]
+  [[ "$output" == *"could not resolve closing issues for PR https://example.com/pr/11 (feat/45-reap-me)"* ]]
+  ! grep -q 'issue edit' "$STUB_LOG"
+}
+
+@test "reap: a PR with no closing issue reaps without attempting a label removal" {
+  git commit -q --allow-empty -m init
+  git branch feat/44-reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt3"
+  git worktree add -q "$wt_path" feat/44-reap-me
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/44-reap-me" done "" "https://example.com/pr/10"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/44-reap-me"* ]]
+  ! grep -q 'issue edit' "$STUB_LOG"
+}
+
 @test "msg: an oversized JSON body stays parseable JSON" {
   big="$(head -c 6000 /dev/zero | tr '\0' x)"
   body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"
