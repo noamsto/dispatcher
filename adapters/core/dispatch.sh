@@ -379,6 +379,26 @@ else
     closes="Closes #$num"
   fi
   switch_mode=create
+
+  # New branch: base it on the remote default branch's fetched tip, not the
+  # local ref of that name, which nothing here fast-forwards and can be
+  # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
+  # which is only as fresh as the last `git remote set-head`. Resolved before
+  # the dispatch lock below, so a failure here costs no worktree and no
+  # window — same as the --pr gate above.
+  default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+  [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
+    echo "dispatch: could not resolve the default branch via gh repo view" >&2
+    exit 1
+  }
+  git fetch origin -- "$default_branch"
+  # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
+  # gate in between shells out to crew/jq, giving a concurrent fetch a window
+  # to move the floating ref — pinning keeps what's branched and what the
+  # success line reports from ever diverging.
+  default_base_oid="$(git rev-parse "origin/$default_branch")"
+  default_base_label="origin/$default_branch"
+  default_base_short="$(git rev-parse --short "$default_base_oid")"
 fi
 
 # Serialize the gate's check-then-act (occupancy read -> switch -> open window)
@@ -440,7 +460,10 @@ if [ -n "$prev_wt" ]; then
 fi
 
 case "$switch_mode" in
-create) wt switch -c "$branch" -y --config-set "$wt_post_switch" ;;
+create)
+  wt switch -c "$branch" -b "$default_base_oid" -y --config-set "$wt_post_switch"
+  echo "dispatch: created branch $branch from $default_base_label ($default_base_short)"
+  ;;
 name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
 fetch-name)
   # `--` before the ref: a PR head branch is attacker-named (up to git's ref

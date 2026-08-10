@@ -25,6 +25,23 @@ teardown() {
 stub_launch_bins() {
   git -C "$TEST_REPO" commit --allow-empty -q -m init
 
+  # A real, fetchable origin: the create path now runs `gh repo view` +
+  # `git fetch origin` before branching (#41), so both need to resolve to
+  # something real rather than the generic no-op stubs from setup().
+  git init -q --bare "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" remote add origin "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" push -q origin main
+
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
   cat >"$STUB_DIR/wt" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -142,8 +159,8 @@ setup_stale_pr_worktree() { # <branch>
   export STALE_OLD_OID
   STALE_OLD_OID="$(git -C "$TEST_REPO" rev-parse "$1")"
 
-  git init -q --bare "$TEST_REPO/origin.git"
-  git -C "$TEST_REPO" remote add origin "$TEST_REPO/origin.git"
+  # stub_launch_bins already wired up a real `origin` bare repo; reuse it
+  # rather than colliding with a second `remote add origin`.
   git -C "$TEST_REPO" push -q origin "$1:refs/heads/$1"
 
   scratch="$(mktemp -d)"
@@ -180,6 +197,51 @@ EOF
   # The worktree already exists, so the reuse-or-refuse gate (#17) runs before
   # the head check; tell it the worktree is unoccupied.
   stub_crew_gate '[]' '[]'
+}
+
+# A real `origin` whose default branch has advanced past the local `main` —
+# the staleness #41 describes: nothing here fetches or fast-forwards the
+# local ref before a new worker branches from it. $STALE_LOCAL_OID is what
+# local `main` is stuck at; $STALE_REMOTE_OID is origin's real tip. gh is
+# stubbed to report the default branch name (the one gh call this fixture
+# needs); git is real, including the fetch dispatch.sh itself runs. The wt
+# stub honors -b (unlike stub_launch_bins' generic one, which always bases on
+# HEAD) so the test can see which commit the worktree actually landed on.
+setup_stale_default_branch() {
+  stub_launch_bins
+  export STALE_LOCAL_OID
+  STALE_LOCAL_OID="$(git -C "$TEST_REPO" rev-parse main)"
+
+  scratch="$(mktemp -d)"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q main
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "origin advances"
+  export STALE_REMOTE_OID
+  STALE_REMOTE_OID="$(git -C "$scratch" rev-parse HEAD)"
+  git -C "$scratch" push -q origin main
+  rm -rf "$scratch"
+
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = switch ]; then
+  br="" base=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -c) br="$2"; shift 2 ;;
+    -b) base="$2"; shift 2 ;;
+    *) shift ;;
+    esac
+  done
+  [ -n "$br" ] || exit 1
+  dest="$TEST_REPO/.dispatch-wt/${br//\//-}"
+  mkdir -p "$(dirname "$dest")"
+  git -C "$TEST_REPO" worktree add -b "$br" "$dest" "${base:-HEAD}" >/dev/null
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
 }
 
 # wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
@@ -840,6 +902,10 @@ EOF
 # verification step sees a match (not the concern of these gate tests).
 setup_occupied_branch() {
   stub_launch_bins
+  # All consumers of this fixture dispatch via --pr, which never touches the
+  # create-mode default-branch fetch stub_launch_bins now wires up — drop it
+  # so "no origin remote" stays true for the fast-path regression check below.
+  git -C "$TEST_REPO" remote remove origin
   git -C "$TEST_REPO" branch eng-7691-foo
   mkdir -p "$TEST_REPO/.worktrees"
   git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/eng-7691-foo" eng-7691-foo
@@ -994,4 +1060,56 @@ lock_path() { # <branch>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   [ ! -L "$(lock_path feat/42-do-a-thing)" ]
+}
+
+# Create-mode base resolution (#41): `wt switch -c` with no -b bases off the
+# LOCAL default branch, which nothing here fetches or fast-forwards first —
+# routine staleness on a machine that dispatches more than it pulls. These
+# tests pin that the new worktree lands on the fetched origin ref instead.
+
+@test "create-mode branches from the fetched origin ref, not a stale local branch of the same name" {
+  setup_stale_default_branch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  [ "$(git -C "$wt_path" rev-parse HEAD)" != "$STALE_LOCAL_OID" ]
+
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STALE_REMOTE_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/main ($short)"* ]]
+  # The oid is pinned at fetch time and passed to `-b` directly (not the
+  # floating origin/main ref) so the branch actually created can never drift
+  # from what the success line reports.
+  grep -q "switch -c feat/42-implement-thing -b $STALE_REMOTE_OID" "$STUB_LOG"
+}
+
+@test "create-mode base resolution works the same for a Linear-tracked dispatch" {
+  setup_stale_default_branch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/eng-1234-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  grep -qx 'Closes ENG-1234' "$wt_path/WORKER_TASK.md"
+}
+
+@test "aborts before scaffolding when gh cannot resolve the default branch" {
+  stub_launch_bins
+  # Revert stub_launch_bins' gh override back to the generic no-op stub, so
+  # `repo view` resolves to nothing while wt/tmux/crew stay real enough that
+  # a genuine scaffold attempt would show up in $STUB_LOG.
+  stub_bin gh
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not resolve the default branch"* ]]
+  ! grep -q 'switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--pr dispatch never calls gh repo view or fetches a default branch" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  ! grep -q 'repo view' "$STUB_LOG"
 }
