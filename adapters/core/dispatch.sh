@@ -38,6 +38,7 @@ effort=""
 linear_id=""
 gh_issue=""
 pr_number=""
+base_ref=""
 kind=implement
 mcp_profile=""
 crew_id_flag=""
@@ -309,11 +310,17 @@ wt_post_switch='post-switch.tmux=""'
 # --pr resolves the head ref; the switch itself happens after the gate below, so
 # a refusal costs no worktree and no window.
 if [ -n "$pr_number" ]; then
-  pr_json=$(gh pr view "$pr_number" --json headRefName,isCrossRepository)
+  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository)
   head=$(printf '%s' "$pr_json" | jq -r .headRefName)
+  head_oid=$(printf '%s' "$pr_json" | jq -r .headRefOid)
+  base_ref=$(printf '%s' "$pr_json" | jq -r .baseRefName)
   cross=$(printf '%s' "$pr_json" | jq -r .isCrossRepository)
   [ -n "$head" ] && [ "$head" != null ] || {
     echo "dispatch: could not resolve headRefName for PR $pr_number" >&2
+    exit 1
+  }
+  [ -n "$head_oid" ] && [ "$head_oid" != null ] && [ -n "$base_ref" ] && [ "$base_ref" != null ] || {
+    echo "dispatch: could not resolve headRefOid/baseRefName for PR $pr_number" >&2
     exit 1
   }
   branch="$head"
@@ -412,7 +419,10 @@ case "$switch_mode" in
 create) wt switch -c "$branch" -y --config-set "$wt_post_switch" ;;
 name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
 fetch-name)
-  git fetch origin "$branch"
+  # `--` before the ref: a PR head branch is attacker-named (up to git's ref
+  # rules, which permit a leading `-`), and a bare positional would let a
+  # branch named e.g. `--upload-pack=...` be parsed as a fetch option.
+  git fetch origin -- "$branch"
   wt switch "$branch" -y --config-set "$wt_post_switch"
   ;;
 pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
@@ -437,6 +447,28 @@ if [ -z "$wt_path" ]; then
   exit 1
 fi
 
+# --pr: verify the attached worktree actually sits at the PR head. `wt switch`
+# attaches to an existing worktree without fetching or resetting it, so a
+# stale local branch would otherwise go unnoticed.
+if [ -n "$pr_number" ]; then
+  worktree_head="$(git -C "$wt_path" rev-parse HEAD)"
+  if [ "$worktree_head" != "$head_oid" ]; then
+    # A worker's own WORKER_TASK.md is intentionally untracked and is only
+    # trashed by `crew reap`, not on reclaim, so it alone must not count as
+    # dirty.
+    dirt="$(git -C "$wt_path" status --porcelain | grep -v '^?? WORKER_TASK\.md$' || true)"
+    if [ -z "$dirt" ]; then
+      echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid — fetching and hard-resetting" >&2
+      # `--` before the ref: see the fetch-name comment above, same reasoning.
+      git -C "$wt_path" fetch origin -- "$head"
+      git -C "$wt_path" reset --hard "$head_oid"
+    else
+      echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
+      exit 1
+    fi
+  fi
+fi
+
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
 jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
@@ -457,6 +489,9 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 {
   printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
     "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
+  if [ -n "$pr_number" ]; then
+    printf 'base: %s\n' "$base_ref"
+  fi
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"

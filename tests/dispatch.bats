@@ -72,18 +72,23 @@ EOF
 
 # Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the
 # PR head, wt attaches a worktree to that existing branch (no -c), crew/tmux as
-# in stub_launch_bins. $1 is the PR's head branch.
-stub_pr_bins() { # <head-branch>
+# in stub_launch_bins. $1 is the PR's head branch. headRefOid is the branch's
+# current tip, so the worktree-verification step sees a match by default —
+# tests that want a mismatch override $PR_HEAD_OID after calling this.
+stub_pr_bins() { # <head-branch> [base-branch]
   git commit --allow-empty -qm init
   git branch "$1"
   export PR_HEAD="$1"
+  export PR_HEAD_OID
+  PR_HEAD_OID="$(git rev-parse "$1")"
+  export PR_BASE="${2:-extract}"
 
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 pr\ view\ *)
-  printf '{"headRefName":"%s","isCrossRepository":false}\n' "$PR_HEAD"
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE"
   ;;
 esac
 exit 0
@@ -120,6 +125,61 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
+}
+
+# An existing --pr worktree that is behind the PR's real head: a real `origin`
+# remote (a bare repo) carries a commit the local worktree never fetched —
+# exactly the staleness #19 describes, where `wt switch` attached to an
+# existing worktree without fetching or resetting it. $STALE_OLD_OID is what
+# the worktree has checked out; $STALE_NEW_OID is what `gh pr view` reports as
+# headRefOid. wt/crew/tmux are the no-op attach stubs from setup_occupied_branch
+# (the worktree already exists); gh and git are real.
+setup_stale_pr_worktree() { # <branch>
+  stub_launch_bins
+  git -C "$TEST_REPO" branch "$1"
+  mkdir -p "$TEST_REPO/.worktrees"
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/$1" "$1"
+  export STALE_OLD_OID
+  STALE_OLD_OID="$(git -C "$TEST_REPO" rev-parse "$1")"
+
+  git init -q --bare "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" remote add origin "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" push -q origin "$1:refs/heads/$1"
+
+  scratch="$(mktemp -d)"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q "$1"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "pr head advances"
+  export STALE_NEW_OID
+  STALE_NEW_OID="$(git -C "$scratch" rev-parse HEAD)"
+  git -C "$scratch" push -q origin "$1"
+  rm -rf "$scratch"
+
+  export STALE_HEAD="$1"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ view\ *)
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false}\n' "$STALE_HEAD" "$STALE_NEW_OID"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  # stub_launch_bins' wt only handles `switch -c`; the --pr path switches by
+  # NAME onto the already-existing worktree, so switching is a no-op success.
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+
+  # The worktree already exists, so the reuse-or-refuse gate (#17) runs before
+  # the head check; tell it the worktree is unoccupied.
+  stub_crew_gate '[]' '[]'
 }
 
 # wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
@@ -528,6 +588,83 @@ assert_gate_silent() { # <engine> <model>
   ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
 }
 
+@test "--pr stamps base: from baseRefName" {
+  stub_pr_bins eng-7691-foo stacked-base
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -qx 'base: stacked-base' "$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+}
+
+@test "a non-pr dispatch never stamps base:" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  ! grep -q '^base:' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+}
+
+# --pr HEAD verification (#19): `wt switch` attaches to an existing worktree
+# without fetching or resetting it, so dispatch itself must confirm the
+# worktree actually matches the PR's headRefOid before a worker ever launches
+# against it.
+
+@test "--pr worktree already at the PR head launches unchanged" {
+  setup_occupied_branch
+  stub_crew_gate '[]' '[]'
+  wt_path="$TEST_REPO/.worktrees/eng-7691-foo"
+  before="$(git -C "$wt_path" rev-parse HEAD)"
+
+  # No `origin` remote exists in this fixture — if dispatch mistakenly
+  # attempted a fetch on the matching-head fast path, it would fail here.
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$before" ]
+  grep -q 'new-window' "$STUB_LOG"
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "--pr fetches and hard-resets a clean stale worktree to the PR head" {
+  setup_stale_pr_worktree eng-7691-stale
+  wt_path="$TEST_REPO/.worktrees/eng-7691-stale"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$STALE_OLD_OID"* ]]
+  [[ "$output" == *"$STALE_NEW_OID"* ]]
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_NEW_OID" ]
+  grep -q 'new-window' "$STUB_LOG"
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "--pr treats a leftover WORKER_TASK.md alone as clean, not dirty" {
+  # WORKER_TASK.md is intentionally untracked and is never cleaned up on
+  # reclaim (only `crew reap` trashes it) — a re-dispatch onto a --pr worktree
+  # whose PR has since advanced must not treat its own prior task file as
+  # uncommitted work and refuse to reset.
+  setup_stale_pr_worktree eng-7691-leftover
+  wt_path="$TEST_REPO/.worktrees/eng-7691-leftover"
+  printf 'tier: standard\n' >"$wt_path/WORKER_TASK.md"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_NEW_OID" ]
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "--pr refuses to reset a dirty stale worktree, and launches nothing" {
+  setup_stale_pr_worktree eng-7691-dirty
+  wt_path="$TEST_REPO/.worktrees/eng-7691-dirty"
+  echo "local edit" >"$wt_path/dirty.txt"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$STALE_OLD_OID"* ]]
+  [[ "$output" == *"$STALE_NEW_OID"* ]]
+  [[ "$output" == *"uncommitted"* ]]
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_OLD_OID" ]
+  ! grep -q 'new-window' "$STUB_LOG"
+  ! grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "--review without --pr aborts before scaffolding" {
   run run_dispatch standard sonnet --effort medium --review --crew-id c1 "review something"
   [ "$status" -eq 1 ]
@@ -638,17 +775,20 @@ EOF
 }
 
 # An existing worktree for the branch the --pr path resolves to, so the gate has
-# something to find.
+# something to find. headRefOid matches the worktree's actual HEAD so the
+# verification step sees a match (not the concern of these gate tests).
 setup_occupied_branch() {
   stub_launch_bins
   git -C "$TEST_REPO" branch eng-7691-foo
   mkdir -p "$TEST_REPO/.worktrees"
   git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/eng-7691-foo" eng-7691-foo
+  export OCCUPIED_HEAD_OID
+  OCCUPIED_HEAD_OID="$(git -C "$TEST_REPO" rev-parse eng-7691-foo)"
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
-pr\ view\ *) printf '%s\n' '{"headRefName":"eng-7691-foo","isCrossRepository":false}' ;;
+pr\ view\ *) printf '{"headRefName":"eng-7691-foo","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false}\n' "$OCCUPIED_HEAD_OID" ;;
 esac
 exit 0
 EOF
