@@ -138,12 +138,25 @@ _lock_acquire() {
 
 _lock_release() { rm -rf "$1"; }
 
-# A bus line MUST fit in one write(). `printf '%s\n' … >>"$log"` is atomic under
-# O_APPEND only up to the 4096-byte stdio buffer; above it bash flushes in
-# 4096-byte chunks and a concurrent append lands in the gap, splicing two records
-# into one line (#20).
+# A bus line MUST fit in one write(). `printf '%s\n' … >>"$log"` is NOT reliably
+# atomic under O_APPEND: bash's printf builtin doesn't guarantee one write(2)
+# syscall per line, so under concurrent writers a line above a few KB can land
+# as two separate writes with another process's append spliced into the gap,
+# corrupting two records into one line (#20, #55). `_LINE_MAX` is a shrink
+# target for readability, not what makes appends atomic — `_bus_append` below
+# is what does that.
 _LINE_MAX=4096
 _ELIDED=' …[elided]'
+
+# _bus_append <log> <line> — append <line> + newline to <log> as a single
+# write(2) (#55). `iflag=fullblock` makes dd keep reading until its buffer is
+# full or EOF instead of writing out whatever a single short read from the
+# pipe returned — without it, dd's own read/write is no more atomic than the
+# `printf >>` it replaces. Only POSIX-common flags (no GNU-only `oflag=append`
+# or `of=`), so this also works under macOS's system BSD `dd`. Covers only the
+# two call sites that use it (`status`/`msg`, and `_post`) — `reply`,
+# `pr-watch` and `reap` still append directly and share the same hazard.
+_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
 # _shrink <text> <keep> — shorten <text> to roughly <keep> characters.
 # A sink body (`metrics:`, `retro:`) is itself JSON, and cutting it as a blob ends
@@ -315,7 +328,7 @@ status | msg)
     }
     line=$(_fit_line _build_msg "${3:-}")
   fi
-  printf '%s\n' "$line" >>"$log"
+  _bus_append "$log" "$line"
   ;;
 reply)
   # reply <to> <body> — sugar over `msg`; from is dispatcher:<crew> so the
@@ -1479,9 +1492,11 @@ BUSLINE
     done | failed | exited) exit 0 ;;
     esac
     mkdir -p "$dir"
-    jq -nc --arg crew "$crew" --arg from "$me" --arg state "$1" --arg detail "$2" \
+    local line
+    line=$(jq -nc --arg crew "$crew" --arg from "$me" --arg state "$1" --arg detail "$2" \
       '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
-          kind:"status", body:{state:$state, detail:$detail, source:"watchdog"}}' >>"$log"
+          kind:"status", body:{state:$state, detail:$detail, source:"watchdog"}}')
+    _bus_append "$log" "$line"
   }
 
   # INV-W3 — one open watchdog episode per branch PER PREFIX, checked on the bus
