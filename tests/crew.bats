@@ -920,6 +920,49 @@ Considering… ($1 · ↓ 28.0k tokens)
 EOF
 }
 
+# fx_prompt_quota — the rate-limit prompt from issue #58's transcript.
+# RECONSTRUCTED, not captured: no frame of this prompt exists in
+# EVIDENCE-2026-08-10.txt (same caveat as fx_meter_hours's "uncaptured"
+# note above). Footer/geometry assumed to match every other measured
+# option-select frame in this file.
+fx_prompt_quota() {
+  frame_file prompt_quota <<'EOF'
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+  3. Upgrade to Team plan
+Enter to select · Esc to cancel
+EOF
+}
+
+# fx_prompt_trust_with_distant_quota_text — a GENUINE, different prompt (the
+# workspace-trust frame) whose visible screen also happens to contain the
+# literal quota phrase, but more than 12 non-empty lines above the trust
+# prompt's own footer — i.e. outside _is_quota_prompt's search window.
+# Guards against classifying a real, answerable prompt as quota: merely
+# because that phrase is visible somewhere higher on the same screen (e.g. a
+# worker with DISPATCHER_PROTOCOL.md scrolled into view).
+fx_prompt_trust_with_distant_quota_text() {
+  frame_file prompt_trust_distant <<'EOF'
+Reviewing DISPATCHER_PROTOCOL.md: `quota:` fires on Stop and wait for limit to reset.
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
+EOF
+}
+
 @test "stall-watch: D1 posts blocked/prompt: on the option-select frame" {
   p=$(fx_prompt_select)
   stall_sampler "$p" "$p" "$p" "$p"
@@ -1314,6 +1357,56 @@ EOF
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --bogus 1
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown arg"* ]]
+}
+
+@test "stall-watch: D1 posts blocked/quota: on the rate-limit prompt, not prompt:" {
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|quota: quota exhausted"* ]]
+}
+
+@test "stall-watch: a quota: episode NEVER escalates (C-1 quota variant)" {
+  # Mirrors "a prompt: episode NEVER escalates (C-1)" for the quota discriminator.
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: a quota: episode held past --idle and --dead still never escalates or gets superseded by quiet:" {
+  # Mirrors the equivalent prompt: test. A frozen quota frame is byte-identical
+  # by construction, so it satisfies D3 too: quiet: must not supersede quota:,
+  # and the timer must not launder it into a failed.
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet:' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|quota:* ]]
+}
+
+@test "stall-watch: a genuine prompt with the quota phrase far up-screen still classifies as prompt:, not quota:" {
+  p=$(fx_prompt_trust_with_distant_quota_text)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
 }
 
 @test "roster: carries source and truncates detail to 120 chars" {

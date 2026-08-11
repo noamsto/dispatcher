@@ -815,14 +815,18 @@ stall-watch)
   # working (#31). Four detectors read one pane capture per tick:
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
+  #                  (quota: is D1's own content discriminator on the SAME
+  #                  geometry, not a fifth detector — see _is_quota_prompt)
   #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
   #   D3 quiet:      byte-identical pane for --idle
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
   # evidence that nobody answered, not that the worker died, so it never
-  # escalates. Engine signatures are the data table below: claude only, because
-  # a guessed signature is a false-positive generator.
+  # escalates (quota: never escalates either — same reasoning, opposite
+  # recovery: stop dispatching, don't answer). Engine signatures are the data
+  # table below: claude only, because a guessed signature is a false-positive
+  # generator.
   # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
   # pane liveness) so the loop is testable without tmux.
   arg="${1:-}"
@@ -997,8 +1001,12 @@ BUSLINE
       # C-1's other half: an open `prompt:` is sticky, un-supersedable by any
       # other prefix. Overwriting it with `quiet:` — which a frozen prompt frame
       # satisfies by construction — would hand the unanswered prompt an
-      # escalation path `prompt:` itself is forbidden to have.
+      # escalation path `prompt:` itself is forbidden to have. `quota:` gets the
+      # same protection: a quota-exhausted pane is static for hours (far past
+      # --idle), so without this a D3 `quiet:` would eventually overwrite the
+      # one signal telling the dispatcher to stop dispatching entirely.
       prompt:*) return 1 ;;
+      quota:*) return 1 ;;
       esac
     fi
     _post blocked "$2"
@@ -1035,6 +1043,22 @@ BUSLINE
     above=$(printf '%s\n' "$tail_n" | sed '$d')
     printf '%s\n' "$above" | grep -qE "$re_option"
   }
+  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
+  # (never alone): _is_prompt already proves the pane is on-screen and shaped
+  # like an option-select frame; this only decides WHICH option-select frame it
+  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
+  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
+  # unlike the pinned fixtures above it, so its exact line count above the
+  # footer is unknown and a too-tight window risks silently degrading to
+  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
+  # search would classify a genuinely different, answerable prompt as `quota:`
+  # merely because this literal phrase happens to be visible somewhere higher
+  # on the same screen (e.g. a worker with this very protocol doc scrolled
+  # into view) — and `quota:` is sticky and escalation-exempt, so that
+  # mislabel would leave a real question unanswered indefinitely.
+  _is_quota_prompt() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
+  }
   _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
@@ -1047,6 +1071,7 @@ BUSLINE
   d0_at=0
   d1_hits=0
   d1_at=0
+  d1_kind=""
   d2_tok=""
   d2_clock=""
   d2_since=0
@@ -1093,24 +1118,50 @@ BUSLINE
     fi
     quiet_for=$((now - last_change))
 
-    # ---- D1: interactive prompt ------------------------------------------
+    # ---- D1: interactive prompt --------------------------------------------
     # Presence, not transition: the workspace-trust frame is on screen from the
     # worker's FIRST sample, so an "appeared" conjunct could never fire on the
     # only frame with measured production occurrences.
+    # quota: is a content discriminator on the SAME geometry, not a separate
+    # detector — a quota-exhausted frame and a generic option-select frame are
+    # mutually exclusive per sample, so one hit counter (d1_hits/d1_at) covers
+    # both. d1_kind remembers which was actually posted so a mid-episode flip
+    # (e.g. a prompt frame that becomes the quota frame with no intervening
+    # non-prompt sample) reclassifies instead of staying mislabeled for the
+    # rest of the run.
     if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] &&
       _is_prompt "$text" && [ -z "$(_meter_line "$text")" ]; then
+      if _is_quota_prompt "$text"; then
+        kind=quota
+      else
+        kind=prompt
+      fi
+      if [ "$d1_at" != 0 ] && [ "$kind" != "$d1_kind" ]; then
+        _post_clear "prompt:"
+        _post_clear "quota:"
+        d1_at=0
+        d1_hits=0
+      fi
       d1_hits=$((d1_hits + 1))
       if [ "$d1_hits" -ge 2 ] && [ "$d1_at" = 0 ]; then
-        if _post_blocked "prompt:" "prompt: interactive prompt in pane $pane — worker is waiting on input nobody can give"; then
+        if [ "$kind" = quota ]; then
+          if _post_blocked "quota:" "quota: quota exhausted — worker parked on the rate-limit prompt in pane $pane; do not re-dispatch — Esc dismisses it, resume continues from intact context on the next window"; then
+            d1_at="$now"
+            d1_kind=quota
+          fi
+        elif _post_blocked "prompt:" "prompt: interactive prompt in pane $pane — worker is waiting on input nobody can give"; then
           d1_at="$now"
+          d1_kind=prompt
         fi
       fi
     else
       if [ "$d1_at" != 0 ]; then
         _post_clear "prompt:"
+        _post_clear "quota:"
         d1_at=0
       fi
       d1_hits=0
+      d1_kind=""
     fi
 
     # ---- D2: dead turn ----------------------------------------------------
@@ -1204,18 +1255,23 @@ BUSLINE
 
     # ---- Escalation --------------------------------------------------------
     # The only path to `failed`, and it is a SECOND, later, independent evidence
-    # check — not a timer. `prompt:` is exempt (C-1): a frame still on screen
-    # means nobody answered yet, and escalating it would reproduce session 3
-    # with a 30-minute delay. `stalled:` is exempt too — it is the branch that
-    # catches the classifier's misses, so it must stay recoverable; a genuinely
-    # dead pane reaches `failed` through the `quiet:` episode instead.
+    # check — not a timer. `prompt:` and `quota:` are both exempt (C-1): a frame
+    # still on screen means nobody answered yet (or the quota window hasn't
+    # reset), and escalating either would reproduce session 3 with a 30-minute
+    # delay — for `quota:` specifically, laundering hours of an intact worker
+    # into a `failed` that invites exactly the re-dispatch this state exists to
+    # prevent. `stalled:` is exempt too — it is the branch that catches the
+    # classifier's misses, so it must stay recoverable; a genuinely dead pane
+    # reaches `failed` through the `quiet:` episode instead.
     # The live bus, not the in-process timer, decides: a timer armed before D1
-    # claimed the branch still points at an episode that is no longer the open
-    # one, and escalating it would launder a `prompt:` into a `failed`.
+    # claimed the branch (or before a second watchdog process superseded it —
+    # INV-W3 allows two live per branch, coordinating only via the bus) still
+    # points at an episode that is no longer the open one, and escalating it
+    # would launder a `prompt:`/`quota:` into a `failed`.
     if [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
-      prompt:*) ;;
+      prompt:* | quota:*) ;;
       *)
         _post failed "dead: turn-stall: unchanged for $((now - d2_at))s"
         exit 0
@@ -1225,7 +1281,7 @@ BUSLINE
     if [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
-      prompt:*) ;;
+      prompt:* | quota:*) ;;
       *)
         _post failed "dead: quiet: unchanged for $((now - d3_at))s"
         exit 0
