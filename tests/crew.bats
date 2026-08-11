@@ -1346,3 +1346,29 @@ EOF
   run jq -r '"\(.blocked_count)|\(.watchdog_blocked_count)"' "$store/crew/ratings.jsonl"
   [ "$output" = "1|2" ]
 }
+
+# Contract pin, not a behaviour test: `crew rate` already passes any
+# `review_mode` string through unchanged today, so this test would pass
+# before the review-gate change too. It exists so a later `crew rate` edit
+# cannot silently swallow the new `unavailable` value — it does not verify
+# that any worker actually emits it.
+@test "rate: passes review_mode unavailable through untouched" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  cat >"$log" <<'EOF'
+{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/review-unavailable","engine":"codex","model":"terra","tier":"standard","effort":"medium","title":"review gate unavailable"}
+{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/review-unavailable","body":{"state":"failed"}}
+{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/review-unavailable","to":"metrics:c1","body":"{\"review_mode\":\"unavailable\",\"review_high\":null}"}
+EOF
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+
+  run jq -s -e '
+    map(select(.branch=="feat/review-unavailable"))
+    | .[0]
+    | {review_mode, outcome, reached_pr} == {review_mode:"unavailable", outcome:"failed", reached_pr:false}
+  ' "$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$status" -eq 0 ]
+}
