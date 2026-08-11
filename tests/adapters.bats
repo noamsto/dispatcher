@@ -326,17 +326,19 @@ setup() {
     '`unavailable` appears on a `blocked`/`failed` snapshot only and **never co-occurs with `done`**' \
     '**On `standard`/`deep` a `kind: implement` worker never validly reports `done` (or `pr_open`) with `review_mode: "none"`, on any engine**' \
     '`unavailable` is narrower than "no reviewer ran": it means the gate was **reached** and no reviewer could be spawned' \
-    'honestly emits `none`, because no reviewer was due yet, with `review_high: 0`'; do
+    'Whether `none` is honest turns on one test — **did the run reach the review gate?**' \
+    'emits `none` with `review_high: 0` per the "`0` if no reviewer ran" rule' \
+    'A run that did reach it keeps whatever the gate produced — `full`/`downgraded` with its real `review_high`, or `unavailable` — even if it later fails, is stopped, or times out'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
 }
 
-@test "worker protocol narrows the review_mode none gloss to trivial" {
+@test "worker protocol glosses review_mode none by the gate-reached condition" {
   # The old parenthetical read as permission for the exact degrade the
   # unavailability path exists to close, so its absence is the regression test.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
-  run grep -F '`none` (**trivial only** — no reviewer was ever supposed to run), or `unavailable` (a reviewer was required and could not be spawned; see below)' "$protocol"
+  run grep -F '`none` (**no reviewer was due** — the trivial tier, or a standard/deep run that stopped before reaching the gate), or `unavailable` (a reviewer was required and could not be spawned; see below)' "$protocol"
   [ "$status" -eq 0 ]
   run grep -F '`none` (trivial / no reviewer)' "$protocol"
   [ "$status" -ne 0 ]
