@@ -196,12 +196,19 @@ fan-out budget, so the same wakeup tells you when to dispatch the next queued ta
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of five reserved prefixes:
+self-reported. Its `detail` always begins with one of six reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
   watchdog clears the state itself. This never escalates: an unanswered answerable
   question is waiting work, not a dead worker.
+- `quota:` — the pane is parked on the rate-limit prompt ("Stop and wait for limit to
+  reset"), a content variant of `prompt:` with the opposite correct response: stop
+  dispatching to this engine, don't answer a question. Recovery is cheap and this is not
+  hypothetical, it's measured: `Esc` dismisses the prompt, the session keeps its full
+  context, and a resume nudge continues the work on the next quota window — **never
+  re-dispatch** a worker wedged this way, it would discard hours of intact work for
+  nothing that needed redoing. Like `prompt:`, this never escalates to `dead:`.
 - `turn-stall:` — the pane's clock advanced for 30 min against a static token count with
   no live subagent row. A dead turn.
 - `quiet:` — the pane has been byte-identical for 30 min.
@@ -218,7 +225,8 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
    `detail` exists to make this one command possible.
-2. The pane confirms a prompt → answer it in place.
+2. The pane confirms a prompt → answer it in place (except `quota:` — see above: stop,
+   don't answer).
 3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.
 4. The pane shows work in flight (a live meter, advancing subagent rows) → it is a
    **false positive. Do not kill.** Post nothing; the watchdog clears itself on the next
