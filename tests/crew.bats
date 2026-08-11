@@ -1347,11 +1347,9 @@ EOF
   [ "$output" = "1|2" ]
 }
 
-# Contract pin, not a behaviour test: `crew rate` already passes any
-# `review_mode` string through unchanged today, so this test would pass
-# before the review-gate change too. It exists so a later `crew rate` edit
-# cannot silently swallow the new `unavailable` value — it does not verify
-# that any worker actually emits it.
+# Contract pin, not a behaviour test: rate already passes any review_mode
+# string through, so this passed before the value existed. It stops a later
+# rate edit swallowing `unavailable` — it does not verify a worker emits it.
 @test "rate: passes review_mode unavailable through untouched" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$log")"
