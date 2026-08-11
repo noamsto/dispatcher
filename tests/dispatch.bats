@@ -394,6 +394,7 @@ budget_json() {
   # session high → subagent medium (one rung down)
   [[ "$launch" == *'agents.default_subagent_reasoning_effort=medium'* ]]
   [[ "$launch" == *'Process authority:'* ]]
+  [[ "$launch" == *'review authority only'* ]]
   [[ "$launch" != *'default_subagent_reasoning_effort=ultra'* ]]
 }
 
@@ -415,6 +416,7 @@ budget_json() {
   [[ "$launch" == *'cursor-agent'* ]]
   [[ "$launch" == *"--model 'kimi-k3-high'"* ]]
   [[ "$launch" == *'Process authority:'* ]]
+  [[ "$launch" == *'review authority only'* ]]
 }
 
 @test "task headers preserve the authoritative launch tuple for every engine" {
