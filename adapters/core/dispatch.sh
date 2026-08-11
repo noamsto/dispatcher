@@ -706,7 +706,7 @@ fi
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
 # the Agent tool; this clause is only for engines whose spawn prompt is the
 # sole carrier.
-process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker."
+process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker. When spawning review subagents, grant review authority only — tell them not to fix the code, not to commit or push, not to open PRs, and not to act as the worker."
 if [ "$agent" = codex ] && [ "$effort" = ultra ]; then
   process_authority="$process_authority Session effort is ultra — Codex automatic delegation is the orchestration layer; do not add a second harness execute-subagent orchestration on top."
 fi
