@@ -169,8 +169,8 @@ fi
 # $CREW_ID from the claude process env; in-session dispatchers pass --crew-id.
 crew_id="${crew_id_flag:-${CREW_ID:-}}"
 [ -n "$crew_id" ] || {
-  # shellcheck disable=SC2016  # $CREW_ID is documentation text, not an expansion
-  echo 'dispatch: no crew id — pass --crew-id <id> (in-session) or run under a launcher/registered dispatcher ($CREW_ID)' >&2
+  # shellcheck disable=SC2016  # $PPID is documentation text, not an expansion
+  echo 'dispatch: no crew id — run '\''crew crews'\'' to find this repo'\''s crews and '\''crew adopt <id> $PPID'\'' to re-attach, or '\''crew new'\'' to start one; then pass --crew-id <id> or export CREW_ID' >&2
   exit 1
 }
 

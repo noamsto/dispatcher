@@ -97,14 +97,40 @@ session_name=dispatcher
 [ -n "$task" ] && session_name="dispatcher: $task"
 
 # Mint + export the crew id once at launch (mirrors `dispatch`), so the launched
-# agent and every child `dispatch` inherit the SAME crew. `crew id` needs no git
-# repo. Printed because a script cannot export back to the calling shell.
-: "${CREW_ID:=$(crew id)}"
+# agent and every child `dispatch` inherit the SAME crew. `crew new` needs no
+# git repo. Printed because a script cannot export back to the calling shell.
+crew_id_was_unset=1
+[ -z "${CREW_ID:-}" ] || crew_id_was_unset=0
+: "${CREW_ID:=$(crew new)}"
 export CREW_ID
 echo "crew id: $CREW_ID"
 
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
   crew register $$
+
+  # Discovery notice (#29): a mint that silently orphans other on-disk crews is
+  # the exact split-brain this issue exists to close. `crew adopt` is the wrong
+  # remedy on this entrance — CREW_ID is already exported into the launched
+  # agent's env, so adopt's export line would land in the wrong shell; only
+  # relaunching with it set re-attaches.
+  if [ "$crew_id_was_unset" = 1 ]; then
+    {
+      other=0
+      header=1
+      while IFS=$'\t' read -r row_id _; do
+        if [ "$header" = 1 ]; then
+          header=0
+          continue
+        fi
+        [ -n "$row_id" ] || continue
+        [ "$row_id" = "$CREW_ID" ] && continue
+        other=$((other + 1))
+      done < <(crew crews)
+      if [ "$other" -gt 0 ]; then
+        echo "dispatcher: minted a NEW crew; this repo has $other other(s) — 'crew crews' lists them; to re-attach instead, relaunch as: CREW_ID=<id> dispatcher …" >&2
+      fi
+    } || true
+  fi
 fi
 
 case "$agent" in
