@@ -243,7 +243,7 @@ setup() {
 @test "worker protocol carries retro notes in the metrics snapshot" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
-    '"review_mode":"<full|downgraded|none|unavailable>","notes":[]' \
+    '"review_high":<int|null>,"review_mode":"<full|downgraded|none|unavailable>","notes":[]' \
     '`notes` = the retro notes you accumulated this run' \
     'An empty array is the healthy case.'; do
     run grep -F "$statement" "$protocol"
@@ -287,7 +287,8 @@ setup() {
     '**This gate binds on every engine**: the roles below are engine-neutral, and only the spawn mechanism differs.' \
     '| **claude** | Agent tool, the named `*-reviewer` agent matching the diff' \
     'a general agent running the `find-bugs` skill when none fits | unchanged — each agent definition owns its model |' \
-    '| **codex** | native subagent (`agents.enabled`, cap 3) with the role brief written into its prompt — codex has no named-agent registry, so the brief **is** the prompt |' \
+    '| **codex** | native subagent (`agents.enabled`, cap 3) with the role brief written into its prompt — codex has no named-agent registry, so the brief **is** the prompt. Rule 1'"'"'s `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort |' \
+    'The exemption covers the **diverse** reviewer only: the same-engine language reviewer and test-runner still run, and having **no** reviewer at all is the terminal path below' \
     'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
     '| **cursor** | Task-tool subagent with an explicit model slug, same inline role brief |' \
     'slug (deep → `cursor-grok-4.5-medium-fast`, standard → `cursor-grok-4.5-low-fast`) |' \
@@ -323,7 +324,9 @@ setup() {
     'the only two legal replies — **retry**, or **re-dispatch** (to an engine that can review, or as `tier: trivial`, where `none` is both legal and true)' \
     '**proceeding unreviewed at this tier is not a legal reply**' \
     '`unavailable` appears on a `blocked`/`failed` snapshot only and **never co-occurs with `done`**' \
-    '**On `standard`/`deep` a `kind: implement` worker never validly emits `review_mode: "none"`, on any engine**'; do
+    '**On `standard`/`deep` a `kind: implement` worker never validly reports `done` (or `pr_open`) with `review_mode: "none"`, on any engine**' \
+    '`unavailable` is narrower than "no reviewer ran": it means the gate was **reached** and no reviewer could be spawned' \
+    'honestly emits `none`, because no reviewer was due yet, with `review_high: 0`'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
