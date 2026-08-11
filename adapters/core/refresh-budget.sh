@@ -9,9 +9,15 @@
 # missing engine entry is "unknown", never "exhausted".
 #
 #   claude — GET /api/oauth/usage with the access token from
-#     ~/.claude/.credentials.json (stays local, never printed). Fallback: a
+#     ~/.claude/.credentials.json (stays local, never printed). Fallback 1: a
 #     statusline-dumped rate_limits payload at $XDG_DATA_HOME/crew/claude-
-#     statusline.json, used only when its mtime is <2h old.
+#     statusline.json, used only when its mtime is <2h old. Fallback 2: scrape
+#     the ⚡ NN% / 7d NN% the statusline already renders out of live worker
+#     tmux panes (neither of the above exists on a macOS host — Keychain
+#     holds the OAuth token instead of the credentials file, and nothing
+#     persists the statusline's ephemeral rate_limits payload — see
+#     probe_claude_pane_scrape below for why this is scoped and anchored the
+#     way it is).
 #   codex  — `codex app-server --stdio` JSON-RPC account/rateLimits/read
 #     (experimental API; any failure -> null).
 #   cursor — always null. Probed cursor-agent 2026.07: `status` is auth-only,
@@ -84,7 +90,67 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
       )
     }' "$STATUSLINE_CACHE" 2>/dev/null && return 0
   fi
-  return 1
+  probe_claude_pane_scrape
+}
+
+# probe_claude_pane_scrape — third fallback: scrape the ⚡ NN% (5h) and 7d
+# NN% markers the statusline already renders, from live worker pane
+# captures. Scoped to windows `dispatch` tagged with @crew_name (excluding
+# the dispatcher's own window, tagged literally "dispatcher" — same idiom
+# as crew.sh's _occupants) rather than every tmux pane on the server: the
+# dispatcher's own pane is itself a claude session with its own statusline,
+# so an unscoped scrape could never degrade to "unknown" on a drained
+# roster, and an unanchored one could pick up a stray "⚡ NN%" sitting in a
+# worker's visible scrollback (e.g. example statusline text in a doc or task
+# file a worker has open).
+# Anchored to the last 2 non-empty lines of each capture — the statusline
+# sits one line above the input-box indicator by construction (verified
+# live, pane %228, 2026-08-11):
+#   🤖 Sonnet 5 🧠 high | 📊 170k/1M | ⚡ 69% (3h9m → 05:20) 7d 56% (9h49m)
+#   -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+# No pane_current_command filter: this host's nix-wrapped claude binary
+# reports as `.claude-wrapped`, not `claude`, so a literal-command filter
+# would silently scrape nothing here — the regex itself is the filter.
+# resets_at is never visible on screen, so it stays null; credits_cover is
+# unknowable from a screen scrape, also null.
+probe_claude_pane_scrape() {
+  local wins panes wid nm pw pid text tail m v max5=-1 max7=-1
+  command -v tmux >/dev/null 2>&1 || return 1
+  wins=$(tmux list-windows -a -F '#{window_id}	#{@crew_name}' 2>/dev/null) || return 1
+  panes=$(tmux list-panes -a -F '#{window_id}	#{pane_id}' 2>/dev/null) || return 1
+  [[ -n $wins && -n $panes ]] || return 1
+  while IFS=$'\t' read -r wid nm; do
+    [[ -n $wid && -n $nm && $nm != dispatcher ]] || continue
+    while IFS=$'\t' read -r pw pid; do
+      [[ $pw == "$wid" ]] || continue
+      text=$(tmux capture-pane -p -t "$pid" 2>/dev/null) || continue
+      tail=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -2)
+      m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]+%' | tail -1)
+      if [[ -n $m ]]; then
+        v=$(printf '%s' "$m" | grep -oE '[0-9]+' | tail -1)
+        if ((v > max5)); then max5=$v; fi
+      fi
+      m=$(printf '%s\n' "$tail" | grep -oE '7d[[:space:]]*[0-9]+%' | tail -1)
+      if [[ -n $m ]]; then
+        v=$(printf '%s' "$m" | grep -oE '[0-9]+' | tail -1)
+        if ((v > max7)); then max7=$v; fi
+      fi
+    done <<PANES
+$panes
+PANES
+  done <<WINS
+$wins
+WINS
+  ((max5 >= 0)) || return 1
+  jq -n --argjson p5 "$max5" --argjson p7 "$max7" '
+    {
+      source: "pane_scrape",
+      credits_cover: null,
+      windows: (
+        {"5h": {used_pct: $p5, resets_at: null}}
+        + (if $p7 >= 0 then {"7d": {used_pct: $p7, resets_at: null}} else {} end)
+      )
+    }'
 }
 
 # probe_codex — print the codex engine object via app-server JSON-RPC; return
@@ -127,7 +193,7 @@ main() {
   if probe=$(probe_claude); then
     claude=$probe
   else
-    warn "claude quota unknown (oauth + statusline both unavailable)"
+    warn "claude quota unknown (oauth + statusline + pane-scrape all unavailable)"
   fi
   if probe=$(probe_codex); then
     codex=$probe
@@ -150,6 +216,13 @@ main() {
   mv "$tmp" "$OUT"
 
   printf '%s\n' "$OUT"
+  jq -r '.engines | to_entries[] | select(.value != null) | .key as $e |
+    .value.windows | to_entries[] | select(.value.used_pct >= 85) |
+    "\($e) \(.key) at \(.value.used_pct)%"' "$OUT" |
+    while IFS= read -r line; do
+      warn "budget lever: $line — approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+    done || true
+
   jq -r '.engines | to_entries[] | .key as $e |
     if .value == null then "\($e): unknown"
     else "\($e): " + ([.value.windows | to_entries[] | "\(.key) \(.value.used_pct)% used\(if .value.resets_at then " (resets \(.value.resets_at | todateiso8601))" else "" end)"] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)

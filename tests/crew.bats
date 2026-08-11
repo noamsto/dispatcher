@@ -115,6 +115,33 @@ EOF
   [ "$output" = "alice|bob|ship it" ]
 }
 
+# #46: a shell expanding an unset $CREW_ID into "dispatcher:$CREW_ID" leaves
+# a bare trailing colon — msg must fail loudly instead of logging it.
+@test "msg: rejects dispatcher: with an empty id" {
+  CREW_ID=c1 run run_crew msg worker "dispatcher:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: rejects worker: with an empty id" {
+  CREW_ID=c1 run run_crew msg dispatcher:c1 "worker:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: rejects retro: with an empty id" {
+  CREW_ID=c1 run run_crew msg worker "retro:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: still accepts every currently-valid recipient shape" {
+  for to in bob 'worker:feat/1' 'worker:feat/1#s1-1' 'dispatcher:c1' 'retro:c1' 'metrics:c1' '*'; do
+    CREW_ID=c1 run run_crew msg worker "$to" "hi"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "status: an oversized detail is clipped so the line stays one atomic write" {
   big="$(head -c 8192 /dev/zero | tr '\0' x)"
   CREW_ID=c1 run_crew status worker failed "$big"
@@ -528,6 +555,10 @@ EOF
   git branch feat/idle-me
   wt_path="$BATS_TEST_TMPDIR/idle-wt"
   git worktree add -q "$wt_path" feat/idle-me
+  # $BATS_TEST_TMPDIR sits under macOS's /var, a symlink to /private/var; git
+  # resolves it but a hardcoded stub path here wouldn't, so canonicalize to
+  # match what a real tmux pane_current_path (kernel cwd) always reports.
+  wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   stub_bin wt
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
@@ -594,6 +625,7 @@ EOF
   git branch feat/idle-me
   wt_path="$BATS_TEST_TMPDIR/idle-wt"
   git worktree add -q "$wt_path" feat/idle-me
+  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
   stub_bin gh
   stub_bin wt
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
@@ -905,6 +937,49 @@ fx_meter_hours() {
   frame_file "meter_hours.$1" <<EOF
   ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
 Considering… ($1 · ↓ 28.0k tokens)
+EOF
+}
+
+# fx_prompt_quota — the rate-limit prompt from issue #58's transcript.
+# RECONSTRUCTED, not captured: no frame of this prompt exists in
+# EVIDENCE-2026-08-10.txt (same caveat as fx_meter_hours's "uncaptured"
+# note above). Footer/geometry assumed to match every other measured
+# option-select frame in this file.
+fx_prompt_quota() {
+  frame_file prompt_quota <<'EOF'
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+  3. Upgrade to Team plan
+Enter to select · Esc to cancel
+EOF
+}
+
+# fx_prompt_trust_with_distant_quota_text — a GENUINE, different prompt (the
+# workspace-trust frame) whose visible screen also happens to contain the
+# literal quota phrase, but more than 12 non-empty lines above the trust
+# prompt's own footer — i.e. outside _is_quota_prompt's search window.
+# Guards against classifying a real, answerable prompt as quota: merely
+# because that phrase is visible somewhere higher on the same screen (e.g. a
+# worker with DISPATCHER_PROTOCOL.md scrolled into view).
+fx_prompt_trust_with_distant_quota_text() {
+  frame_file prompt_trust_distant <<'EOF'
+Reviewing DISPATCHER_PROTOCOL.md: `quota:` fires on Stop and wait for limit to reset.
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
 EOF
 }
 
@@ -1304,6 +1379,56 @@ EOF
   [[ "$output" == *"unknown arg"* ]]
 }
 
+@test "stall-watch: D1 posts blocked/quota: on the rate-limit prompt, not prompt:" {
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|quota: quota exhausted"* ]]
+}
+
+@test "stall-watch: a quota: episode NEVER escalates (C-1 quota variant)" {
+  # Mirrors "a prompt: episode NEVER escalates (C-1)" for the quota discriminator.
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: a quota: episode held past --idle and --dead still never escalates or gets superseded by quiet:" {
+  # Mirrors the equivalent prompt: test. A frozen quota frame is byte-identical
+  # by construction, so it satisfies D3 too: quiet: must not supersede quota:,
+  # and the timer must not launder it into a failed.
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet:' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|quota:* ]]
+}
+
+@test "stall-watch: a genuine prompt with the quota phrase far up-screen still classifies as prompt:, not quota:" {
+  p=$(fx_prompt_trust_with_distant_quota_text)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
+}
+
 @test "roster: carries source and truncates detail to 120 chars" {
   long=$(printf 'quiet: %0.sx' $(seq 1 200))
   seed_raw worker:feat/x blocked "$long" watchdog
@@ -1333,4 +1458,28 @@ EOF
   [ "$status" -eq 0 ]
   run jq -r '"\(.blocked_count)|\(.watchdog_blocked_count)"' "$store/crew/ratings.jsonl"
   [ "$output" = "1|2" ]
+}
+
+# Contract pin, not a behaviour test: rate already passes any review_mode
+# string through, so this passed before the value existed. It stops a later
+# rate edit swallowing `unavailable` — it does not verify a worker emits it.
+@test "rate: passes review_mode unavailable through untouched" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  cat >"$log" <<'EOF'
+{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/review-unavailable","engine":"codex","model":"terra","tier":"standard","effort":"medium","title":"review gate unavailable"}
+{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/review-unavailable","body":{"state":"failed"}}
+{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/review-unavailable","to":"metrics:c1","body":"{\"review_mode\":\"unavailable\",\"review_high\":null}"}
+EOF
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+
+  run jq -s -e '
+    map(select(.branch=="feat/review-unavailable"))
+    | .[0]
+    | {review_mode, outcome, reached_pr} == {review_mode:"unavailable", outcome:"failed", reached_pr:false}
+  ' "$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$status" -eq 0 ]
 }

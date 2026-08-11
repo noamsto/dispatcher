@@ -345,6 +345,8 @@ fi
 # possible cleanup schedule: no daemon, no timer, and it runs exactly when the
 # worktree/window count is about to grow. Non-fatal by construction — a dispatch
 # must never fail because cleanup of unrelated, already-merged work failed.
+# Any worker still booting on a branch this reap could otherwise mistake for
+# idle-done is protected by the claim write near `worker_id=` below.
 crew reap --quiet || true
 
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
@@ -520,6 +522,19 @@ sanitized="${branch//\//-}"
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
+# Claim the branch on the bus before the tmux window exists (#32): reap's
+# idle-release loop reads a branch's newest bus event, and a session that
+# hasn't posted `working` yet would otherwise still read as whatever the
+# prior session last posted — often a stale `done` — releasing the window
+# this dispatch is about to create. A claim has no `body`, so it can never
+# itself satisfy reap's terminal-state check; it only masks a stale `done`
+# until the worker's own `working` post supersedes it. If this dispatch
+# aborts before that happens, the claim becomes the branch's permanent
+# latest bus event and idle-release can never touch it again.
+jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
+  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}' \
+  >>"$crew_dir/events.jsonl"
+
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
 # awk must read to EOF: an early `exit` closes the pipe while git still has
@@ -662,7 +677,7 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
   fi
 } >"$wt_path/WORKER_TASK.md"
 
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -P -F '#{window_id} #{pane_id}')
+read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
@@ -706,7 +721,7 @@ fi
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
 # the Agent tool; this clause is only for engines whose spawn prompt is the
 # sole carrier.
-process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker."
+process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker. When spawning review subagents, grant review authority only — tell them not to fix the code, not to commit or push, not to open PRs, and not to act as the worker."
 if [ "$agent" = codex ] && [ "$effort" = ultra ]; then
   process_authority="$process_authority Session effort is ultra — Codex automatic delegation is the orchestration layer; do not add a second harness execute-subagent orchestration on top."
 fi

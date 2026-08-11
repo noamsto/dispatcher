@@ -12,6 +12,7 @@ setup() {
   write_fixtures
   write_curl_shim
   write_codex_shim
+  write_tmux_shim
   export PATH="$STUB_DIR:$PATH"
 }
 
@@ -62,9 +63,47 @@ EOF
   chmod +x "$STUB_DIR/codex"
 }
 
+# Fake tmux: list-windows / list-panes / capture-pane, dispatched on $1.
+# Defaults to "no windows" (exit 1) when its controlling env vars are unset —
+# load-bearing: every EXISTING test in this file (which sets none of them)
+# must see the pane-scrape tier fail exactly like before this shim existed.
+write_tmux_shim() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+list-windows)
+  [ -n "${SHIM_TMUX_WINDOWS:-}" ] || exit 1
+  printf '%s\n' "$SHIM_TMUX_WINDOWS"
+  ;;
+list-panes)
+  [ -n "${SHIM_TMUX_PANES:-}" ] || exit 1
+  printf '%s\n' "$SHIM_TMUX_PANES"
+  ;;
+capture-pane)
+  pane="" prev=""
+  for a in "$@"; do
+    [ "$prev" = "-t" ] && pane="$a"
+    prev="$a"
+  done
+  id="${pane#%}"
+  var="SHIM_TMUX_CAPTURE_P${id}"
+  val="${!var:-}"
+  [ -n "$val" ] || exit 1
+  printf '%s\n' "$val"
+  ;;
+*) exit 1 ;;
+esac
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
 @test "claude quota comes from the oauth endpoint with normalized windows" {
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
+  # The fixture's 7d window is 97.0% (>=85%) — the budget lever must visibly
+  # fire a warning for it, and must NOT fire one for the 12.5% 5h window.
+  [[ "$output" == *"budget lever: claude 7d at 97"*"approaching quota"* ]]
+  [[ "$output" != *"budget lever: claude 5h at 12.5"* ]]
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
   run jq -r '.engines.claude.source' "$cache"
   [ "$output" = "oauth_usage" ]
@@ -129,5 +168,68 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"codex quota unknown"* ]]
   run jq '.engines.codex' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape fallback produces a populated cache when oauth+statusline both fail" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 🧠 high | 📊 170k/1M | ⚡ 89% (10m → 05:20) 7d 61% (9h49m)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq -r '.engines.claude.source' "$cache"
+  [ "$output" = "pane_scrape" ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "89" ]
+  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
+  [ "$output" = "61" ]
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.claude.credits_cover' "$cache"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape aggregates by max across multiple worker windows" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova\n@2\tember' \
+    SHIM_TMUX_PANES=$'@1\t%10\n@2\t%20' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 42% (10m)' \
+    SHIM_TMUX_CAPTURE_P20=$'  ⚡ 89% (5m) 7d 70% (2h)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "89" ]
+  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
+  [ "$output" = "70" ]
+}
+
+@test "pane-scrape excludes the dispatcher's own window even when it renders a statusline" {
+  SHIM_TMUX_WINDOWS=$'@1\tdispatcher' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 97% (1m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude quota unknown"* ]]
+  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape ignores a stray ⚡NN% sitting above the anchored tail" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'Reading WORKER_TASK.md — example line: ⚡ 97% (2h53m → 00:20)\n  ⎿  Done (3 tool uses)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude quota unknown"* ]]
+  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape degrades to unknown with no error when no worker windows exist" {
+  SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude quota unknown"* ]]
+  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
 }

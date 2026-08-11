@@ -394,6 +394,7 @@ budget_json() {
   # session high → subagent medium (one rung down)
   [[ "$launch" == *'agents.default_subagent_reasoning_effort=medium'* ]]
   [[ "$launch" == *'Process authority:'* ]]
+  [[ "$launch" == *'review authority only'* ]]
   [[ "$launch" != *'default_subagent_reasoning_effort=ultra'* ]]
 }
 
@@ -415,6 +416,34 @@ budget_json() {
   [[ "$launch" == *'cursor-agent'* ]]
   [[ "$launch" == *"--model 'kimi-k3-high'"* ]]
   [[ "$launch" == *'Process authority:'* ]]
+  [[ "$launch" == *'review authority only'* ]]
+}
+
+# #46: a codex/cursor worker's shell expands `$CREW_ID` itself (the launch
+# prompt tells it to report via `dispatcher:$CREW_ID`), so the id must be a
+# real env var in the worker's tmux window, not merely known to dispatch.sh.
+@test "codex launch exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
+}
+
+@test "cursor launch exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
+}
+
+@test "claude launch also exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
 }
 
 @test "task headers preserve the authoritative launch tuple for every engine" {
@@ -864,6 +893,20 @@ assert_gate_silent() { # <engine> <model>
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="dispatch") | .session' "$log"
   [ "$output" = "s7-7" ]
+}
+
+@test "session: claims the branch on the bus before the window exists (#32)" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim") | .from' "$log"
+  [ "$output" = "worker:feat/42-do-a-thing#s7-7" ]
+  # Millisecond scale, matching every other bus event — a seconds-scale `ts`
+  # would never win max_by(.ts) against a real status timestamp, silently
+  # defeating the fix while this assertion alone would still pass.
+  run jq -s -r '(map(select(.kind=="claim")) | first | .ts) > 1000000000000' "$log"
+  [ "$output" = "true" ]
 }
 
 @test "session: stall-watch is handed the worker id, not the branch" {

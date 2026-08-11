@@ -14,7 +14,7 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 | Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — sonnet                   |
 | Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet\|haiku            |
 
-**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`); the tier is what decides whether anything reviews the work. When genuinely on the fence, pick the cheaper tier/model and say why — a worker can escalate via the bus. A task whose **decomposition** is the hard part (many interacting components, subtle split) is a `deep` signal too — the deep worker decides in its worktree whether to bring a top-tier consultant in to decompose it, and which one (see `WORKER_PROTOCOL.md` → "Orchestration consult"); you do not make that call.
+**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say why — an underpowered worker can escalate via the bus. On the fence about **tier**, pick the **higher** one and say why — an unneeded critic is cheap, but a missing one lets an error ship unreviewed. A task whose **decomposition** is the hard part (many interacting components, subtle split) is a `deep` signal too — the deep worker decides in its worktree whether to bring a top-tier consultant in to decompose it, and which one (see `WORKER_PROTOCOL.md` → "Orchestration consult"); you do not make that call.
 
 **Plan-depth is a fourth lever — decouple it from tier.** Tier sets _review_ rigor; whether the worker runs a _pre-implementation plan phase_ is a separate judgement. When you inline a spec (`DISPATCH_SPEC`) that already contains **all four** of — root cause/mechanism, an explicit file list, a named approach, and acceptance criteria — you have already done the plan phase yourself; pass `--plan provided` so the worker treats the doc as its plan of record and skips `spec-plan-critic`. If the task still needs design work the doc doesn't settle, pass `--plan required` (the default). This is independent of tier: a `standard` + `--plan provided` task still gets a full standard _review_; it just isn't re-planned. Do **not** drop to `trivial` to skip planning — `trivial` also drops the review gate. `--plan` is judged like `--effort`: by the doc you wrote, not by the tier.
 
@@ -196,12 +196,19 @@ fan-out budget, so the same wakeup tells you when to dispatch the next queued ta
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of five reserved prefixes:
+self-reported. Its `detail` always begins with one of six reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
   watchdog clears the state itself. This never escalates: an unanswered answerable
   question is waiting work, not a dead worker.
+- `quota:` — the pane is parked on the rate-limit prompt ("Stop and wait for limit to
+  reset"), a content variant of `prompt:` with the opposite correct response: stop
+  dispatching to this engine, don't answer a question. Recovery is cheap and this is not
+  hypothetical, it's measured: `Esc` dismisses the prompt, the session keeps its full
+  context, and a resume nudge continues the work on the next quota window — **never
+  re-dispatch** a worker wedged this way, it would discard hours of intact work for
+  nothing that needed redoing. Like `prompt:`, this never escalates to `dead:`.
 - `turn-stall:` — the pane's clock advanced for 30 min against a static token count with
   no live subagent row. A dead turn.
 - `quiet:` — the pane has been byte-identical for 30 min.
@@ -218,7 +225,8 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
    `detail` exists to make this one command possible.
-2. The pane confirms a prompt → answer it in place.
+2. The pane confirms a prompt → answer it in place (except `quota:` — see above: stop,
+   don't answer).
 3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.
 4. The pane shows work in flight (a live meter, advancing subagent rows) → it is a
    **false positive. Do not kill.** Post nothing; the watchdog clears itself on the next
