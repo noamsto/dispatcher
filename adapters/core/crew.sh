@@ -322,6 +322,15 @@ status | msg)
   else
     # msg <from> <to> <body>
     from="${1:-}" to="${2:-}"
+    # A caller that expanded an unset shell var into the recipient (e.g.
+    # `dispatcher:$CREW_ID` with CREW_ID empty) silently lands a message
+    # nobody reads (#46). Fail loudly on any prefix left with no id.
+    case "$to" in
+    *:)
+      echo "crew: msg recipient '$to' is missing an id after the colon" >&2
+      exit 1
+      ;;
+    esac
     _build_msg() {
       jq -nc --arg crew "$crew" --arg from "$from" --arg to "$to" --arg body "$1" \
         '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:$to, kind:"msg", body:$body}'

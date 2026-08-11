@@ -419,6 +419,33 @@ budget_json() {
   [[ "$launch" == *'review authority only'* ]]
 }
 
+# #46: a codex/cursor worker's shell expands `$CREW_ID` itself (the launch
+# prompt tells it to report via `dispatcher:$CREW_ID`), so the id must be a
+# real env var in the worker's tmux window, not merely known to dispatch.sh.
+@test "codex launch exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
+}
+
+@test "cursor launch exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
+}
+
+@test "claude launch also exports CREW_ID into the worker window" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  win="$(grep 'new-window' "$STUB_LOG")"
+  [[ "$win" == *'CREW_ID=c1'* ]]
+}
+
 @test "task headers preserve the authoritative launch tuple for every engine" {
   stub_launch_bins
 

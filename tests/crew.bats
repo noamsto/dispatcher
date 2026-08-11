@@ -127,6 +127,33 @@ EOF
   [ "$output" = "alice|bob|ship it" ]
 }
 
+# #46: a shell expanding an unset $CREW_ID into "dispatcher:$CREW_ID" leaves
+# a bare trailing colon — msg must fail loudly instead of logging it.
+@test "msg: rejects dispatcher: with an empty id" {
+  CREW_ID=c1 run run_crew msg worker "dispatcher:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: rejects worker: with an empty id" {
+  CREW_ID=c1 run run_crew msg dispatcher:c1 "worker:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: rejects retro: with an empty id" {
+  CREW_ID=c1 run run_crew msg worker "retro:" "hi"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"missing an id after the colon"* ]]
+}
+
+@test "msg: still accepts every currently-valid recipient shape" {
+  for to in bob 'worker:feat/1' 'worker:feat/1#s1-1' 'dispatcher:c1' 'retro:c1' 'metrics:c1' '*'; do
+    CREW_ID=c1 run run_crew msg worker "$to" "hi"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "status: an oversized detail is clipped so the line stays one atomic write" {
   big="$(head -c 8192 /dev/zero | tr '\0' x)"
   CREW_ID=c1 run_crew status worker failed "$big"
