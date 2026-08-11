@@ -233,6 +233,7 @@ setup() {
     '`approach_abandoned`' \
     '`consult_failed`' \
     '`rung_blocked`' \
+    '`review_unavailable`' \
     '{"seam":"<stage>","tag":"<tag>","detail":"<what>"}'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
@@ -242,7 +243,7 @@ setup() {
 @test "worker protocol carries retro notes in the metrics snapshot" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
-    '"review_mode":"<full|downgraded|none>","notes":[]' \
+    '"review_mode":"<full|downgraded|none|unavailable>","notes":[]' \
     '`notes` = the retro notes you accumulated this run' \
     'An empty array is the healthy case.'; do
     run grep -F "$statement" "$protocol"
@@ -270,8 +271,86 @@ setup() {
     'Write a `consult_failed` retro note naming the consultant and the reason.' \
     'write a `command_not_found` retro note.' \
     'emit a `gate_thrash` retro note carrying the ledger rows via the mid-execute path' \
-    'Write a `rung_blocked` retro note naming the rung and the reason.'; do
+    'Write a `rung_blocked` retro note naming the rung and the reason.' \
+    'write a `review_unavailable` retro note.'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
+}
+
+@test "worker protocol binds the review gate to every engine" {
+  # The roles stay engine-neutral; only the spawn mechanism is per-engine. The
+  # rungs must keep matching rule 1's execute ladder, which is why each row's
+  # model is asserted alongside its mechanism.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '**This gate binds on every engine**: the roles below are engine-neutral, and only the spawn mechanism differs.' \
+    '| **claude** | Agent tool, the named `*-reviewer` agent matching the diff' \
+    'a general agent running the `find-bugs` skill when none fits | unchanged — each agent definition owns its model |' \
+    '| **codex** | native subagent (`agents.enabled`, cap 3) with the role brief written into its prompt — codex has no named-agent registry, so the brief **is** the prompt |' \
+    'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
+    '| **cursor** | Task-tool subagent with an explicit model slug, same inline role brief |' \
+    'slug (deep → `cursor-grok-4.5-medium-fast`, standard → `cursor-grok-4.5-low-fast`) |' \
+    'Cap the review→fix loop at 2.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol pins the fresh-context reviewer contract" {
+  # Both named escape hatches get their own assertion: self-review (the spawn
+  # contract) and the safe-default-on-timeout allowance, which would otherwise
+  # let a standard codex worker default its way past the gate to `done`.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'A reviewer subagent receives **only** the task doc, the diff (or the command that computes it), and its role brief.' \
+    'It carries **review authority only**: it does not fix, commit, push, open PRs, or act as the worker' \
+    '**"review it yourself in this context" is not a permitted fallback on `standard`/`deep`**' \
+    '**A missing review gate is never low-risk**, so a `review gate unavailable:` block is carved out of this allowance on every tier'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol makes an unspawnable reviewer terminal and loud" {
+  # The `crew status` shape matters, not just the path: dropping the worker id
+  # makes `from=blocked`, crew exits 1, and the block never reaches the bus.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'Retry the spawn **once**. If it still fails, do not push, do not open a PR, and do not emit `none`:' \
+    'crew status "$CREW_WORKER_ID" blocked "review gate unavailable: <what>"' \
+    'crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<engine and tier, mechanism attempted, how it failed including the retry, the two legal replies>"' \
+    'the only two legal replies — **retry**, or **re-dispatch** (to an engine that can review, or as `tier: trivial`, where `none` is both legal and true)' \
+    '**proceeding unreviewed at this tier is not a legal reply**' \
+    '`unavailable` appears on a `blocked`/`failed` snapshot only and **never co-occurs with `done`**' \
+    '**On `standard`/`deep` a `kind: implement` worker never validly emits `review_mode: "none"`, on any engine**'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol narrows the review_mode none gloss to trivial" {
+  # The old parenthetical read as permission for the exact degrade the
+  # unavailability path exists to close, so its absence is the regression test.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F '`none` (**trivial only** — no reviewer was ever supposed to run), or `unavailable` (a reviewer was required and could not be spawned; see below)' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F '`none` (trivial / no reviewer)' "$protocol"
+  [ "$status" -ne 0 ]
+}
+
+@test "worker protocol scopes the metrics carve-out to the critics only" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '`review_mode` = which review depth actually ran (`full`|`downgraded`|`none`|`unavailable`, per the Code review gate' \
+    '**The code review gate is not part of that carve-out**: on `standard`/`deep` they run it like any other engine' \
+    'on `trivial` they emit `review_high: 0` with `review_mode: "none"`, the same as a trivial claude worker.' \
+    'On an `unavailable` snapshot `review_high` is `null`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+  # Phrase unique to the deleted carve-out — `Codex and cursor` alone would also
+  # match the tier-scoped sentence that replaced it.
+  run grep -F 'nor the claude code-review gate' "$protocol"
+  [ "$status" -ne 0 ]
 }
