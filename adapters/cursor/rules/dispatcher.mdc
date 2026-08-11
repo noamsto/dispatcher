@@ -13,9 +13,10 @@ alwaysApply: true
   `dispatch` passes that path to the worker on the command line, so a worker
   never has to resolve it. To read it yourself, use
   `$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md` when that variable is set.
-- Cursor workers skip the plan-critic and code-review gates (Claude-only) but
-  still delegate execute subagents per `WORKER_PROTOCOL.md` rule 1. Emit
-  `plan_critic_first_pass: null`, `review_high: null`, `review_mode: "none"` —
-  ungated, not unorchestrated.
+- Cursor workers skip the plan-critic (Claude-only) but still delegate execute
+  subagents per `WORKER_PROTOCOL.md` rule 1. On `standard`/`deep` they run the
+  code-review gate like any other engine — see that protocol's "Code review
+  gate" section for the reviewer mechanism and `review_mode` values. Emit
+  `plan_critic_first_pass: null` — the critic half of the carve-out only.
 
 Run `crew` with no arguments for the full subcommand surface.

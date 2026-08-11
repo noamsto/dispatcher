@@ -354,3 +354,19 @@ setup() {
   run grep -F 'nor the claude code-review gate' "$protocol"
   [ "$status" -ne 0 ]
 }
+
+@test "the cursor rule runs the review gate, keeping only the critic carve-out" {
+  # This file is hand-maintained (gen-adapters.sh never touches
+  # adapters/cursor/rules/) and carries alwaysApply: true, so it is the
+  # highest-authority stale text of the four duplicates — and the only one
+  # with no drift gate. This test is its sole protection.
+  rule="$ROOT/adapters/cursor/rules/dispatcher.mdc"
+  run grep -F 'code-review gate like any other engine' "$rule"
+  [ "$status" -eq 0 ]
+  run grep -F '`plan_critic_first_pass: null` — the critic half of the carve-out only.' "$rule"
+  [ "$status" -eq 0 ]
+  run grep -F 'review_mode: "none"' "$rule"
+  [ "$status" -ne 0 ]
+  run grep -F 'review_high: null' "$rule"
+  [ "$status" -ne 0 ]
+}

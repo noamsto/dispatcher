@@ -126,24 +126,27 @@ while nothing was watching.
 The harness is engine-neutral; the adapters are not. Each engine gets what it can
 actually express:
 
-|                               | Claude Code |        Codex        |      Cursor      |
-| ----------------------------- | :---------: | :-----------------: | :--------------: |
-| Packaging                     |   plugin    |       plugin        |   loose files¹   |
-| Slash commands                |     ✅      | ❌ ships as skills² |        ✅        |
-| Skills                        |     ✅      |         ✅          |        ✅        |
-| Subagents                     |     ✅      |         ❌          |       ✅³        |
-| Hooks                         |     ✅      |         ✅          |        ✅        |
-| Worker: critics + review gate |     ✅      |  ⚠️ process-light   | ⚠️ process-light |
+|                           | Claude Code |        Codex        |    Cursor    |
+| ------------------------- | :---------: | :-----------------: | :----------: |
+| Packaging                 |   plugin    |       plugin        | loose files¹ |
+| Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |
+| Skills                    |     ✅      |         ✅          |      ✅      |
+| Subagents                 |     ✅      |   ⚠️ native only³   |     ✅³      |
+| Hooks                     |     ✅      |         ✅          |      ✅      |
+| Worker: spec/plan critics |     ✅      |         ❌          |      ❌      |
+| Worker: code-review gate  |     ✅      |         ✅          |      ✅      |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
 ² Codex has no custom slash commands — custom prompts are deprecated in favour of
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
-³ Cursor has subagents, but not the model this pipeline is built on.
+³ Codex has native ad-hoc subagents but no declarable plugin agents; cursor has
+both but not the model this pipeline is built on.
 
-**Process-light is a promise, not an omission.** Codex and cursor workers run
-single-agent, so they emit `plan_critic_first_pass: null`, `review_high: null`,
-`review_mode: "none"` — a run is never mistaken for _reviewed and clean_.
+**Process-light is a promise, not an omission.** Codex and cursor workers skip
+the plan/spec critics — claude-only, so they emit `plan_critic_first_pass: null`
+— but still run the code-review gate on `standard`/`deep` like any other
+engine, with a real `review_high` and `review_mode`.
 
 ---
 
@@ -311,7 +314,7 @@ Next up:
   the engine-neutral equivalent — porting them makes them work everywhere and
   collapses a duplicate fan-out architecture.
 - **Closing the process-light gap** so Codex and Cursor workers get a critic
-  pipeline and a review gate.
+  pipeline too.
 
 ## License
 

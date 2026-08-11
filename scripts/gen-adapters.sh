@@ -73,8 +73,9 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
 done
 
 # codex gets spec-plan-critic as a skill; it can express neither agents nor
-# workflows, so its workers stay ungated (no plan-critic / code-review) per
-# WORKER_PROTOCOL.md — they still delegate execute subagents.
+# workflows, so its workers skip the plan-critic (claude-only) per
+# WORKER_PROTOCOL.md — the review gate still runs, on native subagents
+# instead of a named registry.
 mkdir -p "$cx/spec-plan-critic"
 cp "$root/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" \
   "$cx/spec-plan-critic/SKILL.md"
