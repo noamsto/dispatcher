@@ -99,3 +99,28 @@ teardown() {
   [ -n "$pid" ]
   [ "$pid" -gt 0 ]
 }
+
+@test "survives a tmux without lazytmux's @reflow_bin" {
+  # A missing reflow must not abort the launcher under `set -e`.
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+}
+
+@test "reflows through the path lazytmux stamps in @reflow_bin" {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+[ "$1" = show-option ] && echo "$STUB_DIR/reflow"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cat >"$STUB_DIR/reflow" <<'EOF'
+#!/usr/bin/env bash
+printf 'reflow %s\n' "$*" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/reflow"
+
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  run grep -c '^reflow ' "$STUB_LOG"
+  [ "$output" = "1" ]
+}

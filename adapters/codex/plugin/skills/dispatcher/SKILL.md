@@ -67,12 +67,14 @@ reflow so it renders. Two things bite here:
 - **The stamp alone won't render.** No tmux event fires on a user-option set,
   and lazytmux's per-tick poll only runs for the session a client is _currently
   viewing_ — so kick a reflow explicitly, else the badge won't show until you
-  next switch to this window.
+  next switch to this window. lazytmux's reflow script is never on `PATH` (its
+  tmux config calls it by nix-store path), so read the path out of the
+  `@reflow_bin` option it stamps. An empty value means no lazytmux — skip it.
 
 ```
 tmux set-window-option -t "$TMUX_PANE" @crew_name dispatcher
 tmux set-window-option -t "$TMUX_PANE" @crew_color colour99
-tmux-reflow-windows "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
+reflow=$(tmux show-option -gqv @reflow_bin); [ -n "$reflow" ] && "$reflow" "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
 ```
 
 **Argument:** `$ARGUMENTS`

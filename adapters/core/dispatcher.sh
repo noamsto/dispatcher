@@ -87,10 +87,15 @@ if [ -n "${TMUX:-}" ]; then
   tmux set-window-option @crew_color colour99
   # No tmux event fires on a user-option set, and lazytmux's per-tick poll only
   # runs for the session a client is viewing — kick a reflow or the badge won't
-  # render until you next switch to this window.
-  tmux-reflow-windows \
-    "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" \
-    "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
+  # render until you next switch to this window. The reflow script is never on
+  # PATH — lazytmux's tmux config calls it by nix-store path — so take the path
+  # from the @reflow_bin option it stamps.
+  reflow_bin=$(tmux show-option -gqv @reflow_bin)
+  if [ -n "$reflow_bin" ]; then
+    "$reflow_bin" \
+      "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" \
+      "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
+  fi
 fi
 
 session_name=dispatcher
