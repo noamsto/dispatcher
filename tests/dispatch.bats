@@ -1017,15 +1017,19 @@ EOF
   [ "$output" = "eng-7691-foo done @23" ]
 }
 
-@test "gate: reclaims a worker window whose engine already exited" {
+# An engine-less occupant is not grounds to reclaim (#71): that reading goes false
+# on a live worker whenever its wrapper is unrecognised, so killing on it takes the
+# tree out from under a working agent. Only a terminal bus state licenses a kill.
+@test "gate: refuses a non-terminal session even when no engine is detected" {
   setup_occupied_branch
   stub_crew_gate \
     '[{"window":"@23","name":"sage","pane":null,"engine":false}]' \
     '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":"working","ts":1,"age_s":900,"terminal":false}]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
-  [ "$status" -eq 0 ]
-  grep -q 'kill-window -t @23' "$STUB_LOG"
-  grep -q 'new-window' "$STUB_LOG"
+  [ "$status" -eq 1 ]
+  ! grep -q 'kill-window' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+  [[ "$output" == *"no engine pane detected"* ]]
 }
 
 @test "gate: an unoccupied existing worktree dispatches normally" {
