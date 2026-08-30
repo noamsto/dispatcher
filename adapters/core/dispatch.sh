@@ -317,6 +317,20 @@ title="$*"
   exit 1
 }
 
+# slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
+slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
+
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+mkdir -p "$crew_dir"
+
+# Hoisted above the claim gate (#73): the gate keys its resume exemption on the
+# resolved branch and records the claim to the bus under $crew_dir. All three are
+# pure — string work, one `git rev-parse`, one `mkdir -p` — so the gate keeps its
+# stated property of running before ANY scaffolding.
+if [ -n "$gh_issue" ]; then
+  branch="feat/$gh_issue-$slug"
+fi
+
 # Claim: GitHub issue only. $gh_issue is empty for both a Linear dispatch
 # (own status/assignee semantics — every issue here already has an assignee,
 # so that can't double as a claim signal) and a --pr review dispatch
@@ -331,14 +345,31 @@ if [ -n "$gh_issue" ]; then
     echo "dispatch: could not read labels for issue #$gh_issue" >&2
     exit 1
   }
+  # Resume exemption (#73): a claimed issue still dispatches when the branch it
+  # resolves to already exists — that is the interrupted run being continued, not
+  # a second crew forking. Keyed on the exact branch, so a reworded dispatch
+  # resolves to a name that does not exist and is still refused. Who is live on
+  # that branch stays the occupancy gate's call, as for every other dispatch.
   if printf '%s\n' "$issue_labels" | grep -qx dispatched; then
-    echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
-    exit 1
+    git show-ref --verify --quiet "refs/heads/$branch" || {
+      echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+      exit 1
+    }
+    echo "dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume." >&2
   fi
+  # The exemption skips the refusal only. --add-label is idempotent and runs on
+  # both paths, which is what makes a reap-driven resume->create downgrade below
+  # harmless: whichever mode this run ends in, the issue is labelled.
   gh issue edit "$gh_issue" --add-label dispatched || {
     echo "dispatch: could not claim issue #$gh_issue (adding the 'dispatched' label failed)" >&2
     exit 1
   }
+  # An explicit claim record, because `crew adopt` cannot infer one: the
+  # kind:"dispatch" row carries no issue number and is written ~300 lines later,
+  # so every failure in between would strand an unreleasable label (#73).
+  jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" \
+    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
+    >>"$crew_dir/events.jsonl"
 fi
 
 # Reclaim workers whose PR already landed, before adding another one. Cheapest
@@ -348,12 +379,6 @@ fi
 # Any worker still booting on a branch this reap could otherwise mistake for
 # idle-done is protected by the claim write near `worker_id=` below.
 crew reap --quiet || true
-
-# slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
-slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
-
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-mkdir -p "$crew_dir"
 
 # Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
 # ourselves below, and the hook would otherwise open a second, undecorated shell
@@ -399,7 +424,7 @@ else
     branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
     closes="Closes $linear_id"
   elif [ -n "$gh_issue" ]; then
-    branch="feat/$gh_issue-$slug"
+    # $branch was already computed by the hoist above the claim gate.
     closes="Closes #$gh_issue"
   else
     url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
@@ -408,36 +433,49 @@ else
       echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
       exit 1
     }
-    # A minted issue is claimed by definition — stamp it right away.
+    # A minted issue is claimed by definition — stamp it right away. $branch is
+    # assigned first so the claim record below can carry it (#73).
+    branch="feat/$num-$slug"
+    closes="Closes #$num"
     _ensure_dispatched_label
     gh issue edit "$num" --add-label dispatched || {
       echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1
     }
-    branch="feat/$num-$slug"
-    closes="Closes #$num"
+    jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
+      >>"$crew_dir/events.jsonl"
   fi
-  switch_mode=create
+  # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
+  # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
+  # reclaim below, and -c died on it all the same. Resolved here rather than
+  # hoisted with $branch, because `crew reap` above calls `wt remove` and can
+  # delete a merged branch — a mode computed before it could already be stale.
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    switch_mode=resume
+  else
+    switch_mode=create
 
-  # New branch: base it on the remote default branch's fetched tip, not the
-  # local ref of that name, which nothing here fast-forwards and can be
-  # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
-  # which is only as fresh as the last `git remote set-head`. Resolved before
-  # the dispatch lock below, so a failure here costs no worktree and no
-  # window — same as the --pr gate above.
-  default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
-  [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
-    echo "dispatch: could not resolve the default branch via gh repo view" >&2
-    exit 1
-  }
-  git fetch origin -- "$default_branch"
-  # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
-  # gate in between shells out to crew/jq, giving a concurrent fetch a window
-  # to move the floating ref — pinning keeps what's branched and what the
-  # success line reports from ever diverging.
-  default_base_oid="$(git rev-parse "origin/$default_branch")"
-  default_base_label="origin/$default_branch"
-  default_base_short="$(git rev-parse --short "$default_base_oid")"
+    # New branch: base it on the remote default branch's fetched tip, not the
+    # local ref of that name, which nothing here fast-forwards and can be
+    # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
+    # which is only as fresh as the last `git remote set-head`. Resolved before
+    # the dispatch lock below, so a failure here costs no worktree and no
+    # window — same as the --pr gate above.
+    default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+    [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
+      echo "dispatch: could not resolve the default branch via gh repo view" >&2
+      exit 1
+    }
+    git fetch origin -- "$default_branch"
+    # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
+    # gate in between shells out to crew/jq, giving a concurrent fetch a window
+    # to move the floating ref — pinning keeps what's branched and what the
+    # success line reports from ever diverging.
+    default_base_oid="$(git rev-parse "origin/$default_branch")"
+    default_base_label="origin/$default_branch"
+    default_base_short="$(git rev-parse --short "$default_base_oid")"
+  fi
 fi
 
 # Serialize the gate's check-then-act (occupancy read -> switch -> open window)
@@ -516,6 +554,79 @@ case "$switch_mode" in
 create)
   wt switch -c "$branch" -b "$default_base_oid" -y --config-set "$wt_post_switch"
   echo "dispatch: created branch $branch from $default_base_label ($default_base_short)"
+  # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
+  # default branch and silently strands the earlier branch's uncommitted work
+  # (#73). Warn only — a second branch may be what the operator wants. Local
+  # heads only: the stranded work is uncommitted and local.
+  siblings="$(git for-each-ref --format='%(refname:short)' "refs/heads/${branch%"$slug"}*" | grep -vFx "$branch" || true)"
+  if [ -n "$siblings" ]; then
+    # The slug is a lossy 40-char projection, so the branch name cannot be read
+    # back into a title; the original survives on the sibling's own dispatch row.
+    # The branch comes back with it: max_by(.ts) spans every sibling, so with more
+    # than one listed the title needs an owner. A Linear dispatch appends nothing
+    # before this point, and bare jq on a missing events.jsonl exits 2 — fatal
+    # under `set -euo pipefail`.
+    sibling_recovered="$(jq -rs --arg sibs "$siblings" \
+      '($sibs | split("\n")) as $b
+       | [.[] | select(.kind == "dispatch" and (.branch | IN($b[])))]
+       | max_by(.ts) | [(.branch // ""), ((.title // "") | gsub("[[:cntrl:]]"; ""))] | @tsv' \
+      "$crew_dir/events.jsonl" 2>/dev/null || true)"
+    IFS=$'\t' read -r sibling_branch sibling_title <<<"$sibling_recovered"
+    {
+      echo "dispatch: branch(es) for this id already exist:"
+      printf '%s\n' "$siblings" | sed 's/^/  /'
+      if [ -n "$sibling_title" ]; then
+        echo "dispatch: creating $branch instead — the work in the branch above will be left behind. To resume $sibling_branch, re-dispatch with its original title:"
+        # Printed as data on its own line, never interpolated into a paste-ready
+        # command: the title is free-form operator text and quoting it correctly
+        # for a shell is exactly where this would break.
+        printf '    %s\n' "$sibling_title"
+      else
+        echo "dispatch: creating $branch instead — the work in the branch above will be left behind. No bus row carries its original title, so resuming it means reconstructing the wording that produced its name."
+      fi
+    } >&2
+  fi
+  ;;
+resume)
+  # `wt switch -c` was also, accidentally, what refused a branch checked out where
+  # a worker has no business opening (#73). Occupancy cannot replace it: it keys on
+  # @crew_name and skips the dispatcher's window and the caller's, so the primary
+  # checkout, dispatch's own cwd and a human sitting in a plain shell all read as
+  # empty. This runs after that gate, so it only ever sees a tree the gate allowed.
+  if [ -n "$prev_wt" ]; then
+    # No `exit` in the awk: an early close SIGPIPEs git and trips pipefail.
+    primary_wt="$(git worktree list --porcelain | awk '/^worktree /{if (!p) p=$2} END{print p}')"
+    if [ "$prev_wt" = "$primary_wt" ]; then
+      echo "dispatch: $branch is checked out in the primary worktree $prev_wt — a worker must not run in the main checkout. Move the branch to its own worktree, then re-dispatch." >&2
+      exit 1
+    fi
+    case "$PWD/" in
+    "$prev_wt"/*)
+      echo "dispatch: $branch is checked out at $prev_wt, the worktree this dispatch is running from — a worker would open on top of you. Re-dispatch from elsewhere." >&2
+      exit 1
+      ;;
+    esac
+    # A pane at that path with an EMPTY @crew_name is a non-worker occupant — a
+    # human in a plain shell. Complements `crew occupants`, which requires a
+    # non-empty @crew_name. list-panes, not list-windows: in a window format
+    # pane_current_path resolves to the ACTIVE pane only, so a human in an
+    # inactive pane here would go undetected.
+    # @crew_name last, unlike `_occupants`' order: tab is IFS whitespace, so an
+    # empty middle field collapses and `read` would shift the path into it — and
+    # empty is exactly the value being matched on here.
+    while IFS=$'\t' read -r res_win res_path res_name; do
+      [ -n "$res_win" ] || continue
+      [ "$res_path" = "$prev_wt" ] || continue
+      [ -z "$res_name" ] || continue
+      echo "dispatch: window $res_win is sitting in $prev_wt with no worker identity — a worker would open on top of it. Close that window, or take the branch over by hand." >&2
+      exit 1
+    done <<WINDOWS
+$(tmux list-panes -a -F '#{window_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
+WINDOWS
+  fi
+  wt switch "$branch" -y --config-set "$wt_post_switch"
+  branch_short="$(git rev-parse --short "$branch")"
+  echo "dispatch: resuming branch $branch at $branch_short"
   ;;
 name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
 fetch-name)
@@ -671,6 +782,16 @@ ident=$(crew identity "$branch")
 agent_name=$(printf '%s' "$ident" | jq -r .name)
 agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 
+# A resume issued without re-passing $DISPATCH_SPEC would otherwise leave a
+# header-only doc, destroying the task text — and, on a `plan: provided` run, the
+# plan of record — of the run it is meant to continue (#73). Captured ABOVE the
+# block below: `>` truncates the target before the block's first command runs, so
+# reading the old file inside it reads zero bytes.
+carried=""
+if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
+  carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
+fi
+
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 # The review contract is appended so the dispatcher never re-authors it as
@@ -681,9 +802,15 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
   if [ -n "$pr_number" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
+  if [ "$switch_mode" = resume ]; then
+    printf 'resume: true\n'
+  fi
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
+  elif [ -n "$carried" ]; then
+    # $carried already opens with its own `## Task` heading.
+    printf '\n%s\n' "$carried"
   fi
   if [ "$kind" = review ]; then
     printf '\n'
@@ -719,6 +846,15 @@ fi
 plan_note=""
 if [ "$plan_val" = provided ]; then
   plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+fi
+
+# Same carrier, for a worker landing in a tree that already holds its spec, plan
+# and partial work (#73). No apostrophes anywhere in this string: all three launch
+# strings single-quote the prompt inside a double-quoted `tmux send-keys`
+# argument, and one apostrophe silently breaks the line.
+resume_note=""
+if [ "$switch_mode" = resume ]; then
+  resume_note=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
 fi
 
 # The launch prompt is a user-turn instruction, so it outranks the protocol: a
@@ -760,7 +896,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
@@ -776,10 +912,10 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
