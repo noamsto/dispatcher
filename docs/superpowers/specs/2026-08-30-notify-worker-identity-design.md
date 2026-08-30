@@ -124,8 +124,11 @@ It eliminates the **session-less** class only. It does **not** cover:
   remnant left in `sessions[]` to notice. Recovery then depends entirely on the
   `exit_suspect` live-pane rewrite (`crew.sh:860-893`), whose nix-wrapped-engine matcher
   #71/PR #72 has since fixed (`_pane_is_engine_at`, `crew.sh:879`) — so that remedy is
-  now live rather than inert, which is what makes leaving the residual class to it
-  defensible.
+  now live rather than inert. But recovery is roster-only: `exit_suspect` is set only in
+  the roster rewrite; `crew reply` resolves via `_sessions` (`crew.sh:114-141`), which
+  reads the raw latest status event with no live-pane rewrite, so a sessioned false
+  `exited` still makes branch-only reply refuse. That partial coverage is what makes
+  leaving the residual class to it defensible.
 - **Cross-worktree.** A shell carrying `CREW_WORKER_ID=worker:A#s…` whose `SessionEnd`
   fires with `cwd` inside worktree B posts `exited` for A against B's `crew_id`. A cheap
   narrowing exists — compare the `wid_branch` of `$CREW_WORKER_ID` against `$branch`
