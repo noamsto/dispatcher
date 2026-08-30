@@ -32,10 +32,14 @@ setup() {
   [ -f "$dir/REVIEW_TASK.md" ]
 }
 
-@test "crew is not substituted — it never references the protocols" {
+@test "crew does not retain the protocols as a runtime closure reference" {
+  # `crew` intentionally reads its source directly; unlike dispatch and
+  # dispatcher it must not gain a runtime dependency on the protocol tree.
+  protocols="$(nix store add-path "$ROOT/adapters/core/protocols")"
   out="$(nix build --no-link --print-out-paths "$ROOT#crew")"
-  run grep -c 'PROTOCOL' "$out/bin/crew"
-  [ "$output" = "0" ]
+  run nix-store -q --requisites "$out"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"$protocols"* ]]
 }
 
 # Evaluate a nix expression from a file, returning stdout only.

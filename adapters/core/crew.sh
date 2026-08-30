@@ -2075,6 +2075,26 @@ reap)
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
 
+  # The set of states a worker session ends in — shared by the idle-release
+  # filter below and the reclaim filter further down so they can't drift
+  # apart again (#68): a worker that `exited` (compacted, hit its context
+  # limit, or the human took the pane) or `failed` is just as finished as one
+  # that reported `done`, and the PR-state gate downstream is what actually
+  # decides whether reclaiming its worktree is safe — not which of the three
+  # terminal states it ended in.
+  reap_terminal_states='["done","failed","exited"]'
+
+  # Untracked scaffold our own pipeline writes into every worktree — must
+  # never read as "uncommitted work" below. Only a TRACKED modification, or
+  # an untracked file outside this set, is real dirt. Keep this pattern in
+  # sync with the writers or a new scaffold file pins the worktree forever:
+  # WORKER_TASK.md (dispatch.sh, `>"$wt_path/WORKER_TASK.md"`),
+  # SPEC.md/PLAN.md/DECOMPOSITION.md (WORKER_PROTOCOL.md's spec-plan-critic
+  # flow), and docs/superpowers/plans/*.md (the superpowers writing-plans
+  # skill). Anchored on the porcelain `?? ` prefix and the full path so a
+  # real file merely named e.g. `src/PLAN.md` still counts as dirt.
+  reap_scaffold_re='^\?\? (WORKER_TASK\.md|SPEC\.md|PLAN\.md|DECOMPOSITION\.md|docs/superpowers/plans/[^/]*\.md)$'
+
   # Idle release: a session that reached a terminal state but whose window is
   # still sitting there keeps the tree occupied, and the PR gate below deliberately
   # will not touch it while its PR is open. Kill the WINDOW only — the worktree
@@ -2111,7 +2131,7 @@ reap)
       '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
           state:$state, windows:($occ|map(.window))}' >>"$log"
   done <<EOF
-$(jq -s -r --argjson idle "$idle" '
+$(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
     def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
     # A dispatch posts a "claim" for a branch before its window even exists.
@@ -2121,7 +2141,7 @@ $(jq -s -r --argjson idle "$idle" '
     map(select((.kind=="status" or .kind=="claim") and ((.from // "") | startswith("worker:"))))
     | group_by(.from) | map(max_by(.ts))
     | group_by(.from | wid_branch) | map(max_by(.ts))
-    | map(select(.body.state as $st | (["done","failed","exited"] | index($st)) != null))
+    | map(select(.body.state as $st | ($terminal | index($st)) != null))
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
     | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state] | @tsv' "$log")
 EOF
@@ -2134,10 +2154,11 @@ EOF
     }
   done
 
-  # Latest status per worker across every crew; keep the terminal `done` ones.
+  # Latest status per worker across every crew; keep the ones in a terminal
+  # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
   # reason roster does this).
-  candidates=$(jq -s -r '
+  candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
       map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
       | group_by(.from) | map(
@@ -2147,8 +2168,8 @@ EOF
              state: $latest.body.state,
              pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
       | group_by(.branch) | map(sort_by(.ts) | last)
-      | map(select(.state == "done"))
-      | .[] | [.branch, (.pr_url // "-")] | @tsv' "$log")
+      | map(select(.state as $st | ($terminal | index($st)) != null))
+      | .[] | [.branch, .state, (.pr_url // "-")] | @tsv' "$log")
   [ -n "$candidates" ] || {
     note "nothing done to reap"
     exit 0
@@ -2160,14 +2181,14 @@ EOF
   live=$(tmux list-panes -a -F '#{pane_current_command} #{pane_current_path}' 2>/dev/null || true)
 
   reaped=0
-  while IFS=$'\t' read -r branch pr; do
+  while IFS=$'\t' read -r branch state pr; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     [ -n "$wtpath" ] && [ -d "$wtpath" ] || continue
 
     if [ "$pr" = "-" ]; then
-      note "keeping $branch — done but no PR on the bus"
+      note "keeping $branch — $state but no PR on the bus"
       continue
     fi
     pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
@@ -2208,7 +2229,10 @@ PANES
     # Check for leftover work BEFORE touching anything. `wt remove` refuses a
     # dirty worktree on its own, but discovering that only after trashing the
     # task doc below would strip a worktree that then survives.
-    dirt=$(git -C "$wtpath" status --porcelain | grep -v '^?? WORKER_TASK\.md$' || true)
+    # --untracked-files=all: the default "normal" mode collapses a brand-new
+    # untracked directory to just its own name (e.g. `?? docs/`), which would
+    # never match the docs/superpowers/plans/*.md pattern in $reap_scaffold_re.
+    dirt=$(git -C "$wtpath" status --porcelain --untracked-files=all | grep -vE "$reap_scaffold_re" || true)
     if [ -n "$dirt" ]; then
       note "keeping $branch — uncommitted changes"
       continue

@@ -896,6 +896,183 @@ EOF
   ! grep -q 'issue edit' "$STUB_LOG"
 }
 
+@test "reap: an exited worker with a merged PR is reclaimed" {
+  # #68 defect 1: the reclaim filter used to accept only "done", pinning the
+  # worktree of every worker that ended via `exited` (compaction, context
+  # limit, or a human taking the pane) forever even after its PR merged.
+  git commit -q --allow-empty -m init
+  git branch feat/exited-me
+  wt_path="$BATS_TEST_TMPDIR/exited-wt"
+  git worktree add -q "$wt_path" feat/exited-me
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/exited-me" exited "" "https://example.com/pr/20"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would reap feat/exited-me"* ]]
+}
+
+@test "reap: a failed worker with an open PR is kept" {
+  # The PR gate — not the worker's own terminal state — is what must decide
+  # keep vs. reclaim; widening the state filter must not let an open PR through.
+  git commit -q --allow-empty -m init
+  git branch feat/failed-open
+  wt_path="$BATS_TEST_TMPDIR/failed-open-wt"
+  git worktree add -q "$wt_path" feat/failed-open
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'OPEN' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/failed-open" failed "" "https://example.com/pr/21"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/failed-open — PR OPEN"* ]]
+  ! grep -q 'remove' "$STUB_LOG"
+}
+
+@test "reap: a worktree dirty only with pipeline scaffold is reclaimed" {
+  # #68 defect 2: SPEC.md/PLAN.md/DECOMPOSITION.md/WORKER_TASK.md and a
+  # superpowers plan doc are all untracked files OUR OWN pipeline writes;
+  # none of them should make a finished worktree read as dirty.
+  git commit -q --allow-empty -m init
+  git branch feat/scaffold-me
+  wt_path="$BATS_TEST_TMPDIR/scaffold-wt"
+  git worktree add -q "$wt_path" feat/scaffold-me
+  : >"$wt_path/WORKER_TASK.md"
+  : >"$wt_path/SPEC.md"
+  : >"$wt_path/PLAN.md"
+  : >"$wt_path/DECOMPOSITION.md"
+  mkdir -p "$wt_path/docs/superpowers/plans"
+  : >"$wt_path/docs/superpowers/plans/2026-08-29-scaffold.md"
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/scaffold-me" done "" "https://example.com/pr/22"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would reap feat/scaffold-me"* ]]
+}
+
+@test "reap: a tracked modification keeps the worktree" {
+  # A TRACKED change to one of the scaffold names (e.g. a real src/PLAN.md)
+  # must still count as dirt — only untracked scaffold is ever ignored.
+  echo one >README.md
+  git add README.md
+  git commit -q -m init
+  git branch feat/tracked-dirty
+  wt_path="$BATS_TEST_TMPDIR/tracked-dirty-wt"
+  git worktree add -q "$wt_path" feat/tracked-dirty
+  echo two >"$wt_path/README.md"
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/tracked-dirty" done "" "https://example.com/pr/23"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/tracked-dirty — uncommitted changes"* ]]
+}
+
+@test "reap: an untracked non-scaffold file keeps the worktree" {
+  git commit -q --allow-empty -m init
+  git branch feat/stray-file
+  wt_path="$BATS_TEST_TMPDIR/stray-wt"
+  git worktree add -q "$wt_path" feat/stray-file
+  : >"$wt_path/notes.txt"
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/stray-file" done "" "https://example.com/pr/24"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/stray-file — uncommitted changes"* ]]
+}
+
+@test "reap: a live engine pane keeps a terminal, merged-PR worktree" {
+  # Widening the terminal-state filter (defect 1) must not let an exited
+  # worker whose PR merged get reclaimed out from under a human (or another
+  # session) still sitting at the pane. The live-pane check runs unconditionally,
+  # after the terminal-state filter, so it must still guard exited/failed the
+  # same way it already guarded done.
+  git commit -q --allow-empty -m init
+  git branch feat/live-engine-me
+  wt_path="$BATS_TEST_TMPDIR/live-engine-wt"
+  git worktree add -q "$wt_path" feat/live-engine-me
+  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note in the idle-release tests
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  stub_tmux "" "$(printf 'claude %s\n' "$wt_path")"
+  CREW_ID=c1 run_crew status "worker:feat/live-engine-me" exited "" "https://example.com/pr/25"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/live-engine-me — an engine is still running there"* ]]
+  ! grep -q 'remove' "$STUB_LOG"
+}
+
+@test "reap: an exited worker with no PR is kept" {
+  # Same guard as the long-standing "done but no PR" keep, now exercised for
+  # a state defect 1 newly admits into the candidate pool.
+  git commit -q --allow-empty -m init
+  git branch feat/exited-no-pr
+  wt_path="$BATS_TEST_TMPDIR/exited-no-pr-wt"
+  git worktree add -q "$wt_path" feat/exited-no-pr
+  stub_bin gh
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/exited-no-pr" exited
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/exited-no-pr — exited but no PR on the bus"* ]]
+  ! grep -q 'remove' "$STUB_LOG"
+}
+
 @test "msg: an oversized JSON body stays parseable JSON" {
   big="$(head -c 6000 /dev/zero | tr '\0' x)"
   body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"
