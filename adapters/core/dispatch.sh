@@ -467,6 +467,14 @@ trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"' EXIT INT TERM HUP
 # WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a
 # finished agent drops to a shell prompt, and a command-based check would read the
 # window as empty.
+#
+# Only a TERMINAL bus state licenses the reclaim (#71). Every engine ships behind
+# a wrapper, so "no engine here" reads false on a live worker whenever the wrapper
+# is one the check doesn't recognise — far too weak to kill on. The bus state is
+# the worker's own word, so it is the gate; the engine count is advisory. The cost
+# is deliberate: a worker that dies without posting anything holds the branch until
+# a human kills the window, which the refusal spells out and stall-watch resolves
+# on its own after 30 minutes.
 prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
 if [ -n "$prev_wt" ]; then
   occ=$(crew occupants "$prev_wt")
@@ -475,19 +483,25 @@ if [ -n "$prev_wt" ]; then
     state=$(printf '%s' "$newest" | jq -r '.state // "none"')
     terminal=$(printf '%s' "$newest" | jq -r '.terminal // false')
     engine=$(printf '%s' "$occ" | jq -r 'map(select(.engine)) | length')
-    if [ "$engine" -gt 0 ] && [ "$terminal" != true ]; then
+    # An `exited` row is the SessionEnd backstop, not the worker's own word, and
+    # (#69) it fires under the bare `worker:$branch` id for a subagent too — so a
+    # bare `exited` can be `last` while the real `#session` row is still
+    # `working`. A live engine pane is the same defence-in-depth reap already
+    # applies: refuse exactly like the non-terminal case rather than reclaim.
+    if [ "$terminal" != true ] || { [ "$state" = exited ] && [ "$engine" -gt 0 ]; }; then
       nm=$(printf '%s' "$occ" | jq -r '.[0].name')
       win=$(printf '%s' "$occ" | jq -r '.[0].window')
       wid=$(printf '%s' "$newest" | jq -r '.worker_id // ""')
       {
         echo "dispatch: $nm ($wid) is $state in that worktree (window $win) — git allows one worktree per branch."
+        [ "$engine" -gt 0 ] || echo "  no engine pane detected — it may have crashed, or the check may not recognise its wrapper; the bus has not seen it finish."
         echo "  redirect it:  crew reply worker:$branch \"<directive>\""
         echo "  or take over: tmux kill-window -t $win, then re-dispatch"
       } >&2
       exit 1
     fi
-    # Finished work squatting the tree (terminal, or the engine is already gone).
-    # Reclaim rather than stack beside it. Best-effort, like reap's kills.
+    # Terminal on the bus — finished work squatting the tree. Reclaim rather than
+    # stack beside it. Best-effort, like reap's kills.
     for w in $(printf '%s' "$occ" | jq -r '.[].window'); do
       tmux kill-window -t "$w" 2>/dev/null || true
       echo "dispatch: reclaimed $w at $prev_wt (session $state)"

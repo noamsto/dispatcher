@@ -33,12 +33,46 @@ _identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macO
     '{name:$name, color:$color, tmux:$tmux}'
 }
 
+# _is_engine_cmd <pane_current_command> — is this pane running an agent engine?
+# Under Nix the literal binary name doesn't always reach tmux. All three
+# engines were measured on a live pane: claude reports `.claude-wrapped`
+# (makeWrapper's hidden inner exec) and cursor-agent reports `node` (its
+# wrapper ends in `exec -a "$0" "$NODE_BIN" index.js`) — tmux reads the
+# executable's own name, so the `exec -a` renaming in both is invisible here.
+# codex reports its own literal `codex` (its wrapper re-execs under that name),
+# so it needs no special-casing beyond the plain match below.
+#
+# `node` is broad on purpose. It costs a false positive on, say, a dev server
+# sharing the worktree — and every consequence of that is to KEEP something
+# (refuse a dispatch, keep an idle window, keep a worktree), while a false
+# negative kills a live worker (#71). Callers all pair it with the worktree path
+# or a @crew_name window, which is what makes the trade safe.
+_is_engine_cmd() {
+  local c="${1#.}"
+  c="${c%-wrapped}"
+  case "$c" in
+  claude | codex | cursor-agent | node) return 0 ;;
+  esac
+  return 1
+}
+
+# _pane_is_engine_at <pane_row> <worktree_path> — <pane_row> is one
+# `#{pane_current_command} #{pane_current_path}` row. The path is the strong
+# signal and must match exactly, never by prefix — /wt/foo would otherwise claim
+# a pane sitting in /wt/foobar. The command is the weak signal (#71).
+_pane_is_engine_at() {
+  [ "${1#* }" = "$2" ] || return 1
+  _is_engine_cmd "${1%% *}"
+}
+
 # _occupants <worktree_path> -> [{window,name,pane,engine}] — worker windows
 # rooted at that path. Keyed on @crew_name (dispatch stamps it on every worker
 # window), NOT on the pane's running command: a finished agent drops back to a
 # shell prompt, and a command match would then read its window as empty and let
 # the next dispatch stack a second worker onto the same tree (#17). Excludes the
-# dispatcher's own window — it carries @crew_name too — and the caller's.
+# dispatcher's own window — it carries @crew_name too — and the caller's. The
+# engine/pane fields below ARE a command check (via _is_engine_cmd) and are
+# advisory only — occupancy itself stays window-keyed.
 _occupants() {
   local wtp="$1" self_win="" wins panes out wid nm path pw pid cmd epane
   if [ -n "${TMUX_PANE:-}" ]; then
@@ -56,12 +90,10 @@ _occupants() {
     epane=""
     while IFS=$'\t' read -r pw pid cmd; do
       [ "$pw" = "$wid" ] || continue
-      case "$cmd" in
-      claude | codex | cursor-agent)
+      if _is_engine_cmd "$cmd"; then
         epane="$pid"
         break
-        ;;
-      esac
+      fi
     done <<PANES
 $panes
 PANES
@@ -844,12 +876,10 @@ roster)
         awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
       if [ -n "$wtpath" ]; then
         while IFS= read -r pane; do
-          case "$pane" in
-          "claude $wtpath"* | "codex $wtpath"* | "cursor-agent $wtpath"*)
+          if _pane_is_engine_at "$pane" "$wtpath"; then
             row=$(printf '%s' "$row" | jq -c '.state = (.prev_state // "working") | .exit_suspect = true')
             break
-            ;;
-          esac
+          fi
         done <<PANES
 $live
 PANES
@@ -2057,6 +2087,17 @@ reap)
     [ -n "$rwt" ] && [ -d "$rwt" ] || continue
     rocc=$(_occupants "$rwt")
     [ "$rocc" != '[]' ] || continue
+    # `exited` is the SessionEnd backstop, not something the worker asserts, and
+    # it fires for subagents and stray panes too (#69) — so an `exited` row with
+    # a live engine in the tree is a false read, and killing the window would
+    # kill a working agent. `done`/`failed` are the worker's own word and stay
+    # releasable, engine or not: an agent legitimately idles in its pane after
+    # posting `done`, which is exactly what idle-release exists to clean up (#17).
+    if [ "$rstate" = exited ] &&
+      [ "$(printf '%s' "$rocc" | jq -r 'map(select(.engine)) | length')" -gt 0 ]; then
+      note "keeping $rbranch — exited but an engine is still running there"
+      continue
+    fi
     for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
       if [ -n "$dry" ]; then
         say "would release $w at $rwt ($rbranch $rstate)"
@@ -2142,12 +2183,19 @@ EOF
       ;;
     esac
 
-    case "$live" in
-    *"claude $wtpath"* | *"codex $wtpath"* | *"cursor-agent $wtpath"*)
+    engine_live=""
+    while IFS= read -r pane; do
+      if _pane_is_engine_at "$pane" "$wtpath"; then
+        engine_live=1
+        break
+      fi
+    done <<PANES
+$live
+PANES
+    if [ -n "$engine_live" ]; then
       note "keeping $branch — an engine is still running there"
       continue
-      ;;
-    esac
+    fi
     # Never remove the worktree the caller is standing in — it would leave the
     # invoking shell (or dispatch itself) on a path that no longer exists.
     case "$PWD/" in
