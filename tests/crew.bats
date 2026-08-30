@@ -310,6 +310,17 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
 }
 
+# Measured on a live Nix pane (`tmux display -p '#{pane_current_command}'` on a
+# running codex worker): unlike claude/cursor-agent, codex's Nix wrapper
+# re-execs under its own literal name, so no wrapper-strip is needed for it.
+@test "occupants: a codex pane reports its own literal name and is an engine" {
+  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\tcodex\n')"
+  run run_crew occupants /wt/a
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
+  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
+}
+
 @test "occupants: a finished agent that dropped to a shell is still an occupant" {
   stub_tmux "$(printf '@23\tsage\t/wt/a\n')" "$(printf '@23\t%%33\tfish\n')"
   run run_crew occupants /wt/a
@@ -535,6 +546,23 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].exit_suspect // "none"')" = "none" ]
 }
 
+# The path match is exact, never a prefix (crew.sh:64): the old `"claude $wtpath"*`
+# glob matched /wt/foobar when $wtpath was /wt/foo. A pane sitting at a sibling
+# path that merely shares the prefix must not resolve the exited row.
+@test "roster: a live engine at a sibling path does not resolve the exited row" {
+  git commit --allow-empty -q -m init
+  git branch feat/roster-sib
+  wt_path="$BATS_TEST_TMPDIR/roster-sib-wt"
+  git worktree add -q "$wt_path" feat/roster-sib
+  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
+  stub_tmux "" "$(printf '.claude-wrapped %s-sibling\n' "$wt_path")"
+  CREW_ID=c1 run_crew status "worker:feat/roster-sib#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/roster-sib#s1-1" exited
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].state')" = "exited" ]
+  [ "$(echo "$output" | jq -r '.[0].exit_suspect // "none"')" = "none" ]
+}
+
 @test "roster: joins the title on the branch" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$log")"
@@ -619,6 +647,31 @@ EOF
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"an engine is still running there"* ]]
   ! grep -q remove "$STUB_LOG"
+}
+
+# Same exact-path requirement as the roster sibling-path test above, exercised
+# through reap's own _pane_is_engine_at call site.
+@test "reap: a sibling-path engine pane does not keep the worktree" {
+  git commit --allow-empty -q -m init
+  git branch feat/reap-sib
+  wt_path="$BATS_TEST_TMPDIR/reap-sib-wt"
+  git worktree add -q "$wt_path" feat/reap-sib
+  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  stub_tmux "" "$(printf '.claude-wrapped %s-sibling\n' "$wt_path")"
+  CREW_ID=c1 run_crew status "worker:feat/reap-sib#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [[ "$output" != *"an engine is still running there"* ]]
 }
 
 @test "reap: releases a terminal session's window past --idle, keeping the worktree" {

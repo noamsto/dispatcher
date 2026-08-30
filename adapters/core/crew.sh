@@ -34,13 +34,13 @@ _identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macO
 }
 
 # _is_engine_cmd <pane_current_command> — is this pane running an agent engine?
-# Under Nix the literal binary name never reaches tmux. Both wrappers were
-# measured on a live pane: claude reports `.claude-wrapped` (makeWrapper's
-# hidden inner exec) and cursor-agent reports `node` (its wrapper ends in
-# `exec -a "$0" "$NODE_BIN" index.js`). tmux reads the executable's own name, so
-# the `exec -a` renaming in both is invisible here. codex was not installed on
-# the machine this was measured on; it is covered only by the generic wrapper
-# strip, so treat it as unverified.
+# Under Nix the literal binary name doesn't always reach tmux. All three
+# engines were measured on a live pane: claude reports `.claude-wrapped`
+# (makeWrapper's hidden inner exec) and cursor-agent reports `node` (its
+# wrapper ends in `exec -a "$0" "$NODE_BIN" index.js`) — tmux reads the
+# executable's own name, so the `exec -a` renaming in both is invisible here.
+# codex reports its own literal `codex` (its wrapper re-execs under that name),
+# so it needs no special-casing beyond the plain match below.
 #
 # `node` is broad on purpose. It costs a false positive on, say, a dev server
 # sharing the worktree — and every consequence of that is to KEEP something

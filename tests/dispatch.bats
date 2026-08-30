@@ -1017,6 +1017,24 @@ EOF
   [ "$output" = "eng-7691-foo done @23" ]
 }
 
+# A bare `exited` is the SessionEnd backstop, not the worker's own word, and per
+# #69 it can post under the bare worker:$branch id for a SUBAGENT while the real
+# #session row is still `working` — so `last.terminal` reads true on a branch
+# that is actually live. Defence-in-depth: a live engine pane still refuses the
+# dispatch here, same as reap keeps such a worker rather than releasing it.
+@test "gate: refuses a terminal exited session with a live engine pane (#69)" {
+  setup_occupied_branch
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:eng-7691-foo","state":"exited","ts":1,"age_s":5,"terminal":true}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exited"* ]]
+  [[ "$output" == *"crew reply worker:eng-7691-foo"* ]]
+  ! grep -q 'kill-window' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
 # An engine-less occupant is not grounds to reclaim (#71): that reading goes false
 # on a live worker whenever its wrapper is unrecognised, so killing on it takes the
 # tree out from under a working agent. Only a terminal bus state licenses a kill.

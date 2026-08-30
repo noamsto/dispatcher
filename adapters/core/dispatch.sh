@@ -483,7 +483,12 @@ if [ -n "$prev_wt" ]; then
     state=$(printf '%s' "$newest" | jq -r '.state // "none"')
     terminal=$(printf '%s' "$newest" | jq -r '.terminal // false')
     engine=$(printf '%s' "$occ" | jq -r 'map(select(.engine)) | length')
-    if [ "$terminal" != true ]; then
+    # An `exited` row is the SessionEnd backstop, not the worker's own word, and
+    # (#69) it fires under the bare `worker:$branch` id for a subagent too — so a
+    # bare `exited` can be `last` while the real `#session` row is still
+    # `working`. A live engine pane is the same defence-in-depth reap already
+    # applies: refuse exactly like the non-terminal case rather than reclaim.
+    if [ "$terminal" != true ] || { [ "$state" = exited ] && [ "$engine" -gt 0 ]; }; then
       nm=$(printf '%s' "$occ" | jq -r '.[0].name')
       win=$(printf '%s' "$occ" | jq -r '.[0].window')
       wid=$(printf '%s' "$newest" | jq -r '.worker_id // ""')
