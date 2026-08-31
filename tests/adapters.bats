@@ -130,6 +130,33 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+@test "worker protocol pins the resume-a-killed-run contract" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '`tier:`, `kind:`, `resume:`, authoritative `engine:`, `model:`, and `effort:`,' \
+    'consult **Resuming a killed run** (below) first; unless resuming, run `spec-plan-critic` with `{ tier:' \
+    '`resume: true` is read first and outranks `plan:` — see **Resuming a killed run** below;' \
+    '**except under `resume: true`** (see **Resuming a killed run**): a recovered `SPEC.md` is the _output_ of a spec-critic gate in the interrupted run of this same task, not a task doc that never faced one.' \
+    'Do **not** re-run the spec or plan phases. Continue from the first unfinished step.' \
+    '**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`).' \
+    'When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url' \
+    'Consult **Resuming a killed run** (above) first; unless resuming, before the plan phase decide **once** whether to bring a top-tier consultant in to decompose the task' \
+    '`Plan: recovered (resume)` when you resumed under `resume: true`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "dispatcher protocol claim bullet pins the resume exemption and adopt release" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'already there and the branch exists, it resumes that branch and re-adds the label; free, `dispatch` adds it before any scaffolding.' \
+    '`crew adopt` on a dead-pid crew releases that crew'"'"'s own recorded claims the same way.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "the generator removes a codex skill whose command is gone" {
   # Only clearing the command dirs would orphan a codex skill on rename/removal
   # forever: the idempotence test reruns with an unchanged source so never

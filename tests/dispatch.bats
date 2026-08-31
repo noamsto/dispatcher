@@ -1396,3 +1396,298 @@ EOF
   [ "$(readlink "$HOME/.claude.json.dispatch.lock")" = "$holder_pid" ]
   ! grep -q 'send-keys' "$STUB_LOG"
 }
+
+# resume (#73): dispatching onto a branch that already exists continues the
+# interrupted run in place rather than dying on `wt switch -c`. Every fixture
+# below extends the create-mode gate pattern above — stub_launch_bins plus a
+# hand-made branch/worktree — because that is the shape the bug was reported in.
+
+# setup_resume_branch <branch> — an existing branch WITH its worktree already on
+# disk. stub_launch_bins' wt stub only understands `switch -c` and exits 1 on
+# anything else; a resume switches by name onto a tree that already exists, so a
+# no-op wt is the correct override here.
+setup_resume_branch() { # <branch>
+  stub_launch_bins
+  git -C "$TEST_REPO" branch "$1"
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dispatch-wt/${1//\//-}" "$1"
+  stub_crew_gate '[]' '[]'
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+# setup_resume_branch_no_worktree <branch> — an existing branch with NO worktree,
+# the case that proves the resume gate is ref existence and not the reclaim. The
+# wt stub must MATERIALISE the worktree on a bare `switch <branch>`, mirroring
+# what stub_launch_bins does for `switch -c`: a no-op leaves $wt_path empty and
+# dispatch dies at `could not locate worktree`, which would satisfy a status
+# assertion for entirely the wrong reason.
+setup_resume_branch_no_worktree() { # <branch>
+  stub_launch_bins
+  git -C "$TEST_REPO" branch "$1"
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = switch ] && [ "${2#-}" = "$2" ]; then
+  br="$2"
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.dispatch-wt/${br//\//-}" "$br"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+# The repro #73 was filed for: a killed worker leaves a terminal session on a
+# branch whose worktree still holds uncommitted work. The gate reclaims the
+# window, and the switch must attach to the branch rather than re-create it —
+# `wt switch -c` fails outright, and any create would strand that work.
+@test "resume: reclaims a terminal session, switches without -c, and keeps dirty work" {
+  setup_resume_branch feat/42-do-a-thing
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'half-done\n' >"$wt/scratch.txt"
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:feat/42-do-a-thing#s1-1","state":"done","ts":1,"age_s":900,"terminal":true}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reclaimed @23"* ]]
+  [[ "$output" == *"resuming branch feat/42-do-a-thing"* ]]
+  grep -q '^switch feat/42-do-a-thing -y' "$STUB_LOG"
+  ! grep -q 'switch -c' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+  [ -f "$wt/scratch.txt" ]
+}
+
+# `wt remove` and a pruned worktree both leave the ref behind, and `switch -c`
+# died on those too — so the resume gate keys on the ref, not on finding a tree.
+@test "resume: an existing branch with no worktree resumes too" {
+  setup_resume_branch_no_worktree feat/42-do-a-thing
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming branch feat/42-do-a-thing"* ]]
+  ! grep -q 'switch -c' "$STUB_LOG"
+  ! grep -q '^occupants' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+# Non-vacuous form of "a resume resolves no default base": with `origin` gone,
+# the `git fetch origin` the create path runs would fail the dispatch outright,
+# so a green run here can only mean that whole block was skipped.
+@test "resume: resolves no default branch — succeeds with origin removed" {
+  setup_resume_branch feat/42-do-a-thing
+  git -C "$TEST_REPO" remote remove origin
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  ! grep -q 'repo view' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+# The worker has to know it is continuing rather than starting, in both places it
+# reads instructions from: the stamped header and the launch prompt.
+@test "resume: stamps resume: true and carries the resume note into the launch string" {
+  setup_resume_branch feat/42-do-a-thing
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -Fx 'resume: true' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  keys="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$keys" == *"You are resuming an interrupted run on this branch"* ]]
+  [[ "$keys" == *"do not re-run the spec or plan phases"* ]]
+  [[ "$keys" == *"open PR before you push"* ]]
+}
+
+@test "resume: a create-mode dispatch stamps neither resume: true nor the resume note" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  ! grep -q '^resume:' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  ! grep -q 'You are resuming an interrupted run' "$STUB_LOG"
+}
+
+# The claim gate's own label is what a re-dispatch of an interrupted run trips
+# over: the issue is still labelled from the first run. The resolved branch
+# existing is what separates that from a second crew forking the same issue.
+@test "claim: an already-dispatched issue proceeds when the resolved branch exists" {
+  setup_resume_branch feat/42-do-a-thing
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already claimed, but branch feat/42-do-a-thing exists"* ]]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: an already-dispatched issue is still refused when the branch does not exist" {
+  stub_launch_bins
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already claimed"* ]]
+  ! grep -q 'add-label' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The exemption is keyed on the EXACT resolved branch, not "a branch for this
+# issue". A sibling from an earlier, differently-worded dispatch of the same
+# issue (feat/42-something-else) must not satisfy it in place of the branch
+# this title actually resolves to (feat/42-do-a-thing) — otherwise a later
+# loosening to a `feat/<id>-*` glob would let a second crew fork the issue
+# without anything here catching it (#73).
+@test "claim: an already-dispatched issue is still refused when only a sibling branch exists" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch feat/42-something-else
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already claimed"* ]]
+  ! grep -q 'add-label' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# A resume is normally issued without re-passing $DISPATCH_SPEC, and the stamp
+# block truncates the file — so the run's task text (and, on a `plan: provided`
+# run, its plan of record) has to be read back before the redirect opens.
+@test "resume: carries the prior ## Task body forward under a fresh header" {
+  setup_resume_branch feat/42-do-a-thing
+  task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n' >"$task"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -Fx 'The original body.' "$task"
+  grep -Fx 'resume: true' "$task"
+  grep -q '^worker_id: worker:feat/42-do-a-thing#' "$task"
+  ! grep -q '^stale_header:' "$task"
+  [ "$(grep -cFx '## Task' "$task")" -eq 1 ]
+}
+
+# `crew adopt` cannot infer a claim from the kind:"dispatch" row — that row
+# carries no issue number and is written far later — so the claim records itself
+# at claim time. The issue is a JSON string (jq --arg), not a number.
+@test "claim: an issue dispatch writes a claim-issue bus row" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | "\(.crew_id) \(.issue) \(.issue|type) \(.branch)"' "$log"
+  [ "$output" = "c1 42 string feat/42-do-a-thing" ]
+}
+
+@test "claim: a Linear dispatch writes no claim-issue row" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "linear thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  ! grep -q 'claim-issue' "$log"
+}
+
+@test "claim: a --pr dispatch writes no claim-issue row" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  ! grep -q 'claim-issue' "$log"
+}
+
+# `wt switch -c` was also, accidentally, the thing that refused a branch checked
+# out where a worker has no business opening. Occupancy keys on @crew_name, so it
+# reads all three of these as empty — the resume arm has to refuse them itself.
+@test "resume: refuses when the branch is checked out in the primary worktree" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch feat/42-do-a-thing
+  git -C "$TEST_REPO" checkout -q feat/42-do-a-thing
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"primary worktree"* ]]
+  ! grep -q '^switch' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "resume: refuses when the worktree is the directory dispatch runs from" {
+  setup_resume_branch feat/42-do-a-thing
+  cd "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the worktree this dispatch is running from"* ]]
+  ! grep -q '^switch' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The scan's field order is window_id / pane_current_path / @crew_name —
+# deliberately NOT `crew occupants`' order. Tab is IFS whitespace, so an empty
+# middle field collapses and `read` shifts the path into it; @crew_name goes last
+# precisely because empty is the value being matched on. This stub mirrors that.
+# list-panes, not list-windows (#73): a window format only resolves the ACTIVE
+# pane's path, missing a human in an inactive pane at the same path.
+@test "resume: refuses a tmux window sitting in the worktree with no worker identity" {
+  setup_resume_branch feat/42-do-a-thing
+  export RESUME_WT="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-panes) printf '%s\t%s\t\n' '@9' "$RESUME_WT" ;;
+new-window) printf '%s %s\n' '%1' '%1' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"window @9 is sitting in $RESUME_WT"* ]]
+  [[ "$output" == *"no worker identity"* ]]
+  ! grep -q '^switch' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The occupancy gate runs BEFORE the resume arm, so a live worker is still
+# refused rather than resumed on top of. #72's case: a bare `exited` row can be
+# the newest event while the session is live, so a live engine pane still
+# refuses. The `working` case is pinned by "gate: refuses a live occupant on a
+# create-mode re-dispatch" above, which now takes this same resume path.
+@test "gate: refuses a terminal exited session with a live engine on a resume dispatch" {
+  setup_resume_branch feat/42-do-a-thing
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:feat/42-do-a-thing","state":"exited","ts":1,"age_s":5,"terminal":true}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exited"* ]]
+  [[ "$output" == *"crew reply worker:feat/42-do-a-thing"* ]]
+  ! grep -q 'kill-window' "$STUB_LOG"
+  ! grep -q '^switch' "$STUB_LOG"
+  ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The slug is a lossy projection of the title, so a reworded re-dispatch of the
+# same id resolves to a NEW name, creates cleanly, and silently strands the first
+# branch's uncommitted work. Warn and name it — the original title only survives
+# on the sibling's own bus row, and is printed as data, never as a command. The
+# seeded title carries an escaped control char, which must not reach the terminal.
+@test "create: warns about a sibling branch for the same id and still launches" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch feat/42-old-wording
+  crew_dir="$TEST_REPO/.git/crew"
+  mkdir -p "$crew_dir"
+  printf '%s\n' '{"ts":100,"crew_id":"c0","kind":"dispatch","branch":"feat/42-old-wording","title":"Old\u0007 wording"}' >"$crew_dir/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"branch(es) for this id already exist:"* ]]
+  [[ "$output" == *"feat/42-old-wording"* ]]
+  [[ "$output" == *$'\n    Old wording'* ]]
+  grep -q 'switch -c feat/42-do-a-thing' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "create: says so when no bus row carries the sibling's title" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch feat/42-old-wording
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"feat/42-old-wording"* ]]
+  [[ "$output" == *"No bus row carries its original title"* ]]
+  grep -q 'new-window' "$STUB_LOG"
+}

@@ -348,6 +348,278 @@ EOF
   printf '%s' "$output" | grep -qF 'adopt [--force] <id> [pid]'
 }
 
+# ---- adopt: releasing stale claims (#73) ---------------------------------
+
+# _seed_claim_issue <crew_id> <issue> <branch> <ts_ms> — append one
+# well-formed `claim-issue` bus row, the record `crew adopt`'s release logic
+# keys on. Unlike _seed_crew_event, ts is a required argument here rather
+# than "now": the newest-claim-wins filter (`group_by(.issue|tostring)` then
+# `max_by(.ts)`) needs rows with a deterministic, controllable order.
+_seed_claim_issue() {
+  local log
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc --arg crew "$1" --arg issue "$2" --arg branch "$3" --argjson ts "$4" \
+    '{ts:$ts, crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
+    >>"$log"
+}
+
+# _seed_claim_issue_num <crew_id> <issue> <branch> <ts_ms> — same row, but with
+# `issue` as a JSON *number* rather than a string. Only dispatch.sh writes these
+# rows today and it writes strings, so this is the shape a future numeric writer
+# would produce; the grouping must not care which it gets.
+_seed_claim_issue_num() {
+  local log
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc --arg crew "$1" --argjson issue "$2" --arg branch "$3" --argjson ts "$4" \
+    '{ts:$ts, crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
+    >>"$log"
+}
+
+# A dead-pid crew is exactly the state the issue names ("alive: no"): nobody
+# is left to release the label it once claimed, so adopt must do it. This
+# also covers acceptance 8: stdout stays the bare id even on a release run.
+@test "adopt: releases a dead crew's recorded claim" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead 83 feat/83-foo 100
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"released the dispatched label on #83"* ]]
+  grep -qF 'issue edit 83 --remove-label dispatched' "$STUB_LOG"
+}
+
+# A claim row proves only that a crew once took a claim, never that adopting
+# it may release someone else's. The newest-per-issue filter runs across ALL
+# crews before the crew_id filter, so a live sibling's own claim must never
+# be touched just because a dead crew is being adopted.
+@test "adopt: leaves another crew's claim alone" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead 50 feat/50-a 100
+  _seed_claim_issue c-other 99 feat/99-b 100
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  grep -qF 'issue edit 50 --remove-label dispatched' "$STUB_LOG"
+  ! grep -q '99' "$STUB_LOG"
+}
+
+# The most important case: a claim record outlives its own release, so if
+# crew D re-claims an issue after dead crew C once claimed it, adopting C
+# must not strip D's live claim. Newest `claim-issue` row per issue wins,
+# across all crews, before the crew_id filter is ever applied.
+@test "adopt: leaves alone an issue whose claim was later re-taken by another crew" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead 77 feat/77-old 100
+  _seed_claim_issue c-live-other 77 feat/77-new 200
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  ! grep -q 'issue edit 77' "$STUB_LOG"
+}
+
+# An open PR means the work landed far enough to still hold the issue;
+# `crew reap` releases it when that PR merges, not `crew adopt`. Releasing
+# here would let a second dispatch fork a rival branch onto the same issue.
+@test "adopt: leaves alone a branch that heads an open PR" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead 61 feat/61-x 100
+  export PR_OPEN_BRANCH=feat/61-x
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ list\ *) printf '%s\n' "$PR_OPEN_BRANCH" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"keeping #61"* ]]
+  [[ "$stderr" == *"heads an open PR"* ]]
+  ! grep -q 'issue edit 61' "$STUB_LOG"
+}
+
+# A branch a worker still occupies is not adopt's to touch — killing the
+# claim out from under a live occupant is exactly what the occupancy gate
+# elsewhere in this file exists to prevent.
+@test "adopt: leaves alone a branch with a live worker occupant" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  git -C "$TEST_REPO" commit --allow-empty -qm init
+  git -C "$TEST_REPO" branch feat/72-y
+  export OCCUPANT_WT="$TEST_REPO/.worktrees/feat-72-y"
+  git -C "$TEST_REPO" worktree add -q "$OCCUPANT_WT" feat/72-y
+  _seed_claim_issue c-dead 72 feat/72-y 100
+  stub_bin gh
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1 $2" in
+"list-windows -a") printf '%s\t%s\t%s\n' "@1" "sage" "$OCCUPANT_WT" ;;
+"list-panes -a") printf '%s\t%s\t%s\n' "@1" "%1" "claude" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"keeping #72"* ]]
+  [[ "$stderr" == *"still occupies feat/72-y"* ]]
+  ! grep -q 'issue edit 72' "$STUB_LOG"
+}
+
+# The liveness guard sits outside `--force`'s bypass by design: --force lets
+# an operator reclaim a genuinely live dispatcher's pid slot, but must never
+# also strip the label out from under whatever that live crew is doing.
+@test "adopt: --force over a live pid releases nothing" {
+  sleep 30 & pid=$!
+  CREW_ID=c-live run_crew register "$pid"
+  _seed_claim_issue c-live 55 feat/55-z 100
+  stub_bin gh
+  run --separate-stderr run_crew adopt c-live --force "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-live" ]
+  [ ! -e "$STUB_LOG" ]
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+# With no claim-issue rows, the whole release block must stay off the
+# network — this is what keeps the ~29 pre-existing adopt tests offline.
+@test "adopt: with no claim-issue rows, adopt makes no gh calls" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  stub_bin gh
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [ ! -e "$STUB_LOG" ]
+}
+
+# One issue can carry claim rows from two crews on two different branches — a
+# state dispatch warns about rather than refuses (#73) — so the safety gates
+# have to look at every branch ever claimed for the issue, not just the newest
+# row's. Here the dead crew owns the newest row, but the *other* crew's older
+# branch heads an open PR, and that PR still holds the label.
+@test "adopt: keeps an issue whose other claimed branch heads an open PR" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-live-other 83 feat/83-b 50
+  _seed_claim_issue c-dead 83 feat/83-a 100
+  export PR_OPEN_BRANCH=feat/83-b
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ list\ *) printf '%s\n' "$PR_OPEN_BRANCH" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"keeping #83"* ]]
+  [[ "$stderr" == *"feat/83-b heads an open PR"* ]]
+  ! grep -q 'issue edit 83' "$STUB_LOG"
+}
+
+# Same widening for the occupancy gate (#73): the live worker sits on the other
+# crew's branch, which the newest-row-only filter never looked at.
+@test "adopt: keeps an issue whose other claimed branch has a live occupant" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  git -C "$TEST_REPO" commit --allow-empty -qm init
+  git -C "$TEST_REPO" branch feat/84-b
+  export OCCUPANT_WT="$TEST_REPO/.worktrees/feat-84-b"
+  git -C "$TEST_REPO" worktree add -q "$OCCUPANT_WT" feat/84-b
+  _seed_claim_issue c-live-other 84 feat/84-b 50
+  _seed_claim_issue c-dead 84 feat/84-a 100
+  stub_bin gh
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1 $2" in
+"list-windows -a") printf '%s\t%s\t%s\n' "@1" "sage" "$OCCUPANT_WT" ;;
+"list-panes -a") printf '%s\t%s\t%s\n' "@1" "%1" "claude" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"keeping #84"* ]]
+  [[ "$stderr" == *"still occupies feat/84-b"* ]]
+  ! grep -q 'issue edit 84' "$STUB_LOG"
+}
+
+# jq's group_by compares raw JSON, so a numeric 73 and a string "73" would form
+# two groups while `gh issue edit` treats them as one issue (#73). Split that
+# way, the dead crew's older row would look like the newest of its own group and
+# the live crew's newer claim would be released; grouped on `tostring`, the live
+# claim wins and nothing is touched.
+@test "adopt: a numeric and a string issue are one issue for newest-claim-wins" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue_num c-dead 73 feat/73-old 100
+  _seed_claim_issue c-live-other 73 feat/73-new 200
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  ! grep -q 'issue edit 73' "$STUB_LOG"
+}
+
+# The bus log is caller-writable and `cissue` is interpolated straight into a
+# `gh issue edit` argv, so the read site validates it itself rather than
+# trusting its producers (#73). Skipping is the right failure: adopt is a
+# best-effort recovery path, and the well-formed rows beside it still release.
+@test "adopt: a claim row with a malformed issue is skipped, never passed to gh" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead '90; rm -rf .' feat/bad 100
+  _seed_claim_issue c-dead 91 feat/91-ok 100
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  [[ "$stderr" == *"not a number"* ]]
+  ! grep -qF 'rm -rf' "$STUB_LOG"
+  grep -qF 'issue edit 91 --remove-label dispatched' "$STUB_LOG"
+}
+
 # ---- register -----------------------------------------------------------
 
 @test "register: the refusal names the discovery commands" {

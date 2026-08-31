@@ -628,13 +628,15 @@ adopt)
     echo "crew: no crew '$id' in this repo — run 'crew crews' to list them, or 'crew new' to start one" >&2
     exit 1
   }
+  # Liveness sits OUTSIDE the --force guard because the claim release below keys
+  # on it too: --force over a genuinely live dispatcher must release nothing.
+  epid=$(cat "$cdir/pid" 2>/dev/null || true)
+  live=""
+  case "$epid" in
+  '' | *[!0-9]* | 0) ;;
+  *) if kill -0 "$epid" 2>/dev/null; then live=1; fi ;;
+  esac
   if [ -z "$force" ]; then
-    epid=$(cat "$cdir/pid" 2>/dev/null || true)
-    live=""
-    case "$epid" in
-    '' | *[!0-9]* | 0) ;;
-    *) if kill -0 "$epid" 2>/dev/null; then live=1; fi ;;
-    esac
     # A live pid among our own ancestors is *this* session's crew, so re-adopting
     # is idempotent — the recovery path has to survive being run twice. It is a
     # heuristic, not proof: `kill -0` only says some process holds that number
@@ -664,6 +666,94 @@ adopt)
   fi
   mkdir -p "$cdir"
   printf '%s\n' "$pid" >"$cdir/pid"
+
+  # Release the claims this crew recorded taking (#73): a dead or absent pid is
+  # exactly the state that leaves a `dispatched` label with nobody left to
+  # release it. A `claim-issue` row proves the crew once TOOK a claim, never that
+  # it still holds one — neither reap nor adopt writes a counter-record — so the
+  # newest claim per issue across ALL crews wins, and only then is it kept when
+  # it is ours; otherwise adopting a long-dead crew strips the claim a later crew
+  # is working right now. `crew register` writes no bus row, so an absent log is
+  # the ordinary case, not an anomaly.
+  #
+  # Each row is issue, our branch, then every OTHER branch ever claimed for that
+  # issue by any crew. Candidacy is ours, but the gates below need the whole
+  # issue: two crews may hold two branches for one issue, and checking only ours
+  # would release the label out from under the other. `group_by` compares raw
+  # JSON, hence the `tostring` key — a numeric 73 and a string "73" would
+  # otherwise split into two groups that `gh issue edit` treats as one.
+  claims=""
+  pr_heads=""
+  if [ -z "$live" ] && [ -f "$log" ]; then
+    claims=$(jq -s -r --arg id "$id" '
+      map(select(.kind=="claim-issue" and .issue != null and (.branch // "") != ""))
+      | group_by(.issue|tostring)
+      | map(
+          max_by(.ts) as $mine
+          | select($mine.crew_id == $id)
+          | [($mine.issue|tostring), $mine.branch] + (map(.branch) | unique - [$mine.branch])
+        )
+      | .[] | @tsv' "$log" 2>/dev/null || true)
+  fi
+  # Every gh call below hangs off this: with nothing to release, adopt stays offline.
+  if [ -n "$claims" ]; then
+    # Explicit --limit — the default 30 would read a busy repo's PR-bearing branch
+    # as PR-less and release a claim its open PR still holds.
+    if ! pr_heads=$(gh pr list --state open --limit 500 --json headRefName --jq '.[].headRefName' 2>&1); then
+      echo "crew adopt: could not list open PRs ($pr_heads) — leaving the recorded claims in place" >&2
+      claims=""
+    fi
+  fi
+  # Messages go to stderr without exception: stdout is a machine channel
+  # (`CREW_ID=$(crew adopt <id> $PPID)`) and stays exactly the bare id.
+  #
+  # The claims snapshot is read once, above, and never revalidated: a dispatch
+  # can record a newer claim while these `gh issue edit` calls run, so a
+  # just-started dispatch can still lose its label. Accepted, for the reason the
+  # claim gate itself states — `gh` offers no compare-and-swap, so every claim
+  # path here narrows the race rather than closing it.
+  while IFS=$'\t' read -r -a crow; do
+    cissue="${crow[0]:-}"
+    [ -n "$cissue" ] || continue
+    # The bus log is caller-writable, so the issue is validated here, at the read
+    # site, before it reaches `gh` — same reason the crew id is validated above
+    # rather than trusted from its producer.
+    case "$cissue" in
+    *[!0-9]*)
+      echo "crew adopt: skipping a claim row whose issue is not a number ($cissue)" >&2
+      continue
+      ;;
+    esac
+    cbranch="${crow[1]}"
+    held=""
+    for cb in "${crow[@]:1}"; do
+      # _occupants takes a path, not a branch.
+      cwt=$(git worktree list --porcelain |
+        awk -v b="refs/heads/$cb" '/^worktree /{p=$2} $0=="branch "b{print p}')
+      if [ -n "$cwt" ] && [ -d "$cwt" ] && [ "$(_occupants "$cwt")" != '[]' ]; then
+        echo "crew adopt: keeping #$cissue — a worker still occupies $cb" >&2
+        held=1
+        break
+      fi
+      # An open PR means the work landed far enough to still hold the issue, and
+      # `crew reap` releases it when that PR merges.
+      if printf '%s\n' "$pr_heads" | grep -qxF "$cb"; then
+        echo "crew adopt: keeping #$cissue — $cb heads an open PR" >&2
+        held=1
+        break
+      fi
+    done
+    [ -z "$held" ] || continue
+    # Best-effort: adopt is a recovery command and must not fail because gh is
+    # unavailable.
+    if gh issue edit "$cissue" --remove-label dispatched >/dev/null 2>&1; then
+      echo "crew adopt: released the dispatched label on #$cissue ($cbranch)" >&2
+    else
+      echo "crew adopt: could not remove the dispatched label from #$cissue ($cbranch)" >&2
+    fi
+  done <<EOF
+$claims
+EOF
   printf '%s\n' "$id"
   ;;
 watch)
