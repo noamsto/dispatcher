@@ -7,6 +7,14 @@ event="$(cat)"
 cwd="$(jq -r '.cwd // empty' <<<"$event")"
 [[ -f "$cwd/WORKER_TASK.md" ]] || exit 0
 
+# Only a session that can name itself may speak for this branch. `dispatch` puts
+# CREW_WORKER_ID in the worker window's environment, so a session without one is
+# something else in the same worktree — another engine's subagent session, a human's
+# auxiliary pane — and must not post a terminal status over a live worker (#69).
+# Probing for a live pane instead would deadlock: the worker's own SessionEnd blocks
+# on its own hooks.
+[[ -n ${CREW_WORKER_ID:-} ]] || exit 0
+
 pane="$(grep -m1 '^dispatcher_pane:' "$cwd/WORKER_TASK.md" | cut -d' ' -f2 || true)"
 branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 if [[ -n $pane ]]; then
@@ -23,9 +31,8 @@ if [[ -n $crew_id ]]; then
     log="$common/crew/events.jsonl"
     # The worker id comes from the environment, never from WORKER_TASK.md: the doc
     # is overwritten by the next dispatch on this worktree, so reading it here
-    # would post THIS session's `exited` against its successor (#17). A session
-    # launched before this change has no CREW_WORKER_ID and keeps the old id.
-    me="${CREW_WORKER_ID:-worker:$branch}"
+    # would post THIS session's `exited` against its successor (#17).
+    me="$CREW_WORKER_ID"
     last=""
     if [[ -f $log ]]; then
       last="$(jq -r --arg c "$crew_id" --arg m "$me" \
