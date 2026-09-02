@@ -508,7 +508,7 @@ budget_json() {
 }
 
 @test "rejects an effort-suffixed cursor id on --agent claude" {
-  run run_dispatch standard claude-opus-4-8-high --agent claude --effort medium --crew-id c1 42 "title"
+  run run_dispatch standard claude-opus-5-high --agent claude --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"effort-suffixed cursor id"* ]]
 }
@@ -526,7 +526,7 @@ budget_json() {
   # Distinct titles are load-bearing: the title becomes the branch, and a reused
   # one makes the second `git worktree add -b` collide.
   stub_launch_bins
-  run run_dispatch deep claude-fable-5 --agent claude --effort high --crew-id c1 42 "fable row"
+  run run_dispatch deep claude-fable-5-1 --agent claude --effort high --crew-id c1 42 "fable row"
   [ "$status" -eq 0 ]
   run run_dispatch trivial haiku --agent claude --effort low --crew-id c1 42 "haiku row"
   [ "$status" -eq 0 ]
@@ -703,11 +703,11 @@ budget_json() {
 
 @test "cursor accepts the parameterised bracket form" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-4-8[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
+  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   launch="$(grep 'send-keys' "$STUB_LOG")"
   # Single-quoted, so the glob-active brackets never reach the worker's shell.
-  [[ "$launch" == *"--model 'claude-opus-4-8[context=1m,effort=high,fast=false]'"* ]]
+  [[ "$launch" == *"--model 'claude-opus-5[context=1m,effort=high,fast=false]'"* ]]
 }
 
 # Asserts only that the gate stayed silent — a full launch per model would need
@@ -724,15 +724,15 @@ assert_gate_silent() { # <engine> <model>
   # Hand-copied from dispatch-orchestration.md: the model map, the cursor
   # alternatives prose, the codex legacy generations, and the orchestrator
   # table. Copied, so it makes drift loud rather than impossible.
-  for m in opus sonnet haiku claude-fable-5; do
+  for m in opus sonnet haiku claude-fable-5-1; do
     assert_gate_silent claude "$m"
   done
   for m in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini; do
     assert_gate_silent codex "$m"
   done
-  for m in kimi-k3-high cursor-grok-4.5-high cursor-grok-4.5-medium-fast \
-    cursor-grok-4.5-low-fast composer-2.5 composer-2.5-fast \
-    claude-opus-4-8-high gpt-5.6-sol-high; do
+  for m in kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium-fast \
+    cursor-grok-4.6-low-fast composer-2.5 composer-2.5-fast \
+    claude-opus-5-high gpt-5.6-sol-high; do
     assert_gate_silent cursor "$m"
   done
 }

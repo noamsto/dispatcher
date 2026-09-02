@@ -230,7 +230,7 @@ else
       exit 1
     fi
     if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
-      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5-1). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -275,7 +275,7 @@ else
       cursor_params="${BASH_REMATCH[2]}"
     fi
     if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
-      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.5-medium-fast, composer-2.5, claude-opus-4-8-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.6-medium-fast, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
@@ -923,7 +923,7 @@ if [ "$agent" = codex ]; then
     "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
-  # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
+  # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
   # A bare prompt argument (no -p) seeds and auto-submits cursor's own TUI;
   # --force/--trust/--approve-mcps make it unattended (codex bypass analog); base
   # MCP is the shared ~/.cursor/mcp.json. Headless -p is wrong for a worker: the

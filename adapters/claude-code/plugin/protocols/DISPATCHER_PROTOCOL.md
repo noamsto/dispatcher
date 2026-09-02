@@ -31,8 +31,8 @@ default-plus-exception:
 - codex leans: large mechanical refactors, wide-but-shallow multi-file sweeps,
   or a deliberate second-engine perspective on a hard problem.
 - cursor leans: a distinct third-engine perspective on a deep task — default the
-  **worker** to **`kimi-k3-high`** (plans) with **Grok 4.5** execute subagents
-  (`cursor-grok-4.5-*`, genuinely non-Claude implementers); Composer stays
+  **worker** to **`kimi-k3-high`** (plans) with **Grok 4.6** execute subagents
+  (`cursor-grok-4.6-*`, genuinely non-Claude implementers); Composer stays
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.

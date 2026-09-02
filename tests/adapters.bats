@@ -156,7 +156,7 @@ setup() {
     'A higher planner must be strictly above the authoritative tuple; a top or unavailable rung blocks without launching planning, and `replanned` remains false only when no earlier execute-time planning episode began.' \
     '**Claude:** Agent model override `haiku → sonnet → opus → fable`' \
     '**Codex:** on the exact model, increase `low → medium → high → xhigh → max`' \
-    '**Cursor:** Task model override `cursor-grok-4.5-low-fast → cursor-grok-4.5-medium-fast → cursor-grok-4.5-high`.' \
+    '**Cursor:** Task model override `cursor-grok-4.6-low-fast → cursor-grok-4.6-medium-fast → cursor-grok-4.6-high`.' \
     'Immediately before every stopping path, emit one complete latest-state metrics snapshot.'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
@@ -369,7 +369,7 @@ setup() {
     'The exemption covers the **diverse** reviewer only: the same-engine language reviewer and test-runner still run, and having **no** reviewer at all is the terminal path below' \
     'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
     '| **cursor** | Task-tool subagent with an explicit model slug, same inline role brief |' \
-    'slug (deep → `cursor-grok-4.5-medium-fast`, standard → `cursor-grok-4.5-low-fast`) |' \
+    'slug (deep → `cursor-grok-4.6-medium-fast`, standard → `cursor-grok-4.6-low-fast`) |' \
     'Cap the review→fix loop at 2.'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
