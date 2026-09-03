@@ -4,6 +4,11 @@
 # even for tests that do not need a throwaway repository.
 export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 
+# Real `crew reap` invocations across the suite would each fork a ratings
+# sweep; the fork would outlive the test and race teardown_repo's rm -rf.
+# Tests that exercise the sweep opt in explicitly.
+export CREW_RATE_AUTOSWEEP=0
+
 # setup_repo — a throwaway git repo as $TEST_REPO, cwd set to it.
 setup_repo() {
   TEST_REPO="$(mktemp -d)"
