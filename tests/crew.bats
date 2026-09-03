@@ -9,14 +9,69 @@ teardown() {
   teardown_repo
 }
 
+# Real tmux pane_current_path is kernel-canonical (pwd -P); git worktree paths
+# resolve symlinks too (/var → /private/var on macOS) but $BATS_TEST_TMPDIR does
+# not — canonicalize existing dirs in fixture text so absence-of-release tests
+# can fail when occupancy silently misses (#52).
+_canon_stub_path() {
+  if [ -d "$1" ]; then
+    (cd "$1" && pwd -P)
+  else
+    printf '%s' "$1"
+  fi
+}
+
+_canon_stub_wins_body() {
+  local body="$1"
+  [ -n "$body" ] || return 0
+  local line f1 f2 f3 rest
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -z "$line" ]; then
+      printf '\n'
+      continue
+    fi
+    IFS=$'\t' read -r f1 f2 f3 rest <<< "$line"
+    if [ -n "$f3" ]; then
+      f3="$(_canon_stub_path "$f3")"
+    fi
+    printf '%s\t%s\t%s' "$f1" "$f2" "$f3"
+    [ -n "$rest" ] && printf '\t%s' "$rest"
+    printf '\n'
+  done <<< "$body"
+}
+
+_canon_stub_panes_body() {
+  local body="$1"
+  [ -n "$body" ] || return 0
+  local line cmd path
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -z "$line" ]; then
+      printf '\n'
+      continue
+    fi
+    if [[ "$line" == *$'\t'* ]]; then
+      printf '%s\n' "$line"
+      continue
+    fi
+    cmd="${line%% *}"
+    path="${line#* }"
+    if [ "$path" != "$line" ] && [ -n "$path" ]; then
+      path="$(_canon_stub_path "$path")"
+      printf '%s %s\n' "$cmd" "$path"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <<< "$body"
+}
+
 # stub_tmux <list-windows-body> <list-panes-body> — a tmux whose list output is
 # fixed text. crew's real tmux calls are `|| true`-tolerant, so without this the
 # occupancy tests would read the developer's live server and flake.
 stub_tmux() {
   STUB_DIR="${STUB_DIR:-$(mktemp -d)}"
   STUB_LOG="${STUB_LOG:-$STUB_DIR/calls.log}"
-  printf '%s' "$1" >"$STUB_DIR/wins.txt"
-  printf '%s' "$2" >"$STUB_DIR/panes.txt"
+  _canon_stub_wins_body "$1" >"$STUB_DIR/wins.txt"
+  _canon_stub_panes_body "$2" >"$STUB_DIR/panes.txt"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
