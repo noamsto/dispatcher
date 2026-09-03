@@ -842,7 +842,40 @@ fi
   fi
 } >"$wt_path/WORKER_TASK.md"
 
+# A detached new-window can inherit tmux's fallback size instead of the client
+# that invoked dispatch. Claude reads that initial PTY geometry during startup,
+# and some full-screen redraws do not recover cleanly from a later resize.
+client_target=()
+[ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
+client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
+window_size_mode="$(tmux show-option -qv "${client_target[@]}" window-size 2>/dev/null || true)"
+if [ -z "$window_size_mode" ]; then
+  window_size_mode="$(tmux show-option -gqv window-size 2>/dev/null || true)"
+fi
+client_width=""
+client_height=""
+status_rows=""
+if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
+  client_width="${BASH_REMATCH[1]}"
+  client_height="${BASH_REMATCH[2]}"
+  case "${BASH_REMATCH[3]}" in
+  off) status_rows=0 ;;
+  on) status_rows=1 ;;
+  *) status_rows="${BASH_REMATCH[3]}" ;;
+  esac
+  client_height=$((client_height - status_rows))
+  if ((client_height <= 0)); then
+    client_width=""
+    client_height=""
+  fi
+fi
 read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+if [ -n "$client_width" ]; then
+  tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
+  if [ -n "$window_size_mode" ] && [ "$window_size_mode" != manual ]; then
+    tmux set-option -t "$win" window-size "$window_size_mode"
+  fi
+fi
 
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.

@@ -9,7 +9,6 @@ setup() {
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
   unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
-  export XDG_DATA_HOME="$(mktemp -d)"
   stub_bin tmux
   stub_bin crew
   stub_bin gh
@@ -373,6 +372,31 @@ budget_json() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"quota exhausted"* ]]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "worker window starts at the invoking client size" {
+  stub_launch_bins
+
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '200 50 off' ;;
+show-option) printf '%s\n' latest ;;
+new-window) printf '%s %s\n' '%1' '%1' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "sized worker"
+  [ "$status" -eq 0 ]
+  grep -q 'new-window -d -c .* -n feat-42-sized-worker .* -P' "$STUB_LOG"
+  grep -q 'resize-window -t %1 -x 200 -y 50' "$STUB_LOG"
+  grep -q 'set-option -t %1 window-size latest' "$STUB_LOG"
+  resize_line="$(grep -n 'resize-window -t %1 -x 200 -y 50' "$STUB_LOG" | cut -d: -f1)"
+  launch_line="$(grep -n 'send-keys' "$STUB_LOG" | cut -d: -f1)"
+  [ "$resize_line" -lt "$launch_line" ]
 }
 
 @test "DISPATCHER_PROTOCOL_DIR overrides the baked default" {
@@ -763,12 +787,12 @@ assert_gate_silent() { # <engine> <model>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
   grep -q 'pr view 99' "$STUB_LOG"
-  ! grep -E '(^| )(-c|--create)( |$)' "$STUB_LOG"
+  run ! grep -E '^switch [^ ]+ (-c|--create)( |$)' "$STUB_LOG"
   grep -q 'switch eng-7691-foo' "$STUB_LOG"
 
   wt_path="$TEST_REPO/.worktrees/eng-7691-foo"
   grep -qx 'pr: 99' "$wt_path/WORKER_TASK.md"
-  ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
+  run ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
 }
 
 @test "--pr stamps base: from baseRefName" {
