@@ -13,6 +13,10 @@ teardown() {
   [ "$output" = "true" ]
 }
 
+@test "XDG_DATA_HOME is isolated per test" {
+  assert_isolated_xdg_data_home
+}
+
 @test "stub_bin intercepts a command and logs argv" {
   stub_bin tmux
   tmux send-keys -t pane0 'hello' Enter

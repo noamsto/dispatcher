@@ -16,6 +16,7 @@ setup() {
   # No test may make a real network call — gh is stubbed on PATH for every
   # test, even ones that never expect to invoke it (e.g. --report).
   stub_gh
+  unset CREW_ID
 }
 
 teardown() {

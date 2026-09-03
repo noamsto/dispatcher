@@ -4,7 +4,7 @@ setup() {
   STUB_DIR="$(mktemp -d)"
   STUB_LOG="$STUB_DIR/calls.log"
   FIXTURE_DIR="$(mktemp -d)"
-  export XDG_DATA_HOME="$(mktemp -d)" STUB_DIR STUB_LOG FIXTURE_DIR
+  export STUB_DIR STUB_LOG FIXTURE_DIR
   unset OPENROUTER_API_KEY
   write_fixtures
   write_curl_shim

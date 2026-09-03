@@ -11,6 +11,7 @@ setup() {
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  unset CREW_ID
 }
 
 teardown() {
