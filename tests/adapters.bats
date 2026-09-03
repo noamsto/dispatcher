@@ -133,7 +133,7 @@ setup() {
 @test "worker protocol pins the resume-a-killed-run contract" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
-    '`tier:`, `kind:`, `resume:`, authoritative `engine:`, `model:`, and `effort:`,' \
+    '`tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, and `effort:`,' \
     'consult **Resuming a killed run** (below) first; unless resuming, run `spec-plan-critic` with `{ tier:' \
     '`resume: true` is read first and outranks `plan:` — see **Resuming a killed run** below;' \
     '**except under `resume: true`** (see **Resuming a killed run**): a recovered `SPEC.md` is the _output_ of a spec-critic gate in the interrupted run of this same task, not a task doc that never faced one.' \

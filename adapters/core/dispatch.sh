@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--ignore-budget] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -51,6 +51,10 @@ mcp_profile=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
+draft=false
+if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
+  draft=true
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
   --agent)
@@ -114,6 +118,14 @@ while [ $# -gt 0 ]; do
     kind=review
     shift
     ;;
+  --draft)
+    draft=true
+    shift
+    ;;
+  --no-draft)
+    draft=false
+    shift
+    ;;
   --ignore-budget)
     ignore_budget=1
     shift
@@ -131,6 +143,11 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
+
+if [ "$kind" = review ] && [ "$draft" = true ]; then
+  echo "dispatch: --draft cannot be combined with --review" >&2
+  exit 1
+fi
 
 [ -n "$effort" ] || {
   echo "dispatch: --effort is required and must be judged independently from tier" >&2
@@ -797,8 +814,8 @@ fi
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
 {
-  printf 'tier: %s\nkind: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
-    "$tier" "$kind" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
+  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
+    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
   if [ -n "$pr_number" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
