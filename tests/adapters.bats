@@ -340,6 +340,22 @@ setup() {
   done
 }
 
+@test "dispatcher protocol synthesizes retro notes at a drained roster" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    '`misrouted`' \
+    '`fanout_binder`' \
+    '`spec_too_thin`' \
+    '`session_summary`' \
+    'crew msg "dispatcher:$CREW_ID" "retro:$CREW_ID"' \
+    'Every note must quote a specific observable' \
+    'A clean drained roster writes nothing at all.' \
+    '≥2 workers'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "worker protocol binds the review gate to every engine" {
   # The roles stay engine-neutral; only the spawn mechanism is per-engine. The
   # rungs must keep matching rule 1's execute ladder, which is why each row's

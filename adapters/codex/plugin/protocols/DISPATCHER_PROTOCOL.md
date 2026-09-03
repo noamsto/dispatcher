@@ -189,6 +189,33 @@ Partition the roster: `working`+`blocked` = **ACTIVE**; `pr_open`+`done`+`failed
   worker blocks/finishes, at which point the exit-0 wake fires immediately. Costs only
   cache-warmth, never responsiveness.
 
+**Retro synthesis — at a DRAINED roster, before the 3300s re-arm.** Read the crew's
+notes and roster, then write:
+
+1. For each terminal worker, compare its outcome against your `{tier, engine, model,
+   plan}` call. Emit `misrouted` **only** when the outcome contradicts it, naming the
+   contradiction — e.g. "trivial, but the diff touched an auth path — no review gate
+   ran".
+2. Emit `fanout_binder` when a concrete binder capped fan-out (429, drag, pile-up);
+   emit `spec_too_thin` when a worker blocked on something the inlined spec should
+   have answered.
+3. Emit **one** `session_summary` whose detail states, per worker: codename, `{tier,
+   engine, model}`, outcome, and the tags its notes carried — plus any tag appearing
+   on **≥2 workers**, the pattern only you can see.
+
+- **Every note must quote a specific observable** — a tag, a status detail, an
+  outcome, a dispatch field. Never a general impression.
+- **A clean drained roster writes nothing at all.** No notes, no summary.
+
+```
+crew msg "dispatcher:$CREW_ID" "retro:$CREW_ID" '{"seam":"dispatch","tag":"<tag>","detail":"<what>"}'
+```
+
+Like `metrics:`, `retro:` is a synthetic sink: `watch`/`inbox` filter on
+`to == dispatcher:<crew>`/`*`, so writing one never wakes a dispatcher — including
+yourself. No new event kind, no new write subcommand. `crew retro` / `crew retro
+--report` folds these notes back out.
+
 `crew watch` wakes on any worker `status` in `blocked`/`pr_open`/`done`/`failed`
 (not `working` heartbeats) or any question `msg` to you, returning
 `{"cursor":<ts>,"events":[…]}`. The terminal states (`done`/`pr_open`/`failed`) free
