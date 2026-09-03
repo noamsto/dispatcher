@@ -8,7 +8,8 @@ setup() {
   # and fails on a personal one. HOME points at the throwaway repo so the codex
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
-  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
+  export XDG_DATA_HOME="$(mktemp -d)"
   stub_bin tmux
   stub_bin crew
   stub_bin gh
@@ -469,6 +470,40 @@ budget_json() {
   grep -Fx 'engine: cursor' "$task"
   grep -Fx 'model: composer-2.5' "$task"
   grep -Fx 'effort: low' "$task"
+}
+
+@test "draft defaults to false" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "draft default"
+  [ "$status" -eq 0 ]
+  grep -Fx 'draft: false' "$TEST_REPO/.dispatch-wt/feat-42-draft-default/WORKER_TASK.md"
+}
+
+@test "--draft stamps a draft worker task" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --draft --crew-id c1 42 "draft flag"
+  [ "$status" -eq 0 ]
+  grep -Fx 'draft: true' "$TEST_REPO/.dispatch-wt/feat-42-draft-flag/WORKER_TASK.md"
+}
+
+@test "DISPATCH_DRAFT_PR enables draft PRs" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal DISPATCH_DRAFT_PR=1 run run_dispatch standard sonnet --effort medium --crew-id c1 42 "draft env"
+  [ "$status" -eq 0 ]
+  grep -Fx 'draft: true' "$TEST_REPO/.dispatch-wt/feat-42-draft-env/WORKER_TASK.md"
+}
+
+@test "--no-draft overrides DISPATCH_DRAFT_PR" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal DISPATCH_DRAFT_PR=1 run run_dispatch standard sonnet --effort medium --no-draft --crew-id c1 42 "ready override"
+  [ "$status" -eq 0 ]
+  grep -Fx 'draft: false' "$TEST_REPO/.dispatch-wt/feat-42-ready-override/WORKER_TASK.md"
+}
+
+@test "--draft with --review aborts before scaffolding" {
+  run run_dispatch standard sonnet --effort medium --draft --review --pr 12 --crew-id c1 "draft review"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--draft cannot be combined with --review"* ]]
 }
 
 @test "rejects a codex slug on --agent claude" {
