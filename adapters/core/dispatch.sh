@@ -17,6 +17,12 @@ _ensure_dispatched_label() {
     --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
 }
 
+# crew.sh's atomic-append helper, duplicated (not sourced): this file builds
+# as its own standalone writeShellApplication with no shared lib. A bare
+# `printf >>` isn't one write(2), so concurrent writers to this shared log
+# can splice a large line with another process's append (#55, #61).
+_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
+
 # Protocol directory. The env override is the dev loop: point it at a checkout
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
@@ -384,9 +390,9 @@ if [ -n "$gh_issue" ]; then
   # An explicit claim record, because `crew adopt` cannot infer one: the
   # kind:"dispatch" row carries no issue number and is written ~300 lines later,
   # so every failure in between would strand an unreleasable label (#73).
-  jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" \
-    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
-    >>"$crew_dir/events.jsonl"
+  line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" \
+    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
+  _bus_append "$crew_dir/events.jsonl" "$line"
 fi
 
 # Reclaim workers whose PR already landed, before adding another one. Cheapest
@@ -459,9 +465,9 @@ else
       echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1
     }
-    jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}' \
-      >>"$crew_dir/events.jsonl"
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
   fi
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
   # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
@@ -561,9 +567,10 @@ if [ -n "$prev_wt" ]; then
       tmux kill-window -t "$w" 2>/dev/null || true
       echo "dispatch: reclaimed $w at $prev_wt (session $state)"
     done
-    jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
+    line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"reclaim", branch:$branch, state:$state,
-          windows:($occ|map(.window))}' >>"$crew_dir/events.jsonl"
+          windows:($occ|map(.window))}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
   fi
 fi
 
@@ -673,9 +680,9 @@ worker_id="worker:$branch#$session"
 # until the worker's own `working` post supersedes it. If this dispatch
 # aborts before that happens, the claim becomes the branch's permanent
 # latest bus event and idle-release can never touch it again.
-jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
-  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}' \
-  >>"$crew_dir/events.jsonl"
+line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
+  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
+_bus_append "$crew_dir/events.jsonl" "$line"
 
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
@@ -788,11 +795,11 @@ fi
 
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
-jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
+line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}' \
-  >>"$crew_dir/events.jsonl"
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}')
+_bus_append "$crew_dir/events.jsonl" "$line"
 
 # FleetView-style codename+color, derived from the branch (deterministic).
 ident=$(crew identity "$branch")

@@ -247,6 +247,34 @@ EOF
   [ "$(grep -o '{"ts"' "$log" | wc -l | tr -d ' ')" -eq 40 ]
 }
 
+@test "bus: concurrent reply appends never splice (#61's converted site)" {
+  # Same shape as the "concurrent oversized writes" test above, but through
+  # `reply` — one of the five sites #61 converted to _bus_append. `reply`
+  # doesn't need a live session to target as long as `to` isn't `worker:*`
+  # (that prefix triggers session resolution this test isn't exercising).
+  # 4002 x's lands the finished line (with trailing newline) at 4097 bytes —
+  # one byte over `_LINE_MAX`, too small for `_fit_line`'s shrink loop to ever
+  # engage (it measures the line *without* the newline `_bus_append` adds, so
+  # it sees 4096 and calls that done) but enough to force bash's `printf`
+  # builtin to split the write into two syscalls (4096 + 1) instead of one —
+  # exactly the multi-write window `_bus_append`'s `dd` closes.
+  big="$(head -c 4002 /dev/zero | tr '\0' x)"
+  for i in 1 2 3 4 5 6 7 8; do
+    (
+      for _ in 1 2 3 4 5; do
+        CREW_ID=c1 bash -euo pipefail "$CREW" reply "peer$i" "$big"
+      done
+    ) &
+  done
+  wait
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(wc -l <"$log" | tr -d ' ')" -eq 40 ]
+  while IFS= read -r l; do
+    printf '%s' "$l" | jq -e . >/dev/null
+  done <"$log"
+  [ "$(grep -o '{"ts"' "$log" | wc -l | tr -d ' ')" -eq 40 ]
+}
+
 @test "register: is idempotent for the same pid" {
   CREW_ID=c1 run run_crew register $$
   [ "$status" -eq 0 ]

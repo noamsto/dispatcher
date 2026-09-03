@@ -24,6 +24,11 @@ fi
 # so the roster doesn't strand a `working` entry. `crew` is a PATH CLI now, but
 # this hook stays self-contained (inline append) to avoid depending on PATH at
 # SessionEnd; envelope matches crew's status event.
+#
+# crew.sh's atomic-append helper, duplicated (not sourced) for the reason
+# above. A bare `printf >>` isn't one write(2), so concurrent writers to this
+# shared log can splice a large line with another process's append (#55, #61).
+_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 crew_id="$(grep -m1 '^crew_id:' "$cwd/WORKER_TASK.md" | cut -d' ' -f2 || true)"
 if [[ -n $crew_id ]]; then
   common="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
@@ -44,7 +49,7 @@ if [[ -n $crew_id ]]; then
       mkdir -p "$common/crew"
       line="$(jq -nc --arg c "$crew_id" --arg m "$me" \
         '{ts:(now*1000|floor), crew_id:$c, from:$m, to:("dispatcher:"+$c), kind:"status", body:{state:"exited"}}')"
-      printf '%s\n' "$line" >>"$log"
+      _bus_append "$log" "$line"
       ;;
     esac
   fi

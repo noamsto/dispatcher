@@ -185,9 +185,9 @@ _ELIDED=' …[elided]'
 # full or EOF instead of writing out whatever a single short read from the
 # pipe returned — without it, dd's own read/write is no more atomic than the
 # `printf >>` it replaces. Only POSIX-common flags (no GNU-only `oflag=append`
-# or `of=`), so this also works under macOS's system BSD `dd`. Covers only the
-# two call sites that use it (`status`/`msg`, and `_post`) — `reply`,
-# `pr-watch` and `reap` still append directly and share the same hazard.
+# or `of=`), so this also works under macOS's system BSD `dd`. `dispatch.sh`
+# and `dispatch-notify.sh` are separate binaries with no shared lib to source
+# this from, so each carries its own copy — keep them in sync (#61).
 _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
 # _shrink <text> <keep> — shorten <text> to roughly <keep> characters.
@@ -437,7 +437,7 @@ reply)
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
   }
   line=$(_fit_line _build_reply "${2:-}")
-  printf '%s\n' "$line" >>"$log"
+  _bus_append "$log" "$line"
   ;;
 await)
   # await <agent> [--timeout S] [--interval S] — block until a msg addressed to
@@ -2129,9 +2129,10 @@ pr-watch)
   # Empty stdout is pr-watch's timeout marker, not a failure — nothing to post.
   [ -n "$ev" ] || exit 0
   mkdir -p "$dir"
-  jq -nc --arg crew "$crew" --arg from "pr-watch:${1:-}" --arg body "$ev" \
+  line=$(jq -nc --arg crew "$crew" --arg from "pr-watch:${1:-}" --arg body "$ev" \
     '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
-        kind:"msg", body:$body}' >>"$log"
+        kind:"msg", body:$body}')
+  _bus_append "$log" "$line"
   printf '%s\n' "$ev"
   ;;
 reap)
@@ -2226,10 +2227,13 @@ reap)
       tmux kill-window -t "$w" 2>/dev/null || true
       say "released $w at $rwt ($rbranch $rstate)"
     done
-    [ -n "$dry" ] || jq -nc --arg branch "$rbranch" --arg session "$rsession" \
-      --arg state "$rstate" --argjson occ "$rocc" \
-      '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
-          state:$state, windows:($occ|map(.window))}' >>"$log"
+    [ -n "$dry" ] || {
+      line=$(jq -nc --arg branch "$rbranch" --arg session "$rsession" \
+        --arg state "$rstate" --argjson occ "$rocc" \
+        '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
+            state:$state, windows:($occ|map(.window))}')
+      _bus_append "$log" "$line"
+    }
   done <<EOF
 $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
@@ -2362,9 +2366,9 @@ PANES
     if wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1; then
       reaped=$((reaped + 1))
       say "reaped $branch ($pr_state)"
-      jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
-        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}' \
-        >>"$log"
+      line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
+        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
+      _bus_append "$log" "$line"
 
       # Release the claim: drop `dispatched` from the issue(s) this PR
       # closes. Best-effort — a Linear PR closes no GitHub issue, and any gh

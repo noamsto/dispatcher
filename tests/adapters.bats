@@ -3,6 +3,41 @@ setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
 }
 
+@test "no raw append to the shared bus log survives outside _bus_append" {
+  # Five sites drifted from the one atomic-append helper before anyone caught
+  # it (#55, #61), and #61 itself found a sixth (dispatch.sh) that the issue
+  # describing the other five never listed — nothing was stopping a raw
+  # `printf ... >>"$log"` from creeping back in. This fails loudly, by
+  # file:line, the moment one does. `_bus_append`'s own body uses `$1`/`$2`,
+  # never the literal `$log` name or the `events.jsonl` path, so it never
+  # matches its own guard; comment lines (prose mentioning the old pattern in
+  # backticks) are excluded so documentation can't trip this.
+  #
+  # Two alternatives, not one: `\$\{?log\}?` catches `$log`/`"$log"`/`${log}`
+  # regardless of brace-quoting, and `events\.jsonl` catches the log path
+  # spelled out directly (`>>"$crew_dir/events.jsonl"`) even when it's split
+  # across quotes (`>>"$crew_dir"/events.jsonl`) — a variable-name match alone
+  # would miss that shape.
+  offenders="$(grep -rnE '>>[[:space:]]*"?\$\{?log\}?"?|>>.*events\.jsonl' "$ROOT/adapters" |
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  [ -z "$offenders" ]
+}
+
+@test "every standalone script's _bus_append copy matches crew.sh's" {
+  # dispatch.sh and dispatch-notify.sh each carry their own copy of this
+  # one-liner (#61) — they're separate writeShellApplication builds with no
+  # shared lib to source it from. Nothing else keeps those copies in sync, so
+  # a future fix to crew.sh's `dd` invocation (the source of truth) could
+  # silently fail to reach the other two, quietly reopening the exact splice
+  # hazard this fixes. Byte-compares the three definitions instead.
+  canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/crew.sh")"
+  [ -n "$canonical" ]
+  for f in "$ROOT/adapters/core/dispatch.sh" "$ROOT/adapters/core/dispatch-notify.sh"; do
+    found="$(grep -h '^_bus_append() {' "$f")"
+    [ "$found" = "$canonical" ]
+  done
+}
+
 @test "generator is idempotent" {
   # Compare checksums across two runs rather than `git diff --exit-code`: that
   # conflates generator drift with any unrelated uncommitted edit, and is
