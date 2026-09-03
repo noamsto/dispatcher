@@ -1621,10 +1621,9 @@ rate)
 retro)
   # Read-only rollup of the retro notes workers and the dispatcher write to the
   # synthetic `retro:`/`metrics:` sinks (docs/superpowers/specs/
-  # 2026-08-05-retro-notes-design.md). jq, not the design's DuckDB: `rate` folds
-  # this same bus with jq, so the fold stays consistent with the one command it
-  # shares run attribution with — and the scope is this repo's bus, since there
-  # is no registry of other repos' paths to glob over.
+  # 2026-08-05-retro-notes-design.md). jq over this repo's bus, not the design's
+  # cross-repo DuckDB: `rate` folds the same bus with jq, and retro reuses its
+  # run attribution.
   report=false
   json=false
   while [ $# -gt 0 ]; do
@@ -1727,8 +1726,7 @@ retro)
             # Type-guarded for the same reason as body_obj: a status whose body
             # is not an object, or whose state is not a scalar, must cost this
             # one run its outcome, not abort the fold and take every other row
-            # down with it (#25). `$last` is null when a run has no status at
-            # all, and lands on the same em dash.
+            # down with it (#25).
             outcome: (($last.body | if type == "object" then .state else null end)
                       | if (type == "object" or type == "array") then null else . end
                       // "—"),
@@ -1749,9 +1747,8 @@ retro)
     # A clean run is silent: no notes, no row.
     # Tags are cleaned here, once, so the grouping key, the vocabulary check,
     # the first report column, the bare-mode tag list and the `unknown` array
-    # all name the same value. Details stay verbatim: JSON encoding renders
-    # their control bytes inert, and --json is where the whole gate_thrash
-    # payload is meant to be reachable, so only `sample` cleans them.
+    # all name the same value. Details stay verbatim — JSON encoding renders
+    # their control bytes inert — so only `sample` cleans them.
     | (($wrows | map(select((.notes | length) > 0)) | sort_by([.branch, .t0]))
        + ($drows | map(select((.notes | length) > 0)))
        | map(.notes |= map(.tag |= (tostring | clean)))) as $rows
@@ -1778,9 +1775,7 @@ retro)
                     / ($rl | length) | round)
               end),
             details: map(.detail) })) as $groups
-    # Known tags in vocabulary order, then unknown ones alphabetically. An
-    # unrecognized tag is surfaced with its value, never dropped (design
-    # §Tag validation is reader-side).
+    # Known tags in vocabulary order, then unknown ones alphabetically.
     | (($groups | map(select(.known)) | sort_by(. as $g | $vocab | index($g.tag)))
        + ($groups | map(select(.known | not)) | sort_by(.tag))) as $sorted
     | ($sorted | map(select(.known | not)) | map(.tag)) as $unknown
