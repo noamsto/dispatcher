@@ -228,17 +228,27 @@ _fit_line() {
   printf '%s' "$line"
 }
 
-# Resolve the crew id: env wins; else read it from WORKER_TASK.md at the repo
-# root, so a worker just calls `crew status …` with no env prefix to remember.
+# Resolve the crew id: task-document-first, so a worker's own scaffold record
+# always wins over its environment — env can be lost (a re-exec, an
+# env-scrubbing nested shell, a worker resumed by other means) and silently
+# reconstruct #54's bug, but WORKER_TASK.md was written once at scaffold time
+# and cannot be. `git rev-parse --show-toplevel` walks up from cwd on its own,
+# so this resolves correctly from any subdirectory of the worktree, not just
+# its root. CREW_ID is the fallback for callers with no task doc at all (a
+# dispatcher session, a bare `crew` invocation outside a worker).
 _crew_id() {
+  local top id
+  top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$top" ] && [ -f "$top/WORKER_TASK.md" ]; then
+    id=$(grep -m1 '^crew_id:' "$top/WORKER_TASK.md" | cut -d' ' -f2 || true)
+    if [ -n "$id" ]; then
+      printf '%s' "$id"
+      return 0
+    fi
+  fi
   if [ -n "${CREW_ID:-}" ]; then
     printf '%s' "$CREW_ID"
     return 0
-  fi
-  local top
-  top=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$top" ] && [ -f "$top/WORKER_TASK.md" ]; then
-    grep -m1 '^crew_id:' "$top/WORKER_TASK.md" | cut -d' ' -f2 || true
   fi
 }
 
@@ -276,7 +286,7 @@ shift || true
 
 # `id`, `new` and `identity` need no repo / no crew id.
 if [ "$sub" = id ]; then
-  # Read-only: resolves via _crew_id (env, else WORKER_TASK.md) and never mints.
+  # Read-only: resolves via _crew_id (WORKER_TASK.md, else env) and never mints.
   # Capture-then-print normalises _crew_id's inconsistent trailing newline (#29).
   id=$(_crew_id)
   if [ -n "$id" ]; then
