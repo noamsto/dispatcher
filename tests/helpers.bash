@@ -24,7 +24,7 @@ setup_repo() {
 
 assert_isolated_xdg_data_home() {
   case "${XDG_DATA_HOME:-}" in
-    "$BATS_TEST_TMPDIR"/*) return 0 ;;
+  "$BATS_TEST_TMPDIR"/*) return 0 ;;
   esac
   printf 'XDG_DATA_HOME must be under BATS_TEST_TMPDIR (got %s)\n' \
     "${XDG_DATA_HOME:-<unset>}" >&2
