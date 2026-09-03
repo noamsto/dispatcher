@@ -167,10 +167,37 @@ EOF
   stub_tmux "" ""
   CREW_ID=c1 run_crew status "worker:feat/race-wt#s1-1" "done" "" "https://example.com/pr/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:feat/race-wt#s2-2", kind:"claim"}' >>"$log"
+  claim_ts=$(jq -nc 'now*1000|floor')
+  jq -nc --argjson ts "$claim_ts" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/race-wt#s2-2", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" != *"would reap feat/race-wt"* ]]
+}
+
+@test "reap: a future-dated claim does not mask a merged branch forever" {
+  git commit --allow-empty -q -m init
+  git branch feat/future-claim
+  wt_path="$BATS_TEST_TMPDIR/future-claim-wt"
+  git worktree add -q "$wt_path" feat/future-claim
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  stub_tmux "" ""
+  CREW_ID=c1 run_crew status "worker:feat/future-claim#s1-1" "done" "" "https://example.com/pr/1"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:feat/future-claim#s2-2", kind:"claim"}' >>"$log"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would reap feat/future-claim"* ]]
 }
 
 @test "reap: an expired claim no longer blocks worktree removal of a prior done session" {
@@ -190,9 +217,20 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   stub_tmux "" ""
-  CREW_ID=c1 run_crew status "worker:feat/aged-claim#s1-1" "done" "" "https://example.com/pr/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  jq -nc '{ts:1, crew_id:"c1", from:"worker:feat/aged-claim#s2-2", kind:"claim"}' >>"$log"
+  mkdir -p "$(dirname "$log")"
+  now_ms=$(jq -nc 'now*1000|floor')
+  # claim_ts > status_ts: absent the ttl guard the claim would outrank the
+  # done status in the per-branch max_by(.ts) fold and mask it. Both deltas
+  # still put claim_ts past $claim_mask_ttl (1h) by the time reap runs, so
+  # only the guard — not recency — keeps the claim from masking here.
+  status_ts=$((now_ms - 7200000))
+  claim_ts=$((now_ms - 7100000))
+  jq -nc --argjson ts "$status_ts" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/aged-claim#s1-1", to:"dispatcher:c1", kind:"status",
+      body:{state:"done", pr_url:"https://example.com/pr/1"}}' >>"$log"
+  jq -nc --argjson ts "$claim_ts" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/aged-claim#s2-2", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would reap feat/aged-claim"* ]]
