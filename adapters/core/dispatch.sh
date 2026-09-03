@@ -843,8 +843,11 @@ fi
 } >"$wt_path/WORKER_TASK.md"
 
 # A detached new-window can inherit tmux's fallback size instead of the client
-# that invoked dispatch. Claude reads that initial PTY geometry during startup,
-# and some full-screen redraws do not recover cleanly from a later resize.
+# that invoked dispatch. codex's startup banner boxes stay pinned at their
+# initial width and never redraw on a later resize; claude and cursor both
+# redraw cleanly, so `default-size` (lazytmux) already covers them. This
+# fixes codex, and gives every engine the invoking client's own geometry,
+# which only dispatch knows.
 client_target=()
 [ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
 client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
