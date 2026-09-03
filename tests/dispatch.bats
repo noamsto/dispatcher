@@ -327,7 +327,6 @@ budget_json() {
 }
 
 @test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
-  export XDG_DATA_HOME="$(mktemp -d)"
   budget_json 97 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
   [ "$status" -eq 1 ]
@@ -338,7 +337,6 @@ budget_json() {
 
 @test "budget gate passes below the threshold" {
   stub_launch_bins
-  export XDG_DATA_HOME="$(mktemp -d)"
   budget_json 94 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
@@ -348,7 +346,6 @@ budget_json() {
 
 @test "budget gate fails open on a stale cache" {
   stub_launch_bins
-  export XDG_DATA_HOME="$(mktemp -d)"
   budget_json 100 "$(($(date +%s) - 10000))"
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
@@ -358,7 +355,6 @@ budget_json() {
 
 @test "budget gate fails open when the cache is silent on the engine" {
   stub_launch_bins
-  export XDG_DATA_HOME="$(mktemp -d)"
   mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$(date +%s)" \
     '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}' \
@@ -371,7 +367,6 @@ budget_json() {
 
 @test "--ignore-budget bypasses the gate" {
   stub_launch_bins
-  export XDG_DATA_HOME="$(mktemp -d)"
   budget_json 100 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 --ignore-budget 42 "title"
   [ "$status" -eq 0 ]

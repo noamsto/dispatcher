@@ -9,7 +9,7 @@ setup() {
   stub_bin codex
   stub_bin cursor-agent
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
-  unset TMUX
+  unset TMUX CREW_ID
 }
 
 teardown() {
