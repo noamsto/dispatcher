@@ -13,7 +13,7 @@ flowchart TD
 
     ENG -->|"large mechanical refactor, wide sweep, 2nd-engine perspective"| CODEX["Codex"]
     ENG -->|"UI/frontend, ambiguous spec, security-adjacent"| CLAUDE["Claude"]
-    ENG -->|"Grok 4.5 (or Composer), distinct 3rd perspective on deep tasks"| CURSOR["Cursor"]
+    ENG -->|"Grok 4.6 (or Composer), distinct 3rd perspective on deep tasks"| CURSOR["Cursor"]
 
     CLAUDE --> OPUS["opus — deep"]
     CLAUDE --> SONNET["sonnet — standard/trivial"]
@@ -45,9 +45,9 @@ rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
 **Burn classes.** All three engines are subscriptions, so cost = quota burn,
 and the rungs group into three classes: **premium** — opus (fable ≈2× opus),
-`gpt-5.6-sol`, `cursor-grok-4.5-high`; **standard** — sonnet, `gpt-5.6-terra`,
-`cursor-grok-4.5-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
-`cursor-grok-4.5-low-fast`, `composer-2.5*` (free). Effort multiplies burn
+`gpt-5.6-sol`, `cursor-grok-4.6-high`; **standard** — sonnet, `gpt-5.6-terra`,
+`cursor-grok-4.6-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
+`cursor-grok-4.6-low-fast`, `composer-2.5*` (free). Effort multiplies burn
 within a rung (`xhigh`/`max`; codex `ultra` most). When the budget tightens
 (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
 class before walking down a tier — burn only sets model strength, tier sets
@@ -55,9 +55,9 @@ review depth.
 
 | Tier       | claude (worker → execute → escalate)                                                                                                                                                                                                                                     | codex (worker → execute → escalate)                         | cursor (worker → execute → escalate)                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus** — escalate worker to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`** → **terra** → escalated **sol**           | **`kimi-k3-high`** → **`cursor-grok-4.5-medium-fast`** → escalated **`cursor-grok-4.5-high`** |
-| `standard` | **sonnet** → **sonnet** → escalated **opus**                                                                                                                                                                                                                             | **`gpt-5.6-terra`** → **luna** → escalated **terra**        | **`cursor-grok-4.5-medium-fast`** → **`cursor-grok-4.5-low-fast`** → escalated **medium-fast** |
-| `trivial`  | **sonnet** (or **haiku** if truly trivial) — no delegation                                                                                                                                                                                                               | **`gpt-5.6-luna`** — no delegation                          | **`cursor-grok-4.5-low-fast`** — no delegation                                                |
+| `deep`     | **opus** → **sonnet** → escalated **opus** — escalate worker to **`claude-fable-5-1`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`** → **terra** → escalated **sol**           | **`kimi-k3-high`** → **`cursor-grok-4.6-medium-fast`** → escalated **`cursor-grok-4.6-high`** |
+| `standard` | **sonnet** → **sonnet** → escalated **opus**                                                                                                                                                                                                                             | **`gpt-5.6-terra`** → **luna** → escalated **terra**        | **`cursor-grok-4.6-medium-fast`** → **`cursor-grok-4.6-low-fast`** → escalated **medium-fast** |
+| `trivial`  | **sonnet** (or **haiku** if truly trivial) — no delegation                                                                                                                                                                                                               | **`gpt-5.6-luna`** — no delegation                          | **`cursor-grok-4.6-low-fast`** — no delegation                                                |
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -87,14 +87,14 @@ exposes both an effort suffix (`-low`/`-medium`/`-high`) and a throughput
 suffix (`-fast`), so the dispatcher expresses effort by _picking the id_: the
 standard/trivial rows use `-fast` for cheap, high-throughput turns; cursor `deep`
 uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
-(implements) — escalate to `cursor-grok-4.5-high`, not back to Kimi. **`kimi-k3`
-has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.5 remains the
+(implements) — escalate to `cursor-grok-4.6-high`, not back to Kimi. **`kimi-k3`
+has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.6 remains the
 default cursor distinct-implementer** — a genuinely non-Claude perspective, which
 is the point of reaching for cursor. `--model` is open across cursor's whole
 multi-vendor id space (the gate checks id _shape_, not membership of this
 table), so a cursor worker can still front **`composer-2.5`** /
 **`composer-2.5-fast`** (no effort variants) as an alternative, or an
-effort-suffixed `claude-opus-4-8-*` / `gpt-5.6-sol-*`. `dispatch` validates the
+effort-suffixed `claude-opus-5-*` / `gpt-5.6-sol-*`. `dispatch` validates the
 model slot against `--agent` before scaffolding — see **Model gate** below.
 
 **Worker-session model vs execute-subagent model.** The first model in each map
@@ -107,12 +107,12 @@ sets codex `agents.*` guardrails and a process-authority spawn clause only —
 never model slugs for execute subagents (those stay in this table / rule 1).
 Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.5-low-fast → cursor-grok-4.5-medium-fast → cursor-grok-4.5-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low-fast → cursor-grok-4.6-medium-fast → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
-**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.5-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults are work-profile only. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
+**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.6-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults are work-profile only. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
 `crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
 
@@ -126,7 +126,7 @@ _shape_, not membership of the table above, so a model bump needs no
 `dispatch.sh` edit:
 
 - **claude** — an alias (`opus`, `sonnet`, `haiku`, `fable`) or a full
-  `claude-*` id. An effort suffix is rejected: `claude-opus-4-8-high` is a
+  `claude-*` id. An effort suffix is rejected: `claude-opus-5-high` is a
   _cursor_ id, and claude takes intensity through `--effort`.
 - **codex** — `gpt-<gen>-<variant>`, variant mandatory, which is what rejects a
   bare `gpt-5.6`; `gpt-5.5` / `gpt-5.4` pass as legacy bare generations. When
@@ -136,7 +136,7 @@ _shape_, not membership of the table above, so a model bump needs no
 - **cursor** — an open multi-vendor id space, so shape only: claude CLI aliases
   are rejected, and a `claude-*` / `gpt-*` id must carry an effort suffix
   (`gpt-5.6-sol-high`) or name one in a bracket block
-  (`claude-opus-4-8[context=1m,effort=high,fast=false]`). The bracket rule is a
+  (`claude-opus-5[context=1m,effort=high,fast=false]`). The bracket rule is a
   conservative guess — `cursor-agent` calls the pairs "overrides", so a block
   that omits `effort=` may well be legitimate and still get rejected. That is
   what the override below is for.
@@ -163,7 +163,7 @@ model ships:
 | ------ | ----- | ------ |
 | claude | opus (settings default) | settings default |
 | codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.5-*) |
+| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
 
 claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor inject it as
 the first prompt (neither CLI has an append-system-prompt flag). The judging rubric
@@ -173,7 +173,7 @@ is identical across engines; the crew-watch park primitive is not — see
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with its own automated PR-review gauntlet (Cursor Bugbot / Codex / a review GitHub App) on top of CI makes the worker's internal model review largely redundant, so the worker downgrades it (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). `mono` is such a repo. Tier still sets *planning* depth regardless — the downgrade only touches the post-execute review.
-- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default the worker to **`kimi-k3-high`** with **Grok 4.5** execute subagents (`cursor-grok-4.5-*`), genuinely non-Claude; Composer stays available as an alternative; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
+- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default the worker to **`kimi-k3-high`** with **Grok 4.6** execute subagents (`cursor-grok-4.6-*`), genuinely non-Claude; Composer stays available as an alternative; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map; codex reasoning effort scales with tier (deep→high, standard→medium, trivial→low) independent of which model is chosen, while cursor folds effort into the model id (no separate knob).
 
 ## MCP is no longer a routing factor
