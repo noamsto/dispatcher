@@ -2358,6 +2358,7 @@ reap)
     exit 1
     ;;
   esac
+  claim_mask_ttl=3600
   [ -f "$log" ] || exit 0
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
@@ -2449,10 +2450,21 @@ EOF
   # Latest status per worker across every crew; keep the ones in a terminal
   # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
-  # reason roster does this).
-  candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" '
+  # reason roster does this). Fresh claims join the fold here only (not
+  # idle-release permanence, not dispatch retract): a claim-latest session has
+  # no body.state so it masks but never qualifies; a claim's age must be
+  # nonnegative and under $claim_mask_ttl to mask at all — a future-dated
+  # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
+  # must not win the fold forever, and claims older than $claim_mask_ttl drop
+  # out so a prior terminal status can resurface.
+  candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
+      map(select(
+          ((.from // "") | startswith("worker:"))
+          and (
+            .kind == "status"
+            or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
+          )))
       | group_by(.from) | map(
           (max_by(.ts)) as $latest
           | {branch: ($latest.from | wid_branch),
