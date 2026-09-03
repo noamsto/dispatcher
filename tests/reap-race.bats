@@ -9,6 +9,7 @@
 setup() {
   load helpers
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  # shellcheck disable=SC2329  # invoked via `run run_crew`
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
   unset CREW_ID
@@ -123,6 +124,7 @@ canon_wt_path() {
   [ "$output" != "[]" ]
   CREW_ID=c1 run run_crew reap --idle 0
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2314  # intentional; bats <1.5 has no `run !`
   ! grep -q 'kill-window' "$STUB_LOG"
 }
 
@@ -146,6 +148,56 @@ canon_wt_path() {
   grep -q 'kill-window -t @23' "$STUB_LOG"
 }
 
+@test "reap: a fresh claim on the same branch blocks worktree removal of a prior done session" {
+  git commit --allow-empty -q -m init
+  git branch feat/race-wt
+  wt_path="$BATS_TEST_TMPDIR/race-wt"
+  git worktree add -q "$wt_path" feat/race-wt
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  stub_tmux "" ""
+  CREW_ID=c1 run_crew status "worker:feat/race-wt#s1-1" "done" "" "https://example.com/pr/1"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:feat/race-wt#s2-2", kind:"claim"}' >>"$log"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"would reap feat/race-wt"* ]]
+}
+
+@test "reap: an expired claim no longer blocks worktree removal of a prior done session" {
+  git commit --allow-empty -q -m init
+  git branch feat/aged-claim
+  wt_path="$BATS_TEST_TMPDIR/aged-claim-wt"
+  git worktree add -q "$wt_path" feat/aged-claim
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  stub_tmux "" ""
+  CREW_ID=c1 run_crew status "worker:feat/aged-claim#s1-1" "done" "" "https://example.com/pr/1"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:1, crew_id:"c1", from:"worker:feat/aged-claim#s2-2", kind:"claim"}' >>"$log"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would reap feat/aged-claim"* ]]
+}
+
 @test "reap: a genuinely stale done worker on a merged PR is still reaped despite an unrelated claim" {
   git commit --allow-empty -q -m init
   git branch feat/stale-done
@@ -162,7 +214,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/stale-done#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/stale-done#s1-1" "done" "" "https://example.com/pr/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:other-branch#s9-9", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
