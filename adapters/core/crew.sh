@@ -1609,7 +1609,13 @@ rate)
     # without it every sweep would append every row forever.
     | select($S[$r.run_id] == null
              or ($S[$r.run_id] | del(.swept_at)) != ($new | del(.swept_at)))
-    | $new' >>"$store"
+    # The same single-write primitive `_bus_append` uses, but batched rather
+    # than per-line, so the guarantee holds only while the whole batch fits
+    # one `bs` block: past 1 MiB (~2k rows at ~500 B each) dd splits at an
+    # arbitrary byte. A torn line is unrecoverable — every reader folds a
+    # parse error to `[]` — and `--report` reads the store without taking
+    # `ratings.lock.d`, so it can observe the split.
+    | $new' | dd bs=1048576 iflag=fullblock status=none >>"$store"
   _lock_release "$lockd"
   trap - EXIT
   # stdout stays clean (spec §crew rate --report renders the store, nothing
@@ -2364,6 +2370,59 @@ reap)
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
+
+  # CREW_RATE_AUTOSWEEP: unset/1 (default) = detached async sweep; sync =
+  # foreground, for an operator watching a sweep or diagnosing a skipped one;
+  # 0 = no sweep at all, which exists for test isolation and is NOT a
+  # supported production switch.
+  _rate_autosweep() {
+    local store_dir lockd
+    store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
+    lockd="$store_dir/ratings.sweep.lock.d"
+    # _lock_acquire cannot mkdir into a missing parent, so without this the
+    # hook returns 1 and never sweeps — silently — on exactly the machines
+    # that have never run `crew rate` by hand.
+    mkdir -p "$store_dir"
+    # The store is machine-global, so this lock is too: the skip below is
+    # cross-repo, not same-repo, even though two repos' sweeps never contend
+    # on `ratings.lock.d` itself. Self-healing — the bus is append-only, so
+    # the next reap for the skipped repo backfills it in full.
+    _lock_acquire "$lockd" "$BASHPID" || {
+      note "a ratings sweep is already running — skipped"
+      return 0
+    }
+    trap '_lock_release "$lockd"' EXIT
+    bash -euo pipefail "$0" rate || true
+    _lock_release "$lockd"
+    trap - EXIT
+  }
+  # An unrecognised value defaults to ON, loudly: reading a typo as "off"
+  # would silently disable the sweep, which is the failure this hook exists
+  # to fix. Warn rather than `exit 1` — reap's status is not the hook's to
+  # change.
+  autosweep="${CREW_RATE_AUTOSWEEP:-1}"
+  case "$autosweep" in
+  0 | 1 | sync) ;;
+  *)
+    echo "crew reap: CREW_RATE_AUTOSWEEP='$autosweep' is not 0, 1 or sync — sweeping anyway" >&2
+    autosweep=1
+    ;;
+  esac
+  case "$autosweep" in
+  0) ;;
+  *)
+    if [ -n "$dry" ]; then
+      note "dry run — skipping ratings sweep"
+    elif [ "$autosweep" = sync ]; then
+      _rate_autosweep
+    else
+      (
+        trap '' HUP
+        _rate_autosweep
+      ) >/dev/null 2>&1 </dev/null &
+    fi
+    ;;
+  esac
 
   # The set of states a worker session ends in — shared by the idle-release
   # filter below and the reclaim filter further down so they can't drift
