@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -57,6 +57,7 @@ mcp_profile=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
+ignore_map=""
 draft=false
 if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
   draft=true
@@ -134,6 +135,10 @@ while [ $# -gt 0 ]; do
     ;;
   --ignore-budget)
     ignore_budget=1
+    shift
+    ;;
+  --ignore-map)
+    ignore_map=1
     shift
     ;;
   *)
@@ -287,6 +292,100 @@ else
     ;;
   esac
 fi
+
+# Tier↔model gate (#89). Enforces tier-appropriateness on top of
+# the dispatchability gate above — see dispatch-orchestration.md
+# "Tier map". DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
+# about shape/cache staleness, not tier); --ignore-map does.
+if [ -z "$ignore_map" ]; then
+  tier_ok=1
+  tier_expected=""
+  case "$agent" in
+  claude)
+    case "$tier" in
+    deep)
+      tier_expected="opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*"
+      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|fable|claude-fable-.*)$ ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="sonnet or claude-sonnet-*"
+      [[ $model =~ ^(sonnet|claude-sonnet-.*)$ ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
+      [[ $model =~ ^(sonnet|claude-sonnet-.*|haiku|claude-haiku-.*)$ ]] || tier_ok=0
+      ;;
+    # An unhandled tier can't happen today (the top-of-file case at line 34
+    # already restricts $tier to trivial|standard|deep before this code
+    # runs) — but fail CLOSED rather than silently accepting every model,
+    # in case a future tier is ever added there without a matching update
+    # here.
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  codex)
+    re_codex_legacy='^(gpt-5\.5|gpt-5\.4|gpt-5\.4-mini)$'
+    case "$tier" in
+    deep)
+      tier_expected="gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^(gpt-5\.6-sol|gpt-5\.6-terra)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^(gpt-5\.6-terra|gpt-5\.6-luna)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^gpt-5\.6-luna$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  cursor)
+    # Self-contained for $tiermap_cursor_base/$tiermap_cursor_params (unset
+    # on the DISPATCH_SKIP_MODEL_CHECK skip path above) — but
+    # $re_effort_tail is safe to reuse as-is: it's assigned once, before
+    # that skip branch splits, so it's set on both paths.
+    tiermap_re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+    tiermap_cursor_base="" tiermap_cursor_params=""
+    if [[ $model =~ $tiermap_re_cursor ]]; then
+      tiermap_cursor_base="${BASH_REMATCH[1]}"
+      tiermap_cursor_params="${BASH_REMATCH[2]}"
+    fi
+    # composer-2.5[-fast] has no effort variants (dispatch-orchestration.md),
+    # so a bracket block on it is never legitimate — require the whole
+    # model string to match, not just the base.
+    tiermap_is_composer=0
+    [[ $model =~ ^composer-2\.5(-fast)?$ ]] && tiermap_is_composer=1
+    tiermap_is_alt_effort=0
+    if [[ $tiermap_cursor_base =~ ^(claude|gpt)- ]] && { [[ $tiermap_cursor_base =~ $re_effort_tail ]] || [[ $tiermap_cursor_params =~ (\[|,)effort= ]]; }; then
+      tiermap_is_alt_effort=1
+    fi
+    case "$tier" in
+    deep)
+      tier_expected="kimi-k3-high, cursor-grok-4.6-medium-fast, cursor-grok-4.6-high, composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
+      [[ $model =~ ^(kimi-k3-high|cursor-grok-4\.6-medium-fast|cursor-grok-4\.6-high)$ ]] ||
+        [ "$tiermap_is_composer" = 1 ] || [ "$tiermap_is_alt_effort" = 1 ] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="cursor-grok-4.6-medium-fast, cursor-grok-4.6-low-fast, or composer-2.5[-fast]"
+      [[ $model =~ ^(cursor-grok-4\.6-medium-fast|cursor-grok-4\.6-low-fast)$ ]] ||
+        [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="cursor-grok-4.6-low-fast or composer-2.5[-fast]"
+      [[ $model =~ ^cursor-grok-4\.6-low-fast$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  esac
+  if [ "$tier_ok" = 0 ]; then
+    echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+    exit 1
+  fi
+fi
+
 # claude's --effort tops out at max; rejecting `ultra` here fails before the
 # worktree and pane exist, instead of at worker launch.
 if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
@@ -314,6 +413,40 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   if [ -n "$exhausted" ]; then
     echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
     exit 1
+  fi
+fi
+
+# Budget-aware rung refusal (#89): once codex/claude/cursor's 7d
+# burn crosses 70%, refuse the premium rung specifically and name the
+# standard-class alternative — before the engine goes fully dark at
+# 95% (the gate above). See dispatch-orchestration.md "Tier map".
+if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
+  rung_downgrade=""
+  case "$agent:$model" in
+  claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*)
+    rung_downgrade="sonnet"
+    ;;
+  codex:gpt-5.6-sol)
+    rung_downgrade="gpt-5.6-terra"
+    ;;
+  # Matches bare and bracketed forms: cursor-grok-4.6-high[effort=high] is
+  # dispatchable via the Tier map gate's deep row too. Inert today —
+  # refresh-budget.sh hardcodes cursor quota to null.
+  cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[*)
+    rung_downgrade="cursor-grok-4.6-medium-fast"
+    ;;
+  esac
+  if [ -n "$rung_downgrade" ]; then
+    rung_pct=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
+      if (.fetched_epoch + 7200) < $now then empty
+      elif .engines[$e] == null then empty
+      elif .engines[$e].windows["7d"] == null then empty
+      elif .engines[$e].windows["7d"].used_pct >= 70 then .engines[$e].windows["7d"].used_pct
+      else empty end' "$budget_file" 2>/dev/null || true)
+    if [ -n "$rung_pct" ]; then
+      echo "dispatch: $agent 7d is at ${rung_pct}% — the premium rung ($model) is refused; use the standard rung ($rung_downgrade) instead, or pass --ignore-budget (the human's spend decision). See dispatch-orchestration.md \"Tier map\"." >&2
+      exit 1
+    fi
   fi
 fi
 

@@ -93,9 +93,10 @@ default cursor distinct-implementer** — a genuinely non-Claude perspective, wh
 is the point of reaching for cursor. `--model` is open across cursor's whole
 multi-vendor id space (the gate checks id _shape_, not membership of this
 table), so a cursor worker can still front **`composer-2.5`** /
-**`composer-2.5-fast`** (no effort variants) as an alternative, or an
-effort-suffixed `claude-opus-5-*` / `gpt-5.6-sol-*`. `dispatch` validates the
-model slot against `--agent` before scaffolding — see **Model gate** below.
+**`composer-2.5-fast`** (no effort variants) as an alternative on every tier,
+or — on `deep` only, per the Tier map gate below — an effort-suffixed
+`claude-opus-5-*` / `gpt-5.6-sol-*`. `dispatch` validates the model slot
+against `--agent` before scaffolding — see **Model gate** below.
 
 **Worker-session model vs execute-subagent model.** The first model in each map
 cell is the **worker session** — it does spec / plan / reconcile / judging. The
@@ -123,7 +124,9 @@ Read `replanned` together with `rework_count`: it distinguishes ordinary mechani
 `dispatch` validates `<model>` against `--agent` **before** it scaffolds
 anything — no issue, no branch, no worktree, no window. It checks per-engine id
 _shape_, not membership of the table above, so a model bump needs no
-`dispatch.sh` edit:
+`dispatch.sh` edit — true for this gate; the Tier map gate below hand-copies
+the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
+"Tier map" below):
 
 - **claude** — an alias (`opus`, `sonnet`, `haiku`, `fable`) or a full
   `claude-*` id. An effort suffix is rejected: `claude-opus-5-high` is a
@@ -141,9 +144,9 @@ _shape_, not membership of the table above, so a model bump needs no
   that omits `effort=` may well be legitimate and still get rejected. That is
   what the override below is for.
 
-The gate enforces **dispatchability, not tier-appropriateness**. Picking the
-rung that fits the task stays the dispatcher's judgment, and the map above stays
-the source of truth for it.
+The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
+map gate below enforces **tier-appropriateness**; the map above stays the
+source of truth for both.
 
 **Override.** `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` skips the gate for
 that one id and warns on stderr. Truthiness is exact string equality with the
@@ -151,7 +154,53 @@ model, not "is set" — exporting it for a session still gates every _other_
 model. Reaching for it means **the map above is stale**: update the map in the
 same session. The map is a protocol file, hot-reloadable through
 `DISPATCHER_PROTOCOL_DIR`, so the doc fix lands immediately; the `dispatch.sh`
-grammar follows on the next rebuild.
+grammar follows on the next rebuild. This skip var covers the Model gate
+(shape) only — it does not bypass the Tier map gate below. A genuinely new
+model that is also a new tier's row additionally needs `--ignore-map` until
+the Tier map's table and `dispatch.sh` are updated.
+
+### Tier map
+
+`dispatch` layers a second check on top of the Model gate above: once a model
+clears dispatchability (shape), it must also be tier-appropriate for the
+`(tier, engine)` pair. A model is accepted iff it is that tier's **worker** or
+**execute** cell from the Model map above, **or** that tier's **escalate**
+cell when the escalate cell is not burn-stronger (Burn classes, above) than
+the worker cell — this is what excludes claude `standard`'s escalate (`opus`,
+stronger than `standard`'s worker `sonnet`) while admitting every other row's
+escalate, none of which strengthens beyond worker. On top of the map, a small
+set of named exceptions apply: claude also accepts a full `claude-<alias>-*`
+id for any alias already accepted at that tier, plus `fable`/`claude-fable-*`
+on `deep` specifically (the map's own deep-cell prose escalation, above);
+codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
+`gpt-5.4-mini`) on every tier; cursor also accepts `composer-2.5` /
+`composer-2.5-fast` on every tier, plus an effort-suffixed or bracketed
+cross-vendor `claude-*`/`gpt-*` id (the shape the Model gate's cursor arm
+already recognizes) on `deep` only.
+
+Reject with the tier, the model given, the row's expected model(s) (rendered
+from the Model map / Burn classes above), and `--ignore-map`.
+
+**Override.** `--ignore-map` skips this gate for the dispatched model and is
+**silent when set** — mirroring `--ignore-budget` exactly, not
+`DISPATCH_SKIP_MODEL_CHECK`'s stderr notice (see "Override" under Model gate
+above). Reaching for it is **the human's model decision**, the same framing
+`DISPATCHER_PROTOCOL.md` uses for `--ignore-budget`'s "the human's spend
+decision".
+
+**Budget-aware rung refusal.** Layered above (checked after) the Tier map
+gate itself, so an off-row model is rejected by the Tier map check first,
+regardless of budget. Once an engine's `7d` budget window crosses 70% and the
+dispatched model is in the premium set below, `dispatch` refuses it and names
+the downgrade target — before the engine goes fully dark at the existing
+≥95% gate (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever").
+Overridable with `--ignore-budget`, same as the ≥95% gate.
+
+| engine | premium                                        | downgrade target        |
+| ------ | ----------------------------------------------- | ------------------------ |
+| claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet`                 |
+| codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
+| cursor | `cursor-grok-4.6-high`                           | `cursor-grok-4.6-medium-fast` |
 
 ## Orchestrator engines (dispatcher session)
 
