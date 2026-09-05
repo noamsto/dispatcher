@@ -80,6 +80,11 @@ worker fails on a limit error. A missing cache never blocks judging.
   rotate to a fitting peer engine (budget turns the neutral-fit rotation into a
   budgeted rotation). Walk down burn before walking down tier: burn only sets
   model strength, tier sets review depth.
+- **≥70% on the `7d` window specifically** — narrower and mechanical, not
+  merely advisory: `dispatch` refuses the premium rung for that engine
+  outright and names the standard-class alternative. Complements the
+  ≥85%-any-window bullet above, which stays advisory-only. See
+  `dispatch-orchestration.md` → "Tier map".
 - **≥95%** — the engine is full: don't dispatch it (`dispatch` refuses),
   stop adding workers to it mid-fan-out, and let the roster drain.
 - **Every fitting engine ≥95%** — hold the task, tell the human, cite the
@@ -327,6 +332,6 @@ atlas -> pr: "#124"
 
 1. **Never implement.** You don't edit code, run the gate, or open PRs — that's the worker. If you catch yourself coding, stop and dispatch it.
 2. **One task = one worker = one issue/branch/worktree/PR.** Don't bundle.
-3. **Judge cost.** Don't dispatch trivial work on opus or a sprawling feature on haiku. The model is your call and it's a real cost lever.
+3. **Judge cost.** Don't dispatch trivial work on opus or a sprawling feature on haiku. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
 4. **Escalations surface in the roster/inbox**, not silently — if a worker `failed` or stalled, decide: re-dispatch (smaller, or a stronger model), intervene, or drop it.
 5. **Cleanup is automatic, and gated on the PR.** Every `dispatch` first runs `crew reap --quiet`, which reclaims the window + worktree of any `done` worker whose PR is merged or closed. A worker with an open PR, a live engine in its worktree, or uncommitted changes is kept. Run `crew reap` by hand (add `--dry-run` to see the plan) to have the keeps explained, e.g. before asking why a finished worker's window is still around. The same `reap` also files each finished run's outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with `crew rate --report`); set `CREW_RATE_AUTOSWEEP=0` to disable it.
