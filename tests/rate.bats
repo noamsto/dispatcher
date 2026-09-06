@@ -536,6 +536,24 @@ EOF
   [ "$output" = "null null" ]
 }
 
+@test "cost: cursor-grok-4.6 rungs get their burn class's weight, same wall clock as the opus case above" {
+  seed_dispatch cost-cursor-high 1000 cursor cursor-grok-4.6-high deep
+  seed_status worker:cost-cursor-high 601000 done
+  seed_dispatch cost-cursor-medium 1000 cursor cursor-grok-4.6-medium-fast standard
+  seed_status worker:cost-cursor-medium 601000 done
+  seed_dispatch cost-cursor-low 1000 cursor cursor-grok-4.6-low-fast trivial
+  seed_status worker:cost-cursor-low 601000 done
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  rows="$(store_rows)"
+  run jq -r 'map(select(.branch=="cost-cursor-high"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
+  [ "$output" = "premium 2400000" ]
+  run jq -r 'map(select(.branch=="cost-cursor-medium"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
+  [ "$output" = "standard 1200000" ]
+  run jq -r 'map(select(.branch=="cost-cursor-low"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
+  [ "$output" = "cheap 600000" ]
+}
+
 @test "--report --json: aggregates carry {value,k,n}; raw counts stay plain numbers" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'

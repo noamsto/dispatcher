@@ -269,9 +269,11 @@ else
     fi
     ;;
   cursor)
-    # Cursor fronts other vendors, so membership is unknowable offline and only
-    # id shape is checked. BASH_REMATCH is clobbered by the next [[ =~ ]], so
-    # both groups are captured on the spot.
+    # Cursor fronts other vendors, so id shape is always checked but
+    # membership is only knowable offline, best-effort, via a refreshed
+    # cache — and only for a subset of cursor's id space (see below).
+    # BASH_REMATCH is clobbered by the next [[ =~ ]], so both groups are
+    # captured on the spot.
     re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
     cursor_base=""
     cursor_params=""
@@ -288,6 +290,30 @@ else
     if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
       echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
+    fi
+    # Existence check against a refresh-models.sh cache, mirroring codex's
+    # cache check above (same defensive `?|strings` idiom, same silent
+    # degrade on a missing/stale/malformed cache). Only for non-bracketed
+    # ids: a bracketed cell like claude-opus-5[effort=high] has
+    # cursor_base == "claude-opus-5", which never appears bare in cursor's
+    # live catalog (only effort-suffixed slugs like claude-opus-5-high do)
+    # — the bracket's effort= is what cursor resolves the real slug from,
+    # so the pre-bracket base is not itself an invocable id and must never
+    # be checked. A non-bracketed id is checked verbatim (cursor_base ==
+    # the whole $model), since that is exactly the string the live catalog
+    # would list.
+    if [ -z "$cursor_params" ]; then
+      cursor_cache="${XDG_DATA_HOME:-$HOME/.local/share}/crew/cursor-models-cache.json"
+      # 24h, not the budget gate's 2h: a model catalog moves at the cadence
+      # of new releases (days-to-weeks), not quota's hour-to-hour churn — a
+      # 2h bound would leave this degraded almost all the time between
+      # manual refresh-models runs.
+      if jq -e --argjson now "$(date +%s)" '($now - .fetched_epoch) < 86400 and ([.models[]?|.slug?|strings]|length > 0)' "$cursor_cache" >/dev/null 2>&1 &&
+        ! jq -e --arg m "$cursor_base" '[.models[]?|.slug?|strings]|index($m)' "$cursor_cache" >/dev/null; then
+        known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")]|join(", ")' "$cursor_cache")"
+        echo "dispatch: model '$model' is not in this account's cursor model list ($cursor_cache: $known). If it is genuinely new, run refresh-models to update the cache, or set DISPATCH_SKIP_MODEL_CHECK=$model. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
     fi
     ;;
   esac

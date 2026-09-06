@@ -260,9 +260,9 @@ _crew_id() {
 _burn_weight() {
   case "$1" in
   composer-2.5*) printf 'free\t0' ;;
-  *haiku* | gpt-5.6-luna | cursor-grok-4.5-low-fast) printf 'cheap\t1' ;;
-  *sonnet* | gpt-5.6-terra | cursor-grok-4.5-medium-fast) printf 'standard\t2' ;;
-  *opus* | gpt-5.6-sol | cursor-grok-4.5-high) printf 'premium\t4' ;;
+  *haiku* | gpt-5.6-luna | cursor-grok-4.6-low-fast) printf 'cheap\t1' ;;
+  *sonnet* | gpt-5.6-terra | cursor-grok-4.6-medium-fast) printf 'standard\t2' ;;
+  *opus* | gpt-5.6-sol | cursor-grok-4.6-high) printf 'premium\t4' ;;
   claude-fable-5 | *fable*) printf 'fable\t8' ;;
   *) printf '' ;;
   esac

@@ -266,6 +266,17 @@ write_codex_cache() {
 EOF
 }
 
+# Mirrors the real cache: $XDG_DATA_HOME/crew/cursor-models-cache.json, as
+# produced by refresh-models.sh. $1 is fetched_epoch (so tests can control
+# freshness); the slug list is a small fixed catalog that deliberately does
+# NOT include cursor-grok-4.5-high or a bare claude-opus-5.
+write_cursor_models_cache() { # <fetched_epoch>
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$1" \
+    '{fetched_at: "t", fetched_epoch: $epoch, models: [{slug:"cursor-grok-4.6-high"},{slug:"cursor-grok-4.6-medium-fast"},{slug:"cursor-grok-4.6-low-fast"},{slug:"claude-opus-5-high"}]}' \
+    >"$XDG_DATA_HOME/crew/cursor-models-cache.json"
+}
+
 @test "rejects an unknown tier" {
   run run_dispatch bogus sonnet --effort medium "title"
   [ "$status" -eq 1 ]
@@ -710,6 +721,56 @@ EOF
   [[ "$output" != *"startswith() requires string inputs"* ]]
 }
 
+@test "the cursor cache rejects a well-shaped slug this account lacks" {
+  write_cursor_models_cache "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.5-high --agent cursor --effort medium --ignore-map --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor-grok-4.5-high"* ]]
+  [[ "$output" == *"cursor-models-cache.json"* ]]
+  [[ "$output" == *"refresh-models"* ]]
+  [[ "$output" == *"DISPATCH_SKIP_MODEL_CHECK"* ]]
+}
+
+@test "the cursor cache admits a slug it holds" {
+  stub_launch_bins
+  write_cursor_models_cache "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-high --agent cursor --effort medium --ignore-map --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "an absent cursor models cache is a skip, not a hard fail" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.5-high --agent cursor --effort medium --ignore-map --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a stale cursor models cache degrades to shape-only" {
+  stub_launch_bins
+  write_cursor_models_cache "$(($(date +%s) - 90000))"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.5-high --agent cursor --effort medium --ignore-map --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a malformed cursor models cache never blocks cursor dispatch" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  printf 'not json' >"$XDG_DATA_HOME/crew/cursor-models-cache.json"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.5-high --agent cursor --effort medium --ignore-map --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a bracketed id is exempt from cursor cache membership checking" {
+  stub_launch_bins
+  write_cursor_models_cache "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "rejects a claude alias on --agent cursor" {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent cursor --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
@@ -887,6 +948,22 @@ assert_gate_silent() { # <engine> <model>
   DISPATCH_PROFILE=work run run_dispatch deep 'cursor-grok-4.6-high[effort=high]' --agent cursor --effort high --crew-id c1 42 "rung bracket cursor"
   [ "$status" -eq 1 ]
   [[ "$output" == *"cursor-grok-4.6-medium-fast"* ]]
+}
+
+@test "budget rung gate also matches the bare premium cursor id" {
+  # Sibling of the bracketed-id test above, same fixture — but the bare form
+  # additionally clears Task 1's new cache-membership check, which sits
+  # ahead of this gate; write a cache that lists it so the rung gate is what
+  # actually rejects it here, not the cache-membership check.
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  write_cursor_models_cache "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "rung bare cursor"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor-grok-4.6-medium-fast"* ]]
+  [[ "$output" == *"the premium rung"* ]]
 }
 
 @test "claude standard rejects opus" {

@@ -137,9 +137,15 @@
             text = builtins.readFile ./adapters/core/refresh-budget.sh;
           };
 
+          refresh-models = pkgs.writeShellApplication {
+            name = "refresh-models";
+            runtimeInputs = with pkgs; [jq gnugrep gnused coreutils];
+            text = builtins.readFile ./adapters/core/refresh-models.sh;
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher refresh-scores refresh-budget pr-watch];
+            paths = [crew dispatch dispatcher refresh-scores refresh-budget refresh-models pr-watch];
           };
         };
 

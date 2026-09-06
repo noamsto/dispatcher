@@ -175,8 +175,8 @@ programs.dispatcher = {
 };
 ```
 
-That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`
-and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE` and
+That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
+`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE` and
 `DISPATCHER_PROTOCOL_DIR`, installs the Codex plugin and writes the Cursor
 rule and commands.
 
