@@ -1897,3 +1897,27 @@ EOF
   ' "$XDG_DATA_HOME/crew/ratings.jsonl"
   [ "$status" -eq 0 ]
 }
+
+@test "burn map conformance: _burn_weight matches the documented rule" {
+  # Copied from the Model map/Burn classes table, so it makes drift loud
+  # rather than impossible — same tolerance as dispatch.bats's precedent
+  # "tier map conformance" test. kimi-k3* is deliberately excluded from this
+  # token list: _burn_weight's own comment says kimi-k3 falls through to ""
+  # on purpose, so it must never be asserted present in the function body.
+  doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
+  doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
+  fn_slice="$(sed -n '/^_burn_weight() {/,/^}/p' "$CREW")"
+  for token in opus sonnet haiku fable composer-2.5 \
+    gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol \
+    cursor-grok-4.6-low-fast cursor-grok-4.6-medium-fast cursor-grok-4.6-high \
+    claude-fable-5; do
+    grep -qF "$token" <<<"$doc_slice" || {
+      printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
+      return 1
+    }
+    grep -qF "$token" <<<"$fn_slice" || {
+      printf 'token %s missing from _burn_weight\n' "$token" >&2
+      return 1
+    }
+  done
+}

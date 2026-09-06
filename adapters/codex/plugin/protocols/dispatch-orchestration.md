@@ -136,13 +136,35 @@ the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
   `$HOME/.codex/models_cache.json` is readable and holds a non-empty `.models`
   array, the slug must also appear in it — an absent or unusable cache is
   skipped, never fatal.
-- **cursor** — an open multi-vendor id space, so shape only: claude CLI aliases
-  are rejected, and a `claude-*` / `gpt-*` id must carry an effort suffix
-  (`gpt-5.6-sol-high`) or name one in a bracket block
+- **cursor** — an open multi-vendor id space, so shape is the floor: claude CLI
+  aliases are rejected, and a `claude-*` / `gpt-*` id must carry an effort
+  suffix (`gpt-5.6-sol-high`) or name one in a bracket block
   (`claude-opus-5[context=1m,effort=high,fast=false]`). The bracket rule is a
   conservative guess — `cursor-agent` calls the pairs "overrides", so a block
   that omits `effort=` may well be legitimate and still get rejected. That is
   what the override below is for.
+  On top of shape, a **cached existence check** (#95) mirrors codex's: when
+  `${XDG_DATA_HOME:-~/.local/share}/crew/cursor-models-cache.json` is readable,
+  its `fetched_epoch` is within 24h, and it holds a non-empty `.models` array,
+  a **non-bracketed** id must also appear in it — an absent, stale, or
+  unusable cache is skipped, never fatal (same "degrade, never fail closed"
+  posture as codex's). The 24h bound is deliberately far looser than the
+  budget gate's 2h (below): a model catalog moves at the cadence of new
+  releases (days-to-weeks), not quota's hour-to-hour churn, and a tight bound
+  would leave this check degraded almost all the time between manual
+  refreshes. **Bracketed ids are exempt from membership checking entirely** —
+  a cell like `claude-opus-5[context=1m,effort=high,fast=false]` has a
+  pre-bracket base (`claude-opus-5`) that is not itself an invocable slug
+  (cursor resolves the real, effort-suffixed slug from the bracket's
+  `effort=` param), so checking the base against the catalog would reject a
+  legitimate dispatch rather than catch a bad one. The cache is built by the
+  `refresh-models` CLI (`cursor-agent --list-models`, no JSON mode — parsed and
+  cached; refresh by hand or at dispatcher session start, no daemon, same as
+  `refresh-scores`/`refresh-budget`). It is **inert until run once**: nothing
+  auto-populates the cache, so on a machine that has never run
+  `refresh-models` this check is always degraded and only the shape floor
+  applies — "fail fast on a dead id" starts working the first time a human (or
+  the dispatcher session) runs it, not out of the box.
 
 The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
 map gate below enforces **tier-appropriateness**; the map above stays the
