@@ -952,9 +952,9 @@ assert_gate_silent() { # <engine> <model>
 
 @test "budget rung gate also matches the bare premium cursor id" {
   # Sibling of the bracketed-id test above, same fixture — but the bare form
-  # additionally clears Task 1's new cache-membership check, which sits
-  # ahead of this gate; write a cache that lists it so the rung gate is what
-  # actually rejects it here, not the cache-membership check.
+  # also has to clear the cache-membership check ahead of this gate, so the
+  # cache here lists it: proves the rung gate itself rejects it, not the
+  # cache-membership check.
   mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$(date +%s)" \
     '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \

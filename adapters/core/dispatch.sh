@@ -291,17 +291,14 @@ else
       echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
-    # Existence check against a refresh-models.sh cache, mirroring codex's
-    # cache check above (same defensive `?|strings` idiom, same silent
-    # degrade on a missing/stale/malformed cache). Only for non-bracketed
-    # ids: a bracketed cell like claude-opus-5[effort=high] has
-    # cursor_base == "claude-opus-5", which never appears bare in cursor's
-    # live catalog (only effort-suffixed slugs like claude-opus-5-high do)
-    # — the bracket's effort= is what cursor resolves the real slug from,
-    # so the pre-bracket base is not itself an invocable id and must never
-    # be checked. A non-bracketed id is checked verbatim (cursor_base ==
-    # the whole $model), since that is exactly the string the live catalog
-    # would list.
+    # Existence check against a refresh-models.sh cache (same `?|strings`
+    # idiom as codex's cache check above). Only for non-bracketed ids: a
+    # bracketed cell like claude-opus-5[effort=high] resolves its real slug
+    # from the bracket's effort= param, and cursor's live catalog only lists
+    # the effort-suffixed forms (claude-opus-5-high, not bare claude-opus-5)
+    # — so cursor_base there isn't itself an invocable id. A non-bracketed
+    # id is checked verbatim, since cursor_base then equals the whole
+    # $model, exactly what the live catalog lists.
     if [ -z "$cursor_params" ]; then
       cursor_cache="${XDG_DATA_HOME:-$HOME/.local/share}/crew/cursor-models-cache.json"
       # 24h, not the budget gate's 2h: a model catalog moves at the cadence
