@@ -326,6 +326,17 @@ budget_json() {
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+# Write a budget cache with one codex 7d window at the given utilization —
+# the gate-1/gate-2 ordering test and the gate-2 budget-rung tests both need
+# this. Parallel to budget_json() above, not a change to its signature: that
+# helper has 5 existing claude-only call sites.
+codex_budget_json() { # <pct> <epoch>
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson pct "$1" --argjson epoch "$2" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"7d": {used_pct: $pct, resets_at: null}}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
   budget_json 97 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
@@ -558,7 +569,7 @@ EOF
 
 @test "DISPATCH_SKIP_MODEL_CHECK bypasses the gate for that exact model" {
   stub_launch_bins
-  DISPATCH_SKIP_MODEL_CHECK=kimi-k3-high run run_dispatch standard kimi-k3-high --agent claude --effort medium --crew-id c1 42 "title"
+  DISPATCH_SKIP_MODEL_CHECK=kimi-k3-high run run_dispatch standard kimi-k3-high --agent claude --effort medium --ignore-map --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   [[ "$output" == *"model check skipped"* ]]
 }
@@ -614,7 +625,7 @@ EOF
 
 @test "DISPATCH_SKIP_MODEL_CHECK lets its own model through to launch" {
   stub_launch_bins
-  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
+  DISPATCH_PROFILE=work DISPATCH_SKIP_MODEL_CHECK=gpt-5.6 run run_dispatch deep gpt-5.6 --agent codex --effort high --ignore-map --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   [[ "$output" == *"model check skipped"* ]]
   grep -q 'send-keys' "$STUB_LOG"
@@ -737,9 +748,17 @@ EOF
 # Asserts only that the gate stayed silent — a full launch per model would need
 # a distinct branch per row and buys nothing the acceptance tests do not cover.
 assert_gate_silent() { # <engine> <model>
-  DISPATCH_PROFILE=work run run_dispatch standard "$2" --agent "$1" --effort medium --crew-id c1 42 "map row $2"
+  DISPATCH_PROFILE=work run run_dispatch standard "$2" --agent "$1" --effort medium --ignore-map --crew-id c1 42 "map row $2"
   if [[ "$output" == *"Model gate"* ]]; then
     printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
+    return 1
+  fi
+  # Non-vacuous: no stub_launch_bins here, so every row already dies
+  # downstream at dispatch.sh's `gh repo view` resolution regardless of
+  # gate 1/gate 2 — reaching that specific failure proves the run cleared
+  # BOTH the dispatchability gate and the new tier gate.
+  if [[ "$output" != *"could not resolve the default branch"* ]]; then
+    printf 'gate stopped %s/%s before reaching gh repo view: %s\n' "$1" "$2" "$output" >&2
     return 1
   fi
 }
@@ -761,6 +780,273 @@ assert_gate_silent() { # <engine> <model>
   done
 }
 
+@test "tier gate accepts every claude table cell" {
+  # Distinct titles: see the claude-alias test at :549.
+  stub_launch_bins
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "tier claude deep opus"
+  [ "$status" -eq 0 ]
+  run run_dispatch deep claude-opus-5-1 --agent claude --effort high --crew-id c1 42 "tier claude deep opus pinned"
+  [ "$status" -eq 0 ]
+  run run_dispatch deep sonnet --agent claude --effort high --crew-id c1 42 "tier claude deep sonnet"
+  [ "$status" -eq 0 ]
+  run run_dispatch deep claude-sonnet-4-5 --agent claude --effort high --crew-id c1 42 "tier claude deep sonnet pinned"
+  [ "$status" -eq 0 ]
+  run run_dispatch deep fable --agent claude --effort high --crew-id c1 42 "tier claude deep fable"
+  [ "$status" -eq 0 ]
+  run run_dispatch deep claude-fable-5-1 --agent claude --effort high --crew-id c1 42 "tier claude deep fable pinned"
+  [ "$status" -eq 0 ]
+  run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet"
+  [ "$status" -eq 0 ]
+  run run_dispatch standard claude-sonnet-4-5 --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet pinned"
+  [ "$status" -eq 0 ]
+  run run_dispatch trivial sonnet --agent claude --effort low --crew-id c1 42 "tier claude trivial sonnet"
+  [ "$status" -eq 0 ]
+  run run_dispatch trivial haiku --agent claude --effort low --crew-id c1 42 "tier claude trivial haiku"
+  [ "$status" -eq 0 ]
+}
+
+@test "tier gate accepts every codex table cell" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "tier codex deep sol"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "tier codex deep terra"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.5 --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.5"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.4 --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.4"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.4-mini --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.4 mini"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "tier codex standard terra"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-luna --agent codex --effort medium --crew-id c1 42 "tier codex standard luna"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.5 --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.5"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.4 --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.4"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.4-mini --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.4 mini"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-luna --agent codex --effort low --crew-id c1 42 "tier codex trivial luna"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.5 --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.5"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.4 --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.4"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.4-mini --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.4 mini"
+  [ "$status" -eq 0 ]
+}
+
+@test "tier gate accepts every cursor table cell" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep kimi"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-medium-fast --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok medium"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok high"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep composer-2.5 --agent cursor --effort high --crew-id c1 42 "tier cursor deep composer"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "tier cursor deep bracket opus"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-medium-fast --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok medium"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-low-fast --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok low"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "tier cursor standard composer"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial cursor-grok-4.6-low-fast --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work run run_dispatch trivial composer-2.5 --agent cursor --effort low --crew-id c1 42 "tier cursor trivial composer"
+  [ "$status" -eq 0 ]
+}
+
+@test "tier gate rejects a bracketed composer id on every tier" {
+  # composer-2.5[-fast] has no effort variants (dispatch-orchestration.md
+  # "composer-2.5 ... no effort variants") — a bracket block on it is never
+  # legitimate, so it must not slip through as if it were the plain,
+  # no-effort-variant composer alternative.
+  DISPATCH_PROFILE=work run run_dispatch deep 'composer-2.5[effort=max]' --agent cursor --effort high --crew-id c1 42 "tier cursor deep composer bracket rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"deep"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+
+  DISPATCH_PROFILE=work run run_dispatch standard 'composer-2.5-fast[foo=bar]' --agent cursor --effort medium --crew-id c1 42 "tier cursor standard composer fast bracket rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"standard"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+}
+
+@test "budget rung gate also matches a bracketed premium cursor id" {
+  # Pins the case pattern itself, not live cursor budget data (cursor's
+  # cache is always null today — see the dispatch.sh comment above this arm).
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch deep 'cursor-grok-4.6-high[effort=high]' --agent cursor --effort high --crew-id c1 42 "rung bracket cursor"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor-grok-4.6-medium-fast"* ]]
+}
+
+@test "claude standard rejects opus" {
+  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "tier claude standard opus rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"standard"* ]]
+  [[ "$output" == *"opus"* ]]
+  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+}
+
+@test "cursor confines effort-suffixed cross-vendor ids to deep" {
+  # claude-*/gpt-* effort-suffixed ids are cursor arguments only on deep —
+  # standard/trivial reject them (dispatch-orchestration.md "Tier map").
+  DISPATCH_PROFILE=work run run_dispatch standard claude-opus-5-high --agent cursor --effort medium --crew-id c1 42 "tier cursor standard leak opus"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"standard"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-sol-high --agent cursor --effort low --crew-id c1 42 "tier cursor trivial leak sol"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"trivial"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep claude-opus-5-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep suffix opus"
+  [ "$status" -eq 0 ]
+}
+
+@test "--ignore-map bypasses the tier gate silently" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --effort medium --ignore-map --crew-id c1 42 "tier ignore map bypass"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"'s row for --agent"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "the tier gate outranks the budget rung gate" {
+  # Ordering pin: a model that is both off-row and premium must be rejected
+  # for being off-row, not for its budget rung — mirrors "the model gate
+  # outranks the effort-ultra gate" shape at :540.
+  codex_budget_json 80 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --effort medium --crew-id c1 42 "tier vs budget ordering"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"standard"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+  [[ "$output" != *"the premium rung"* ]]
+}
+
+@test "an off-map --review --pr dispatch is rejected by the tier gate" {
+  stub_pr_bins pr-head-review-offmap
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard opus --agent claude --effort medium --pr 99 --review --crew-id c1 "review off map"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"standard"* ]]
+  [[ "$output" == *"opus"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "tier map conformance: dispatch.sh matches the documented rule" {
+  # Copied from the Model map/Burn classes table, so it makes drift loud
+  # rather than impossible — same tolerance as :747's precedent test.
+  # dispatch.sh's side matches through the human-readable tier_expected
+  # strings gate 1 builds, not the bash regexes (which carry escaped `\.`
+  # and would not literal-match e.g. gpt-5.6-sol) — a future edit that
+  # removes those strings without keeping some literal occurrence of each id
+  # would silently gut this tripwire.
+  doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
+  # Model map through the Model gate section only — stops before the new
+  # Tier map subsection, whose own downgrade-target table repeats most of
+  # these same tokens and would let this test pass even if the ORIGINAL
+  # Model map/Burn classes text were deleted.
+  doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
+  for token in opus sonnet haiku fable \
+    gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
+    kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium-fast cursor-grok-4.6-low-fast \
+    composer-2.5 claude-fable-5-1; do
+    grep -qF "$token" <<<"$doc_slice" || {
+      printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
+      return 1
+    }
+    grep -qF "$token" "$DISPATCH" || {
+      printf 'token %s missing from dispatch.sh\n' "$token" >&2
+      return 1
+    }
+  done
+}
+
+@test "budget rung gate refuses codex sol at 70% 7d" {
+  codex_budget_json 70 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung refuse 70"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"gpt-5.6-terra"* ]]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "budget rung gate refuses codex sol at 84% 7d" {
+  codex_budget_json 84 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung refuse 84"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"gpt-5.6-terra"* ]]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "the exhaustion gate outranks the budget rung gate at 95%" {
+  codex_budget_json 95 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung vs exhaustion 95"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted"* ]]
+  [[ "$output" != *"the premium rung"* ]]
+}
+
+@test "a 5h spike with 7d low does not trigger the budget rung gate" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"5h": {used_pct: 90, resets_at: null}, "7d": {used_pct: 30, resets_at: null}}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "5h spike 7d low"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a drifted window key with no 7d does not trigger the budget rung gate" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"other": {used_pct: 80, resets_at: null}}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "drifted window key"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+  [[ "$output" != *"quota exhausted"* ]]
+  [[ "$output" != *"the premium rung"* ]]
+}
+
+@test "--ignore-budget bypasses the budget rung gate" {
+  stub_launch_bins
+  codex_budget_json 90 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --ignore-budget --crew-id c1 42 "rung ignore budget"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a non-premium codex model is not refused by the budget rung gate" {
+  stub_launch_bins
+  codex_budget_json 90 "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "non premium rung"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "budget rung gate refuses claude opus at 75% 7d" {
+  budget_json 75 "$(date +%s)"
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "claude rung refuse"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" != *"quota exhausted"* ]]
+}
 
 @test "rejects --pr combined with a GitHub issue token" {
   run run_dispatch standard sonnet --effort medium --pr 12 34 "review"
