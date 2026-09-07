@@ -72,6 +72,16 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   cp -r "$protocols" "$d/protocols"
 done
 
+# Cursor has no plugin tree to be self-contained inside, and ~/.cursor/hooks.json
+# is a single shared file several flakes write — so the hook ships as a loose
+# script referenced by its store path from a hand-managed stanza (see README),
+# the same arrangement as codex's config.toml. It lives beside commands/, not
+# inside it: that dir is cleared and regenerated above.
+rm -rf "$root/adapters/cursor/scripts"
+mkdir -p "$root/adapters/cursor/scripts"
+cp "$root/adapters/core/dispatch-notify.sh" "$root/adapters/cursor/scripts/dispatch-notify.sh"
+chmod +x "$root/adapters/cursor/scripts/dispatch-notify.sh"
+
 # codex gets spec-plan-critic as a skill; it can express neither agents nor
 # workflows, so its workers skip the plan-critic (claude-only) per
 # WORKER_PROTOCOL.md — the review gate still runs, on native subagents

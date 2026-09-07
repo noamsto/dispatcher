@@ -201,6 +201,27 @@ For Claude Code, pass the plugin directory to `claude`:
   enabled = true
   ```
 
+- **The Cursor `stop` hook.** `~/.cursor/hooks.json` is a single shared file
+  several tools write, so this module does not own it. Without the stanza below
+  a cursor worker that dies is invisible to the bus — cursor has no session-end
+  event, so nothing posts `exited` and the roster strands a `working` entry:
+
+  ```json
+  {
+    "hooks": {
+      "stop": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/dispatch-notify.sh --turn-end"
+        }
+      ]
+    }
+  }
+  ```
+
+  `--turn-end` is load-bearing: cursor only reports end-of-turn, and a `blocked`
+  worker also ends its turn while waiting for the dispatcher, so that mode leaves
+  `blocked` alone where SessionEnd would override it.
+
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to
   your Codex config. It is a runtime file, so there is no eval-time check — a
@@ -298,7 +319,7 @@ adapters/
 │   └── commands/            shared bodies, projected per engine
 ├── claude-code/plugin/      commands · agents · skills · workflows · hooks
 ├── codex/plugin/            skills · hooks   (no agents/workflows: unsupported)
-└── cursor/                  rules · commands (no plugin format)
+└── cursor/                  rules · commands · scripts (no plugin format)
 scripts/gen-adapters.sh      projects core/commands into all three shapes
 nix/hm-module.nix            Home Manager module
 ```

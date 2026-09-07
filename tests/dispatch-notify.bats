@@ -123,3 +123,58 @@ stub_tmux() {
   grep -q 'display-message -t %9' "$STUB_LOG"
   ! grep -q '"state":"exited"' "$LOG"
 }
+
+# ---------------------------------------------------------------------------
+# Cursor: `stop` (end of turn), and a payload whose .cwd is empty
+# ---------------------------------------------------------------------------
+
+# run_notify_cursor — cursor's payload shape: .cwd empty, workspace in
+# workspace_roots[0], plus the --turn-end mode its `stop` event needs.
+run_notify_cursor() {
+  jq -nc --arg c "$PWD" '{cwd:"",workspace_roots:[$c],hook_event_name:"stop"}' |
+    bash -euo pipefail "$NOTIFY" --turn-end
+}
+
+@test "notify: cursor's empty .cwd resolves through workspace_roots" {
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_cursor
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
+
+@test "notify: --turn-end leaves a blocked worker alone — it is waiting, not gone" {
+  stub_tmux
+  task_doc %9
+  seed_status blocked
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_cursor
+  [ "$status" -eq 0 ]
+
+  ! grep -q '"state":"exited"' "$LOG"
+  ! grep -q display-message "$STUB_LOG"
+}
+
+@test "notify: SessionEnd still overrides blocked — that session is really gone" {
+  task_doc
+  seed_status blocked
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.body.state == "exited"'
+}
+
+@test "notify: --turn-end on a worker that reported done writes nothing and stays quiet" {
+  stub_tmux
+  task_doc %9
+  seed_status done
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_cursor
+  [ "$status" -eq 0 ]
+
+  ! grep -q '"state":"exited"' "$LOG"
+  ! grep -q display-message "$STUB_LOG"
+}
