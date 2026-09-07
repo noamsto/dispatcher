@@ -951,10 +951,13 @@ fi
 
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
+# task_kind rides along because only `dispatch` knows it: a `--review` worker is
+# told not to push or open a PR, so a run with no PR is its success case, not a
+# failure. Without this the ratings store cannot tell the two apart.
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
-  --arg shape "$dispatch_shape" --arg title "$title" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}')
+  --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title}')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # FleetView-style codename+color, derived from the branch (deterministic).

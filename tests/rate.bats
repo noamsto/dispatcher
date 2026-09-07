@@ -490,7 +490,7 @@ EOF
   [ "$output" = "false" ]
 }
 
-@test "outcome: full precedence — merged, running, pr_open, failed, incomplete" {
+@test "outcome: full precedence — merged, running, pr_open, done, failed, incomplete" {
   seed_dispatch outcome-merged 1000
   seed_status worker:outcome-merged 1500 pr_open "https://github.com/acme/widgets/pull/1"
   set_view '{"state":"MERGED","closedAt":null,"mergedAt":"1970-01-01T00:00:05Z","mergeCommit":{"oid":"deadbeef"},"commits":[],"reviews":[]}'
@@ -501,8 +501,12 @@ EOF
   seed_dispatch outcome-pr_open 3000
   seed_status worker:outcome-pr_open 3500 pr_open "https://example.com/pr/9"
 
-  seed_dispatch outcome-failed 4000
-  seed_status worker:outcome-failed 4500 done
+  # A no-PR task (review, measurement, experiment) that the worker finished.
+  seed_dispatch outcome-done 4000
+  seed_status worker:outcome-done 4500 done
+
+  seed_dispatch outcome-failed 6000
+  seed_status worker:outcome-failed 6500 failed
 
   seed_dispatch outcome-incomplete 5000
   seed_status worker:outcome-incomplete 5500 exited
@@ -516,10 +520,33 @@ EOF
   [ "$output" = "running" ]
   run jq -r 'map(select(.branch=="outcome-pr_open"))[0].outcome' <<<"$rows"
   [ "$output" = "pr_open" ]
+  run jq -r 'map(select(.branch=="outcome-done"))[0].outcome' <<<"$rows"
+  [ "$output" = "done" ]
   run jq -r 'map(select(.branch=="outcome-failed"))[0].outcome' <<<"$rows"
   [ "$output" = "failed" ]
   run jq -r 'map(select(.branch=="outcome-incomplete"))[0].outcome' <<<"$rows"
   [ "$output" = "incomplete" ]
+}
+
+@test "terminal_state: records the worker's own last state, distinguishing done from failed" {
+  seed_dispatch ts-done 1000
+  seed_status worker:ts-done 1500 done
+
+  seed_dispatch ts-failed 2000
+  seed_status worker:ts-failed 2500 failed
+
+  seed_dispatch ts-exited 3000
+  seed_status worker:ts-exited 3500 exited
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  rows="$(store_rows)"
+  run jq -r 'map(select(.branch=="ts-done"))[0].terminal_state' <<<"$rows"
+  [ "$output" = "done" ]
+  run jq -r 'map(select(.branch=="ts-failed"))[0].terminal_state' <<<"$rows"
+  [ "$output" = "failed" ]
+  run jq -r 'map(select(.branch=="ts-exited"))[0].terminal_state' <<<"$rows"
+  [ "$output" = "exited" ]
 }
 
 @test "cost: a known model's proxy is weight times wall clock; kimi-k3-high is null" {
@@ -575,4 +602,25 @@ EOF
   CREW_ID=c1 run --separate-stderr run_crew watch --since 0 --timeout 1 --interval 1
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "task_kind: carried from the dispatch event, null when absent" {
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"tk-review", engine:"cursor",
+           model:"cursor-grok-4.6-medium-fast", tier:"standard", effort:"medium",
+           task_kind:"review", title:"t"}' >>"$logf"
+  seed_status worker:tk-review 1500 done
+
+  # A run dispatched before dispatch.sh recorded the field.
+  seed_dispatch tk-legacy 2000
+  seed_status worker:tk-legacy 2500 done
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  rows="$(store_rows)"
+  run jq -r 'map(select(.branch=="tk-review"))[0].task_kind' <<<"$rows"
+  [ "$output" = "review" ]
+  run jq -r 'map(select(.branch=="tk-legacy"))[0].task_kind' <<<"$rows"
+  [ "$output" = "null" ]
 }

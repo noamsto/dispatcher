@@ -121,6 +121,13 @@ setup() {
   [ -x "$ROOT/adapters/codex/plugin/scripts/dispatch-notify.sh" ]
 }
 
+# Cursor has no plugin tree, so the hook ships loose for a hand-managed
+# ~/.cursor/hooks.json stanza to name by store path.
+@test "the notify hook ships executable for cursor, beside the generated commands" {
+  [ -x "$ROOT/adapters/cursor/scripts/dispatch-notify.sh" ]
+  cmp -s "$ROOT/adapters/core/dispatch-notify.sh" "$ROOT/adapters/cursor/scripts/dispatch-notify.sh"
+}
+
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
   run head -3 "$ROOT/adapters/cursor/rules/dispatcher.mdc"
   [[ "$output" == *"alwaysApply: true"* ]]
