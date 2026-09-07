@@ -30,8 +30,12 @@ default-plus-exception:
   self-similarity bias: do not let "X is what I am" become "X is the fit."
 - codex leans: large mechanical refactors, wide-but-shallow multi-file sweeps,
   or a deliberate second-engine perspective on a hard problem.
-- cursor leans: a distinct third-engine perspective on a deep task — default the
-  **worker** to **`kimi-k3-high`** (plans) with **Grok 4.6** execute subagents
+- cursor leans: **reviewing or finishing an existing PR** (`--pr N`, with or
+  without `--review`) and **eval/measurement work** — scorecards, golden-set
+  correctness, regression suites — plus a distinct third-engine perspective on a
+  deep task. Those first two are where its own record is strongest, and neither
+  is a fallback for the other engines being busy: route them here on fit.
+  Default the **worker** to **`kimi-k3-high`** (plans) with **Grok 4.6** execute subagents
   (`cursor-grok-4.6-*`, genuinely non-Claude implementers); Composer stays
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
