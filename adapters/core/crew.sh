@@ -257,12 +257,22 @@ _crew_id() {
 # kimi-k3* deliberately falls through to "" — the burn doc does not class it —
 # so the cursor rungs are matched on their exact strings, never on a `*high*`
 # glob that would also swallow kimi-k3-high.
+#
+# Cursor prices two independent axes, so the grok rungs are enumerated rather
+# than globbed: the effort suffix sets how many tokens a turn spends, while
+# `-fast` doubles what each token costs (docs: grok 4.6 is $2/M in + $6/M out
+# standard against $4/M + $12/M fast; 4.5 charges 3x on output). Reading `-fast`
+# as the cheap lane put `-medium-fast` in the same class as sonnet while it
+# actually burns like premium.
 _burn_weight() {
   case "$1" in
   composer-2.5*) printf 'free\t0' ;;
-  *haiku* | gpt-5.6-luna | cursor-grok-4.6-low-fast) printf 'cheap\t1' ;;
-  *sonnet* | gpt-5.6-terra | cursor-grok-4.6-medium-fast) printf 'standard\t2' ;;
-  *opus* | gpt-5.6-sol | cursor-grok-4.6-high) printf 'premium\t4' ;;
+  *haiku* | gpt-5.6-luna | cursor-grok-4.[0-9]-low) printf 'cheap\t1' ;;
+  *sonnet* | gpt-5.6-terra | cursor-grok-4.[0-9]-medium | cursor-grok-4.[0-9]-low-fast) printf 'standard\t2' ;;
+  *opus* | gpt-5.6-sol | cursor-grok-4.[0-9]-high | cursor-grok-4.[0-9]-medium-fast) printf 'premium\t4' ;;
+  cursor-grok-4.[0-9]-xhigh) printf 'premium\t6' ;;
+  cursor-grok-4.[0-9]-high-fast) printf 'premium\t8' ;;
+  cursor-grok-4.[0-9]-xhigh-fast) printf 'premium\t12' ;;
   claude-fable-5 | *fable*) printf 'fable\t8' ;;
   *) printf '' ;;
   esac
