@@ -282,7 +282,7 @@ else
       cursor_params="${BASH_REMATCH[2]}"
     fi
     if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
-      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.6-medium-fast, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.6-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
@@ -384,20 +384,24 @@ if [ -z "$ignore_map" ]; then
     if [[ $tiermap_cursor_base =~ ^(claude|gpt)- ]] && { [[ $tiermap_cursor_base =~ $re_effort_tail ]] || [[ $tiermap_cursor_params =~ (\[|,)effort= ]]; }; then
       tiermap_is_alt_effort=1
     fi
+    # The gate enforces EFFORT appropriateness, so each row accepts its rung
+    # with or without `-fast`: the suffix is a price/speed choice (2x the token
+    # rate), not a different rung. The Tier map names the non-fast slug as the
+    # default and `-fast` is the deliberate "I want this now" override.
     case "$tier" in
     deep)
-      tier_expected="kimi-k3-high, cursor-grok-4.6-medium-fast, cursor-grok-4.6-high, composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
-      [[ $model =~ ^(kimi-k3-high|cursor-grok-4\.6-medium-fast|cursor-grok-4\.6-high)$ ]] ||
+      tier_expected="kimi-k3-high, cursor-grok-4.6-medium[-fast], cursor-grok-4.6-high[-fast], composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
+      [[ $model =~ ^(kimi-k3-high|cursor-grok-4\.6-(medium|high)(-fast)?)$ ]] ||
         [ "$tiermap_is_composer" = 1 ] || [ "$tiermap_is_alt_effort" = 1 ] || tier_ok=0
       ;;
     standard)
-      tier_expected="cursor-grok-4.6-medium-fast, cursor-grok-4.6-low-fast, or composer-2.5[-fast]"
-      [[ $model =~ ^(cursor-grok-4\.6-medium-fast|cursor-grok-4\.6-low-fast)$ ]] ||
+      tier_expected="cursor-grok-4.6-medium[-fast], cursor-grok-4.6-low[-fast], or composer-2.5[-fast]"
+      [[ $model =~ ^cursor-grok-4\.6-(medium|low)(-fast)?$ ]] ||
         [ "$tiermap_is_composer" = 1 ] || tier_ok=0
       ;;
     trivial)
-      tier_expected="cursor-grok-4.6-low-fast or composer-2.5[-fast]"
-      [[ $model =~ ^cursor-grok-4\.6-low-fast$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      tier_expected="cursor-grok-4.6-low[-fast] or composer-2.5[-fast]"
+      [[ $model =~ ^cursor-grok-4\.6-low(-fast)?$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
       ;;
     *) tier_ok=0 ;;
     esac
@@ -456,7 +460,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   # dispatchable via the Tier map gate's deep row too. Inert today —
   # refresh-budget.sh hardcodes cursor quota to null.
   cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[*)
-    rung_downgrade="cursor-grok-4.6-medium-fast"
+    rung_downgrade="cursor-grok-4.6-medium"
     ;;
   esac
   if [ -n "$rung_downgrade" ]; then

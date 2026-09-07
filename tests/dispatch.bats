@@ -273,7 +273,7 @@ EOF
 write_cursor_models_cache() { # <fetched_epoch>
   mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$1" \
-    '{fetched_at: "t", fetched_epoch: $epoch, models: [{slug:"cursor-grok-4.6-high"},{slug:"cursor-grok-4.6-medium-fast"},{slug:"cursor-grok-4.6-low-fast"},{slug:"claude-opus-5-high"}]}' \
+    '{fetched_at: "t", fetched_epoch: $epoch, models: [{slug:"cursor-grok-4.6-high"},{slug:"cursor-grok-4.6-medium"},{slug:"cursor-grok-4.6-medium-fast"},{slug:"cursor-grok-4.6-low"},{slug:"cursor-grok-4.6-low-fast"},{slug:"claude-opus-5-high"}]}' \
     >"$XDG_DATA_HOME/crew/cursor-models-cache.json"
 }
 
@@ -834,8 +834,9 @@ assert_gate_silent() { # <engine> <model>
   for m in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini; do
     assert_gate_silent codex "$m"
   done
-  for m in kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium-fast \
-    cursor-grok-4.6-low-fast composer-2.5 composer-2.5-fast \
+  for m in kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium \
+    cursor-grok-4.6-low cursor-grok-4.6-medium-fast cursor-grok-4.6-low-fast \
+    composer-2.5 composer-2.5-fast \
     claude-opus-5-high gpt-5.6-sol-high; do
     assert_gate_silent cursor "$m"
   done
@@ -902,7 +903,7 @@ assert_gate_silent() { # <engine> <model>
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep kimi"
   [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-medium-fast --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok medium"
+  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-medium --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok medium"
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok high"
   [ "$status" -eq 0 ]
@@ -910,13 +911,13 @@ assert_gate_silent() { # <engine> <model>
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "tier cursor deep bracket opus"
   [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-medium-fast --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok medium"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-medium --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok medium"
   [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-low-fast --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok low"
+  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-low --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok low"
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "tier cursor standard composer"
   [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial cursor-grok-4.6-low-fast --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
+  DISPATCH_PROFILE=work run run_dispatch trivial cursor-grok-4.6-low --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch trivial composer-2.5 --agent cursor --effort low --crew-id c1 42 "tier cursor trivial composer"
   [ "$status" -eq 0 ]
@@ -947,7 +948,7 @@ assert_gate_silent() { # <engine> <model>
     >"$XDG_DATA_HOME/crew/engine-budget.json"
   DISPATCH_PROFILE=work run run_dispatch deep 'cursor-grok-4.6-high[effort=high]' --agent cursor --effort high --crew-id c1 42 "rung bracket cursor"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"cursor-grok-4.6-medium-fast"* ]]
+  [[ "$output" == *"cursor-grok-4.6-medium"* ]]
 }
 
 @test "budget rung gate also matches the bare premium cursor id" {
@@ -962,7 +963,7 @@ assert_gate_silent() { # <engine> <model>
   write_cursor_models_cache "$(date +%s)"
   DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "rung bare cursor"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"cursor-grok-4.6-medium-fast"* ]]
+  [[ "$output" == *"cursor-grok-4.6-medium"* ]]
   [[ "$output" == *"the premium rung"* ]]
 }
 
@@ -1040,7 +1041,7 @@ assert_gate_silent() { # <engine> <model>
   doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
   for token in opus sonnet haiku fable \
     gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
-    kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium-fast cursor-grok-4.6-low-fast \
+    kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium cursor-grok-4.6-low \
     composer-2.5 claude-fable-5-1; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2

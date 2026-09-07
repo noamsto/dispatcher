@@ -1898,26 +1898,63 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "burn map conformance: _burn_weight matches the documented rule" {
+@test "burn map conformance: the doc slice names every classed rung" {
   # Copied from the Model map/Burn classes table, so it makes drift loud
   # rather than impossible — same tolerance as dispatch.bats's precedent
-  # "tier map conformance" test. kimi-k3* is deliberately excluded from this
-  # token list: _burn_weight's own comment says kimi-k3 falls through to ""
-  # on purpose, so it must never be asserted present in the function body.
+  # "tier map conformance" test. kimi-k3* is deliberately excluded: the burn
+  # doc does not class it and _burn_weight falls it through to "" on purpose.
+  # The cursor rungs listed are the non-fast defaults; `-fast` is a price
+  # multiplier the sibling behavioural test below pins.
   doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
   doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
-  fn_slice="$(sed -n '/^_burn_weight() {/,/^}/p' "$CREW")"
   for token in opus sonnet haiku fable composer-2.5 \
     gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol \
-    cursor-grok-4.6-low-fast cursor-grok-4.6-medium-fast cursor-grok-4.6-high \
+    cursor-grok-4.6-low cursor-grok-4.6-medium cursor-grok-4.6-high \
     claude-fable-5; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
     }
-    grep -qF "$token" <<<"$fn_slice" || {
-      printf 'token %s missing from _burn_weight\n' "$token" >&2
+  done
+}
+
+# _burn_weight matches on glob families (`cursor-grok-4.[0-9]-medium`) so that
+# 4.5 and 4.6 price alike, which a token grep of the function body cannot see.
+# Assert the rule by calling it.
+@test "burn map conformance: _burn_weight prices effort and -fast on separate axes" {
+  weight() {
+    bash -c 'source /dev/stdin <<<"$(sed -n "/^_burn_weight() {/,/^}/p" "$1")"; _burn_weight "$2"' _ "$CREW" "$1"
+  }
+  while read -r model expected; do
+    [ -n "$model" ] || continue
+    got="$(weight "$model" | tr '\t' ' ')"
+    [ "$got" = "$expected" ] || {
+      printf '_burn_weight %s = "%s", expected "%s"\n' "$model" "$got" "$expected" >&2
       return 1
     }
-  done
+  done <<'EOF'
+opus premium 4
+sonnet standard 2
+haiku cheap 1
+claude-fable-5 fable 8
+gpt-5.6-sol premium 4
+gpt-5.6-terra standard 2
+gpt-5.6-luna cheap 1
+composer-2.5 free 0
+composer-2.5-fast free 0
+cursor-grok-4.6-low cheap 1
+cursor-grok-4.6-medium standard 2
+cursor-grok-4.6-high premium 4
+cursor-grok-4.6-xhigh premium 6
+cursor-grok-4.5-low cheap 1
+cursor-grok-4.5-medium standard 2
+cursor-grok-4.5-high premium 4
+cursor-grok-4.6-low-fast standard 2
+cursor-grok-4.6-medium-fast premium 4
+cursor-grok-4.6-high-fast premium 8
+cursor-grok-4.6-xhigh-fast premium 12
+EOF
+  # kimi-k3-high and an unknown id stay unclassed rather than guessed.
+  [ -z "$(weight kimi-k3-high)" ]
+  [ -z "$(weight some-unknown-model)" ]
 }
