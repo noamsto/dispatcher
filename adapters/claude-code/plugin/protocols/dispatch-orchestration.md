@@ -46,18 +46,22 @@ rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 **Burn classes.** All three engines are subscriptions, so cost = quota burn,
 and the rungs group into three classes: **premium** — opus (fable ≈2× opus),
 `gpt-5.6-sol`, `cursor-grok-4.6-high`; **standard** — sonnet, `gpt-5.6-terra`,
-`cursor-grok-4.6-medium-fast`; **cheap** — haiku, `gpt-5.6-luna`,
-`cursor-grok-4.6-low-fast`, `composer-2.5*` (free). Effort multiplies burn
-within a rung (`xhigh`/`max`; codex `ultra` most). When the budget tightens
+`cursor-grok-4.6-medium`; **cheap** — haiku, `gpt-5.6-luna`,
+`cursor-grok-4.6-low`, `composer-2.5*` (free). Effort multiplies burn
+within a rung (`xhigh`/`max`; codex `ultra` most). **Cursor `-fast` doubles the
+token rate on top of that** ($2/M in + $6/M out standard against $4/M + $12/M
+fast on Grok 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
+`-medium-fast` burns like premium `-high`, and `-low-fast` like standard. It is
+a deliberate "I need this turn now" override, never the cheap lane. When the budget tightens
 (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
 class before walking down a tier — burn only sets model strength, tier sets
 review depth.
 
 | Tier       | claude (worker → execute → escalate)                                                                                                                                                                                                                                     | codex (worker → execute → escalate)                         | cursor (worker → execute → escalate)                                                          |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus** — escalate worker to **`claude-fable-5-1`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`** → **terra** → escalated **sol**           | **`kimi-k3-high`** → **`cursor-grok-4.6-medium-fast`** → escalated **`cursor-grok-4.6-high`** |
-| `standard` | **sonnet** → **sonnet** → escalated **opus**                                                                                                                                                                                                                             | **`gpt-5.6-terra`** → **luna** → escalated **terra**        | **`cursor-grok-4.6-medium-fast`** → **`cursor-grok-4.6-low-fast`** → escalated **medium-fast** |
-| `trivial`  | **sonnet** (or **haiku** if truly trivial) — no delegation                                                                                                                                                                                                               | **`gpt-5.6-luna`** — no delegation                          | **`cursor-grok-4.6-low-fast`** — no delegation                                                |
+| `deep`     | **opus** → **sonnet** → escalated **opus** — escalate worker to **`claude-fable-5-1`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`** → **terra** → escalated **sol**           | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** |
+| `standard` | **sonnet** → **sonnet** → escalated **opus**                                                                                                                                                                                                                             | **`gpt-5.6-terra`** → **luna** → escalated **terra**        | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** |
+| `trivial`  | **sonnet** (or **haiku** if truly trivial) — no delegation                                                                                                                                                                                                               | **`gpt-5.6-luna`** — no delegation                          | **`cursor-grok-4.6-low`** — no delegation                                                |
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -83,9 +87,11 @@ persists locally and would otherwise leak into unattended runs, burning ChatGPT
 credits at 2.5x for latency nobody is watching.
 Cursor has **no reasoning-effort flag** — effort is baked into the model id
 suffix and `dispatch`'s `--effort` is accepted-and-ignored for cursor. Grok
-exposes both an effort suffix (`-low`/`-medium`/`-high`) and a throughput
-suffix (`-fast`), so the dispatcher expresses effort by _picking the id_: the
-standard/trivial rows use `-fast` for cheap, high-throughput turns; cursor `deep`
+exposes both an effort suffix (`-low`/`-medium`/`-high`/`-xhigh`) and a speed
+suffix (`-fast`), so the dispatcher expresses effort by _picking the id_. The
+rows above name the **non-fast** slug on every tier: `-fast` is a paid speed
+tier at ~2× the token rate, not a cheaper high-throughput one, so reach for it
+only when a turn's latency actually matters and say why. cursor `deep`
 uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
 (implements) — escalate to `cursor-grok-4.6-high`, not back to Kimi. **`kimi-k3`
 has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.6 remains the
@@ -108,7 +114,7 @@ sets codex `agents.*` guardrails and a process-authority spawn clause only —
 never model slugs for execute subagents (those stay in this table / rule 1).
 Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low-fast → cursor-grok-4.6-medium-fast → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
@@ -222,7 +228,7 @@ Overridable with `--ignore-budget`, same as the ≥95% gate.
 | ------ | ----------------------------------------------- | ------------------------ |
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet`                 |
 | codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
-| cursor | `cursor-grok-4.6-high`                           | `cursor-grok-4.6-medium-fast` |
+| cursor | `cursor-grok-4.6-high`                           | `cursor-grok-4.6-medium` |
 
 ## Orchestrator engines (dispatcher session)
 

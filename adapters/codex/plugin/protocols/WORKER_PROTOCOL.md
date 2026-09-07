@@ -139,7 +139,7 @@ For three qualifying amendments, use one fresh planning-only context and the aut
 
 - **Claude:** Agent model override `haiku → sonnet → opus → fable`; `opus → fable` retains the hard, well-specified, long-horizon eligibility check. Fable, ineligible opus, unknown full ids, and unavailable launches block. Effort is metadata because the Agent override cannot change it. Claude may use its bounded critic within this single episode.
 - **Codex:** on the exact model, increase `low → medium → high → xhigh → max`; at max move one family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`, preserving max. Never use ultra. Sol/max, legacy/unknown families, outside-table tuples, and unavailable native planning launches block. Use plain replanning, not Claude critics.
-- **Cursor:** Task model override `cursor-grok-4.6-low-fast → cursor-grok-4.6-medium-fast → cursor-grok-4.6-high`. High, Kimi, Composer, cross-vendor ids, unknown ids, and unavailable Task launches block. Use plain replanning.
+- **Cursor:** Task model override `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`. High, Kimi, Composer, cross-vendor ids, unknown ids, and unavailable Task launches block. Use plain replanning.
 
 A replacement is viable only when it accounts for all three ledger rows, names allowed files/components, gives a finite ordered implementation list plus deterministic validation commands, and leaves no choice for execute-time improvisation. Refusal, timeout, failed extraction/critic, unavailable launch, or non-viable output blocks without falling back to the original plan or a second planner. Write a `rung_blocked` retro note naming the rung and the reason.
 
@@ -154,7 +154,7 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
   | ------ | ------------------ | ------------- |
   | **claude** | Agent tool, the named `*-reviewer` agent matching the diff's language (`go-reviewer`, `python-reviewer`, `typescript-reviewer`, `shell-reviewer`, the SQL reviewers, …); a general agent running the `find-bugs` skill when none fits | unchanged — each agent definition owns its model |
   | **codex** | native subagent (`agents.enabled`, cap 3) with the role brief written into its prompt — codex has no named-agent registry, so the brief **is** the prompt. Rule 1's `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort | the tier's **execute** rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |
-  | **cursor** | Task-tool subagent with an explicit model slug, same inline role brief | the tier's **execute** slug (deep → `cursor-grok-4.6-medium-fast`, standard → `cursor-grok-4.6-low-fast`) |
+  | **cursor** | Task-tool subagent with an explicit model slug, same inline role brief | the tier's **execute** slug (deep → `cursor-grok-4.6-medium`, standard → `cursor-grok-4.6-low`) |
 
   - **Language reviewer** — one reviewer briefed on the changed files' language, spawned per the table above. **If the plan phase was skipped** (plan of record), instruct this reviewer to add an explicit **approach-sanity** check against the task doc — is this the _right_ fix, not merely a faithful one? — since no plan-critic vetted the approach.
   - **Targeted test-runner** — a subagent that runs the change's acceptance-criteria / behavior-specific tests and reports pass/fail; its result feeds the reconcile as deterministic evidence.
@@ -266,8 +266,8 @@ Immediately before every stopping path, emit one complete latest-state metrics s
 
    | Tier | claude | codex | cursor |
    | --- | --- | --- | --- |
-   | `deep` | opus → sonnet → escalated opus | sol → terra → escalated sol | kimi-k3-high → grok-4.6-medium-fast → escalated grok-4.6-high |
-   | `standard` | sonnet → sonnet → escalated opus | terra → luna → escalated terra | grok-4.6-medium-fast → grok-4.6-low-fast → escalated medium-fast |
+   | `deep` | opus → sonnet → escalated opus | sol → terra → escalated sol | kimi-k3-high → grok-4.6-medium → escalated grok-4.6-high |
+   | `standard` | sonnet → sonnet → escalated opus | terra → luna → escalated terra | grok-4.6-medium → grok-4.6-low → escalated medium |
    | `trivial` | no delegation | no delegation | no delegation |
 
    - **claude** — spawn execute subagents with the Agent tool's `model: sonnet` by default; escalate with `model: opus` (or the plan's `implement: opus` tag). No per-spawn effort parameter.
