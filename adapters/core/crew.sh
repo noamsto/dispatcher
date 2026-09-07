@@ -1357,6 +1357,8 @@ rate)
             engine: $d.engine, model: $d.model, tier: $d.tier,
             effort: $d.effort, title: $d.title,
             shape: $shape,
+            # null for a run scaffolded by a `dispatch` older than this field.
+            task_kind: ($d.task_kind // null),
             t0_ms: $t0,
             window_end_ms: $window_end,
             reached_pr: ($propen != null),
@@ -1366,12 +1368,20 @@ rate)
             wall_clock_ms: $wall,
             cost_class: (if $cw == null then null else $cw[0] end),
             cost_proxy: (if $cw == null or $wall == null then null else ($cw[1] * $wall) end),
+            # `done` is the success signal a worker posts for itself, and plenty
+            # of dispatched work (reviews, measurements, experiments) has no PR
+            # as its deliverable — so a missing PR is not evidence of failure.
+            # Only a worker-reported `failed` is. Rows swept before this split
+            # carry "failed" for both, so a reader spanning them must fold on
+            # terminal_state, not on outcome.
             outcome: (
               if ($owns_pr and $pr_state == "MERGED") then "merged"
               elif ($ls == "working" or $ls == "blocked") then "running"
               elif ($pr != null) then "pr_open"
-              elif ($ls == "done" or $ls == "failed") then "failed"
+              elif ($ls == "done") then "done"
+              elif ($ls == "failed") then "failed"
               else "incomplete" end),
+            terminal_state: ($ls // null),
             rework_count: ($m.rework_count // null),
             replanned: (
               if $m == null or (($m | has("replanned")) | not)
