@@ -238,21 +238,33 @@ self-reported. Its `detail` always begins with one of six reserved prefixes:
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
   watchdog clears the state itself. This never escalates: an unanswered answerable
   question is waiting work, not a dead worker.
-- `quota:` — the pane is parked on the rate-limit prompt ("Stop and wait for limit to
-  reset"), a content variant of `prompt:` with the opposite correct response: stop
-  dispatching to this engine, don't answer a question. Recovery is cheap and this is not
-  hypothetical, it's measured: `Esc` dismisses the prompt, the session keeps its full
-  context, and a resume nudge continues the work on the next quota window — **never
-  re-dispatch** a worker wedged this way, it would discard hours of intact work for
-  nothing that needed redoing. Like `prompt:`, this never escalates to `dead:`.
+- `quota:` — two distinct frame shapes, both meaning stop dispatching to this engine,
+  don't answer a question. The rate-limit prompt ("Stop and wait for limit to reset")
+  is a content variant of `prompt:` with the opposite correct response. Recovery is
+  cheap and this is not hypothetical, it's measured: `Esc` dismisses the prompt, the
+  session keeps its full context, and a resume nudge continues the work on the next
+  quota window. The session-limit refusal ("You've hit your session limit" /
+  `/upgrade to increase your usage limit` / a `/low-priority` hint) is a different
+  frame — the pane keeps its normal status bar, it isn't an option-select prompt —
+  and its recovery is **not** the same: verified live in issue #93, `Esc`/`Enter`
+  will **not** submit a queued prompt while the limit holds. The only real recoveries
+  are waiting for the reset window shown in the pane, or a human explicitly invoking
+  `/low-priority` in the pane — that spends weekly budget, a human spend decision,
+  never something the watchdog or any automated recovery takes. Either way, **never
+  re-dispatch** a worker wedged on `quota:`, it would discard hours of intact work for
+  nothing that needed redoing. Neither variant ever escalates to `dead:`.
 - `turn-stall:` — the pane's clock advanced for 30 min against a static token count with
   no live subagent row. A dead turn.
-- `quiet:` — the pane has been byte-identical for 30 min.
+- `quiet:` — the pane has been byte-identical for 30 min. Escalation to `dead:` also
+  requires the pane's engine process to be gone — a static frame alone is no longer
+  sufficient evidence.
 - `stalled:` — a static pane inside the startup window whose frame the watchdog could
   **not** classify. Deliberately its weakest claim: an unrecognised prompt family, a
   shell waiting on `direnv allow`, and a dead process all arrive under this prefix.
 - `dead:` — a `turn-stall:`/`quiet:` episode whose evidence still held a further 30 min.
-  This is the **only** watchdog `failed`.
+  For `quiet:` this now additionally requires the engine process to be gone, not just
+  the static frame; `turn-stall:`'s escalation is unchanged. This is the **only**
+  watchdog `failed`.
 
 **Every watchdog state except `dead:` is `blocked`, not `failed`.** This replaces the old
 rule that a `stalled:` `failed` was a recovery trigger — that instruction, followed

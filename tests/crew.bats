@@ -4,6 +4,9 @@ setup() {
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
   unset CREW_ID
+  # No engine process by default, so quiet:->dead: escalation stays
+  # deterministic regardless of what runs on the host tmux server.
+  export CREW_STALL_PROC_CMD='printf ""'
 }
 
 teardown() {
@@ -1397,6 +1400,57 @@ Enter to confirm
 EOF
 }
 
+# fx_session_limit_refusal — captured verbatim from a real wedged worker in
+# issue #93, not reconstructed (contrast fx_prompt_quota's note above). A
+# working-pane shape: normal status bar, no option-select prompt.
+fx_session_limit_refusal() {
+  frame_file session_limit_refusal <<'EOF'
+⏺ Monitor event: "idle wait for wave 2 reports"
+  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)
+     /upgrade to increase your usage limit.
+
+──────────────────────────────────────────── bronze ─
+❯ keep going
+─────────────────────────────────────────────────────
+  ⚠ /low-priority to continue now at lower priority · uses your weekly limit
+  🤖 Opus 5 🧠 high | 📊 350k/1M                                    /rc
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+EOF
+}
+
+# fx_prompt_trust_with_distant_session_limit_text — mirrors
+# fx_prompt_trust_with_distant_quota_text for the other quota variant: a real
+# workspace-trust prompt with the three session-limit anchors pushed above
+# _is_quota_session_limit's tail window, as they would be for a worker that
+# merely has this repo's own doc text on screen.
+fx_prompt_trust_with_distant_session_limit_text() {
+  frame_file prompt_trust_distant_session_limit <<'EOF'
+⏺ Monitor event: "idle wait for wave 2 reports"
+  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)
+     /upgrade to increase your usage limit.
+  ⚠ /low-priority to continue now at lower priority · uses your weekly limit
+line 1 filler
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+line 13 filler
+line 14 filler
+line 15 filler
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
+EOF
+}
+
 @test "stall-watch: D1 posts blocked/prompt: on the option-select frame" {
   p=$(fx_prompt_select)
   stall_sampler "$p" "$p" "$p" "$p"
@@ -1841,6 +1895,100 @@ EOF
   run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == prompt:* ]]
+}
+
+@test "stall-watch: D1b posts blocked/quota: on the session-limit refusal, not quiet:" {
+  p=$(fx_session_limit_refusal)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  want="blocked|watchdog|quota: session limit — do not re-dispatch; wait for the reset shown in pane %9, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"
+  [ "${lines[0]}" = "$want" ]
+  # roster truncates detail to 120 chars, so the actionable guidance must
+  # survive the cut.
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail | .[0:120]'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == *"do not re-dispatch"* ]]
+}
+
+@test "stall-watch: a session-limit quota: episode NEVER escalates" {
+  p=$(fx_session_limit_refusal)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: a session-limit quota: episode held past --idle and --dead still never escalates or gets superseded by quiet:" {
+  # A frozen session-limit frame is byte-identical by construction, so it
+  # satisfies D3 too: quiet: must not supersede quota:.
+  p=$(fx_session_limit_refusal)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 8
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quiet:' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|quota:* ]]
+}
+
+@test "stall-watch: the session-limit phrase far up-screen classifies as prompt:, not quota:" {
+  p=$(fx_prompt_trust_with_distant_session_limit_text)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
+}
+
+@test "stall-watch: D1's rate-limit quota: transitions cleanly to D1b's session-limit quota: and back" {
+  q=$(fx_prompt_quota)
+  s=$(fx_session_limit_refusal)
+  stall_sampler "$q" "$q" "$s" "$s" "$q" "$q"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 18
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 5 ]
+  [[ "${lines[0]}" == "blocked|quota: quota exhausted"* ]]
+  [ "${lines[1]}" = "working|quota: cleared" ]
+  [[ "${lines[2]}" == "blocked|quota: session limit"* ]]
+  [ "${lines[3]}" = "working|quota: cleared" ]
+  [[ "${lines[4]}" == "blocked|quota: quota exhausted"* ]]
+}
+
+@test "stall-watch: a quiet: episode with a dead engine process still escalates to failed" {
+  export CREW_STALL_PROC_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == blocked\|quiet:* ]]
+  [[ "${lines[1]}" == "failed|dead: quiet: unchanged for "* ]]
+}
+
+@test "stall-watch: a quiet: episode with a live engine process does NOT escalate" {
+  export CREW_STALL_PROC_CMD='printf claude'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == blocked\|quiet:* ]]
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
 }
 
 @test "roster: carries source and truncates detail to 120 chars" {
