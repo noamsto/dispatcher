@@ -1839,11 +1839,13 @@ stall-watch)
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
   # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Four detectors read one pane capture per tick:
+  # working (#31). Five detectors read one pane capture per tick:
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
-  #                  geometry, not a fifth detector — see _is_quota_prompt)
+  #                  geometry — see _is_quota_prompt)
+  #   D1b quota:     session-limit refusal frame — normal status bar, no
+  #                  option-select prompt, 2 samples (see _is_quota_session_limit)
   #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
   #   D3 quiet:      byte-identical pane for --idle
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
@@ -1851,11 +1853,13 @@ stall-watch)
   # after a second evidence check --dead later; a prompt still on screen is
   # evidence that nobody answered, not that the worker died, so it never
   # escalates (quota: never escalates either — same reasoning, opposite
-  # recovery: stop dispatching, don't answer). Engine signatures are the data
-  # table below: claude only, because a guessed signature is a false-positive
-  # generator.
+  # recovery: stop dispatching, don't answer). quiet:'s escalation additionally
+  # requires the pane's engine process to be gone (see _pane_engine_alive);
+  # turn-stall:'s does not. Engine signatures are the data table below: claude
+  # only, because a guessed signature is a false-positive generator.
   # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
-  # pane liveness) so the loop is testable without tmux.
+  # pane liveness) and CREW_STALL_PROC_CMD overrides the engine-liveness check
+  # (see _pane_engine_alive), so the loop is testable without tmux.
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
@@ -1964,6 +1968,30 @@ stall-watch)
     else
       tmux capture-pane -p -t "$pane" 2>/dev/null
     fi
+  }
+
+  # _pane_engine_alive — corroborating evidence for quiet:'s dead: escalation.
+  # The trade-off: a turn that hangs while the engine process stays resident
+  # (D2's subrow blind spot, documented above, is one way) can now never reach
+  # dead: via quiet: — only a vanished process does.
+  # CREW_STALL_PROC_CMD overrides this the same way CREW_STALL_SAMPLE_CMD
+  # overrides _sample, so the loop stays testable without tmux.
+  _pane_engine_alive() {
+    local cmd panes pid pcmd
+    if [ -n "${CREW_STALL_PROC_CMD:-}" ]; then
+      cmd=$(eval "$CREW_STALL_PROC_CMD" 2>/dev/null || true)
+    else
+      cmd=""
+      panes=$(tmux list-panes -a -F $'#{pane_id}\t#{pane_current_command}' 2>/dev/null || true)
+      while IFS=$'\t' read -r pid pcmd; do
+        [ "$pid" = "$pane" ] || continue
+        cmd="$pcmd"
+        break
+      done <<PANES
+$panes
+PANES
+    fi
+    [ -n "$cmd" ] && _is_engine_cmd "$cmd"
   }
 
   # C-3 — every bus read is scoped to THIS run. events.jsonl is append-only per
@@ -2088,6 +2116,24 @@ BUSLINE
   _is_quota_prompt() {
     printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
   }
+  # _is_quota_session_limit — content discriminator for the session-limit
+  # refusal frame: a normal working pane, not an option-select prompt, so
+  # unlike _is_quota_prompt it is not gated behind _is_prompt.
+  # All three anchors must be present: any one alone false-triggers on a worker
+  # that merely has this repo's own docs or fixtures on screen, and quota: is
+  # sticky and escalation-exempt. The tail bound is the same hazard — the real
+  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
+  # queued prompt in the input box can push them out of the window and this
+  # detector silently misses the frame. `uses your weekly limit` sits in a
+  # persistent hint row at depth 3, so it gets the tighter window.
+  _is_quota_session_limit() {
+    local tail_n tail_n6
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
+    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
+    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
+      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
+      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
+  }
   _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
@@ -2106,6 +2152,8 @@ BUSLINE
   d2_since=0
   d2_moved=0
   d2_at=0
+  d1b_hits=0
+  d1b_at=0
   d3_at=0
   _bus_refresh
   while :; do
@@ -2157,7 +2205,8 @@ BUSLINE
     # both. d1_kind remembers which was actually posted so a mid-episode flip
     # (e.g. a prompt frame that becomes the quota frame with no intervening
     # non-prompt sample) reclassifies instead of staying mislabeled for the
-    # rest of the run.
+    # rest of the run. The folding covers D1's rate-limit-prompt variant only;
+    # D1b's session-limit frame carries its own counter (d1b_hits/d1b_at).
     if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] &&
       _is_prompt "$text" && [ -z "$(_meter_line "$text")" ]; then
       if _is_quota_prompt "$text"; then
@@ -2246,6 +2295,28 @@ BUSLINE
       fi
     fi
 
+    # ---- D1b: session-limit refusal ----------------------------------------
+    # A second quota: frame, and its own detector because it satisfies neither
+    # of the two above: no option-select geometry for D1, and it matches neither
+    # re_meter nor re_subrow, so D2 reads it as "no active turn" and resets.
+    # Without this block it falls through to D3 quiet:, which escalates (#93).
+    # sig_prompt is reused here only as "claude signature verified" — D1b
+    # requires no prompt geometry.
+    if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] && _is_quota_session_limit "$text"; then
+      d1b_hits=$((d1b_hits + 1))
+      if [ "$d1b_hits" -ge 2 ] && [ "$d1b_at" = 0 ]; then
+        if _post_blocked "quota:" "quota: session limit — do not re-dispatch; wait for the reset shown in pane $pane, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"; then
+          d1b_at="$now"
+        fi
+      fi
+    else
+      if [ "$d1b_at" != 0 ]; then
+        _post_clear "quota:"
+        d1b_at=0
+      fi
+      d1b_hits=0
+    fi
+
     # ---- D3: quiet pane ---------------------------------------------------
     # Byte-identity, not "no meter": a healthy claude pane repaints its spinner
     # every second, so a working worker can never satisfy D3 even if every
@@ -2312,8 +2383,10 @@ BUSLINE
       case "$bus_detail" in
       prompt:* | quota:*) ;;
       *)
-        _post failed "dead: quiet: unchanged for $((now - d3_at))s"
-        exit 0
+        if ! _pane_engine_alive; then
+          _post failed "dead: quiet: unchanged for $((now - d3_at))s"
+          exit 0
+        fi
         ;;
       esac
     fi
