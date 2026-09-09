@@ -298,7 +298,7 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'send-keys -t %8 claude --continue' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' "$STUB_LOG"
   grep -q -- '--model sonnet' "$STUB_LOG"
   grep -q -- '--effort medium' "$STUB_LOG"
   grep -q -- '--append-system-prompt-file /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
@@ -310,7 +310,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -q 'send-keys -t %8 claude ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -333,7 +333,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -q 'send-keys -t %8 codex ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' "$STUB_LOG"
   run grep -c -- 'resume --last' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -355,7 +355,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -q 'send-keys -t %8 CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -426,10 +426,9 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume
+  DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  ! grep -q 'worker_id: worker:feat/7-a-thing#s1-99' "$WT/WORKER_TASK.md"
-  grep -qE '^worker_id: worker:feat/7-a-thing#s[0-9]+-[0-9]+$' "$WT/WORKER_TASK.md"
+  grep -qx 'worker_id: worker:feat/7-a-thing#s2-100' "$WT/WORKER_TASK.md"
   grep -qx 'the original body' "$WT/WORKER_TASK.md"
   grep -qx 'title: a thing' "$WT/WORKER_TASK.md"
 }

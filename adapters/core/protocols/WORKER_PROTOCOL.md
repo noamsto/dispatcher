@@ -10,11 +10,6 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), and `worker_id:` (your bus identity). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup.
 
-If `resume: true` is set, this session is a continuation: your `worker_id:` was
-rewritten when you were resumed, so re-read it from this file rather than
-reusing one you remember from earlier in the conversation. Post your status
-under the current value.
-
 Announce yourself:
 `crew status "$CREW_WORKER_ID" working`
 Use `$CREW_WORKER_ID` as your agent id for every bus call below — it is exported into your environment by `dispatch` and identifies **this session**, not just this branch. Never rebuild it from the branch name: several sessions can have run on this branch, and a branch-keyed id let one session drain a directive that was written for another.

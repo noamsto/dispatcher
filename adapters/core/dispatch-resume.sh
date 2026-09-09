@@ -137,6 +137,7 @@ missing=""
 [ -n "$model" ] || missing="${missing:+$missing }model"
 [ -n "$effort" ] || missing="${missing:+$missing }effort"
 [ -n "$crew_id" ] || missing="${missing:+$missing }crew_id"
+[ -n "$tier" ] || missing="${missing:+$missing }tier"
 [ -z "$missing" ] || {
   echo "dispatch resume: $task_doc header is missing: $missing — pass --agent/--model/--effort explicitly, or re-dispatch this branch." >&2
   exit 1
@@ -150,12 +151,43 @@ claude | codex | cursor) ;;
   ;;
 esac
 
+case "$tier" in
+trivial | standard | deep) ;;
+*)
+  echo "dispatch resume: unknown tier '$tier' in the task header — expected trivial, standard or deep" >&2
+  exit 1
+  ;;
+esac
+
 # mcp is claude-only, and this is the one gate the precheck below cannot make:
 # passing --mcp there would have dispatch resolve and validate the config file
 # too, which Task 6 must do anyway to build the launch flag.
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   echo "dispatch resume: mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
   exit 1
+fi
+
+profile="${DISPATCH_PROFILE:-personal}"
+
+mcp_arg=""
+if [ -n "$mcp_profile" ]; then
+  case "$mcp_profile" in
+  analytics) mcp_file="$HOME/.config/claude-code/mcp-posthog.json" ;;
+  *)
+    echo "dispatch resume: unknown mcp profile '$mcp_profile' (valid: analytics)" >&2
+    exit 1
+    ;;
+  esac
+  [ -f "$mcp_file" ] || {
+    echo "dispatch resume: mcp $mcp_profile config not found at $mcp_file" >&2
+    exit 1
+  }
+  mcp_arg="--mcp-config $mcp_file"
+fi
+
+xreview_mcp=""
+if [ "$profile" = work ] && [ "$agent" = claude ] && [ "$tier" = deep ]; then
+  xreview_mcp="--mcp-config $HOME/.config/claude-code/mcp-codex.json"
 fi
 
 # Every other pre-scaffold gate is dispatch's, run through its precheck exit
@@ -257,7 +289,6 @@ tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobo
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 kind="$(_hdr kind)"
 plan_val="$(_hdr plan)"
-profile="${DISPATCH_PROFILE:-personal}"
 
 # Session identity. A resume gets a NEW session id and therefore a new
 # worker_id: the pane, the watchdog and the bus rows are all new even when the
@@ -360,27 +391,6 @@ if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi
 
-mcp_arg=""
-if [ -n "$mcp_profile" ]; then
-  case "$mcp_profile" in
-  analytics) mcp_file="$HOME/.config/claude-code/mcp-posthog.json" ;;
-  *)
-    echo "dispatch resume: unknown mcp profile '$mcp_profile' (valid: analytics)" >&2
-    exit 1
-    ;;
-  esac
-  [ -f "$mcp_file" ] || {
-    echo "dispatch resume: mcp $mcp_profile config not found at $mcp_file" >&2
-    exit 1
-  }
-  mcp_arg="--mcp-config $mcp_file"
-fi
-
-xreview_mcp=""
-if [ "$profile" = work ] && [ "$agent" = claude ] && [ "$tier" = deep ]; then
-  xreview_mcp="--mcp-config $HOME/.config/claude-code/mcp-codex.json"
-fi
-
 # Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
 # stamp process-authority into every execute-subagent prompt so a fresh subagent
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
@@ -412,12 +422,12 @@ if [ "$agent" = codex ]; then
   cont="resume --last"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""
@@ -425,7 +435,7 @@ else
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
   tmux send-keys -t "$pane" \
-    "claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}'" Enter
 fi
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
