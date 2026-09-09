@@ -332,6 +332,23 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
 }
 
+@test "DISPATCH_PRECHECK runs every gate and exits before any scaffolding" {
+  # Same fixture as the mint-and-claim test below, so the flow it exercises
+  # really would reach `gh issue create`, `gh issue edit`, `crew reap` and
+  # `tmux new-window` if the precheck exit didn't sit above all of them —
+  # every one of those is stubbed here, so a real invocation of any of them
+  # lands in $STUB_LOG. Assert the file was never even created: none of
+  # `gh`, `wt`, `tmux`, `crew` ran, which is a strict superset of "none of the
+  # four specific calls ran" and, unlike a `grep` on a maybe-absent file,
+  # can't be defeated by bash's errexit skipping a negated command.
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  [ ! -f "$STUB_LOG" ]
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
 @test "no launch string references nix-config" {
   run grep -c 'nix-config' "$DISPATCH"
   [ "$output" = "0" ]

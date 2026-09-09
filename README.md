@@ -251,6 +251,17 @@ dispatch --crew-id <id> deep opus --effort high --agent codex "redesign the expo
 dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the flag"
 ```
 
+Resuming a worker, from inside its own worktree — reads the engine, model,
+effort and crew back from `WORKER_TASK.md` and continues the engine's own
+session:
+
+```bash
+dispatch resume                     # continue this worktree's worker
+dispatch resume --print             # show what a resume would launch
+dispatch resume --fresh             # relaunch without the prior conversation
+dispatch resume the review comments are the priority
+```
+
 Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
 `/project-autopilot` (namespaced `/dispatcher:*` on Claude Code and Codex).
 
