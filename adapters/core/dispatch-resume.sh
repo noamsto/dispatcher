@@ -179,6 +179,19 @@ done <<PANES
 $(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
 PANES
 
+# --print is a dry run: report the placement the lookup above already found
+# and stop before anything below opens a window or restyles a pane. On the
+# create path there is no window or pane id yet, so those report as "-" and
+# placement: create carries the meaning.
+if [ -n "$do_print" ]; then
+  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\nwindow: %s\npane: %s\nplacement: %s\n' \
+    "$branch" "$wt_path" "$agent" "$model" "$effort" "$mcp_profile" \
+    "$tier" "$crew_id" "$agent_name" "$prev_worker_id" \
+    "$([ -n "$fresh" ] && echo false || echo true)" \
+    "${win:--}" "${pane:--}" "$([ -n "$reused" ] && echo reuse || echo create)"
+  exit 0
+fi
+
 if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
   # Same client-geometry handling as dispatch: a detached new-window otherwise
@@ -208,11 +221,6 @@ if [ -z "$pane" ]; then
   fi
 fi
 
-if [ -z "$pane" ]; then
-  echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
-  exit 1
-fi
-
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
 # and a reused worker window may have been renamed since.
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
@@ -222,11 +230,7 @@ tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_colo
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
 tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
 
-if [ -n "$do_print" ]; then
-  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\nwindow: %s\npane: %s\nplacement: %s\n' \
-    "$branch" "$wt_path" "$agent" "$model" "$effort" "$mcp_profile" \
-    "$tier" "$crew_id" "$agent_name" "$prev_worker_id" \
-    "$([ -n "$fresh" ] && echo false || echo true)" \
-    "$win" "$pane" "$([ -n "$reused" ] && echo reuse || echo create)"
-  exit 0
+if [ -z "$pane" ]; then
+  echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
+  exit 1
 fi

@@ -152,21 +152,32 @@ EOF
 
 @test "--print reports a fresh window when nothing sits at the worktree" {
   setup_worker_wt
-  cat >"$STUB_DIR/tmux" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-case "$1" in
-list-panes) : ;;
-new-window) printf '%s %s\n' '%99' '%99' ;;
-display-message) printf '%s\n' '80 24 on' ;;
-esac
-exit 0
-EOF
-  chmod +x "$STUB_DIR/tmux"
   cd "$WT"
   run run_resume --print
   [ "$status" -eq 0 ]
   [[ "$output" == *"placement: create"* ]]
+  [[ "$output" == *"window: -"* ]]
+  [[ "$output" == *"pane: -"* ]]
+}
+
+@test "--print on the create path opens no window and stamps nothing" {
+  setup_worker_wt
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  run cat "$STUB_LOG"
+  [[ "$output" != *new-window* ]]
+  [[ "$output" != *set-window-option* ]]
+}
+
+@test "--print on the reuse path stamps nothing" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  run cat "$STUB_LOG"
+  [[ "$output" != *set-window-option* ]]
 }
 
 @test "creating a window stamps the crew identity on it" {
