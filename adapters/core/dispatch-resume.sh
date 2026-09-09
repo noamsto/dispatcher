@@ -157,10 +157,76 @@ claude | codex | cursor) ;;
   ;;
 esac
 
+# Placement. dispatch always opens a fresh window and refuses when anything
+# already sits at the worktree — including a pane with an empty @crew_name,
+# i.e. a human in a plain shell, which is exactly whoever runs this command.
+# Inheriting that would refuse the primary use case, so resume reuses the pane
+# that is already there and gives up the anti-stacking refusal in trade.
+#
+# Keyed on pane_current_path, not the window name: lazytmux renames worker
+# windows, so the name dispatch assigned is long gone by now.
+win=""
+pane=""
+reused=""
+while IFS=$'\t' read -r cand_win cand_pane cand_path _cand_name; do
+  [ -n "$cand_win" ] || continue
+  [ "$cand_path" = "$wt_path" ] || continue
+  win="$cand_win"
+  pane="$cand_pane"
+  reused=1
+  break
+done <<PANES
+$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
+PANES
+
+if [ -z "$pane" ]; then
+  sanitized="${branch//\//-}"
+  # Same client-geometry handling as dispatch: a detached new-window otherwise
+  # inherits tmux's fallback size, and codex's startup banner never redraws.
+  client_target=()
+  [ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
+  client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
+  client_width=""
+  client_height=""
+  if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
+    client_width="${BASH_REMATCH[1]}"
+    client_height="${BASH_REMATCH[2]}"
+    case "${BASH_REMATCH[3]}" in
+    off) status_rows=0 ;;
+    on) status_rows=1 ;;
+    *) status_rows="${BASH_REMATCH[3]}" ;;
+    esac
+    client_height=$((client_height - status_rows))
+    if ((client_height <= 0)); then
+      client_width=""
+      client_height=""
+    fi
+  fi
+  read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+  if [ -n "$client_width" ]; then
+    tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
+  fi
+fi
+
+if [ -z "$pane" ]; then
+  echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
+  exit 1
+fi
+
+# Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
+# and a reused worker window may have been renamed since.
+agent_color="$(crew identity "$branch" | jq -r .tmux)"
+tmux set-window-option -t "$win" @crew_name "$agent_name"
+tmux set-window-option -t "$win" @crew_color "$agent_color"
+tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
+tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
+tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+
 if [ -n "$do_print" ]; then
-  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\n' \
+  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\nwindow: %s\npane: %s\nplacement: %s\n' \
     "$branch" "$wt_path" "$agent" "$model" "$effort" "$mcp_profile" \
     "$tier" "$crew_id" "$agent_name" "$prev_worker_id" \
-    "$([ -n "$fresh" ] && echo false || echo true)"
+    "$([ -n "$fresh" ] && echo false || echo true)" \
+    "$win" "$pane" "$([ -n "$reused" ] && echo reuse || echo create)"
   exit 0
 fi

@@ -5,7 +5,7 @@ setup() {
   setup_repo
   export HOME="$TEST_REPO"
   unset DISPATCH_PROFILE CREW_ID TMUX_PANE
-  stub_bin tmux
+  stub_tmux_no_pane
   stub_bin crew
   stub_bin gh
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
@@ -13,6 +13,24 @@ setup() {
 }
 
 teardown() { teardown_repo; }
+
+# Default tmux stub: no pane sits at the worktree, so placement resolution
+# takes the create-a-window path. Individual tests override $STUB_DIR/tmux
+# when they need the reuse path instead.
+stub_tmux_no_pane() {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-panes) : ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
 
 # A worktree that looks like a live worker's: its own branch, its own
 # directory, and a task document with a full header.
@@ -94,4 +112,88 @@ setup_worker_wt() { # [extra header lines...]
   run run_resume --print
   [ "$status" -eq 0 ]
   [ "$(md5sum <"$WT/WORKER_TASK.md")" = "$before" ]
+}
+
+# tmux stub that reports one pane sitting at $WT, so the reuse path fires.
+stub_tmux_with_pane_at_wt() { # $1=window id  $2=pane id  $3=@crew_name value
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+list-panes) printf '%s\t%s\t%s\t%s\n' '$1' '$2' '$WT' '$3' ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "--print names the existing pane at the worktree" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"window: @4"* ]]
+  [[ "$output" == *"pane: %8"* ]]
+  [[ "$output" == *"placement: reuse"* ]]
+}
+
+@test "--print reuses a pane with no worker identity (a human sitting there)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' ''
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pane: %8"* ]]
+  [[ "$output" == *"placement: reuse"* ]]
+}
+
+@test "--print reports a fresh window when nothing sits at the worktree" {
+  setup_worker_wt
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-panes) : ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"placement: create"* ]]
+}
+
+@test "creating a window stamps the crew identity on it" {
+  setup_worker_wt
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-panes) : ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'set-window-option -t %99 @crew_name iris' "$STUB_LOG"
+}
+
+@test "reusing a pane does not open a window" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -c new-window "$STUB_LOG"
+  [ "$status" -ne 0 ]
 }
