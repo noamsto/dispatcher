@@ -25,6 +25,19 @@ EOF
 
 teardown() { teardown_repo; }
 
+# wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
+# stub (the nohup'd stall-watch). Fails the test after ~2s.
+wait_for_log() {
+  local i
+  for i in $(seq 1 40); do
+    grep -qE "$1" "$STUB_LOG" && return 0
+    sleep 0.05
+  done
+  echo "wait_for_log: never saw '$1' in $STUB_LOG" >&2
+  cat "$STUB_LOG" >&2
+  return 1
+}
+
 # Default tmux stub: no pane sits at the worktree, so placement resolution
 # takes the create-a-window path. Individual tests override $STUB_DIR/tmux
 # when they need the reuse path instead.
@@ -349,4 +362,98 @@ EOF
   [ "$status" -eq 0 ]
   run grep -c "send-keys.*'.*'.*'" "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
+
+@test "writes a resume row naming both worker identities" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  row="$(jq -c 'select(.kind == "resume")' "$(bus_log)" | tail -1)"
+  [ "$(jq -r .crew_id <<<"$row")" = c1 ]
+  [ "$(jq -r .branch <<<"$row")" = feat/7-a-thing ]
+  [ "$(jq -r .prev_worker_id <<<"$row")" = 'worker:feat/7-a-thing#s1-99' ]
+  [ "$(jq -r .continued <<<"$row")" = true ]
+  [ "$(jq -r .engine <<<"$row")" = claude ]
+}
+
+@test "--fresh records continued false" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --fresh
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = false ]
+}
+
+@test "posts a working status under the NEW worker id" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qE "status worker:feat/7-a-thing#s[0-9]+-[0-9]+ working resumed" "$STUB_LOG"
+}
+
+@test "updates worker_id in the task doc and leaves the body alone" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  ! grep -q 'worker_id: worker:feat/7-a-thing#s1-99' "$WT/WORKER_TASK.md"
+  grep -qE '^worker_id: worker:feat/7-a-thing#s[0-9]+-[0-9]+$' "$WT/WORKER_TASK.md"
+  grep -qx 'the original body' "$WT/WORKER_TASK.md"
+  grep -qx 'title: a thing' "$WT/WORKER_TASK.md"
+}
+
+@test "runs solo when the crew has no registered dispatcher" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"solo"* ]]
+  run grep -c 'crew msg' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
+}
+
+@test "reattaches to a live dispatcher: retargets the pane and messages it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '%s\n' "$$" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  grep -qx 'dispatcher_pane: %77' "$WT/WORKER_TASK.md"
+  grep -q 'msg .* dispatcher:c1' "$STUB_LOG"
+}
+
+@test "runs solo when the registered dispatcher pid is dead" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '999999999\n' >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"solo"* ]]
+  grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
+}
+
+@test "re-arms the stall watchdog on the resumed pane" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
 }

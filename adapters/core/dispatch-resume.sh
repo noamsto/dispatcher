@@ -265,6 +265,77 @@ profile="${DISPATCH_PROFILE:-personal}"
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+mkdir -p "$crew_dir"
+
+# crew.sh's atomic-append helper, duplicated for the same reason dispatch.sh
+# duplicates it: this file builds as its own writeShellApplication with no
+# shared lib, and a bare `printf >>` is not one write(2) (#55, #61).
+_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
+
+# Dispatcher liveness. `crew register` writes the pid, and `crew deregister`
+# removes the whole directory on a clean exit — so absent means gone, a dead
+# pid means it crashed, and only a live pid is a dispatcher still watching.
+# A resume never mints or adopts a crew: it keeps posting under the crew_id in
+# the task document, which is what `crew adopt` is for on the other side.
+dispatcher_live=""
+dispatcher_pane_new=""
+cdir="$crew_dir/crews/$crew_id"
+if [ -d "$cdir" ]; then
+  epid="$(cat "$cdir/pid" 2>/dev/null || true)"
+  case "$epid" in
+  '' | *[!0-9]* | 0) ;;
+  *)
+    if kill -0 "$epid" 2>/dev/null; then
+      dispatcher_live=1
+      dispatcher_pane_new="$(cat "$cdir/pane" 2>/dev/null || true)"
+    fi
+    ;;
+  esac
+fi
+
+# Rewrite exactly two header lines in place, never the whole document: the
+# worker may have been handed a spec, and this header is the record we just
+# read. worker_id MUST move — it carries the session, so leaving the old one
+# would have the worker post under a dead bus identity.
+_hdr_set() { # $1=field  $2=value
+  awk -v f="$1" -v v="$2" '
+    !done && $0 ~ "^" f ": " { print f ": " v; done = 1; next }
+    { print }
+  ' "$task_doc" >"$task_doc.tmp" && mv "$task_doc.tmp" "$task_doc"
+}
+_hdr_set worker_id "$worker_id"
+if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
+  _hdr_set dispatcher_pane "$dispatcher_pane_new"
+fi
+
+# The resume row. New kind: without it a worker resumed four times reports as
+# one run, and the ratings rollup attributes the whole cost and latency to a
+# single session. prev_worker_id is what chains the sessions back together.
+line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
+  --arg worker "$worker_id" --arg prev "$prev_worker_id" \
+  --arg engine "$agent" --arg model "$model" --arg session "$session" \
+  --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
+     worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
+     session:$session, continued:$continued}')
+_bus_append "$crew_dir/events.jsonl" "$line"
+
+# Clears a stale exited/failed/done roster row so the crew reads as live again.
+CREW_ID="$crew_id" crew status "$worker_id" working resumed || true
+
+# A live dispatcher is told, deliberately. `crew watch` wakes on a message to
+# the dispatcher but its default --states exclude `working`, so a status post
+# alone would leave a dispatcher that wrote this worker off as failed still
+# believing it dead — and free to re-dispatch the task onto this branch.
+if [ -n "$dispatcher_live" ]; then
+  CREW_ID="$crew_id" crew msg "$worker_id" "dispatcher:$crew_id" \
+    "resumed on $branch (engine $agent, model $model) — this worker is live again, do not re-dispatch it" || true
+  echo "dispatcher: reattached to live crew $crew_id"
+else
+  echo "dispatcher: none live for crew $crew_id — running solo (a later dispatcher can 'crew adopt $crew_id')"
+fi
+
 # The reorient prompt. dispatch's own resume_note sends a worker to SPEC.md and
 # PLAN.md because it has no transcript to stand on; with the conversation
 # restored the risk inverts, and the danger is trusting a stale last plan and
@@ -331,3 +402,7 @@ else
 fi
 
 echo "worker_id: $worker_id"
+
+# Re-arm the stall watchdog: the original self-exited when it saw the terminal
+# state, and a resumed worker can wedge exactly the same way.
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &
