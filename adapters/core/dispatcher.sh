@@ -140,9 +140,12 @@ fi
 
 case "$agent" in
 claude)
-  set -- --name "$session_name" --append-system-prompt-file "$protocol"
-  [ -n "$model" ] && set -- "$@" --model "$model"
-  [ -n "$effort" ] && set -- "$@" --effort "$effort"
+  # Pinned, not inherited: /model and /effort persist across sessions, so an
+  # unpinned dispatcher judges tier+engine+model on whatever the last cheap
+  # session was toggled to. high, not xhigh — same reason codex holds at high
+  # below: blocked workers wait on a bounded ~300s in-band window.
+  set -- --name "$session_name" --append-system-prompt-file "$protocol" \
+    --model "${model:-opus}" --effort "${effort:-high}"
   claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
