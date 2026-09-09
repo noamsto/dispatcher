@@ -2109,3 +2109,22 @@ EOF
   [[ "$output" == *"No bus row carries its original title"* ]]
   grep -q 'new-window' "$STUB_LOG"
 }
+
+@test "stamps the mcp profile in the task header" {
+  stub_launch_bins
+  export DISPATCH_PROFILE=work
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{}' >"$HOME/.config/claude-code/mcp-posthog.json"
+  run run_dispatch standard sonnet --effort medium --mcp analytics --crew-id c1 42 "add a flag"
+  [ "$status" -eq 0 ]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qx 'mcp: analytics' "$doc"
+}
+
+@test "stamps an empty mcp line when no profile was given" {
+  stub_launch_bins
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "add a flag"
+  [ "$status" -eq 0 ]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qE '^mcp: ?$' "$doc"
+}
