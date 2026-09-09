@@ -222,3 +222,13 @@ setup() {
   [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
 }
+
+@test "the review gate names the engines that skip it" {
+  # The protocol ships byte-identical into the codex tree, so the exclusion has
+  # to be inline — a codex worker has no other doc telling it the gate is unreachable.
+  for tree in core claude-code/plugin codex/plugin; do
+    run grep -F '**Engine scope — claude only, and the skip is not a failure.**' \
+      "$ROOT/adapters/$tree/protocols/WORKER_PROTOCOL.md"
+    [ "$status" -eq 0 ]
+  done
+}
