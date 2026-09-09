@@ -863,7 +863,7 @@ The spec requires a resume to re-run the profile, effort-ceiling, model-shape an
 **Interfaces:**
 
 - Consumes: `agent`, `model`, `effort`, `tier`, `crew_id`, `mcp_profile`, `model_flag`, `ignore_budget`, `ignore_map` from Task 3.
-- Produces: `profile` (resolved `$DISPATCH_PROFILE`, default `personal`), used by Task 6's `xreview_mcp`.
+- Produces: nothing new. It does NOT declare `profile` — nothing here reads it, so assigning it would fail the build on SC2034; Task 6 declares it where `xreview_mcp` reads it.
 
 Insert resume's part **before** Task 4's placement block, so a refusal costs no window.
 
@@ -975,8 +975,6 @@ fi
 Insert into `adapters/core/dispatch-resume.sh`, after the engine validation from Task 3:
 
 ```bash
-profile="${DISPATCH_PROFILE:-personal}"
-
 # mcp is claude-only, and this is the one gate the precheck below cannot make:
 # passing --mcp there would have dispatch resolve and validate the config file
 # too, which Task 6 must do anyway to build the launch flag.
@@ -1004,12 +1002,22 @@ fi
 DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Retire the two SC2034 waivers this task makes obsolete**
+
+`ignore_budget` and `ignore_map` carry `# shellcheck disable=SC2034` waivers
+from Task 3, because nothing read them yet. This task reads both when it builds
+the `precheck` array, so **delete both waivers** and trim the file-header
+paragraph that explains them — it should no longer describe any waiver, because
+none remains. The build is the check: `nix build --no-link .#dispatch-resume`
+fails on an unused disable only if shellcheck grows that diagnostic, so removing
+them is a judgement you make from the code, not something a tool will prompt.
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `bats tests/dispatch-resume.bats`
 Expected: all PASS.
 
-- [ ] **Step 6: Confirm the precheck really is side-effect free**
+- [ ] **Step 7: Confirm the precheck really is side-effect free**
 
 Run: `bats tests/dispatch.bats`
 Expected: all PASS — nothing above the new exit changed.
@@ -1022,7 +1030,7 @@ grep -n '_ensure_dispatched_label$\|crew reap\|^slug=' adapters/core/dispatch.sh
 
 Expected: every hit is at a line number **greater** than the line you inserted the exit at. If any is smaller, the exit is in the wrong place — move it up.
 
-- [ ] **Step 7: Lint, format, full suite**
+- [ ] **Step 8: Lint, format, build**
 
 Run: `shellcheck adapters/core/dispatch-resume.sh adapters/core/dispatch.sh`
 Expected: no output.
@@ -1148,6 +1156,7 @@ silencing a checker. They land here, with their reader.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 kind="$(_hdr kind)"
 plan_val="$(_hdr plan)"
+profile="${DISPATCH_PROFILE:-personal}"
 
 # Session identity. A resume gets a NEW session id and therefore a new
 # worker_id: the pane, the watchdog and the bus rows are all new even when the
