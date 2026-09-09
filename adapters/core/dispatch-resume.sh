@@ -221,6 +221,11 @@ if [ -z "$pane" ]; then
   fi
 fi
 
+if [ -z "$pane" ]; then
+  echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
+  exit 1
+fi
+
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
 # and a reused worker window may have been renamed since.
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
@@ -229,8 +234,3 @@ tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
 tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
-
-if [ -z "$pane" ]; then
-  echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
-  exit 1
-fi
