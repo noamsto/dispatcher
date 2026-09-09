@@ -151,6 +151,15 @@ the plan/spec critics — claude-only, so they emit `plan_critic_first_pass: nul
 — but still run the code-review gate on `standard`/`deep` like any other
 engine, with a real `review_high` and `review_mode`.
 
+**One roster, spawned three ways.** What each reviewer _is_ ships with the
+harness: `adapters/core/reviewers/` holds eleven engine-neutral bodies — Go,
+Python, TypeScript, shell, Nix, YAML, Terraform, SQLite, Postgres, Bubble Tea,
+security — whose `globs:` frontmatter routes a diff to the ones that apply.
+A worker resolves them through `DISPATCHER_REVIEWERS_DIR` (or its plugin-local
+copy) and hands the matched body to whatever spawn its engine has: a named
+agent on claude, an inline role brief on codex and cursor. Nothing about the
+review depends on agent definitions that live outside the repo.
+
 ---
 
 ## Install
@@ -327,7 +336,8 @@ adapters/
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher
 │   ├── protocols/           DISPATCHER · WORKER · orchestration
-│   └── commands/            shared bodies, projected per engine
+│   ├── commands/            shared bodies, projected per engine
+│   └── reviewers/           engine-neutral reviewer roster, glob-routed
 ├── claude-code/plugin/      commands · agents · skills · workflows · hooks
 ├── codex/plugin/            skills · hooks   (no agents/workflows: unsupported)
 └── cursor/                  rules · commands · scripts (no plugin format)

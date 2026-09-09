@@ -49,6 +49,9 @@ in {
         # copy as the fallback when this is unset (a non-Nix install). Override
         # it in your shell to iterate on a checkout without rebuilding.
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
+        # Cursor has no plugin tree to fall back to, so for a cursor worker
+        # this is the only path to the roster that resolves.
+        DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
       };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc

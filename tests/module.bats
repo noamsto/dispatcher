@@ -105,7 +105,7 @@ nix_eval() {
       c = applied.config.content;
     in
       builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}\"
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}\"
   "
   [ "$status" -eq 0 ]
   # Assert the wiring, not the flavour of path it resolves to: whether `self`
@@ -117,7 +117,7 @@ nix_eval() {
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
   [[ "$output" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
-  [[ "$output" == */adapters/core/protocols ]]
+  [[ "$output" == */adapters/core/protocols\|*/adapters/core/reviewers ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {
