@@ -115,8 +115,19 @@
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
+          };
+
+          # `dispatch` is deliberately NOT in runtimeInputs: dispatch lists
+          # dispatch-resume (for the exec below), so naming it here would be an
+          # infinite recursion at eval time. Task 5 calls `dispatch` for its
+          # gate precheck and resolves it from the ambient PATH, the same way
+          # dispatch leaves `wt` ambient.
+          dispatch-resume = pkgs.writeShellApplication {
+            name = "dispatch-resume";
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
           };
 
           dispatcher = pkgs.writeShellApplication {
@@ -145,7 +156,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher refresh-scores refresh-budget refresh-models pr-watch];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch];
           };
         };
 

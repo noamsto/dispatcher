@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -27,6 +27,15 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+
+# `dispatch resume` is its own binary — resume skips the issue claim, branch
+# creation, task-document rewrite and new-window paths this file is built
+# around. Intercepted here so the subcommand reads as part of dispatch, and
+# before the positional tier parse below, which would reject it as a tier.
+if [ "${1:-}" = resume ]; then
+  shift
+  exec dispatch-resume "$@"
+fi
 
 tier="${1:-}"
 model="${2:-}"
