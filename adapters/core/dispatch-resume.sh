@@ -253,3 +253,81 @@ tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
 tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+
+PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+kind="$(_hdr kind)"
+plan_val="$(_hdr plan)"
+profile="${DISPATCH_PROFILE:-personal}"
+
+# Session identity. A resume gets a NEW session id and therefore a new
+# worker_id: the pane, the watchdog and the bus rows are all new even when the
+# conversation is not. dispatch.sh:832 owns the same shape.
+session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
+worker_id="worker:$branch#$session"
+
+# The reorient prompt. dispatch's own resume_note sends a worker to SPEC.md and
+# PLAN.md because it has no transcript to stand on; with the conversation
+# restored the risk inverts, and the danger is trusting a stale last plan and
+# redoing finished work. --fresh keeps dispatch's wording, since a fresh launch
+# is exactly the no-transcript case that note was written for.
+# No apostrophes anywhere in these strings.
+if [ -n "$fresh" ]; then
+  reorient=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
+else
+  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust your transcript's last plan as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one."
+fi
+reorient="${reorient//\'/}"
+[ -n "$extra" ] && reorient="$reorient ${extra//\'/}"
+
+plan_note=""
+if [ "$plan_val" = provided ]; then
+  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+fi
+
+push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" = review ]; then
+  push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
+fi
+
+mcp_arg=""
+if [ -n "$mcp_profile" ]; then
+  case "$mcp_profile" in
+  analytics) mcp_file="$HOME/.config/claude-code/mcp-posthog.json" ;;
+  *)
+    echo "dispatch resume: unknown mcp profile '$mcp_profile' (valid: analytics)" >&2
+    exit 1
+    ;;
+  esac
+  [ -f "$mcp_file" ] || {
+    echo "dispatch resume: mcp $mcp_profile config not found at $mcp_file" >&2
+    exit 1
+  }
+  mcp_arg="--mcp-config $mcp_file"
+fi
+
+xreview_mcp=""
+if [ "$profile" = work ] && [ "$agent" = claude ] && [ "$tier" = deep ]; then
+  xreview_mcp="--mcp-config $HOME/.config/claude-code/mcp-codex.json"
+fi
+
+if [ "$agent" = codex ]; then
+  cont="resume --last"
+  [ -n "$fresh" ] && cont=""
+  tmux send-keys -t "$pane" \
+    "codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}'" Enter
+elif [ "$agent" = cursor ]; then
+  cont="--continue"
+  [ -n "$fresh" ] && cont=""
+  tmux send-keys -t "$pane" \
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}'" Enter
+else
+  cont="--continue"
+  [ -n "$fresh" ] && cont=""
+  # Re-passing --append-system-prompt-file matters on a continue: it forces
+  # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
+  # than replayed from the conversation's recorded prompt.
+  tmux send-keys -t "$pane" \
+    "claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}'" Enter
+fi
+
+echo "worker_id: $worker_id"

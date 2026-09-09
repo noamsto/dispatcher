@@ -21,6 +21,12 @@ setup() {
   [ "$output" = "0" ]
 }
 
+@test "the protocol placeholder is substituted in dispatch-resume" {
+  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch-resume")"
+  run grep -c '@protocolDir@' "$out/bin/dispatch-resume"
+  [ "$output" = "0" ]
+}
+
 @test "the substituted protocol dir actually contains the protocols" {
   # A substituted-but-wrong path would leave every dispatched worker unable to
   # find its protocol, and nothing else would notice until a live run.

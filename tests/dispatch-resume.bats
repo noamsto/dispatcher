@@ -278,3 +278,75 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"claude-only"* ]]
 }
+
+@test "claude resume launches with --continue and the recorded tuple" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8 claude --continue' "$STUB_LOG"
+  grep -q -- '--model sonnet' "$STUB_LOG"
+  grep -q -- '--effort medium' "$STUB_LOG"
+  grep -q -- '--append-system-prompt-file /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
+}
+
+@test "--fresh drops the continue flag" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --fresh
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8 claude ' "$STUB_LOG"
+  run grep -c -- '--continue' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "codex resume launches resume --last" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'codex resume --last' "$STUB_LOG"
+  grep -q -- '--profile worker' "$STUB_LOG"
+}
+
+@test "cursor resume launches with --continue" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: cursor/' -e 's/^model: sonnet/model: composer-2.5/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'cursor-agent --continue' "$STUB_LOG"
+}
+
+@test "the reorient prompt tells the worker not to trust its last plan" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'do not trust your transcript' "$STUB_LOG"
+}
+
+@test "trailing arguments are appended to the prompt" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume the review comments are the priority
+  [ "$status" -eq 0 ]
+  grep -q 'the review comments are the priority' "$STUB_LOG"
+}
+
+@test "no launch string contains an apostrophe" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -c "send-keys.*'.*'.*'" "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
