@@ -376,7 +376,7 @@ fi
 if [ -n "$fresh" ]; then
   reorient=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
 else
-  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one."
+  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one. Your transcript contains bus calls made under a worker id that is now retired: read \$CREW_WORKER_ID from your environment for every bus call rather than copying an id forward from an earlier call."
 fi
 reorient="${reorient//\'/}"
 [ -n "$extra" ] && reorient="$reorient ${extra//\'/}"
