@@ -329,7 +329,7 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'do not trust your transcript' "$STUB_LOG"
+  grep -q 'do not trust the last plan in your transcript' "$STUB_LOG"
 }
 
 @test "trailing arguments are appended to the prompt" {
