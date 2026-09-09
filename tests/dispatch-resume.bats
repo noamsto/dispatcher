@@ -8,6 +8,17 @@ setup() {
   stub_tmux_no_pane
   stub_bin crew
   stub_bin gh
+  cat >"$STUB_DIR/dispatch" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+[ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
+[ -z "${STUB_PRECHECK_FAIL:-}" ] || {
+  echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
+  exit 1
+}
+exit 0
+EOF
+  chmod +x "$STUB_DIR/dispatch"
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
   git commit --allow-empty -qm init
 }
@@ -207,4 +218,63 @@ EOF
   [ "$status" -eq 0 ]
   run grep -c new-window "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+@test "runs the dispatch precheck with the recorded tuple" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qE 'standard sonnet .*--effort medium' "$STUB_LOG"
+  grep -q -- '--agent claude' "$STUB_LOG"
+  grep -q -- '--crew-id c1' "$STUB_LOG"
+}
+
+@test "suppresses the tier-model map when no model was named" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q -- '--ignore-map' "$STUB_LOG"
+}
+
+@test "re-arms the tier-model map when --model is passed" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  run grep -c -- '--ignore-map' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "forwards --ignore-budget to the precheck" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --ignore-budget
+  [ "$status" -eq 0 ]
+  grep -q -- '--ignore-budget' "$STUB_LOG"
+}
+
+@test "a refused precheck aborts before any launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  STUB_PRECHECK_FAIL=1 run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ultra is codex-only"* ]]
+  run grep -c send-keys "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "refuses an mcp profile on a non-claude engine" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^mcp: $/mcp: analytics/' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude-only"* ]]
 }

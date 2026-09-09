@@ -7,11 +7,6 @@
 # issue claim, branch creation, task-document rewrite and new-window paths
 # entirely, and re-runs only the gates it names. The shebang and
 # `set -euo pipefail` are prepended by writeShellApplication.
-#
-# writeShellApplication runs shellcheck at build time and fails on a warning,
-# so ignore_budget and ignore_map — read only by the gates a later task adds —
-# carry an SC2034 waiver at their assignment. Drop the waiver when the reader
-# lands; do not widen it to the whole file.
 
 usage() {
   echo "usage: dispatch resume [--agent claude|codex|cursor] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
@@ -70,12 +65,10 @@ while [ $# -gt 0 ]; do
     shift
     ;;
   --ignore-budget)
-    # shellcheck disable=SC2034
     ignore_budget=1
     shift
     ;;
   --ignore-map)
-    # shellcheck disable=SC2034
     ignore_map=1
     shift
     ;;
@@ -156,6 +149,32 @@ claude | codex | cursor) ;;
   exit 1
   ;;
 esac
+
+# mcp is claude-only, and this is the one gate the precheck below cannot make:
+# passing --mcp there would have dispatch resolve and validate the config file
+# too, which Task 6 must do anyway to build the launch flag.
+if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
+  echo "dispatch resume: mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  exit 1
+fi
+
+# Every other pre-scaffold gate is dispatch's, run through its precheck exit
+# so there is exactly one copy of the profile, model-shape, effort-ceiling,
+# budget and rung rules. `dispatch` resolves from the ambient PATH: it lists
+# dispatch-resume in runtimeInputs for the `resume` exec, so naming it in ours
+# would be an eval-time cycle.
+command -v dispatch >/dev/null 2>&1 || {
+  echo "dispatch resume: dispatch is not on PATH — both are installed together by the home-manager module" >&2
+  exit 1
+}
+precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
+[ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
+# The tier↔model pair was adjudicated when this worker was first dispatched;
+# only an explicit --model is a fresh choice that deserves re-gating.
+if [ -z "$model_flag" ] || [ -n "$ignore_map" ]; then
+  precheck+=(--ignore-map)
+fi
+DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 
 # Placement. dispatch always opens a fresh window and refuses when anything
 # already sits at the worktree — including a pane with an empty @crew_name,

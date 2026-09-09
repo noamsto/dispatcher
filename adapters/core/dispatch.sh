@@ -509,6 +509,17 @@ title="$*"
   exit 1
 }
 
+# Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
+# are properties of now — profile, model shape, effort ceiling, quota, rung —
+# rather than re-deriving them in a second copy that would drift. Everything
+# above this point is pure validation: `_ensure_dispatched_label` and
+# `crew reap` are below, as is the first string of scaffolding, so exiting
+# here has no side effects. Resume suppresses the tier↔model gate for a pair
+# the first dispatch already accepted by passing the existing --ignore-map.
+if [ -n "${DISPATCH_PRECHECK:-}" ]; then
+  exit 0
+fi
+
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
