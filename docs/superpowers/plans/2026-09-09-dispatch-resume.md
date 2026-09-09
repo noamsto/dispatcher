@@ -1048,6 +1048,9 @@ Profile, model shape, effort ceiling, quota and rung are properties of now, so
 a resume re-runs them — through a DISPATCH_PRECHECK exit in dispatch rather
 than a second copy that would drift. The tier-model pair was adjudicated at
 first dispatch, so resume passes --ignore-map unless a model is named."
+```
+
+---
 
 ### Task 6: Launch — continue the engine's own session
 
