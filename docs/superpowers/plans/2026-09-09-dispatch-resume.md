@@ -798,6 +798,22 @@ tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$age
 tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
 ```
 
+**Ordering — the `--print` block moves.** The read-only pane lookup runs
+first; then `--print` reports and exits; and only a real run creates the window
+and stamps identity. Putting creation before the dry-run exit makes
+`dispatch resume --print` open a real tmux window when nothing sits at the
+worktree, and restyle whatever pane it found — including a human's shell — which
+contradicts what `--print` is for. So the file reads:
+
+1. read-only lookup of a pane whose `pane_current_path` is the worktree
+2. `if [ -n "$do_print" ]` → print and `exit 0`
+3. `tmux new-window` + `resize-window` when the lookup found nothing
+4. the `@crew_name` / `@crew_color` / border stamping
+5. the "could not resolve a pane" guard
+
+On the create path `--print` has no window or pane id to report yet, so it
+reports them as `-` and relies on `placement: create` to say what would happen.
+
 Then extend the `--print` block's printf — change its format string and arguments to add the three placement lines:
 
 ```bash
