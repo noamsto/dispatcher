@@ -52,6 +52,9 @@ setup() {
     adapters/codex/plugin/scripts
     adapters/claude-code/plugin/protocols
     adapters/codex/plugin/protocols
+    adapters/claude-code/plugin/reviewers
+    adapters/codex/plugin/reviewers
+    adapters/cursor/reviewers
   )
   "$ROOT/scripts/gen-adapters.sh" >/dev/null
   before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
@@ -125,7 +128,8 @@ setup() {
 # ~/.cursor/hooks.json stanza to name by store path.
 @test "the notify hook ships executable for cursor, beside the generated commands" {
   [ -x "$ROOT/adapters/cursor/scripts/dispatch-notify.sh" ]
-  cmp -s "$ROOT/adapters/core/dispatch-notify.sh" "$ROOT/adapters/cursor/scripts/dispatch-notify.sh"
+  run cmp -s "$ROOT/adapters/core/dispatch-notify.sh" "$ROOT/adapters/cursor/scripts/dispatch-notify.sh"
+  [ "$status" -eq 0 ]
 }
 
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
@@ -147,8 +151,10 @@ setup() {
 @test "every canonical protocol exactly matches both shipped protocol trees" {
   for source in "$ROOT"/adapters/core/protocols/*.md; do
     name="$(basename "$source")"
-    cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
-    cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
+    run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
+    [ "$status" -eq 0 ]
+    run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
+    [ "$status" -eq 0 ]
   done
 }
 
@@ -370,12 +376,12 @@ setup() {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
     '**This gate binds on every engine**: the roles below are engine-neutral, and only the spawn mechanism differs.' \
-    '| **claude** | Agent tool, the named `*-reviewer` agent matching the diff' \
-    'a general agent running the `find-bugs` skill when none fits | unchanged — each agent definition owns its model |' \
-    '| **codex** | native subagent (`agents.enabled`, cap 3) with the role brief written into its prompt — codex has no named-agent registry, so the brief **is** the prompt. Rule 1'"'"'s `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort |' \
+    '| **claude** | Agent tool, one subagent per matched roster entry, its body as the brief' \
+    'Nothing matched: one general reviewer running the `find-bugs` skill.' \
+    '| **codex** | native subagent (`agents.enabled`, cap 3) with the matched roster body written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt. Rule 1'"'"'s `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort |' \
     'The exemption covers the **diverse** reviewer only: the same-engine language reviewer and test-runner still run, and having **no** reviewer at all is the terminal path below' \
     'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
-    '| **cursor** | Task-tool subagent with an explicit model slug, same inline role brief |' \
+    '| **cursor** | Task-tool subagent with an explicit model slug, the same roster body inline |' \
     'slug (deep → `cursor-grok-4.6-medium`, standard → `cursor-grok-4.6-low`) |' \
     'Cap the review→fix loop at 2.'; do
     run grep -F "$statement" "$protocol"
@@ -458,4 +464,60 @@ setup() {
   [ "$status" -ne 0 ]
   run grep -F 'review_high: null' "$rule"
   [ "$status" -ne 0 ]
+}
+
+@test "the reviewer roster ships verbatim into every adapter" {
+  for source in "$ROOT"/adapters/core/reviewers/*.md; do
+    name="$(basename "$source")"
+    for tree in claude-code/plugin codex/plugin cursor; do
+      run cmp -s "$source" "$ROOT/adapters/$tree/reviewers/$name"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "every reviewer carries a routable frontmatter" {
+  # A reviewer with neither globs nor when is unreachable: the gate routes by
+  # matching changed paths against globs, and falls back to when for the
+  # triggers no pattern can express (security).
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$status" -eq 0 ]
+    routable="$(yq -r '((.globs // []) | length > 0) or (.when != null)' "$BATS_TEST_TMPDIR/fm.yaml")"
+    [ "$routable" = "true" ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$(basename "$f" .md)" ]
+  done
+}
+
+@test "the roster covers the languages this repo and its workers actually ship" {
+  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer; do
+    [ -f "$ROOT/adapters/core/reviewers/$n.md" ]
+  done
+}
+
+@test "the generator removes a reviewer whose source is gone" {
+  work="$BATS_TEST_TMPDIR/roster"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/codex/plugin/reviewers/go-reviewer.md" ]
+  rm "$work/adapters/core/reviewers/go-reviewer.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  for tree in claude-code/plugin codex/plugin cursor; do
+    [ ! -f "$work/adapters/$tree/reviewers/go-reviewer.md" ]
+  done
+}
+
+@test "the review gate routes the batch over the roster" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '**The reviewers themselves ship with the harness.**' \
+    '$DISPATCHER_REVIEWERS_DIR/*.md' \
+    'one subagent per matched roster entry' \
+    'the matched roster body written into its prompt' \
+    'the same roster body inline'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
 }

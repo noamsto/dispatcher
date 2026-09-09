@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Project the shared command bodies in adapters/core/commands/ into each
-# engine's native shape, and ship the protocols inside each plugin tree.
+# engine's native shape, and ship the protocols and the reviewer roster
+# inside each plugin tree.
+#
+# The roster ships verbatim to all three, rather than as per-engine agents: a
+# reviewer runs by having its body read into a fresh context, which every
+# engine can do, and no shipped agent name can then collide with a user's own.
 # Idempotent — CI regenerates and asserts no diff.
 #
 #   claude-code : commands/<name>.md   (native slash commands)
@@ -14,6 +19,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src="$root/adapters/core/commands"
 protocols="$root/adapters/core/protocols"
+reviewers="$root/adapters/core/reviewers"
 
 cc="$root/adapters/claude-code/plugin/commands"
 cx="$root/adapters/codex/plugin/skills"
@@ -68,8 +74,9 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   mkdir -p "$d/scripts"
   cp "$root/adapters/core/dispatch-notify.sh" "$d/scripts/dispatch-notify.sh"
   chmod +x "$d/scripts/dispatch-notify.sh"
-  rm -rf "$d/protocols"
+  rm -rf "$d/protocols" "$d/reviewers"
   cp -r "$protocols" "$d/protocols"
+  cp -r "$reviewers" "$d/reviewers"
 done
 
 # Cursor has no plugin tree to be self-contained inside, and ~/.cursor/hooks.json
@@ -81,6 +88,12 @@ rm -rf "$root/adapters/cursor/scripts"
 mkdir -p "$root/adapters/cursor/scripts"
 cp "$root/adapters/core/dispatch-notify.sh" "$root/adapters/cursor/scripts/dispatch-notify.sh"
 chmod +x "$root/adapters/cursor/scripts/dispatch-notify.sh"
+
+# The roster ships loose for cursor on the same reasoning: a cursor worker
+# resolves a reviewer by path, and without this copy the only path that
+# resolves is the exported one, which a non-Nix install does not have.
+rm -rf "$root/adapters/cursor/reviewers"
+cp -r "$reviewers" "$root/adapters/cursor/reviewers"
 
 # codex gets spec-plan-critic as a skill; it can express neither agents nor
 # workflows, so its workers skip the plan-critic (claude-only) per
