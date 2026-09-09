@@ -18,7 +18,10 @@
 - **Bus appends go through `_bus_append`**, never bare `printf >>`: a bare append is not one `write(2)` and concurrent writers splice (`dispatch.sh:20-24`, #55/#61).
 - **`ps -o ppid= -p <pid>`** is the one parent-of spelling identical on BSD and GNU (`crew.sh:658`). Use it for any ancestry walk.
 - **`awk` over `git worktree list --porcelain` must read to EOF.** An early `exit` SIGPIPEs git, and under `pipefail` that kills the script (`dispatch.sh:849-851`).
-- Run `bats tests/` after every task. Run `shellcheck adapters/core/dispatch-resume.sh` after every task that touches it.
+- Run `shellcheck adapters/core/dispatch-resume.sh` after every task that touches it.
+- **`shfmt` is NOT on the devShell PATH** (only pulled in transitively by the treefmt wrapper), so `nix develop -c shfmt` fails. Use `nix run nixpkgs#shfmt -- -d -i 2 <file>`.
+- **`nix build --no-link .#dispatch-resume` and `.#dispatch` are the real gate** on the new file: `writeShellApplication` runs shellcheck at build time and fails the build on any warning. `nix flake check` does NOT cover this — it reports the packages as "build skipped". Run both after every task that touches `dispatch-resume.sh`.
+- **Never background a test run, and never run the whole `bats tests/` suite.** Run targeted files in the foreground with an explicit timeout; `tests/crew.bats` alone takes minutes and four agents on this plan have wedged waiting on a background job notification that never arrived.
 
 ---
 
@@ -235,7 +238,7 @@ a pid cannot name a pane."
 - Consumes: the `mcp:` header line from Task 1.
 - Produces:
   - binary `dispatch-resume`, reached as `dispatch resume [...]`.
-  - shell variables later tasks extend: `branch`, `wt_path`, `task_doc`, `agent`, `model`, `effort`, `mcp_profile`, `tier`, `kind`, `plan_val`, `crew_id`, `agent_name`, `prev_worker_id`, `fresh`, `do_print`.
+  - shell variables later tasks extend: `branch`, `wt_path`, `task_doc`, `agent`, `model`, `effort`, `mcp_profile`, `tier`, `crew_id`, `agent_name`, `prev_worker_id`, `fresh`, `do_print`. NOT `PROTOCOL_DIR`, `kind` or `plan_val` — each is declared by Task 6, the task that reads it, because a variable assigned here and read only later needs an SC2034 waiver to build (`writeShellApplication` runs shellcheck at build time) and this repo forbids escape hatches that silence a checker.
   - `_hdr <field>` — echoes the value of `<field>: ` from `$task_doc`, or empty.
 
 - [ ] **Step 1: Write the failing tests**
@@ -597,7 +600,7 @@ Expected: all seven PASS.
 Run: `shellcheck adapters/core/dispatch-resume.sh`
 Expected: no output.
 
-Run: `nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh`
+Run: `nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh`
 Expected: no diff. `dispatch-resume.sh` is not treefmt-excluded, so a diff here fails CI.
 
 Run: `bats tests/module.bats`
@@ -814,7 +817,7 @@ Note the `crew identity` call: the generic `crew` stub from `setup()` prints not
 
 - [ ] **Step 5: Lint and format**
 
-Run: `shellcheck adapters/core/dispatch-resume.sh && nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh`
+Run: `shellcheck adapters/core/dispatch-resume.sh && nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh`
 Expected: no output, no diff.
 
 - [ ] **Step 6: Commit**
@@ -1008,7 +1011,7 @@ Expected: every hit is at a line number **greater** than the line you inserted t
 Run: `shellcheck adapters/core/dispatch-resume.sh adapters/core/dispatch.sh`
 Expected: no output.
 
-Run: `nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
+Run: `nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
 Expected: no diff, all pass.
 
 - [ ] **Step 8: Commit**
@@ -1119,9 +1122,17 @@ Expected: FAIL — nothing sends keys.
 
 - [ ] **Step 3: Build the prompt and send the launch**
 
-Append to `adapters/core/dispatch-resume.sh`:
+Append to `adapters/core/dispatch-resume.sh`. The first three assignments are
+the launch parameters Task 3 deliberately did not declare: a variable assigned
+before the task that reads it needs an SC2034 waiver to survive
+`writeShellApplication`'s build-time shellcheck, and this repo forbids
+silencing a checker. They land here, with their reader.
 
 ```bash
+PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+kind="$(_hdr kind)"
+plan_val="$(_hdr plan)"
+
 # Session identity. A resume gets a NEW session id and therefore a new
 # worker_id: the pane, the watchdog and the bus rows are all new even when the
 # conversation is not. dispatch.sh:832 owns the same shape.
@@ -1196,17 +1207,32 @@ fi
 echo "worker_id: $worker_id"
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Assert the protocol path is substituted at build time**
+
+`PROTOCOL_DIR` reintroduces the `@protocolDir@` placeholder, and the flake's
+`sub` replacer is a silent no-op on a file that has none — so nothing would
+catch a missing substitution. `tests/module.bats` already carries this
+assertion for `dispatch` and `dispatcher`; add the third, mirroring them
+exactly (read the two existing ones and follow their shape rather than
+inventing a new one).
+
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `bats tests/dispatch-resume.bats`
 Expected: all PASS.
 
-- [ ] **Step 5: Lint, format, full suite**
+Run: `bats tests/module.bats`
+Expected: all PASS, including your new substitution assertion. This is the
+test that actually compiles the derivation — `nix flake check` reports the
+packages as "build skipped" — so it is also the only build-time shellcheck
+gate on the new file.
 
-Run: `shellcheck adapters/core/dispatch-resume.sh && nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
-Expected: no output, no diff, all pass.
+- [ ] **Step 6: Lint, format**
 
-- [ ] **Step 6: Commit**
+Run: `shellcheck adapters/core/dispatch-resume.sh && nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh`
+Expected: no output, no diff.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add adapters/core/dispatch-resume.sh tests/dispatch-resume.bats
@@ -1430,7 +1456,7 @@ Expected: all PASS.
 
 - [ ] **Step 6: Lint, format, full suite**
 
-Run: `shellcheck adapters/core/dispatch-resume.sh && nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
+Run: `shellcheck adapters/core/dispatch-resume.sh && nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
 Expected: no output, no diff, all pass.
 
 - [ ] **Step 7: Commit**
