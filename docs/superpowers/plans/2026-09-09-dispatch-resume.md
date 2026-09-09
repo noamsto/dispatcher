@@ -57,7 +57,7 @@ Append to `tests/dispatch.bats`:
   run run_dispatch standard sonnet --effort medium --crew-id c1 "add a flag"
   [ "$status" -eq 0 ]
   doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
-  grep -qx 'mcp:' "$doc"
+  grep -qE '^mcp: ?$' "$doc"
 }
 ```
 
@@ -447,21 +447,24 @@ git rev-parse --git-common-dir >/dev/null 2>&1 || {
 wt_path="$(git rev-parse --show-toplevel)"
 task_doc="$wt_path/WORKER_TASK.md"
 
-# The primary worktree is never a worker's tree (dispatch.sh refuses the same
-# thing on its own resume path): a worker there would run in the main checkout.
-# Checked before the task document, so a stray WORKER_TASK.md in the primary
-# checkout cannot make this look legitimate.
+# Task document first: the overwhelmingly common mistake is running this from
+# the main checkout, which has no WORKER_TASK.md, and "not a worker's worktree"
+# says more there than "primary worktree" would.
+[ -f "$task_doc" ] || {
+  echo "dispatch resume: no WORKER_TASK.md in $wt_path — this is not a dispatched worker's worktree. To start a new worker, use 'dispatch <tier> <model> --effort <e> <title>'." >&2
+  exit 1
+}
+
+# Then the primary worktree, which catches the remaining case: a stray
+# WORKER_TASK.md in the main checkout must not make this look legitimate. A
+# worker there would run in the main checkout, which dispatch.sh refuses on its
+# own resume path for the same reason.
 # awk reads to EOF on purpose — an early exit SIGPIPEs git under pipefail.
 primary_wt="$(git worktree list --porcelain | awk '/^worktree /{if (!p) p=$2} END{print p}')"
 if [ "$wt_path" = "$primary_wt" ]; then
   echo "dispatch resume: $wt_path is the primary worktree — a worker must not run in the main checkout. cd into the worker's worktree and retry." >&2
   exit 1
 fi
-
-[ -f "$task_doc" ] || {
-  echo "dispatch resume: no WORKER_TASK.md in $wt_path — this is not a dispatched worker's worktree. To start a new worker, use 'dispatch <tier> <model> --effort <e> <title>'." >&2
-  exit 1
-}
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [ "$branch" != HEAD ] || {
@@ -540,6 +543,11 @@ And extend the usage line (`dispatch.sh:10`) by appending to the existing string
 In `flake.nix`, after the `dispatch` package block (`flake.nix:115-120`), add:
 
 ```nix
+          # `dispatch` is deliberately NOT in runtimeInputs: dispatch lists
+          # dispatch-resume (for the exec below), so naming it here would be an
+          # infinite recursion at eval time. Task 5 calls `dispatch` for its
+          # gate precheck and resolves it from the ambient PATH, the same way
+          # dispatch leaves `wt` ambient.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
             runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];
@@ -822,140 +830,180 @@ pane instead, and only opens a window when the worktree has none."
 
 ---
 
-### Task 5: Gates — re-run what is a property of now, skip what was already adjudicated
+### Task 5: Gates — reuse dispatch's own pre-scaffold checks
+
+The spec requires a resume to re-run the profile, effort-ceiling, model-shape and budget/rung gates, and to skip the tier↔model map unless a model is named. Those live in `dispatch.sh:211-478` and must not be copied: the budget gate alone reads a cache with staleness rules, and a second copy would drift.
+
+`dispatch.sh` runs **only pure validation** before its first side effect — `_ensure_dispatched_label` is called at `:526` and `:623`, `crew reap` at `:564`, and the `slug`/`crew_dir` work starts at `:503`. So an early exit placed just before the slug line has run every gate and touched nothing.
 
 **Files:**
 
-- Modify: `adapters/core/dispatch-resume.sh`
+- Modify: `adapters/core/dispatch.sh` (early exit before the `# slug:` line at `:503`), `adapters/core/dispatch-resume.sh`
 - Test: `tests/dispatch-resume.bats`
 
 **Interfaces:**
 
-- Consumes: `agent`, `effort`, `model`, `tier`, `ignore_budget`, `ignore_map`, `model_flag` from Task 3.
-- Produces: `profile` (the resolved `$DISPATCH_PROFILE`, defaulting to `personal`). No new names for later tasks.
+- Consumes: `agent`, `model`, `effort`, `tier`, `crew_id`, `mcp_profile`, `model_flag`, `ignore_budget`, `ignore_map` from Task 3.
+- Produces: `profile` (resolved `$DISPATCH_PROFILE`, default `personal`), used by Task 6's `xreview_mcp`.
 
-Place these gates **before** Task 4's placement block, so a refusal costs no window.
+Insert resume's part **before** Task 4's placement block, so a refusal costs no window.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/dispatch-resume.bats`:
-
-```bash
-@test "gates a codex resume behind the work profile" {
-  setup_worker_wt
-  sed -i 's/^engine: claude/engine: codex/' "$WT/WORKER_TASK.md"
-  cd "$WT"
-  DISPATCH_PROFILE=personal run run_resume --print
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
-}
-
-@test "rejects effort ultra on a claude resume" {
-  setup_worker_wt
-  cd "$WT"
-  run run_resume --print --effort ultra
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"ultra is codex-only"* ]]
-}
-
-@test "does not re-run the tier-model map without an explicit model" {
-  setup_worker_wt
-  # haiku on a deep tier is exactly what the map refuses at dispatch time.
-  sed -i -e 's/^tier: standard/tier: deep/' -e 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"
-  cd "$WT"
-  run run_resume --print
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"model: haiku"* ]]
-}
-
-@test "re-runs the tier-model map when a model is passed" {
-  setup_worker_wt
-  sed -i 's/^tier: standard/tier: deep/' "$WT/WORKER_TASK.md"
-  cd "$WT"
-  run run_resume --print --model haiku
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"tier"* ]]
-}
-```
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `bats tests/dispatch-resume.bats -f gate`
-Expected: the profile and ultra tests FAIL (exit 0, no refusal). The two map tests: the first passes already (nothing gates), the second FAILs.
-
-- [ ] **Step 3: Add the gates**
-
-Insert into `adapters/core/dispatch-resume.sh`, after the engine validation from Task 3:
-
-```bash
-# Gates split by what they are about. Availability, effort ceilings and quota
-# are properties of NOW, so a resume re-runs them. The tier↔model map is not:
-# that pair was adjudicated when the worker was first dispatched, and
-# re-gating would refuse a resume because the map moved underneath it —
-# stranding live work on a branch nobody can restart. Passing --model is a
-# fresh choice, so it re-arms the map.
-profile="${DISPATCH_PROFILE:-personal}"
-if [ "$agent" = codex ] && [ "$profile" != work ]; then
-  echo "dispatch resume: engine codex is work-profile only (no personal codex account)" >&2
-  exit 1
-fi
-if [ "$agent" = cursor ] && [ "$profile" != work ]; then
-  echo "dispatch resume: engine cursor is work-profile only" >&2
-  exit 1
-fi
-if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
-  echo "dispatch resume: --effort ultra is codex-only; claude tops out at max" >&2
-  exit 1
-fi
-if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch resume: mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
-  exit 1
-fi
-```
-
-Then, for the map: `dispatch.sh` holds the tier↔model table at lines 319-415. Rather than duplicating it, shell out to `dispatch`'s own gate in a check-only mode. Add to `dispatch.sh` immediately after its tier↔model gate block ends (just before the `# claude's --effort tops out at max` comment at line 416):
-
-```bash
-# Check-only exit for `dispatch resume`, which re-arms this gate when the
-# operator names a model but must not re-adjudicate the pair the first
-# dispatch already accepted. Placed after the gate so reaching here means the
-# pair passed; before the worktree so nothing is scaffolded.
-if [ -n "${DISPATCH_CHECK_MAP_ONLY:-}" ]; then
-  exit 0
-fi
-```
-
-And in `dispatch-resume.sh`, after the gates above:
-
-```bash
-if [ -n "$model_flag" ] && [ -z "$ignore_map" ]; then
-  DISPATCH_CHECK_MAP_ONLY=1 dispatch "$tier" "$model" --effort "$effort" --agent "$agent" --crew-id "$crew_id" "resume map check" || exit 1
-fi
-```
-
-- [ ] **Step 4: Run the tests to verify they pass**
-
-Run: `bats tests/dispatch-resume.bats`
-Expected: all PASS.
-
-The map-check test needs `dispatch` on PATH inside the test. Add a `dispatch` stub to `tests/dispatch-resume.bats`'s `setup()` that refuses a deep/haiku pair, so the test exercises resume's _call_ rather than `dispatch.sh`'s table (which `tests/dispatch.bats` already covers):
+Add a `dispatch` stub to `tests/dispatch-resume.bats`'s `setup()`, after the existing `stub_bin` calls. The gates themselves are already covered by `tests/dispatch.bats`; these tests assert that resume _invokes_ the precheck correctly and honours its verdict.
 
 ```bash
   cat >"$STUB_DIR/dispatch" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-case "$*" in
-*deep*haiku* | *haiku*deep*)
-  echo "dispatch: haiku is below the deep tier floor" >&2
+[ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
+[ -z "${STUB_PRECHECK_FAIL:-}" ] || {
+  echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
   exit 1
-  ;;
-esac
+}
 exit 0
 EOF
   chmod +x "$STUB_DIR/dispatch"
 ```
 
-- [ ] **Step 5: Lint, format, full suite**
+Then append:
+
+```bash
+@test "runs the dispatch precheck with the recorded tuple" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qE 'standard sonnet .*--effort medium' "$STUB_LOG"
+  grep -q -- '--agent claude' "$STUB_LOG"
+  grep -q -- '--crew-id c1' "$STUB_LOG"
+}
+
+@test "suppresses the tier-model map when no model was named" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q -- '--ignore-map' "$STUB_LOG"
+}
+
+@test "re-arms the tier-model map when --model is passed" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  run grep -c -- '--ignore-map' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "forwards --ignore-budget to the precheck" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --ignore-budget
+  [ "$status" -eq 0 ]
+  grep -q -- '--ignore-budget' "$STUB_LOG"
+}
+
+@test "a refused precheck aborts before any launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  STUB_PRECHECK_FAIL=1 run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ultra is codex-only"* ]]
+  run grep -c send-keys "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "refuses an mcp profile on a non-claude engine" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^mcp: $/mcp: analytics/' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude-only"* ]]
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `bats tests/dispatch-resume.bats -f precheck`
+Expected: FAIL — resume never invokes `dispatch`, so `$STUB_LOG` has no such line.
+
+- [ ] **Step 3: Add the precheck exit to `dispatch.sh`**
+
+In `adapters/core/dispatch.sh`, immediately **before** the `# slug: lowercase, non-alnum -> single dash...` comment at line 503, insert:
+
+```bash
+# Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
+# are properties of now — profile, model shape, effort ceiling, quota, rung —
+# rather than re-deriving them in a second copy that would drift. Everything
+# above this point is pure validation: `_ensure_dispatched_label` and
+# `crew reap` are below, as is the first string of scaffolding, so exiting
+# here has no side effects. Resume suppresses the tier↔model gate for a pair
+# the first dispatch already accepted by passing the existing --ignore-map.
+if [ -n "${DISPATCH_PRECHECK:-}" ]; then
+  exit 0
+fi
+```
+
+- [ ] **Step 4: Call it from `dispatch-resume.sh`**
+
+Insert into `adapters/core/dispatch-resume.sh`, after the engine validation from Task 3:
+
+```bash
+profile="${DISPATCH_PROFILE:-personal}"
+
+# mcp is claude-only, and this is the one gate the precheck below cannot make:
+# passing --mcp there would have dispatch resolve and validate the config file
+# too, which Task 6 must do anyway to build the launch flag.
+if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
+  echo "dispatch resume: mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  exit 1
+fi
+
+# Every other pre-scaffold gate is dispatch's, run through its precheck exit
+# so there is exactly one copy of the profile, model-shape, effort-ceiling,
+# budget and rung rules. `dispatch` resolves from the ambient PATH: it lists
+# dispatch-resume in runtimeInputs for the `resume` exec, so naming it in ours
+# would be an eval-time cycle.
+command -v dispatch >/dev/null 2>&1 || {
+  echo "dispatch resume: dispatch is not on PATH — both are installed together by the home-manager module" >&2
+  exit 1
+}
+precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
+[ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
+# The tier↔model pair was adjudicated when this worker was first dispatched;
+# only an explicit --model is a fresh choice that deserves re-gating.
+if [ -z "$model_flag" ] || [ -n "$ignore_map" ]; then
+  precheck+=(--ignore-map)
+fi
+DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `bats tests/dispatch-resume.bats`
+Expected: all PASS.
+
+- [ ] **Step 6: Confirm the precheck really is side-effect free**
+
+Run: `bats tests/dispatch.bats`
+Expected: all PASS — nothing above the new exit changed.
+
+Run this manual check in the worktree, which proves the claim the exit rests on:
+
+```bash
+grep -n '_ensure_dispatched_label$\|crew reap\|^slug=' adapters/core/dispatch.sh
+```
+
+Expected: every hit is at a line number **greater** than the line you inserted the exit at. If any is smaller, the exit is in the wrong place — move it up.
+
+- [ ] **Step 7: Lint, format, full suite**
 
 Run: `shellcheck adapters/core/dispatch-resume.sh adapters/core/dispatch.sh`
 Expected: no output.
@@ -963,18 +1011,16 @@ Expected: no output.
 Run: `nix develop -c shfmt -d -i 2 adapters/core/dispatch-resume.sh && bats tests/`
 Expected: no diff, all pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
-```bash
+````bash
 git add adapters/core/dispatch-resume.sh adapters/core/dispatch.sh tests/dispatch-resume.bats
-git commit -m "feat(dispatch): resume re-runs the now-gates, skips the tier-model map
+git commit -m "feat(dispatch): resume reuses dispatch's own pre-scaffold gates
 
-Profile, effort ceiling and quota are properties of now. The tier-model pair
-was adjudicated at first dispatch, and re-gating it would refuse a resume
-because the map moved underneath it. Passing --model re-arms the check."
-```
-
----
+Profile, model shape, effort ceiling, quota and rung are properties of now, so
+a resume re-runs them — through a DISPATCH_PRECHECK exit in dispatch rather
+than a second copy that would drift. The tier-model pair was adjudicated at
+first dispatch, so resume passes --ignore-map unless a model is named."
 
 ### Task 6: Launch — continue the engine's own session
 
@@ -1064,7 +1110,7 @@ Append to `tests/dispatch-resume.bats`:
   run grep -c "send-keys.*'.*'.*'" "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
-```
+````
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1488,7 +1534,7 @@ resume, so it re-reads its bus identity rather than reusing a remembered one."
 
 ## Self-Review
 
-**Spec coverage.** Every section of `2026-09-09-dispatch-resume-design.md` maps to a task: surface and resolution → Task 3; the `mcp:` gap → Task 1; "the task document is not rewritten" → Task 7 (in-place two-line edit, with the body asserted byte-identical in Task 3); placement → Task 4; gates → Task 5; dispatcher liveness and the `crew register` pane gap → Tasks 2 and 7; launch and the reorient prompt → Task 6; bus rows and the watchdog → Task 7; testing → each task's own steps; documentation → Task 8.
+**Spec coverage.** Every section of `2026-09-09-dispatch-resume-design.md` maps to a task: surface and resolution → Task 3; the `mcp:` gap → Task 1; "the task document is not rewritten" → Task 7 (in-place two-line edit, with the body asserted byte-identical in Task 3); placement → Task 4; gates (including the budget/rung gate, via dispatch's own precheck) → Task 5; dispatcher liveness and the `crew register` pane gap → Tasks 2 and 7; launch and the reorient prompt → Task 6; bus rows and the watchdog → Task 7; testing → each task's own steps; documentation → Task 8.
 
 **One spec correction, made here.** The spec allowed rewriting only `dispatcher_pane:` and `resume:`. That is wrong: `worker_id="worker:$branch#$session"` (`dispatch.sh:832`), so a new session means a new `worker_id`, and leaving the recorded one stale would have the resumed worker post every status under a dead bus identity. Task 7 rewrites `worker_id:` too, Task 8 tells the worker this happens, and the spec should be amended to match. `resume:` needs no write — it is already `true` on any tree that reached here through a branch resume, and a tree that never did is not made more truthful by the flag.
 
