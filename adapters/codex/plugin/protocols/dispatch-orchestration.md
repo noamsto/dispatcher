@@ -151,9 +151,14 @@ model ships:
 
 | engine | model | effort |
 | ------ | ----- | ------ |
-| claude | opus (settings default) | settings default |
+| claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
 | codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
 | cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.5-*) |
+
+All three rows are pinned in `dispatcher.sh`, claude included — `/model` and
+`/effort` persist across sessions, so an unpinned claude dispatcher would inherit
+whatever a previous cheap session left set and judge the whole fan-out on it.
+`--model` / `--effort` still override per launch.
 
 claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor inject it as
 the first prompt (neither CLI has an append-system-prompt flag). The judging rubric

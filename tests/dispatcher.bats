@@ -57,6 +57,21 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "pins the claude orchestrator model and effort" {
+  # Unpinned, the launcher inherited the persisted /model and /effort toggles,
+  # so a dispatcher could silently judge a whole fan-out on a cheap session's
+  # leftovers. codex and cursor were already pinned; claude was the gap.
+  CREW_ID=c1 run_launcher
+  run grep -F -- '--model opus --effort high' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "an explicit model and effort still override the claude pins" {
+  CREW_ID=c1 run_launcher --model sonnet --effort max
+  run grep -F -- '--model sonnet --effort max' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "the bare form treats all non-flag args as one task" {
   CREW_ID=c1 run_launcher fix the flaky test
   run grep -F -- '--name dispatcher: fix the flaky test' "$STUB_LOG"
