@@ -9,16 +9,13 @@
 # `set -euo pipefail` are prepended by writeShellApplication.
 #
 # writeShellApplication runs shellcheck at build time and fails on a warning,
-# so the launch parameters resolved here but read only by the gate and launch
-# sections carry an SC2034 waiver at their assignment. Drop the waiver when the
-# reader lands; do not widen it to the whole file.
+# so ignore_budget and ignore_map — read only by the gates a later task adds —
+# carry an SC2034 waiver at their assignment. Drop the waiver when the reader
+# lands; do not widen it to the whole file.
 
 usage() {
   echo "usage: dispatch resume [--agent claude|codex|cursor] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
 }
-
-# shellcheck disable=SC2034
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
 fresh=""
 do_print=""
@@ -136,10 +133,6 @@ model="${model_flag:-$(_hdr model)}"
 effort="${effort_flag:-$(_hdr effort)}"
 mcp_profile="${mcp_flag_val:-$(_hdr mcp)}"
 tier="$(_hdr tier)"
-# shellcheck disable=SC2034
-kind="$(_hdr kind)"
-# shellcheck disable=SC2034
-plan_val="$(_hdr plan)"
 crew_id="$(_hdr crew_id)"
 agent_name="$(_hdr agent_name)"
 prev_worker_id="$(_hdr worker_id)"

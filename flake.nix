@@ -119,11 +119,12 @@
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
-          # `dispatch` is deliberately NOT in runtimeInputs: dispatch lists
-          # dispatch-resume (for the exec below), so naming it here would be an
-          # infinite recursion at eval time. Task 5 calls `dispatch` for its
-          # gate precheck and resolves it from the ambient PATH, the same way
-          # dispatch leaves `wt` ambient.
+          # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
+          # package above lists dispatch-resume so its `resume` subcommand can
+          # exec this one, and naming dispatch here would close that into an
+          # eval-time cycle. dispatch-resume resolves `dispatch` from the
+          # ambient PATH instead — the same ambient-tool pattern dispatch
+          # itself uses for `wt`.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
             runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];

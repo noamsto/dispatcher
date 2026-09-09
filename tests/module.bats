@@ -15,12 +15,6 @@ setup() {
   [ "$output" = "0" ]
 }
 
-@test "the protocol placeholder is substituted in dispatch-resume" {
-  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch-resume")"
-  run grep -c '@protocolDir@' "$out/bin/dispatch-resume"
-  [ "$output" = "0" ]
-}
-
 @test "the protocol placeholder is substituted in dispatcher" {
   out="$(nix build --no-link --print-out-paths "$ROOT#dispatcher")"
   run grep -c '@protocolDir@' "$out/bin/dispatcher"

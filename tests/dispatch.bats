@@ -289,6 +289,14 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"usage: dispatch"* ]]
 }
 
+@test "resume intercepts before the positional tier parse and execs dispatch-resume" {
+  stub_bin dispatch-resume
+  run run_dispatch resume --print
+  [ "$status" -eq 0 ]
+  grep -Fq -- '--print' "$STUB_LOG"
+  [[ "$output" != *"usage: dispatch"* ]]
+}
+
 @test "rejects an unknown agent" {
   run run_dispatch standard sonnet --agent bogus --effort medium "title"
   [ "$status" -eq 1 ]
