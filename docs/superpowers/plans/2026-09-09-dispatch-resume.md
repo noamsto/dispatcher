@@ -1260,7 +1260,7 @@ gate on the new file.
 Run: `shellcheck adapters/core/dispatch-resume.sh && nix run nixpkgs#shfmt -- -d -i 2 adapters/core/dispatch-resume.sh`
 Expected: no output, no diff.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add adapters/core/dispatch-resume.sh tests/dispatch-resume.bats
@@ -1556,17 +1556,41 @@ reusing one you remember from earlier in the conversation. Post your status
 under the current value.
 ```
 
-- [ ] **Step 4: Regenerate the adapters**
+- [ ] **Step 4: Guard the precheck contract with a real test**
+
+Task 5 made `dispatch resume` depend on an invariant nothing enforces: that
+`DISPATCH_PRECHECK=1 dispatch …` runs every gate and then exits having touched
+nothing. That was verified once, by hand, with a `grep` comparing line numbers
+— so a future edit that inserts a mutation above the exit passes CI silently
+and a refused resume starts having consequences.
+
+Add a test to `tests/dispatch.bats` that runs the real `dispatch.sh` (not a
+stub) with `DISPATCH_PRECHECK=1` and a valid tuple, and asserts:
+
+- exit status 0;
+- the stub log records no `gh issue create`, no `gh issue edit`, no
+  `crew reap`, and no `tmux new-window`;
+- no worktree was created under the test repo.
+
+`stub_launch_bins` (`tests/dispatch.bats`) already provides argv-logging stubs
+for `gh`, `wt`, `tmux` and `crew`, so the assertions are greps over
+`$STUB_LOG` plus one filesystem check. Read a nearby test first and match its
+shape.
+
+This closes the only Minor finding from Task 5's review that does not resolve
+itself.
+
+- [ ] **Step 5: Regenerate the adapters**
 
 Run: `./scripts/gen-adapters.sh && git status --short adapters/`
 Expected: the claude-code, codex and cursor protocol copies show as modified.
 
-- [ ] **Step 5: Verify the drift gate**
+- [ ] **Step 6: Verify the drift gate**
 
 Run: `bats tests/adapters.bats`
 Expected: PASS. This is the check CI runs to prove committed adapter output matches a fresh generator run.
 
-- [ ] **Step 6: Full verification**
+- [ ] **Step 7: Full verification**
 
 Run: `bats tests/`
 Expected: all pass.
