@@ -381,16 +381,43 @@ if [ "$profile" = work ] && [ "$agent" = claude ] && [ "$tier" = deep ]; then
   xreview_mcp="--mcp-config $HOME/.config/claude-code/mcp-codex.json"
 fi
 
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
+# stamp process-authority into every execute-subagent prompt so a fresh subagent
+# cannot re-derive process via skills. Claude gets the same idea from rule 1 +
+# the Agent tool; this clause is only for engines whose spawn prompt is the
+# sole carrier.
+process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker. When spawning review subagents, grant review authority only — tell them not to fix the code, not to commit or push, not to open PRs, and not to act as the worker."
+if [ "$agent" = codex ] && [ "$effort" = ultra ]; then
+  process_authority="$process_authority Session effort is ultra — Codex automatic delegation is the orchestration layer; do not add a second harness execute-subagent orchestration on top."
+fi
+
+# Codex execute-subagent effort: one rung below the session, floor at low,
+# never ultra (ultra auto-delegates and must not nest). Model versions live in
+# dispatch-orchestration.md — dispatch sets guardrails only.
+codex_subagent_effort="$effort"
+case "$effort" in
+ultra) codex_subagent_effort=max ;;
+max) codex_subagent_effort=xhigh ;;
+xhigh) codex_subagent_effort=high ;;
+high) codex_subagent_effort=medium ;;
+medium) codex_subagent_effort=low ;;
+low) codex_subagent_effort=low ;;
+esac
+
+# Printed so the dispatcher can address this session in the gap before the worker
+# boots — its startup drain is unbounded, so a scoping note posted now still lands.
+echo "worker_id: $worker_id"
+
 if [ "$agent" = codex ]; then
   cont="resume --last"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}'" Enter
+    "codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
 elif [ "$agent" = cursor ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""
@@ -400,8 +427,6 @@ else
   tmux send-keys -t "$pane" \
     "claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}'" Enter
 fi
-
-echo "worker_id: $worker_id"
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
 # state, and a resumed worker can wedge exactly the same way.

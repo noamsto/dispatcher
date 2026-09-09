@@ -326,6 +326,18 @@ EOF
   grep -q -- '--profile worker' "$STUB_LOG"
 }
 
+@test "codex --fresh drops the resume flag" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume --fresh
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8 codex ' "$STUB_LOG"
+  run grep -c -- 'resume --last' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
 @test "cursor resume launches with --continue" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: cursor/' -e 's/^model: sonnet/model: composer-2.5/' "$WT/WORKER_TASK.md"
@@ -334,6 +346,18 @@ EOF
   DISPATCH_PROFILE=work run run_resume
   [ "$status" -eq 0 ]
   grep -q 'cursor-agent --continue' "$STUB_LOG"
+}
+
+@test "cursor --fresh drops the continue flag" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: cursor/' -e 's/^model: sonnet/model: composer-2.5/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume --fresh
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8 CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
+  run grep -c -- '--continue' "$STUB_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "the reorient prompt tells the worker not to trust its last plan" {
