@@ -941,11 +941,15 @@ fi
 # code an external PR author wrote, sight unseen, right before the worker's
 # devshell (and the operator's own shell, if direnv-hooked) sources it. Only
 # --pr is skipped: create/name/fetch-name all check out a branch from this
-# machine's own trusted origin, not a fork. Aborts the dispatch on an
-# unexpected direnv failure so a devshell-less worker never gets scaffolded to
-# fail its gate in a confusing way much later.
+# machine's own trusted origin, not a fork. A repo with no .envrc never used
+# direnv and has no devshell to lose, so there's nothing to allow — skip it.
+# Aborts the dispatch only when an .envrc is present and direnv actually
+# fails to allow it, so a devshell-less worker never gets scaffolded to fail
+# its gate in a confusing way much later.
 if [ -n "$pr_number" ]; then
   echo "dispatch: --pr worktree — not auto-approving direnv; review $wt_path/.envrc and run \`direnv allow $wt_path\` by hand once you trust it" >&2
+elif [ ! -e "$wt_path/.envrc" ]; then
+  : # no .envrc — repo doesn't use direnv, nothing to allow
 elif ! direnv allow "$wt_path"; then
   echo "dispatch: direnv allow failed for $wt_path — the worker's devshell will not load" >&2
   exit 1

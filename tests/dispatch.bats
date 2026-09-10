@@ -1751,6 +1751,16 @@ wt_path_for() {
     awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
 }
 
+# commit_envrc — track a real .envrc on the source branch so a worktree cut
+# from it (via `wt`'s `git worktree add -b ... HEAD`) actually has one; the
+# direnv-allow guard now skips entirely when .envrc is absent, so tests that
+# mean to exercise `direnv allow` itself need this.
+commit_envrc() {
+  echo 'use nix' >"$TEST_REPO/.envrc"
+  git -C "$TEST_REPO" add .envrc
+  git -C "$TEST_REPO" commit -q -m envrc
+}
+
 @test "trust: a claude dispatch stamps hasTrustDialogAccepted for the new worktree" {
   stub_launch_bins
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
@@ -1788,6 +1798,7 @@ wt_path_for() {
 
 @test "direnv: allow is called with the new worktree path" {
   stub_launch_bins
+  commit_envrc
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   wt="$(wt_path_for feat/42-title)"
@@ -1796,6 +1807,7 @@ wt_path_for() {
 
 @test "direnv: allow is called for codex and cursor dispatches too" {
   stub_launch_bins
+  commit_envrc
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   wt="$(wt_path_for feat/42-title)"
@@ -1804,6 +1816,7 @@ wt_path_for() {
 
 @test "direnv: allow failure aborts the dispatch, never launches" {
   stub_launch_bins
+  commit_envrc
   cat >"$STUB_DIR/direnv" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -1815,6 +1828,14 @@ EOF
   [[ "$output" == *"direnv allow failed"* ]]
   ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "direnv: no .envrc in the worktree skips direnv allow entirely and still launches" {
+  stub_launch_bins
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  ! grep -q '^allow ' "$STUB_LOG"
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "direnv: a --pr dispatch never auto-approves, warns instead, and still launches" {
