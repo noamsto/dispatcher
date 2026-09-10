@@ -1,8 +1,14 @@
-# Every test here runs a real `nix build`/`nix store` against the shared
-# local flake. Under bats --jobs, several of these racing concurrently makes
-# Nix's own flake-input fetch/eval locking contend hard enough on a small
-# runner to produce genuine eval errors (`error: not an absolute path: "nix"`),
-# not just slow — confirmed on CI. Serialize this file rather than each test.
+# Every test here runs a real `nix build`/`nix eval`/`nix store` against the
+# shared local flake -- including one `nix build` of 8 outputs at once and a
+# fresh <nixpkgs> resolution. On a cold cache (true on every fresh CI runner)
+# that races internally on the git-fetcher cache well before bats-level
+# concurrency even enters into it -- confirmed on CI: the failure recurs
+# identically whether this file runs in parallel with itself or as a plain
+# serial run, and only goes away once the cache is warm. CI gives this file
+# its own lane, run once before anything else, to guarantee that (see
+# ci.yml). BATS_NO_PARALLELIZE_WITHIN_FILE stays here as a second layer for
+# any direct/ad-hoc `bats --jobs` invocation that includes this file
+# alongside others.
 export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 
 setup() {

@@ -21,6 +21,17 @@ jobs:
         run: |
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
+      # module.bats runs real `nix build`/`nix eval` against this flake,
+      # including one `nix build` of 8 outputs at once and fresh <nixpkgs>
+      # resolution. On a cold cache -- true on every fresh runner -- that
+      # races internally on the git-fetcher cache regardless of bats-level
+      # concurrency (confirmed on CI: it fails identically whether run in
+      # parallel or as the first of several sequential serial runs, and
+      # passes once the cache is warm). A serial lane doesn't fix a cold
+      # cache; running it once, on its own, first, is what warms the cache
+      # before the parallel step below ever touches the flake again.
+      - name: bats (module.bats, serial)
+        run: nix develop -c bats tests/module.bats
       # bats --jobs requires GNU parallel on PATH inside the devshell, so
       # check for it explicitly with a legible error rather than letting a
       # missing binary surface as an opaque bats failure. --jobs 4 is a
@@ -29,7 +40,7 @@ jobs:
       # guard is added here: bats' own bats_test_count_validator (in
       # libexec/bats-core/bats, wired with `set -o pipefail execfail`) already
       # fails the whole run on any test-count shortfall, verified empirically
-      # against tests/.
+      # against tests/. module.bats is excluded here -- it already ran above.
       # TEMPORARY measurement step for #126 -- times several --jobs values on
       # this runner in one job so the numbers are apples-to-apples. Removed
       # once the real value is chosen.
@@ -41,10 +52,11 @@ jobs:
             exit 1
           fi
           nix develop -c bash -c '
+            files=$(find tests -maxdepth 1 -name "*.bats" ! -name "module.bats" | sort)
             echo "nproc: $(nproc)"
             for j in $(nproc) $(( $(nproc) * 2 )) $(( $(nproc) * 4 )) $(( $(nproc) * 8 )); do
               echo "=== --jobs $j ==="
-              time bats --jobs "$j" tests/
+              time bats --jobs "$j" $files
               echo "=== --jobs $j exit=$? ==="
             done
           '
