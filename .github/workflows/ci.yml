@@ -30,13 +30,23 @@ jobs:
       # libexec/bats-core/bats, wired with `set -o pipefail execfail`) already
       # fails the whole run on any test-count shortfall, verified empirically
       # against tests/.
-      - name: bats
+      # TEMPORARY measurement step for #126 -- times several --jobs values on
+      # this runner in one job so the numbers are apples-to-apples. Removed
+      # once the real value is chosen.
+      - name: bats (jobs measurement)
         shell: bash
         run: |
           if ! nix develop -c bash -c 'command -v parallel' >/dev/null; then
             echo "::error::GNU parallel not found in the nix devshell (required for bats --jobs)"
             exit 1
           fi
-          nix develop -c bats --jobs 4 tests/
+          nix develop -c bash -c '
+            echo "nproc: $(nproc)"
+            for j in $(nproc) $(( $(nproc) * 2 )) $(( $(nproc) * 4 )); do
+              echo "=== --jobs $j ==="
+              time bats --jobs "$j" tests/
+              echo "=== --jobs $j exit=$? ==="
+            done
+          '
       - name: flake check
         run: nix flake check
