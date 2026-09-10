@@ -471,7 +471,7 @@ setup() {
   for statement in \
     'run the plan-critic and the code-review gate like any other' \
     'DISPATCHER_CRITICS_DIR' \
-    'Emit a real' \
+    '`plan_critic_first_pass` verdict alongside `review_high` and `review_mode`.' \
     '~/.cursor/critics'; do
     run grep -F "$statement" "$rule"
     [ "$status" -eq 0 ]
