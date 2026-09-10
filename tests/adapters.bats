@@ -713,7 +713,16 @@ $hits"
     shebangs_csv="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
     IFS=',' read -ra shebangs <<<"$shebangs_csv"
     for i in "${shebangs[@]}"; do
-      [ -n "$i" ] && printf '%s\t%s\n' "$i" "$name" >>"$shebang_map"
+      # An interpreter is spliced unescaped into an ERE below, where it must
+      # stay unquoted to be read as a pattern at all. A metacharacter in an
+      # entry would compile to a regex that means something else, or fail to
+      # compile — and a failed compile returns 2, which inside an `if` is
+      # indistinguishable from a clean non-match, so the collision check would
+      # go quiet instead of red. Interpreter names are bare words; require it.
+      if [ -n "$i" ]; then
+        [[ "$i" =~ ^[A-Za-z0-9_+-]+$ ]]
+        printf '%s\t%s\n' "$i" "$name" >>"$shebang_map"
+      fi
     done
   done
 
