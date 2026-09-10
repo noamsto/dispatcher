@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run !`
+
 setup() {
   load helpers
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
@@ -1257,7 +1259,7 @@ assert_gate_silent() { # <engine> <model>
   [[ "$output" == *"$STALE_NEW_OID"* ]]
   [[ "$output" == *"uncommitted"* ]]
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_OLD_OID" ]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q 'send-keys' "$STUB_LOG"
 }
 
@@ -1429,9 +1431,9 @@ EOF
   [[ "$output" == *"working"* ]]
   [[ "$output" == *"@23"* ]]
   [[ "$output" == *"crew reply worker:eng-7691-foo"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q 'send-keys' "$STUB_LOG"
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
   ! grep -q '^switch' "$STUB_LOG"
 }
 
@@ -1474,7 +1476,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"exited"* ]]
   [[ "$output" == *"crew reply worker:eng-7691-foo"* ]]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1488,9 +1490,9 @@ EOF
     '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":"working","ts":1,"age_s":900,"terminal":false}]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 1 ]
-  ! grep -q 'kill-window' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
   [[ "$output" == *"no engine pane detected"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "gate: an unoccupied existing worktree dispatches normally" {
@@ -1498,7 +1500,7 @@ EOF
   stub_crew_gate '[]' '[]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 0 ]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1522,7 +1524,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"worker:feat/42-do-a-thing#s1-1"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q '^switch' "$STUB_LOG"
 }
 
@@ -1544,7 +1546,7 @@ lock_path() { # <branch>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already scaffolding feat/42-do-a-thing"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q '^switch' "$STUB_LOG"
 }
 
@@ -1559,7 +1561,7 @@ lock_path() { # <branch>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"stale dispatch lock"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q '^switch' "$STUB_LOG"
 }
 
@@ -1612,7 +1614,7 @@ lock_path() { # <branch>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not resolve the default branch"* ]]
-  ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
   [ ! -d "$TEST_REPO/.dispatch-wt" ]
 }
 
@@ -1656,8 +1658,8 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"#42"* ]]
   [[ "$output" == *"already claimed"* ]]
-  ! grep -q '^reap' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q '^reap' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q 'switch' "$STUB_LOG"
 }
 
@@ -1690,7 +1692,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not claim issue #42"* ]]
-  ! grep -q '^reap' "$STUB_LOG"
+  run ! grep -q '^reap' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1725,7 +1727,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "linear thing"
   [ "$status" -eq 0 ]
   grep -qx 'Closes ENG-1234' "$TEST_REPO/.dispatch-wt/eng-1234-linear-thing/WORKER_TASK.md"
-  ! grep -q '^issue' "$STUB_LOG"
+  run ! grep -q '^issue' "$STUB_LOG"
   ! grep -q '^label' "$STUB_LOG"
 }
 
@@ -1733,7 +1735,7 @@ EOF
   stub_pr_bins eng-7691-foo
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 0 ]
-  ! grep -q '^issue' "$STUB_LOG"
+  run ! grep -q '^issue' "$STUB_LOG"
   ! grep -q '^label' "$STUB_LOG"
 }
 
@@ -1813,7 +1815,7 @@ EOF
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"direnv allow failed"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
   ! grep -q 'send-keys' "$STUB_LOG"
 }
 
@@ -1822,7 +1824,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
   [[ "$output" == *"not auto-approving direnv"* ]]
-  ! grep -q '^allow ' "$STUB_LOG"
+  run ! grep -q '^allow ' "$STUB_LOG"
   grep -q 'send-keys' "$STUB_LOG"
 }
 
@@ -1899,7 +1901,7 @@ EOF
   [[ "$output" == *"reclaimed @23"* ]]
   [[ "$output" == *"resuming branch feat/42-do-a-thing"* ]]
   grep -q '^switch feat/42-do-a-thing -y' "$STUB_LOG"
-  ! grep -q 'switch -c' "$STUB_LOG"
+  run ! grep -q 'switch -c' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
   [ -f "$wt/scratch.txt" ]
 }
@@ -1911,8 +1913,8 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   [[ "$output" == *"resuming branch feat/42-do-a-thing"* ]]
-  ! grep -q 'switch -c' "$STUB_LOG"
-  ! grep -q '^occupants' "$STUB_LOG"
+  run ! grep -q 'switch -c' "$STUB_LOG"
+  run ! grep -q '^occupants' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1924,7 +1926,7 @@ EOF
   git -C "$TEST_REPO" remote remove origin
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
-  ! grep -q 'repo view' "$STUB_LOG"
+  run ! grep -q 'repo view' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1945,7 +1947,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
-  ! grep -q '^resume:' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  run ! grep -q '^resume:' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
   ! grep -q 'You are resuming an interrupted run' "$STUB_LOG"
 }
 
@@ -1968,7 +1970,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
-  ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q 'add-label' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -1985,7 +1987,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
-  ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q 'add-label' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -2001,7 +2003,7 @@ EOF
   grep -Fx 'The original body.' "$task"
   grep -Fx 'resume: true' "$task"
   grep -q '^worker_id: worker:feat/42-do-a-thing#' "$task"
-  ! grep -q '^stale_header:' "$task"
+  run ! grep -q '^stale_header:' "$task"
   [ "$(grep -cFx '## Task' "$task")" -eq 1 ]
 }
 
@@ -2045,7 +2047,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"primary worktree"* ]]
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -2055,7 +2057,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"the worktree this dispatch is running from"* ]]
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -2082,7 +2084,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"window @9 is sitting in $RESUME_WT"* ]]
   [[ "$output" == *"no worker identity"* ]]
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -2100,8 +2102,8 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"exited"* ]]
   [[ "$output" == *"crew reply worker:feat/42-do-a-thing"* ]]
-  ! grep -q 'kill-window' "$STUB_LOG"
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
   ! grep -q 'new-window' "$STUB_LOG"
 }
 

@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run !`
+
 setup() {
   load helpers
   NOTIFY="$BATS_TEST_DIRNAME/../adapters/core/dispatch-notify.sh"
@@ -153,7 +155,7 @@ run_notify_cursor() {
   CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_cursor
   [ "$status" -eq 0 ]
 
-  ! grep -q '"state":"exited"' "$LOG"
+  run ! grep -q '"state":"exited"' "$LOG"
   ! grep -q display-message "$STUB_LOG"
 }
 
@@ -175,6 +177,6 @@ run_notify_cursor() {
   CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_cursor
   [ "$status" -eq 0 ]
 
-  ! grep -q '"state":"exited"' "$LOG"
+  run ! grep -q '"state":"exited"' "$LOG"
   ! grep -q display-message "$STUB_LOG"
 }
