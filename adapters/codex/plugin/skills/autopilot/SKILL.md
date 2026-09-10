@@ -3,7 +3,6 @@ name: autopilot
 description: 'Autonomous dev workflow: Linear ticket → implement → PR → CI green'
 ---
 
-
 # Autopilot: Autonomous Development Workflow
 
 You are running an autonomous development workflow from Linear ticket to merged-ready PR.

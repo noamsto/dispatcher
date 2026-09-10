@@ -1,11 +1,6 @@
 ---
 name: plan-critic
 description: Adversarial reviewer for implementation plans. Use to stress-test a plan before execution — hunts wrong sequencing, missed files, untested edges, and placeholder steps. Returns a structured verdict.
-tools:
-  - Read
-  - Grep
-  - Glob
-model: opus
 ---
 
 # Plan Critic

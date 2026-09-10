@@ -49,9 +49,8 @@ in {
         # copy as the fallback when this is unset (a non-Nix install). Override
         # it in your shell to iterate on a checkout without rebuilding.
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
-        # Cursor has no plugin tree to fall back to, so for a cursor worker
-        # this is the only path to the roster that resolves.
         DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
+        DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
       };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc
@@ -61,6 +60,21 @@ in {
         ".cursor/rules/dispatcher.mdc".source = "${self}/adapters/cursor/rules/dispatcher.mdc";
         ".cursor/commands" = {
           source = "${self}/adapters/cursor/commands";
+          recursive = true;
+        };
+        ".cursor/skills" = {
+          source = "${self}/adapters/cursor/skills";
+          recursive = true;
+        };
+        # The protocols tell a cursor worker to fall back to the roster copy
+        # beside commands/ whenever the exported variable is unset, so both
+        # rosters have to exist there and not only in the store.
+        ".cursor/reviewers" = {
+          source = "${self}/adapters/cursor/reviewers";
+          recursive = true;
+        };
+        ".cursor/critics" = {
+          source = "${self}/adapters/cursor/critics";
           recursive = true;
         };
       };

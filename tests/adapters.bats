@@ -55,6 +55,11 @@ setup() {
     adapters/claude-code/plugin/reviewers
     adapters/codex/plugin/reviewers
     adapters/cursor/reviewers
+    adapters/claude-code/plugin/agents
+    adapters/codex/plugin/critics
+    adapters/cursor/critics
+    adapters/claude-code/plugin/skills
+    adapters/cursor/skills
   )
   "$ROOT/scripts/gen-adapters.sh" >/dev/null
   before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
@@ -435,35 +440,52 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "worker protocol scopes the metrics carve-out to the critics only" {
+@test "the metrics snapshot carves no engine out of either gate" {
+  # Both carve-outs are gone (#114 took the critic half, #108 the review half),
+  # so what needs guarding is that neither creeps back: a `null` metric excused
+  # by engine rather than by tier is the bug both closed.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
     '`review_mode` = which review depth actually ran (`full`|`downgraded`|`none`|`unavailable`, per the Code review gate' \
-    '**The code review gate is not part of that carve-out**: on `standard`/`deep` they run it like any other engine' \
+    '**Every engine runs the spec/plan critics**' \
+    'carries a real verdict on codex and cursor too and `null` keeps its narrow meaning: no plan phase ran.' \
+    '**The code review gate reads the same way**: on `standard`/`deep` all three run it like any other engine' \
     'on `trivial` they emit `review_high: 0` with `review_mode: "none"`, the same as a trivial claude worker.' \
     'On an `unavailable` snapshot `review_high` is `null`'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
-  # Phrase unique to the deleted carve-out — `Codex and cursor` alone would also
-  # match the tier-scoped sentence that replaced it.
-  run grep -F 'nor the claude code-review gate' "$protocol"
-  [ "$status" -ne 0 ]
+  for gone in \
+    'nor the claude code-review gate' \
+    'those stay Claude-only' \
+    'Use plain replanning, not Claude critics.'; do
+    run grep -F "$gone" "$protocol"
+    [ "$status" -ne 0 ]
+  done
 }
 
-@test "the cursor rule runs the review gate, keeping only the critic carve-out" {
+@test "the cursor rule runs both gates and names where the bodies are" {
   # Hand-maintained — gen-adapters.sh never touches adapters/cursor/rules/, so
   # no drift gate sees this file. With alwaysApply: true it is in every cursor
   # session's context, and this test is its only protection.
   rule="$ROOT/adapters/cursor/rules/dispatcher.mdc"
-  run grep -F 'code-review gate like any other engine' "$rule"
-  [ "$status" -eq 0 ]
-  run grep -F '`plan_critic_first_pass: null` — the critic half of the carve-out only.' "$rule"
-  [ "$status" -eq 0 ]
-  run grep -F 'review_mode: "none"' "$rule"
-  [ "$status" -ne 0 ]
-  run grep -F 'review_high: null' "$rule"
-  [ "$status" -ne 0 ]
+  for statement in \
+    'run the plan-critic and the code-review gate like any other' \
+    'DISPATCHER_CRITICS_DIR' \
+    '`plan_critic_first_pass` verdict alongside `review_high` and `review_mode`.' \
+    '~/.cursor/critics'; do
+    run grep -F "$statement" "$rule"
+    [ "$status" -eq 0 ]
+  done
+  # A cursor session that reads any of these skips a gate it now owns.
+  for gone in \
+    'skip the plan-critic' \
+    'plan_critic_first_pass: null' \
+    'review_mode: "none"' \
+    'review_high: null'; do
+    run grep -F "$gone" "$rule"
+    [ "$status" -ne 0 ]
+  done
 }
 
 @test "the reviewer roster ships verbatim into every adapter" {
@@ -517,6 +539,130 @@ setup() {
     'one subagent per matched roster entry' \
     'the matched roster body written into its prompt' \
     'the same roster body inline'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the critic roster ships verbatim to the engines without an agent registry" {
+  for source in "$ROOT"/adapters/core/critics/*.md; do
+    name="$(basename "$source")"
+    for tree in codex/plugin cursor; do
+      run cmp -s "$source" "$ROOT/adapters/$tree/critics/$name"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "claude gets the same critic bodies as agents, with a pinned model" {
+  # The body has to be byte-identical to the roster's or the gate stops being
+  # the same text on every engine — only the frontmatter may differ, and only
+  # by the two keys claude alone can express.
+  for source in "$ROOT"/adapters/core/critics/*.md; do
+    name="$(basename "$source" .md)"
+    agent="$ROOT/adapters/claude-code/plugin/agents/$name.md"
+    [ -f "$agent" ]
+    strip() { awk 'NR>1 && /^---$/ {found=1; next} found' "$1"; }
+    run diff <(strip "$source") <(strip "$agent")
+    [ "$status" -eq 0 ]
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$agent" >"$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$(yq -r .model "$BATS_TEST_TMPDIR/fm.yaml")" = "opus" ]
+    [ "$(yq -r '.tools | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")" = "Read,Grep,Glob" ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$name" ]
+  done
+}
+
+@test "no critic body names a model, so no engine reads a rung it cannot spawn" {
+  # `model: opus` belongs to the generated claude agent, never to the shared
+  # body codex and cursor paste into a subagent prompt.
+  run grep -rn 'model:' "$ROOT/adapters/core/critics/"
+  [ "$status" -ne 0 ]
+}
+
+@test "every critic carries frontmatter naming itself" {
+  for f in "$ROOT"/adapters/core/critics/*.md; do
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$(basename "$f" .md)" ]
+  done
+}
+
+@test "the roster holds both gates the tiers name" {
+  # standard gates on the plan, deep on the spec first — a tier whose body is
+  # missing has no gate at all.
+  [ -f "$ROOT/adapters/core/critics/plan-critic.md" ]
+  [ -f "$ROOT/adapters/core/critics/spec-critic.md" ]
+}
+
+@test "the generator removes a critic whose source is gone" {
+  work="$BATS_TEST_TMPDIR/critics"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/codex/plugin/critics/plan-critic.md" ]
+  [ -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
+  rm "$work/adapters/core/critics/plan-critic.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ ! -f "$work/adapters/codex/plugin/critics/plan-critic.md" ]
+  [ ! -f "$work/adapters/cursor/critics/plan-critic.md" ]
+  [ ! -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
+}
+
+@test "every shared skill reaches all three engines" {
+  for d in "$ROOT"/adapters/core/skills/*/; do
+    name="$(basename "$d")"
+    for shipped in \
+      "adapters/claude-code/plugin/skills/$name/SKILL.md" \
+      "adapters/codex/plugin/skills/$name/SKILL.md" \
+      "adapters/cursor/skills/$name/SKILL.md"; do
+      run cmp -s "$d/SKILL.md" "$ROOT/$shipped"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "the generator removes a shared skill whose source is gone" {
+  work="$BATS_TEST_TMPDIR/skills"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic/SKILL.md" ]
+  mv "$work/adapters/core/skills/spec-plan-critic" "$work/adapters/core/skills/spec-plan-critic-v2"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  for stale in \
+    adapters/claude-code/plugin/skills/spec-plan-critic \
+    adapters/codex/plugin/skills/spec-plan-critic \
+    adapters/cursor/skills/spec-plan-critic; do
+    [ ! -e "$work/$stale" ]
+  done
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic-v2/SKILL.md" ]
+}
+
+@test "the critic gate routes over the roster on every engine" {
+  skill="$ROOT/adapters/core/skills/spec-plan-critic/SKILL.md"
+  for statement in \
+    '**The critics themselves ship with the harness.**' \
+    '$DISPATCHER_CRITICS_DIR/*.md' \
+    'the named `spec-critic` / `plan-critic` agent' \
+    'the roster body written into its prompt' \
+    'the same roster body inline' \
+    'the tier'"'"'s **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`)' \
+    'the tier'"'"'s **escalate** slug (deep → `cursor-grok-4.6-high`, standard → `cursor-grok-4.6-medium`)'; do
+    run grep -F "$statement" "$skill"
+    [ "$status" -eq 0 ]
+  done
+  # A same-context critic is the refused-spawn fallback, never an engine's default.
+  run grep -F 'degraded fallback' "$skill"
+  [ "$status" -eq 0 ]
+}
+
+@test "the worker protocol points at the critic roster too" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '2. **Critics are independent, on every engine.**' \
+    '$DISPATCHER_CRITICS_DIR/*.md' \
+    'Any engine may use its bounded critic within this single episode'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done

@@ -136,7 +136,7 @@ actually express:
 | Skills                    |     ✅      |         ✅          |      ✅      |
 | Subagents                 |     ✅      |   ⚠️ native only³   |     ✅³      |
 | Hooks                     |     ✅      |         ✅          |      ✅      |
-| Worker: spec/plan critics |     ✅      |         ❌          |      ❌      |
+| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      |
 | Worker: code-review gate  |     ✅      |         ✅          |      ✅      |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
@@ -146,19 +146,23 @@ skills — so each command ships as a skill, invoked `$autopilot` or via `/skill
 ³ Codex has native ad-hoc subagents but no declarable plugin agents; cursor has
 both but not the model this pipeline is built on.
 
-**Process-light is a promise, not an omission.** Codex and cursor workers skip
-the plan/spec critics — claude-only, so they emit `plan_critic_first_pass: null`
-— but still run the code-review gate on `standard`/`deep` like any other
-engine, with a real `review_high` and `review_mode`.
+**Every tier gate runs on every engine.** A worker's pipeline depth is set by
+its tier, not by which engine drew the task: `standard` and `deep` run the
+spec/plan critics _and_ the code-review gate on all three, so
+`plan_critic_first_pass`, `review_high` and `review_mode` all carry real
+values whoever ran. Only the spawn mechanism and the rung are per-engine.
 
-**One roster, spawned three ways.** What each reviewer _is_ ships with the
-harness: `adapters/core/reviewers/` holds eleven engine-neutral bodies — Go,
-Python, TypeScript, shell, Nix, YAML, Terraform, SQLite, Postgres, Bubble Tea,
-security — whose `globs:` frontmatter routes a diff to the ones that apply.
-A worker resolves them through `DISPATCHER_REVIEWERS_DIR` (or its plugin-local
-copy) and hands the matched body to whatever spawn its engine has: a named
-agent on claude, an inline role brief on codex and cursor. Nothing about the
-review depends on agent definitions that live outside the repo.
+**Two rosters, spawned three ways.** What each reviewer and each critic _is_
+ships with the harness. `adapters/core/reviewers/` holds eleven engine-neutral
+bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
+Postgres, Bubble Tea, security — whose `globs:` frontmatter routes a diff to
+the ones that apply; `adapters/core/critics/` holds the spec and plan critics
+that gate a plan before any of it is written. A worker resolves them through
+`DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR` (or the copy its adapter
+ships) and hands the matched body to whatever spawn its engine has: a named
+agent on claude, an inline role brief on codex and cursor. A critic sits at
+the tier's escalate rung — it has to out-think the draft it gates. Nothing
+about either gate depends on agent definitions that live outside the repo.
 
 ---
 
@@ -185,9 +189,10 @@ programs.dispatcher = {
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
-`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE` and
-`DISPATCHER_PROTOCOL_DIR`, installs the Codex plugin and writes the Cursor
-rule and commands.
+`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
+`DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR` and
+`DISPATCHER_CRITICS_DIR`, installs the Codex plugin and writes the Cursor
+rule, commands, skills and rosters.
 
 For Claude Code, pass the plugin directory to `claude`:
 

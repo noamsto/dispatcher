@@ -3,7 +3,6 @@ name: finish-prs
 description: 'Fan out across my open PRs in the current repo: one teammate per PR → babysit each to CI-green + comments-clean'
 ---
 
-
 # Finish PRs: Multi-PR Shepherd Fan-Out
 
 You are the **team lead**. You select a batch of the user's already-open PRs, spawn one teammate per PR, and each teammate babysits its PR through CI failures and reviewer comments until everything is clean. You coordinate; you do not implement.
