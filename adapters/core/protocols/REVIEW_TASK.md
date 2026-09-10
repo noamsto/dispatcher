@@ -72,6 +72,8 @@ crew msg "worker:$(git branch --show-current)" "dispatcher:$CREW_ID" \
 crew status "worker:$(git branch --show-current)" done "reviewed PR <N> — <review_url>" "<pr_url>"
 ```
 
+Map reviewer severities onto the tally as CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`.
+
 The url slot carries the **PR** url, not the review url: `crew reap` feeds it to `gh pr view` to decide whether this worktree can be reclaimed, and a `#pullrequestreview-…` fragment is not a PR reference. The review url rides in the detail and in the tally.
 
 A review worker emits the tally **instead of** the outcome-metrics record in `WORKER_PROTOCOL.md` ("When done") — that record rates an implement pipeline this worker never ran.

@@ -519,7 +519,7 @@ setup() {
 }
 
 @test "the roster covers the languages this repo and its workers actually ship" {
-  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer; do
+  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer agent-docs-reviewer; do
     [ -f "$ROOT/adapters/core/reviewers/$n.md" ]
   done
 }
@@ -613,6 +613,147 @@ setup() {
   [ ! -f "$work/adapters/codex/plugin/critics/plan-critic.md" ]
   [ ! -f "$work/adapters/cursor/critics/plan-critic.md" ]
   [ ! -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
+}
+
+@test "every reviewer ends with the shared tail verbatim" {
+  # Pins the anti-inflation tail (#116) byte-for-byte across the roster,
+  # so a per-file rewrite can't quietly soften the severity/verdict rules it
+  # shares with every other reviewer.
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    count="$(grep -c '^## Findings and verdict$' "$f" || true)"
+    [ "$count" -eq 1 ]
+    awk '/^## Findings and verdict$/{p=1} p' "$f" >"$BATS_TEST_TMPDIR/tail.md"
+    run cmp -s "$BATS_TEST_TMPDIR/tail.md" "$ROOT/tests/fixtures/reviewer-tail.md"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "no roster body carries an engine-specific or repo-specific idiom" {
+  # #116: the roster ships verbatim to three engines, so a phrase that
+  # only makes sense on one of them (a tool name, a path, a spawn idiom, a
+  # model pin) would silently break neutrality on the other two.
+  mapfile -t files < <(printf '%s\n' "$ROOT"/adapters/core/reviewers/*.md "$ROOT"/adapters/core/critics/*.md)
+  offenders=""
+  for pattern in '~/.claude' 'Agent tool' 'Task tool' 'subagent' \
+    'MUST BE USED' 'PROACTIVELY' 'gh pr ' 'Emergency Response' 'prdash' \
+    'factify' 'model:'; do
+    hits="$(grep -nF -- "$pattern" "${files[@]}" || true)"
+    [ -n "$hits" ] && offenders="$offenders
+$hits"
+  done
+  if [ -n "$offenders" ]; then
+    echo "$offenders" >&2
+  fi
+  [ -z "$offenders" ]
+}
+
+@test "every reviewer grades on the one severity ladder" {
+  # #116: CRITICAL/HIGH/MEDIUM is the only severity vocabulary a
+  # reviewer may use — a stray ladder rung (LOW, blocker, NOTE) means two
+  # engines could disagree about what a finding means.
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    headings="$(grep -E '^### ' "$f" || true)"
+    [ -n "$headings" ]
+    bad="$(echo "$headings" | grep -vE '^### (CRITICAL|HIGH|MEDIUM)$' || true)"
+    [ -z "$bad" ]
+    run grep -F -e 'should-fix' -e 'blocker |' -e 'NOTE:' -e 'LOW' "$f"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "the routing table is coherent" {
+  # #116: pins the frontmatter routing invariants mechanically, so a
+  # future glob/when edit can't silently break Postgres/SQLite disjointness
+  # or leave two reviewers racing on an unguarded shared glob.
+  glob_map="$BATS_TEST_TMPDIR/globs.tsv"
+  : >"$glob_map"
+  postgres_when=""
+  sqlite_when=""
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    name="$(basename "$f" .md)"
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    globs_csv="$(yq -r '(.globs // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    when="$(yq -r '.when // ""' "$BATS_TEST_TMPDIR/fm.yaml")"
+    description="$(yq -r '.description // ""' "$BATS_TEST_TMPDIR/fm.yaml")"
+
+    case "$name" in
+    typescript-reviewer)
+      [[ "$globs_csv" == *'tsconfig*.json'* ]]
+      ;;
+    shell-reviewer)
+      [[ "$globs_csv" == *'.envrc'* ]]
+      ;;
+    terraform-reviewer)
+      [[ "$description" != *'YAML'* ]]
+      ;;
+    postgres-reviewer)
+      [ -n "$when" ]
+      [[ "$when" == *'atlas.hcl'* ]]
+      [[ "$when" == *'sqlc.yaml'* ]]
+      [[ "$when" != *'dependencies'* ]]
+      postgres_when="$when"
+      ;;
+    sqlite-reviewer)
+      [ -n "$when" ]
+      [[ "$when" == *'d1_databases'* ]]
+      [[ "$when" == *'no atlas.hcl'* ]]
+      [[ "$when" != *'dependencies'* ]]
+      sqlite_when="$when"
+      ;;
+    esac
+
+    IFS=',' read -ra globs <<<"$globs_csv"
+    for g in "${globs[@]}"; do
+      [ -n "$g" ] && printf '%s\t%s\n' "$g" "$name" >>"$glob_map"
+    done
+  done
+
+  [ -n "$postgres_when" ]
+  [ -n "$sqlite_when" ]
+  [ "$postgres_when" != "$sqlite_when" ]
+
+  # Every glob shared by two or more reviewers must carry a non-empty
+  # `when:` on each of them, or the routing table would double-dispatch
+  # silently instead of relying on a `when:` to arbitrate.
+  # Read line by line, never `for x in $(...)`: the tokens are literal glob
+  # patterns (`*.md`, `*.go`), and an unquoted word list pathname-expands
+  # them against the invocation CWD, so any glob that happens to match a
+  # file there is replaced by that filename and its row is never checked.
+  while IFS= read -r shared_glob; do
+    names="$(awk -F'\t' -v g="$shared_glob" '$1==g{print $2}' "$glob_map" | sort -u)"
+    count="$(printf '%s\n' "$names" | wc -l)"
+    if [ "$count" -ge 2 ]; then
+      while IFS= read -r n; do
+        awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$ROOT/adapters/core/reviewers/$n.md" >"$BATS_TEST_TMPDIR/fm2.yaml"
+        w="$(yq -r '.when // ""' "$BATS_TEST_TMPDIR/fm2.yaml")"
+        [ -n "$w" ]
+      done <<<"$names"
+    fi
+  done < <(cut -f1 "$glob_map" | sort -u)
+}
+
+@test "the README counts the roster" {
+  # #116: the roster paragraph must actually name the new count
+  # and every reviewer domain, not just claim "the roster" in the abstract.
+  run grep -F 'twelve engine-neutral' "$ROOT/README.md"
+  [ "$status" -eq 0 ]
+  start_line="$(grep -nF '**Two rosters, spawned three ways.**' "$ROOT/README.md" | head -1 | cut -d: -f1)"
+  [ -n "$start_line" ]
+  paragraph="$(sed -n "${start_line},\$p" "$ROOT/README.md" | awk '{print} /^$/{exit}' | tr '\n' ' ')"
+  for item in Go Python TypeScript shell Nix YAML Terraform SQLite Postgres \
+    'Bubble Tea' security 'agent-facing prose'; do
+    [[ "$paragraph" == *"$item"* ]]
+  done
+}
+
+@test "both protocols state the severity mapping" {
+  # #116: each protocol states the CRITICAL/HIGH/MEDIUM mapping
+  # onto its own vocabulary exactly once — this pins both sentences so a
+  # future edit can't reword one without the other drifting.
+  run grep -F 'a CRITICAL is HIGH-severity for `review_high` and for the deep second re-review' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  [ "$status" -eq 0 ]
+  run grep -F 'CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`' "$ROOT/adapters/core/protocols/REVIEW_TASK.md"
+  [ "$status" -eq 0 ]
 }
 
 @test "every shared skill reaches all three engines" {
