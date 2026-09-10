@@ -111,10 +111,51 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # No pane_current_command filter: this host's nix-wrapped claude binary
 # reports as `.claude-wrapped`, not `claude`, so a literal-command filter
 # would silently scrape nothing here — the regex itself is the filter.
-# resets_at is never visible on screen, so it stays null; credits_cover is
-# unknowable from a screen scrape, also null.
+# resets_at is derived from the countdown parenthetical the statusline
+# renders next to each percentage, when it parses (see _pane_countdown
+# below); credits_cover is unknowable from a screen scrape, so it stays
+# null.
+
+# _pane_countdown <match> <nominal_secs> — print "<pct>\t<remaining>" for
+# one ⚡/7d match captured by probe_claude_pane_scrape below. <remaining> is
+# -1 when the match carries no usable countdown.
+#
+# The percentage is the LAST digit run of the text before the first '%',
+# not the first run of the whole match: the first run breaks on the "7d"
+# marker's own leading digit ("7d 61%" -> "761"), and the last run of the
+# whole match breaks on the " -> HH:MM" tail instead ("(10m -> 05:20)" ->
+# "20"). Only the text before '%' is scanned, so both traps are avoided at
+# once.
+#
+# A derived clock is a best effort, not a live one: tmux capture-pane
+# returns the pane's last render, so "now + remaining" inherits however
+# stale that render is. That's the conservative direction for the rung gate
+# — an overstated remaining understates elapsed_pct and makes it refuse
+# harder, never less. The day-form (NNd) branch is implemented but
+# UNOBSERVED: a live capture of every crew pane on this host showed no 7d
+# segment rendered at all, so the only in-repo sample of the grammar is
+# NNhNNm.
+_pane_countdown() {
+  local m="$1" nominal="$2" pct paren inner re d h mnt remaining=-1
+  pct=$(printf '%s' "${m%%\%*}" | grep -oE '[0-9]+' | tail -1)
+  paren=$(printf '%s' "$m" | grep -oE '\([^)]*\)$')
+  if [[ -n $paren ]]; then
+    inner="${paren#(}"
+    inner="${inner%)}"
+    re='^([0-9]+d)?([0-9]+h)?([0-9]+m)?( → [0-9]{2}:[0-9]{2})?$'
+    if [[ $inner =~ $re ]] && [[ -n ${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]} ]]; then
+      d="${BASH_REMATCH[1]%d}"
+      h="${BASH_REMATCH[2]%h}"
+      mnt="${BASH_REMATCH[3]%m}"
+      remaining=$((${d:-0} * 86400 + ${h:-0} * 3600 + ${mnt:-0} * 60))
+      ((remaining <= nominal)) || remaining=-1
+    fi
+  fi
+  printf '%s\t%s\n' "$pct" "$remaining"
+}
+
 probe_claude_pane_scrape() {
-  local wins panes wid nm pw pid text tail m v max5=-1 max7=-1
+  local wins panes wid nm pw pid text tail m v rem max5=-1 max7=-1 rem5=-1 rem7=-1
   command -v tmux >/dev/null 2>&1 || return 1
   wins=$(tmux list-windows -a -F '#{window_id}	#{@crew_name}' 2>/dev/null) || return 1
   panes=$(tmux list-panes -a -F '#{window_id}	#{pane_id}' 2>/dev/null) || return 1
@@ -125,15 +166,21 @@ probe_claude_pane_scrape() {
       [[ $pw == "$wid" ]] || continue
       text=$(tmux capture-pane -p -t "$pid" 2>/dev/null) || continue
       tail=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -2)
-      m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]+%' | tail -1)
+      m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]+%([[:space:]]*\([^)]*\))?' | tail -1)
       if [[ -n $m ]]; then
-        v=$(printf '%s' "$m" | grep -oE '[0-9]+' | tail -1)
-        if ((v > max5)); then max5=$v; fi
+        IFS=$'\t' read -r v rem <<<"$(_pane_countdown "$m" 18000)"
+        if ((v > max5)) || { ((v == max5)) && ((rem > rem5)); }; then
+          max5=$v
+          rem5=$rem
+        fi
       fi
-      m=$(printf '%s\n' "$tail" | grep -oE '7d[[:space:]]*[0-9]+%' | tail -1)
+      m=$(printf '%s\n' "$tail" | grep -oE '7d[[:space:]]*[0-9]+%([[:space:]]*\([^)]*\))?' | tail -1)
       if [[ -n $m ]]; then
-        v=$(printf '%s' "$m" | grep -oE '[0-9]+' | tail -1)
-        if ((v > max7)); then max7=$v; fi
+        IFS=$'\t' read -r v rem <<<"$(_pane_countdown "$m" 604800)"
+        if ((v > max7)) || { ((v == max7)) && ((rem > rem7)); }; then
+          max7=$v
+          rem7=$rem
+        fi
       fi
     done <<PANES
 $panes
@@ -142,13 +189,17 @@ PANES
 $wins
 WINS
   ((max5 >= 0)) || return 1
-  jq -n --argjson p5 "$max5" --argjson p7 "$max7" '
+  local now resets5 resets7
+  now=$(date +%s)
+  if ((rem5 >= 0)); then resets5=$((now + rem5)); else resets5=null; fi
+  if ((rem7 >= 0)); then resets7=$((now + rem7)); else resets7=null; fi
+  jq -n --argjson p5 "$max5" --argjson p7 "$max7" --argjson r5 "$resets5" --argjson r7 "$resets7" '
     {
       source: "pane_scrape",
       credits_cover: null,
       windows: (
-        {"5h": {used_pct: $p5, resets_at: null}}
-        + (if $p7 >= 0 then {"7d": {used_pct: $p7, resets_at: null}} else {} end)
+        {"5h": {used_pct: $p5, resets_at: $r5}}
+        + (if $p7 >= 0 then {"7d": {used_pct: $p7, resets_at: $r7}} else {} end)
       )
     }'
 }
@@ -216,17 +267,68 @@ main() {
   mv "$tmp" "$OUT"
 
   printf '%s\n' "$OUT"
-  jq -r '.engines | to_entries[] | select(.value != null) | .key as $e |
+
+  # Shared by both jq programs below: a relative-duration renderer and the
+  # nominal window lengths a pace figure can be computed against. 7d is a
+  # real budget and gets its pace ("N points ahead of pace") named in
+  # the advisory; 5h is a short rate limit that just gets a wait-vs-shed
+  # steer; everything else (1d, unknown, other — codex's non-5h/7d buckets)
+  # has no known length and stays generic. The pace figure uses the same
+  # formula as dispatch.sh's gate 2 (minus its 70 floor and 15-point
+  # threshold, which are the gate's business, not an advisory's), so the two
+  # renderers never disagree on a number.
+  local now jq_time_defs
+  now=$(date +%s)
+  # shellcheck disable=SC2016  # jq's own $vars, not bash expansions
+  jq_time_defs='
+    def reltime: . as $s
+      | ($s / 86400 | floor) as $d
+      | (($s % 86400) / 3600 | floor) as $h
+      | (($s % 3600) / 60 | floor) as $m
+      | if $d > 0 then "\($d)d \($h)h"
+        elif $h > 0 then "\($h)h \($m)m"
+        else "\($m)m" end;
+    def wsecs($k): if $k == "5h" then 18000
+      elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then 604800
+      else null end;
+    def elapsed_pct($resets_at; $L): (100 * ($L - ($resets_at - $now)) / $L) as $x
+      | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+  '
+
+  jq -r --argjson now "$now" "$jq_time_defs"'
+    .engines | to_entries[] | select(.value != null) | .key as $e |
     .value.windows | to_entries[] | select(.value.used_pct >= 85) |
-    "\($e) \(.key) at \(.value.used_pct)%"' "$OUT" |
+    .key as $k | .value as $w |
+    (if $k == "5h" then "5h" elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then "7d" else "other" end) as $fam |
+    (wsecs($k)) as $L |
+    (if $w.resets_at != null and $w.resets_at > $now then ($w.resets_at - $now) else null end) as $rem |
+    (if $fam == "7d" and $rem != null then (($w.used_pct - elapsed_pct($w.resets_at; $L)) | round) else null end) as $ahead |
+    (if $rem == null then ""
+     else " (resets in \($rem | reltime)" + (if $ahead != null then ", \($ahead) points ahead of pace" else "" end) + ")"
+     end) as $paren |
+    (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
+     elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
+     else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+     end) as $advice |
+    "\($e) \($k) at \($w.used_pct)%\($paren) — \($advice)"
+  ' "$OUT" |
     while IFS= read -r line; do
-      warn "budget lever: $line — approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+      warn "budget lever: $line"
     done || true
 
-  jq -r '.engines | to_entries[] | .key as $e |
+  jq -r --argjson now "$now" "$jq_time_defs"'
+    .engines | to_entries[] | .key as $e |
     if .value == null then "\($e): unknown"
-    else "\($e): " + ([.value.windows | to_entries[] | "\(.key) \(.value.used_pct)% used\(if .value.resets_at then " (resets \(.value.resets_at | todateiso8601))" else "" end)"] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)
-    end' "$OUT"
+    else "\($e): " + ([.value.windows | to_entries[] |
+        "\(.key) \(.value.used_pct)% used" +
+        (if .value.resets_at then
+           " (resets \(.value.resets_at | todateiso8601)" +
+           (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
+           ")"
+         else "" end)
+      ] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)
+    end
+  ' "$OUT"
 }
 
 main "$@"

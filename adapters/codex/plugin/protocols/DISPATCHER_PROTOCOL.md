@@ -80,23 +80,58 @@ per-engine subscription quota to
 session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
 
-- **≥85% on any window** — prefer a cheaper burn class on that engine, or
-  rotate to a fitting peer engine (budget turns the neutral-fit rotation into a
-  budgeted rotation). Walk down burn before walking down tier: burn only sets
-  model strength, tier sets review depth.
-- **≥70% on the `7d` window specifically** — narrower and mechanical, not
-  merely advisory: `dispatch` refuses the premium rung for that engine
-  outright and names the standard-class alternative. Complements the
-  ≥85%-any-window bullet above, which stays advisory-only. See
+- **`5h` at ≥85%** — a short rate limit that refills inside one session. Inside
+  its last 15% (~45m to reset), hold and wake past the reset rather than
+  shedding burn class, and report it to the human as a wait with the clock
+  time, not as a ceiling. Longer than that, shed as before.
+- **`7d` at ≥85%** — a real budget: shed burn class or rotate to a fitting
+  peer engine (budget turns the neutral-fit rotation into a budgeted
+  rotation). Inside its last 15% (~25h to reset), prefer waiting to shedding a
+  fan-out you would otherwise have run.
+- **Both bullets above are advisory judgement, implemented by nothing** — no
+  code reads the `5h` window for routing, and the mechanical gate below reads
+  only the `7d` window and only the pace rule. Don't mistake this prose for a
+  mechanism.
+- **The tail of a window is not free headroom.** The pace rule below
+  deliberately allows the premium rung at, say, 94% with two hours left on
+  the `7d` window. A `deep` fan-out launched there can cross 95% mid-run and
+  start killing live workers on limit errors — the gate can't catch that
+  because it only runs at dispatch time. Near the wall, size the fan-out to
+  what fits before the reset, not to the roster budget.
+- **≥70% on the `7d` window, pace-aware** — narrower and mechanical, not
+  merely advisory: `dispatch` refuses the premium rung for an engine when its
+  `7d` window is **both** ≥70% used **and** more than 15 points ahead of the
+  window's elapsed fraction (`elapsed = clamp(100 * (604800 - (resets_at -
+  now)) / 604800, 0, 100)`) — burning faster than the window refills, not
+  just past a flat floor. Because `used_pct` tops out at 100 the inequality
+  can't fire once elapsed reaches 85%, so a window inside its own last 15%
+  (~25h on `7d`) stops refusing the premium rung on its own — that's the
+  "about to reset" exemption, and a property of the inequality rather than a
+  second branch to keep in sync. When `resets_at` is null, pace isn't
+  computable and the gate falls back to the flat `>=70` rule it's always had.
+  Either way it names the standard-class alternative. See
   `dispatch-orchestration.md` → "Tier map".
+- **Two overrides, different blast radii.** `DISPATCH_IGNORE_RUNG=<the exact
+  model id>` bypasses only this rung refusal, for that one dispatched model,
+  and leaves the ≥95% hard stop armed — the escape an agent can actually
+  type, since `--ignore-budget` reads as spend authorization to the
+  auto-mode classifier and a dispatcher agent can't pass it. `--ignore-budget`
+  still bypasses both this gate and the ≥95% stop; that's the human's spend
+  decision, say so when you take it.
 - **≥95%** — the engine is full: don't dispatch it (`dispatch` refuses),
   stop adding workers to it mid-fan-out, and let the roster drain.
 - **Every fitting engine ≥95%** — hold the task, tell the human, cite the
   earliest `resets_at`, and re-check on the first wake past it. Never dispatch
   into an exhausted engine to keep momentum.
+- **Every fitting engine's premium rung refused at once is a fleet-wide burn
+  signal, not a routing hint** — shed tier or hold rather than reaching for
+  `DISPATCH_IGNORE_RUNG` on each engine in turn; that override is for one
+  dispatch, not a habit.
 - **`credits_cover: true`** means the engine bills real money past the plan
-  limit — the gate still fires, and overriding it (`--ignore-budget`) is the
-  human's spend decision; say so when you take it.
+  limit — the gate still fires regardless. Overriding just the rung refusal
+  is `DISPATCH_IGNORE_RUNG=<model>`; overriding both gates is
+  `--ignore-budget`, the human's spend decision — say so when you take
+  either.
 - **cursor's quota is unobservable** — treat it as neutral, but it's the engine
   most likely to surprise you; route the work you'd shed first there, not the
   work you'd shed last.

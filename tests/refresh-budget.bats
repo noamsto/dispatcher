@@ -51,6 +51,9 @@ EOF
 }
 
 # Fake `codex app-server --stdio`: ignores the requests, emits canned frames.
+# SHIM_CODEX_GENERIC swaps in a single 1440min (24h) window at 90% used — the
+# static default below is pinned at 5h/7d buckets and can never emit a
+# 1d/unknown/other key at >=85%, which the generic advisory wording needs.
 write_codex_shim() {
   cat >"$STUB_DIR/codex" <<'EOF'
 #!/usr/bin/env bash
@@ -58,7 +61,11 @@ if [[ -n "${SHIM_CODEX_FAIL:-}" ]]; then
   exit 1
 fi
 printf '%s\n' '{"id":1,"result":{}}'
-printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true},"planType":"team"}}}'
+if [[ -n "${SHIM_CODEX_GENERIC:-}" ]]; then
+  printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":1440},"credits":{"hasCredits":true},"planType":"team"}}}'
+else
+  printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true},"planType":"team"}}}'
+fi
 EOF
   chmod +x "$STUB_DIR/codex"
 }
@@ -102,7 +109,10 @@ EOF
   [ "$status" -eq 0 ]
   # The fixture's 7d window is 97.0% (>=85%) — the budget lever must visibly
   # fire a warning for it, and must NOT fire one for the 12.5% 5h window.
-  [[ "$output" == *"budget lever: claude 7d at 97"*"approaching quota"* ]]
+  # Its resets_at (2026-08-09) is already in the past, so the line carries
+  # no "(resets in ...)" parenthetical — verified by requiring the "%" to
+  # butt directly against the em dash.
+  [[ "$output" == *"budget lever: claude 7d at 97.0% — real budget: prefer a cheaper burn class or rotate engines"* ]]
   [[ "$output" != *"budget lever: claude 5h at 12.5"* ]]
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
   run jq -r '.engines.claude.source' "$cache"
@@ -171,7 +181,8 @@ EOF
   [ "$output" = "null" ]
 }
 
-@test "pane-scrape fallback produces a populated cache when oauth+statusline both fail" {
+@test "pane-scrape derives resets_at from the parsed countdown, for both windows" {
+  now=$(date +%s)
   SHIM_TMUX_WINDOWS=$'@1\tnova' \
     SHIM_TMUX_PANES=$'@1\t%10' \
     SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 🧠 high | 📊 170k/1M | ⚡ 89% (10m → 05:20) 7d 61% (9h49m)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
@@ -184,13 +195,20 @@ EOF
   [ "$output" = "89" ]
   run jq '.engines.claude.windows["7d"].used_pct' "$cache"
   [ "$output" = "61" ]
+  # "10m -> 05:20" parses to a 600s countdown despite the arrow tail, and
+  # "9h49m" (9*3600 + 49*60 = 35340s) parses without one.
   run jq '.engines.claude.windows["5h"].resets_at' "$cache"
-  [ "$output" = "null" ]
+  [ "$output" -ge $((now + 540)) ]
+  [ "$output" -le $((now + 660)) ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" -ge $((now + 35240)) ]
+  [ "$output" -le $((now + 35440)) ]
   run jq '.engines.claude.credits_cover' "$cache"
   [ "$output" = "null" ]
 }
 
 @test "pane-scrape aggregates by max across multiple worker windows" {
+  now=$(date +%s)
   SHIM_TMUX_WINDOWS=$'@1\tnova\n@2\tember' \
     SHIM_TMUX_PANES=$'@1\t%10\n@2\t%20' \
     SHIM_TMUX_CAPTURE_P10=$'  ⚡ 42% (10m)' \
@@ -202,6 +220,15 @@ EOF
   [ "$output" = "89" ]
   run jq '.engines.claude.windows["7d"].used_pct' "$cache"
   [ "$output" = "70" ]
+  # The winning percentage (89%, from pane %20) carries pane %20's own
+  # countdown (5m = 300s), not pane %10's higher 10m — the max comparison
+  # picks the pane, not the longest countdown.
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" -ge $((now + 240)) ]
+  [ "$output" -le $((now + 420)) ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" -ge $((now + 7140)) ]
+  [ "$output" -le $((now + 7320)) ]
 }
 
 @test "pane-scrape excludes the dispatcher's own window even when it renders a statusline" {
@@ -231,5 +258,88 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude quota unknown"* ]]
   run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+# Neither existing fixture crosses the >=85% advisory filter, so a fresh
+# fixture (future epochs, computed at write time — the oauth fixture is
+# only a "past reset" case because its hardcoded 2026-08 dates aged into
+# one) is the only way to exercise the window-differentiated wording, the
+# pace clause, and the "in <reltime>" summary tail together.
+@test "budget lever advisory is window-differentiated, with time and pace" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  now=$(date +%s)
+  # 5h: 91% used, ~35m to reset (2130s, not the exact minute boundary —
+  # leaves margin so the script's own later `date +%s` can't round it down
+  # to 34m). 7d: 97% used, 338688s (3d 22h) to reset, chosen so elapsed_pct
+  # lands on an exact 44.0 and "ahead" rounds to a clean 53.
+  cat >"$XDG_DATA_HOME/crew/claude-statusline.json" <<EOF
+{"rate_limits": {
+  "five_hour": {"used_percentage": 91, "resets_at": $((now + 2130))},
+  "seven_day": {"used_percentage": 97, "resets_at": $((now + 338688))}
+}}
+EOF
+  SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: claude 5h at 91% (resets in 35m) — short window: prefer waiting past the reset to shedding burn class"* ]]
+  [[ "$output" == *"budget lever: claude 7d at 97% (resets in 3d 22h, 53 points ahead of pace) — real budget: prefer a cheaper burn class or rotate engines"* ]]
+  [[ "$output" == *"budget lever: codex 1d at 90% — approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"* ]]
+  # The summary line gains the relative remaining only on a future reset —
+  # the oauth fixture's past-dated one has no ", in ..." tail by design.
+  [[ "$output" == *"claude: "*"(resets "*", in "* ]]
+}
+
+@test "pane-scrape parses a day-form countdown" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (2h) 7d 91% (4d3h)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
+  [ "$output" = "91" ]
+  # 4d3h = 4*86400 + 3*3600 = 356400s, inside the 604800s 7d window.
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" -ge $((now + 356280)) ]
+  [ "$output" -le $((now + 356520)) ]
+}
+
+@test "pane-scrape leaves resets_at null when no countdown parenthetical is present" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% 7d 61%' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape leaves resets_at null for an unparseable parenthetical" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (soon) 7d 61% (later today)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape rejects a countdown longer than the window's nominal length" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (6h) 7d 61% (8d)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
   [ "$output" = "null" ]
 }

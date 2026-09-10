@@ -218,11 +218,23 @@ decision".
 
 **Budget-aware rung refusal.** Layered above (checked after) the Tier map
 gate itself, so an off-row model is rejected by the Tier map check first,
-regardless of budget. Once an engine's `7d` budget window crosses 70% and the
-dispatched model is in the premium set below, `dispatch` refuses it and names
-the downgrade target — before the engine goes fully dark at the existing
-≥95% gate (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever").
-Overridable with `--ignore-budget`, same as the ≥95% gate.
+regardless of budget. `dispatch` refuses the premium rung for an engine when
+its `7d` window is **both** ≥70% used **and** more than 15 points ahead of
+pace — `used_pct` minus the window's elapsed fraction, `elapsed = clamp(100 *
+(604800 - (resets_at - now)) / 604800, 0, 100)`. Because `used_pct` tops out
+at 100 the inequality can't fire once elapsed reaches 85%, so a window
+inside its own last 15% (~25h on `7d`) stops refusing on its own — that's the
+near-reset exemption, not a second rule to keep in sync. A null `resets_at`
+means pace isn't computable and the gate falls back to the flat ≥70 rule it
+always had. Either way it names the downgrade target below — before the
+engine goes fully dark at the existing ≥95% gate (`DISPATCHER_PROTOCOL.md` →
+"Budget is the fifth lever"). Two overrides, different blast radii:
+`DISPATCH_IGNORE_RUNG=<the exact model id>` bypasses just this refusal for
+that one dispatched model and leaves the ≥95% stop armed — the escape an
+agent can actually reach for, since `--ignore-budget` reads as spend
+authorization to the auto-mode classifier and a dispatcher agent can't pass
+it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
+remains the human's spend decision.
 
 | engine | premium                                        | downgrade target        |
 | ------ | ----------------------------------------------- | ------------------------ |
