@@ -294,13 +294,10 @@ setup() {
 }
 
 @test "autopilot routes reviewers through the roster, not a private table" {
-  # #118: autopilot.md hand-rolled a reviewer table naming database-reviewer
-  # and expo-mobile-reviewer (neither a roster entry) and graded findings
-  # must-fix/should-fix/nit instead of the roster's CRITICAL/HIGH/MEDIUM
-  # ladder. Pin the roster-matching sentence on every shipped copy, reject
-  # the retired vocabulary, and check every `*-reviewer` token named in the
-  # file is a real roster entry — derived from the roster directory, not
-  # hardcoded, so this test can't itself go stale.
+  # #118: pins the roster-matching sentence on every shipped copy, rejects
+  # the retired database-reviewer/expo-mobile-reviewer/must-fix vocabulary,
+  # and checks every `*-reviewer` token against the roster directory itself
+  # so this test can't go stale.
   roster_names="$(basename -s .md -a "$ROOT"/adapters/core/reviewers/*.md | sort -u)"
   for f in \
     "$ROOT/adapters/core/commands/autopilot.md" \
