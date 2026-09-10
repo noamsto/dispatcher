@@ -1,3 +1,9 @@
+# "generator is idempotent" runs scripts/gen-adapters.sh, which writes real
+# generated files into the shared checkout tree (not a per-test tmpdir) --
+# other tests in this file read those same paths. Under bats --jobs that's a
+# write/read race against the checked-out repo. Serialize this file.
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
 setup() {
   load helpers
   ROOT="$BATS_TEST_DIRNAME/.."

@@ -168,6 +168,7 @@
             ++ [
               config.treefmt.build.wrapper
               pkgs.bats
+              pkgs.parallel
               pkgs.shellcheck
               pkgs.jq
               # yq-go: tests/adapters.bats parses generated codex skill
