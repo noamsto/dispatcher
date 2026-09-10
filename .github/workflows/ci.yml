@@ -34,17 +34,24 @@ jobs:
         run: nix develop -c bats tests/module.bats
       # bats --jobs requires GNU parallel on PATH inside the devshell, so
       # check for it explicitly with a legible error rather than letting a
-      # missing binary surface as an opaque bats failure. --jobs 4 is a
-      # provisional placeholder: TODO replace with the real core count once
-      # it's measured on the actual GitHub-hosted runner. No TAP/count-parsing
+      # missing binary surface as an opaque bats failure. No TAP/count-parsing
       # guard is added here: bats' own bats_test_count_validator (in
       # libexec/bats-core/bats, wired with `set -o pipefail execfail`) already
       # fails the whole run on any test-count shortfall, verified empirically
-      # against tests/. module.bats is excluded here -- it already ran above.
-      # TEMPORARY measurement step for #126 -- times several --jobs values on
-      # this runner in one job so the numbers are apples-to-apples. Removed
-      # once the real value is chosen.
-      - name: bats (jobs measurement)
+      # against tests/ (and again under --jobs). module.bats is excluded
+      # here -- it already ran above.
+      #
+      # --jobs 16 (#126): the runner measured at nproc=4; the suite is
+      # subprocess-bound, not CPU-bound, so above-core parallelism keeps
+      # paying off. Measured on this runner (module.bats excluded, N=581):
+      #   --jobs  4 (1x): 2m50s
+      #   --jobs  8 (2x): 1m55s
+      #   --jobs 16 (4x): 1m24s  <- chosen
+      #   --jobs 32 (8x): 1m21s, but reproduced a real flake twice
+      #                   (stall-watch: one post per episode...) under that
+      #                   much oversubscription -- ~3% faster than 16 isn't
+      #                   worth it.
+      - name: bats
         shell: bash
         run: |
           if ! nix develop -c bash -c 'command -v parallel' >/dev/null; then
@@ -53,12 +60,7 @@ jobs:
           fi
           nix develop -c bash -c '
             files=$(find tests -maxdepth 1 -name "*.bats" ! -name "module.bats" | sort)
-            echo "nproc: $(nproc)"
-            for j in $(nproc) $(( $(nproc) * 2 )) $(( $(nproc) * 4 )) $(( $(nproc) * 8 )); do
-              echo "=== --jobs $j ==="
-              time bats --jobs "$j" $files
-              echo "=== --jobs $j exit=$? ==="
-            done
+            bats --jobs 16 $files
           '
       - name: flake check
         run: nix flake check
