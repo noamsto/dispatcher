@@ -395,7 +395,7 @@ a `trivial` review worker at it (`--pr N`) rather than doing the work yourself.
 
 Two reads remain for detail:
 
-- `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
+- `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), the same event's `engine`/`model`/`tier`, a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
 - `crew inbox dispatcher:$CREW_ID` — worker **questions** in full (messages only; status lives in the roster).
 - A worker that's `blocked` has posted its question and is **awaiting your reply in-band** (a bounded ~300s wait). Answer promptly with `crew reply worker:<branch> "<answer>"` — it resumes in place, no tmux, no re-dispatch. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
   **This applies only to a worker's own `blocked`.** A `blocked` carrying
@@ -425,8 +425,47 @@ Per-worker node: **outline** it with the worker's roster `color` on the _stroke_
 (`{style: {stroke: <color>; stroke-width: 3}}`, a plain color name D2 accepts) —
 not the fill. A hand-set fill bakes in one theme's assumption and the label can
 land light-on-light; a colored border keeps the node on the theme's own
-fill+label (always readable) while still tying it to its tmux window color. Label
-`"<codename>\n<title>\n<state> · <age>s"`. Draw a `PR` node and an
+fill+label (always readable) while still tying it to its tmux window color. A
+worker whose latest `blocked` carries `source: "watchdog"` (nobody is
+waiting in `crew await` — see above) additionally gets a **dashed** stroke,
+`style.stroke-dash: 3`, on top of its color: dash is a line-style property,
+not a color, so it layers onto the existing rule rather than conflicting
+with it — `{style: {stroke: <color>; stroke-width: 3; stroke-dash: 3}}`.
+
+Label `"<codename>\n<title>\n<tier>·<engine>·<model>\n<state>[ (watchdog)] · <detail><loop-marker> · <age>s[ · <N> sessions]"`:
+
+- **`<tier>·<engine>·<model>`** — read straight off the roster row (the
+  join lives in `crew roster` itself, same mechanism as `title`). Render
+  `?` for any component that's `null` (pre-tuple dispatch events, or a
+  legacy branch-keyed row) rather than dropping the whole line.
+- **`<detail>`** — the roster already truncates it to 120 chars, so the
+  label has a bounded width; when `detail` is null/empty, drop the
+  `· <detail>` segment entirely rather than leaving a trailing `· `.
+- **`<loop-marker>`** — append `↻` right after `<detail>` when it matches
+  one of the vocabulary's own loop tokens: `r<N>` (`spec-critic r2`),
+  `revision <N>`, `fix`, or `re-review`. Plain text in the label string,
+  not a style — needs no `|md` block, a second round is distinguishable
+  from a first at a glance. These are the exact freeform phrases issue #136
+  measured occurring on the bus, not an enforced enum — the match fires
+  when a worker happens to phrase a loop that way and simply doesn't
+  otherwise, which is fine since `<detail>` alone already carries the
+  phase.
+- **`· <N> sessions`** — append only when `sessions` has more than one
+  entry: a second session on this branch, whether from death, resume, or a
+  deliberate re-dispatch. Omit the segment for the common one-session case.
+- **`detail`/`title` are worker-authored free text** flowing into more of
+  the label than before — escape a literal `$` in either as `\$` (the
+  general escaping rule below still applies; called out again here because
+  a missed one silently suppresses the whole diagram, not just this node).
+- **`age_s` reads on `detail`'s staleness too.** `detail` can lag the
+  worker's real position (measured: 27 minutes stale in the field, mid-review
+  while `detail` still read `gate`). `age_s` is precisely "time since the
+  last status event on the bus for this session" (a watchdog post refreshes
+  it same as a worker's own heartbeat) — so a large `age_s` next to an
+  unchanged `detail` is the reader's cue that the phase label may be stale,
+  with no new field or poll.
+
+Draw a `PR` node and an
 edge to it for any worker in `pr_open`/`done` (label it with the `pr_url`). Escape a
 literal `$` in any label as `\$`, and use only plain quoted labels with `\n` — never
 `|md`/`|markdown` blocks (the rasterizer paints them blank and suppresses the whole
@@ -435,12 +474,16 @@ diagram). Skeleton:
 ```d2
 title: "Crew roster" {near: top-center}
 dispatcher: "dispatcher" {style.bold: true}
-sage: "sage\nfix the widget\nworking · 42s" {style: {stroke: green; stroke-width: 3}}
-atlas: "atlas\nbump flake.lock\npr_open · 8s" {style: {stroke: blue; stroke-width: 3}}
+sage: "sage\nfix the widget\nstandard·claude·sonnet\nworking · execute: tests · 42s" {style: {stroke: green; stroke-width: 3}}
+atlas: "atlas\nbump flake.lock\ndeep·claude·opus\nworking · plan-critic r2↻ · 190s · 2 sessions" {style: {stroke: blue; stroke-width: 3}}
+indigo: "indigo\nrework the cache\nstandard·codex·terra\nblocked (watchdog) · quiet: %204 · 1820s" {style: {stroke: indigo; stroke-width: 3; stroke-dash: 3}}
+amber: "amber\nrelease notes\nstandard·claude·sonnet\npr_open · 8s" {style: {stroke: yellow; stroke-width: 3}}
 pr: "PR" {shape: page}
 dispatcher -> sage
 dispatcher -> atlas
-atlas -> pr: "#124"
+dispatcher -> indigo
+dispatcher -> amber
+amber -> pr: "#124"
 ```
 
 ## Rules

@@ -1303,10 +1303,11 @@ roster)
   base=$(jq -c -s --arg crew "$crew" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
       def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
-      # title lives on the dispatch event (keyed by branch); join it per branch.
-      # last wins on re-dispatch. missing (pre-title dispatch events) -> null.
+      # title/engine/model/tier live on the dispatch event (keyed by branch);
+      # join them per branch. last wins on re-dispatch. missing (pre-title
+      # dispatch events, or no dispatch event at all) -> null.
       (map(select(.crew_id==$crew and .kind=="dispatch"))
-        | map({key:.branch, value:(.title // null)}) | from_entries) as $titles
+        | map({key:.branch, value:{title:(.title // null), engine:(.engine // null), model:(.model // null), tier:(.tier // null)}}) | from_entries) as $dispatch
       | map(select(.crew_id==$crew and .kind=="status"
                    and ((.from // "") | startswith("worker:"))))
       | group_by(.from)
@@ -1332,7 +1333,10 @@ roster)
              age_s: ((now - ($latest.ts/1000))|floor)})
       | group_by(.branch)
       | map((sort_by(.ts) | last)
-            + {title: (.[0].branch as $b | $titles[$b] // null),
+            + {title:  (.[0].branch as $b | $dispatch[$b].title  // null),
+               engine: (.[0].branch as $b | $dispatch[$b].engine // null),
+               model:  (.[0].branch as $b | $dispatch[$b].model  // null),
+               tier:   (.[0].branch as $b | $dispatch[$b].tier   // null),
                sessions: (sort_by(.ts) | map({session, state, age_s}))})' "$log")
   # Resolve a false `exited`. SessionEnd fires for more than the worker's own session
   # (a subagent ending, a human closing an auxiliary pane), and the hook sees only a
