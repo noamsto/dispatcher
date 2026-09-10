@@ -42,7 +42,7 @@ jobs:
           fi
           nix develop -c bash -c '
             echo "nproc: $(nproc)"
-            for j in $(nproc) $(( $(nproc) * 2 )) $(( $(nproc) * 4 )); do
+            for j in $(nproc) $(( $(nproc) * 2 )) $(( $(nproc) * 4 )) $(( $(nproc) * 8 )); do
               echo "=== --jobs $j ==="
               time bats --jobs "$j" tests/
               echo "=== --jobs $j exit=$? ==="
