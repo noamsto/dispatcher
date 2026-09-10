@@ -494,6 +494,43 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
   grep -qx 'title: a thing' "$WT/WORKER_TASK.md"
 }
 
+@test "stamps resume: true when the header has no resume field yet (#112)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx 'resume: true' "$WT/WORKER_TASK.md"
+  run grep -c '^resume: ' "$WT/WORKER_TASK.md"
+  [ "$output" = 1 ]
+}
+
+@test "rewrites an existing resume field to true rather than duplicating it" {
+  setup_worker_wt 'resume: false'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx 'resume: true' "$WT/WORKER_TASK.md"
+  run grep -c '^resume: ' "$WT/WORKER_TASK.md"
+  [ "$output" = 1 ]
+}
+
+@test "inserting resume: true leaves a body line that happens to read resume: false alone" {
+  setup_worker_wt
+  printf 'the resume field is documented as\nresume: false\nby default\n' >>"$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  # exactly one header-position "resume: true" line, and the body's own
+  # "resume: false" line is untouched, not overwritten by the header rewrite.
+  run grep -n '^resume: ' "$WT/WORKER_TASK.md"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | wc -l)" = 2 ]
+  grep -qx 'resume: false' "$WT/WORKER_TASK.md"
+}
+
 @test "runs solo when the crew has no registered dispatcher" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

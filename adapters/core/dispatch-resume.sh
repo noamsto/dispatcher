@@ -338,17 +338,23 @@ if [ -d "$cdir" ]; then
   esac
 fi
 
-# Rewrite exactly two header lines in place, never the whole document: the
-# worker may have been handed a spec, and this header is the record we just
-# read. worker_id MUST move — it carries the session, so leaving the old one
-# would have the worker post under a dead bus identity.
+# Rewrite header lines in place, never the whole document: the worker may have
+# been handed a spec, and this header is the record we just read. worker_id
+# MUST move — it carries the session, so leaving the old one would have the
+# worker post under a dead bus identity. `resume:` is not always present
+# (dispatch.sh only stamps it on a branch re-dispatch), so it needs an append
+# path: absent a matching line, insert one at the end of the header block,
+# just before the first blank line that separates it from the task body.
 _hdr_set() { # $1=field  $2=value
   awk -v f="$1" -v v="$2" '
     !done && $0 ~ "^" f ": " { print f ": " v; done = 1; next }
+    !done && /^$/ { print f ": " v; done = 1 }
     { print }
+    END { if (!done) print f ": " v }
   ' "$task_doc" >"$task_doc.tmp" && mv "$task_doc.tmp" "$task_doc"
 }
 _hdr_set worker_id "$worker_id"
+_hdr_set resume true
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
@@ -389,7 +395,7 @@ fi
 if [ -n "$fresh" ]; then
   reorient=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
 else
-  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one. Your transcript contains bus calls made under a worker id that is now retired: read CREW_WORKER_ID from your environment for every bus call rather than copying an id forward from an earlier call."
+  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one."
 fi
 reorient="${reorient//\'/}"
 [ -n "$extra" ] && reorient="$reorient ${extra//\'/}"
