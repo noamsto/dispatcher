@@ -710,9 +710,9 @@ $hits"
   # `when:` on each of them, or the routing table would double-dispatch
   # silently instead of relying on a `when:` to arbitrate.
   # Read line by line, never `for x in $(...)`: the tokens are literal glob
-  # patterns (`*.md`, `*.sh`), and an unquoted word list pathname-expands
-  # them against the invocation CWD — `*.md` became `README.md` and the
-  # check silently skipped the one glob two reviewers actually share.
+  # patterns (`*.md`, `*.go`), and an unquoted word list pathname-expands
+  # them against the invocation CWD, so any glob that happens to match a
+  # file there is replaced by that filename and its row is never checked.
   while IFS= read -r shared_glob; do
     names="$(awk -F'\t' -v g="$shared_glob" '$1==g{print $2}' "$glob_map" | sort -u)"
     count="$(printf '%s\n' "$names" | wc -l)"
