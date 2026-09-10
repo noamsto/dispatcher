@@ -94,36 +94,22 @@ Commit any fixes from these passes.
 
 Dispatch reviewer agents **in parallel** (single message, multiple Agent tool calls). Each reviewer sees the branch diff against the base.
 
-### Always run
+### Reviewer roster
 
-- **`superpowers:code-reviewer`** — plan adherence + general quality
+Reviewer bodies ship with the harness: `$DISPATCHER_REVIEWERS_DIR/*.md`, falling back to the adapter-local `reviewers/` when that variable is unset. Each carries `globs:` — the changed-file patterns that route a diff to it — and, where a pattern can't express the trigger, a `when:` line. Match your changed paths (`git diff --name-only main...HEAD`) against every roster `globs:`, honour each matched reviewer's `when:`, and that set is the batch. Nothing matched: one general reviewer running the `find-bugs` skill.
 
-### Language-specific (based on file types in `git diff --name-only main...HEAD`)
-
-| Files changed | Reviewer |
-|---------------|----------|
-| `*.go` | `go-reviewer` |
-| `*.ts`, `*.tsx`, `*.js`, `*.jsx` | `typescript-reviewer` |
-| `*.sql`, migrations under `*/migrations/*` | `database-reviewer` |
-| Expo / React Native (presence of `app.json` + `expo` in deps, or `*.tsx` under a `mobile/` app) | `expo-mobile-reviewer` |
+Spawn one Agent-tool subagent per matched roster entry, its body as the brief — prefer a native reviewer agent of the same name where the environment defines one.
 
 ### Conditional: `security-reviewer`
 
-Run when **any** of these apply to the diff:
-- Touches auth / session / token / password / secret / crypto / signature / JWT / OAuth
-- Adds or modifies API endpoints, route handlers, or RPC methods
-- Handles untrusted user input (parsing, deserialization, query builders, file uploads)
-- Touches SQL (especially raw queries or string-built SQL)
-- Adds shell exec, eval, dynamic imports, or filesystem path joins from input
-- Diff is large: >10 files **or** >500 lines changed
-- Modifies CORS, CSP, cookie flags, TLS config, IAM, or env handling
+`security-reviewer` is the one roster entry with no `globs:`; its `when:` is the trigger. Include it only if the diff touches an auth, crypto, input-parsing, SQL, or network path. Conservative trigger: when in doubt, include it. Otherwise skip it.
 
 ### After reviewers return
 
 1. Aggregate findings, deduplicate overlapping issues
-2. Triage by severity: must-fix (correctness/security) → should-fix (quality) → nit (skip unless trivial)
+2. Every roster body grades findings `CRITICAL` / `HIGH` / `MEDIUM` and ends with a `Block` / `Warning` / `Approve` verdict — fix all CRITICAL and HIGH findings, apply MEDIUM at your discretion
 3. Apply fixes, commit (`fix(review): address <reviewer> findings`)
-4. Re-run only the reviewers whose findings were addressed if they flagged correctness/security issues
+4. Re-run a reviewer whose CRITICAL or HIGH findings were non-trivially fixed
 
 ## Step 7: Create PR
 

@@ -293,6 +293,37 @@ setup() {
   done
 }
 
+@test "autopilot routes reviewers through the roster, not a private table" {
+  # #118: autopilot.md hand-rolled a reviewer table naming database-reviewer
+  # and expo-mobile-reviewer (neither a roster entry) and graded findings
+  # must-fix/should-fix/nit instead of the roster's CRITICAL/HIGH/MEDIUM
+  # ladder. Pin the roster-matching sentence on every shipped copy, reject
+  # the retired vocabulary, and check every `*-reviewer` token named in the
+  # file is a real roster entry — derived from the roster directory, not
+  # hardcoded, so this test can't itself go stale.
+  roster_names="$(basename -s .md -a "$ROOT"/adapters/core/reviewers/*.md | sort -u)"
+  for f in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md"; do
+    run grep -cF 'against every roster `globs:`, honour each matched reviewer' "$f"
+    [ "$status" -eq 0 ]
+    [ "$output" -eq 1 ]
+
+    run grep -F -e 'database-reviewer' -e 'expo-mobile-reviewer' -e 'superpowers:code-reviewer' -e 'must-fix' -e 'should-fix' "$f"
+    [ "$status" -ne 0 ]
+
+    # "prefer a native reviewer agent of the same name" is deliberately
+    # backtick-free in the doc so it can't false-positive here.
+    names="$(grep -oE '`[a-z0-9-]+-reviewer`' "$f" | tr -d '`' | sort -u)"
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      echo "$roster_names" | grep -qxF "$name"
+    done <<<"$names"
+  done
+}
+
 @test "the dispatcher command resolves its protocol via the env var" {
   run grep -F '$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md' "$ROOT/adapters/core/commands/dispatcher.md"
   [ "$status" -eq 0 ]
