@@ -1,3 +1,10 @@
+# Every test here runs a real `nix build`/`nix store` against the shared
+# local flake. Under bats --jobs, several of these racing concurrently makes
+# Nix's own flake-input fetch/eval locking contend hard enough on a small
+# runner to produce genuine eval errors (`error: not an absolute path: "nix"`),
+# not just slow — confirmed on CI. Serialize this file rather than each test.
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
 setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
 }
