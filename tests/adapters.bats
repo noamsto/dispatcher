@@ -513,7 +513,7 @@ setup() {
 }
 
 @test "the roster covers the languages this repo and its workers actually ship" {
-  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer; do
+  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer agent-docs-reviewer; do
     [ -f "$ROOT/adapters/core/reviewers/$n.md" ]
   done
 }
