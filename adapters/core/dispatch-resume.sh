@@ -218,17 +218,30 @@ DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck"
 # windows, so the name dispatch assigned is long gone by now.
 win=""
 pane=""
+pane_cmd=""
 reused=""
-while IFS=$'\t' read -r cand_win cand_pane cand_path _cand_name; do
+while IFS=$'\t' read -r cand_win cand_pane cand_path cand_cmd _cand_name; do
   [ -n "$cand_win" ] || continue
   [ "$cand_path" = "$wt_path" ] || continue
   win="$cand_win"
   pane="$cand_pane"
+  pane_cmd="$cand_cmd"
   reused=1
   break
 done <<PANES
-$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
+$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{pane_current_command}	#{@crew_name}' 2>/dev/null || true)
 PANES
+
+# Cheap partial guard (#111): refuse a pane that is still running an engine.
+# `crew engine-cmd` shares crew.sh's own nix-wrapper-aware matcher
+# (_is_engine_cmd) rather than duplicating it here. Deliberately a
+# command-name sniff, not the stronger bus-state gate dispatch.sh uses for its
+# own placement refusal (dispatch.sh:699-711) — see that gate's own comment
+# for why its engine count is only advisory.
+if [ -n "$reused" ] && crew engine-cmd "$pane_cmd" 2>/dev/null; then
+  echo "dispatch resume: $wt_path's pane ($pane) is running $pane_cmd — a worker session is already alive there. Attach to it instead of resuming (tmux select-window -t $win), or wait for it to exit/finish first." >&2
+  exit 1
+fi
 
 # --print is a dry run: report the placement the lookup above already found
 # and stop before anything below opens a window or restyles a pane. On the
@@ -325,17 +338,23 @@ if [ -d "$cdir" ]; then
   esac
 fi
 
-# Rewrite exactly two header lines in place, never the whole document: the
-# worker may have been handed a spec, and this header is the record we just
-# read. worker_id MUST move — it carries the session, so leaving the old one
-# would have the worker post under a dead bus identity.
+# Rewrite header lines in place, never the whole document: the worker may have
+# been handed a spec, and this header is the record we just read. worker_id
+# MUST move — it carries the session, so leaving the old one would have the
+# worker post under a dead bus identity. `resume:` is not always present
+# (dispatch.sh only stamps it on a branch re-dispatch), so it needs an append
+# path: absent a matching line, insert one at the end of the header block,
+# just before the first blank line that separates it from the task body.
 _hdr_set() { # $1=field  $2=value
   awk -v f="$1" -v v="$2" '
     !done && $0 ~ "^" f ": " { print f ": " v; done = 1; next }
+    !done && /^$/ { print f ": " v; done = 1 }
     { print }
+    END { if (!done) print f ": " v }
   ' "$task_doc" >"$task_doc.tmp" && mv "$task_doc.tmp" "$task_doc"
 }
 _hdr_set worker_id "$worker_id"
+_hdr_set resume true
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
@@ -376,7 +395,7 @@ fi
 if [ -n "$fresh" ]; then
   reorient=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
 else
-  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one. Your transcript contains bus calls made under a worker id that is now retired: read CREW_WORKER_ID from your environment for every bus call rather than copying an id forward from an earlier call."
+  reorient=" You were interrupted mid-task and this session has been resumed. Before anything else, establish where you actually got to from git log, git status and any open PR on this branch — do not trust the last plan in your transcript as your current position. Then continue from the first genuinely unfinished step. If this branch already has an open PR, push to it rather than opening a second one."
 fi
 reorient="${reorient//\'/}"
 [ -n "$extra" ] && reorient="$reorient ${extra//\'/}"

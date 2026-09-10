@@ -67,6 +67,8 @@ If the artifacts are absent or contradicted by the tree (a named file doesn't ex
 
 **Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`). A resume can land on a branch that already reached `pr_open`, which the terminal step below ("open a PR, and stop") and the launch prompt's push mandate otherwise treat as unconditional — an unguarded resumed worker runs a full pipeline and then hard-fails on `gh pr create`. When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url — a missing or wrong url there mis-drives `crew reap`.
 
+**Session identity never carries forward across a resume.** A resume mints a new `worker_id` for this session. If your restored transcript contains bus calls made under a previous session's id, those literals are retired — read `$CREW_WORKER_ID` fresh from your environment for every bus call in this session, never copy an id forward from an earlier call in the transcript.
+
 ## Orchestration consult (deep only)
 
 Consult **Resuming a killed run** (above) first; unless resuming, before the plan phase decide **once** whether to bring a top-tier consultant in to decompose the task — and if so, **which one**. Both decisions are made in the worktree (where the code is), never at dispatch time.
