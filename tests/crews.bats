@@ -41,7 +41,7 @@ _seed_crew_event() {
 # looks at crew id.
 _run_dispatch_no_crew_id() {
   export HOME="$TEST_REPO"
-  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
   run bash -euo pipefail "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh" trivial some-model --effort low
 }
 

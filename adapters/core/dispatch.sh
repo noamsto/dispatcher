@@ -473,15 +473,44 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
     ;;
   esac
   if [ -n "$rung_downgrade" ]; then
+    # A window is a rate limit, not a balance: past the 70% floor, refuse only
+    # when burn is also >15 points ahead of the window's elapsed fraction
+    # (dispatch-orchestration.md "Tier map"). A null resets_at degrades to the
+    # flat >=70 rule; 7d is the only key read here, so its length is always
+    # 604800. Emits "<used>" on the flat path, "<used>|<ahead>" on the pace
+    # one — test for the "|" before splitting, since ${v#*|} yields the whole
+    # string when there is none.
     rung_pct=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
+      def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
+        | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
       if (.fetched_epoch + 7200) < $now then empty
       elif .engines[$e] == null then empty
       elif .engines[$e].windows["7d"] == null then empty
-      elif .engines[$e].windows["7d"].used_pct >= 70 then .engines[$e].windows["7d"].used_pct
-      else empty end' "$budget_file" 2>/dev/null || true)
+      else
+        .engines[$e].windows["7d"] as $w
+        | if $w.used_pct < 70 then empty
+          elif $w.resets_at == null then "\($w.used_pct)"
+          else
+            ($w.used_pct - elapsed_pct($w)) as $ahead
+            | if $ahead > 15 then "\($w.used_pct)|\($ahead | round)" else empty end
+          end
+      end' "$budget_file" 2>/dev/null || true)
     if [ -n "$rung_pct" ]; then
-      echo "dispatch: $agent 7d is at ${rung_pct}% — the premium rung ($model) is refused; use the standard rung ($rung_downgrade) instead, or pass --ignore-budget (the human's spend decision). See dispatch-orchestration.md \"Tier map\"." >&2
-      exit 1
+      used_pct="$rung_pct"
+      pace_notice=""
+      pace_clause=""
+      if [[ $rung_pct == *"|"* ]]; then
+        used_pct="${rung_pct%%|*}"
+        ahead="${rung_pct#*|}"
+        pace_notice=" ($ahead ahead of pace)"
+        pace_clause=" and $ahead points ahead of pace"
+      fi
+      if [ "${DISPATCH_IGNORE_RUNG:-}" = "$model" ]; then
+        echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$model' on --agent $agent at 7d ${used_pct}%${pace_notice}" >&2
+      else
+        echo "dispatch: $agent 7d is at ${used_pct}%${pace_clause} — the premium rung ($model) is refused; use the standard rung ($rung_downgrade) instead, set DISPATCH_IGNORE_RUNG=$model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+        exit 1
+      fi
     fi
   fi
 fi

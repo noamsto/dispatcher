@@ -10,7 +10,7 @@ setup() {
   # and fails on a personal one. HOME points at the throwaway repo so the codex
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
-  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
   stub_bin tmux
   stub_bin crew
   stub_bin gh
@@ -372,6 +372,25 @@ codex_budget_json() { # <pct> <epoch>
   mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson pct "$1" --argjson epoch "$2" \
     '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"7d": {used_pct: $pct, resets_at: null}}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+# Write a budget cache with one <engine> 7d window at <pct>, with resets_at
+# <resets_in_s> seconds from now, or the literal string "null". fetched_epoch
+# is always now. Parallel to budget_json()/codex_budget_json() above, not a
+# change to either signature — this is the pace-aware sibling the gate-2
+# pace tests need, able to place a window anywhere in its span.
+budget_json_at() { # <engine> <pct> <resets_in_s|null>
+  local engine="$1" pct="$2" resets_in="$3" now resets_arg
+  now="$(date +%s)"
+  if [ "$resets_in" = null ]; then
+    resets_arg=null
+  else
+    resets_arg=$((now + resets_in))
+  fi
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --arg engine "$engine" --argjson pct "$pct" --argjson epoch "$now" --argjson resets "$resets_arg" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null} + {($engine): {source: "t", windows: {"7d": {used_pct: $pct, resets_at: $resets}}}}}' \
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
@@ -1151,6 +1170,112 @@ assert_gate_silent() { # <engine> <model>
   [ "$status" -eq 1 ]
   [[ "$output" == *"sonnet"* ]]
   [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "budget rung gate refuses when 7d burn is ahead of pace" {
+  # 77% used, 4 days left on the 7-day window: 43% elapsed, +34 ahead —
+  # #113's live case, and the pace rule's own worked example.
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "pace ahead refuses"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" == *"34 points ahead of pace"* ]]
+}
+
+@test "budget rung gate allows 7d burn that is at or behind pace" {
+  stub_launch_bins
+  budget_json_at claude 77 86400
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "at pace allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "budget rung gate allows a high 7d window near its reset" {
+  stub_launch_bins
+  budget_json_at claude 94 7200
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "near reset allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "budget rung gate allows below the 70% floor regardless of pace" {
+  stub_launch_bins
+  budget_json_at claude 69 432000
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "below floor allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "budget rung gate falls back to the flat rule when resets_at is null" {
+  budget_json_at claude 90 null
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "flat fallback refuses"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" != *"ahead of pace"* ]]
+}
+
+@test "budget rung gate allows a resets_at already in the past" {
+  stub_launch_bins
+  budget_json_at claude 90 -3600
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "past reset allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "DISPATCH_IGNORE_RUNG bypasses the rung gate for the exact model" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  DISPATCH_IGNORE_RUNG=opus run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "ignore rung bypass"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG)"* ]]
+  [[ "$output" == *"'opus' on --agent claude at 7d 77%"* ]]
+  [[ "$output" == *"34 ahead of pace"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "DISPATCH_IGNORE_RUNG set to a different model does not bypass" {
+  budget_json_at claude 77 345600
+  DISPATCH_IGNORE_RUNG=sonnet run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "ignore rung mismatch"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" != *"rung refusal skipped"* ]]
+}
+
+@test "DISPATCH_IGNORE_RUNG does not bypass the 95% exhaustion gate" {
+  budget_json_at claude 97 345600
+  DISPATCH_IGNORE_RUNG=opus run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "ignore rung vs exhaustion"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted"* ]]
+}
+
+@test "the rung refusal message names DISPATCH_IGNORE_RUNG" {
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "message names ignore rung"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DISPATCH_IGNORE_RUNG=opus"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "the pace clause is present on the pace path and absent on the flat path" {
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "pace clause present"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"points ahead of pace"* ]]
+
+  budget_json_at claude 90 null
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "pace clause absent"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"points ahead of pace"* ]]
+}
+
+@test "pace never disarms the 95% hard stop" {
+  # A near-future resets_at that would put the rung gate at or behind pace —
+  # the hard stop still fires first, untouched by pace.
+  budget_json_at claude 97 7200
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "pace vs hard stop"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted"* ]]
+  [[ "$output" != *"the premium rung"* ]]
 }
 
 @test "rejects --pr combined with a GitHub issue token" {
