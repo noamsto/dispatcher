@@ -120,21 +120,17 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # one ⚡/7d match captured by probe_claude_pane_scrape below. <remaining> is
 # -1 when the match carries no usable countdown.
 #
-# The percentage is the LAST digit run of the text before the first '%',
-# not the first run of the whole match: the first run breaks on the "7d"
-# marker's own leading digit ("7d 61%" -> "761"), and the last run of the
-# whole match breaks on the " -> HH:MM" tail instead ("(10m -> 05:20)" ->
-# "20"). Only the text before '%' is scanned, so both traps are avoided at
-# once.
+# The percentage is the LAST digit run of the text before the first '%'.
+# Scanning the whole match either way is wrong in both directions: the first
+# run picks up the "7d" marker's own digit ("7d 61%" -> "761"), the last run
+# picks up the " -> HH:MM" tail ("(10m -> 05:20)" -> "20").
 #
-# A derived clock is a best effort, not a live one: tmux capture-pane
-# returns the pane's last render, so "now + remaining" inherits however
-# stale that render is. That's the conservative direction for the rung gate
-# — an overstated remaining understates elapsed_pct and makes it refuse
-# harder, never less. The day-form (NNd) branch is implemented but
-# UNOBSERVED: a live capture of every crew pane on this host showed no 7d
-# segment rendered at all, so the only in-repo sample of the grammar is
-# NNhNNm.
+# A derived clock is best-effort: capture-pane returns the pane's last
+# render, so "now + remaining" inherits however stale that is. It errs
+# toward refusing, since an overstated remaining understates elapsed_pct.
+# The day-form (NNd) branch is UNOBSERVED — a live capture of every crew
+# pane on this host showed no 7d segment at all, so NNhNNm is the only
+# sampled form.
 _pane_countdown() {
   local m="$1" nominal="$2" pct paren inner re d h mnt remaining=-1
   # Bash treats a leading-zero numeral ("08") as octal, so a captured digit
@@ -178,10 +174,8 @@ probe_claude_pane_scrape() {
       [[ $pw == "$wid" ]] || continue
       text=$(tmux capture-pane -p -t "$pid" 2>/dev/null) || continue
       tail=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -2)
-      # Percentage bounded to {1,3} digits, same reasoning as the duration
-      # bound in _pane_countdown: a garbled render with a huge digit run
-      # must fail this match rather than hand _pane_countdown a value that
-      # 10# wraps into a plausible-looking pct.
+      # {1,3}: a huge digit run must fail the match, not reach 10# — see
+      # _pane_countdown.
       m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]{1,3}%([[:space:]]*\([^)]*\))?' | tail -1)
       if [[ -n $m ]]; then
         IFS=$'\t' read -r v rem <<<"$(_pane_countdown "$m" 18000)"
@@ -290,15 +284,11 @@ main() {
 
   printf '%s\n' "$OUT"
 
-  # Shared by both jq programs below: a relative-duration renderer and the
-  # nominal window lengths a pace figure can be computed against. 7d is a
-  # real budget and gets its pace ("N points ahead of pace") named in
-  # the advisory; 5h is a short rate limit that just gets a wait-vs-shed
-  # steer; everything else (1d, unknown, other — codex's non-5h/7d buckets)
-  # has no known length and stays generic. The pace figure uses the same
-  # formula as dispatch.sh's gate 2 (minus its 70 floor and 15-point
-  # threshold, which are the gate's business, not an advisory's), so the two
-  # renderers never disagree on a number.
+  # Shared by both jq programs below. wsecs covers only the windows with a
+  # known nominal length — codex's 1d/unknown/other buckets have none, so no
+  # pace can be computed for them. The pace figure uses gate 2's formula
+  # (without its floor and threshold, which are the gate's business), so the
+  # two renderers never disagree on a number.
   local now jq_time_defs
   now=$(date +%s)
   # shellcheck disable=SC2016  # jq's own $vars, not bash expansions

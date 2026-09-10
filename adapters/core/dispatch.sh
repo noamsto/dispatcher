@@ -476,11 +476,10 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
     # A window is a rate limit, not a balance: past the 70% floor, refuse only
     # when burn is also >15 points ahead of the window's elapsed fraction
     # (dispatch-orchestration.md "Tier map"). A null resets_at degrades to the
-    # flat >=70 rule; the 7d key is the only one read here, so its length is
-    # always 604800. Emits
-    # "<used>" on that flat path, "<used>|<ahead>" on the pace path — the two
-    # cases below split on the presence of the "|" rather than trust a naive
-    # ${v#*|} split, which returns the whole string when there is none.
+    # flat >=70 rule; 7d is the only key read here, so its length is always
+    # 604800. Emits "<used>" on the flat path, "<used>|<ahead>" on the pace
+    # one — test for the "|" before splitting, since ${v#*|} yields the whole
+    # string when there is none.
     rung_pct=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
       def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
         | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
