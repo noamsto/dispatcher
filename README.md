@@ -88,7 +88,7 @@ crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
 Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
-`await`, `register`, `deregister`, `watch`, `roster`, `inbox`, `stall-watch`,
+`await`, `register`, `deregister`, `watch`, `stream`, `roster`, `inbox`, `stall-watch`,
 `pr-watch`, `log`, `report`, `rate`, `reap`.
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never

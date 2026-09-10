@@ -800,17 +800,13 @@ watch)
   # undetectable. When --since is omitted the cursor is self-seeded from
   # the crew's cursor file (see below) so a stale caller cursor can't re-deliver.
   # Zero-token held poll, like `await`. Strict `>` matches `await` (same-ms edge).
-  crew=$(_crew_id)
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
-    exit 1
-  }
   mkdir -p "$dir"
   since=0
   since_explicit=0
   states="blocked,pr_open,done,failed"
   timeout=3300
   interval=2
+  wcrew=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --since)
@@ -846,6 +842,14 @@ watch)
       interval="$2"
       shift 2
       ;;
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 1
+      }
+      wcrew="$2"
+      shift 2
+      ;;
     *)
       echo "crew: watch: unknown arg '$1'" >&2
       exit 1
@@ -871,6 +875,23 @@ watch)
     echo "crew: --states must be non-empty" >&2
     exit 1
   }
+  # --crew names the crew explicitly so a Monitor-armed `crew stream` (whose
+  # command string carries no ambient CREW_ID) can pass it down; when omitted,
+  # resolution falls back to _crew_id exactly as before the flag existed.
+  crew="${wcrew:-$(_crew_id)}"
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    exit 1
+  }
+  # Same guard `adopt` applies to its caller-supplied id: `--crew` here is just
+  # as caller-supplied, and unvalidated would let `/` or `..` mkdir and write a
+  # pid file outside the bus dir.
+  case "$crew" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 1
+    ;;
+  esac
   cdir="$dir/crews/$crew"
   mkdir -p "$cdir"
   cursor_file="$cdir/cursor"
@@ -911,6 +932,338 @@ watch)
       exit 0
     }
     sleep "$interval"
+  done
+  ;;
+stream)
+  # stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S]
+  #        [--coalesce S] [--retry S] [--interval S] [--force]
+  # stream --status [--crew ID]
+  # Wraps `watch` in a long-lived process, so a streaming lane gets pushed
+  # batches instead of re-arming a one-shot park every turn. `--crew` is
+  # required in spirit (not syntax): the command string a streaming lane arms
+  # carries no ambient CREW_ID.
+  #
+  # Usage/crew-resolution failures exit 64, not 1 — otherwise a `--status`
+  # call that simply couldn't find its crew reads as the `dead` state it
+  # never measured.
+  screw=""
+  states="blocked,pr_open,done,failed"
+  park=300
+  heartbeat=3300
+  coalesce=5
+  retry=30
+  interval=2
+  force=""
+  statusmode=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 64
+      }
+      screw="$2"
+      shift 2
+      ;;
+    --states)
+      [ -n "${2:-}" ] || {
+        echo "crew: --states needs a value" >&2
+        exit 64
+      }
+      states="$2"
+      shift 2
+      ;;
+    --park)
+      [ -n "${2:-}" ] || {
+        echo "crew: --park needs a value" >&2
+        exit 64
+      }
+      park="$2"
+      shift 2
+      ;;
+    --heartbeat)
+      [ -n "${2:-}" ] || {
+        echo "crew: --heartbeat needs a value" >&2
+        exit 64
+      }
+      heartbeat="$2"
+      shift 2
+      ;;
+    --coalesce)
+      [ -n "${2:-}" ] || {
+        echo "crew: --coalesce needs a value" >&2
+        exit 64
+      }
+      coalesce="$2"
+      shift 2
+      ;;
+    --retry)
+      [ -n "${2:-}" ] || {
+        echo "crew: --retry needs a value" >&2
+        exit 64
+      }
+      retry="$2"
+      shift 2
+      ;;
+    --interval)
+      [ -n "${2:-}" ] || {
+        echo "crew: --interval needs a value" >&2
+        exit 64
+      }
+      interval="$2"
+      shift 2
+      ;;
+    --force)
+      force=1
+      shift
+      ;;
+    --status)
+      statusmode=1
+      shift
+      ;;
+    *)
+      echo "crew: stream: unknown arg '$1'" >&2
+      exit 64
+      ;;
+    esac
+  done
+  _stream_posint() {
+    case "$2" in '' | *[!0-9]*)
+      echo "crew: --$1 must be a positive integer number of seconds" >&2
+      exit 64
+      ;;
+    esac
+    [ "$2" -gt 0 ] || {
+      echo "crew: --$1 must be a positive integer number of seconds" >&2
+      exit 64
+    }
+  }
+  _stream_posint park "$park"
+  _stream_posint heartbeat "$heartbeat"
+  _stream_posint coalesce "$coalesce"
+  _stream_posint retry "$retry"
+  _stream_posint interval "$interval"
+  statesjson=$(printf '%s' "$states" | jq -Rc 'split(",") | map(select(length>0))')
+  [ "$statesjson" = "[]" ] && {
+    echo "crew: --states must be non-empty" >&2
+    exit 64
+  }
+  crew="${screw:-$(_crew_id)}"
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    exit 64
+  }
+  # Same guard `adopt` applies to its caller-supplied id: `--crew` here is just
+  # as caller-supplied, and unvalidated would let `/` or `..` mkdir and write a
+  # pid file outside the bus dir.
+  case "$crew" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 64
+    ;;
+  esac
+  cdir="$dir/crews/$crew"
+  mkdir -p "$cdir"
+
+  if [ -n "$statusmode" ]; then
+    # A live pid is not evidence notifications are flowing (a rate-limit
+    # auto-stop, a closed stdout, pid reuse all leave a pid that looks
+    # alive), so `alive` also needs a tick younger than 2×park+60 — computed
+    # from the park THE TICK ITSELF recorded, not this call's, so a stale
+    # `--park` on the status call can't shift the answer. A lock with no
+    # readable tick counts as `stale`, the safe direction: the tick is
+    # written immediately on acquiring the lock.
+    ldir="$cdir/stream.lock.d"
+    lockpid=""
+    [ -f "$ldir/pid" ] && lockpid=$(cat "$ldir/pid" 2>/dev/null || true)
+    case "$lockpid" in '' | *[!0-9]* | 0) lockpid="" ;; esac
+    live=""
+    if [ -n "$lockpid" ] && kill -0 "$lockpid" 2>/dev/null; then
+      live=1
+    fi
+    if [ -z "$live" ]; then
+      st=dead
+      rc=2
+      age_json=null
+    else
+      tick=$(cat "$cdir/stream.tick" 2>/dev/null || true)
+      tickts=""
+      tickpark=""
+      if [ -n "$tick" ]; then
+        tickts=$(printf '%s' "$tick" | jq -r '.ts // empty' 2>/dev/null || true)
+        tickpark=$(printf '%s' "$tick" | jq -r '.park // empty' 2>/dev/null || true)
+      fi
+      case "$tickts" in '' | *[!0-9]*) tickts="" ;; esac
+      case "$tickpark" in '' | *[!0-9]*) tickpark="" ;; esac
+      if [ -z "$tickts" ] || [ -z "$tickpark" ]; then
+        st=stale
+        age_json=null
+      else
+        now_ms=$(jq -nc 'now*1000|floor')
+        age_s=$(((now_ms - tickts) / 1000))
+        if [ "$age_s" -lt "$((2 * tickpark + 60))" ]; then
+          st=alive
+        else
+          st=stale
+        fi
+        age_json="$age_s"
+      fi
+      case "$st" in alive) rc=0 ;; *) rc=1 ;; esac
+    fi
+    pid_json="${lockpid:-null}"
+    jq -nc --arg crew "$crew" --arg state "$st" --argjson pid "$pid_json" --argjson age "$age_json" \
+      '{stream:"status", state:$state, crew:$crew, pid:$pid, age_s:$age}'
+    exit "$rc"
+  fi
+
+  # Same `_lock_acquire` INV-1 relies on for `watch.lock.d`: a second stream
+  # for one crew is refused, enforced by the tool instead of maintained by
+  # hand. Acquired BEFORE any trap is armed — `_stream_cleanup` releases the
+  # lock unconditionally, so a trap installed first would make the refusal
+  # path below `rm -rf` the INCUMBENT stream's lock, after which a third
+  # `crew stream` starts and two run for one crew.
+  lockd="$cdir/stream.lock.d"
+  if ! _lock_acquire "$lockd" "$$"; then
+    holder=$(cat "$lockd/pid" 2>/dev/null || true)
+    [ -n "$force" ] || {
+      echo "crew: another stream is already running for this crew ($crew) — pid ${holder:-unknown}; use --force to reclaim a stale one" >&2
+      exit 1
+    }
+    # Same sanitisation `--status` above applies to a lock pid before trusting
+    # it: 0 and -1 both read as "live" to `kill -0`, but as a signal target 0
+    # hits our whole process group and a negative pid hits every process we can
+    # signal — neither is a single stale holder.
+    case "$holder" in '' | *[!0-9]* | 0)
+      echo "crew: --force found no valid holder pid for crew ($crew) stream lock (got '${holder:-empty}') — refusing to signal" >&2
+      exit 1
+      ;;
+    esac
+    # Bounded, not indefinite: an unbounded wait would hang forever against a
+    # holder that ignores TERM. 50×0.1s gives the recorded pid 5s to clear.
+    kill -TERM "$holder" 2>/dev/null || true
+    cleared=""
+    tries=0
+    while [ "$tries" -lt 50 ]; do
+      kill -0 "$holder" 2>/dev/null || {
+        cleared=1
+        break
+      }
+      sleep 0.1
+      tries=$((tries + 1))
+    done
+    [ -n "$cleared" ] || {
+      echo "crew: --force sent TERM but pid $holder for crew ($crew) did not clear" >&2
+      exit 1
+    }
+    _lock_acquire "$lockd" "$$" || {
+      echo "crew: another stream is already running for this crew ($crew)" >&2
+      exit 1
+    }
+  fi
+
+  # Pinned, not `mktemp`: these are per-crew and already mutually excluded by
+  # stream.lock.d, so two streams can't collide on them.
+  outf="$cdir/stream.out"
+  errf="$cdir/stream.err"
+  # Initialized before the trap is armed, so a signal landing before the
+  # first iteration can't abort the handler on an unbound variable.
+  child=""
+  pending=""
+  quiet=0
+  last_err_key=""
+  last_err_ts=0
+
+  # The handler must disarm itself first — its own closing `exit` would
+  # otherwise re-enter it and re-print `$pending` — and must end by exiting
+  # the process outright: a TERM/INT/HUP handler does not stop the shell, so
+  # if it merely returned, `wait "$child"` (interrupted with rc>128) would
+  # hand control straight back to the loop below, which would read that as
+  # an ordinary inner-watch failure and launch a fresh one against temp
+  # files already removed and a lock already released.
+  _stream_cleanup() {
+    trap - EXIT INT TERM HUP
+    # TERM (not KILL): the inner watch's own EXIT trap must run to release
+    # watch.lock.d. It is normally parked in `sleep "$interval"`, and bash
+    # runs no trapped handler until that sleep returns. Hence the wait,
+    # bounded by `--interval` rather than `--park`: draining without it reads
+    # $outf empty or partial for a batch whose cursor has already advanced.
+    if [ -n "$child" ]; then
+      kill -TERM "$child" 2>/dev/null || true
+      wait "$child" 2>/dev/null || true
+    fi
+    # Drain before delete, and reap (above) before drain: `pending` is what
+    # this process already read out of $outf and was about to print; $outf
+    # itself is what an orphaned-then-reaped child wrote but this process
+    # never got to read. Never both — they are the same batch, and a
+    # duplicate the reader can skip beats a silent drop it cannot.
+    # `|| true` on every write below: a reader that hung up makes the write
+    # fail, and under `set -e` that would abort this handler before it reaches
+    # `rm -f`/`_lock_release`, leaving the lock held by a dead pid.
+    if [ -n "$pending" ]; then
+      printf '%s\n' "$pending" || true
+    elif [ -s "$outf" ]; then
+      cat "$outf" || true
+    fi
+    rm -f "$outf" "$errf"
+    _lock_release "$lockd"
+    exit 0
+  }
+  trap _stream_cleanup EXIT INT TERM HUP
+
+  while :; do
+    # Written at the top of every iteration — including the first, right
+    # after the lock is acquired — because a live lock pid is not evidence
+    # that notifications are flowing (see --status above).
+    tick_ts=$(jq -nc 'now*1000|floor')
+    jq -nc --argjson pid "$$" --argjson ts "$tick_ts" --argjson park "$park" \
+      '{pid:$pid, ts:$ts, park:$park}' >"$cdir/stream.tick"
+    # Never --since: the per-crew cursor file self-seeds `watch`, exactly as
+    # a bare `crew watch` would, so the cursor keeps advancing across
+    # iterations without this process tracking it itself.
+    bash -euo pipefail "$0" watch --crew "$crew" --timeout "$park" --states "$states" --interval "$interval" \
+      >"$outf" 2>"$errf" &
+    child=$!
+    rc=0
+    wait "$child" || rc=$?
+    child=""
+    if [ -s "$outf" ]; then
+      # A qualifying batch. Re-entering `watch` immediately would turn N
+      # events trickling in over N seconds into N notifications, so the
+      # `--coalesce` sleep is what holds one turn to one batch.
+      pending=$(cat "$outf")
+      # A gone reader must not abort the loop mid-write (`set -e`): the batch
+      # is still consumed and the cursor still advances, only the print fails.
+      printf '%s\n' "$pending" || true
+      pending=""
+      : >"$outf"
+      quiet=0
+      sleep "$coalesce"
+    elif [ "$rc" -eq 0 ]; then
+      # Park expired with nothing to report.
+      quiet=$((quiet + park))
+      if [ "$quiet" -ge "$heartbeat" ]; then
+        hb_ts=$(jq -nc 'now*1000|floor')
+        jq -nc --arg crew "$crew" --argjson quiet_s "$quiet" --argjson ts "$hb_ts" \
+          '{stream:"heartbeat", crew:$crew, quiet_s:$quiet_s, ts:$ts}' || true
+        quiet=0
+      fi
+    else
+      # The inner watch failed (never to its own stderr — that stays in
+      # $errf, or it would put non-JSON next to the JSON event stream). The
+      # suppression key normalises away the cursor value and timestamps
+      # `watch` embeds in its error lines, so a stable underlying cause
+      # prints once instead of once per --retry.
+      eline=$(head -n1 "$errf" 2>/dev/null || true)
+      ekey="$rc:$(printf '%s' "$eline" | sed -E 's/[0-9]+/N/g')"
+      e_ts=$(jq -nc 'now*1000|floor')
+      if [ "$ekey" != "$last_err_key" ] || [ "$((e_ts - last_err_ts))" -ge "$((heartbeat * 1000))" ]; then
+        jq -nc --arg crew "$crew" --argjson rc "$rc" --arg detail "$eline" --argjson ts "$e_ts" \
+          '{stream:"error", crew:$crew, rc:$rc, detail:$detail, ts:$ts}' || true
+        last_err_key="$ekey"
+        last_err_ts="$e_ts"
+      fi
+      sleep "$retry"
+    fi
   done
   ;;
 sessions)
@@ -2759,7 +3112,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

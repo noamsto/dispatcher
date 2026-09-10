@@ -950,3 +950,52 @@ $hits"
     [ "$status" -eq 0 ]
   done
 }
+
+@test "the claude lane carries its Monitor-stream contract" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'Monitor(' \
+    'command: "crew stream --crew <your crew id>",' \
+    'persistent: true)' \
+    'crew stream --status --crew <your crew id>' \
+    '`alive` → nothing,' \
+    '`stale` → `crew stream --force --crew <your crew id>`, a live pid that' \
+    '`dead` → arm, as above.' \
+    'handle the **entire `events[]` in ONE turn**' \
+    'any later batch whose `cursor` isn'"'"'t greater' \
+    '**No `Monitor` tool** → follow the cursor lane' \
+    '`run_in_background`; cursor: a backgrounded shell with a completion notification,' \
+    '**Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn;'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the claude lane carries none of the cursor lane's park scaffolding" {
+  # Absence, not presence, is the acceptance criterion for #127: the claude
+  # lane streams via Monitor and never arms/re-arms a background watch, so
+  # none of cursor's park bookkeeping belongs there. Slice the byte range
+  # between the two literal lane headings (excluding the cursor heading
+  # itself, which would otherwise smuggle "INV-1" into the "claude" range)
+  # and grep only that slice, rather than eyeballing a diff.
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  claude_lane="$(awk '
+    /\*\*claude — streaming monitor\.\*\*/ { flag = 1 }
+    flag && /\*\*cursor — background park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$claude_lane" ]
+
+  for phrase in 'INV-1' 'arm-token' 'B1 race' 'G4 self-heal' '270, not 300'; do
+    # It must survive somewhere in the file (under cursor) ...
+    run grep -F "$phrase" "$protocol"
+    [ "$status" -eq 0 ]
+
+    # ... but never inside the claude lane's slice.
+    run grep -F "$phrase" <<<"$claude_lane"
+    if [ "$status" -eq 0 ]; then
+      echo "scaffolding phrase '$phrase' leaked into the claude lane — it must live under cursor only" >&2
+      false
+    fi
+  done
+}
