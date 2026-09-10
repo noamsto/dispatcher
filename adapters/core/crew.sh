@@ -291,6 +291,54 @@ _gh_json() {
   return 0
 }
 
+# _hold_crew <raw> — resolve `crew hold`'s --crew flag (or _crew_id when
+# omitted) and apply the same caller-supplied-id guard `watch`/`stream` use
+# (crew.sh:889-894). Not containment — `<dir>/holds/<id>.md` embeds no crew
+# id — but a write path with a caller-supplied id guards like its siblings.
+_hold_crew() {
+  local crew="${1:-$(_crew_id)}"
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    exit 1
+  }
+  case "$crew" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 1
+    ;;
+  esac
+  printf '%s' "$crew"
+}
+
+# _hold_outstanding <crew> — adds to hold:<crew> with no matching release,
+# crew-scoped, unlike `retro`'s deliberately unscoped
+# fold (crew.sh:2042) — a hold belongs to one crew's queue. try/catch mirrors
+# retro's fromjson wart (:2065): one unparseable body must not cost every
+# other hold its row. Prints `[]`, never nothing, when the log is missing —
+# `due`/`list` depend on that for an unambiguous empty-array read.
+_hold_outstanding() {
+  local crew="$1"
+  [ -f "$log" ] || {
+    printf '[]'
+    return 0
+  }
+  jq -c -s --arg crew "$crew" --arg to "hold:$crew" '
+    map(select(.crew_id==$crew and .kind=="msg" and .to==$to)
+        | .body | (try fromjson catch null)) | map(select(. != null)) as $bodies
+    | ($bodies | map(select(.released == true) | .id)) as $released
+    | $bodies | map(select(.released != true
+                           and (([.id] - $released) | length) > 0))
+  ' "$log"
+}
+
+# _hold_render — tab table for `hold list`/`hold due`, matching `report`'s
+# header+@tsv shape; the holds array is read from stdin.
+_hold_render() {
+  printf 'id\tengine\twindow\tresets_at\tref\tbranch\ttitle\n'
+  jq -r '.[] | [.id, .wait.engine, .wait.window, (.wait.resets_at | tostring),
+                .task.ref, .task.branch, .task.title] | @tsv'
+}
+
 sub="${1:-}"
 shift || true
 
@@ -1165,6 +1213,7 @@ stream)
   # stream.lock.d, so two streams can't collide on them.
   outf="$cdir/stream.out"
   errf="$cdir/stream.err"
+  holderrf="$cdir/stream.hold.err"
   # Initialized before the trap is armed, so a signal landing before the
   # first iteration can't abort the handler on an unbound variable.
   child=""
@@ -1172,6 +1221,10 @@ stream)
   quiet=0
   last_err_key=""
   last_err_ts=0
+  last_hold_key=""
+  last_hold_ts=0
+  last_holderr_key=""
+  last_holderr_ts=0
 
   # The handler must disarm itself first — its own closing `exit` would
   # otherwise re-enter it and re-print `$pending` — and must end by exiting
@@ -1204,7 +1257,7 @@ stream)
     elif [ -s "$outf" ]; then
       cat "$outf" || true
     fi
-    rm -f "$outf" "$errf"
+    rm -f "$outf" "$errf" "$holderrf"
     _lock_release "$lockd"
     exit 0
   }
@@ -1217,6 +1270,51 @@ stream)
     tick_ts=$(jq -nc 'now*1000|floor')
     jq -nc --argjson pid "$$" --argjson ts "$tick_ts" --argjson park "$park" \
       '{pid:$pid, ts:$ts, park:$park}' >"$cdir/stream.tick"
+    # Ahead of the inner watch, so a matured hold announces on the batch path
+    # too, and at `--park` resolution rather than `--heartbeat` — which is
+    # coarser than the longest wait a hold can legally carry.
+    #
+    # The rc is captured rather than discarded with `|| true`: `due` exits 1
+    # for the ordinary "nothing matured", so a blanket `|| true` would fold a
+    # genuine failure into that same silence — and this is the one branch
+    # nothing else watches, since a hold exists precisely because no human is
+    # looking. Anything but 0/1 is reported like an inner-watch failure below.
+    hold_rc=0
+    matured=$(bash -euo pipefail "$0" hold due --crew "$crew" --json 2>"$holderrf") || hold_rc=$?
+    if [ "$hold_rc" -gt 1 ]; then
+      heline=$(head -n1 "$holderrf" 2>/dev/null || true)
+      hekey="$hold_rc:$(printf '%s' "$heline" | sed -E 's/[0-9]+/N/g')"
+      he_ts=$(jq -nc 'now*1000|floor')
+      if [ "$hekey" != "$last_holderr_key" ] || [ "$((he_ts - last_holderr_ts))" -ge "$((heartbeat * 1000))" ]; then
+        jq -nc --arg crew "$crew" --argjson rc "$hold_rc" --arg detail "$heline" --argjson ts "$he_ts" \
+          '{stream:"error", crew:$crew, rc:$rc, detail:("hold due: " + $detail), ts:$ts}' || true
+        last_holderr_key="$hekey"
+        last_holderr_ts="$he_ts"
+      fi
+      matured=""
+    fi
+    case "$matured" in
+    '' | '[]')
+      # Empty as well as `[]`: a failed shell-out above may print nothing at
+      # all, and neither answer may reach `jq`. Cleared rather than kept, so a
+      # hold released and later re-added announces again.
+      last_hold_key=""
+      ;;
+    *)
+      # Keyed on the matured set, not on the transition into it: releasing one
+      # of several holds changes the key, so the rest re-announce on the next
+      # iteration instead of stranding until the stream restarts. Suppression
+      # is the error path's below, unchanged.
+      hkey=$(printf '%s' "$matured" | jq -r '[.[].id] | sort | join(",")' 2>/dev/null || true)
+      h_ts=$(jq -nc 'now*1000|floor')
+      if [ "$hkey" != "$last_hold_key" ] || [ "$((h_ts - last_hold_ts))" -ge "$((heartbeat * 1000))" ]; then
+        jq -nc --arg crew "$crew" --argjson holds "$matured" --argjson ts "$h_ts" \
+          '{stream:"hold_due", crew:$crew, holds:$holds, ts:$ts}' || true
+        last_hold_key="$hkey"
+        last_hold_ts="$h_ts"
+      fi
+      ;;
+    esac
     # Never --since: the per-crew cursor file self-seeds `watch`, exactly as
     # a bare `crew watch` would, so the cursor keeps advancing across
     # iterations without this process tracking it itself.
@@ -2199,6 +2297,420 @@ retro)
       end
   ' "$log"
   ;;
+hold)
+  # A queued dispatch parked on a quota window, so a successor session can
+  # resume it without a human. Records go to the synthetic sink
+  # `hold:<crew>`, matching `retro`/`metrics` — `watch`'s `to==$me or to=="*"`
+  # predicate (crew.sh:917) matches neither, so a hold cannot wake or pollute
+  # the inbox of the dispatcher that wrote it, while `crew log` still shows it.
+  holdsub="${1:-}"
+  shift || true
+  case "$holdsub" in
+  add)
+    # crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
+    #   --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft]
+    #   [--shape S] [--spec FILE] [--crew ID] <title...>
+    #
+    # --engine is the engine whose quota is being waited on; --agent is the
+    # engine the task will be dispatched to (task.engine). Both are required
+    # and kept distinct — neither is inferred from the other.
+    engine="" window="" resets_at="" agent="" ref="" branch="" tier="" model="" effort=""
+    plan="" mcp="" draft=false shape="" spec="" hcrew=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --engine)
+        [ -n "${2:-}" ] || {
+          echo "crew: --engine needs a value" >&2
+          exit 1
+        }
+        engine="$2"
+        shift 2
+        ;;
+      --window)
+        [ -n "${2:-}" ] || {
+          echo "crew: --window needs a value" >&2
+          exit 1
+        }
+        window="$2"
+        shift 2
+        ;;
+      --resets-at)
+        [ -n "${2:-}" ] || {
+          echo "crew: --resets-at needs a value" >&2
+          exit 1
+        }
+        resets_at="$2"
+        shift 2
+        ;;
+      --agent)
+        [ -n "${2:-}" ] || {
+          echo "crew: --agent needs a value" >&2
+          exit 1
+        }
+        agent="$2"
+        shift 2
+        ;;
+      --ref)
+        [ -n "${2:-}" ] || {
+          echo "crew: --ref needs a value" >&2
+          exit 1
+        }
+        ref="$2"
+        shift 2
+        ;;
+      --branch)
+        [ -n "${2:-}" ] || {
+          echo "crew: --branch needs a value" >&2
+          exit 1
+        }
+        branch="$2"
+        shift 2
+        ;;
+      --tier)
+        [ -n "${2:-}" ] || {
+          echo "crew: --tier needs a value" >&2
+          exit 1
+        }
+        tier="$2"
+        shift 2
+        ;;
+      --model)
+        [ -n "${2:-}" ] || {
+          echo "crew: --model needs a value" >&2
+          exit 1
+        }
+        model="$2"
+        shift 2
+        ;;
+      --effort)
+        [ -n "${2:-}" ] || {
+          echo "crew: --effort needs a value" >&2
+          exit 1
+        }
+        effort="$2"
+        shift 2
+        ;;
+      --plan)
+        [ -n "${2:-}" ] || {
+          echo "crew: --plan needs a value" >&2
+          exit 1
+        }
+        plan="$2"
+        shift 2
+        ;;
+      --mcp)
+        [ -n "${2:-}" ] || {
+          echo "crew: --mcp needs a value" >&2
+          exit 1
+        }
+        mcp="$2"
+        shift 2
+        ;;
+      --draft)
+        draft=true
+        shift
+        ;;
+      --shape)
+        [ -n "${2:-}" ] || {
+          echo "crew: --shape needs a value" >&2
+          exit 1
+        }
+        shape="$2"
+        shift 2
+        ;;
+      --spec)
+        [ -n "${2:-}" ] || {
+          echo "crew: --spec needs a value" >&2
+          exit 1
+        }
+        spec="$2"
+        shift 2
+        ;;
+      --crew)
+        [ -n "${2:-}" ] || {
+          echo "crew: --crew needs a value" >&2
+          exit 1
+        }
+        hcrew="$2"
+        shift 2
+        ;;
+      -*)
+        echo "crew: hold add: unknown arg '$1'" >&2
+        exit 1
+        ;;
+      *)
+        break
+        ;;
+      esac
+    done
+    title="$*"
+    # Reject a missing required field by name, the way `status` rejects an
+    # unknown state (crew.sh:366) — fail loudly at the writer, not downstream.
+    [ -n "$engine" ] || {
+      echo "crew: hold add: --engine is required" >&2
+      exit 1
+    }
+    [ -n "$window" ] || {
+      echo "crew: hold add: --window is required" >&2
+      exit 1
+    }
+    [ -n "$resets_at" ] || {
+      echo "crew: hold add: --resets-at is required" >&2
+      exit 1
+    }
+    [ -n "$agent" ] || {
+      echo "crew: hold add: --agent is required" >&2
+      exit 1
+    }
+    [ -n "$ref" ] || {
+      echo "crew: hold add: --ref is required" >&2
+      exit 1
+    }
+    [ -n "$branch" ] || {
+      echo "crew: hold add: --branch is required" >&2
+      exit 1
+    }
+    [ -n "$tier" ] || {
+      echo "crew: hold add: --tier is required" >&2
+      exit 1
+    }
+    [ -n "$model" ] || {
+      echo "crew: hold add: --model is required" >&2
+      exit 1
+    }
+    [ -n "$effort" ] || {
+      echo "crew: hold add: --effort is required" >&2
+      exit 1
+    }
+    [ -n "$title" ] || {
+      echo "crew: hold add: a title is required" >&2
+      exit 1
+    }
+    # Shape only, never the floor — `refresh-budget.sh` alone owns
+    # the 85%/95% judgment. Seconds here, matching `resets_at`'s own unit;
+    # `id`/`ts` below are milliseconds, a different clock.
+    case "$resets_at" in '' | *[!0-9]*)
+      echo "crew: hold add: --resets-at must be an integer epoch-seconds timestamp" >&2
+      exit 1
+      ;;
+    esac
+    now=$(jq -nc 'now | floor')
+    [ "$resets_at" -gt "$now" ] || {
+      echo "crew: hold add: --resets-at must be in the future" >&2
+      exit 1
+    }
+    if [ -n "$spec" ] && [ ! -r "$spec" ]; then
+      echo "crew: hold add: --spec file '$spec' is not readable" >&2
+      exit 1
+    fi
+    crew=$(_hold_crew "$hcrew")
+    # setup_repo (tests/helpers.bash:13-28) creates a bare repo with no
+    # .git/crew, so a `hold add` with no --spec would otherwise fail its
+    # append — mirrors `status`/`msg`'s own mkdir -p (crew.sh:357).
+    mkdir -p "$dir"
+    # Computed once, before the builder: `_fit_line` calls the builder
+    # repeatedly while shrinking the title, and an `id` minted inside it would
+    # stop matching its own row's `ts` on any shrunk record.
+    # Milliseconds, not `crew new`'s seconds (crew.sh:311): the duplicate guard
+    # compares `id` against the ms `ts` fields dispatch.sh writes at :603 and
+    # :1017, so copying `crew new` breaks that comparison by 1000x.
+    ts=$(jq -nc 'now*1000|floor')
+    id="$ts-$$"
+    specpath=""
+    if [ -n "$spec" ]; then
+      mkdir -p "$dir/holds"
+      specpath="$dir/holds/$id.md"
+      # `--`: a --spec whose basename starts with a dash would otherwise be
+      # parsed by cp as a flag bundle, long after `[ -r ]` accepted it.
+      cp -- "$spec" "$specpath"
+    fi
+    # Mirrors `_build_status` exactly: every fixed field closes over the
+    # enclosing scope via --arg/--argjson, and $1 is the only shrinkable part
+    # (crew.sh:384-392). Handing `_shrink` the whole body would truncate `id`,
+    # `task.branch` and `task.spec` along with the title.
+    _build_hold() {
+      jq -nc --arg crew "$crew" --arg id "$id" --argjson ts "$ts" \
+        --arg wengine "$engine" --arg window "$window" --argjson resets_at "$resets_at" \
+        --arg tengine "$agent" --arg ref "$ref" --arg branch "$branch" \
+        --arg tier "$tier" --arg model "$model" --arg effort "$effort" \
+        --arg plan "$plan" --arg mcp "$mcp" --argjson draft "$draft" \
+        --arg shape "$shape" --arg spec "$specpath" --arg title "$1" \
+        '{ts: $ts, crew_id: $crew, from: ("dispatcher:" + $crew),
+          to: ("hold:" + $crew), kind: "msg",
+          body: ({id: $id,
+                  wait: {engine: $wengine, window: $window, resets_at: $resets_at},
+                  task: {ref: $ref, branch: $branch, tier: $tier, engine: $tengine,
+                         model: $model, effort: $effort,
+                         plan: (if $plan == "" then null else $plan end),
+                         mcp: (if $mcp == "" then null else $mcp end),
+                         draft: $draft,
+                         shape: (if $shape == "" then null else $shape end),
+                         title: $title,
+                         spec: (if $spec == "" then null else $spec end)}}
+                 | tostring)}'
+    }
+    line=$(_fit_line _build_hold "$title")
+    _bus_append "$log" "$line"
+    # Prints only the minted id, so a caller can `release <id>` later or build
+    # test assertions without going through `list --json`.
+    printf '%s\n' "$id"
+    ;;
+  list)
+    json=false
+    hcrew=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --json)
+        json=true
+        shift
+        ;;
+      --crew)
+        [ -n "${2:-}" ] || {
+          echo "crew: --crew needs a value" >&2
+          exit 1
+        }
+        hcrew="$2"
+        shift 2
+        ;;
+      *)
+        echo "crew: hold list [--crew ID] [--json]" >&2
+        exit 1
+        ;;
+      esac
+    done
+    crew=$(_hold_crew "$hcrew")
+    holds=$(_hold_outstanding "$crew")
+    if [ "$json" = true ]; then
+      printf '%s\n' "$holds"
+    else
+      printf '%s' "$holds" | _hold_render
+    fi
+    ;;
+  due)
+    json=false
+    hcrew=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --json)
+        json=true
+        shift
+        ;;
+      --crew)
+        [ -n "${2:-}" ] || {
+          echo "crew: --crew needs a value" >&2
+          exit 1
+        }
+        hcrew="$2"
+        shift 2
+        ;;
+      *)
+        echo "crew: hold due [--crew ID] [--json]" >&2
+        exit 1
+        ;;
+      esac
+    done
+    crew=$(_hold_crew "$hcrew")
+    # Matured is `<=`, not `<`. Bare `now` here compares seconds
+    # against `wait.resets_at`, never the `now*1000` idiom `ts`/`id` use above.
+    matured=$(_hold_outstanding "$crew" | jq -c '[.[] | select(.wait.resets_at <= now)]')
+    n=$(printf '%s' "$matured" | jq 'length')
+    if [ "$json" = true ]; then
+      printf '%s\n' "$matured"
+    else
+      printf '%s' "$matured" | _hold_render
+    fi
+    # Exits 0 when any hold is matured, 1 when none — including a missing log,
+    # since `_hold_outstanding` already prints `[]` for that case.
+    if [ "$n" -gt 0 ]; then
+      exit 0
+    else
+      exit 1
+    fi
+    ;;
+  park)
+    default="${1:-}"
+    shift || true
+    case "$default" in '' | *[!0-9]*)
+      echo "crew: hold park <default> must be a positive integer number of seconds" >&2
+      exit 1
+      ;;
+    esac
+    [ "$default" -gt 0 ] || {
+      echo "crew: hold park <default> must be a positive integer number of seconds" >&2
+      exit 1
+    }
+    hcrew=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --crew)
+        [ -n "${2:-}" ] || {
+          echo "crew: --crew needs a value" >&2
+          exit 1
+        }
+        hcrew="$2"
+        shift 2
+        ;;
+      *)
+        echo "crew: hold park <default> [--crew ID]" >&2
+        exit 1
+        ;;
+      esac
+    done
+    crew=$(_hold_crew "$hcrew")
+    # The branch default when nothing is outstanding or the earliest is
+    # already matured; otherwise min(default, earliest - now). Never below 1
+    # — `crew watch` rejects `--timeout 0` (crew.sh:869-872) and a 0 here
+    # would fail the cursor re-arm.
+    _hold_outstanding "$crew" | jq -r --argjson default "$default" '
+      ([.[] | .wait.resets_at] | min) as $earliest
+      | (if ($earliest == null or $earliest <= now) then $default
+         else ([$default, ($earliest - now)] | min) end) as $raw
+      | ([$raw, 1] | max) | floor'
+    ;;
+  release)
+    hid="${1:-}"
+    shift || true
+    [ -n "$hid" ] || {
+      echo "crew: hold release <id> [--crew ID]" >&2
+      exit 1
+    }
+    hcrew=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --crew)
+        [ -n "${2:-}" ] || {
+          echo "crew: --crew needs a value" >&2
+          exit 1
+        }
+        hcrew="$2"
+        shift 2
+        ;;
+      *)
+        echo "crew: hold release <id> [--crew ID]" >&2
+        exit 1
+        ;;
+      esac
+    done
+    crew=$(_hold_crew "$hcrew")
+    mkdir -p "$dir"
+    # Always appended — the bus is append-only (crew.sh:191) — so an unknown
+    # or already-released id is a no-op by construction: `_hold_outstanding`
+    # excludes any id with a matching release, however many it finds.
+    _build_hold_release() {
+      jq -nc --arg crew "$crew" --arg id "$hid" --arg body "$1" \
+        '{ts: (now*1000|floor), crew_id: $crew, from: ("dispatcher:" + $crew),
+          to: ("hold:" + $crew), kind: "msg", body: $body}'
+    }
+    relbody=$(jq -nc --arg id "$hid" '{id: $id, released: true}')
+    line=$(_fit_line _build_hold_release "$relbody")
+    _bus_append "$log" "$line"
+    ;;
+  *)
+    echo "crew: hold add|list|due|park|release" >&2
+    exit 1
+    ;;
+  esac
+  ;;
 stall-watch)
   # stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S]
   #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S]
@@ -3112,7 +3624,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

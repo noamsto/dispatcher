@@ -2263,6 +2263,21 @@ tick_after() {
 }
 proc_gone() { ! kill -0 "$1" 2>/dev/null; }
 
+# add_hold <resets_at> [title] — crew hold add for crew c1, every other
+# required flag pinned to an arbitrary fixed value: only --resets-at and the
+# title (to tell holds apart) vary per test. Prints the minted id.
+add_hold() {
+  run_crew hold add --crew c1 --engine claude --window 5h --resets-at "$1" \
+    --agent claude --ref FOO-1 --branch feat/x --tier standard --model sonnet \
+    --effort medium "${2:-hold}"
+}
+
+# Predicates and readers for the hold_due stream tests below.
+hold_due_lines() { grep -c '"stream":"hold_due"' "$STREAM_OUT" 2>/dev/null || true; }
+at_least_hold_due_lines() { [ "$(hold_due_lines)" -ge "$1" ]; }
+heartbeat_seen() { grep -q '"stream":"heartbeat"' "$STREAM_OUT" 2>/dev/null; }
+heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
+
 @test "watch: --crew resolves that crew with CREW_ID unset and no WORKER_TASK.md" {
   CREW_ID=c1 run_crew status worker:feat/x done
 
@@ -2402,6 +2417,145 @@ proc_gone() { ! kill -0 "$1" 2>/dev/null; }
   poll_for 200 at_least_lines 2
   run jq -e '.stream == "error" and .rc == 3 and .detail == "crew: fault injected"' <<<"$(tail -n1 "$STREAM_OUT")"
   [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: a matured hold produces exactly one hold_due line, not one per park" {
+  # Seeded already-matured rather than added a second in the future: `hold add`
+  # refuses a past --resets-at, so a near-future add races its own fork+jq cost
+  # against the deadline it just set, and loses under --jobs 16.
+  id=h1
+  seed_hold c1 "$id" "$(($(date +%s) - 5))"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 200 at_least_hold_due_lines 1
+
+  # Two more iterations of the same matured hold emit nothing further — the
+  # tick, rewritten at the top of every iteration, is the evidence the loop
+  # is still turning (same idiom as the error-suppression test above).
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  [ "$(hold_due_lines)" -eq 1 ]
+
+  run jq -e --arg id "$id" \
+    '.stream == "hold_due" and .crew == "c1" and (.holds | map(.id) == [$id])' \
+    <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: an unmatured hold produces no hold_due line" {
+  now=$(date +%s)
+  add_hold "$((now + 3600))" future
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 lock_pid_is "$STREAM_PID"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+
+  [ "$(hold_due_lines)" -eq 0 ]
+  [ "$(stream_lines)" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: releasing one of two matured holds re-announces the other on the next iteration, no restart" {
+  # Both seeded to the same past instant, so they mature together by
+  # construction — two near-future adds cannot be made simultaneous.
+  id1=h1
+  id2=h2
+  matured_at=$(($(date +%s) - 5))
+  seed_hold c1 "$id1" "$matured_at"
+  seed_hold c1 "$id2" "$matured_at"
+  expected=$(jq -nr --arg a "$id1" --arg b "$id2" '[$a, $b] | sort | join(",")')
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 200 at_least_hold_due_lines 1
+
+  ids1=$(jq -r '.holds | map(.id) | sort | join(",")' <<<"$(head -n1 "$STREAM_OUT")")
+  [ "$ids1" = "$expected" ]
+
+  run_crew hold release "$id1" --crew c1
+  poll_for 200 at_least_hold_due_lines 2
+
+  # The re-announcement is keyed on the matured id SET changing, not on a
+  # count — assert the surviving id, not just that a second line arrived.
+  line2=$(grep '"stream":"hold_due"' "$STREAM_OUT" | sed -n '2p')
+  ids2=$(jq -r '.holds | map(.id) | sort | join(",")' <<<"$line2")
+  [ "$ids2" = "$id2" ]
+
+  # No further re-announcement while the set stays put and --heartbeat has
+  # not elapsed.
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  [ "$(hold_due_lines)" -eq 2 ]
+  stop_stream
+}
+
+@test "stream: hold_due does not reset quiet — the heartbeat still fires on schedule" {
+  seed_hold c1 h1 "$(($(date +%s) - 5))"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3 --retry 1
+  poll_for 200 at_least_hold_due_lines 1
+  poll_for 300 heartbeat_seen
+
+  # quiet_s == 3, the same value the plain heartbeat test (--heartbeat 3,
+  # --park 1) asserts: three parks' worth of quiet, undisturbed by hold_due
+  # firing on the same iterations.
+  run jq -e '.stream == "heartbeat" and .quiet_s == 3' <<<"$(heartbeat_line)"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: a failing hold due is announced as an error, not swallowed as no-holds" {
+  # `hold due` exits 1 by design when nothing is matured, so the loop cannot
+  # treat every nonzero rc as silence — a real failure there is the one branch
+  # nothing else watches. Fault only `hold due`: the stream re-execs the same
+  # $0 for `watch` too, and failing both would leave the inner-watch error
+  # line indistinguishable from this one.
+  STREAM_CREW="$BATS_TEST_TMPDIR/crew-holdfault.sh"
+  {
+    head -n1 "$CREW"
+    printf '%s\n' 'if [ "${1:-}" = hold ] && [ "${2:-}" = due ]; then echo "crew: hold fault injected" >&2; exit 3; fi'
+    tail -n +2 "$CREW"
+  } >"$STREAM_CREW"
+  chmod +x "$STREAM_CREW"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 200 at_least_lines 1
+
+  run jq -e '.stream == "error" and .rc == 3
+    and .detail == "hold due: crew: hold fault injected"' <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+
+  # Suppressed like the inner-watch error path: the same failure on later
+  # iterations adds no line, and the tick proves the loop is still turning.
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  [ "$(stream_lines)" -eq 1 ]
+  stop_stream
+}
+
+@test "stream: a crew with no holds streams batches and heartbeats unchanged" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3 --retry 1
+  CREW_ID=c1 run_crew status worker:feat/x done
+  poll_for 100 at_least_lines 1
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "done"' \
+    <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+
+  poll_for 200 at_least_lines 2
+  run jq -e '.stream == "heartbeat" and .quiet_s == 3' <<<"$(tail -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  [ "$(stream_lines)" -eq 2 ]
+  [ "$(hold_due_lines)" -eq 0 ]
   stop_stream
 }
 

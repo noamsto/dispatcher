@@ -999,3 +999,73 @@ $hits"
     fi
   done
 }
+
+@test "the claude lane's hold_due wake lives inside its own slice" {
+  # Same awk range as the slice guard above, so this tracks the real claude/cursor
+  # boundary rather than a line number.
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  claude_lane="$(awk '
+    /\*\*claude — streaming monitor\.\*\*/ { flag = 1 }
+    flag && /\*\*cursor — background park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$claude_lane" ]
+
+  for statement in \
+    '"stream":"hold_due"' \
+    '**Hold due** → `holds[]` lists every matured hold; release exactly one'; do
+    run grep -F "$statement" <<<"$claude_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the cursor lane's overshoot and park primitive live below its heading" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  cursor_lane="$(awk '
+    /\*\*cursor — background park\.\*\*/ { flag = 1 }
+    flag && /\*\*codex — blocking park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$cursor_lane" ]
+
+  for statement in \
+    'woken up to one' \
+    'min(branch default, crew hold park'; do
+    run grep -F "$statement" <<<"$cursor_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the Tracker bullet states both branch forms and the three-way duplicate guard" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'GitHub `feat/<issue>-<slug>` (`dispatch.sh:563`)' \
+    'Linear `<linear-id lowercased>-<slug>`, with **no** `feat/` prefix (`dispatch.sh:656`)' \
+    'a `kind:"claim-issue"` row for `task.ref`' \
+    'a `kind:"dispatch"` row for `task.branch`' \
+    'or an existing worktree for `task.branch`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the dispatcher protocol tells the human at all three ends of a hold" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'On placing one, name what is held' \
+    'resuming, name which hold resumed, that it resumed at full strength' \
+    'On refusing, name that the deadline is outside the'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the release predicate matches the gate's own, verbatim" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'no window of `wait.engine`' \
+    'dispatch.sh:446'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
