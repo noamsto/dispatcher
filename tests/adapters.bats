@@ -319,7 +319,10 @@ setup() {
     names="$(grep -oE '`[a-z0-9-]+-reviewer`' "$f" | tr -d '`' | sort -u)"
     while IFS= read -r name; do
       [ -z "$name" ] && continue
-      echo "$roster_names" | grep -qxF "$name"
+      if ! echo "$roster_names" | grep -qxF "$name"; then
+        echo "unknown reviewer token: $name (file: $f)" >&2
+        return 1
+      fi
     done <<<"$names"
   done
 }
