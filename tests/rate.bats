@@ -325,7 +325,7 @@ EOF
   : >"$STUB_LOG"
   run run_crew rate
   [ "$status" -eq 0 ]
-  ! grep -q '^pr view' "$STUB_LOG"
+  run ! grep -q '^pr view' "$STUB_LOG"
   grep -q 'actions/runs' "$STUB_LOG"
   ! grep -q 'graphql' "$STUB_LOG"
 }

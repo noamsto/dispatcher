@@ -617,7 +617,7 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = "c-dead" ]
   [[ "$stderr" == *"not a number"* ]]
-  ! grep -qF 'rm -rf' "$STUB_LOG"
+  run ! grep -qF 'rm -rf' "$STUB_LOG"
   grep -qF 'issue edit 91 --remove-label dispatched' "$STUB_LOG"
 }
 
