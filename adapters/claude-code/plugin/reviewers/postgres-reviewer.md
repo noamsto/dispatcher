@@ -30,9 +30,7 @@ Frame each finding by its latent failure mode (a backfill, an ops script, a seco
 - **Atlas linearity**: filenames are timestamp-ordered; a new migration whose timestamp predates an applied one, or a stale `atlas.sum`, makes Atlas treat the chain as non-linear (DIRTY after rebase/merge). Verify timestamp ordering AND that `atlas.sum` was regenerated (append-only: one new line, no reorders/deletions).
 - HCL/declarative schema must match the generated migration (no drift).
 
-#### Query correctness & performance
-- WHERE/JOIN columns indexed; check composite index order (equality first, then range); watch Seq Scans on large tables (`EXPLAIN (ANALYZE, BUFFERS)`).
-- N+1: sqlc method calls inside Go loops.
+#### Query correctness
 - `ON CONFLICT DO UPDATE/NOTHING` on a path where the caller assumed the row already existed silently creates/masks a missing-precondition bug.
 - Short transactions (no locks held across external calls), consistent lock ordering (`ORDER BY id FOR UPDATE`).
 
@@ -45,12 +43,14 @@ Frame each finding by its latent failure mode (a backfill, an ops script, a seco
 - **Docstring vs schema drift**: a comment claiming a column/scope the table lacks (e.g. "org-scoped via `organization_id`" with no such column) is a live bug — flag it.
 
 #### sqlc hygiene
-- Never hand-edit generated files; flag edits to `*/data/sqlc/*.sql.go` / `models.go`.
+- Never hand-edit generated files; flag edits to any file under the `out:` directory `sqlc.yaml` names (conventionally `*.sql.go` and `models.go`).
 - Annotations correct: `-- name: GetFoo :one|:many|:exec|:execrows`; argument types match params; positional args line up after a column add.
 - Explicit null handling (`sqlc.narg` vs `sqlc.arg`); Go consumer type (`string` vs `*string`) matches column nullability end-to-end.
 - No `fmt.Sprintf`-built SQL bypassing sqlc (injection risk) — use named queries or sqlc conditionals.
 
 ### MEDIUM
+- WHERE/JOIN columns unindexed; composite index order wrong (equality first, then range); a Seq Scan on a large table (`EXPLAIN (ANALYZE, BUFFERS)`).
+- N+1: sqlc method calls inside Go loops.
 - `SELECT *` in production code, `GRANT ALL` to app users.
 - Partial indexes (`WHERE deleted_at IS NULL`), cursor pagination over OFFSET, and `SKIP LOCKED` for queue patterns are recommendations, not failures — suggest, don't block.
 

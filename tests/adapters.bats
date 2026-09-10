@@ -610,14 +610,10 @@ setup() {
 }
 
 @test "every reviewer ends with the shared tail verbatim" {
-  # Pins the anti-inflation tail (SPEC.md D1) byte-for-byte across the roster,
+  # Pins the anti-inflation tail (#116) byte-for-byte across the roster,
   # so a per-file rewrite can't quietly soften the severity/verdict rules it
   # shares with every other reviewer.
   for f in "$ROOT"/adapters/core/reviewers/*.md; do
-    name="$(basename "$f")"
-    # Enable only if security-reviewer.md's rewrite was refused by a
-    # classifier (SPEC.md D5) and it ships unchanged instead.
-    # [ "$name" = security-reviewer.md ] && continue
     count="$(grep -c '^## Findings and verdict$' "$f" || true)"
     [ "$count" -eq 1 ]
     awk '/^## Findings and verdict$/{p=1} p' "$f" >"$BATS_TEST_TMPDIR/tail.md"
@@ -627,13 +623,10 @@ setup() {
 }
 
 @test "no roster body carries an engine-specific or repo-specific idiom" {
-  # SPEC.md D3: the roster ships verbatim to three engines, so a phrase that
+  # #116: the roster ships verbatim to three engines, so a phrase that
   # only makes sense on one of them (a tool name, a path, a spawn idiom, a
   # model pin) would silently break neutrality on the other two.
   mapfile -t files < <(printf '%s\n' "$ROOT"/adapters/core/reviewers/*.md "$ROOT"/adapters/core/critics/*.md)
-  # Enable only if security-reviewer.md's rewrite was refused by a
-  # classifier (SPEC.md D5) and it ships unchanged instead.
-  # mapfile -t files < <(printf '%s\n' "${files[@]}" | grep -v security-reviewer.md)
   offenders=""
   for pattern in '~/.claude' 'Agent tool' 'Task tool' 'subagent' \
     'MUST BE USED' 'PROACTIVELY' 'gh pr ' 'Emergency Response' 'prdash' \
@@ -649,14 +642,10 @@ $hits"
 }
 
 @test "every reviewer grades on the one severity ladder" {
-  # SPEC.md D1/D7: CRITICAL/HIGH/MEDIUM is the only severity vocabulary a
+  # #116: CRITICAL/HIGH/MEDIUM is the only severity vocabulary a
   # reviewer may use — a stray ladder rung (LOW, blocker, NOTE) means two
   # engines could disagree about what a finding means.
   for f in "$ROOT"/adapters/core/reviewers/*.md; do
-    name="$(basename "$f")"
-    # Enable only if security-reviewer.md's rewrite was refused by a
-    # classifier (SPEC.md D5) and it ships unchanged instead.
-    # [ "$name" = security-reviewer.md ] && continue
     headings="$(grep -E '^### ' "$f" || true)"
     [ -n "$headings" ]
     bad="$(echo "$headings" | grep -vE '^### (CRITICAL|HIGH|MEDIUM)$' || true)"
@@ -667,7 +656,7 @@ $hits"
 }
 
 @test "the routing table is coherent" {
-  # SPEC.md D4: pins the frontmatter routing invariants mechanically, so a
+  # #116: pins the frontmatter routing invariants mechanically, so a
   # future glob/when edit can't silently break Postgres/SQLite disjointness
   # or leave two reviewers racing on an unguarded shared glob.
   glob_map="$BATS_TEST_TMPDIR/globs.tsv"
@@ -720,27 +709,31 @@ $hits"
   # Every glob shared by two or more reviewers must carry a non-empty
   # `when:` on each of them, or the routing table would double-dispatch
   # silently instead of relying on a `when:` to arbitrate.
-  for shared_glob in $(cut -f1 "$glob_map" | sort -u); do
+  # Read line by line, never `for x in $(...)`: the tokens are literal glob
+  # patterns (`*.md`, `*.sh`), and an unquoted word list pathname-expands
+  # them against the invocation CWD — `*.md` became `README.md` and the
+  # check silently skipped the one glob two reviewers actually share.
+  while IFS= read -r shared_glob; do
     names="$(awk -F'\t' -v g="$shared_glob" '$1==g{print $2}' "$glob_map" | sort -u)"
-    count="$(echo "$names" | wc -l)"
+    count="$(printf '%s\n' "$names" | wc -l)"
     if [ "$count" -ge 2 ]; then
-      for n in $names; do
+      while IFS= read -r n; do
         awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$ROOT/adapters/core/reviewers/$n.md" >"$BATS_TEST_TMPDIR/fm2.yaml"
         w="$(yq -r '.when // ""' "$BATS_TEST_TMPDIR/fm2.yaml")"
         [ -n "$w" ]
-      done
+      done <<<"$names"
     fi
-  done
+  done < <(cut -f1 "$glob_map" | sort -u)
 }
 
 @test "agent-docs-reviewer ships in the roster" {
-  # New persona (SPEC.md D6). The existing "roster covers the languages…"
+  # New persona (#116, docs/superpowers/specs/2026-09-10-persona-roster-gaps-design.md). The existing "roster covers the languages…"
   # test is not extended here — Step 4.2 does that alongside its README edit.
   [ -f "$ROOT/adapters/core/reviewers/agent-docs-reviewer.md" ]
 }
 
 @test "the README counts the roster" {
-  # SPEC.md D7 test 6: the roster paragraph must actually name the new count
+  # #116: the roster paragraph must actually name the new count
   # and every reviewer domain, not just claim "the roster" in the abstract.
   run grep -F 'twelve engine-neutral' "$ROOT/README.md"
   [ "$status" -eq 0 ]
@@ -754,7 +747,7 @@ $hits"
 }
 
 @test "both protocols state the severity mapping" {
-  # SPEC.md D2/D7: each protocol states the CRITICAL/HIGH/MEDIUM mapping
+  # #116: each protocol states the CRITICAL/HIGH/MEDIUM mapping
   # onto its own vocabulary exactly once — this pins both sentences so a
   # future edit can't reword one without the other drifting.
   run grep -F 'a CRITICAL is HIGH-severity for `review_high` and for the deep second re-review' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
