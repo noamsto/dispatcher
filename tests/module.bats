@@ -123,9 +123,34 @@ nix_eval() {
 @test "the codex plugin is copied as a real dir, never symlinked" {
   # Codex loads plugins only from a real directory under ~/.codex/plugins/cache.
   # A symlinked tree reports "installed, enabled" in `codex plugin list` while
-  # its skills never reach the model — so cp -rL is load-bearing.
+  # its skills never reach the model — so cp -rL is load-bearing. Scoped to the
+  # codex activation block: the cursor-skills activation below it intentionally
+  # uses ln -sfn, since ~/.cursor/skills is a shared namespace it must not
+  # claim wholesale (#130).
   run grep -F 'cp -rL' "$ROOT/nix/hm-module.nix"
   [ "$status" -eq 0 ]
-  run grep -cE 'mkOutOfStoreSymlink|ln -s' "$ROOT/nix/hm-module.nix"
+  # A renamed/moved activation attribute would make this extraction match
+  # zero lines and silently disarm the guard below — assert it isn't empty
+  # first, so that failure mode fails loudly instead of passing green.
+  codex_block="$(awk '/activation\.dispatcherCodexPlugin/{f=1} f{print; if (/^ *$/) exit}' "$ROOT/nix/hm-module.nix")"
+  [ -n "$codex_block" ]
+  run grep -cE 'mkOutOfStoreSymlink|ln -s' <<<"$codex_block"
   [ "$output" = "0" ]
+}
+
+@test "cursor skills are symlinked in, not claimed as a whole directory" {
+  # ~/.cursor/skills is a shared namespace with other producers (#130) — a
+  # whole-directory `home.file` source there conflicts the moment another
+  # module also populates it. Individual skills must be linked in instead.
+  run grep -cE '"\.cursor/skills"\s*=\s*\{' "$ROOT/nix/hm-module.nix"
+  [ "$output" = "0" ]
+  # Scoped to the dispatcherCursorSkills activation block (same extraction
+  # style as the codex test above) so this can't pass on an unrelated ln -sfn
+  # elsewhere while the actual symlink activation was dropped.
+  skills_block="$(awk '/activation\.dispatcherCursorSkills/{f=1} f{print; if (/^ *$/) exit}' "$ROOT/nix/hm-module.nix")"
+  [ -n "$skills_block" ]
+  run grep -F 'ln -sfn' <<<"$skills_block"
+  [ "$status" -eq 0 ]
+  run grep -F '.cursor/skills' <<<"$skills_block"
+  [ "$status" -eq 0 ]
 }

@@ -62,10 +62,12 @@ in {
           source = "${self}/adapters/cursor/commands";
           recursive = true;
         };
-        ".cursor/skills" = {
-          source = "${self}/adapters/cursor/skills";
-          recursive = true;
-        };
+        # ".cursor/skills" is NOT claimed here: it's a shared namespace with
+        # other producers (like another module already installing aeye's
+        # skills there). A whole-directory `source` would conflict with
+        # theirs the moment ours is non-empty. Individual skills are
+        # symlinked in by the activation script below instead.
+        #
         # The protocols tell a cursor worker to fall back to the roster copy
         # beside commands/ whenever the exported variable is unset, so both
         # rosters have to exist there and not only in the store.
@@ -93,6 +95,19 @@ in {
         run mkdir -p "$HOME/${codexCache}"
         run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
         run chmod -R u+w "$HOME/${codexCache}"
+      '';
+
+      # ~/.cursor/skills is a shared namespace another module also links
+      # individual skills into (see the ".cursor/skills" comment above), so
+      # this links each of ours in rather than claiming the whole directory.
+      # `ln -sfn` (not `home.file`) makes it idempotent across activations and
+      # lets a store-path bump repoint an existing link. Named "spec-plan-critic",
+      # not "dispatcher-spec-plan-critic", because that's the literal name the
+      # protocol docs and skill invocations resolve it by.
+      activation.dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        skills_dir="$HOME/.cursor/skills"
+        run mkdir -p "$skills_dir"
+        run ln -sfn "${self}/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"
       '';
     };
   };
