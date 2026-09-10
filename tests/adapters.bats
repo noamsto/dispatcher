@@ -536,14 +536,15 @@ setup() {
 }
 
 @test "every reviewer carries a routable frontmatter" {
-  # A reviewer with neither globs nor when is unreachable: the gate routes by
-  # matching changed paths against globs, and falls back to when for the
+  # A reviewer with no globs, no shebang and no when is unreachable: the gate
+  # routes by matching changed paths against globs, probes an extensionless
+  # file's first line against shebang (#119), and falls back to when for the
   # triggers no pattern can express (security).
   for f in "$ROOT"/adapters/core/reviewers/*.md; do
     awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
     run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
     [ "$status" -eq 0 ]
-    routable="$(yq -r '((.globs // []) | length > 0) or (.when != null)' "$BATS_TEST_TMPDIR/fm.yaml")"
+    routable="$(yq -r '((.globs // []) | length > 0) or ((.shebang // []) | length > 0) or (.when != null)' "$BATS_TEST_TMPDIR/fm.yaml")"
     [ "$routable" = "true" ]
     [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$(basename "$f" .md)" ]
   done
@@ -698,6 +699,8 @@ $hits"
   # or leave two reviewers racing on an unguarded shared glob.
   glob_map="$BATS_TEST_TMPDIR/globs.tsv"
   : >"$glob_map"
+  shebang_map="$BATS_TEST_TMPDIR/shebangs.tsv"
+  : >"$shebang_map"
   postgres_when=""
   sqlite_when=""
   for f in "$ROOT"/adapters/core/reviewers/*.md; do
@@ -737,6 +740,19 @@ $hits"
     for g in "${globs[@]}"; do
       [ -n "$g" ] && printf '%s\t%s\n' "$g" "$name" >>"$glob_map"
     done
+
+    shebangs_csv="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    IFS=',' read -ra shebangs <<<"$shebangs_csv"
+    for i in "${shebangs[@]}"; do
+      # Spliced unescaped into an ERE below, where it must stay unquoted to
+      # be a pattern at all. A failed compile returns 2, and inside an `if`
+      # that is indistinguishable from a clean non-match — a metacharacter
+      # entry would make the collision check go quiet instead of red.
+      if [ -n "$i" ]; then
+        [[ "$i" =~ ^[A-Za-z0-9_+-]+$ ]]
+        printf '%s\t%s\n' "$i" "$name" >>"$shebang_map"
+      fi
+    done
   done
 
   [ -n "$postgres_when" ]
@@ -761,6 +777,95 @@ $hits"
       done <<<"$names"
     fi
   done < <(cut -f1 "$glob_map" | sort -u)
+
+  # A shared glob has `when:` to arbitrate it; a shared interpreter has
+  # nothing, so interpreters are disjoint outright. Kept at test top level
+  # rather than inside an `if shared` branch: with disjoint lists that branch
+  # would never execute and the check would pass by never running — the
+  # self-skipping shape #116 caught. Non-emptiness closes the same hole from
+  # the other side, where deleting every `shebang:` key leaves nothing to scan.
+  [ -s "$shebang_map" ]
+
+  while IFS= read -r interp; do
+    claimants="$(awk -F'\t' -v i="$interp" '$1==i{print $2}' "$shebang_map" | sort -u | wc -l)"
+    [ "$claimants" -eq 1 ]
+  done < <(cut -f1 "$shebang_map" | sort -u)
+
+  # The suffix is optional, so exact uniqueness above is not enough: `python`
+  # and `python3` are distinct strings that `#!/usr/bin/env python3` matches
+  # equally. The relation is directional — compare each cross-reviewer pair
+  # both ways. Two entries on one reviewer may collide harmlessly, since
+  # either way that reviewer is the one dispatched.
+  while IFS=$'\t' read -r a a_owner; do
+    while IFS=$'\t' read -r b b_owner; do
+      if [ "$a_owner" = "$b_owner" ]; then
+        continue
+      fi
+      if [[ "$b" =~ ^${a}([-.]?[0-9]+(\.[0-9]+)*)?$ ]]; then
+        echo "interpreter '$b' ($b_owner) collides with '$a' ($a_owner)" >&2
+        false
+      fi
+    done <"$shebang_map"
+  done <"$shebang_map"
+}
+
+@test "the routing rule probes an extensionless file's shebang" {
+  # Without this clause an extensionless `bin/foo` matches no glob, and the
+  # find-bugs fallback fires only when NOTHING matched — so a diff that also
+  # touches a matching file leaves the script reviewed by nobody at all.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'A reviewer may also carry `shebang:`, interpreter names that route an **extensionless** changed file by its first line.' \
+    'then probe every extensionless changed file against every `shebang:`, then honour each matched reviewer'"'"'s `when:`' \
+    'as it stands in the worktree after the change' \
+    'The line must start with `#!` or nothing matches.' \
+    'equals that entry followed only by a version suffix'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the shebang probe is stated exactly once" {
+  # A second statement of the rule is a second source of truth. grep -o, not
+  # grep -c: this file is one line per paragraph, so a line count would score
+  # a restatement inside the same paragraph as one.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  count="$(grep -o -F '**The shebang probe.**' "$protocol" | wc -l)"
+  [ "$count" -eq 1 ]
+}
+
+@test "the language reviewer bullet does not route by globs alone" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F 'the roster entries the changed files matched, one reviewer each' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F "the roster entries the changed files' \`globs:\` matched" "$protocol"
+  [ "$status" -ne 0 ]
+}
+
+@test "the roster declares the interpreters the probe routes" {
+  # A stated rule with nothing declaring against it routes nothing.
+  for pair in "shell-reviewer:sh,bash" "python-reviewer:python"; do
+    name="${pair%%:*}"
+    want="${pair#*:}"
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' \
+      "$ROOT/adapters/core/reviewers/$name.md" >"$BATS_TEST_TMPDIR/fm.yaml"
+    got="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    [ "$got" = "$want" ]
+  done
+}
+
+@test "the shebang routing fixtures stay extensionless and executable" {
+  # A fixture that gains an extension, loses its shebang, or loses the
+  # executable bit that makes pre-commit classify it as shell stops being an
+  # extensionless shebang script, and stops testing anything.
+  dir="$ROOT/tests/fixtures/shebang-routing/bin"
+  for pair in "foo:#!/usr/bin/env bash" "bar:#!/usr/bin/env python3"; do
+    f="${pair%%:*}"
+    want="${pair#*:}"
+    [ -x "$dir/$f" ]
+    [[ "$f" != *.* ]]
+    [ "$(head -1 "$dir/$f")" = "$want" ]
+  done
 }
 
 @test "the README counts the roster" {

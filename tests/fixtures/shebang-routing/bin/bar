@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+# Routing fixture for issue #119: extensionless script routed by shebang.
+print("bar")

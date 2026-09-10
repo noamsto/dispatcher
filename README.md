@@ -155,14 +155,16 @@ values whoever ran. Only the spawn mechanism and the rung are per-engine.
 **Two rosters, spawned three ways.** What each reviewer and each critic _is_
 ships with the harness. `adapters/core/reviewers/` holds twelve engine-neutral
 bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
-Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` frontmatter routes a diff to
-the ones that apply; `adapters/core/critics/` holds the spec and plan critics
-that gate a plan before any of it is written. A worker resolves them through
-`DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR` (or the copy its adapter
-ships) and hands the matched body to whatever spawn its engine has: a named
-agent on claude, an inline role brief on codex and cursor. A critic sits at
-the tier's escalate rung — it has to out-think the draft it gates. Nothing
-about either gate depends on agent definitions that live outside the repo.
+Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` and
+`shebang:` frontmatter route a diff to the ones that apply (an extensionless
+changed file matches by its first line); `adapters/core/critics/` holds the
+spec and plan critics that gate a plan before any of it is written. A worker
+resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
+(or the copy its adapter ships) and hands the matched body to whatever spawn
+its engine has: a named agent on claude, an inline role brief on codex and
+cursor. A critic sits at the tier's escalate rung — it has to out-think the
+draft it gates. Nothing about either gate depends on agent definitions that
+live outside the repo.
 
 ---
 
@@ -342,7 +344,7 @@ adapters/
 │   ├── dispatcher.sh        146 L · orchestrator launcher
 │   ├── protocols/           DISPATCHER · WORKER · orchestration
 │   ├── commands/            shared bodies, projected per engine
-│   └── reviewers/           engine-neutral reviewer roster, glob-routed
+│   └── reviewers/           engine-neutral reviewer roster, glob- and shebang-routed
 ├── claude-code/plugin/      commands · agents · skills · workflows · hooks
 ├── codex/plugin/            skills · hooks   (no agents/workflows: unsupported)
 └── cursor/                  rules · commands · scripts (no plugin format)
