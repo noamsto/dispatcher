@@ -713,12 +713,10 @@ $hits"
     shebangs_csv="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
     IFS=',' read -ra shebangs <<<"$shebangs_csv"
     for i in "${shebangs[@]}"; do
-      # An interpreter is spliced unescaped into an ERE below, where it must
-      # stay unquoted to be read as a pattern at all. A metacharacter in an
-      # entry would compile to a regex that means something else, or fail to
-      # compile — and a failed compile returns 2, which inside an `if` is
-      # indistinguishable from a clean non-match, so the collision check would
-      # go quiet instead of red. Interpreter names are bare words; require it.
+      # Spliced unescaped into an ERE below, where it must stay unquoted to
+      # be a pattern at all. A failed compile returns 2, and inside an `if`
+      # that is indistinguishable from a clean non-match — a metacharacter
+      # entry would make the collision check go quiet instead of red.
       if [ -n "$i" ]; then
         [[ "$i" =~ ^[A-Za-z0-9_+-]+$ ]]
         printf '%s\t%s\n' "$i" "$name" >>"$shebang_map"
@@ -749,16 +747,12 @@ $hits"
     fi
   done < <(cut -f1 "$glob_map" | sort -u)
 
-  # #119: an interpreter routes an extensionless changed file by its first
-  # line. Unlike a shared glob, a shared interpreter has no arbitrator — there
-  # is no `when:` to break the tie — so two reviewers claiming one interpreter
-  # would simply double-dispatch. Interpreters are therefore disjoint outright.
-  #
-  # Asserted at test top level, never inside an `if shared` branch: with
-  # today's disjoint lists such a branch would never execute, and the check
-  # would pass by never running — the self-skipping shape #116 caught. The
-  # non-emptiness assertion closes the same hole from the other side, where
-  # deleting every `shebang:` key would leave nothing to iterate over.
+  # A shared glob has `when:` to arbitrate it; a shared interpreter has
+  # nothing, so interpreters are disjoint outright. Kept at test top level
+  # rather than inside an `if shared` branch: with disjoint lists that branch
+  # would never execute and the check would pass by never running — the
+  # self-skipping shape #116 caught. Non-emptiness closes the same hole from
+  # the other side, where deleting every `shebang:` key leaves nothing to scan.
   [ -s "$shebang_map" ]
 
   while IFS= read -r interp; do
@@ -766,13 +760,11 @@ $hits"
     [ "$claimants" -eq 1 ]
   done < <(cut -f1 "$shebang_map" | sort -u)
 
-  # Exact-string uniqueness above is not sufficient. The probe matches a
-  # declared entry followed by an OPTIONAL version suffix, so `python` on one
-  # reviewer and `python3` on another are distinct strings that a
-  # `#!/usr/bin/env python3` line matches equally — the double dispatch this
-  # check exists to prevent. The relation is directional, so compare every
-  # cross-reviewer pair both ways; two entries on the SAME reviewer may
-  # version-collide harmlessly, since either way one reviewer is dispatched.
+  # The suffix is optional, so exact uniqueness above is not enough: `python`
+  # and `python3` are distinct strings that `#!/usr/bin/env python3` matches
+  # equally. The relation is directional — compare each cross-reviewer pair
+  # both ways. Two entries on one reviewer may collide harmlessly, since
+  # either way that reviewer is the one dispatched.
   while IFS=$'\t' read -r a a_owner; do
     while IFS=$'\t' read -r b b_owner; do
       if [ "$a_owner" = "$b_owner" ]; then
@@ -787,10 +779,9 @@ $hits"
 }
 
 @test "the routing rule probes an extensionless file's shebang" {
-  # #119: the probe is the whole fix. Without this clause an extensionless
-  # `bin/foo` matches no glob, and — because the find-bugs fallback fires only
-  # when NOTHING matched — a diff that also touches a matching file leaves the
-  # script reviewed by nobody at all.
+  # Without this clause an extensionless `bin/foo` matches no glob, and the
+  # find-bugs fallback fires only when NOTHING matched — so a diff that also
+  # touches a matching file leaves the script reviewed by nobody at all.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
     'A reviewer may also carry `shebang:`, interpreter names that route an **extensionless** changed file by its first line.' \
@@ -804,18 +795,15 @@ $hits"
 }
 
 @test "the shebang probe is stated exactly once" {
-  # The rule is a routing contract every worker on three engines reads, so a
-  # second statement of it is a second source of truth. grep -o, not grep -c:
-  # this file is one line per paragraph, so a line count would score a
-  # restatement inside the same paragraph as one.
+  # A second statement of the rule is a second source of truth. grep -o, not
+  # grep -c: this file is one line per paragraph, so a line count would score
+  # a restatement inside the same paragraph as one.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   count="$(grep -o -F '**The shebang probe.**' "$protocol" | wc -l)"
   [ "$count" -eq 1 ]
 }
 
 @test "the language reviewer bullet does not route by globs alone" {
-  # #119: the batch is now globs plus shebang, so the one other sentence that
-  # described the match had to stop naming globs as the whole of it.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   run grep -F 'the roster entries the changed files matched, one reviewer each' "$protocol"
   [ "$status" -eq 0 ]
@@ -824,8 +812,7 @@ $hits"
 }
 
 @test "the roster declares the interpreters the probe routes" {
-  # A stated rule with nothing declaring against it routes nothing. These are
-  # the two reviewers whose languages carry a shebang convention.
+  # A stated rule with nothing declaring against it routes nothing.
   for pair in "shell-reviewer:sh,bash" "python-reviewer:python"; do
     name="${pair%%:*}"
     want="${pair#*:}"
@@ -837,10 +824,9 @@ $hits"
 }
 
 @test "the shebang routing fixtures stay extensionless and executable" {
-  # These two files are the input to the routing evidence recorded on #119's
-  # PR. A fixture that gains an extension, loses its shebang, or loses the
-  # executable bit that makes pre-commit classify it as shell would leave that
-  # evidence quietly meaningless.
+  # A fixture that gains an extension, loses its shebang, or loses the
+  # executable bit that makes pre-commit classify it as shell stops being an
+  # extensionless shebang script, and stops testing anything.
   dir="$ROOT/tests/fixtures/shebang-routing/bin"
   for pair in "foo:#!/usr/bin/env bash" "bar:#!/usr/bin/env python3"; do
     f="${pair%%:*}"
