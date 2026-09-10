@@ -6,10 +6,9 @@
 # The reviewer roster ships verbatim to all three, rather than as per-engine
 # agents: a reviewer runs by having its body read into a fresh context, which
 # every engine can do, and no shipped agent name can then collide with a
-# user's own. The critic roster ships the same way to codex and cursor, but
-# claude gets it as real plugin agents — that registry is what lets the
-# workflow spawn `plan-critic` by name and pin its model, so the two engines
-# without one read the identical body as an inline brief instead.
+# user's own. The critic roster ships that way to codex and cursor too, but
+# claude gets it as plugin agents — only that registry can spawn `plan-critic`
+# by name and pin its model.
 # Idempotent — CI regenerates and asserts no diff.
 #
 #   claude-code : commands/<name>.md   (native slash commands)
@@ -30,6 +29,7 @@ skills="$root/adapters/core/skills"
 cc="$root/adapters/claude-code/plugin/commands"
 cx="$root/adapters/codex/plugin/skills"
 cu="$root/adapters/cursor/commands"
+cus="$root/adapters/cursor/skills"
 cca="$root/adapters/claude-code/plugin/agents"
 ccs="$root/adapters/claude-code/plugin/skills"
 
@@ -58,8 +58,8 @@ _body() {
 # or removed: the idempotence test never exercises removal (it reruns with an
 # unchanged source), and the CI drift gate sees no diff for a stale dir nobody
 # rewrote — so the orphan would persist silently and forever.
-rm -rf "$cc" "$cu" "$cx" "$cca" "$ccs"
-mkdir -p "$cc" "$cu" "$cx" "$cca" "$ccs"
+rm -rf "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
+mkdir -p "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
 
 for f in "$src"/*.md; do
   name="$(basename "$f" .md)"
@@ -92,9 +92,7 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
 done
 
 # codex reads a critic the way it reads a reviewer — body into a subagent
-# prompt — so it gets the roster as files. claude does not: its copy IS the
-# agents/ registry generated below, and a second inert copy inside the plugin
-# would be two bodies to keep in sync for one engine.
+# prompt. claude is not in this loop: its copy IS the agents/ registry below.
 rm -rf "$root/adapters/codex/plugin/critics"
 cp -r "$critics" "$root/adapters/codex/plugin/critics"
 
@@ -117,12 +115,10 @@ for r in "$reviewers" "$critics"; do
   cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
 done
 
-# claude is the one engine with an agent registry, so the critic roster
-# becomes real agents there. The generator owns the two claude-only
-# frontmatter keys rather than the roster body carrying them: `model: opus` in
-# a file codex and cursor read as a brief would name a model neither can
-# spawn. opus is the escalate rung the critic table in the spec-plan-critic
-# skill pins for every engine — bump it there and here together.
+# The two claude-only frontmatter keys live here rather than in the shared
+# body: a body codex and cursor paste into a prompt must not name a model
+# neither can spawn. `opus` is the escalate rung the spec-plan-critic critic
+# table pins — bump both together.
 for f in "$critics"/*.md; do
   name="$(basename "$f" .md)"
   {
@@ -135,16 +131,14 @@ for f in "$critics"/*.md; do
   } >"$cca/$name.md"
 done
 
-# The skills project into each engine's own shape, from one source: claude and
-# codex load a skill directory, cursor has no skills channel at all and takes
-# the body as a command. Written after the clears above, so a renamed skill
-# leaves no orphan behind.
+# All three engines load a skill directory, cursor's loose under ~/.cursor.
+# Written after the clears above, so a renamed skill leaves no orphan.
 for d in "$skills"/*/; do
   name="$(basename "$d")"
-  mkdir -p "$ccs/$name" "$cx/$name"
+  mkdir -p "$ccs/$name" "$cx/$name" "$cus/$name"
   cp "$d/SKILL.md" "$ccs/$name/SKILL.md"
   cp "$d/SKILL.md" "$cx/$name/SKILL.md"
-  cp "$d/SKILL.md" "$cu/$name.md"
+  cp "$d/SKILL.md" "$cus/$name/SKILL.md"
 done
 
 echo "adapters regenerated"

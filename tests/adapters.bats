@@ -59,6 +59,7 @@ setup() {
     adapters/codex/plugin/critics
     adapters/cursor/critics
     adapters/claude-code/plugin/skills
+    adapters/cursor/skills
   )
   "$ROOT/scripts/gen-adapters.sh" >/dev/null
   before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
@@ -588,8 +589,8 @@ setup() {
 }
 
 @test "the roster holds both gates the tiers name" {
-  # standard gates on the plan, deep on the spec first — a tier with no body to
-  # spawn is the hole #114 closed.
+  # standard gates on the plan, deep on the spec first — a tier whose body is
+  # missing has no gate at all.
   [ -f "$ROOT/adapters/core/critics/plan-critic.md" ]
   [ -f "$ROOT/adapters/core/critics/spec-critic.md" ]
 }
@@ -608,13 +609,13 @@ setup() {
   [ ! -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
 }
 
-@test "every shared skill reaches all three engines, cursor as a command" {
+@test "every shared skill reaches all three engines" {
   for d in "$ROOT"/adapters/core/skills/*/; do
     name="$(basename "$d")"
     for shipped in \
       "adapters/claude-code/plugin/skills/$name/SKILL.md" \
       "adapters/codex/plugin/skills/$name/SKILL.md" \
-      "adapters/cursor/commands/$name.md"; do
+      "adapters/cursor/skills/$name/SKILL.md"; do
       run cmp -s "$d/SKILL.md" "$ROOT/$shipped"
       [ "$status" -eq 0 ]
     done
@@ -626,16 +627,16 @@ setup() {
   mkdir -p "$work"
   cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
   (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
-  [ -f "$work/adapters/cursor/commands/spec-plan-critic.md" ]
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic/SKILL.md" ]
   mv "$work/adapters/core/skills/spec-plan-critic" "$work/adapters/core/skills/spec-plan-critic-v2"
   (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
   for stale in \
     adapters/claude-code/plugin/skills/spec-plan-critic \
     adapters/codex/plugin/skills/spec-plan-critic \
-    adapters/cursor/commands/spec-plan-critic.md; do
+    adapters/cursor/skills/spec-plan-critic; do
     [ ! -e "$work/$stale" ]
   done
-  [ -f "$work/adapters/cursor/commands/spec-plan-critic-v2.md" ]
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic-v2/SKILL.md" ]
 }
 
 @test "the critic gate routes over the roster on every engine" {

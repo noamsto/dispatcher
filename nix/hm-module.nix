@@ -62,10 +62,13 @@ in {
           source = "${self}/adapters/cursor/commands";
           recursive = true;
         };
-        # Both rosters land in ~/.cursor as well, not just as exported paths:
-        # the protocols tell a cursor worker to fall back to the copy beside
-        # commands/ when the variable is unset, and without these that
-        # fallback is a path that never existed on a Nix install.
+        ".cursor/skills" = {
+          source = "${self}/adapters/cursor/skills";
+          recursive = true;
+        };
+        # The protocols tell a cursor worker to fall back to the roster copy
+        # beside commands/ whenever the exported variable is unset, so both
+        # rosters have to exist there and not only in the store.
         ".cursor/reviewers" = {
           source = "${self}/adapters/cursor/reviewers";
           recursive = true;

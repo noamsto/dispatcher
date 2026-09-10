@@ -129,15 +129,15 @@ while nothing was watching.
 The harness is engine-neutral; the adapters are not. Each engine gets what it can
 actually express:
 
-|                           | Claude Code |        Codex        |        Cursor        |
-| ------------------------- | :---------: | :-----------------: | :------------------: |
-| Packaging                 |   plugin    |       plugin        |     loose files¹     |
-| Slash commands            |     ✅      | ❌ ships as skills² |          ✅          |
-| Skills                    |     ✅      |         ✅          | ❌ ship as commands⁴ |
-| Subagents                 |     ✅      |   ⚠️ native only³   |         ✅³          |
-| Hooks                     |     ✅      |         ✅          |          ✅          |
-| Worker: spec/plan critics |     ✅      |         ✅          |          ✅          |
-| Worker: code-review gate  |     ✅      |         ✅          |          ✅          |
+|                           | Claude Code |        Codex        |    Cursor    |
+| ------------------------- | :---------: | :-----------------: | :----------: |
+| Packaging                 |   plugin    |       plugin        | loose files¹ |
+| Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |
+| Skills                    |     ✅      |         ✅          |      ✅      |
+| Subagents                 |     ✅      |   ⚠️ native only³   |     ✅³      |
+| Hooks                     |     ✅      |         ✅          |      ✅      |
+| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      |
+| Worker: code-review gate  |     ✅      |         ✅          |      ✅      |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
@@ -145,8 +145,6 @@ into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
 ³ Codex has native ad-hoc subagents but no declarable plugin agents; cursor has
 both but not the model this pipeline is built on.
-⁴ Cursor reads no skill directory, so a shared skill body ships as a command —
-`/spec-plan-critic` rather than a skill of that name.
 
 **Every tier gate runs on every engine.** A worker's pipeline depth is set by
 its tier, not by which engine drew the task: `standard` and `deep` run the
@@ -194,7 +192,7 @@ That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
 `refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
 `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR` and
 `DISPATCHER_CRITICS_DIR`, installs the Codex plugin and writes the Cursor
-rule, commands and rosters.
+rule, commands, skills and rosters.
 
 For Claude Code, pass the plugin directory to `claude`:
 
