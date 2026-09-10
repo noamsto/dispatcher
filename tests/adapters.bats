@@ -726,12 +726,6 @@ $hits"
   done < <(cut -f1 "$glob_map" | sort -u)
 }
 
-@test "agent-docs-reviewer ships in the roster" {
-  # New persona (#116, docs/superpowers/specs/2026-09-10-persona-roster-gaps-design.md). The existing "roster covers the languages…"
-  # test is not extended here — Step 4.2 does that alongside its README edit.
-  [ -f "$ROOT/adapters/core/reviewers/agent-docs-reviewer.md" ]
-}
-
 @test "the README counts the roster" {
   # #116: the roster paragraph must actually name the new count
   # and every reviewer domain, not just claim "the roster" in the abstract.
