@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Project the shared command bodies in adapters/core/commands/ into each
-# engine's native shape, and ship the protocols and the reviewer roster
-# inside each plugin tree.
+# engine's native shape, and ship the protocols, the skills, and the reviewer
+# and critic rosters inside each plugin tree.
 #
-# The roster ships verbatim to all three, rather than as per-engine agents: a
-# reviewer runs by having its body read into a fresh context, which every
-# engine can do, and no shipped agent name can then collide with a user's own.
+# The reviewer roster ships verbatim to all three, rather than as per-engine
+# agents: a reviewer runs by having its body read into a fresh context, which
+# every engine can do, and no shipped agent name can then collide with a
+# user's own. The critic roster ships the same way to codex and cursor, but
+# claude gets it as real plugin agents — that registry is what lets the
+# workflow spawn `plan-critic` by name and pin its model, so the two engines
+# without one read the identical body as an inline brief instead.
 # Idempotent — CI regenerates and asserts no diff.
 #
 #   claude-code : commands/<name>.md   (native slash commands)
@@ -20,18 +24,42 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 src="$root/adapters/core/commands"
 protocols="$root/adapters/core/protocols"
 reviewers="$root/adapters/core/reviewers"
+critics="$root/adapters/core/critics"
+skills="$root/adapters/core/skills"
 
 cc="$root/adapters/claude-code/plugin/commands"
 cx="$root/adapters/codex/plugin/skills"
 cu="$root/adapters/cursor/commands"
+cca="$root/adapters/claude-code/plugin/agents"
+ccs="$root/adapters/claude-code/plugin/skills"
+
+# Read a frontmatter description through a YAML parser and re-emit it through
+# one, rather than hand-rolling quote/backslash escaping. Descriptions
+# routinely contain ": " (invalid as a bare YAML scalar), and naive
+# re-escaping of an already-escaped source value silently corrupts it — a `\"`
+# in the source became a literal backslash in the output. jq owns the
+# escaping, yq -P owns the YAML quoting, so both are correct by construction.
+_desc() {
+  awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$1" |
+    yq -r '.description // ""'
+}
+
+# Body with the source frontmatter stripped, if it has any.
+_body() {
+  if [ "$(head -1 "$1")" = "---" ]; then
+    awk 'NR>1 && /^---$/ {found=1; next} found' "$1"
+  else
+    cat "$1"
+  fi
+}
 
 # Clear ALL generated trees, codex skills included. Only clearing the command
 # dirs would leave an orphaned codex skill behind whenever a command is renamed
 # or removed: the idempotence test never exercises removal (it reruns with an
 # unchanged source), and the CI drift gate sees no diff for a stale dir nobody
 # rewrote — so the orphan would persist silently and forever.
-rm -rf "$cc" "$cu" "$cx"
-mkdir -p "$cc" "$cu" "$cx"
+rm -rf "$cc" "$cu" "$cx" "$cca" "$ccs"
+mkdir -p "$cc" "$cu" "$cx" "$cca" "$ccs"
 
 for f in "$src"/*.md; do
   name="$(basename "$f" .md)"
@@ -41,28 +69,12 @@ for f in "$src"/*.md; do
 
   mkdir -p "$cx/$name"
 
-  # Read the description through a YAML parser and re-emit through one, rather
-  # than hand-rolling quote/backslash escaping. Descriptions routinely contain
-  # ": " (invalid as a bare YAML scalar), and naive re-escaping of an
-  # already-escaped source value silently corrupts it — a `\"` in the source
-  # became a literal backslash in the output. jq owns the escaping, yq -P owns
-  # the YAML quoting, so both are correct by construction.
-  desc="$(
-    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" |
-      yq -r '.description // ""'
-  )"
-
   {
     printf -- '---\n'
-    jq -n --arg name "$name" --arg description "$desc" \
+    jq -n --arg name "$name" --arg description "$(_desc "$f")" \
       '{name: $name, description: $description}' | yq -P -
-    printf -- '---\n\n'
-    # Body with the source frontmatter stripped, if it has any.
-    if [ "$(head -1 "$f")" = "---" ]; then
-      awk 'NR>1 && /^---$/ {found=1; next} found' "$f"
-    else
-      cat "$f"
-    fi
+    printf -- '---\n'
+    _body "$f"
   } >"$cx/$name/SKILL.md"
 done
 
@@ -79,6 +91,13 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   cp -r "$reviewers" "$d/reviewers"
 done
 
+# codex reads a critic the way it reads a reviewer — body into a subagent
+# prompt — so it gets the roster as files. claude does not: its copy IS the
+# agents/ registry generated below, and a second inert copy inside the plugin
+# would be two bodies to keep in sync for one engine.
+rm -rf "$root/adapters/codex/plugin/critics"
+cp -r "$critics" "$root/adapters/codex/plugin/critics"
+
 # Cursor has no plugin tree to be self-contained inside, and ~/.cursor/hooks.json
 # is a single shared file several flakes write — so the hook ships as a loose
 # script referenced by its store path from a hand-managed stanza (see README),
@@ -89,18 +108,43 @@ mkdir -p "$root/adapters/cursor/scripts"
 cp "$root/adapters/core/dispatch-notify.sh" "$root/adapters/cursor/scripts/dispatch-notify.sh"
 chmod +x "$root/adapters/cursor/scripts/dispatch-notify.sh"
 
-# The roster ships loose for cursor on the same reasoning: a cursor worker
-# resolves a reviewer by path, and without this copy the only path that
-# resolves is the exported one, which a non-Nix install does not have.
-rm -rf "$root/adapters/cursor/reviewers"
-cp -r "$reviewers" "$root/adapters/cursor/reviewers"
+# Both rosters ship loose for cursor on the same reasoning: a cursor worker
+# resolves a reviewer or a critic by path, and without these copies the only
+# path that resolves is the exported one, which a non-Nix install does not
+# have.
+for r in "$reviewers" "$critics"; do
+  rm -rf "$root/adapters/cursor/$(basename "$r")"
+  cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
+done
 
-# codex gets spec-plan-critic as a skill; it can express neither agents nor
-# workflows, so its workers skip the plan-critic (claude-only) per
-# WORKER_PROTOCOL.md — the review gate still runs, on native subagents
-# instead of a named registry.
-mkdir -p "$cx/spec-plan-critic"
-cp "$root/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" \
-  "$cx/spec-plan-critic/SKILL.md"
+# claude is the one engine with an agent registry, so the critic roster
+# becomes real agents there. The generator owns the two claude-only
+# frontmatter keys rather than the roster body carrying them: `model: opus` in
+# a file codex and cursor read as a brief would name a model neither can
+# spawn. opus is the escalate rung the critic table in the spec-plan-critic
+# skill pins for every engine — bump it there and here together.
+for f in "$critics"/*.md; do
+  name="$(basename "$f" .md)"
+  {
+    printf -- '---\n'
+    jq -n --arg name "$name" --arg description "$(_desc "$f")" \
+      '{name: $name, description: $description, tools: ["Read", "Grep", "Glob"], model: "opus"}' |
+      yq -P -
+    printf -- '---\n'
+    _body "$f"
+  } >"$cca/$name.md"
+done
+
+# The skills project into each engine's own shape, from one source: claude and
+# codex load a skill directory, cursor has no skills channel at all and takes
+# the body as a command. Written after the clears above, so a renamed skill
+# leaves no orphan behind.
+for d in "$skills"/*/; do
+  name="$(basename "$d")"
+  mkdir -p "$ccs/$name" "$cx/$name"
+  cp "$d/SKILL.md" "$ccs/$name/SKILL.md"
+  cp "$d/SKILL.md" "$cx/$name/SKILL.md"
+  cp "$d/SKILL.md" "$cu/$name.md"
+done
 
 echo "adapters regenerated"

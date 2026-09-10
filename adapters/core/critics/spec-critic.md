@@ -1,11 +1,6 @@
 ---
 name: spec-critic
 description: Adversarial reviewer for feature specs. Use to stress-test a spec before any planning — hunts missing requirements, scope creep, and solving-the-wrong-problem. Returns a structured verdict.
-tools:
-  - Read
-  - Grep
-  - Glob
-model: opus
 ---
 
 # Spec Critic

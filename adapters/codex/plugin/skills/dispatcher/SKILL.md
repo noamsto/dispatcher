@@ -3,7 +3,6 @@ name: dispatcher
 description: Promote this running session into a dispatcher (judges tasks → tier+model, fans out workers)
 ---
 
-
 **First, discover this repo's crews and either re-attach to one or mint a new one, then
 register this dispatcher (plain bash — NOT `fish -c`):**
 
