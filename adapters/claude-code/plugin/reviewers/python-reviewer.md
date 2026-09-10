@@ -1,6 +1,6 @@
 ---
 name: python-reviewer
-description: "Expert Python code reviewer specializing in idiomatic modern Python, type safety, async correctness, error handling, and security. Use for all Python code changes. MUST BE USED for Python projects."
+description: "Reviews Python changes for silent failure, language footguns, type safety, async correctness and test quality."
 globs: ["*.py", "pyproject.toml", "requirements*.txt"]
 ---
 

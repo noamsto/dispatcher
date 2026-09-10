@@ -1,6 +1,6 @@
 ---
 name: yaml-reviewer
-description: "Expert YAML configuration reviewer specializing in Helm charts, Kubernetes manifests, GitHub Actions workflows, and process/docker-compose. Catches schema drift, anchor/merge pitfalls, secret leaks, env/value parity gaps, and templating bugs. Use for all YAML config changes."
+description: "Reviews YAML configuration: Helm charts, Kubernetes manifests, GitHub Actions workflows, compose and Atmos/Terragrunt stacks, for schema drift, anchor and merge pitfalls, secret leaks, environment parity and templating bugs."
 globs: ["*.yaml", "*.yml"]
 ---
 

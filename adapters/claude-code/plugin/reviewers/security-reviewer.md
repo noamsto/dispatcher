@@ -1,6 +1,6 @@
 ---
 name: security-reviewer
-description: "Security vulnerability detection and remediation specialist. Use PROACTIVELY after writing code that handles user input, authentication, API endpoints, or sensitive data. Flags secrets, SSRF, injection, unsafe crypto, and OWASP Top 10 vulnerabilities."
+description: "Finds exploitable defects in a diff: injection, broken access control, secret exposure, unsafe crypto, supply-chain and prompt-injection paths."
 globs: []
 when: "the diff touches an auth, crypto, input-parsing, SQL, or network path \u2014 when in doubt, include it"
 ---

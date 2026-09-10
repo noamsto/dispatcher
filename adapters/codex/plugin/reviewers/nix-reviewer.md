@@ -1,6 +1,6 @@
 ---
 name: nix-reviewer
-description: "Nix reviewer for flakes, NixOS and nix-darwin modules, and Home Manager. Reviews module layering, conditional composition, platform guards, secret handling, and the flake evaluation traps that only surface at switch time."
+description: "Reviews flakes, NixOS, nix-darwin and Home Manager changes for layering, conditional composition, platform guards, secret handling and evaluation traps that only surface at switch time."
 globs: ["*.nix", "flake.lock"]
 ---
 

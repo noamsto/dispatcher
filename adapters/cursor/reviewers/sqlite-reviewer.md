@@ -1,8 +1,8 @@
 ---
 name: sqlite-reviewer
-description: "SQLite & Cloudflare D1 specialist for query design, schema, migrations, and access patterns. Use PROACTIVELY when writing SQL, D1 queries, schema, or migrations. (Postgres/Atlas repos ship their own project-level reviewer that overrides this.)"
+description: "Reviews SQLite and Cloudflare D1 schema, migrations and queries: type affinity, tenant scoping without RLS, batch atomicity and the ALTER TABLE limits."
 globs: ["*.sql"]
-when: "SQLite and Cloudflare D1 repos only \u2014 a Postgres/Atlas repo routes to postgres-reviewer instead"
+when: "only when the repo has no atlas.hcl and no sqlc.yaml/sqlc.json, and either a wrangler.toml/wrangler.json* with a d1_databases binding or a *.sql file using SQLite-only syntax (STRICT, WITHOUT ROWID, INTEGER PRIMARY KEY AUTOINCREMENT); then postgres-reviewer does not run"
 ---
 
 # Database Reviewer (SQLite / Cloudflare D1)
