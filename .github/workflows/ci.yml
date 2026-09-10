@@ -21,7 +21,22 @@ jobs:
         run: |
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
+      # bats --jobs requires GNU parallel on PATH inside the devshell, so
+      # check for it explicitly with a legible error rather than letting a
+      # missing binary surface as an opaque bats failure. --jobs 4 is a
+      # provisional placeholder: TODO replace with the real core count once
+      # it's measured on the actual GitHub-hosted runner. No TAP/count-parsing
+      # guard is added here: bats' own bats_test_count_validator (in
+      # libexec/bats-core/bats, wired with `set -o pipefail execfail`) already
+      # fails the whole run on any test-count shortfall, verified empirically
+      # against tests/.
       - name: bats
-        run: nix develop -c bats tests/
+        shell: bash
+        run: |
+          if ! nix develop -c bash -c 'command -v parallel' >/dev/null; then
+            echo "::error::GNU parallel not found in the nix devshell (required for bats --jobs)"
+            exit 1
+          fi
+          nix develop -c bats --jobs 4 tests/
       - name: flake check
         run: nix flake check
