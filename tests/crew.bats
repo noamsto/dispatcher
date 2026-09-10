@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 setup() {
   load helpers
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
@@ -13,6 +15,12 @@ setup() {
 }
 
 teardown() {
+  # Before teardown_repo: a leaked `crew stream` (and the `crew watch` it owns)
+  # would race its rm -rf. See the stream harness at the bottom of this file.
+  stop_stream
+  if [ -n "${HOLDER_PID:-}" ]; then
+    kill -KILL "$HOLDER_PID" 2>/dev/null || true
+  fi
   teardown_repo
 }
 
@@ -2160,4 +2168,442 @@ EOF
   # kimi-k3-high and an unknown id stay unclassed rather than guessed.
   [ -z "$(weight kimi-k3-high)" ]
   [ -z "$(weight some-unknown-model)" ]
+}
+
+# ---------------------------------------------------------------------------
+# watch --crew / stream harness
+# ---------------------------------------------------------------------------
+
+# crew_dir [id] — the per-crew state dir `watch` and `stream` share.
+crew_dir() {
+  printf '%s' "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/${1:-c1}"
+}
+
+# poll_for <tries> <cmd…> — run cmd every 0.1s until it succeeds, at most
+# <tries> times. Every wait below is a bounded poll rather than a fixed sleep:
+# a state change that already happened costs nothing, and one that never
+# happens fails the test instead of hanging a --jobs 16 run.
+poll_for() {
+  local tries="$1" i=0
+  shift
+  while [ "$i" -lt "$tries" ]; do
+    "$@" && return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# start_stream <args…> — launch `crew stream` as a REAL process. Never through
+# run_crew: backgrounding a shell function makes $! the subshell's pid, so the
+# --status pid comparison, the --force reclaim and every kill below would name
+# the wrong process. </dev/null keeps it off bats' own pipes.
+start_stream() {
+  STREAM_N=$((${STREAM_N:-0} + 1))
+  STREAM_OUT="$BATS_TEST_TMPDIR/stream.$STREAM_N.out"
+  STREAM_ERR="$BATS_TEST_TMPDIR/stream.$STREAM_N.err"
+  # Recorded so stop_stream polls the right crew's lock dir instead of always
+  # c1's — a future test using --crew c2 would otherwise wait uselessly on c1
+  # and then force-KILL a stream mid-shutdown.
+  local args=("$@") i
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    [ "${args[i]}" = --crew ] && STREAM_CREW_ID="${args[i + 1]}"
+  done
+  bash -euo pipefail "${STREAM_CREW:-$CREW}" stream "$@" >"$STREAM_OUT" 2>"$STREAM_ERR" </dev/null &
+  STREAM_PID=$!
+  STREAM_PIDS="${STREAM_PIDS:-} $STREAM_PID"
+}
+
+# stop_stream — TERM every stream this test started, then reap it. The lock dir
+# is the last thing the cleanup handler removes before its `exit 0`, so polling
+# that bounds the wait; `kill -0` cannot, because a TERM'd child stays a
+# not-yet-reaped zombie that still answers it.
+stop_stream() {
+  local spid
+  [ -n "${STREAM_PIDS:-}" ] || return 0
+  for spid in $STREAM_PIDS; do
+    kill -TERM "$spid" 2>/dev/null || true
+  done
+  poll_for 60 test ! -d "$(crew_dir "${STREAM_CREW_ID:-c1}")/stream.lock.d" || {
+    for spid in $STREAM_PIDS; do
+      kill -KILL "$spid" 2>/dev/null || true
+    done
+  }
+  for spid in $STREAM_PIDS; do
+    wait "$spid" 2>/dev/null || true
+  done
+  STREAM_PIDS=""
+  STREAM_PID=""
+  STREAM_CREW_ID=""
+}
+
+# spawn_holder — set HOLDER_PID to a live pid that is NOT a child of this
+# shell, for the lock `--force` has to reclaim. A child TERM'd by --force would
+# sit unreaped, and `kill -0` on that zombie still succeeds, so --force's
+# bounded wait could never see it clear. Called plainly and never through a
+# command substitution: under bats the holder does not survive one.
+spawn_holder() {
+  local pf="$BATS_TEST_TMPDIR/holder.pid"
+  (
+    sleep 30 >/dev/null 2>&1 </dev/null &
+    printf '%s' "$!" >"$pf"
+  )
+  HOLDER_PID="$(cat "$pf")"
+}
+
+# Predicates for poll_for.
+stream_lines() { grep -c . "$STREAM_OUT" 2>/dev/null || true; }
+at_least_lines() { [ "$(stream_lines)" -ge "$1" ]; }
+lock_pid_is() { [ "$(cat "$(crew_dir)/stream.lock.d/pid" 2>/dev/null || true)" = "$1" ]; }
+tick_ts() { jq -r '.ts // empty' "$(crew_dir)/stream.tick" 2>/dev/null || true; }
+tick_after() {
+  local t
+  t="$(tick_ts)"
+  [ -n "$t" ] && [ "$t" -gt "$1" ]
+}
+proc_gone() { ! kill -0 "$1" 2>/dev/null; }
+
+@test "watch: --crew resolves that crew with CREW_ID unset and no WORKER_TASK.md" {
+  CREW_ID=c1 run_crew status worker:feat/x done
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].crew_id == "c1"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: an explicit --crew beats a WORKER_TASK.md at the repo top" {
+  CREW_ID=c1 run_crew status worker:feat/x done
+  printf 'crew_id: c9\n' >WORKER_TASK.md
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '.events[0].crew_id == "c1"' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  # Without the flag the same call resolves c9 and sees nothing.
+  run --separate-stderr run_crew watch --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: --crew leaves the wake set alone — a working status still does not wake it" {
+  CREW_ID=c1 run_crew status worker:feat/x working
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: --crew uses that crew's cursor file and watch lock" {
+  cdir="$(crew_dir c1)"
+  mkdir -p "$cdir/watch.lock.d"
+  printf '%s\n' "$$" >"$cdir/watch.lock.d/pid"
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 1 ]
+  [ "$stderr" = "crew: another watch is already running for this crew (c1)" ]
+
+  rm -rf "$cdir/watch.lock.d"
+  CREW_ID=c1 run_crew status worker:feat/x done
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e --argjson cursor "$(cat "$cdir/cursor")" '.cursor == $cursor' <<<"$output"
+  [ "$status" -eq 0 ]
+  [ ! -d "$cdir/watch.lock.d" ]
+}
+
+@test "stream: a batch line passes through verbatim and parses as {cursor, events}" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  CREW_ID=c1 run_crew status worker:feat/x done
+  poll_for 100 at_least_lines 1
+
+  line="$(head -n1 "$STREAM_OUT")"
+  # Verbatim: the compact single line `watch` printed, not a re-encoding.
+  [ "$line" = "$(jq -c . <<<"$line")" ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "done"
+    and .cursor == .events[0].ts' <<<"$line"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: events posted inside the coalesce window arrive as ONE batch line [F1]" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 3 --heartbeat 3600 --retry 1
+  CREW_ID=c1 run_crew status worker:feat/a done
+  poll_for 100 at_least_lines 1
+  t0="$(jq -nc 'now*1000|floor')"
+
+  # The stream is now inside its --coalesce sleep.
+  CREW_ID=c1 run_crew status worker:feat/b done
+  CREW_ID=c1 run_crew status worker:feat/c done
+  CREW_ID=c1 run_crew status worker:feat/d done
+
+  poll_for 100 at_least_lines 2
+  t1="$(jq -nc 'now*1000|floor')"
+  [ "$(stream_lines)" -eq 2 ]
+  run jq -e '(.events | length) == 3' <<<"$(tail -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  # And it is the --coalesce floor that made it one line, not the inner watch's
+  # own --interval, which coalesces a burst for free: the second batch cannot
+  # arrive before the sleep ends. Half a second of slack for the poll that
+  # observed the first line — a lower bound never flakes upward.
+  [ "$((t1 - t0))" -ge 2500 ]
+  stop_stream
+}
+
+@test "stream: a heartbeat appears only after --heartbeat of quiet, not once per park [F6]" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3 --retry 1
+  poll_for 200 at_least_lines 1
+
+  # quiet_s, never wall clock: `watch` checks its deadline only after sleeping
+  # --interval, so an inner --park 1 costs ~2s and elapsed time diverges from
+  # the counter. Three parks' worth of quiet, one line.
+  [ "$(stream_lines)" -eq 1 ]
+  run jq -e '.stream == "heartbeat" and .crew == "c1" and .quiet_s == 3' <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: an inner failure does not kill the loop — one line per error key, re-emitted when the key changes [F8]" {
+  cdir="$(crew_dir c1)"
+  # A live holder of the crew's watch lock: every inner watch exits 1 with the
+  # same first stderr line, so the suppression key is stable.
+  mkdir -p "$cdir/watch.lock.d"
+  printf '%s\n' "$$" >"$cdir/watch.lock.d/pid"
+  # Run the stream from a copy, so the fault below can be swapped in without
+  # touching the file the rest of the suite runs.
+  STREAM_CREW="$BATS_TEST_TMPDIR/crew-copy.sh"
+  cp "$CREW" "$STREAM_CREW"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 200 at_least_lines 1
+  run jq -e '.stream == "error" and .rc == 1
+    and (.detail | test("another watch is already running"))' <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+
+  # Two more iterations of the same failure emit nothing: the tick, rewritten at
+  # the top of every iteration, is the evidence the loop is still turning.
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  t="$(tick_ts)"
+  poll_for 100 tick_after "$t"
+  [ "$(stream_lines)" -eq 1 ]
+
+  # A different key IS re-emitted. Replacing the copy (rm, then create — the
+  # running stream keeps the old inode) changes both the exit code and the
+  # first stderr line. Not by making the inner `mkdir -p "$cdir"` fail: the
+  # stream's own tick write and its $outf redirect are in that same directory,
+  # so a file there kills the loop under `set -e` instead of failing one
+  # iteration of it — and the assertion below would then hold vacuously.
+  rm -rf "$cdir/watch.lock.d"
+  rm -f "$STREAM_CREW"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "crew: fault injected" >&2' 'exit 3' >"$STREAM_CREW"
+
+  poll_for 200 at_least_lines 2
+  run jq -e '.stream == "error" and .rc == 3 and .detail == "crew: fault injected"' <<<"$(tail -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream --status: no lock is dead, exit 2" {
+  run --separate-stderr run_crew stream --status --crew c1
+  [ "$status" -eq 2 ]
+  run jq -e '.stream == "status" and .state == "dead" and .crew == "c1"
+    and .pid == null and .age_s == null' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "stream --status: a live stream is alive, exit 0" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 lock_pid_is "$STREAM_PID"
+
+  run --separate-stderr run_crew stream --status --crew c1
+  [ "$status" -eq 0 ]
+  run jq -e --argjson pid "$STREAM_PID" '.state == "alive" and .pid == $pid and .age_s >= 0' <<<"$output"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream --status: a live pid whose tick stopped moving is stale, exit 1 [F4]" {
+  cdir="$(crew_dir c1)"
+  mkdir -p "$cdir/stream.lock.d"
+  printf '%s\n' "$$" >"$cdir/stream.lock.d/pid"
+
+  # A live lock with no tick yet counts as stale — the safe direction.
+  run --separate-stderr run_crew stream --status --crew c1
+  [ "$status" -eq 1 ]
+  run jq -e '.state == "stale" and .age_s == null' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  # …and so does one aged past 2 × the park the tick itself recorded, + 60.
+  now="$(jq -nc 'now*1000|floor')"
+  jq -nc --argjson pid "$$" --argjson ts "$((now - 121000))" '{pid:$pid, ts:$ts, park:1}' >"$cdir/stream.tick"
+  run --separate-stderr run_crew stream --status --crew c1
+  [ "$status" -eq 1 ]
+  run jq -e '.state == "stale" and .age_s >= 121' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  # Same live pid, fresh tick: alive. So it is the tick that decides.
+  jq -nc --argjson pid "$$" --argjson ts "$now" '{pid:$pid, ts:$ts, park:1}' >"$cdir/stream.tick"
+  run --separate-stderr run_crew stream --status --crew c1
+  [ "$status" -eq 0 ]
+  run jq -e '.state == "alive"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "stream: crew-resolution and usage failures exit 64, not 1 [C2]" {
+  run --separate-stderr run_crew stream --status
+  [ "$status" -eq 64 ]
+  [ "$stderr" = "crew: CREW_ID unset and no WORKER_TASK.md crew_id" ]
+
+  run --separate-stderr run_crew stream --crew c1 --bogus
+  [ "$status" -eq 64 ]
+  [ "$stderr" = "crew: stream: unknown arg '--bogus'" ]
+
+  run --separate-stderr run_crew stream --crew c1 --park 0
+  [ "$status" -eq 64 ]
+}
+
+@test "stream: a second stream for one crew is refused" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 lock_pid_is "$STREAM_PID"
+
+  run --separate-stderr run_crew stream --crew c1 --park 1 --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"another stream is already running for this crew (c1)"* ]]
+  [[ "$stderr" == *"pid $STREAM_PID"* ]]
+
+  # The refusal must leave the incumbent's lock alone.
+  lock_pid_is "$STREAM_PID"
+  stop_stream
+}
+
+@test "stream: --force reclaims a lock held by a live pid [B3]" {
+  cdir="$(crew_dir c1)"
+  mkdir -p "$cdir/stream.lock.d"
+  spawn_holder
+  # A dead holder would be reclaimed by _lock_acquire itself and --force would
+  # never be exercised, so the liveness is an assertion, not an assumption.
+  kill -0 "$HOLDER_PID"
+  printf '%s\n' "$HOLDER_PID" >"$cdir/stream.lock.d/pid"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1 --force
+  poll_for 100 lock_pid_is "$STREAM_PID"
+  proc_gone "$HOLDER_PID"
+  stop_stream
+}
+
+@test "stream: --force refuses to signal a lock pid file containing 0" {
+  cdir="$(crew_dir c1)"
+  mkdir -p "$cdir/stream.lock.d"
+  printf '%s\n' 0 >"$cdir/stream.lock.d/pid"
+
+  # 0 as a signal target hits our whole process group, and `_lock_acquire`'s
+  # own `kill -0` reads it as live — so --force must refuse before it ever
+  # calls `kill -TERM` on it.
+  run --separate-stderr run_crew stream --crew c1 --force --park 1 --interval 1
+  [ "$status" -eq 1 ]
+  [ "$stderr" = "crew: --force found no valid holder pid for crew (c1) stream lock (got '0') — refusing to signal" ]
+
+  # The lock is untouched — refused, not reclaimed.
+  [ -d "$cdir/stream.lock.d" ]
+  [ "$(cat "$cdir/stream.lock.d/pid")" = 0 ]
+}
+
+@test "watch and stream: a traversal-shaped --crew is refused, writing nothing outside the bus dir" {
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+
+  run --separate-stderr run_crew watch --crew '../../escaped' --timeout 1 --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"invalid crew id"* ]]
+  [ ! -e "$common/escaped" ]
+  [ ! -e "$common/crew/escaped" ]
+
+  run --separate-stderr run_crew stream --crew '../../escaped' --park 1 --interval 1
+  [ "$status" -eq 64 ]
+  [[ "$stderr" == *"invalid crew id"* ]]
+  [ ! -e "$common/escaped" ]
+  [ ! -e "$common/crew/escaped" ]
+}
+
+@test "stream: a TERM mid-park leaves no live watch, a released lock and an unadvanced cursor [F2]" {
+  cdir="$(crew_dir c1)"
+  # --park well past the assertions below, so an orphan that outlives the
+  # stream is still alive to be caught: a park short enough to expire during
+  # the test would release the lock and stop advancing the cursor on its own,
+  # and every assertion here would pass with no child kill at all.
+  start_stream --crew c1 --park 10 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 test -f "$cdir/watch.lock.d/pid"
+  wpid="$(cat "$cdir/watch.lock.d/pid")"
+
+  kill -TERM "$STREAM_PID"
+  wait "$STREAM_PID" 2>/dev/null || true
+  STREAM_PIDS=""
+  STREAM_PID=""
+
+  # Bounded by one --interval: the inner watch runs its EXIT trap only once its
+  # sleep returns, so an immediate check would pass on a watch still alive.
+  poll_for 20 proc_gone "$wpid"
+  [ ! -d "$cdir/watch.lock.d" ]
+  [ ! -e "$cdir/cursor" ]
+
+  # The assertion that matters: an orphan would print a batch to a stdout
+  # nobody reads and still mv its cursor into place, which a lock check cannot
+  # see — a watch can advance the cursor and release the lock on the same exit.
+  CREW_ID=c1 run_crew status worker:feat/x done
+  sleep 2
+  [ ! -e "$cdir/cursor" ]
+}
+
+@test "stream: a TERM with an undrained stream.out still emits that batch [B1]" {
+  cdir="$(crew_dir c1)"
+  # No qualifying event, so the inner watch is parked in its sleep with nothing
+  # written — the natural window is microseconds wide, so the test plants the
+  # undrained batch itself.
+  start_stream --crew c1 --park 5 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 test -f "$cdir/watch.lock.d/pid"
+
+  batch='{"cursor":1,"events":[{"ts":1,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}'
+  printf '%s\n' "$batch" >"$cdir/stream.out"
+
+  kill -TERM "$STREAM_PID"
+  wait "$STREAM_PID" 2>/dev/null || true
+  STREAM_PIDS=""
+  STREAM_PID=""
+
+  # Sound only because the cleanup kills AND reaps the child before draining:
+  # an unreaped child could overwrite the file from its offset-0 fd mid-drain.
+  [ "$(cat "$STREAM_OUT")" = "$batch" ]
+  [ ! -e "$cdir/stream.out" ]
+}
+
+@test "stream: writes nothing to its own stderr in normal operation [F8]" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 2 --retry 1
+  CREW_ID=c1 run_crew status worker:feat/x done
+
+  # Both printing paths, and the park-expiry line `watch` writes to ITS stderr
+  # on every iteration.
+  poll_for 200 at_least_lines 2
+  run jq -e -s '.[0].cursor != null and .[1].stream == "heartbeat"' "$STREAM_OUT"
+  [ "$status" -eq 0 ]
+  stop_stream
+  [ ! -s "$STREAM_ERR" ]
+}
+
+@test "stream: a pre-seeded cursor is honoured, so --since is never passed" {
+  cdir="$(crew_dir c1)"
+  CREW_ID=c1 run_crew status worker:feat/old done
+  mkdir -p "$cdir"
+  bus | jq -r '.ts' | tail -n1 >"$cdir/cursor"
+
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  CREW_ID=c1 run_crew status worker:feat/new done
+  poll_for 100 at_least_lines 1
+
+  [ "$(stream_lines)" -eq 1 ]
+  run jq -e '(.events | length) == 1 and .events[0].from == "worker:feat/new"' <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  run jq -e --argjson cursor "$(cat "$cdir/cursor")" '.cursor == $cursor' <<<"$(head -n1 "$STREAM_OUT")"
+  [ "$status" -eq 0 ]
+  stop_stream
 }

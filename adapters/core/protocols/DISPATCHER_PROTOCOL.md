@@ -174,36 +174,74 @@ is back.
 Each dispatcher owns one `crew_id`; several dispatchers (crews) may share a repo.
 Launcher sessions inherit `$CREW_ID` from the environment; an in-session `/dispatcher`
 passes `--crew-id $CREW_ID` to `dispatch` and prefixes `CREW_ID=$CREW_ID` on `crew` reads.
-**The watch primitive depends on your engine.**
+**The primitive for reading it depends on your engine.**
 
-- **claude / cursor — background park.** Arm `crew watch` as a **background** shell
-  call (claude: Bash `run_in_background`; cursor: a backgrounded shell with a
-  completion notification) — a held, zero-token poll that returns the instant any
-  worker needs you. Because it's backgrounded, your LLM loop stays **free**: the
-  human can add a task or ask a question with **no Esc**, and the watch keeps
-  running. (A background task is not bound by the foreground tool timeout;
-  `crew watch`'s own `--timeout` is the real bound.) INV-1 below applies to you.
-- **codex — blocking park.** There is no background-notify primitive, but also no
-  short foreground tool timeout: call `crew watch --timeout 270` in the
-  **foreground**, let the turn block until a worker event wakes it or the park
-  expires, handle whatever it returns, then park again. Always 270 — **never** the
-  3300s drained park below: the park *is* your turn, so a drained 3300 would leave
-  the human queued behind a foreground call for ~55 minutes, exactly when their
-  input is the only thing that can arrive (short parks cost cache-warmth; that is
-  the acceptable price). **Never pass `--since`** — `watch` self-seeds from its
-  per-crew cursor file, so a stale post-compaction cursor can't re-deliver
-  already-handled events (double-dispatch). Human input typed during the park
-  queues and is delivered when the turn ends — expected, not a stall. INV-1 does
-  not apply: a foreground call cannot double-arm.
+**claude — streaming monitor.** Arm once, with the crew id substituted literally (never
+`$CREW_ID` — an in-session `/dispatcher` never exports it, so an unsubstituted reference
+resolves to nothing and the lane dies on start):
 
-**The claude/cursor loop is event-driven, not a foreground spin** (codex: the blocking park above *is* your loop — re-park after handling each batch; the "`crew watch` wakes on any worker `status`…" paragraph below applies to you too):
+```
+Monitor(
+  command: "crew stream --crew <your crew id>",
+  description: "crew bus <your crew id>",
+  persistent: true)
+```
 
-1. **Arm** exactly one `crew watch` as a background shell call — claude: Bash
-   `run_in_background`; cursor: background the shell call (`block_until_ms: 0`) —
-   either way you get a completion notification when it returns. **Do NOT pass
-   `--since`** — `watch` self-seeds from its per-crew cursor file, so a stale
-   post-compaction cursor can't re-deliver already-handled events (double-dispatch).
-   Record the returned background-task id as your **arm-token**.
+`persistent: true` makes it once-per-session and takes no `timeout_ms`. `crew stream`
+never passes `--since` to its inner `watch` — same self-seeding, same double-dispatch
+guard as the other two lanes. Each notification is one line:
+
+```
+{"cursor":<ms>,"events":[…]}                                    # a batch, verbatim from watch
+{"stream":"heartbeat","crew":"<id>","quiet_s":<n>,"ts":<ms>}
+{"stream":"error","crew":"<id>","rc":<n>,"detail":"<first stderr line>","ts":<ms>}
+```
+
+- **Batch** → parse it and handle the **entire `events[]` in ONE turn** (reply /
+  dispatch next / intervene). **Never one-turn-per-event.** Remember its `cursor`; skip
+  any later batch whose `cursor` isn't greater — a stop mid-drain can redeliver the
+  last one, which is what makes that harmless. Re-render the roster diagram (below) on
+  a batch only.
+- **Heartbeat** → near-silent; also run the `--status` poll below, its backstop role
+  for a roster that drained without a final batch.
+- **Error** → already retried internally; treat it as a prompt to run `--status`.
+
+**`--status`, at the start of any turn that wasn't itself a stream notification** (a
+human message, a `dispatch` you were asked for) **and on every heartbeat**:
+
+```
+crew stream --status --crew <your crew id>
+```
+
+`alive` → nothing, unless you didn't arm this session — a previous session's stream,
+`--force` it. `stale` → `crew stream --force --crew <your crew id>`, a live pid that
+stopped delivering. `dead` → arm, as above.
+
+**Compaction** costs your memory of arming, not the monitor — it's harness-level and
+keeps running regardless; check `--status` before re-arming, a second arm can't
+silently succeed anyway. **`--resume`** is a new process that armed nothing: run
+`--status` and act on it the same way, never on an assumption about the old process's
+fate. Any watch it orphaned expires within its `--park` either way.
+
+An unkillable stop of the stream itself orphans its inner `watch` for up to `--park`
+(default 300s) until the lock frees, reclaimed by the next stream's `--retry` within
+30s — genuinely unwatched for that window, named here rather than hidden. The one case
+this lane is weaker than the cursor lane's never-zero guarantee: an **idle, unattended**
+dispatcher whose stream is auto-stopped runs no turn, so it never polls `--status` to
+notice. Process death stays covered — the next turn's poll finds `dead`.
+
+**No `Monitor` tool** → follow the cursor lane's background park, below.
+
+**cursor — background park.** INV-1 below applies to you.
+
+1. **Arm** exactly one `crew watch` as a background shell call (claude: Bash
+   `run_in_background`; cursor: a backgrounded shell with a completion notification,
+   `block_until_ms: 0`) — zero-token, held until any worker needs you; a background
+   task isn't bound by the foreground tool timeout, so your LLM loop stays **free**
+   and `crew watch`'s own `--timeout` is the real bound.
+   **Do NOT pass `--since`** — `watch` self-seeds from its per-crew cursor file, so a
+   stale post-compaction cursor can't re-deliver already-handled events
+   (double-dispatch). Record the returned background-task id as your **arm-token**.
 2. **On the watch-completion notification**, read the task's output file:
    - non-empty stdout → a batch: parse `{"cursor":<ts>,"events":[…]}` and handle the
      **entire `events[]` in ONE turn** (reply / dispatch next / intervene). **Never
@@ -215,7 +253,7 @@ passes `--crew-id $CREW_ID` to `dispatch` and prefixes `CREW_ID=$CREW_ID` on `cr
 3. **Re-arm exactly one** new `crew watch`, recording its new arm-token. On the
    empty-stdout path this re-arm is **near-silent**: one tool call, zero prose.
 
-**INV-1 — exactly one outstanding watch: never two, never zero (claude/cursor only).**
+**INV-1 — exactly one outstanding watch: never two, never zero.**
 
 - Re-arm **only** inside a watch-completion handler turn, and only if your recorded
   arm-token is absent/terminal. This is **token-based, not list-based**: do NOT
@@ -228,21 +266,38 @@ passes `--crew-id $CREW_ID` to `dispatch` and prefixes `CREW_ID=$CREW_ID` on `cr
   which re-invokes the handler → you re-arm within one park interval. No external
   supervisor is needed (G4 self-heal).
 
-**Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn; codex: at each park call).**
+**Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn;
+codex: at each park call — see the codex lane's override, below).**
 Partition the roster: `working`+`blocked` = **ACTIVE**; `pr_open`+`done`+`failed` =
 **TERMINAL / budget-freeing**. At re-arm:
 
 - **ACTIVE** roster → `--timeout 270`: a sub-TTL cache-warm heartbeat (270, not 300 —
   the prompt-cache TTL margin is load-bearing).
 - **DRAINED** roster (nothing active) → `--timeout 3300`: bounds dark time, accepts
-  cache-cold since nothing is in flight.
+  cache-cold since nothing is in flight. **codex: never this branch** — the codex
+  lane below always parks 270, drained or not.
   A DRAINED→ACTIVE transition from a human adding a task happens in a human turn, so it
   does **not** wake the outstanding 3300s park — deliberate: the new worker first posts
   `working` (which `watch` does not match), so nothing needs the park woken until that
   worker blocks/finishes, at which point the exit-0 wake fires immediately. Costs only
   cache-warmth, never responsiveness.
 
-**Retro synthesis — at a DRAINED roster, before the 3300s re-arm.** Read the crew's
+**codex — blocking park.** There is no background-notify primitive, but also no
+short foreground tool timeout: call `crew watch --timeout 270` in the
+**foreground**, let the turn block until a worker event wakes it or the park
+expires, handle whatever it returns, then park again — this **is** your loop; re-park
+after every batch. Always 270 — **never** the cursor lane's 3300s drained park above:
+the park *is* your turn, so a drained 3300 would leave the human queued behind a
+foreground call for ~55 minutes, exactly when their input is the only thing that can
+arrive (short parks cost cache-warmth; that is the acceptable price). **Never pass
+`--since`** — `watch` self-seeds from its per-crew cursor file, so a stale
+post-compaction cursor can't re-deliver already-handled events (double-dispatch). Human
+input typed during the park queues and is delivered when the turn ends — expected, not
+a stall. INV-1 does not apply: a foreground call cannot double-arm. The "`crew watch`
+wakes on any worker `status`…" paragraph below tells you what wakes the park.
+
+**Retro synthesis — claude: any batch that leaves the roster DRAINED, heartbeat as
+backstop; cursor/codex: at a DRAINED roster, before the re-arm.** Read the crew's
 notes and roster, then write:
 
 1. For each terminal worker, compare its outcome against your `{tier, engine, model,
@@ -352,8 +407,8 @@ Two reads remain for detail:
 ## Roster diagram
 
 Keep a live picture of the crew in the aeye carousel. Whenever the roster changes
-— after a non-empty `crew watch` batch, and right after you `dispatch` a new worker
-— regenerate it from `crew roster` and write **D2** to
+— after a non-empty batch from either primitive (`crew watch` or `crew stream`), and
+right after you `dispatch` a new worker — regenerate it from `crew roster` and write **D2** to
 `/tmp/claude-status/images/diagrams/src/roster-$CREW_ID.d2` (always the **same path
 for this crew** — it overwrites and the carousel updates in place). The `$CREW_ID`
 suffix is load-bearing: `/tmp/claude-status/` is machine-global, so a bare
