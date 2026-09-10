@@ -7,6 +7,23 @@ setup() {
   unset DISPATCH_PROFILE CREW_ID TMUX_PANE
   stub_tmux_no_pane
   stub_bin crew
+  # engine-cmd needs real matching (mirrors crew.sh's own _is_engine_cmd,
+  # #111): everything else in dispatch-resume.sh only cares that the call was
+  # made, so it keeps the generic log-and-succeed behaviour stub_bin gave it.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = engine-cmd ]; then
+  c="${2#.}"
+  c="${c%-wrapped}"
+  case "$c" in
+  claude | codex | cursor-agent | node) exit 0 ;;
+  esac
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
   stub_bin gh
   cat >"$STUB_DIR/dispatch" <<'EOF'
 #!/usr/bin/env bash
@@ -139,12 +156,15 @@ setup_worker_wt() { # [extra header lines...]
 }
 
 # tmux stub that reports one pane sitting at $WT, so the reuse path fires.
-stub_tmux_with_pane_at_wt() { # $1=window id  $2=pane id  $3=@crew_name value
+# $4 (pane_current_command) defaults to empty — a plain shell, i.e. nothing an
+# engine matcher would claim — so existing callers that omit it keep meaning
+# "a human sitting there".
+stub_tmux_with_pane_at_wt() { # $1=window id  $2=pane id  $3=@crew_name value  $4=pane_current_command
   cat >"$STUB_DIR/tmux" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\$STUB_LOG"
 case "\$1" in
-list-panes) printf '%s\t%s\t%s\t%s\n' '$1' '$2' '$WT' '$3' ;;
+list-panes) printf '%s\t%s\t%s\t%s\t%s\n' '$1' '$2' '$WT' '${4:-}' '$3' ;;
 new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message) printf '%s\n' '80 24 on' ;;
 esac
@@ -172,6 +192,45 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"pane: %8"* ]]
   [[ "$output" == *"placement: reuse"* ]]
+}
+
+@test "refuses a pane still running a live claude engine" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris claude
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already alive there"* ]]
+  [[ "$output" == *"tmux select-window -t @4"* ]]
+  run grep -c send-keys "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "refuses a pane running a nix-wrapped engine name" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris .claude-wrapped
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already alive there"* ]]
+}
+
+@test "refuses the guard on --print too, before any placement is reported" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris codex
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"placement:"* ]]
+}
+
+@test "still resumes into a plain shell at the worktree (the primary use case)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "--print reports a fresh window when nothing sits at the worktree" {

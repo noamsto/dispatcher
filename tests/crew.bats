@@ -468,6 +468,37 @@ EOF
   [[ "$output" == *"occupants <worktree-path>"* ]]
 }
 
+@test "engine-cmd: claude is a live engine" {
+  run run_crew engine-cmd claude
+  [ "$status" -eq 0 ]
+}
+
+@test "engine-cmd: a nix-wrapped claude pane is a live engine" {
+  run run_crew engine-cmd .claude-wrapped
+  [ "$status" -eq 0 ]
+}
+
+@test "engine-cmd: node (cursor-agent's wrapper) is a live engine" {
+  run run_crew engine-cmd node
+  [ "$status" -eq 0 ]
+}
+
+@test "engine-cmd: codex is a live engine" {
+  run run_crew engine-cmd codex
+  [ "$status" -eq 0 ]
+}
+
+@test "engine-cmd: a plain shell is not an engine" {
+  run run_crew engine-cmd fish
+  [ "$status" -eq 1 ]
+}
+
+@test "engine-cmd: needs a command" {
+  run run_crew engine-cmd
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"engine-cmd <pane_current_command>"* ]]
+}
+
 @test "sessions: folds each session separately, oldest first" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done

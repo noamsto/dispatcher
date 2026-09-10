@@ -218,17 +218,30 @@ DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck"
 # windows, so the name dispatch assigned is long gone by now.
 win=""
 pane=""
+pane_cmd=""
 reused=""
-while IFS=$'\t' read -r cand_win cand_pane cand_path _cand_name; do
+while IFS=$'\t' read -r cand_win cand_pane cand_path cand_cmd _cand_name; do
   [ -n "$cand_win" ] || continue
   [ "$cand_path" = "$wt_path" ] || continue
   win="$cand_win"
   pane="$cand_pane"
+  pane_cmd="$cand_cmd"
   reused=1
   break
 done <<PANES
-$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
+$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_path}	#{pane_current_command}	#{@crew_name}' 2>/dev/null || true)
 PANES
+
+# Cheap partial guard (#111): refuse a pane that is still running an engine.
+# `crew engine-cmd` shares crew.sh's own nix-wrapper-aware matcher
+# (_is_engine_cmd) rather than duplicating it here. Deliberately a
+# command-name sniff, not the stronger bus-state gate dispatch.sh uses for its
+# own placement refusal (dispatch.sh:699-711) — see that gate's own comment
+# for why its engine count is only advisory.
+if [ -n "$reused" ] && crew engine-cmd "$pane_cmd" 2>/dev/null; then
+  echo "dispatch resume: $wt_path's pane ($pane) is running $pane_cmd — a worker session is already alive there. Attach to it instead of resuming (tmux select-window -t $win), or wait for it to exit/finish first." >&2
+  exit 1
+fi
 
 # --print is a dry run: report the placement the lookup above already found
 # and stop before anything below opens a window or restyles a pane. On the

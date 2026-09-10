@@ -328,6 +328,14 @@ if [ "$sub" = occupants ]; then
   printf '\n'
   exit 0
 fi
+if [ "$sub" = engine-cmd ]; then
+  [ -n "${1:-}" ] || {
+    echo "crew: engine-cmd <pane_current_command>" >&2
+    exit 1
+  }
+  _is_engine_cmd "$1"
+  exit $?
+fi
 
 # repo-keyed bus dir; --path-format=absolute so main-checkout and worktrees
 # resolve to a byte-identical path (load-bearing — see #29).
