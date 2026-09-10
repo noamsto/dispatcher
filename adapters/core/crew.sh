@@ -529,6 +529,12 @@ register | deregister)
   if [ "$sub" = register ]; then
     mkdir -p "$cdir"
     printf '%s\n' "${1:-$PPID}" >"$cdir/pid"
+    # The pane, not just the pid: a worker reattaching to a live dispatcher has
+    # to retarget its `dispatcher_pane:` ping, and the pid alone cannot name a
+    # pane. Absent outside tmux, which readers must tolerate.
+    if [ -n "${TMUX_PANE:-}" ]; then
+      printf '%s\n' "$TMUX_PANE" >"$cdir/pane"
+    fi
   else
     rm -rf "$cdir"
   fi

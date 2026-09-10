@@ -208,8 +208,8 @@ finished work:
 
 > You were interrupted mid-task and this session has been resumed. Before
 > anything else, establish where you actually got to from `git log`, `git status`
-> and any open PR on this branch — do not trust your transcript's last plan as
-> your current position. Then continue from the first genuinely unfinished step.
+> and any open PR on this branch — do not trust the last plan in your transcript
+> as your current position. Then continue from the first genuinely unfinished step.
 > If this branch already has an open PR, push to it rather than opening a second.
 
 Same no-apostrophe constraint as the existing launch strings

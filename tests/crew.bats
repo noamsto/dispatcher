@@ -4,6 +4,9 @@ setup() {
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
   unset CREW_ID
+  # Absent unless a test sets it, so pane-recording stays deterministic
+  # regardless of whether bats itself runs inside a tmux pane.
+  unset TMUX_PANE
   # No engine process by default, so quiet:->dead: escalation stays
   # deterministic regardless of what runs on the host tmux server.
   export CREW_STALL_PROC_CMD='printf ""'
@@ -291,6 +294,27 @@ EOF
   [ "$status" -eq 0 ]
   CREW_ID=c2 run run_crew register $$
   [ "$status" -eq 0 ]
+}
+
+@test "register records the dispatcher pane when in tmux" {
+  cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c1"
+  CREW_ID=c1 TMUX_PANE='%12' run_crew register 4242
+  [ "$(cat "$cdir/pid")" = 4242 ]
+  [ "$(cat "$cdir/pane")" = '%12' ]
+}
+
+@test "register writes no pane file outside tmux" {
+  cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c1"
+  CREW_ID=c1 run_crew register 4242
+  [ -f "$cdir/pid" ]
+  [ ! -f "$cdir/pane" ]
+}
+
+@test "deregister removes the pane file with the crew dir" {
+  cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c1"
+  CREW_ID=c1 TMUX_PANE='%12' run_crew register 4242
+  CREW_ID=c1 run_crew deregister
+  [ ! -e "$cdir" ]
 }
 
 @test "inbox: does not deliver a metrics-addressed message to the dispatcher" {

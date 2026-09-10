@@ -115,8 +115,20 @@
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
+          };
+
+          # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
+          # package above lists dispatch-resume so its `resume` subcommand can
+          # exec this one, and naming dispatch here would close that into an
+          # eval-time cycle. dispatch-resume resolves `dispatch` from the
+          # ambient PATH instead — the same ambient-tool pattern dispatch
+          # itself uses for `wt`.
+          dispatch-resume = pkgs.writeShellApplication {
+            name = "dispatch-resume";
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
           };
 
           dispatcher = pkgs.writeShellApplication {
@@ -145,7 +157,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher refresh-scores refresh-budget refresh-models pr-watch];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch];
           };
         };
 

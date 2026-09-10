@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -27,6 +27,15 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+
+# `dispatch resume` is its own binary — resume skips the issue claim, branch
+# creation, task-document rewrite and new-window paths this file is built
+# around. Intercepted here so the subcommand reads as part of dispatch, and
+# before the positional tier parse below, which would reject it as a tier.
+if [ "${1:-}" = resume ]; then
+  shift
+  exec dispatch-resume "$@"
+fi
 
 tier="${1:-}"
 model="${2:-}"
@@ -499,6 +508,17 @@ title="$*"
   usage
   exit 1
 }
+
+# Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
+# are properties of now — profile, model shape, effort ceiling, quota, rung —
+# rather than re-deriving them in a second copy that would drift. Everything
+# above this point is pure validation: `_ensure_dispatched_label` and
+# `crew reap` are below, as is the first string of scaffolding, so exiting
+# here has no side effects. Resume suppresses the tier↔model gate for a pair
+# the first dispatch already accepted by passing the existing --ignore-map.
+if [ -n "${DISPATCH_PRECHECK:-}" ]; then
+  exit 0
+fi
 
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
@@ -984,8 +1004,8 @@ fi
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
 {
-  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
-    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
+  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
+    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
   if [ -n "$pr_number" ]; then
     printf 'base: %s\n' "$base_ref"
   fi

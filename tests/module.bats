@@ -3,8 +3,9 @@ setup() {
 }
 
 @test "every package builds" {
-  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatcher" \
-    "$ROOT#refresh-scores" "$ROOT#refresh-budget" "$ROOT#refresh-models" "$ROOT#pr-watch"
+  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatch-resume" \
+    "$ROOT#dispatcher" "$ROOT#refresh-scores" "$ROOT#refresh-budget" \
+    "$ROOT#refresh-models" "$ROOT#pr-watch"
   [ "$status" -eq 0 ]
 }
 
@@ -17,6 +18,12 @@ setup() {
 @test "the protocol placeholder is substituted in dispatcher" {
   out="$(nix build --no-link --print-out-paths "$ROOT#dispatcher")"
   run grep -c '@protocolDir@' "$out/bin/dispatcher"
+  [ "$output" = "0" ]
+}
+
+@test "the protocol placeholder is substituted in dispatch-resume" {
+  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch-resume")"
+  run grep -c '@protocolDir@' "$out/bin/dispatch-resume"
   [ "$output" = "0" ]
 }
 
@@ -109,7 +116,7 @@ nix_eval() {
   [[ "$output" == work\|* ]]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$output" == *"crew,dispatch,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
+  [[ "$output" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
   [[ "$output" == */adapters/core/protocols\|*/adapters/core/reviewers ]]
 }
 

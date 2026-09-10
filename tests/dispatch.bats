@@ -289,6 +289,14 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"usage: dispatch"* ]]
 }
 
+@test "resume intercepts before the positional tier parse and execs dispatch-resume" {
+  stub_bin dispatch-resume
+  run run_dispatch resume --print
+  [ "$status" -eq 0 ]
+  grep -Fq -- '--print' "$STUB_LOG"
+  [[ "$output" != *"usage: dispatch"* ]]
+}
+
 @test "rejects an unknown agent" {
   run run_dispatch standard sonnet --agent bogus --effort medium "title"
   [ "$status" -eq 1 ]
@@ -322,6 +330,23 @@ write_cursor_models_cache() { # <fetched_epoch>
   # Non-vacuous: move the gate below worktree creation and `wt switch --create`
   # lands in the log, failing this.
   [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "DISPATCH_PRECHECK runs every gate and exits before any scaffolding" {
+  # Same fixture as the mint-and-claim test below, so the flow it exercises
+  # really would reach `gh issue create`, `gh issue edit`, `crew reap` and
+  # `tmux new-window` if the precheck exit didn't sit above all of them —
+  # every one of those is stubbed here, so a real invocation of any of them
+  # lands in $STUB_LOG. Assert the file was never even created: none of
+  # `gh`, `wt`, `tmux`, `crew` ran, which is a strict superset of "none of the
+  # four specific calls ran" and, unlike a `grep` on a maybe-absent file,
+  # can't be defeated by bash's errexit skipping a negated command.
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  [ ! -f "$STUB_LOG" ]
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
 }
 
 @test "no launch string references nix-config" {
@@ -2108,4 +2133,23 @@ EOF
   [[ "$output" == *"feat/42-old-wording"* ]]
   [[ "$output" == *"No bus row carries its original title"* ]]
   grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "stamps the mcp profile in the task header" {
+  stub_launch_bins
+  export DISPATCH_PROFILE=work
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{}' >"$HOME/.config/claude-code/mcp-posthog.json"
+  run run_dispatch standard sonnet --effort medium --mcp analytics --crew-id c1 42 "add a flag"
+  [ "$status" -eq 0 ]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qx 'mcp: analytics' "$doc"
+}
+
+@test "stamps an empty mcp line when no profile was given" {
+  stub_launch_bins
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "add a flag"
+  [ "$status" -eq 0 ]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qE '^mcp: ?$' "$doc"
 }
