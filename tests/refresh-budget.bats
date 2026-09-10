@@ -343,3 +343,133 @@ EOF
   run jq '.engines.claude.windows["7d"].resets_at' "$cache"
   [ "$output" = "null" ]
 }
+
+@test "pane-scrape parses a zero-padded countdown without crashing" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 42% (08m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "42" ]
+  # "08m" must parse as 8 minutes (480s), not crash on the leading zero.
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" -ge $((now + 420)) ]
+  [ "$output" -le $((now + 540)) ]
+}
+
+@test "pane-scrape parses a zero-padded percentage without crashing" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 08% (10m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "8" ]
+}
+
+@test "pane-scrape treats a leading-zero multi-digit component as base 10" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (10m) 7d 61% (010h)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  # "010h" is read as base-10 10 (36000s), not octal 8 — well inside the 7d
+  # window's nominal length, so it survives the guard.
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" -ge $((now + 35880)) ]
+  [ "$output" -le $((now + 36120)) ]
+}
+
+@test "pane-scrape yields a null resets_at for an absurd day count, not a wrong clock" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (10m) 7d 61% (213503982334602d)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
+  [ "$output" = "61" ]
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape clamps a percentage over 100" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 999% (10m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "100" ]
+}
+
+@test "pane-scrape tie-break picks the larger remaining when percentages match" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova\n@2\tember' \
+    SHIM_TMUX_PANES=$'@1\t%10\n@2\t%20' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 70% (5m)' \
+    SHIM_TMUX_CAPTURE_P20=$'  ⚡ 70% (20m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "70" ]
+  # Both panes report 70% — the tie-break must keep the larger remaining
+  # (pane %20's 20m), not whichever pane happened to be scanned first.
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" -ge $((now + 1140)) ]
+  [ "$output" -le $((now + 1260)) ]
+}
+
+@test "pane-scrape rejects an oversized percentage instead of wrapping through 10#" {
+  # 55340232221128654890 is the value that "10#$p" silently wraps to 42
+  # (verified: bash -c 'p=55340232221128654890; echo $((10#$p))' -> 42).
+  # A garbled render that wraps into the middle of the range would be
+  # indistinguishable from a real 42% reading and could mask an exhausted
+  # budget — the marker must be skipped instead, same as an unparseable
+  # countdown already is.
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 55340232221128654890% (10m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude quota unknown"* ]]
+  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape rejects a 4-digit percentage" {
+  # Deliberate choice: the marker regex is bounded to {1,3} digits, so a
+  # 4-digit run (even one well within int64 range) fails the same way the
+  # oversized run above does — it never reaches arithmetic to be judged
+  # "too large", it just doesn't match.
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 1234% (10m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude quota unknown"* ]]
+  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "pane-scrape still parses a one-digit percentage" {
+  # Regression check alongside the existing 2-digit ("08%", zero-padded)
+  # and 3-digit ("999%", clamped) cases: the {1,3} bound must not exclude
+  # the short end of the legitimate range.
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 5% (10m)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "5" ]
+}

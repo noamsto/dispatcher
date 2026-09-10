@@ -137,17 +137,29 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # NNhNNm.
 _pane_countdown() {
   local m="$1" nominal="$2" pct paren inner re d h mnt remaining=-1
-  pct=$(printf '%s' "${m%%\%*}" | grep -oE '[0-9]+' | tail -1)
+  # Bash treats a leading-zero numeral ("08") as octal, so a captured digit
+  # run must be forced to base 10 (10#...) before any arithmetic touches it
+  # — otherwise a zero-padded reading is either a fatal "value too great for
+  # base" error or a silently wrong value ("010" -> 8, not 10). Bounded to
+  # {1,3} digits, second line of defence behind the marker regexes below:
+  # a huge run must not silently wrap through 10# into a plausible pct.
+  pct=$(printf '%s' "${m%%\%*}" | grep -oE '[0-9]{1,3}' | tail -1)
+  pct=$((10#${pct:-0}))
+  ((pct > 100)) && pct=100
   paren=$(printf '%s' "$m" | grep -oE '\([^)]*\)$')
   if [[ -n $paren ]]; then
     inner="${paren#(}"
     inner="${inner%)}"
-    re='^([0-9]+d)?([0-9]+h)?([0-9]+m)?( → [0-9]{2}:[0-9]{2})?$'
+    # Digit runs are bounded per component (not [0-9]+) so an absurd
+    # parenthetical (e.g. a 15-digit day count) can't overflow 64-bit
+    # arithmetic and wrap into a small positive number that passes the
+    # nominal-length guard below — it fails to match instead and stays null.
+    re='^([0-9]{1,3}d)?([0-9]{1,3}h)?([0-9]{1,2}m)?( → [0-9]{2}:[0-9]{2})?$'
     if [[ $inner =~ $re ]] && [[ -n ${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]} ]]; then
       d="${BASH_REMATCH[1]%d}"
       h="${BASH_REMATCH[2]%h}"
       mnt="${BASH_REMATCH[3]%m}"
-      remaining=$((${d:-0} * 86400 + ${h:-0} * 3600 + ${mnt:-0} * 60))
+      remaining=$((10#${d:-0} * 86400 + 10#${h:-0} * 3600 + 10#${mnt:-0} * 60))
       ((remaining <= nominal)) || remaining=-1
     fi
   fi
@@ -166,20 +178,30 @@ probe_claude_pane_scrape() {
       [[ $pw == "$wid" ]] || continue
       text=$(tmux capture-pane -p -t "$pid" 2>/dev/null) || continue
       tail=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -2)
-      m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]+%([[:space:]]*\([^)]*\))?' | tail -1)
+      # Percentage bounded to {1,3} digits, same reasoning as the duration
+      # bound in _pane_countdown: a garbled render with a huge digit run
+      # must fail this match rather than hand _pane_countdown a value that
+      # 10# wraps into a plausible-looking pct.
+      m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]{1,3}%([[:space:]]*\([^)]*\))?' | tail -1)
       if [[ -n $m ]]; then
         IFS=$'\t' read -r v rem <<<"$(_pane_countdown "$m" 18000)"
-        if ((v > max5)) || { ((v == max5)) && ((rem > rem5)); }; then
-          max5=$v
-          rem5=$rem
+        # A helper that crashed or produced no output must not be read as a
+        # valid 0% — treat the pane as if the marker hadn't matched.
+        if [[ $v =~ ^[0-9]+$ ]]; then
+          if ((v > max5)) || { ((v == max5)) && ((rem > rem5)); }; then
+            max5=$v
+            rem5=$rem
+          fi
         fi
       fi
-      m=$(printf '%s\n' "$tail" | grep -oE '7d[[:space:]]*[0-9]+%([[:space:]]*\([^)]*\))?' | tail -1)
+      m=$(printf '%s\n' "$tail" | grep -oE '7d[[:space:]]*[0-9]{1,3}%([[:space:]]*\([^)]*\))?' | tail -1)
       if [[ -n $m ]]; then
         IFS=$'\t' read -r v rem <<<"$(_pane_countdown "$m" 604800)"
-        if ((v > max7)) || { ((v == max7)) && ((rem > rem7)); }; then
-          max7=$v
-          rem7=$rem
+        if [[ $v =~ ^[0-9]+$ ]]; then
+          if ((v > max7)) || { ((v == max7)) && ((rem > rem7)); }; then
+            max7=$v
+            rem7=$rem
+          fi
         fi
       fi
     done <<PANES
