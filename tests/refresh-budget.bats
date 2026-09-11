@@ -54,6 +54,13 @@ EOF
 # SHIM_CODEX_GENERIC swaps in a single 1440min (24h) window at 90% used — the
 # static default below is pinned at 5h/7d buckets and can never emit a
 # 1d/unknown/other key at >=85%, which the generic advisory wording needs.
+# SHIM_CODEX_CUSTOM swaps in a caller-controlled window (usedPercent,
+# windowDurationMins, and an optional resetsAt) — neither fixed frame can
+# reach the >=95% gating verdicts, which need specific percentages and
+# reset times chosen per test. resetsAt is computed from $(date +%s) at
+# shim invocation time (offset by SHIM_CODEX_RESETS_IN seconds) rather than
+# a baked-in epoch, so a test built on it can't age into failure; omitting
+# the offset omits resetsAt entirely, for the null-reset case.
 write_codex_shim() {
   cat >"$STUB_DIR/codex" <<'EOF'
 #!/usr/bin/env bash
@@ -63,6 +70,13 @@ fi
 printf '%s\n' '{"id":1,"result":{}}'
 if [[ -n "${SHIM_CODEX_GENERIC:-}" ]]; then
   printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":1440},"credits":{"hasCredits":true},"planType":"team"}}}'
+elif [[ -n "${SHIM_CODEX_CUSTOM:-}" ]]; then
+  resets_field=""
+  if [[ -n "${SHIM_CODEX_RESETS_IN:-}" ]]; then
+    resets_field=",\"resetsAt\":$(($(date +%s) + SHIM_CODEX_RESETS_IN))"
+  fi
+  printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":%s,"windowDurationMins":%s%s},"credits":{"hasCredits":true},"planType":"team"}}}\n' \
+    "$SHIM_CODEX_USED_PCT" "$SHIM_CODEX_WINDOW_MINS" "$resets_field"
 else
   printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true},"planType":"team"}}}'
 fi
@@ -112,7 +126,7 @@ EOF
   # Its resets_at (2026-08-09) is already in the past, so the line carries
   # no "(resets in ...)" parenthetical — verified by requiring the "%" to
   # butt directly against the em dash.
-  [[ "$output" == *"budget lever: claude 7d at 97.0% — real budget: prefer a cheaper burn class or rotate engines"* ]]
+  [[ "$output" == *"budget lever: claude 7d at 97.0% — not holdable: no reset time, hand the task back"* ]]
   [[ "$output" != *"budget lever: claude 5h at 12.5"* ]]
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
   run jq -r '.engines.claude.source' "$cache"
@@ -282,11 +296,69 @@ EOF
   SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"budget lever: claude 5h at 91% (resets in 35m) — short window: prefer waiting past the reset to shedding burn class"* ]]
-  [[ "$output" == *"budget lever: claude 7d at 97% (resets in 3d 22h, 53 points ahead of pace) — real budget: prefer a cheaper burn class or rotate engines"* ]]
+  [[ "$output" == *"budget lever: claude 7d at 97% (resets in 3d 22h, 53 points ahead of pace) — binding window; not holdable: 3d 22h is outside the window's last 15%, hand the task back"* ]]
   [[ "$output" == *"budget lever: codex 1d at 90% — approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"* ]]
   # The summary line gains the relative remaining only on a future reset —
   # the oauth fixture's past-dated one has no ", in ..." tail by design.
   [[ "$output" == *"claude: "*"(resets "*", in "* ]]
+}
+
+@test "the nearer of two >=95% windows on one engine defers, never reads holdable" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  now=$(date +%s)
+  # Both windows clear the 95% gate; 7d's resets_at is the later one, so
+  # rule 3 makes it the sole gating window. The nearer 5h window must defer
+  # to it by key, not be judged on its own (much sooner) elapsed time — the
+  # wrong-window bug this fold exists to prevent. Pinning the 5h row's full
+  # text (not just a loose "not binding" substring) is what rules out
+  # "holdable" leaking in from the wrong window. 330s (not the exact 5m
+  # boundary) leaves margin so the script's own later `date +%s` can't round
+  # it down to 4m.
+  cat >"$XDG_DATA_HOME/crew/claude-statusline.json" <<EOF
+{"rate_limits": {
+  "five_hour": {"used_percentage": 96, "resets_at": $((now + 330))},
+  "seven_day": {"used_percentage": 97, "resets_at": $((now + 300000))}
+}}
+EOF
+  SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: claude 5h at 96% (resets in 5m) — not binding: claude is gated until 7d resets"* ]]
+}
+
+@test "a sized window at >=95% with a null resets_at is unholdable, with no binding-window prefix" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  # 5h has a nominal length (wsecs) but no resets_at at all — rule 1 (no
+  # usable deadline) must still catch it even though the window is sized,
+  # not just the unsized rule 2 case below.
+  cat >"$XDG_DATA_HOME/crew/claude-statusline.json" <<'EOF'
+{"rate_limits": {
+  "five_hour": {"used_percentage": 96, "resets_at": null}
+}}
+EOF
+  SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: claude 5h at 96% — not holdable: no reset time, hand the task back"* ]]
+}
+
+@test "an unsized window at >=95% is unholdable even with a real reset time" {
+  # 1440min (1d bucket) has no wsecs entry, so rule 2 fires despite a
+  # perfectly good future resetsAt — nominal length, not deadline, is what's
+  # missing here. 22350s (not the exact 6h12m boundary) leaves margin so the
+  # sleeps inside the real probe_codex's pipe can't round it down to 6h11m.
+  SHIM_CLAUDE_429=1 SHIM_CODEX_CUSTOM=1 SHIM_CODEX_USED_PCT=99 \
+    SHIM_CODEX_WINDOW_MINS=1440 SHIM_CODEX_RESETS_IN=22350 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: codex 1d at 99% (resets in 6h 12m) — not holdable: window has no nominal length, hand the task back"* ]]
+}
+
+@test "a >=95% window inside its last 15% is the holdable case" {
+  # A sized 5h window, 99% used, ~38m to reset —
+  # elapsed_pct lands north of the 85 floor, so it's holdable. 2310s (not
+  # the exact 38m boundary) leaves the same rounding margin as above.
+  SHIM_CLAUDE_429=1 SHIM_CODEX_CUSTOM=1 SHIM_CODEX_USED_PCT=99 \
+    SHIM_CODEX_WINDOW_MINS=300 SHIM_CODEX_RESETS_IN=2310 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: codex 5h at 99% (resets in 38m) — binding window; holdable: inside the window's last 15%, wait past the reset"* ]]
 }
 
 @test "pane-scrape parses a day-form countdown" {

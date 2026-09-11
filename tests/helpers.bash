@@ -40,6 +40,30 @@ teardown_repo() {
   [ -n "${TEST_REPO:-}" ] && rm -rf "$TEST_REPO"
 }
 
+# seed_hold <crew> <id> <resets_at> [branch] [ref] [wait_engine] [task_engine]
+# [title] [ts_ms] — a hold row shaped like `_build_hold`'s output
+# (adapters/core/crew.sh:2508-2527), written directly to the bus so a test can
+# plant an already-matured hold: `crew hold add` refuses a `resets_at <= now`
+# (1b), so no matured hold can be created through the CLI.
+seed_hold() {
+  local crew="$1" id="$2" resets_at="$3"
+  local branch="${4:-b-$id}" ref="${5:-r-$id}" wengine="${6:-claude}" tengine="${7:-codex}"
+  local title="${8:-hold $id}" ts="${9:-$((resets_at * 1000))}"
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg crew "$crew" --argjson ts "$ts" --arg id "$id" \
+    --arg wengine "$wengine" --argjson resets_at "$resets_at" \
+    --arg tengine "$tengine" --arg ref "$ref" --arg branch "$branch" --arg title "$title" \
+    '{ts:$ts, crew_id:$crew, from:("dispatcher:" + $crew), to:("hold:" + $crew), kind:"msg",
+      body: ({id:$id,
+              wait: {engine:$wengine, window:"5h", resets_at:$resets_at},
+              task: {ref:$ref, branch:$branch, tier:"standard", engine:$tengine,
+                     model:"sonnet", effort:"medium", plan:null, mcp:null,
+                     draft:false, shape:null, title:$title, spec:null}}
+             | tostring)}' >>"$logf"
+}
+
 # stub_bin <name> — put a logging stub for <name> first on PATH.
 # The stub appends its argv (NUL-free, one invocation per line) to
 # $STUB_LOG and exits 0.

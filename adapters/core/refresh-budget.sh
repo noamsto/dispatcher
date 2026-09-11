@@ -308,8 +308,25 @@ main() {
   '
 
   jq -r --argjson now "$now" "$jq_time_defs"'
+    # >=95% is a hold candidate; each engine gets exactly one gating window
+    # (precedence: no usable deadline, then no nominal length, then latest
+    # resets_at) and every sibling >=95% window on that engine defers to it.
+    # Ties within a rule break on sorted key for a deterministic pick.
+    def gating($windows):
+      ($windows | to_entries | map(select(.value.used_pct >= 95)) | sort_by(.key)) as $cands |
+      if ($cands | length) == 0 then null
+      else
+        ($cands | map(select(.value.resets_at == null or .value.resets_at <= $now))) as $unreset |
+        ($cands | map(select(wsecs(.key) == null))) as $unsized |
+        if ($unreset | length) > 0 then {key: $unreset[0].key, rule: 1}
+        elif ($unsized | length) > 0 then {key: $unsized[0].key, rule: 2}
+        else ($cands | sort_by([-.value.resets_at, .key]))[0] as $g | {key: $g.key, rule: 3}
+        end
+      end;
     .engines | to_entries[] | select(.value != null) | .key as $e |
-    .value.windows | to_entries[] | select(.value.used_pct >= 85) |
+    .value.windows as $windows |
+    (gating($windows)) as $gate |
+    $windows | to_entries[] | select(.value.used_pct >= 85) |
     .key as $k | .value as $w |
     (if $k == "5h" then "5h" elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then "7d" else "other" end) as $fam |
     (wsecs($k)) as $L |
@@ -318,9 +335,16 @@ main() {
     (if $rem == null then ""
      else " (resets in \($rem | reltime)" + (if $ahead != null then ", \($ahead) points ahead of pace" else "" end) + ")"
      end) as $paren |
-    (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
-     elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
-     else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+    (if $w.used_pct < 95 then
+       (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
+        elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
+        else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+        end)
+     elif $k != $gate.key then "not binding: \($e) is gated until \($gate.key) resets"
+     elif $gate.rule == 1 then "not holdable: no reset time, hand the task back"
+     elif $gate.rule == 2 then "not holdable: window has no nominal length, hand the task back"
+     elif elapsed_pct($w.resets_at; $L) >= 85 then "binding window; holdable: inside the window'"'"'s last 15%, wait past the reset"
+     else "binding window; not holdable: \($rem | reltime) is outside the window'"'"'s last 15%, hand the task back"
      end) as $advice |
     "\($e) \($k) at \($w.used_pct)%\($paren) — \($advice)"
   ' "$OUT" |
