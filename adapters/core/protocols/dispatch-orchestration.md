@@ -5,7 +5,7 @@ Canonical reference for how the dispatcher judges a task into **tier**, **engine
 ```mermaid
 flowchart TD
     T(["Incoming task"]) --> TIER{"Tier? (pipeline depth)"}
-    T --> ENG{"Engine? (judge per task: claude ⇄ codex ⇄ cursor — no default)"}
+    T --> ENG{"Engine? (judge per task: claude ⇄ codex ⇄ cursor ⇄ pi — no default)"}
 
     TIER -->|"ambiguous / architectural / security / wide blast"| DEEP["deep — spec + plan critics"]
     TIER -->|"bounded, clear, few files"| STD["standard — plan-critic"]
@@ -14,6 +14,7 @@ flowchart TD
     ENG -->|"large mechanical refactor, wide sweep, 2nd-engine perspective"| CODEX["Codex"]
     ENG -->|"UI/frontend, ambiguous spec, security-adjacent"| CLAUDE["Claude"]
     ENG -->|"Grok 4.5 (or Composer), distinct 3rd perspective on deep tasks"| CURSOR["Cursor"]
+    ENG -->|"deepseek / third-family models via OpenRouter"| PI["pi"]
 
     CLAUDE --> OPUS["opus — deep"]
     CLAUDE --> SONNET["sonnet — standard/trivial"]
@@ -22,14 +23,16 @@ flowchart TD
     CODEX --> GM["codex · standard → model map"]
     CODEX --> GL["codex · trivial → model map"]
     CURSOR --> CU["cursor · tier → model map"]
+    PI --> PI_M["pi · tier → model map"]
 
-    OPUS --> D[["dispatch &lt;tier&gt; &lt;model&gt; [--agent claude|codex|cursor] [id] &lt;title&gt;"]]
+    OPUS --> D[["dispatch &lt;tier&gt; &lt;model&gt; [--agent claude|codex|cursor|pi] [id] &lt;title&gt;"]]
     SONNET --> D
     HAIKU --> D
     GH --> D
     GM --> D
     GL --> D
     CU --> D
+    PI_M --> D
 ```
 
 ## Model map (single source of truth)
@@ -41,11 +44,11 @@ Orchestrator (dispatcher-session) defaults live in "Orchestrator engines" below;
 consult-roster versions live in `WORKER_PROTOCOL.md` → "Orchestration consult".
 Bump the matching table when a new model ships.
 
-| Tier       | claude ladder                                                                                                                                                                                                                                                            | codex ladder      | cursor ladder           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------------------- |
-| `deep`     | **opus** — escalate to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`**   | **`cursor-grok-4.5-high`**        |
-| `standard` | **sonnet**                                                                                                                                                                                                                                                               | **`gpt-5.6-terra`** | **`cursor-grok-4.5-medium-fast`** |
-| `trivial`  | **sonnet** (or **haiku** if truly trivial)                                                                                                                                                                                                                               | **`gpt-5.6-luna`**  | **`cursor-grok-4.5-low-fast`**    |
+| Tier       | claude ladder                                                                                                                                                                                                                                                            | codex ladder        | cursor ladder                     | pi ladder                          |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | --------------------------------- | ---------------------------------- |
+| `deep`     | **opus** — escalate to **`claude-fable-5`** only for a genuinely hard, well-specified, long-horizon task where opus is demonstrably not enough (≈2× opus cost, refusal-classifier risk on security-adjacent code, minutes-long turns; most expensive lever, used rarely) | **`gpt-5.6-sol`**   | **`cursor-grok-4.5-high`**        | **`deepseek/deepseek-v4-pro`**     |
+| `standard` | **sonnet**                                                                                                                                                                                                                                                               | **`gpt-5.6-terra`** | **`cursor-grok-4.5-medium-fast`** | **`deepseek/deepseek-v4.1-flash`** |
+| `trivial`  | **sonnet** (or **haiku** if truly trivial)                                                                                                                                                                                                                               | **`gpt-5.6-luna`**  | **`cursor-grok-4.5-low-fast`**    | **`deepseek/deepseek-v4-flash`**   |
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -79,6 +82,8 @@ by code.
 
 **Worker-session model vs execute-subagent model (claude).** The `<model>` in the map above is the **worker session** model — it does spec / plan / reconcile / judging (opus on deep). The worker's **execute subagents default to sonnet**, escalating a single step to opus only when the plan tags it `implement: opus`. So a deep claude worker is opus-orchestrated but sonnet-implemented by default. See `WORKER_PROTOCOL.md` rule 1 (and the fast deterministic gate + parallel review gate it now describes). Codex workers scale reasoning effort by tier instead — the split is claude-specific.
 
+**pi ladder is provisional.** The pi model ids are OpenRouter-qualified (`provider/id`, the form `pi --model` accepts directly) and the tier→id mapping is a starting point pending the pi-engine decisions in `docs/superpowers/specs/2026-09-11-pi-dispatch-engine-design.md`. pi has a **real `--thinking` knob** (`off|minimal|low|medium|high|xhigh|max`) — unlike cursor, effort is not baked into the model id — so `--effort` is honored for pi. `ultra` is codex-only; `dispatch` rejects it for pi (`max` is the ceiling).
+
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
@@ -88,8 +93,8 @@ It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consul
 
 ## Orchestrator engines (dispatcher session)
 
-The dispatcher itself can run on any engine — `dispatcher --agent claude|codex|cursor`
-(work-profile gated, same as workers). Orchestrator defaults — bump this table when a
+The dispatcher itself can run on any engine — `dispatcher --agent claude|codex|cursor|pi`
+(codex and cursor are work-profile gated, same as workers; pi is all-profile). Orchestrator defaults — bump this table when a
 model ships:
 
 | engine | model | effort |
@@ -97,8 +102,10 @@ model ships:
 | claude | opus (settings default) | settings default |
 | codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
 | cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.5-*) |
+| pi | **deepseek/deepseek-v4-pro** | **high** — real `--thinking` (unlike cursor) |
 
-claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor inject it as
+claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; pi bakes it too, via a real
+`--append-system-prompt` (text or file contents); codex/cursor inject it as
 the first prompt (neither CLI has an append-system-prompt flag). The judging rubric
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
@@ -106,8 +113,8 @@ is identical across engines; the crew-watch park primitive is not — see
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with its own automated PR-review gauntlet (Cursor Bugbot / Codex / a review GitHub App) on top of CI makes the worker's internal model review largely redundant, so the worker downgrades it (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). `mono` is such a repo. Tier still sets *planning* depth regardless — the downgrade only touches the post-execute review.
-- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default it to **Grok 4.5** (`cursor-grok-4.5-*`), genuinely non-Claude; Composer stays available as an alternative; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
-- **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map; codex reasoning effort scales with tier (deep→high, standard→medium, trivial→low) independent of which model is chosen, while cursor folds effort into the model id (no separate knob).
+- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Codex (work profile only) for large mechanical refactors, wide sweeps, or a deliberate second-engine perspective; cursor (work profile only) for a distinct third-engine perspective on deep tasks — default it to **Grok 4.5** (`cursor-grok-4.5-*`), genuinely non-Claude; Composer stays available as an alternative; **pi** (all-profile) for deepseek and other third-family models via OpenRouter; claude for UI/frontend work, security-adjacent code, or _genuinely_ underspecified work (mild ambiguity alone isn't a claude ticket). Soft rule: don't front Claude _through_ cursor when the point is an independent third perspective — a cursor-fronted sonnet isn't independent review of a claude worker; use a Grok (or Composer) model for that.
+- **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map; codex reasoning effort scales with tier (deep→high, standard→medium, trivial→low) independent of which model is chosen, pi scales it with a real `--thinking` flag, while cursor folds effort into the model id (no separate knob).
 
 ## MCP is no longer a routing factor
 

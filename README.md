@@ -5,7 +5,7 @@
 [![ci](https://github.com/noamsto/dispatcher/actions/workflows/ci.yml/badge.svg)](https://github.com/noamsto/dispatcher/actions/workflows/ci.yml)
 &nbsp;![shell](https://img.shields.io/badge/shell-bash-4EAA25)
 &nbsp;![nix](https://img.shields.io/badge/nix-flake-5277C3)
-&nbsp;![engines](https://img.shields.io/badge/engines-claude%20%7C%20codex%20%7C%20cursor-8A63D2)
+&nbsp;![engines](https://img.shields.io/badge/engines-claude%20%7C%20codex%20%7C%20cursor%20%7C%20pi-8A63D2)
 
 `dispatcher` turns one agent session into an orchestrator. It judges each task
 into a tier, an engine and a model, scaffolds one worker per task in its own git
@@ -13,9 +13,10 @@ worktree and tmux window, and coordinates the whole crew over a git-backed
 message bus. Workers survive the session that spawned them. The orchestrator
 never writes code.
 
-It runs on **Claude Code**, **OpenAI Codex** and **Cursor** — and can mix them in
-a single crew, so a refactor goes to one model while the security-sensitive
-change goes to another.
+It runs on **Claude Code**, **OpenAI Codex**, **Cursor** and **pi** — and can mix
+them in a single crew, so a refactor goes to one model while the
+security-sensitive change goes to another. pi is the route to **deepseek** and
+other third-family models via OpenRouter.
 
 ---
 
@@ -104,22 +105,24 @@ wedged worker never reports anything at all: it watches pane output and posts
 The harness is engine-neutral; the adapters are not. Each engine gets what it can
 actually express:
 
-|                               | Claude Code |        Codex        |      Cursor      |
-| ----------------------------- | :---------: | :-----------------: | :--------------: |
-| Packaging                     |   plugin    |       plugin        |   loose files¹   |
-| Slash commands                |     ✅      | ❌ ships as skills² |        ✅        |
-| Skills                        |     ✅      |         ✅          |        ✅        |
-| Subagents                     |     ✅      |         ❌          |       ✅³        |
-| Hooks                         |     ✅      |         ✅          |        ✅        |
-| Worker: critics + review gate |     ✅      |  ⚠️ process-light   | ⚠️ process-light |
+|                               | Claude Code |        Codex        |      Cursor      |        pi        |
+| ----------------------------- | :---------: | :-----------------: | :--------------: | :--------------: |
+| Packaging                     |   plugin    |       plugin        |   loose files¹   |   loose files⁴   |
+| Slash commands                |     ✅      | ❌ ships as skills² |        ✅        |  ✅ (templates)  |
+| Skills                        |     ✅      |         ✅          |        ✅        |        ✅        |
+| Subagents                     |     ✅      |         ❌          |       ✅³        |  ❌ (planned⁵)   |
+| Hooks                         |     ✅      |         ✅          |        ✅        |        ❌        |
+| Worker: critics + review gate |     ✅      |  ⚠️ process-light   | ⚠️ process-light | ⚠️ process-light |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
 ² Codex has no custom slash commands — custom prompts are deprecated in favour of
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
 ³ Cursor has subagents, but not the model this pipeline is built on.
+⁴ pi ships no dispatcher commands yet — the four slash commands are not projected into pi's prompt-template/skill shape. Its worker launch is a real `--append-system-prompt` (text or file contents), so the protocol is a system prompt rather than a first-prompt injection.
+⁵ pi has no subagents of its own; the `pi-subagents` package provides them, and the critic/review pipeline is planned to be ported onto it (see `docs/superpowers/specs/2026-09-11-pi-dispatch-engine-design.md`).
 
-**Process-light is a promise, not an omission.** Codex and cursor workers run
+**Process-light is a promise, not an omission.** Codex, cursor and pi workers run
 single-agent, so they emit `plan_critic_first_pass: null`, `review_high: null`,
 `review_mode: "none"` — a run is never mistaken for _reviewed and clean_.
 
@@ -177,9 +180,10 @@ For Claude Code, pass the plugin directory to `claude`:
   your Codex config. It is a runtime file, so there is no eval-time check — a
   missing profile surfaces as a launch failure in the worker pane.
 
-- **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent` and
+- **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent`, `pi` and
   [`wt`](https://worktrunk.dev) resolve from the ambient `PATH`; log each in out
-  of band.
+  of band. `pi` authenticates with `pi` login or a provider API key
+  (`OPENROUTER_API_KEY` for OpenRouter/deepseek).
 
 </details>
 
@@ -199,6 +203,7 @@ From inside a dispatcher session:
 dispatch --crew-id <id> standard sonnet --effort medium ENG-421 "fix the retry loop"
 dispatch --crew-id <id> deep opus --effort high --agent codex "redesign the export pipeline"
 dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the flag"
+dispatch --crew-id <id> standard deepseek/deepseek-v4-pro --effort high --agent pi "harden the parser"
 ```
 
 Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
