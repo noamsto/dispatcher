@@ -722,6 +722,26 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].title')" = "Do a thing" ]
 }
 
+@test "roster: joins engine/model/tier on the branch" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
+           engine:"claude", model:"sonnet", tier:"standard", title:"T"}' >>"$log"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "claude" ]
+  [ "$(echo "$output" | jq -r '.[0].model')" = "sonnet" ]
+  [ "$(echo "$output" | jq -r '.[0].tier')" = "standard" ]
+}
+
+@test "roster: engine/model/tier default to null with no dispatch event" {
+  CREW_ID=c1 run_crew status "worker:feat/x" working
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "null" ]
+  [ "$(echo "$output" | jq -r '.[0].model')" = "null" ]
+  [ "$(echo "$output" | jq -r '.[0].tier')" = "null" ]
+}
+
 @test "roster: a legacy branch-keyed row still renders" {
   CREW_ID=c1 run_crew status "worker:feat/x" working
   run run_crew roster c1
