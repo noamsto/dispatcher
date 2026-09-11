@@ -196,6 +196,38 @@ KEY-FINDINGS-style in this doc so they're never re-derived):
    and verify the base stack (context7, playwright, firefox-devtools) is lazy
    and ~free when unused.
 
+## KEY FINDINGS (measured 2026-09-11, pi 0.85.1 + deepseek via OpenRouter)
+
+Recorded so they are never re-derived. The launch line is validated end-to-end.
+
+- **Streaming worker mode: WORKS.** A real dispatch —
+  `dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort low --plan provided "#1" "add hello-pi markdown"`
+  on `noamsto/crew-smoke` — ran the full crew-bus lifecycle `working → pr_open → done`,
+  opened [PR #4](https://github.com/noamsto/crew-smoke/pull/4), and emitted the
+  single-agent metrics `{consulted:false, consult_engine:null, plan_critic_first_pass:null, rework_count:0, review_high:null, review_mode:"none"}`.
+  The interactive TUI (`pi "<initial prompt>"`) auto-submits and repaints, so
+  `crew stall-watch` gets a truthful liveness signal — `pi -p` would not.
+- **`--append-system-prompt <path>` reads the file.** Confirmed in
+  `packages/coding-agent/src/core/resource-loader.ts` (`resolvePromptInput` returns
+  `readFileSync(input)` when `existsSync(input)`) and live: a file saying "always
+  answer BANANA" produced `BANANA`. The protocol is a real system prompt, not a
+  first-prompt injection.
+- **Auth: ambient `~/.pi/agent/auth.json`.** `openrouter/deepseek/*` works from a
+  non-interactive shell with the user's global pi config. A fresh
+  `PI_CODING_AGENT_DIR` is credential-less (`auth.json = {}`), so v1 uses the ambient
+  config — consistent with codex/cursor using the user's global engine config. The
+  worker-scoped dir (D4) therefore needs credential provisioning.
+- **`--no-approve` accepted; the worker stayed fully unattended** — no permission
+  prompt, no trust block.
+- **`--thinking` is real but clamped per model.** deepseek-v4-flash/pro ship
+  `thinkingLevelMap = {off:"none", minimal:null, low:null, medium:null, high:"high", xhigh:"xhigh", max:null}`;
+  `null` = unsupported. Measured: `off→off`, `high→high`, `xhigh→xhigh`, but
+  `minimal`/`low`/`medium`→`high`. So for pi+deepseek `--effort` effectively
+  selects `high` (default) vs `xhigh` (deep); the lower rungs are a clamped no-op.
+  `dispatch` still rejects `ultra` for pi.
+- **No MCP/subagents in v1.** Neither `pi-mcp-adapter` nor `pi-subagents` is
+  installed, so the worker is single-agent — exactly as the protocol states.
+
 ## Scoped experiment: upstream pi vs `omp`
 
 Run the **same** real dispatched task (a `standard` bug fix with a non-trivial

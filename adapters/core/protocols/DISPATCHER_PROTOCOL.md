@@ -38,7 +38,9 @@ fit, not as default-plus-exception:
 - pi leans: deepseek and other third-family models via OpenRouter — a genuinely
   different family again, all-profile. Reach for it when you want a non-Claude,
   non-OpenAI, non-Cursor implementer, or a cheap-strong deepseek worker. pi has a
-  real `--thinking` knob, so `--effort` is honored (unlike cursor).
+  real `--thinking` knob (unlike cursor), though the deepseek models expose only
+  `off`/`high`/`xhigh` — `low`/`medium` clamp to `high`, so to actually raise
+  effort on deep work pick `--effort xhigh`.
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the
