@@ -36,9 +36,11 @@ captured. Every later read is `--since $seen` per **Checkpoint-peek**.
 ## Grid mode (role panes)
 
 `WORKER_TASK.md` may stamp a `roles:` line. If it does, you are the **lead** of a
-role grid: those roles are already running as panes in your window, sharing this
-worktree, and parked on the crew bus under
-`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`). In
+role grid: those roles share this worktree and are parked on the crew bus under
+`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`). They
+are already running as panes — unless the doc also stamps `lazy: 1`, in which case
+you create each role's pane at its seam with `dispatch --spawn-role <role>`
+(idempotent; reuses an existing pane). In
 grid mode you **do not** run the `spec-plan-critic` workflow or spawn the claude
 critic subagents — you delegate the critic/review phases your tier and
 plan-of-record call for to the role panes over the bus. **That is the point:**
@@ -53,7 +55,9 @@ review gates above), the seam is:
    `review`. Create the dir. For review write the diff:
    `git diff <base>...HEAD > <crew_dir>/artifacts/<branch>/review.diff`.
 2. **Assign** the role pane, naming the **absolute** artifact path and the verdict
-   you want. `crew msg` takes **`<from> <to> <body>`** — your from is
+   you want. In a lazy grid, create the pane first
+   (`dispatch --spawn-role <role>`).
+   `crew msg` takes **`<from> <to> <body>`** — your from is
    `worker:$(git branch --show-current)`:
    ```
    crew msg "worker:$(git branch --show-current)" "role:$(git branch --show-current):<role>" \
@@ -73,10 +77,10 @@ review gates above), the seam is:
 
 A role is **one-shot per assignment** — after posting its verdict it re-parks.
 When the pipeline is done, release the roles so they exit:
-`crew msg "worker:$(git branch --show-current)" "role:$(git branch --show-current):<role>" '{"final":true}'`; the
-window is reaped with the worker regardless. If a role has died (pane gone),
-fall back to the normal path for that phase and note it — never stall the
-pipeline on a missing role.
+`crew msg "worker:$(git branch --show-current)" "role:$(git branch --show-current):<role>" '{"final":true}'`,
+then reclaim their panes with `dispatch --reap-roles` (the window is reaped with
+the worker regardless). If a role has died (pane gone), fall back to the normal
+path for that phase and note it — never stall the pipeline on a missing role.
 
 ## Plan of record (does the plan already exist?)
 
