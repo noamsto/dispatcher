@@ -293,6 +293,11 @@ Next up:
   collapses a duplicate fan-out architecture.
 - **Closing the process-light gap** so Codex and Cursor workers get a critic
   pipeline and a review gate.
+- **Role-grid topology** — a task window becomes a grid of role panes
+  (implementer + critics + reviewers), so the critic pipeline is engine-neutral
+  and cross-model review is structural rather than a claude-only subagent
+  feature. Phase 1 (`dispatch --roles`, pi-only) lands the mechanics; see
+  `docs/superpowers/specs/2026-09-11-role-grid-topology-design.md`.
 
 ## License
 
