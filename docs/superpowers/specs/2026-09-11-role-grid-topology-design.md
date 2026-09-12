@@ -102,7 +102,11 @@ simultaneous layout. This keeps scale honest and reuses `reap`.
 
 - Create the task window, then `tmux split-window -t <win> -c <worktree>` per
   role; `tmux select-layout -t <win> tiled` to keep the grid legible.
-- Per-pane identity: a `@crew_role` pane option + `pane-border-format`, so a
+- Per-pane identity: a `@crew_role` pane option, a role label in
+  `pane-border-format`, and a **stable per-role colour** (`role_color`) applied to
+  `pane-border-style`/`pane-active-border-style` — all per pane, so a role keeps
+  its colour and label through a tiled layout and a zoom (`prefix+z`).
+  `pane-border-status top` is turned on for the window so the labels render. A
   pane is labelled by role the way a window is labelled by codename.
 - Read-only roles get a read-only posture (`--tools read,grep,find,ls` for pi;
   the reviewer agents for claude).

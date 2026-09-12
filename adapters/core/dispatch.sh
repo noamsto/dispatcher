@@ -19,13 +19,42 @@ PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
 # --- role-grid helpers -----------------------------------------------------
 
-# split_role_pane <window> <worktree> <role> — create a role pane, label it with
-# @crew_role, and echo its pane id.
+# role_color <role> — a stable tmux colour per role. Known roles get a semantic
+# colour; anything else falls back to crew's deterministic FleetView palette, so
+# a role is always the same colour run to run ("always the same per role").
+role_color() {
+  case "$1" in
+  spec-critic) printf 'colour141' ;; # mauve
+  plan-critic) printf 'colour111' ;; # blue
+  reviewer) printf 'colour114' ;;    # green
+  security) printf 'colour174' ;;    # red
+  consult) printf 'colour180' ;;     # yellow
+  *) crew identity "$1" 2>/dev/null | jq -r '.tmux // "colour250"' ;;
+  esac
+}
+
+# decorate_pane <pane> <role> — put the role on the pane border and colour that
+# border by role. tmux keeps these styles per pane, so a role's colour and label
+# survive a tiled layout and a zoom (prefix+z). Also turns pane borders on for the
+# window, so the labels are actually rendered.
+decorate_pane() {
+  local pane="$1" role="$2" color
+  color="$(role_color "$role")"
+  tmux set-option -p -t "$pane" @crew_role "$role"
+  tmux set-option -p -t "$pane" @crew_role_color "$color"
+  tmux set-option -p -t "$pane" pane-border-style "bg=#{@thm_bg},fg=$color"
+  tmux set-option -p -t "$pane" pane-active-border-style "bg=#{@thm_bg},fg=$color,bold"
+  tmux set-option -p -t "$pane" @crew_state idle
+  tmux set-option -p -t "$pane" pane-border-format " #[bold]#{@crew_role}#[nobold] #{@crew_state} "
+  tmux set-option -w -t "$pane" pane-border-status top
+}
+
+# split_role_pane <window> <worktree> <role> — create a role pane, decorate it,
+# and echo its pane id.
 split_role_pane() {
   local win="$1" wt="$2" role="$3" pane
   pane="$(tmux split-window -t "$win" -c "$wt" -P -F '#{pane_id}')"
-  tmux set-option -p -t "$pane" @crew_role "$role"
-  tmux set-option -p -t "$pane" pane-border-format " #[bold]$role#[nobold] "
+  decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
 
@@ -42,6 +71,13 @@ launch_role() {
   codex) tmux send-keys -t "$pane" "codex --profile worker -m $r_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
   cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$r_model' '$first'" Enter ;;
   esac
+}
+
+# watch_role <role> <pane> — spawn the detached bus watcher for a role pane. The
+# watcher (engine-agnostic) types each assignment into the pane and keeps
+# @crew_state fresh, so the role never holds a repainting `crew await`.
+watch_role() {
+  nohup "$0" --role-watch "$1" --pane "$2" --branch "$branch" >/dev/null 2>&1 &
 }
 
 # `dispatch --spawn-role <role>` — create a role pane on demand in the caller's
@@ -100,6 +136,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   pane="$(split_role_pane "$win" "$PWD" "$role")"
   launch_role "$pane" "$role" "$spawn_agent" "$spawn_model"
+  watch_role "$role" "$pane"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $pane"
   exit 0
 fi
@@ -118,6 +155,69 @@ if [ "${1:-}" = "--reap-roles" ]; then
     tmux kill-pane -t "$p" 2>/dev/null || true
   done
   echo "reaped role panes"
+  exit 0
+fi
+
+# `dispatch --role-watch <role> --pane <pane> [--branch <b>] [--interval S]` —
+# a detached, ENGINE-AGNOSTIC role supervisor. It watches the crew bus and, when
+# the lead assigns this role work, types the assignment into the role's pane (a
+# normal user turn) and keeps the pane's @crew_state fresh. That lets a role end
+# its turn instead of holding a repainting `crew await`, and it needs only the
+# pane and the bus — so it works for every engine, pi included.
+if [ "${1:-}" = "--role-watch" ]; then
+  role="${2:-}"
+  [ -n "$role" ] || {
+    echo "dispatch: --role-watch needs a role name" >&2
+    exit 1
+  }
+  shift 2
+  watch_pane=""
+  watch_branch=""
+  interval=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --pane) watch_pane="${2:-}"; shift 2 ;;
+    --branch) watch_branch="${2:-}"; shift 2 ;;
+    --interval) interval="${2:-}"; shift 2 ;;
+    *)
+      echo "dispatch: --role-watch: unexpected argument '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -n "$watch_pane" ] || {
+    echo "dispatch: --role-watch needs --pane <id>" >&2
+    exit 1
+  }
+  watch_branch="${watch_branch:-$(git branch --show-current)}"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  role_id="role:$watch_branch:$role"
+  since="$(jq -nc 'now*1000|floor')"
+  tmux set-option -p -t "$watch_pane" @crew_state idle 2>/dev/null || true
+  # Exits when the pane is gone (role reaped, or the window closed).
+  while tmux display-message -p -t "$watch_pane" '#{pane_id}' >/dev/null 2>&1; do
+    if [ -f "$log" ]; then
+      batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
+        'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
+      if [ -n "$batch" ]; then
+        printf '%s\n' "$batch" | while IFS= read -r ev; do
+          if [ "$(printf '%s' "$ev" | jq -r '.to // ""')" = "$role_id" ]; then
+            body="$(printf '%s' "$ev" | jq -r '.body // ""')"
+            [ -n "$body" ] || continue
+            tmux set-option -p -t "$watch_pane" @crew_state working 2>/dev/null || true
+            tmux send-keys -t "$watch_pane" -l "Assignment: $body" 2>/dev/null || true
+            tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+          else
+            # A verdict from the role — it is idle again.
+            tmux set-option -p -t "$watch_pane" @crew_state idle 2>/dev/null || true
+          fi
+        done
+        next="$(printf '%s\n' "$batch" | jq -s 'map(.ts) | max // empty')"
+        since="${next:-$since}"
+      fi
+    fi
+    sleep "$interval"
+  done
   exit 0
 fi
 
@@ -535,6 +635,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     role_pane="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}")"
     launch_role "$role_pane" "${role_names[$i]}" "${role_agents[$i]}" "${role_models[$i]}"
+    watch_role "${role_names[$i]}" "$role_pane"
   done
   tmux select-layout -t "$win" tiled
 fi
@@ -542,8 +643,7 @@ fi
 # Optional live status pane: a bounded roster loop over the crew bus.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
-  tmux set-option -p -t "$status_pane" @crew_role status
-  tmux set-option -p -t "$status_pane" pane-border-format " #[bold]grid status#[nobold] "
+  decorate_pane "$status_pane" status
   tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
   tmux select-layout -t "$win" tiled
 fi

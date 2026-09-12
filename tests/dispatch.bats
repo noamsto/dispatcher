@@ -174,6 +174,52 @@ teardown() {
   [ "$status" -eq 0 ]
   run grep -F -- 'lazy: 1' "$DISPATCH"
   [ "$status" -eq 0 ]
-  run grep -F -- 'crew_role status' "$DISPATCH"
+  run grep -F -- 'decorate_pane "$status_pane" status' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: role panes get a stable per-role colour and a border label" {
+  run grep -F -- 'role_color' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-active-border-style' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-border-status top' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '@crew_role_color' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: known roles map to fixed colours" {
+  run grep -F -- "plan-critic) printf 'colour111'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- "reviewer) printf 'colour114'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- "security) printf 'colour174'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: role panes spawn the engine-agnostic bus watcher" {
+  run grep -F -- '--role-watch' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'watch_role' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'send-keys -t "$watch_pane" -l' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  # The mechanism is the tmux watcher, not an engine extension.
+  run grep -c 'crew-bus.ts' "$DISPATCH"
+  [ "$output" = "0" ]
+}
+
+@test "grid: --role-watch needs a role name and a pane" {
+  run run_dispatch --role-watch
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--role-watch needs a role name"* ]]
+  run run_dispatch --role-watch reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--role-watch needs --pane"* ]]
+}
+
+@test "grid: the pane border shows the role state" {
+  run grep -F -- '#{@crew_state}' "$DISPATCH"
   [ "$status" -eq 0 ]
 }
