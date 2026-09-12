@@ -141,10 +141,14 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
    verdict, folds stragglers, and releases with `final`. Verified on
    `noamsto/crew-smoke`: a pi/deepseek lead ran plan-critic → implement → reviewer
    over the bus and opened a PR whose body cited both verdicts.
-3. **On-demand materialization + broker/status pane** for `deep`; `reap` role
+3. **Tier-driven topology + per-role engine/model (implemented).** `--grid`
+   derives the topology from the tier — `standard` → plan-critic + reviewer,
+   `deep` → spec-critic + plan-critic + reviewer — and each role spec may name
+   its own engine and model (`reviewer=claude:opus`, `reviewer=<model>`), so a
+   task can run a pi implementer with a claude (or codex) reviewer: the
+   cross-engine review the `WORKER_PROTOCOL` calls for.
+4. **On-demand materialization + broker/status pane** for `deep`; `reap` role
    panes.
-4. **Tier defaults + role→engine map**, so `dispatch` materializes the right
-   topology automatically.
 
 ## Open questions
 
