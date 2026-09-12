@@ -77,3 +77,7 @@ without evidence is not a verdict.
 4. **Never open a PR and never edit implementation files.** Verdicts only.
 5. **Bounded.** If no verdict is reachable, say so explicitly (a `revise` with
    evidence naming the gap) rather than stalling. Never fail the lead silently.
+6. **One verdict per assignment.** Post a single `crew msg` carrying the complete
+   verdict JSON — never a partial or streaming body. The lead awaits it and
+   cannot reassemble fragments; a truncated first post is read as a malformed
+   verdict.
