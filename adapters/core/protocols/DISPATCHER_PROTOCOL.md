@@ -35,12 +35,13 @@ fit, not as default-plus-exception:
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.
-- pi leans: deepseek and other third-family models via OpenRouter — a genuinely
-  different family again, all-profile. Reach for it when you want a non-Claude,
-  non-OpenAI, non-Cursor implementer, or a cheap-strong deepseek worker. pi has a
-  real `--thinking` knob (unlike cursor), though the deepseek models expose only
-  `off`/`high`/`xhigh` — `low`/`medium` clamp to `high`, so to actually raise
-  effort on deep work pick `--effort xhigh`.
+- pi leans: deepseek and other third-family models through OpenRouter on the
+  work profile, or opencode Zen on the personal profile — a genuinely different
+  family again. Reach for it when you want a non-Claude, non-OpenAI, non-Cursor
+  implementer, or a cheap-strong deepseek worker. pi has a real `--thinking`
+  knob (unlike cursor), though the deepseek models expose only `off`/`high`
+  /`xhigh` — `low`/`medium` clamp to `high`, so to actually raise effort on deep
+  work pick `--effort xhigh`.
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the
@@ -59,10 +60,12 @@ codex-only `ultra` (auto task delegation, `gpt-5.6-sol`/`-terra`) — `dispatch`
 rejects `ultra` for claude.
 
 **Profile constraint:** codex and cursor are both work-profile only — `dispatch`
-aborts `--agent codex` / `--agent cursor` off the work profile. **pi is
-all-profile** (its OpenRouter/deepseek account is personal), so on a
-personal-profile host the engine lever is claude + pi; on the work profile it is
-all four.
+aborts `--agent codex` / `--agent cursor` off the work profile. **pi ships on
+both profiles** but via different providers — Noam has OpenRouter on the work
+profile, no OpenRouter on personal there, so personal pi dispatches wire through
+opencode Zen instead. The active provider is keyed on `$DISPATCH_PROFILE`
+(`dispatcher.sh`'s `pi)` branch), so on a personal-profile host the engine lever
+is claude + pi (via opencode) and on the work profile it is all four.
 
 ## Scaffold one worker per task
 
@@ -73,7 +76,7 @@ dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent clau
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line, task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
 
 - **Tracker.** Pass a **Linear id** (e.g. `ENG-6789`) as the token right after the model for Linear-tracked repos (GitHub issues disabled) — it branches `eng-<n>-<slug>` and stamps `Closes ENG-<n>`, no `gh` call. On GitHub-issue repos, pass an **existing issue number** (`#42` or `42`) to reuse it — it branches `feat/42-<slug>` and stamps `Closes #42`, no `gh` call. Omit the tracker entirely and `dispatch` mints a fresh issue (`feat/<n>-<slug>`, `Closes #<n>`); if issue creation fails it aborts instead of half-scaffolding.
-- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine: a claude model for `--agent claude`, a codex model for `--agent codex`, a cursor model id for `--agent cursor`, a pi model id (`provider/id`, e.g. `openrouter/deepseek/deepseek-v4-pro`) for `--agent pi` (model map in `dispatch-orchestration.md`). Codex and cursor are both **work profile only** (no personal OpenAI/Cursor account) — neither is dispatchable off the work profile, and `dispatch` rejects `--agent codex`/`--agent cursor` there before scaffolding. **pi is all-profile.** Each engine needs a one-time login: `codex login` / `cursor-agent login` / `pi` login or a provider API key (`OPENROUTER_API_KEY`). Tier still sets pipeline depth regardless of engine; `--effort` (required, judged independently from tier) sets the reasoning effort passed to whichever engine you picked (a real `--thinking` for pi, a no-op for cursor, which encodes effort in the model id).
+- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine: a claude model for `--agent claude`, a codex model for `--agent codex`, a cursor model id for `--agent cursor`, a **profile-keyed** pi id (`openrouter/deepseek/<model>` on work, `opencode/<model>` on personal — see `dispatch-orchestration.md` → "Orchestrator engines"). Codex and cursor are both **work profile only** (no personal OpenAI/Cursor account) — neither is dispatchable off the work profile, and `dispatch` rejects `--agent codex`/`--agent cursor` there before scaffolding. **pi is all-profile, via two routes:** OpenRouter on work, opencode Zen on personal. Each engine needs a one-time login against its active provider: `codex login` / `cursor-agent login` / `pi` login plus the relevant provider key (`OPENROUTER_API_KEY` on work, an opencode Zen account on personal). Tier still sets pipeline depth regardless of engine; `--effort` (required, judged independently from tier) sets the reasoning effort passed to whichever engine you picked (a real `--thinking` for pi, a no-op for cursor, which encodes effort in the model id).
 - **MCP.** All engines inherit the full base MCP stack by default (context7, playwright, firefox-devtools) — browser work needs no flag. Claude gets it from settings.json; codex gets it from the nix-generated `--profile worker`; cursor gets it from the single shared `~/.cursor/mcp.json` (all defer tool schemas, so it's ~free until used). Add `--mcp <profile>` to layer on an extra profile: `analytics` (posthog, work only). Unknown/ungenerated profile aborts before launch. `--mcp` is claude-only — for codex _and_ cursor it's rejected; their base stacks already come from their own profile.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.
 

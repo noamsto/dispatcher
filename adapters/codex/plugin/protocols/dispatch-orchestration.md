@@ -97,12 +97,18 @@ The dispatcher itself can run on any engine — `dispatcher --agent claude|codex
 (codex and cursor are work-profile gated, same as workers; pi is all-profile). Orchestrator defaults — bump this table when a
 model ships:
 
-| engine | model | effort |
-| ------ | ----- | ------ |
-| claude | opus (settings default) | settings default |
-| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.5-*) |
-| pi | **deepseek/deepseek-v4-pro** | **high** — real `--thinking` (unlike cursor) |
+| engine | model — work | model — personal | effort |
+| ------ | ------------ | ---------------- | ------ |
+| claude | opus (settings default) | (same) | settings default |
+| codex | **gpt-5.6-sol** | (work profile only; gate refuses) | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
+| cursor | **kimi-k3-high** | (work profile only; gate refuses) | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.5-*) |
+| pi | **`openrouter/deepseek/deepseek-v4-pro`** | **`opencode/deepseek-v4-pro`** | **high** — real `--thinking` (unlike cursor) |
+
+The `pi` row is **profile-keyed** in `dispatcher.sh`'s `pi)` branch. Noam has
+OpenRouter only on the work profile; on a personal host, the active provider is
+opencode Zen (the only remote provider Noam configures there is opencode). The
+launcher's default is what runs when `--model` is not passed; pair-wise bump
+when a model ships. `--model` / `--effort` still override per launch.
 
 claude bakes `DISPATCHER_PROTOCOL.md` as a system prompt; pi bakes it too, via a real
 `--append-system-prompt` (text or file contents); codex/cursor inject it as
