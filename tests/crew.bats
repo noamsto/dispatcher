@@ -2450,7 +2450,7 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # the loop under `set -e` instead of failing one iteration of it — and the
   # assertion below would then hold vacuously.
   rm -rf "$cdir/watch.lock.d"
-  tmp="$STREAM_CREW.tmp"
+  tmp=$(mktemp "$BATS_TEST_TMPDIR/crew-copy.XXXXXX")
   printf '%s\n' '#!/usr/bin/env bash' \
     'case "${1:-}" in' \
     '  watch) echo "crew: fault injected" >&2; exit 3 ;;' \
