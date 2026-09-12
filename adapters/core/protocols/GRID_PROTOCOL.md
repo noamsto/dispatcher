@@ -36,7 +36,8 @@ window. Re-park, bounded — at most 3 parks — then
 
 The lead assigns work with a `crew msg` to `$id` naming:
 
-- the **artifact** to read (a file in this worktree, e.g. `.dispatcher/plan.md`),
+- the **artifact** to read — an absolute path the lead gives you, by convention
+  under the crew dir (`<crew_dir>/artifacts/<branch>/<seam>.md`),
 - the **question** (which verdict it wants),
 - the **seam** (`spec`, `plan`, `execute`, `review`).
 
@@ -54,7 +55,7 @@ Post your verdict to the worker, then re-park — or stop if the lead said
 crew msg "$id" "worker:$branch" '{
   "role": "plan-critic",
   "seam": "plan",
-  "artifact": ".dispatcher/plan.md",
+  "artifact": "<crew_dir>/artifacts/<branch>/plan.md",
   "verdict": "accept|revise|reject",
   "findings": [
     {"severity": "high|medium|low", "where": "path:line|section", "what": "…", "why": "…"}
@@ -76,3 +77,7 @@ without evidence is not a verdict.
 4. **Never open a PR and never edit implementation files.** Verdicts only.
 5. **Bounded.** If no verdict is reachable, say so explicitly (a `revise` with
    evidence naming the gap) rather than stalling. Never fail the lead silently.
+6. **One verdict per assignment.** Post a single `crew msg` carrying the complete
+   verdict JSON — never a partial or streaming body. The lead awaits it and
+   cannot reassemble fragments; a truncated first post is read as a malformed
+   verdict.

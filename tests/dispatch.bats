@@ -358,6 +358,15 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$status" -eq 0 ]
 }
 
+@test "grid mode is stamped into the task doc and the lead prompt" {
+  # Phase 2: the lead must know it has role panes (roles: line in WORKER_TASK.md)
+  # and be told to delegate the critic/review phases (grid_note in its prompt).
+  run grep -F -- 'roles: %s' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'grid_note' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
 @test "rejects an unknown effort" {
   run run_dispatch standard sonnet --effort bogus "title"
   [ "$status" -eq 1 ]

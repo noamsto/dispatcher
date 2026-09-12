@@ -1096,6 +1096,8 @@ fi
   if [ "$switch_mode" = resume ]; then
     printf 'resume: true\n'
   fi
+  # The role grid the lead should delegate to (absent = single-agent pipeline).
+  [ -n "$grid_roles" ] && printf 'roles: %s\n' "$grid_roles"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -1216,6 +1218,14 @@ medium) codex_subagent_effort=low ;;
 low) codex_subagent_effort=low ;;
 esac
 
+# Grid mode: tell the lead it has role panes to delegate the critic/review phases
+# to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
+# "Grid mode"). Only reachable when --roles is set (pi-only in phase 1).
+grid_note=""
+if [ -n "$grid_roles" ]; then
+  grid_note=" You lead a role grid: role panes ($grid_roles) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+fi
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -1244,7 +1254,7 @@ elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources.
   tmux send-keys -t "$pane" \
-    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
