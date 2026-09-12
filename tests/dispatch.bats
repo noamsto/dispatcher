@@ -174,6 +174,26 @@ teardown() {
   [ "$status" -eq 0 ]
   run grep -F -- 'lazy: 1' "$DISPATCH"
   [ "$status" -eq 0 ]
-  run grep -F -- 'crew_role status' "$DISPATCH"
+  run grep -F -- 'decorate_pane "$status_pane" status' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: role panes get a stable per-role colour and a border label" {
+  run grep -F -- 'role_color' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-active-border-style' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-border-status top' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '@crew_role_color' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: known roles map to fixed colours" {
+  run grep -F -- "plan-critic) printf 'colour111'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- "reviewer) printf 'colour114'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- "security) printf 'colour174'" "$DISPATCH"
   [ "$status" -eq 0 ]
 }

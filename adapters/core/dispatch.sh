@@ -19,13 +19,41 @@ PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
 # --- role-grid helpers -----------------------------------------------------
 
-# split_role_pane <window> <worktree> <role> — create a role pane, label it with
-# @crew_role, and echo its pane id.
+# role_color <role> — a stable tmux colour per role. Known roles get a semantic
+# colour; anything else falls back to crew's deterministic FleetView palette, so
+# a role is always the same colour run to run ("always the same per role").
+role_color() {
+  case "$1" in
+  spec-critic) printf 'colour141' ;; # mauve
+  plan-critic) printf 'colour111' ;; # blue
+  reviewer) printf 'colour114' ;;    # green
+  security) printf 'colour174' ;;    # red
+  consult) printf 'colour180' ;;     # yellow
+  *) crew identity "$1" 2>/dev/null | jq -r '.tmux // "colour250"' ;;
+  esac
+}
+
+# decorate_pane <pane> <role> — put the role on the pane border and colour that
+# border by role. tmux keeps these styles per pane, so a role's colour and label
+# survive a tiled layout and a zoom (prefix+z). Also turns pane borders on for the
+# window, so the labels are actually rendered.
+decorate_pane() {
+  local pane="$1" role="$2" color
+  color="$(role_color "$role")"
+  tmux set-option -p -t "$pane" @crew_role "$role"
+  tmux set-option -p -t "$pane" @crew_role_color "$color"
+  tmux set-option -p -t "$pane" pane-border-style "bg=#{@thm_bg},fg=$color"
+  tmux set-option -p -t "$pane" pane-active-border-style "bg=#{@thm_bg},fg=$color,bold"
+  tmux set-option -p -t "$pane" pane-border-format " #[bold]#{@crew_role}#[nobold] "
+  tmux set-option -w -t "$pane" pane-border-status top
+}
+
+# split_role_pane <window> <worktree> <role> — create a role pane, decorate it,
+# and echo its pane id.
 split_role_pane() {
   local win="$1" wt="$2" role="$3" pane
   pane="$(tmux split-window -t "$win" -c "$wt" -P -F '#{pane_id}')"
-  tmux set-option -p -t "$pane" @crew_role "$role"
-  tmux set-option -p -t "$pane" pane-border-format " #[bold]$role#[nobold] "
+  decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
 
@@ -542,8 +570,7 @@ fi
 # Optional live status pane: a bounded roster loop over the crew bus.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
-  tmux set-option -p -t "$status_pane" @crew_role status
-  tmux set-option -p -t "$status_pane" pane-border-format " #[bold]grid status#[nobold] "
+  decorate_pane "$status_pane" status
   tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
   tmux select-layout -t "$win" tiled
 fi
