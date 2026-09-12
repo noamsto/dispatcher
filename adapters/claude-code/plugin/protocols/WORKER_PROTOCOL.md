@@ -33,6 +33,50 @@ captured. Every later read is `--since $seen` per **Checkpoint-peek**.
 - **standard** — consult **Plan of record** (below) first; unless the plan already exists, run the `spec-plan-critic` workflow with `{ tier: 'standard', ... }` (plan + plan-critic only). Then execute the plan (of record, or returned by the workflow) via subagents, then the **fast deterministic gate** (build+vet+lint+unit on changed packages, looped to green), then the code-review gate (one pass), then `/deslop` + push + PR.
 - **deep** — run `spec-plan-critic` with `{ tier: 'deep', ... }` (spec + spec-critic, then — see **Orchestration consult** — an optional consultant decomposition seeds plan + plan-critic), then execute, then the **fast deterministic gate**, then the code-review gate (one parallel review batch, reconciled once, then a **conditional** second re-review), then `/deslop` + push + PR.
 
+## Grid mode (role panes)
+
+`WORKER_TASK.md` may stamp a `roles:` line. If it does, you are the **lead** of a
+role grid: those roles are already running as panes in your window, sharing this
+worktree, and parked on the crew bus under
+`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`). In
+grid mode you **do not** run the `spec-plan-critic` workflow or spawn the claude
+critic subagents — you delegate the critic/review phases your tier and
+plan-of-record call for to the role panes over the bus. **That is the point:**
+the pipeline stops depending on one engine's subagent feature, and the reviewers
+can be a different engine from you.
+
+For each critic/review phase your tier runs (the `spec-critic` / `plan-critic` /
+review gates above), the seam is:
+
+1. **Write the artifact** into the crew dir (from `WORKER_TASK.md`):
+   `<crew_dir>/artifacts/<branch>/<seam>.md` — `<seam>` is `spec`, `plan`, or
+   `review`. Create the dir. For review write the diff:
+   `git diff <base>...HEAD > <crew_dir>/artifacts/<branch>/review.diff`.
+2. **Assign** the role pane, naming the **absolute** artifact path and the verdict
+   you want:
+   ```
+   crew msg "role:$(git branch --show-current):<role>" \
+     '{"seam":"plan","artifact":"<abs path>","question":"Is this plan sound?"}'
+   ```
+3. **Await the verdict** — from your bash tool, with a tool timeout above the
+   await timeout (e.g. 360000ms):
+   ```
+   crew await "worker:$(git branch --show-current)" --timeout 300
+   ```
+   The reply is the role's verdict JSON (`verdict` / `findings` / `evidence`).
+4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
+   `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
+   plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.
+5. **Fold stragglers** after every await, before advancing, exactly as in
+   "Report to the bus": `crew inbox "worker:$(git branch --show-current)" --since <seen>`.
+
+A role is **one-shot per assignment** — after posting its verdict it re-parks.
+When the pipeline is done, release the roles so they exit:
+`crew msg "role:$(git branch --show-current):<role>" '{"final":true}'`; the
+window is reaped with the worker regardless. If a role has died (pane gone),
+fall back to the normal path for that phase and note it — never stall the
+pipeline on a missing role.
+
 ## Plan of record (does the plan already exist?)
 
 Before running any plan phase, read `plan:` from `WORKER_TASK.md`:

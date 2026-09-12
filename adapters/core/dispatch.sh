@@ -267,6 +267,8 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 {
   printf 'tier: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
     "$tier" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
+  # The role grid the lead should delegate to (absent = single-agent pipeline).
+  [ -n "$grid_roles" ] && printf 'roles: %s\n' "$grid_roles"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -297,6 +299,14 @@ fi
 plan_note=""
 if [ "$plan_val" = provided ]; then
   plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+fi
+
+# Grid mode: tell the lead it has role panes to delegate the critic/review phases
+# to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
+# "Grid mode"). Only reachable when --roles is set (pi-only in phase 1).
+grid_note=""
+if [ -n "$grid_roles" ]; then
+  grid_note=" You lead a role grid: role panes ($grid_roles) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
 fi
 
 if [ "$agent" = codex ]; then
@@ -331,7 +341,7 @@ elif [ "$agent" = pi ]; then
   # unattended run; global ~/.pi/agent config (auth, packages) still loads.
   # --thinking is a real knob (unlike cursor, where effort lives in the id).
   tmux send-keys -t "$pane" \
-    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
