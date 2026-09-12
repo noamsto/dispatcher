@@ -62,11 +62,21 @@ a deliberate "I need this turn now" override, never the cheap lane. When the bud
 class before walking down a tier — burn only sets model strength, tier sets
 review depth.
 
-| Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
-| ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** | **`openrouter/deepseek/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes |
-| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid |
+| Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi — work (lead + role grid) | pi — personal (lead + role grid) |
+| ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | ---------------------------- | ------------------------------- |
+| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** | **`openrouter/deepseek/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes | **`opencode/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes |
+| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes | **`opencode/minimax-m3`** + plan-critic, reviewer panes |
+| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid | **`opencode/deepseek-v4-flash`** — no grid |
+
+Two ladders on pi because the active provider is profile-keyed. OpenRouter ships on
+the work profile only (Noam has no OpenRouter account on a personal host); opencode
+Zen — the configured remote provider on a personal host — backs the personal
+ladder. The two ladders price-mirror each other (Zen rates per million tokens, from
+`~/.pi/agent/models-store.json` at `.opencode.models[].cost` input/output):
+`deepseek-v4-flash` 0.14/0.28, `minimax-m3` 0.30/1.20, `deepseek-v4-pro` 1.74/3.84.
+That ordering is what places `minimax-m3` on the personal standard rung even
+though `kimi-k3` (3.00/15.00) and `glm-5.3` (1.40/4.40) are also Zen members —
+kimi-k3 would make standard dearer than deep, which the table forbids.
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -185,9 +195,15 @@ the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
   `refresh-models` this check is always degraded and only the shape floor
   applies — "fail fast on a dead id" starts working the first time a human (or
   the dispatcher session) runs it, not out of the box.
-- **pi** — a provider-qualified id. The default OpenRouter ladder uses
-  `openrouter/deepseek/<model>`; this shape and the concrete defaults were
-  verified against `pi --list-models`.
+- **pi** — a provider-qualified id. The active ladder depends on the
+  profile: on the work profile `openrouter/deepseek/<model>` (Noam has an
+  OpenRouter account there); on the personal profile `opencode/<model>`
+  against opencode Zen — the only configured remote provider on a personal
+  host. Both shapes were verified against `pi --list-models`. The shape gate
+  is intentionally profile-agnostic: a model id is *dispatchable* on any
+  profile once it matches `^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$`,
+  and tier-appropriateness — the second gate — is what enforces the active
+  ladder (see "Tier map" below).
 
 The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
 map gate below enforces **tier-appropriateness**; the map above stays the
@@ -221,9 +237,17 @@ codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
 `gpt-5.4-mini`) on every tier; cursor also accepts `composer-2.5` /
 `composer-2.5-fast` on every tier, plus an effort-suffixed or bracketed
 cross-vendor `claude-*`/`gpt-*` id (the shape the Model gate's cursor arm
-already recognizes) on `deep` only. Pi accepts the OpenRouter DeepSeek worker
-for its row plus the adjacent cheaper row on standard/deep, matching
-`dispatch.sh` exactly.
+already recognizes) on `deep` only. Pi accepts the active profile's worker for its row plus an adjacent cheaper
+row on work's standard/deep and on personal's deep — matching `dispatch.sh`
+exactly. Work standard admits `openrouter/deepseek/deepseek-v4.1-flash` (the
+worker) plus `openrouter/deepseek/deepseek-v4-flash` (cheaper adjacent);
+work deep admits `openrouter/deepseek/deepseek-v4-pro` plus
+`openrouter/deepseek/deepseek-v4.1-flash` (the cheaper adjacent crossing
+tiers). Personal deep admits only `opencode/deepseek-v4-pro` (no cheaper
+adjacent rung exists on Zen between `deepseek-v4-pro` 1.74/3.84 and the
+next-deepest `glm-5.3` 1.40/4.40 — `minimax-m3` 0.30/1.20 sits between them
+but is the *standard* rung, not a deep adjacent). Personal standard admits
+only `opencode/minimax-m3`.
 
 Reject with the tier, the model given, the row's expected model(s) (rendered
 from the Model map / Burn classes above), and `--ignore-map`.
@@ -268,12 +292,18 @@ The dispatcher itself can run on any engine —
 gated; pi is all-profile. Orchestrator defaults — bump this table when a model
 ships:
 
-| engine | model | effort |
-| ------ | ----- | ------ |
-| claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
-| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
-| pi | **`openrouter/deepseek/deepseek-v4-pro`** | **high** through `--thinking` |
+| engine | model — work | model — personal | effort |
+| ------ | ------------ | ---------------- | ------ |
+| claude | **opus** | (same) | **high** — not xhigh, for the same bounded-wait reason as codex |
+| codex | **gpt-5.6-sol** | (work profile only, gate refuses) | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
+| cursor | **kimi-k3-high** | (work profile only, gate refuses) | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
+| pi | **`openrouter/deepseek/deepseek-v4-pro`** | **`opencode/deepseek-v4-pro`** | **high** through `--thinking` |
+
+A personal profile has OpenRouter unconfigured, so the work default would still
+*resolve* there — but the personal ladder is what the operator's `pi --list-models`
+actually shows, and the launcher's default is what runs when `--model` is not
+passed. Bump pair-wise (work + personal) when a model ships. `--model` / `--effort`
+override per launch.
 
 All four rows are pinned in `dispatcher.sh`, claude included — `/model` and
 `/effort` persist across sessions, so an unpinned claude dispatcher would inherit

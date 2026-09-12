@@ -182,8 +182,14 @@ pi)
   # effort knob. --no-approve ignores a target project's local resources; the
   # orchestrator runs in the dispatcher repo, and global ~/.pi/agent config
   # (auth, packages) still loads.
+  # Profile-keyed default: OpenRouter on work, opencode Zen on personal
+  # (Noam has no OpenRouter account on a personal host). --model still
+  # overrides either way. See dispatch-orchestration.md → "Orchestrator
+  # engines".
+  pi_default='openrouter/deepseek/deepseek-v4-pro'
+  [ "$profile" = personal ] && pi_default='opencode/deepseek-v4-pro'
   set -- --name "$session_name" \
-    --model "${model:-openrouter/deepseek/deepseek-v4-pro}" \
+    --model "${model:-$pi_default}" \
     --thinking "${effort:-high}" \
     --no-approve \
     --append-system-prompt "$protocol"
