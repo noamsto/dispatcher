@@ -40,10 +40,11 @@ default-plus-exception:
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.
-- pi leans: DeepSeek and other third-family models through OpenRouter, when an
-  independent non-Claude/non-OpenAI perspective is useful. It is available in
-  every profile. Standard and deep pi workers automatically receive role-grid
-  critic/reviewer panes because pi has no native subagents.
+- pi leans: DeepSeek and other third-family models — **OpenRouter on the work
+  profile, opencode Zen on personal** — when an independent non-Claude/non-OpenAI
+  perspective is useful. It is available on every profile, via those two routes.
+  Standard and deep pi workers automatically receive role-grid critic/reviewer
+  panes because pi has no native subagents.
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the
@@ -198,9 +199,10 @@ cache; do not infer that `null` means free or unlimited.
   work you'd shed last.
 
 **Profile constraint:** codex and cursor are both work-profile only — `dispatch`
-aborts `--agent codex` / `--agent cursor` off the work profile. On a
-personal-profile host the engine lever is claude + pi; all four engines are
-available on the work profile.
+aborts `--agent codex` / `--agent cursor` off the work profile. **pi ships on both
+profiles** but via different providers — OpenRouter on the work profile, opencode
+Zen on personal, keyed in `dispatcher.sh`'s `pi)` branch — so a personal-profile
+host is claude + pi (via opencode) and the work profile is all four.
 
 ## Scaffold one worker per task
 
@@ -235,7 +237,7 @@ is back.
   topology or choose a role model/engine, for example
   `--roles reviewer=claude:opus`. Role panes share the worktree, communicate
   through the bus, and never own the PR.
-- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine; Pi's default ladder uses fully-qualified OpenRouter ids such as `openrouter/deepseek/deepseek-v4-pro` (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Codex and cursor are work-profile only; pi is all-profile. Each needs one-time provider authentication. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
+- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine; Pi's default ladder is **profile-keyed** — `openrouter/deepseek/...` on work, `opencode/...` on personal (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Codex and cursor are work-profile only; pi is all-profile via two routes (OpenRouter on work, opencode Zen on personal). Each needs one-time provider authentication against its active provider. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
 - **MCP.** Claude, codex, and cursor inherit the configured base MCP stack. Pi uses its own global configuration. Add `--mcp <profile>` to layer on an extra Claude-only profile: `analytics` (posthog, work only). Unknown/ungenerated profiles abort before launch; non-Claude `--mcp` is rejected.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.
 

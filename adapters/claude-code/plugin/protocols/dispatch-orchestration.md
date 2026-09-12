@@ -273,11 +273,14 @@ ships:
 | claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
 | codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
 | cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
-| pi | **`openrouter/deepseek/deepseek-v4-pro`** | **high** through `--thinking` |
+| pi | work **`openrouter/deepseek/deepseek-v4-pro`** · personal **`opencode/deepseek-v4-pro`** (profile-keyed) | **high** through `--thinking` |
 
 All four rows are pinned in `dispatcher.sh`, claude included — `/model` and
 `/effort` persist across sessions, so an unpinned claude dispatcher would inherit
 whatever a previous cheap session left set and judge the whole fan-out on it.
+The `pi` row is **profile-keyed**: `dispatcher.sh`'s `pi)` branch defaults to
+`openrouter/deepseek/deepseek-v4-pro` on the work profile and
+`opencode/deepseek-v4-pro` on personal; `--model` overrides either.
 `--model` / `--effort` still override per launch.
 
 Claude and pi bake `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
