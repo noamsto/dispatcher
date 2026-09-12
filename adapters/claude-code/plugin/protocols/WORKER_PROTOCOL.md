@@ -53,9 +53,10 @@ review gates above), the seam is:
    `review`. Create the dir. For review write the diff:
    `git diff <base>...HEAD > <crew_dir>/artifacts/<branch>/review.diff`.
 2. **Assign** the role pane, naming the **absolute** artifact path and the verdict
-   you want:
+   you want. `crew msg` takes **`<from> <to> <body>`** — your from is
+   `worker:$(git branch --show-current)`:
    ```
-   crew msg "role:$(git branch --show-current):<role>" \
+   crew msg "worker:$(git branch --show-current)" "role:$(git branch --show-current):<role>" \
      '{"seam":"plan","artifact":"<abs path>","question":"Is this plan sound?"}'
    ```
 3. **Await the verdict** — from your bash tool, with a tool timeout above the
@@ -72,7 +73,7 @@ review gates above), the seam is:
 
 A role is **one-shot per assignment** — after posting its verdict it re-parks.
 When the pipeline is done, release the roles so they exit:
-`crew msg "role:$(git branch --show-current):<role>" '{"final":true}'`; the
+`crew msg "worker:$(git branch --show-current)" "role:$(git branch --show-current):<role>" '{"final":true}'`; the
 window is reaped with the worker regardless. If a role has died (pane gone),
 fall back to the normal path for that phase and note it — never stall the
 pipeline on a missing role.
