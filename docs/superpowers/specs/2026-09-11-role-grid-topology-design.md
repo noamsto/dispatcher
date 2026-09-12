@@ -136,8 +136,11 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
 1. **Mechanics (implemented).** `dispatch --roles <list>` creates the task window
    with a lead pane plus one pane per role, each launched with `GRID_PROTOCOL.md`,
    a `@crew_role` label, and a role-scoped identity. Default behavior unchanged.
-2. **Coordination.** `GRID_PROTOCOL.md` fleshed out; the lead sends assignments
-   and awaits verdicts; roles park and post. One `standard` task end-to-end.
+2. **Coordination (implemented, verified live).** `GRID_PROTOCOL.md` assignment/
+   verdict contract; the lead writes the artifact, assigns the role, awaits the
+   verdict, folds stragglers, and releases with `final`. Verified on
+   `noamsto/crew-smoke`: a pi/deepseek lead ran plan-critic → implement → reviewer
+   over the bus and opened a PR whose body cited both verdicts.
 3. **On-demand materialization + broker/status pane** for `deep`; `reap` role
    panes.
 4. **Tier defaults + role→engine map**, so `dispatch` materializes the right
