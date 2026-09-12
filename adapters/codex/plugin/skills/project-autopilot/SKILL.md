@@ -3,7 +3,6 @@ name: project-autopilot
 description: 'Fan out /dispatcher:autopilot across a Linear project: one teammate per ticket → PR per ticket'
 ---
 
-
 # Project Autopilot: Multi-Ticket Fan-Out
 
 You are the **team lead**. You select a batch of Linear tickets from a project, spawn one teammate per ticket, and each teammate runs `/dispatcher:autopilot TICKET-ID` end-to-end in its own worktree. You coordinate; you do not implement.

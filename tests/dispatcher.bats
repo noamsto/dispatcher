@@ -10,7 +10,7 @@ setup() {
   stub_bin cursor-agent
   stub_bin pi
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
-  unset TMUX
+  unset TMUX CREW_ID
 }
 
 teardown() {
@@ -55,6 +55,21 @@ teardown() {
 @test "passes the protocol to claude as an appended system prompt" {
   CREW_ID=c1 run_launcher
   run grep -F -- '--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "pins the claude orchestrator model and effort" {
+  # Unpinned, the launcher inherited the persisted /model and /effort toggles,
+  # so a dispatcher could silently judge a whole fan-out on a cheap session's
+  # leftovers. codex and cursor were already pinned; claude was the gap.
+  CREW_ID=c1 run_launcher
+  run grep -F -- '--model opus --effort high' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "an explicit model and effort still override the claude pins" {
+  CREW_ID=c1 run_launcher --model sonnet --effort max
+  run grep -F -- '--model sonnet --effort max' "$STUB_LOG"
   [ "$status" -eq 0 ]
 }
 
@@ -137,4 +152,29 @@ teardown() {
   pid="$(grep -x 'register [0-9][0-9]*' "$STUB_LOG" | awk '{print $2}')"
   [ -n "$pid" ]
   [ "$pid" -gt 0 ]
+}
+
+@test "survives a tmux without lazytmux's @reflow_bin" {
+  # A missing reflow must not abort the launcher under `set -e`.
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+}
+
+@test "reflows through the path lazytmux stamps in @reflow_bin" {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+[ "$1" = show-option ] && echo "$STUB_DIR/reflow"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cat >"$STUB_DIR/reflow" <<'EOF'
+#!/usr/bin/env bash
+printf 'reflow %s\n' "$*" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/reflow"
+
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  run grep -c '^reflow ' "$STUB_LOG"
+  [ "$output" = "1" ]
 }

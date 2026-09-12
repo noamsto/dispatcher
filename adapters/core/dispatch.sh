@@ -7,10 +7,21 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--lazy] [--status] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
-  echo "       dispatch --spawn-role <role> [--agent E] [--model M] [--effort E]   # create a lazy grid's role pane on demand" >&2
-  echo "       dispatch --reap-roles                                            # kill this window's role panes" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
+
+# Ensure the `dispatched` claim-marker label exists. A no-op if it already
+# does — must never abort a dispatch on that account.
+_ensure_dispatched_label() {
+  gh label create dispatched --color 1D76DB \
+    --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
+}
+
+# crew.sh's atomic-append helper, duplicated (not sourced): this file builds
+# as its own standalone writeShellApplication with no shared lib. A bare
+# `printf >>` isn't one write(2), so concurrent writers to this shared log
+# can splice a large line with another process's append (#55, #61).
+_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
 # and protocol edits take effect on the next dispatch with no rebuild. The
@@ -21,7 +32,7 @@ PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
 # role_color <role> — a stable tmux colour per role. Known roles get a semantic
 # colour; anything else falls back to crew's deterministic FleetView palette, so
-# a role is always the same colour run to run ("always the same per role").
+# a role is always the same colour run to run.
 role_color() {
   case "$1" in
   spec-critic) printf 'colour141' ;; # mauve
@@ -33,18 +44,17 @@ role_color() {
   esac
 }
 
-# decorate_pane <pane> <role> — put the role on the pane border and colour that
-# border by role. tmux keeps these styles per pane, so a role's colour and label
-# survive a tiled layout and a zoom (prefix+z). Also turns pane borders on for the
-# window, so the labels are actually rendered.
+# decorate_pane <pane> <role> — put the role on the pane border, colour that
+# border by role, and seed @crew_state (rendered on the border). tmux keeps these
+# per pane, so a role's colour and label survive a tiled layout and a zoom.
 decorate_pane() {
   local pane="$1" role="$2" color
   color="$(role_color "$role")"
   tmux set-option -p -t "$pane" @crew_role "$role"
   tmux set-option -p -t "$pane" @crew_role_color "$color"
+  tmux set-option -p -t "$pane" @crew_state idle
   tmux set-option -p -t "$pane" pane-border-style "bg=#{@thm_bg},fg=$color"
   tmux set-option -p -t "$pane" pane-active-border-style "bg=#{@thm_bg},fg=$color,bold"
-  tmux set-option -p -t "$pane" @crew_state idle
   tmux set-option -p -t "$pane" pane-border-format " #[bold]#{@crew_role}#[nobold] #{@crew_state} "
   tmux set-option -w -t "$pane" pane-border-status top
 }
@@ -59,111 +69,34 @@ split_role_pane() {
 }
 
 # launch_role <pane> <role> <agent> <model> — launch the role's engine with
-# GRID_PROTOCOL as its system prompt (appended where the engine supports it,
-# first prompt otherwise). Reads $agent_name / $effort from the caller scope.
+# GRID_PROTOCOL as its system prompt (appended where supported, first prompt
+# otherwise). Reads $agent_name / $effort from the caller scope.
 launch_role() {
-  local pane="$1" role="$2" r_agent="$3" r_model="$4"
-  local prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
-  local first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
+  local pane="$1" role="$2" r_agent="$3" r_model="$4" prompt first quoted_model
+  printf -v quoted_model '%q' "$r_model"
+  prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
+  first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
   case "$r_agent" in
-  pi) tmux send-keys -t "$pane" "pi --name ${agent_name}-${role} --model $r_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter ;;
-  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $r_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
-  codex) tmux send-keys -t "$pane" "codex --profile worker -m $r_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
-  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$r_model' '$first'" Enter ;;
+  pi) tmux send-keys -t "$pane" "pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter ;;
+  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
+  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
+  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model '$first'" Enter ;;
   esac
 }
 
-# watch_role <role> <pane> — spawn the detached bus watcher for a role pane. The
-# watcher (engine-agnostic) types each assignment into the pane and keeps
-# @crew_state fresh, so the role never holds a repainting `crew await`.
+# watch_role <role> <pane> — spawn the detached, engine-agnostic bus watcher for
+# a role pane. It types each assignment into the pane and keeps @crew_state
+# fresh, so the role never holds a repainting `crew await`.
 watch_role() {
   nohup "$0" --role-watch "$1" --pane "$2" --branch "$branch" >/dev/null 2>&1 &
 }
 
-# `dispatch --spawn-role <role>` — create a role pane on demand in the caller's
-# own tmux window/worktree, from the grid recorded in roles.json. Idempotent:
-# reuses an existing pane for that role. Used by a lazy grid's lead at a seam.
-if [ "${1:-}" = "--spawn-role" ]; then
-  role="${2:-}"
-  [ -n "$role" ] || {
-    echo "dispatch: --spawn-role needs a role name" >&2
-    exit 1
-  }
-  shift 2
-  spawn_agent=""
-  spawn_model=""
-  spawn_effort=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --agent) spawn_agent="${2:-}"; shift 2 ;;
-    --model) spawn_model="${2:-}"; shift 2 ;;
-    --effort) spawn_effort="${2:-}"; shift 2 ;;
-    *)
-      echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
-      exit 1
-      ;;
-    esac
-  done
-  [ -f WORKER_TASK.md ] || {
-    echo "dispatch: --spawn-role must run inside a worker worktree (no WORKER_TASK.md)" >&2
-    exit 1
-  }
-  [ -n "${TMUX_PANE:-}" ] || {
-    echo "dispatch: --spawn-role must run inside tmux" >&2
-    exit 1
-  }
-  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  branch="$(git branch --show-current)"
-  roles_file="$crew_dir/artifacts/$branch/roles.json"
-  [ -f "$roles_file" ] || {
-    echo "dispatch: no role grid recorded for $branch (dispatch without --lazy to use an up-front grid)" >&2
-    exit 1
-  }
-  spec="$(jq -r --arg r "$role" '.[$r] // empty | "\(.agent) \(.model)"' "$roles_file")"
-  [ -n "$spec" ] || {
-    echo "dispatch: role '$role' is not part of this grid" >&2
-    exit 1
-  }
-  agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
-  effort="${spawn_effort:-$(sed -n 's/^effort: //p' WORKER_TASK.md)}"
-  spawn_agent="${spawn_agent:-${spec%% *}}"
-  spawn_model="${spawn_model:-${spec#* }}"
-  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
-  existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
-  if [ -n "$existing" ]; then
-    echo "role $role is already running in pane $existing"
-    exit 0
-  fi
-  pane="$(split_role_pane "$win" "$PWD" "$role")"
-  launch_role "$pane" "$role" "$spawn_agent" "$spawn_model"
-  watch_role "$role" "$pane"
-  echo "spawned role $role ($spawn_agent/$spawn_model) in $pane"
-  exit 0
-fi
-
-# `dispatch --reap-roles` — kill every role pane in the caller's window, so a
-# finished grid reclaims its space without waiting for the whole window's reap.
-if [ "${1:-}" = "--reap-roles" ]; then
-  [ -n "${TMUX_PANE:-}" ] || {
-    echo "dispatch: --reap-roles must run inside tmux" >&2
-    exit 1
-  }
-  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
-  tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | while read -r p r; do
-    [ -n "$r" ] || continue
-    [ "$p" = "$TMUX_PANE" ] && continue
-    tmux kill-pane -t "$p" 2>/dev/null || true
-  done
-  echo "reaped role panes"
-  exit 0
-fi
-
 # `dispatch --role-watch <role> --pane <pane> [--branch <b>] [--interval S]` —
-# a detached, ENGINE-AGNOSTIC role supervisor. It watches the crew bus and, when
-# the lead assigns this role work, types the assignment into the role's pane (a
-# normal user turn) and keeps the pane's @crew_state fresh. That lets a role end
-# its turn instead of holding a repainting `crew await`, and it needs only the
-# pane and the bus — so it works for every engine, pi included.
+# an ENGINE-AGNOSTIC role supervisor. It watches the crew bus and, when the lead
+# assigns this role work, types the assignment into the role's pane (a normal
+# user turn) and keeps the pane's @crew_state fresh. That lets a role end its
+# turn instead of holding a repainting `crew await`, and it needs only the pane
+# and the bus — so it works for every engine, pi included.
 if [ "${1:-}" = "--role-watch" ]; then
   role="${2:-}"
   [ -n "$role" ] || {
@@ -221,6 +154,91 @@ if [ "${1:-}" = "--role-watch" ]; then
   exit 0
 fi
 
+# `dispatch --spawn-role <role>` — create a lazy grid's role pane on demand in
+# the caller's own window/worktree, from roles.json. Idempotent.
+if [ "${1:-}" = "--spawn-role" ]; then
+  role="${2:-}"
+  [ -n "$role" ] || {
+    echo "dispatch: --spawn-role needs a role name" >&2
+    exit 1
+  }
+  shift 2
+  spawn_agent=""
+  spawn_model=""
+  spawn_effort=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --agent) spawn_agent="${2:-}"; shift 2 ;;
+    --model) spawn_model="${2:-}"; shift 2 ;;
+    --effort) spawn_effort="${2:-}"; shift 2 ;;
+    *)
+      echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -f WORKER_TASK.md ] || {
+    echo "dispatch: --spawn-role must run inside a worker worktree (no WORKER_TASK.md)" >&2
+    exit 1
+  }
+  [ -n "${TMUX_PANE:-}" ] || {
+    echo "dispatch: --spawn-role must run inside tmux" >&2
+    exit 1
+  }
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  branch="$(git branch --show-current)"
+  roles_file="$crew_dir/artifacts/$branch/roles.json"
+  [ -f "$roles_file" ] || {
+    echo "dispatch: no role grid recorded for $branch (dispatch without --lazy to use an up-front grid)" >&2
+    exit 1
+  }
+  spec="$(jq -r --arg r "$role" '.[$r] // empty | "\(.agent) \(.model)"' "$roles_file")"
+  [ -n "$spec" ] || {
+    echo "dispatch: role '$role' is not part of this grid" >&2
+    exit 1
+  }
+  agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
+  effort="${spawn_effort:-$(sed -n 's/^effort: //p' WORKER_TASK.md)}"
+  spawn_agent="${spawn_agent:-${spec%% *}}"
+  spawn_model="${spawn_model:-${spec#* }}"
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
+  if [ -n "$existing" ]; then
+    echo "role $role is already running in pane $existing"
+    exit 0
+  fi
+  role_pane="$(split_role_pane "$win" "$PWD" "$role")"
+  launch_role "$role_pane" "$role" "$spawn_agent" "$spawn_model"
+  watch_role "$role" "$role_pane"
+  echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
+  exit 0
+fi
+
+# `dispatch --reap-roles` — kill every role pane in the caller's window.
+if [ "${1:-}" = "--reap-roles" ]; then
+  [ -n "${TMUX_PANE:-}" ] || {
+    echo "dispatch: --reap-roles must run inside tmux" >&2
+    exit 1
+  }
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | while read -r p r; do
+    [ -n "$r" ] || continue
+    [ "$p" = "$TMUX_PANE" ] && continue
+    tmux kill-pane -t "$p" 2>/dev/null || true
+  done
+  echo "reaped role panes"
+  exit 0
+fi
+
+# `dispatch resume` is its own binary — resume skips the issue claim, branch
+# creation, task-document rewrite and new-window paths this file is built
+# around. Intercepted here so the subcommand reads as part of dispatch, and
+# before the positional tier parse below, which would reject it as a tier.
+if [ "${1:-}" = resume ]; then
+  shift
+  exec dispatch-resume "$@"
+fi
+
 tier="${1:-}"
 model="${2:-}"
 case "$tier" in
@@ -243,6 +261,9 @@ agent=claude
 effort=""
 linear_id=""
 gh_issue=""
+pr_number=""
+base_ref=""
+kind=implement
 mcp_profile=""
 grid_roles=""
 grid_flag=""
@@ -250,6 +271,12 @@ grid_lazy=""
 grid_status=""
 crew_id_flag=""
 plan_val="required"
+ignore_budget=""
+ignore_map=""
+draft=false
+if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
+  draft=true
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
   --agent)
@@ -321,6 +348,34 @@ while [ $# -gt 0 ]; do
     esac
     shift 2
     ;;
+  --pr)
+    pr_number="${2:-}"
+    [ -n "$pr_number" ] || {
+      echo "dispatch: --pr needs a PR number" >&2
+      exit 1
+    }
+    shift 2
+    ;;
+  --review)
+    kind=review
+    shift
+    ;;
+  --draft)
+    draft=true
+    shift
+    ;;
+  --no-draft)
+    draft=false
+    shift
+    ;;
+  --ignore-budget)
+    ignore_budget=1
+    shift
+    ;;
+  --ignore-map)
+    ignore_map=1
+    shift
+    ;;
   *)
     if printf '%s' "$1" | grep -Eq '^[A-Z]{2,}-[0-9]+$'; then
       linear_id="$1"
@@ -335,17 +390,50 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ "$kind" = review ] && [ "$draft" = true ]; then
+  echo "dispatch: --draft cannot be combined with --review" >&2
+  exit 1
+fi
+
 [ -n "$effort" ] || {
   echo "dispatch: --effort is required and must be judged independently from tier" >&2
   exit 1
 }
 
+if [ -n "$pr_number" ]; then
+  if ! printf '%s' "$pr_number" | grep -Eq '^[0-9]+$'; then
+    echo "dispatch: --pr needs a PR number" >&2
+    exit 1
+  fi
+  if [ -n "$linear_id" ] || [ -n "$gh_issue" ]; then
+    echo "dispatch: --pr cannot combine with a Linear id or GitHub issue token" >&2
+    exit 1
+  fi
+fi
+
+# Reject before scaffolding: without a PR there is no head to attach to, and a
+# review worker on a freshly minted feature branch has nothing to review. The
+# contract file is checked here for the same reason — $DISPATCHER_PROTOCOL_DIR
+# can point at a checkout predating it, and a review worker launched without the
+# contract runs the implement pipeline against someone else's PR head.
+review_contract="$PROTOCOL_DIR/REVIEW_TASK.md"
+if [ "$kind" = review ]; then
+  [ -n "$pr_number" ] || {
+    echo "dispatch: --review requires --pr N" >&2
+    exit 1
+  }
+  [ -f "$review_contract" ] || {
+    echo "dispatch: --review found no review contract at $review_contract" >&2
+    exit 1
+  }
+fi
+
 # Crew id: explicit flag > inherited env > error. Launcher dispatchers inherit
 # $CREW_ID from the claude process env; in-session dispatchers pass --crew-id.
 crew_id="${crew_id_flag:-${CREW_ID:-}}"
 [ -n "$crew_id" ] || {
-  # shellcheck disable=SC2016  # $CREW_ID is documentation text, not an expansion
-  echo 'dispatch: no crew id — pass --crew-id <id> (in-session) or run under a launcher/registered dispatcher ($CREW_ID)' >&2
+  # shellcheck disable=SC2016  # $PPID is documentation text, not an expansion
+  echo 'dispatch: no crew id — run '\''crew crews'\'' to find this repo'\''s crews and '\''crew adopt <id> $PPID'\'' to re-attach, or '\''crew new'\'' to start one; then pass --crew-id <id> or export CREW_ID' >&2
   exit 1
 }
 
@@ -362,8 +450,229 @@ if [ "$agent" = cursor ] && [ "$profile" != work ]; then
   echo "dispatch: --agent cursor is work-profile only" >&2
   exit 1
 fi
-# claude's and pi's --effort top out at max; rejecting `ultra` here fails before
-# the worktree and pane exist, instead of at worker launch.
+
+# Model gate. Reject a slug the chosen engine cannot run before anything is
+# scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
+# worktree, window and issue already paid for. Shape, not a model list: this
+# file bakes into a store path, so a membership table would make every model
+# bump a rebuild.
+# Unanchored at the front on purpose: `gpt-5.5-extra-high` is a real cursor id
+# and matches on its trailing `-high`.
+re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
+if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
+  echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
+else
+  case "$agent" in
+  claude)
+    re_claude_id='^claude-[a-z0-9]+(-[a-z0-9]+)*$'
+    if [[ $model =~ $re_claude_id ]] && [[ $model =~ $re_effort_tail ]]; then
+      echo "dispatch: model '$model' is an effort-suffixed cursor id — on --agent claude pass the bare id and set intensity with --effort. Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
+      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5-1). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  codex)
+    if [[ ! $model =~ ^gpt-[0-9]+\.[0-9]+-[a-z0-9]+$ ]] && [[ ! $model =~ ^gpt-5\.[45]$ ]]; then
+      if [[ $model =~ ^gpt-[0-9]+\.[0-9]+$ ]]; then
+        gen="${model#gpt-}"
+        echo "dispatch: model '$model' is not a codex slug — the $gen family ships only as variants (gpt-$gen-sol, gpt-$gen-terra, gpt-$gen-luna); there is no bare $model. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # The cache tightens the grammar and is never a prerequisite for it: probe
+    # usability separately so the membership test's non-zero can only mean "not
+    # on this account". Conflated, a rotated or half-written cache would block
+    # every codex dispatch behind a file nobody edits by hand. The `?|strings`
+    # projection is what makes that hold for a file that parses but whose
+    # entries are not `{slug: string}` — a bare `.slug` there is a jq error, and
+    # under `set -e` that kills dispatch even for a valid slug.
+    codex_cache="$HOME/.codex/models_cache.json"
+    if jq -e '[.models[]?|.slug?|strings]|length > 0' "$codex_cache" >/dev/null 2>&1 &&
+      ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
+      # Filtered to what the grammar accepts — the raw list advertises
+      # codex-auto-review, an internal review model the gate rejects anyway.
+      # Controls are stripped because this lands on a terminal, where an escape
+      # sequence in a slug would be interpreted rather than shown.
+      known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
+      echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  cursor)
+    # Cursor fronts other vendors, so id shape is always checked but
+    # membership is only knowable offline, best-effort, via a refreshed
+    # cache — and only for a subset of cursor's id space (see below).
+    # BASH_REMATCH is clobbered by the next [[ =~ ]], so both groups are
+    # captured on the spot.
+    re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+    cursor_base=""
+    cursor_params=""
+    if [[ $model =~ $re_cursor ]]; then
+      cursor_base="${BASH_REMATCH[1]}"
+      cursor_params="${BASH_REMATCH[2]}"
+    fi
+    if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.6-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
+    # the id itself; a bracket block exempts only by naming effort= there.
+    if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
+      echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    # Existence check against a refresh-models.sh cache (same `?|strings`
+    # idiom as codex's cache check above). Only for non-bracketed ids: a
+    # bracketed cell like claude-opus-5[effort=high] resolves its real slug
+    # from the bracket's effort= param, and cursor's live catalog only lists
+    # the effort-suffixed forms (claude-opus-5-high, not bare claude-opus-5)
+    # — so cursor_base there isn't itself an invocable id. A non-bracketed
+    # id is checked verbatim, since cursor_base then equals the whole
+    # $model, exactly what the live catalog lists.
+    if [ -z "$cursor_params" ]; then
+      cursor_cache="${XDG_DATA_HOME:-$HOME/.local/share}/crew/cursor-models-cache.json"
+      # 24h, not the budget gate's 2h: a model catalog moves at the cadence
+      # of new releases (days-to-weeks), not quota's hour-to-hour churn — a
+      # 2h bound would leave this degraded almost all the time between
+      # manual refresh-models runs.
+      if jq -e --argjson now "$(date +%s)" '($now - .fetched_epoch) < 86400 and ([.models[]?|.slug?|strings]|length > 0)' "$cursor_cache" >/dev/null 2>&1 &&
+        ! jq -e --arg m "$cursor_base" '[.models[]?|.slug?|strings]|index($m)' "$cursor_cache" >/dev/null; then
+        known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")]|join(", ")' "$cursor_cache")"
+        echo "dispatch: model '$model' is not in this account's cursor model list ($cursor_cache: $known). If it is genuinely new, run refresh-models to update the cache, or set DISPATCH_SKIP_MODEL_CHECK=$model. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+    fi
+    ;;
+  pi)
+    if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
+  esac
+fi
+
+# Tier↔model gate (#89). Enforces tier-appropriateness on top of
+# the dispatchability gate above — see dispatch-orchestration.md
+# "Tier map". DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
+# about shape/cache staleness, not tier); --ignore-map does.
+if [ -z "$ignore_map" ]; then
+  tier_ok=1
+  tier_expected=""
+  case "$agent" in
+  claude)
+    case "$tier" in
+    deep)
+      tier_expected="opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*"
+      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|fable|claude-fable-.*)$ ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="sonnet or claude-sonnet-*"
+      [[ $model =~ ^(sonnet|claude-sonnet-.*)$ ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
+      [[ $model =~ ^(sonnet|claude-sonnet-.*|haiku|claude-haiku-.*)$ ]] || tier_ok=0
+      ;;
+    # An unhandled tier can't happen today (the top-of-file case at line 34
+    # already restricts $tier to trivial|standard|deep before this code
+    # runs) — but fail CLOSED rather than silently accepting every model,
+    # in case a future tier is ever added there without a matching update
+    # here.
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  codex)
+    re_codex_legacy='^(gpt-5\.5|gpt-5\.4|gpt-5\.4-mini)$'
+    case "$tier" in
+    deep)
+      tier_expected="gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^(gpt-5\.6-sol|gpt-5\.6-terra)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^(gpt-5\.6-terra|gpt-5\.6-luna)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      [[ $model =~ ^gpt-5\.6-luna$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  cursor)
+    # Self-contained for $tiermap_cursor_base/$tiermap_cursor_params (unset
+    # on the DISPATCH_SKIP_MODEL_CHECK skip path above) — but
+    # $re_effort_tail is safe to reuse as-is: it's assigned once, before
+    # that skip branch splits, so it's set on both paths.
+    tiermap_re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+    tiermap_cursor_base="" tiermap_cursor_params=""
+    if [[ $model =~ $tiermap_re_cursor ]]; then
+      tiermap_cursor_base="${BASH_REMATCH[1]}"
+      tiermap_cursor_params="${BASH_REMATCH[2]}"
+    fi
+    # composer-2.5[-fast] has no effort variants (dispatch-orchestration.md),
+    # so a bracket block on it is never legitimate — require the whole
+    # model string to match, not just the base.
+    tiermap_is_composer=0
+    [[ $model =~ ^composer-2\.5(-fast)?$ ]] && tiermap_is_composer=1
+    tiermap_is_alt_effort=0
+    if [[ $tiermap_cursor_base =~ ^(claude|gpt)- ]] && { [[ $tiermap_cursor_base =~ $re_effort_tail ]] || [[ $tiermap_cursor_params =~ (\[|,)effort= ]]; }; then
+      tiermap_is_alt_effort=1
+    fi
+    # The gate enforces EFFORT appropriateness, so each row accepts its rung
+    # with or without `-fast`: the suffix is a price/speed choice (2x the token
+    # rate), not a different rung. The Tier map names the non-fast slug as the
+    # default and `-fast` is the deliberate "I want this now" override.
+    case "$tier" in
+    deep)
+      tier_expected="kimi-k3-high, cursor-grok-4.6-medium[-fast], cursor-grok-4.6-high[-fast], composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
+      [[ $model =~ ^(kimi-k3-high|cursor-grok-4\.6-(medium|high)(-fast)?)$ ]] ||
+        [ "$tiermap_is_composer" = 1 ] || [ "$tiermap_is_alt_effort" = 1 ] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="cursor-grok-4.6-medium[-fast], cursor-grok-4.6-low[-fast], or composer-2.5[-fast]"
+      [[ $model =~ ^cursor-grok-4\.6-(medium|low)(-fast)?$ ]] ||
+        [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="cursor-grok-4.6-low[-fast] or composer-2.5[-fast]"
+      [[ $model =~ ^cursor-grok-4\.6-low(-fast)?$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  pi)
+    case "$tier" in
+    deep)
+      tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
+  esac
+  if [ "$tier_ok" = 0 ]; then
+    echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+    exit 1
+  fi
+fi
+
+# claude's and pi's --effort top out at max; rejecting `ultra` here fails before the
+# worktree and pane exist, instead of at worker launch.
 if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; then
   echo "dispatch: --effort ultra is codex-only; $agent tops out at max" >&2
   exit 1
@@ -371,6 +680,88 @@ fi
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
+fi
+
+# Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
+# cache is advisory data from refresh-budget — fail open when it is missing,
+# stale (>2h), or silent on this engine ("unknown" is never "exhausted").
+# --ignore-budget is the manual escape hatch (e.g. credits cover the overage).
+budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
+  exhausted=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
+    if (.fetched_epoch + 7200) < $now then empty
+    elif .engines[$e] == null then empty
+    else .engines[$e].windows | to_entries[]
+      | select(.value.used_pct >= 95)
+      | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
+    end' "$budget_file" 2>/dev/null || true)
+  if [ -n "$exhausted" ]; then
+    echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    exit 1
+  fi
+fi
+
+# Budget-aware rung refusal (#89): once codex/claude/cursor's 7d
+# burn crosses 70%, refuse the premium rung specifically and name the
+# standard-class alternative — before the engine goes fully dark at
+# 95% (the gate above). See dispatch-orchestration.md "Tier map".
+if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
+  rung_downgrade=""
+  case "$agent:$model" in
+  claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*)
+    rung_downgrade="sonnet"
+    ;;
+  codex:gpt-5.6-sol)
+    rung_downgrade="gpt-5.6-terra"
+    ;;
+  # Matches bare and bracketed forms: cursor-grok-4.6-high[effort=high] is
+  # dispatchable via the Tier map gate's deep row too. Inert today —
+  # refresh-budget.sh hardcodes cursor quota to null.
+  cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[*)
+    rung_downgrade="cursor-grok-4.6-medium"
+    ;;
+  esac
+  if [ -n "$rung_downgrade" ]; then
+    # A window is a rate limit, not a balance: past the 70% floor, refuse only
+    # when burn is also >15 points ahead of the window's elapsed fraction
+    # (dispatch-orchestration.md "Tier map"). A null resets_at degrades to the
+    # flat >=70 rule; 7d is the only key read here, so its length is always
+    # 604800. Emits "<used>" on the flat path, "<used>|<ahead>" on the pace
+    # one — test for the "|" before splitting, since ${v#*|} yields the whole
+    # string when there is none.
+    rung_pct=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
+      def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
+        | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+      if (.fetched_epoch + 7200) < $now then empty
+      elif .engines[$e] == null then empty
+      elif .engines[$e].windows["7d"] == null then empty
+      else
+        .engines[$e].windows["7d"] as $w
+        | if $w.used_pct < 70 then empty
+          elif $w.resets_at == null then "\($w.used_pct)"
+          else
+            ($w.used_pct - elapsed_pct($w)) as $ahead
+            | if $ahead > 15 then "\($w.used_pct)|\($ahead | round)" else empty end
+          end
+      end' "$budget_file" 2>/dev/null || true)
+    if [ -n "$rung_pct" ]; then
+      used_pct="$rung_pct"
+      pace_notice=""
+      pace_clause=""
+      if [[ $rung_pct == *"|"* ]]; then
+        used_pct="${rung_pct%%|*}"
+        ahead="${rung_pct#*|}"
+        pace_notice=" ($ahead ahead of pace)"
+        pace_clause=" and $ahead points ahead of pace"
+      fi
+      if [ "${DISPATCH_IGNORE_RUNG:-}" = "$model" ]; then
+        echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$model' on --agent $agent at 7d ${used_pct}%${pace_notice}" >&2
+      else
+        echo "dispatch: $agent 7d is at ${used_pct}%${pace_clause} — the premium rung ($model) is refused; use the standard rung ($rung_downgrade) instead, set DISPATCH_IGNORE_RUNG=$model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+        exit 1
+      fi
+    fi
+  fi
 fi
 
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
@@ -381,6 +772,9 @@ fi
 role_names=()
 role_agents=()
 role_models=()
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+  grid_flag=1
+fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
   case "$tier" in
   trivial) grid_roles="" ;;
@@ -391,7 +785,10 @@ fi
 if [ -n "$grid_roles" ]; then
   IFS=',' read -r -a role_specs <<<"$grid_roles"
   for spec in "${role_specs[@]}"; do
-    [ -n "$spec" ] || continue
+    [ -n "$spec" ] || {
+      echo "dispatch: role list contains an empty entry" >&2
+      exit 1
+    }
     role="${spec%%=*}"
     rest=""
     [ "$role" != "$spec" ] && rest="${spec#*=}"
@@ -401,6 +798,12 @@ if [ -n "$grid_roles" ]; then
       exit 1
       ;;
     esac
+    for existing_role in "${role_names[@]}"; do
+      [ "$existing_role" != "$role" ] || {
+        echo "dispatch: duplicate role '$role'" >&2
+        exit 1
+      }
+    done
     role_agent="$agent"
     role_model="$model"
     if [ -n "$rest" ]; then
@@ -408,10 +811,28 @@ if [ -n "$grid_roles" ]; then
       claude | codex | cursor | pi)
         role_agent="${rest%%:*}"
         role_model="${rest#*:}"
-        [ "$role_model" = "$rest" ] && role_model="$model"
+        [ -n "$role_model" ] || {
+          echo "dispatch: role '$role' needs a model after '$role_agent:'" >&2
+          exit 1
+        }
         ;;
       *) role_model="$rest" ;;
       esac
+    fi
+    role_model_ok=1
+    case "$role_agent" in
+    claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] || role_model_ok=0 ;;
+    codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] || role_model_ok=0 ;;
+    cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] || role_model_ok=0 ;;
+    pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || role_model_ok=0 ;;
+    esac
+    if [ "$role_model_ok" = 0 ]; then
+      echo "dispatch: invalid model '$role_model' for role '$role'" >&2
+      exit 1
+    fi
+    if { [ "$role_agent" = claude ] || [ "$role_agent" = pi ]; } && [ "$effort" = ultra ]; then
+      echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
+      exit 1
     fi
     case "$role_agent" in
     codex | cursor)
@@ -458,37 +879,79 @@ title="$*"
   exit 1
 }
 
-# Reclaim workers whose PR already landed, before adding another one. Cheapest
-# possible cleanup schedule: no daemon, no timer, and it runs exactly when the
-# worktree/window count is about to grow. Non-fatal by construction — a dispatch
-# must never fail because cleanup of unrelated, already-merged work failed.
-crew reap --quiet || true
+# Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
+# are properties of now — profile, model shape, effort ceiling, quota, rung —
+# rather than re-deriving them in a second copy that would drift. Everything
+# above this point is pure validation: `_ensure_dispatched_label` and
+# `crew reap` are below, as is the first string of scaffolding, so exiting
+# here has no side effects. Resume suppresses the tier↔model gate for a pair
+# the first dispatch already accepted by passing the existing --ignore-map.
+if [ -n "${DISPATCH_PRECHECK:-}" ]; then
+  exit 0
+fi
 
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
-# Identity + closes line. Linear mode derives both from the ticket (no gh); a
-# passed GitHub issue number reuses that issue (no gh call). Otherwise GitHub
-# mode mints an issue and aborts cleanly if that fails (issues disabled) rather
-# than scaffolding a half-broken worker off an empty number.
-if [ -n "$linear_id" ]; then
-  branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
-  closes="Closes $linear_id"
-elif [ -n "$gh_issue" ]; then
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+mkdir -p "$crew_dir"
+
+# Hoisted above the claim gate (#73): the gate keys its resume exemption on the
+# resolved branch and records the claim to the bus under $crew_dir. All three are
+# pure — string work, one `git rev-parse`, one `mkdir -p` — so the gate keeps its
+# stated property of running before ANY scaffolding.
+if [ -n "$gh_issue" ]; then
   branch="feat/$gh_issue-$slug"
-  closes="Closes #$gh_issue"
-else
-  url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
-  num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
-  [ -n "$num" ] || {
-    echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
-    exit 1
-  }
-  branch="feat/$num-$slug"
-  closes="Closes #$num"
 fi
 
-sanitized="${branch//\//-}"
+# Claim: GitHub issue only. $gh_issue is empty for both a Linear dispatch
+# (own status/assignee semantics — every issue here already has an assignee,
+# so that can't double as a claim signal) and a --pr review dispatch
+# (attaches to a PR, not an issue) — reusing the tracker detection below
+# rather than a second one. Read-then-claim runs before ANY scaffolding,
+# reap's sweep included, so a same-issue dispatcher racing at human timescale
+# loses on the label read, not after building a worktree. gh has no
+# compare-and-swap, so this narrows that race rather than closing it.
+if [ -n "$gh_issue" ]; then
+  _ensure_dispatched_label
+  issue_labels="$(gh issue view "$gh_issue" --json labels --jq '.labels[].name')" || {
+    echo "dispatch: could not read labels for issue #$gh_issue" >&2
+    exit 1
+  }
+  # Resume exemption (#73): a claimed issue still dispatches when the branch it
+  # resolves to already exists — that is the interrupted run being continued, not
+  # a second crew forking. Keyed on the exact branch, so a reworded dispatch
+  # resolves to a name that does not exist and is still refused. Who is live on
+  # that branch stays the occupancy gate's call, as for every other dispatch.
+  if printf '%s\n' "$issue_labels" | grep -qx dispatched; then
+    git show-ref --verify --quiet "refs/heads/$branch" || {
+      echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+      exit 1
+    }
+    echo "dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume." >&2
+  fi
+  # The exemption skips the refusal only. --add-label is idempotent and runs on
+  # both paths, which is what makes a reap-driven resume->create downgrade below
+  # harmless: whichever mode this run ends in, the issue is labelled.
+  gh issue edit "$gh_issue" --add-label dispatched || {
+    echo "dispatch: could not claim issue #$gh_issue (adding the 'dispatched' label failed)" >&2
+    exit 1
+  }
+  # An explicit claim record, because `crew adopt` cannot infer one: the
+  # kind:"dispatch" row carries no issue number and is written ~300 lines later,
+  # so every failure in between would strand an unreleasable label (#73).
+  line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" \
+    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
+  _bus_append "$crew_dir/events.jsonl" "$line"
+fi
+
+# Reclaim workers whose PR already landed, before adding another one. Cheapest
+# possible cleanup schedule: no daemon, no timer, and it runs exactly when the
+# worktree/window count is about to grow. Non-fatal by construction — a dispatch
+# must never fail because cleanup of unrelated, already-merged work failed.
+# Any worker still booting on a branch this reap could otherwise mistake for
+# idle-done is protected by the claim write near `worker_id=` below.
+crew reap --quiet || true
 
 # Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
 # ourselves below, and the hook would otherwise open a second, undecorated shell
@@ -497,7 +960,279 @@ sanitized="${branch//\//-}"
 # identity into a codex/cursor worker. Scoped to `tmux`, so the devshell hook
 # still runs — it materializes .pre-commit-config.yaml, without which the worker
 # cannot commit at all.
-wt switch -c "$branch" -y --config-set 'post-switch.tmux=""'
+wt_post_switch='post-switch.tmux=""'
+
+# --pr resolves the head ref; the switch itself happens after the gate below, so
+# a refusal costs no worktree and no window.
+if [ -n "$pr_number" ]; then
+  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository)
+  head=$(printf '%s' "$pr_json" | jq -r .headRefName)
+  head_oid=$(printf '%s' "$pr_json" | jq -r .headRefOid)
+  base_ref=$(printf '%s' "$pr_json" | jq -r .baseRefName)
+  cross=$(printf '%s' "$pr_json" | jq -r .isCrossRepository)
+  [ -n "$head" ] && [ "$head" != null ] || {
+    echo "dispatch: could not resolve headRefName for PR $pr_number" >&2
+    exit 1
+  }
+  [ -n "$head_oid" ] && [ "$head_oid" != null ] && [ -n "$base_ref" ] && [ "$base_ref" != null ] || {
+    echo "dispatch: could not resolve headRefOid/baseRefName for PR $pr_number" >&2
+    exit 1
+  }
+  branch="$head"
+  closes="pr: $pr_number"
+  if git show-ref --verify --quiet "refs/heads/$head" ||
+    git show-ref --verify --quiet "refs/remotes/origin/$head"; then
+    switch_mode=name
+  elif [ "$cross" = false ]; then
+    switch_mode=fetch-name
+  else
+    switch_mode=pr-ref
+  fi
+else
+  # Identity + closes line. Linear mode derives both from the ticket (no gh); a
+  # passed GitHub issue number reuses that issue (no gh call). Otherwise GitHub
+  # mode mints an issue and aborts cleanly if that fails (issues disabled) rather
+  # than scaffolding a half-broken worker off an empty number.
+  if [ -n "$linear_id" ]; then
+    branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
+    closes="Closes $linear_id"
+  elif [ -n "$gh_issue" ]; then
+    # $branch was already computed by the hoist above the claim gate.
+    closes="Closes #$gh_issue"
+  else
+    url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
+    num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
+    [ -n "$num" ] || {
+      echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
+      exit 1
+    }
+    # A minted issue is claimed by definition — stamp it right away. $branch is
+    # assigned first so the claim record below can carry it (#73).
+    branch="feat/$num-$slug"
+    closes="Closes #$num"
+    _ensure_dispatched_label
+    gh issue edit "$num" --add-label dispatched || {
+      echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
+      exit 1
+    }
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
+  fi
+  # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
+  # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
+  # reclaim below, and -c died on it all the same. Resolved here rather than
+  # hoisted with $branch, because `crew reap` above calls `wt remove` and can
+  # delete a merged branch — a mode computed before it could already be stale.
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    switch_mode=resume
+  else
+    switch_mode=create
+
+    # New branch: base it on the remote default branch's fetched tip, not the
+    # local ref of that name, which nothing here fast-forwards and can be
+    # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
+    # which is only as fresh as the last `git remote set-head`. Resolved before
+    # the dispatch lock below, so a failure here costs no worktree and no
+    # window — same as the --pr gate above.
+    default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+    [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
+      echo "dispatch: could not resolve the default branch via gh repo view" >&2
+      exit 1
+    }
+    git fetch origin -- "$default_branch"
+    # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
+    # gate in between shells out to crew/jq, giving a concurrent fetch a window
+    # to move the floating ref — pinning keeps what's branched and what the
+    # success line reports from ever diverging.
+    default_base_oid="$(git rev-parse "origin/$default_branch")"
+    default_base_label="origin/$default_branch"
+    default_base_short="$(git rev-parse --short "$default_base_oid")"
+  fi
+fi
+
+# Serialize the gate's check-then-act (occupancy read -> switch -> open window)
+# across concurrent dispatches on ONE branch; ungated, two racers both see an
+# empty worktree and both open a window — the stacking #17 forbids. `ln -s` is an
+# atomic exclusive create that publishes the owner pid (the link target) in the
+# same syscall, so it is the ONLY creator of the lock and exactly one racer wins.
+# A stale (dead-owner) lock is NOT auto-reclaimed: portable shell has no
+# compare-and-delete, so a remove-and-retake path races a fresh acquirer and lets
+# two dispatches proceed — the very stacking this prevents. It refuses instead,
+# which the EXIT/signal trap makes rare: every exit short of SIGKILL clears it.
+# cksum keys the file so a branch name with a `/` can't fold onto another's (#24).
+dispatch_lock="$crew_dir/dispatch-$(printf '%s' "$branch" | cksum | cut -d' ' -f1).lock"
+if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
+  held=$(readlink "$dispatch_lock" 2>/dev/null || true)
+  if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+    echo "dispatch: another dispatch is already scaffolding $branch (pid $held) — wait for it or retry" >&2
+  else
+    echo "dispatch: a stale dispatch lock for $branch remains from a hard-killed dispatch — remove $dispatch_lock and retry" >&2
+  fi
+  exit 1
+fi
+trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"' EXIT INT TERM HUP
+
+# Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
+# onto a branch that already has one lands in the same directory. Occupancy is a
+# WORKER WINDOW (crew occupants, keyed on @crew_name), not a running engine: a
+# finished agent drops to a shell prompt, and a command-based check would read the
+# window as empty.
+#
+# Only a TERMINAL bus state licenses the reclaim (#71). Every engine ships behind
+# a wrapper, so "no engine here" reads false on a live worker whenever the wrapper
+# is one the check doesn't recognise — far too weak to kill on. The bus state is
+# the worker's own word, so it is the gate; the engine count is advisory. The cost
+# is deliberate: a worker that dies without posting anything holds the branch until
+# a human kills the window, which the refusal spells out and stall-watch resolves
+# on its own after 30 minutes.
+prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+if [ -n "$prev_wt" ]; then
+  occ=$(crew occupants "$prev_wt")
+  if [ "$occ" != "[]" ]; then
+    newest=$(crew sessions "$branch" | jq -c 'last')
+    state=$(printf '%s' "$newest" | jq -r '.state // "none"')
+    terminal=$(printf '%s' "$newest" | jq -r '.terminal // false')
+    engine=$(printf '%s' "$occ" | jq -r 'map(select(.engine)) | length')
+    # An `exited` row is the SessionEnd backstop, not the worker's own word, and
+    # (#69) it fires under the bare `worker:$branch` id for a subagent too — so a
+    # bare `exited` can be `last` while the real `#session` row is still
+    # `working`. A live engine pane is the same defence-in-depth reap already
+    # applies: refuse exactly like the non-terminal case rather than reclaim.
+    if [ "$terminal" != true ] || { [ "$state" = exited ] && [ "$engine" -gt 0 ]; }; then
+      nm=$(printf '%s' "$occ" | jq -r '.[0].name')
+      win=$(printf '%s' "$occ" | jq -r '.[0].window')
+      wid=$(printf '%s' "$newest" | jq -r '.worker_id // ""')
+      {
+        echo "dispatch: $nm ($wid) is $state in that worktree (window $win) — git allows one worktree per branch."
+        [ "$engine" -gt 0 ] || echo "  no engine pane detected — it may have crashed, or the check may not recognise its wrapper; the bus has not seen it finish."
+        echo "  redirect it:  crew reply worker:$branch \"<directive>\""
+        echo "  or take over: tmux kill-window -t $win, then re-dispatch"
+      } >&2
+      exit 1
+    fi
+    # Terminal on the bus — finished work squatting the tree. Reclaim rather than
+    # stack beside it. Best-effort, like reap's kills.
+    for w in $(printf '%s' "$occ" | jq -r '.[].window'); do
+      tmux kill-window -t "$w" 2>/dev/null || true
+      echo "dispatch: reclaimed $w at $prev_wt (session $state)"
+    done
+    line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"reclaim", branch:$branch, state:$state,
+          windows:($occ|map(.window))}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
+  fi
+fi
+
+case "$switch_mode" in
+create)
+  wt switch -c "$branch" -b "$default_base_oid" -y --config-set "$wt_post_switch"
+  echo "dispatch: created branch $branch from $default_base_label ($default_base_short)"
+  # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
+  # default branch and silently strands the earlier branch's uncommitted work
+  # (#73). Warn only — a second branch may be what the operator wants. Local
+  # heads only: the stranded work is uncommitted and local.
+  siblings="$(git for-each-ref --format='%(refname:short)' "refs/heads/${branch%"$slug"}*" | grep -vFx "$branch" || true)"
+  if [ -n "$siblings" ]; then
+    # The slug is a lossy 40-char projection, so the branch name cannot be read
+    # back into a title; the original survives on the sibling's own dispatch row.
+    # The branch comes back with it: max_by(.ts) spans every sibling, so with more
+    # than one listed the title needs an owner. A Linear dispatch appends nothing
+    # before this point, and bare jq on a missing events.jsonl exits 2 — fatal
+    # under `set -euo pipefail`.
+    sibling_recovered="$(jq -rs --arg sibs "$siblings" \
+      '($sibs | split("\n")) as $b
+       | [.[] | select(.kind == "dispatch" and (.branch | IN($b[])))]
+       | max_by(.ts) | [(.branch // ""), ((.title // "") | gsub("[[:cntrl:]]"; ""))] | @tsv' \
+      "$crew_dir/events.jsonl" 2>/dev/null || true)"
+    IFS=$'\t' read -r sibling_branch sibling_title <<<"$sibling_recovered"
+    {
+      echo "dispatch: branch(es) for this id already exist:"
+      printf '%s\n' "$siblings" | sed 's/^/  /'
+      if [ -n "$sibling_title" ]; then
+        echo "dispatch: creating $branch instead — the work in the branch above will be left behind. To resume $sibling_branch, re-dispatch with its original title:"
+        # Printed as data on its own line, never interpolated into a paste-ready
+        # command: the title is free-form operator text and quoting it correctly
+        # for a shell is exactly where this would break.
+        printf '    %s\n' "$sibling_title"
+      else
+        echo "dispatch: creating $branch instead — the work in the branch above will be left behind. No bus row carries its original title, so resuming it means reconstructing the wording that produced its name."
+      fi
+    } >&2
+  fi
+  ;;
+resume)
+  # `wt switch -c` was also, accidentally, what refused a branch checked out where
+  # a worker has no business opening (#73). Occupancy cannot replace it: it keys on
+  # @crew_name and skips the dispatcher's window and the caller's, so the primary
+  # checkout, dispatch's own cwd and a human sitting in a plain shell all read as
+  # empty. This runs after that gate, so it only ever sees a tree the gate allowed.
+  if [ -n "$prev_wt" ]; then
+    # No `exit` in the awk: an early close SIGPIPEs git and trips pipefail.
+    primary_wt="$(git worktree list --porcelain | awk '/^worktree /{if (!p) p=$2} END{print p}')"
+    if [ "$prev_wt" = "$primary_wt" ]; then
+      echo "dispatch: $branch is checked out in the primary worktree $prev_wt — a worker must not run in the main checkout. Move the branch to its own worktree, then re-dispatch." >&2
+      exit 1
+    fi
+    case "$PWD/" in
+    "$prev_wt"/*)
+      echo "dispatch: $branch is checked out at $prev_wt, the worktree this dispatch is running from — a worker would open on top of you. Re-dispatch from elsewhere." >&2
+      exit 1
+      ;;
+    esac
+    # A pane at that path with an EMPTY @crew_name is a non-worker occupant — a
+    # human in a plain shell. Complements `crew occupants`, which requires a
+    # non-empty @crew_name. list-panes, not list-windows: in a window format
+    # pane_current_path resolves to the ACTIVE pane only, so a human in an
+    # inactive pane here would go undetected.
+    # @crew_name last, unlike `_occupants`' order: tab is IFS whitespace, so an
+    # empty middle field collapses and `read` would shift the path into it — and
+    # empty is exactly the value being matched on here.
+    while IFS=$'\t' read -r res_win res_path res_name; do
+      [ -n "$res_win" ] || continue
+      [ "$res_path" = "$prev_wt" ] || continue
+      [ -z "$res_name" ] || continue
+      echo "dispatch: window $res_win is sitting in $prev_wt with no worker identity — a worker would open on top of it. Close that window, or take the branch over by hand." >&2
+      exit 1
+    done <<WINDOWS
+$(tmux list-panes -a -F '#{window_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
+WINDOWS
+  fi
+  wt switch "$branch" -y --config-set "$wt_post_switch"
+  branch_short="$(git rev-parse --short "$branch")"
+  echo "dispatch: resuming branch $branch at $branch_short"
+  ;;
+name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
+fetch-name)
+  # `--` before the ref: a PR head branch is attacker-named (up to git's ref
+  # rules, which permit a leading `-`), and a bare positional would let a
+  # branch named e.g. `--upload-pack=...` be parsed as a fetch option.
+  git fetch origin -- "$branch"
+  wt switch "$branch" -y --config-set "$wt_post_switch"
+  ;;
+pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
+esac
+
+sanitized="${branch//\//-}"
+
+# Session id is issued here and carried in the environment by all four engine
+# launch paths. epoch+pid prevents two same-second dispatches on one branch from
+# sharing an identity (#17).
+session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
+worker_id="worker:$branch#$session"
+
+# Claim the branch on the bus before the tmux window exists (#32): reap's
+# idle-release loop reads a branch's newest bus event, and a session that
+# hasn't posted `working` yet would otherwise still read as whatever the
+# prior session last posted — often a stale `done` — releasing the window
+# this dispatch is about to create. A claim has no `body`, so it can never
+# itself satisfy reap's terminal-state check; it only masks a stale `done`
+# until the worker's own `working` post supersedes it. If this dispatch
+# aborts before that happens, the claim becomes the branch's permanent
+# latest bus event and idle-release can never touch it again.
+line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
+  '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
+_bus_append "$crew_dir/events.jsonl" "$line"
 
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
@@ -510,11 +1245,166 @@ if [ -z "$wt_path" ]; then
   exit 1
 fi
 
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-mkdir -p "$crew_dir"
+# Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
+# absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
+# — confirmed by inspecting an already-trusted checkout's own entry there, not
+# guessed. A fresh worktree path is unknown to that store, and
+# --permission-mode auto does NOT bypass the resulting trust dialog, so an
+# unattended worker wedges on it before ever reading WORKER_TASK.md. Stamp
+# trust here so the worker's first turn never sees the prompt. Locked with the
+# same ln -s idiom as dispatch_lock above: ~/.claude.json is shared by every
+# concurrent dispatch on this machine, and an unlocked read-modify-write would
+# lose one racer's stamp to another's. The lock only serializes dispatch
+# invocations against each other — a live claude session's own background
+# writes to ~/.claude.json race it too, same as they'd race any other writer;
+# that residual loss window is accepted, not solved, here. Aborts the dispatch
+# on failure — a worker that can't be pre-trusted just reproduces the wedge
+# this fixes.
+if [ "$agent" = claude ]; then
+  claude_json="$HOME/.claude.json"
+  claude_json_lock_path="$claude_json.dispatch.lock"
+  trusted=1
+  for _ in 1 2 3 4 5; do
+    # claude_json_lock (the trap-visible name at the top-level `trap` above)
+    # is only ever assigned once ln -s has actually made us the owner — a
+    # racer that exhausts all 5 attempts must exit with claude_json_lock still
+    # unset, or the EXIT trap would delete a lock file some other, still-running
+    # dispatch legitimately owns.
+    if ln -s "$$" "$claude_json_lock_path" 2>/dev/null; then
+      claude_json_lock="$claude_json_lock_path"
+      trust_tmp="$(mktemp "$claude_json.tmp.XXXXXX")"
+      if [ -f "$claude_json" ]; then
+        existing="$(cat "$claude_json")"
+      else
+        existing='{}'
+      fi
+      if printf '%s' "$existing" | jq --arg path "$wt_path" \
+        '.projects[$path].hasTrustDialogAccepted = true' >"$trust_tmp" \
+        && mv "$trust_tmp" "$claude_json"; then
+        trusted=0
+      else
+        rm -f "$trust_tmp"
+      fi
+      rm -f "$claude_json_lock"
+      break
+    fi
+    sleep 1
+  done
+  if [ "$trusted" -ne 0 ]; then
+    held=$(readlink "$claude_json_lock_path" 2>/dev/null || true)
+    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+      echo "dispatch: could not pre-trust worktree $wt_path — $claude_json_lock_path is held by pid $held (another dispatch mid-scaffold) — the worker would wedge on the workspace-trust dialog" >&2
+    else
+      echo "dispatch: could not pre-trust worktree $wt_path — a stale lock from a hard-killed dispatch remains at $claude_json_lock_path; remove it and retry" >&2
+    fi
+    exit 1
+  fi
+fi
 
-# Record the resolved role specs so a lazy grid's lead can spawn each role on
-# demand (`dispatch --spawn-role`), and so any role can be re-created after death.
+# Pre-allow direnv for the worktree (#40). direnv's allow-list re-validates
+# *content* on every load, keyed by the realpath of the .envrc — so a fresh
+# worktree's byte-identical .envrc is unseen even though the main checkout's
+# copy is already allowed, but a genuinely different .envrc is (correctly)
+# blocked again. A --pr worktree is checked out to the PR's actual head,
+# which can be a fork (isCrossRepository, handled below) carrying
+# attacker-controlled .envrc content — auto-approving there would rubber-stamp
+# code an external PR author wrote, sight unseen, right before the worker's
+# devshell (and the operator's own shell, if direnv-hooked) sources it. Only
+# --pr is skipped: create/name/fetch-name all check out a branch from this
+# machine's own trusted origin, not a fork. A repo with no .envrc never used
+# direnv and has no devshell to lose, so there's nothing to allow — skip it.
+# Aborts the dispatch only when an .envrc is present and direnv actually
+# fails to allow it, so a devshell-less worker never gets scaffolded to fail
+# its gate in a confusing way much later.
+if [ -n "$pr_number" ]; then
+  echo "dispatch: --pr worktree — not auto-approving direnv; review $wt_path/.envrc and run \`direnv allow $wt_path\` by hand once you trust it" >&2
+elif [ ! -e "$wt_path/.envrc" ]; then
+  : # no .envrc — repo doesn't use direnv, nothing to allow
+elif ! direnv allow "$wt_path"; then
+  echo "dispatch: direnv allow failed for $wt_path — the worker's devshell will not load" >&2
+  exit 1
+fi
+
+# --pr: verify the attached worktree actually sits at the PR head. `wt switch`
+# attaches to an existing worktree without fetching or resetting it, so a
+# stale local branch would otherwise go unnoticed.
+if [ -n "$pr_number" ]; then
+  worktree_head="$(git -C "$wt_path" rev-parse HEAD)"
+  if [ "$worktree_head" != "$head_oid" ]; then
+    # A worker's own WORKER_TASK.md is intentionally untracked and is only
+    # trashed by `crew reap`, not on reclaim, so it alone must not count as
+    # dirty.
+    dirt="$(git -C "$wt_path" status --porcelain | grep -v '^?? WORKER_TASK\.md$' || true)"
+    if [ -z "$dirt" ]; then
+      echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid — fetching and hard-resetting" >&2
+      # `--` before the ref: see the fetch-name comment above, same reasoning.
+      git -C "$wt_path" fetch origin -- "$head"
+      git -C "$wt_path" reset --hard "$head_oid"
+    else
+      echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
+      exit 1
+    fi
+  fi
+fi
+
+# Log the dispatch decision to the crew bus for later `crew report`.
+dispatch_shape="${DISPATCH_SHAPE:-}"
+# task_kind rides along because only `dispatch` knows it: a `--review` worker is
+# told not to push or open a PR, so a run with no PR is its success case, not a
+# failure. Without this the ratings store cannot tell the two apart.
+line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
+  --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
+  --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title}')
+_bus_append "$crew_dir/events.jsonl" "$line"
+
+# FleetView-style codename+color, derived from the branch (deterministic).
+ident=$(crew identity "$branch")
+agent_name=$(printf '%s' "$ident" | jq -r .name)
+agent_color=$(printf '%s' "$ident" | jq -r .tmux)
+
+# A resume issued without re-passing $DISPATCH_SPEC would otherwise leave a
+# header-only doc, destroying the task text — and, on a `plan: provided` run, the
+# plan of record — of the run it is meant to continue (#73). Captured ABOVE the
+# block below: `>` truncates the target before the block's first command runs, so
+# reading the old file inside it reads zero bytes.
+carried=""
+if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
+  carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
+fi
+
+# Stamp the task file: header fields the worker protocol reads, the closes
+# line, and the full task body from $DISPATCH_SPEC (falls back to the title).
+# The review contract is appended so the dispatcher never re-authors it as
+# per-worker prose.
+{
+  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
+    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
+  if [ -n "$pr_number" ]; then
+    printf 'base: %s\n' "$base_ref"
+  fi
+  if [ "$switch_mode" = resume ]; then
+    printf 'resume: true\n'
+  fi
+  # The role grid the lead should delegate to (absent = single-agent pipeline).
+  [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
+  # A lazy grid creates no role panes up front; the lead spawns each at its seam.
+  [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
+  if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
+    printf '\n## Task\n\n'
+    cat "$DISPATCH_SPEC"
+  elif [ -n "$carried" ]; then
+    # $carried already opens with its own `## Task` heading.
+    printf '\n%s\n' "$carried"
+  fi
+  if [ "$kind" = review ]; then
+    printf '\n'
+    cat "$review_contract"
+  fi
+} >"$wt_path/WORKER_TASK.md"
+
+# Record resolved role specs so a lazy grid's lead can spawn each role on demand
+# (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then
   roles_dir="$crew_dir/artifacts/$branch"
   mkdir -p "$roles_dir"
@@ -523,35 +1413,47 @@ if [ "${#role_names[@]}" -gt 0 ]; then
   done | jq -s 'map({key:.name,value:{agent:.agent,model:.model}})|from_entries' > "$roles_dir/roles.json"
 fi
 
-# Log the dispatch decision to the crew bus for later `crew report`.
-dispatch_shape="${DISPATCH_SHAPE:-}"
-jq -nc --arg crew "$crew_id" --arg branch "$branch" \
-  --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
-  --arg shape "$dispatch_shape" --arg title "$title" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, title:$title}' \
-  >>"$crew_dir/events.jsonl"
-
-# FleetView-style codename+color, derived from the branch (deterministic).
-ident=$(crew identity "$branch")
-agent_name=$(printf '%s' "$ident" | jq -r .name)
-agent_color=$(printf '%s' "$ident" | jq -r .tmux)
-
-# Stamp the task file: header fields the worker protocol reads, the closes
-# line, and the full task body from $DISPATCH_SPEC (falls back to the title).
-{
-  printf 'tier: %s\neffort: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\n' \
-    "$tier" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
-  # The role grid the lead should delegate to (absent = single-agent pipeline).
-  [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
-  # A lazy grid creates no role panes up front; the lead spawns each at its seam.
-  [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
-  if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
-    printf '\n## Task\n\n'
-    cat "$DISPATCH_SPEC"
+# A detached new-window can inherit tmux's fallback size instead of the client
+# that invoked dispatch. codex's startup banner boxes stay pinned at their
+# initial width and never redraw on a later resize; claude and cursor both
+# redraw cleanly, so `default-size` (lazytmux) already covers them. This
+# fixes codex, and gives every engine the invoking client's own geometry,
+# which only dispatch knows.
+client_target=()
+[ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
+client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
+window_size_mode="$(tmux show-option -qv "${client_target[@]}" window-size 2>/dev/null || true)"
+if [ -z "$window_size_mode" ]; then
+  window_size_mode="$(tmux show-option -gqv window-size 2>/dev/null || true)"
+fi
+client_width=""
+client_height=""
+status_rows=""
+if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
+  client_width="${BASH_REMATCH[1]}"
+  client_height="${BASH_REMATCH[2]}"
+  case "${BASH_REMATCH[3]}" in
+  off) status_rows=0 ;;
+  on) status_rows=1 ;;
+  *) status_rows="${BASH_REMATCH[3]}" ;;
+  esac
+  client_height=$((client_height - status_rows))
+  if ((client_height <= 0)); then
+    client_width=""
+    client_height=""
   fi
-} >"$wt_path/WORKER_TASK.md"
+fi
+read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+if [ -n "$client_width" ]; then
+  tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
+  if [ -n "$window_size_mode" ] && [ "$window_size_mode" != manual ]; then
+    tmux set-option -t "$win" window-size "$window_size_mode"
+  fi
+fi
 
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+# Printed so the dispatcher can address this session in the gap before the worker
+# boots — its startup drain is unbounded, so a scoping note posted now still lands.
+echo "worker_id: $worker_id"
 
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
@@ -577,24 +1479,66 @@ if [ "$plan_val" = provided ]; then
   plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
 fi
 
+# Same carrier, for a worker landing in a tree that already holds its spec, plan
+# and partial work (#73). No apostrophes anywhere in this string: all four launch
+# strings single-quote the prompt inside a double-quoted `tmux send-keys`
+# argument, and one apostrophe silently breaks the line.
+resume_note=""
+if [ "$switch_mode" = resume ]; then
+  resume_note=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
+fi
+
+# The launch prompt is a user-turn instruction, so it outranks the protocol: a
+# review worker told to "push and open a PR" here would do exactly that on
+# someone else's PR head. Swap the mandate instead of relying on the contract to
+# talk the worker out of it.
+push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" = review ]; then
+  push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
+fi
+
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor/pi workers must
+# stamp process-authority into every execute-subagent prompt so a fresh subagent
+# cannot re-derive process via skills. Claude gets the same idea from rule 1 +
+# the Agent tool; this clause is only for engines whose spawn prompt is the
+# sole carrier.
+process_authority=" Process authority: WORKER_PROTOCOL.md governs this worker session. When spawning execute subagents, grant implementation authority only — tell them not to re-derive worker process via skills, not to open PRs, and not to act as the worker. When spawning review subagents, grant review authority only — tell them not to fix the code, not to commit or push, not to open PRs, and not to act as the worker."
+if [ "$agent" = codex ] && [ "$effort" = ultra ]; then
+  process_authority="$process_authority Session effort is ultra — Codex automatic delegation is the orchestration layer; do not add a second harness execute-subagent orchestration on top."
+fi
+
+# Codex execute-subagent effort: one rung below the session, floor at low,
+# never ultra (ultra auto-delegates and must not nest). Model versions live in
+# dispatch-orchestration.md — dispatch sets guardrails only.
+codex_subagent_effort="$effort"
+case "$effort" in
+ultra) codex_subagent_effort=max ;;
+max) codex_subagent_effort=xhigh ;;
+xhigh) codex_subagent_effort=high ;;
+high) codex_subagent_effort=medium ;;
+medium) codex_subagent_effort=low ;;
+low) codex_subagent_effort=low ;;
+esac
+
 # Grid mode: tell the lead it has role panes to delegate the critic/review phases
 # to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ]; then
   grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
-  [ -n "$grid_lazy" ] && grid_note="$grid_note The grid is lazy: before assigning a role, create its pane with \`dispatch --spawn-role <role>\` (idempotent); reap them at the end with \`dispatch --reap-roles\`."
 fi
 
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
   # latency nobody is watching.
+  # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
+  # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
-  # id ($model, e.g. claude-opus-4-8-high); composer-2.5 has no effort variants.
+  # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
   # A bare prompt argument (no -p) seeds and auto-submits cursor's own TUI;
   # --force/--trust/--approve-mcps make it unattended (codex bypass analog); base
   # MCP is the shared ~/.cursor/mcp.json. Headless -p is wrong for a worker: the
@@ -605,42 +1549,36 @@ elif [ "$agent" = cursor ]; then
   # it skips a merkle index build over a large monorepo. Not a stall fix — the
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
+  # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = pi ]; then
-  # Interactive TUI with an initial prompt: it auto-submits and repaints as it
-  # works, so the pane stays a truthful liveness signal for stall-watch. `pi -p`
-  # is buffered — it prints only at the end and would read as a wedge, the same
-  # trap cursor hit (#103). --append-system-prompt takes text OR a file path (pi
-  # reads the file when the argument exists), so the protocol is a real system
-  # prompt here — unlike codex/cursor, which must inject it as a first prompt.
-  # --no-approve ignores a target repo's project-local .pi/ resources in an
-  # unattended run; global ~/.pi/agent config (auth, packages) still loads.
-  # --thinking is a real knob (unlike cursor, where effort lives in the id).
+  # pi's interactive TUI keeps pane output live. It accepts a file path as a
+  # real appended system prompt; --no-approve ignores project-local resources.
   tmux send-keys -t "$pane" \
-    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}${grid_note}'" Enter
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter
 fi
 
-# Role grid: materialize the panes. A lazy grid creates none up front (the lead
-# spawns each role at its seam with `dispatch --spawn-role`); otherwise split the
-# window into one pane per role. Roles park on the bus until the lead assigns them
-# work; GRID_PROTOCOL.md is their system prompt. A role may run a different engine
-# from the lead (cross-engine review). Split AFTER the lead launch so the lead
-# keeps the first pane. NOT stall-watched on purpose: a parked role produces no
-# output, which the pane-output watchdog would misread as a wedge.
+# Role grid: split the task window into one pane per role. Each role pane parks
+# on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
+# prompt. A role may run a different engine from the lead (cross-engine review).
+# Split AFTER the lead launch so the lead keeps the first pane. NOT stall-watched
+# on purpose: a parked role produces no output, which the pane-output watchdog
+# would misread as a wedge.
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
-    role_pane="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}")"
-    launch_role "$role_pane" "${role_names[$i]}" "${role_agents[$i]}" "${role_models[$i]}"
-    watch_role "${role_names[$i]}" "$role_pane"
+    role="${role_names[$i]}"
+    role_pane="$(split_role_pane "$win" "$wt_path" "$role")"
+    launch_role "$role_pane" "$role" "${role_agents[$i]}" "${role_models[$i]}"
+    watch_role "$role" "$role_pane"
   done
   tmux select-layout -t "$win" tiled
 fi
 
-# Optional live status pane: a bounded roster loop over the crew bus.
+# Optional live status pane (--status): a bounded roster loop over the crew bus.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
   decorate_pane "$status_pane" status
@@ -651,10 +1589,10 @@ fi
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
 # output and never ends, so neither the bus nor the SessionEnd `exited` backstop
 # notices. Pane output is only a valid liveness signal for an engine that streams
-# — every engine launched above must, which is why all three run their own TUI
+# — every engine launched above must, which is why all four run their own TUI
 # rather than a buffered headless mode. This watches the pane's output and, if it
 # goes silent through the startup window, posts `failed` so the dispatcher's
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
 # terminal state, or a vanished pane.
-CREW_ID="$crew_id" nohup crew stall-watch "$branch" --pane "$pane" >/dev/null 2>&1 &
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &

@@ -3,7 +3,6 @@ name: autopilot
 description: 'Autonomous dev workflow: Linear ticket → implement → PR → CI green'
 ---
 
-
 # Autopilot: Autonomous Development Workflow
 
 You are running an autonomous development workflow from Linear ticket to merged-ready PR.
@@ -68,6 +67,11 @@ Do NOT pause for:
 
 Keep the plan concise — a mental model, not a document. List the files to change and what to do in each.
 
+For behavioral bugs, shared contracts, or PR feedback, read `EVIDENCE_REVIEW.md`
+from `$DISPATCHER_PROTOCOL_DIR`, falling back to adapter-local `protocols/`
+(inside the plugin on Claude/Codex, beside `commands/` on Cursor). Apply its
+proof, review-risk, recurrence, and completion rules through Steps 3–10.
+
 ## Step 4: Implement
 
 1. Create a worktree with [worktrunk](https://worktrunk.dev):
@@ -95,36 +99,22 @@ Commit any fixes from these passes.
 
 Dispatch reviewer agents **in parallel** (single message, multiple Agent tool calls). Each reviewer sees the branch diff against the base.
 
-### Always run
+### Reviewer roster
 
-- **`superpowers:code-reviewer`** — plan adherence + general quality
+Reviewer bodies ship with the harness: `$DISPATCHER_REVIEWERS_DIR/*.md`, falling back to the adapter-local `reviewers/` when that variable is unset. Each carries `globs:` — the changed-file patterns that route a diff to it — and, where a pattern can't express the trigger, a `when:` line. Match your changed paths (`git diff --name-only main...HEAD`) against every roster `globs:`, honour each matched reviewer's `when:`, and that set is the batch. Nothing matched: one general reviewer running the `find-bugs` skill.
 
-### Language-specific (based on file types in `git diff --name-only main...HEAD`)
-
-| Files changed | Reviewer |
-|---------------|----------|
-| `*.go` | `go-reviewer` |
-| `*.ts`, `*.tsx`, `*.js`, `*.jsx` | `typescript-reviewer` |
-| `*.sql`, migrations under `*/migrations/*` | `database-reviewer` |
-| Expo / React Native (presence of `app.json` + `expo` in deps, or `*.tsx` under a `mobile/` app) | `expo-mobile-reviewer` |
+Spawn one Agent-tool subagent per matched roster entry, its body as the brief — prefer a native reviewer agent of the same name where the environment defines one.
 
 ### Conditional: `security-reviewer`
 
-Run when **any** of these apply to the diff:
-- Touches auth / session / token / password / secret / crypto / signature / JWT / OAuth
-- Adds or modifies API endpoints, route handlers, or RPC methods
-- Handles untrusted user input (parsing, deserialization, query builders, file uploads)
-- Touches SQL (especially raw queries or string-built SQL)
-- Adds shell exec, eval, dynamic imports, or filesystem path joins from input
-- Diff is large: >10 files **or** >500 lines changed
-- Modifies CORS, CSP, cookie flags, TLS config, IAM, or env handling
+`security-reviewer` is the one roster entry with no `globs:`; its `when:` is the trigger. Include it only if the diff touches an auth, crypto, input-parsing, SQL, or network path. Conservative trigger: when in doubt, include it. Otherwise skip it.
 
 ### After reviewers return
 
 1. Aggregate findings, deduplicate overlapping issues
-2. Triage by severity: must-fix (correctness/security) → should-fix (quality) → nit (skip unless trivial)
+2. Every roster body grades findings `CRITICAL` / `HIGH` / `MEDIUM` and ends with a `Block` / `Warning` / `Approve` verdict. Verify findings against the repo; confirmed correctness issues require a fix or an explicit unresolved disposition, regardless of severity.
 3. Apply fixes, commit (`fix(review): address <reviewer> findings`)
-4. Re-run only the reviewers whose findings were addressed if they flagged correctness/security issues
+4. Follow `EVIDENCE_REVIEW.md` for the fresh evidence packet, stronger cross-component reviewer, targeted re-review, and two-round fix cap. A blocked gate stops delivery; report the remaining evidence and decision needed.
 
 ## Step 7: Create PR
 
@@ -145,7 +135,7 @@ gh pr checks <PR-NUMBER> --repo factify-inc/mono
 ```
 
 - **Ignore "Apps Sanity Gate"** — it's flaky, don't act on it
-- For any other failing check: read the logs (`gh run view <run-id> --log-failed`), diagnose, fix, push
+- For any other failing check: read the logs (`gh run view <run-id> --log-failed`), diagnose, fix, and run affected checks. Behavioral fixes also pass the evidence and targeted review gates before push.
 
 ### Check PR Comments
 
@@ -154,18 +144,17 @@ gh api repos/factify-inc/mono/pulls/<PR-NUMBER>/comments
 gh api repos/factify-inc/mono/issues/<PR-NUMBER>/comments
 ```
 
-- Read all unaddressed reviewer comments (from any author)
-- For each comment:
-  - If the fix is clear: implement it, push, reply acknowledging the fix
-  - If ambiguous: use your best judgment, implement what makes sense, flag what you decided and why
-  - If it's a product/architecture question you truly can't answer: skip it, include in final report
+- Follow `EVIDENCE_REVIEW.md` → PR feedback and completion: paginate all feedback,
+  restore the finding ledger, verify current-head findings, batch fixes, test and
+  re-review before replying with proof. Escalate recurring invariant failures
+  before another patch. Product/architecture questions remain pending and go in
+  the final report; they are not comments-clean.
 
 ### Loop Exit Conditions
 
 Exit when ALL of these are true:
-- All CI checks green (except Apps Sanity Gate)
-- No unaddressed reviewer comments
-- No new comments since last push
+- All CI checks green (except Apps Sanity Gate), for the current head
+- The `EVIDENCE_REVIEW.md` completion check passes for that same head
 
 **Safety cap:** Stop after 30 iterations (~1 hour). Report status and ask for guidance.
 
@@ -176,7 +165,9 @@ One last pass after all CI/reviewer fixes are done:
 1. **Invoke `/simplify`**
 2. **Invoke `/deslop`**
 
-If this produces changes, commit, push, and do a quick CI re-check (no full loop — just verify it stays green).
+If this produces changes, rerun affected checks; behavioral edits also need the
+targeted re-review in `EVIDENCE_REVIEW.md` before push. Refresh the current-head
+completion check afterward. Exhausted review budgets remain exhausted.
 
 ## Step 10: Report
 

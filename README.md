@@ -14,9 +14,8 @@ message bus. Workers survive the session that spawned them. The orchestrator
 never writes code.
 
 It runs on **Claude Code**, **OpenAI Codex**, **Cursor** and **pi** — and can mix
-them in a single crew, so a refactor goes to one model while the
-security-sensitive change goes to another. pi is the route to **deepseek** and
-other third-family models via OpenRouter.
+them in a single crew. pi adds DeepSeek and other model families through
+OpenRouter.
 
 ---
 
@@ -37,13 +36,16 @@ flowchart LR
     D -->|dispatch| W1["worker<br/>claude"]
     D -->|dispatch| W2["worker<br/>codex"]
     D -->|dispatch| W3["worker<br/>cursor"]
+    D -->|dispatch| W4["worker<br/>pi"]
     W1 --> B[("crew bus<br/><code>.git/crew/</code>")]
     W2 --> B
     W3 --> B
+    W4 --> B
     B -->|watch| D
     W1 --> PR1([PR])
     W2 --> PR2([PR])
     W3 --> PR3([PR])
+    W4 --> PR4([PR])
 ```
 
 Each worker gets its own worktree, its own tmux window, and a colour-coded
@@ -88,15 +90,40 @@ crew inbox dispatcher:<id>   # messages addressed to you
 crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
-Full surface: `id`, `identity`, `status`, `msg`, `reply`, `await`, `register`,
-`deregister`, `watch`, `roster`, `inbox`, `stall-watch`, `log`, `report`, `rate`,
-`reap`.
+Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
+`await`, `register`, `deregister`, `watch`, `stream`, `hold`, `roster`, `inbox`,
+`stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`.
 
-Two design notes worth knowing. `reap` gates on **the PR having landed**, never
+Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
-time-based sweep would delete live work. And `stall-watch` exists because a
-wedged worker never reports anything at all: it watches pane output and posts
-`failed` so the dispatcher wakes up instead of waiting forever.
+time-based sweep would delete live work. Reaping a finished run also files its
+outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with
+`crew rate --report`); `CREW_RATE_AUTOSWEEP=0` disables it. And `stall-watch`
+exists because a wedged worker never reports anything at all: it watches pane
+output and posts `failed` so the dispatcher wakes up instead of waiting
+forever.
+
+---
+
+## Parking on a PR
+
+`pr-watch` blocks until a PR actually changes, prints one JSON event, and exits
+0 — so babysitting a posted review costs no session and no tokens.
+
+```bash
+pr-watch 3065 --timeout 1800      # head SHA, review, thread reply, checks, merge
+crew pr-watch 3065                # same park, event posted to the crew bus
+```
+
+It is **standalone first**: no crew, no dispatcher, no `CREW_ID`, no bus. A plain
+agent session backgrounds it and handles the event on completion; a human runs it
+at a shell. `crew pr-watch` is a thin wrapper that adds one thing — posting the
+event to `dispatcher:<crew>`, so an armed `crew watch` wakes.
+
+A `--timeout` park that expires also exits 0 with empty stdout, the same contract
+as `crew watch`. A per-PR cursor under `$XDG_DATA_HOME/crew/pr-watch/<repo>/<N>.json`
+means a restart can neither re-deliver a handled event nor miss one that landed
+while nothing was watching.
 
 ---
 
@@ -105,26 +132,53 @@ wedged worker never reports anything at all: it watches pane output and posts
 The harness is engine-neutral; the adapters are not. Each engine gets what it can
 actually express:
 
-|                               | Claude Code |        Codex        |      Cursor      |        pi        |
-| ----------------------------- | :---------: | :-----------------: | :--------------: | :--------------: |
-| Packaging                     |   plugin    |       plugin        |   loose files¹   |   loose files⁴   |
-| Slash commands                |     ✅      | ❌ ships as skills² |        ✅        |  ✅ (templates)  |
-| Skills                        |     ✅      |         ✅          |        ✅        |        ✅        |
-| Subagents                     |     ✅      |         ❌          |       ✅³        |  ❌ (planned⁵)   |
-| Hooks                         |     ✅      |         ✅          |        ✅        |        ❌        |
-| Worker: critics + review gate |     ✅      |  ⚠️ process-light   | ⚠️ process-light | ⚠️ process-light |
+|                           | Claude Code |        Codex        |    Cursor    |      pi      |
+| ------------------------- | :---------: | :-----------------: | :----------: | :----------: |
+| Packaging                 |   plugin    |       plugin        | loose files¹ | loose files⁴ |
+| Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |      ❌      |
+| Skills                    |     ✅      |         ✅          |      ✅      |      ❌      |
+| Native subagents          |     ✅      |         ✅³         |     ✅³      |      ❌      |
+| Hooks                     |     ✅      |         ✅          |      ✅      |      ❌      |
+| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      | ✅ via grid  |
+| Worker: code-review gate  |     ✅      |         ✅          |      ✅      | ✅ via grid  |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
 ² Codex has no custom slash commands — custom prompts are deprecated in favour of
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
-³ Cursor has subagents, but not the model this pipeline is built on.
-⁴ pi ships no dispatcher commands yet — the four slash commands are not projected into pi's prompt-template/skill shape. Its worker launch is a real `--append-system-prompt` (text or file contents), so the protocol is a system prompt rather than a first-prompt injection.
-⁵ pi has no subagents of its own; the `pi-subagents` package provides them, and the critic/review pipeline is planned to be ported onto it (see `docs/superpowers/specs/2026-09-11-pi-dispatch-engine-design.md`).
+³ Codex has native ad-hoc subagents but no declarable plugin agents; Cursor has
+both, but not every model in its routing table exposes them.
+⁴ pi has no dispatcher adapter or native subagents. It runs the shared protocols
+directly; `--grid` supplies separate critic and reviewer processes where the tier
+requires fresh contexts.
 
-**Process-light is a promise, not an omission.** Codex, cursor and pi workers run
-single-agent, so they emit `plan_critic_first_pass: null`, `review_high: null`,
-`review_mode: "none"` — a run is never mistaken for _reviewed and clean_.
+**Every tier gate runs on every engine.** A worker's pipeline depth is set by
+its tier, not by which engine drew the task: `standard` and `deep` run the
+spec/plan critics _and_ the code-review gate on all four, so
+`plan_critic_first_pass`, `review_high` and `review_mode` all carry real
+values whoever ran. Only the spawn mechanism and the rung are per-engine.
+
+**Two rosters, spawned four ways.** What each reviewer and each critic _is_
+ships with the harness. `adapters/core/reviewers/` holds twelve engine-neutral
+bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
+Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` and
+`shebang:` frontmatter route a diff to the ones that apply (an extensionless
+changed file matches by its first line); `adapters/core/critics/` holds the
+spec and plan critics that gate a plan before any of it is written. A worker
+resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
+(or the copy its adapter ships) and hands the matched body to whatever spawn
+its engine has: a named agent on claude, an inline role brief on codex and
+cursor, or a role-grid pane on pi. A critic sits at the tier's escalate rung — it has to out-think the
+draft it gates. Nothing about either gate depends on agent definitions that
+live outside the repo.
+
+**Evidence scales with risk.** Behavioral fixes require a production-path
+regression; shared contracts require a consumer map. Cross-component review
+promotes one reviewer, and substantive correctness fixes receive targeted
+re-review even when PR bots are active. Recurring findings carry a bounded
+ledger across sessions. Mechanical work keeps its fast path. See the
+[shared contract](adapters/core/protocols/EVIDENCE_REVIEW.md) and the
+[optional-tool sweep](docs/review-evidence-tools.md).
 
 ---
 
@@ -150,9 +204,11 @@ programs.dispatcher = {
 };
 ```
 
-That puts `crew`, `dispatch` and `dispatcher` on `PATH`, exports
-`DISPATCH_PROFILE` and `DISPATCHER_PROTOCOL_DIR`, installs the Codex plugin and
-writes the Cursor rule and commands.
+That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
+`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
+`DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR` and
+`DISPATCHER_CRITICS_DIR`, installs the Codex plugin and writes the Cursor
+rule, commands, skills and rosters.
 
 For Claude Code, pass the plugin directory to `claude`:
 
@@ -175,6 +231,27 @@ For Claude Code, pass the plugin directory to `claude`:
   enabled = true
   ```
 
+- **The Cursor `stop` hook.** `~/.cursor/hooks.json` is a single shared file
+  several tools write, so this module does not own it. Without the stanza below
+  a cursor worker that dies is invisible to the bus — cursor has no session-end
+  event, so nothing posts `exited` and the roster strands a `working` entry:
+
+  ```json
+  {
+    "hooks": {
+      "stop": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/dispatch-notify.sh --turn-end"
+        }
+      ]
+    }
+  }
+  ```
+
+  `--turn-end` is load-bearing: cursor only reports end-of-turn, and a `blocked`
+  worker also ends its turn while waiting for the dispatcher, so that mode leaves
+  `blocked` alone where SessionEnd would override it.
+
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to
   your Codex config. It is a runtime file, so there is no eval-time check — a
@@ -182,8 +259,8 @@ For Claude Code, pass the plugin directory to `claude`:
 
 - **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent`, `pi` and
   [`wt`](https://worktrunk.dev) resolve from the ambient `PATH`; log each in out
-  of band. `pi` authenticates with `pi` login or a provider API key
-  (`OPENROUTER_API_KEY` for OpenRouter/deepseek).
+  of band. Pi uses the selected provider's credentials, such as
+  `OPENROUTER_API_KEY` for the default DeepSeek ladder.
 
 </details>
 
@@ -203,7 +280,18 @@ From inside a dispatcher session:
 dispatch --crew-id <id> standard sonnet --effort medium ENG-421 "fix the retry loop"
 dispatch --crew-id <id> deep opus --effort high --agent codex "redesign the export pipeline"
 dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the flag"
-dispatch --crew-id <id> standard deepseek/deepseek-v4-pro --effort high --agent pi "harden the parser"
+dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effort high --agent pi --grid "harden the parser"
+```
+
+Resuming a worker, from inside its own worktree — reads the engine, model,
+effort and crew back from `WORKER_TASK.md` and continues the engine's own
+session:
+
+```bash
+dispatch resume                     # continue this worktree's worker
+dispatch resume --print             # show what a resume would launch
+dispatch resume --fresh             # relaunch without the prior conversation
+dispatch resume the review comments are the priority
 ```
 
 Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
@@ -266,14 +354,16 @@ generator output. Two reasons it must not be reformatted:
 ```
 adapters/
 ├── core/                    engine-neutral
-│   ├── crew.sh              833 L · the bus
+│   ├── crew.sh              900 L · the bus
+│   ├── pr-watch.sh          177 L · park until a PR changes (standalone)
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher
 │   ├── protocols/           DISPATCHER · WORKER · orchestration
-│   └── commands/            shared bodies, projected per engine
+│   ├── commands/            shared bodies, projected per engine
+│   └── reviewers/           engine-neutral reviewer roster, glob- and shebang-routed
 ├── claude-code/plugin/      commands · agents · skills · workflows · hooks
 ├── codex/plugin/            skills · hooks   (no agents/workflows: unsupported)
-└── cursor/                  rules · commands (no plugin format)
+└── cursor/                  rules · commands · scripts (no plugin format)
 scripts/gen-adapters.sh      projects core/commands into all three shapes
 nix/hm-module.nix            Home Manager module
 ```
@@ -291,14 +381,14 @@ Next up:
   spawn Claude Code teammates, making them claude-only. The crew bus is already
   the engine-neutral equivalent — porting them makes them work everywhere and
   collapses a duplicate fan-out architecture.
-- **Closing the process-light gap** so Codex and Cursor workers get a critic
-  pipeline and a review gate.
 - **Role-grid topology** — a task window becomes a grid of role panes
   (implementer + critics + reviewers), so the critic pipeline is engine-neutral
   and cross-model review is structural rather than a claude-only subagent
   feature. `dispatch --grid` derives the topology from the tier and `--roles`
   picks each role's engine/model (`reviewer=claude:opus`); see
   `docs/superpowers/specs/2026-09-11-role-grid-topology-design.md`.
+- **Role-grid follow-through** — materialize roles on demand instead of at task
+  launch, and surface their state directly in the task window.
 
 ## License
 
