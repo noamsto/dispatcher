@@ -318,10 +318,16 @@ which is why the module exports it rather than only baking it into the binaries.
 
 ```bash
 direnv allow          # or: nix develop
-bats tests/           # 70 tests
+bats tests/           # full suite -- run before pushing
+bats tests/dispatch.bats   # one file -- the fast inner loop while editing
 nix flake check       # formatting + pre-commit
 ./scripts/gen-adapters.sh   # regenerate adapters after editing a command body
 ```
+
+`tests/module.bats` builds every package once per file run (via `setup_file`,
+not once per test), so it stays cheap enough to include in the full suite —
+but a single file is still the right unit for an edit loop: run the file
+closest to what you're touching, save the full `bats tests/` for the gate.
 
 CI runs shellcheck, the bats suite, `nix flake check`, and a **drift gate** that
 regenerates every adapter and fails if committed output differs.
