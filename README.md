@@ -166,6 +166,14 @@ cursor. A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo.
 
+**Evidence scales with risk.** Behavioral fixes require a production-path
+regression; shared contracts require a consumer map. Cross-component review
+promotes one reviewer, and substantive correctness fixes receive targeted
+re-review even when PR bots are active. Recurring findings carry a bounded
+ledger across sessions. Mechanical work keeps its fast path. See the
+[shared contract](adapters/core/protocols/EVIDENCE_REVIEW.md) and the
+[optional-tool sweep](docs/review-evidence-tools.md).
+
 ---
 
 ## Install

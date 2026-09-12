@@ -17,6 +17,10 @@ critique, revise up to 2 times, then accept or escalate.
 
 The worker invokes this skill only when a plan is **required** — it gates on the "Plan of record" check in `WORKER_PROTOCOL.md` first, so a pre-specified task never reaches here.
 
+For behavioral bugs or shared contract changes, read `EVIDENCE_REVIEW.md` from
+`$DISPATCHER_PROTOCOL_DIR`, falling back to the adapter-local `protocols/`
+directory. Include its regression-proof steps and consumer map in the draft.
+
 Run these steps in order:
 
 1. **Draft plan** — using `writing-plans` discipline (or the closest equivalent this engine has), produce a bite-sized implementation plan. Prompt: `"Write a bite-sized implementation plan using writing-plans discipline.\n\nTASK:\n<task>"`

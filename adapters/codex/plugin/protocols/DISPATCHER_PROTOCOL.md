@@ -198,6 +198,12 @@ applies on the work profile.
 
 ## Scaffold one worker per task
 
+For behavioral bugs, shared contract changes, and PR-feedback fixes, read sibling
+`EVIDENCE_REVIEW.md` before tiering or writing the task. Include known invariants
+and evidence pointers; preserve its ledger and budgets across re-dispatches.
+When a worker reports an evidence/review/recurrence block, resolve the stated
+decision or route to a supported reviewer; green CI is not a waiver.
+
 ```
 dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--pr N] [--review] [LINEAR-ID] <title…>
 ```

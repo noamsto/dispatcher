@@ -58,7 +58,12 @@ Classify each PR:
 - **Red** — failing check OR unaddressed reviewer comment → dispatch a teammate
 - **Stuck** — same failing state >24h with no new commits → flag in the report; still dispatch unless the user opted out
 
-"Unaddressed comment" = posted after the latest commit by me on the PR branch.
+Use `EVIDENCE_REVIEW.md` from `$DISPATCHER_PROTOCOL_DIR`, falling back to
+adapter-local `protocols/` (inside the plugin on Claude/Codex, beside `commands/`
+on Cursor), to classify feedback and current-head completion. Read all pages of
+threads/comments/reviews and restore the PR ledger; commit timestamps do not
+establish that a finding was addressed. Incomplete feedback access is blocked,
+not Green.
 
 ## Step 2: Pre-Flight & Confirmation
 
@@ -131,7 +136,12 @@ You are a Finish-PRs teammate. Your job: take ONE already-open PR and drive it t
    ```
    `wt switch` is idempotent. The `lazytmux` post-switch hook short-circuits inside Claude so no spurious tmux window spawns.
 
-2. Read the current PR state in one pass:
+2. Read `EVIDENCE_REVIEW.md` from `$DISPATCHER_PROTOCOL_DIR` or the adapter-local
+   `protocols/` directory. Restore the PR's `## Review notes` ledger and budgets.
+   Follow its evidence, stronger review, recurrence, and completion rules. A
+   targeted read-only reviewer subagent is allowed; it is not another PR teammate.
+
+3. Read the current PR state (paginate all feedback, including GraphQL threads):
    ```bash
    gh pr view <N> --repo <OWNER/REPO> --json title,body,statusCheckRollup,reviews,comments,headRefOid
    gh pr checks <N> --repo <OWNER/REPO>
@@ -151,19 +161,21 @@ Repeat until exit conditions (below) are met. Cap at **20 iterations**.
 - For every other failing check:
   1. `gh run view <run-id> --log-failed` — read the actual failure
   2. Diagnose root cause. If it's a flake on a re-run-able check (network, transient infra), `gh run rerun <run-id> --failed` once and continue. Don't keep re-running flakes.
-  3. Otherwise fix the underlying code, commit (`fix(ci): <what>`), push.
+  3. Otherwise fix the underlying code, run affected checks/proof, and commit (`fix(ci): <what>`). Behavioral fixes also pass `EVIDENCE_REVIEW.md` targeted review before push.
 
 ### B. Reviewer comments (bot + human)
 
-Read every comment posted **after the latest commit by me** on this branch (use `headRefOid` + commit author check).
+Read all feedback and current-head dispositions per `EVIDENCE_REVIEW.md`.
+Verify each finding against the tree before acting, deduplicate bot/human
+reports, and persist the ledger. Check recurrence before another local patch.
 
 For each comment, decide:
 
 | Comment type | Action |
 |--------------|--------|
-| Clear, actionable, in-scope | Implement the fix. Commit (`fix(review): <what>`). Push. Reply to the comment thread acknowledging. |
+| Clear, actionable, in-scope | Batch verified fixes, obtain regression proof, commit, then obtain required targeted re-review before push and reply with fix SHA and evidence. |
 | Trivial unrelated cleanup (one-liner, no behavior change) | Fix it inline. Mention in the reply. |
-| **Non-trivial unrelated work** | **Defer.** Reply on the thread: "Out of scope for this PR — tracking separately." If the repo is `factify-inc/*`, create a Linear ticket via the Linear MCP and link it in the reply. If `noamsto/*`, open a GitHub issue and link it. |
+| **Non-trivial unrelated work** | **Defer with an explicit scope decision.** Follow the user’s ticket/issue approval rules, then link the tracking reference in the thread. Until approved/tracked, report pending rather than claiming completion. |
 | Ambiguous / judgment call | Use your best judgment. Implement what makes sense. Reply explaining what you decided and why. |
 | Product/architecture question you genuinely can't answer | Reply on the thread asking the specific question. Mark it pending in your final report — don't loop on it. |
 | Already-addressed / stale | Reply briefly noting the commit that addressed it. |
@@ -200,16 +212,18 @@ When deferring, the reply should be short, polite, and link to the tracking tick
 Exit when ALL true:
 
 - All CI checks green (except Apps Sanity Gate on `factify-inc/mono`)
-- Every comment posted after the latest user commit is either addressed (with a fix) or replied-to (with a deferral or question)
-- No new comments arrived between the last push and now
+- The current-head completion check in `EVIDENCE_REVIEW.md` passes
+- Questions, pending deferrals, exhausted review budgets, and recurrence blocks
+  are reported as pending/blocked, never Green
 
-Mark your task **completed** via `TaskUpdate` with a one-line note: "Green: <N commits>, <K deferrals>, <Q open questions>".
+Mark your task **completed** via `TaskUpdate` with a one-line note: "Green: <N commits>, <K approved/tracked deferrals>, no pending questions".
 
 ## Stuck / blocked
 
 If you hit any of these, mark your task **completed** with a "BLOCKED: …" note, include PR URL, and `SendMessage` the team lead:
 
-- Same fix attempted 3 times with the same failure
+- A recurrence or review-budget stop from `EVIDENCE_REVIEW.md`
+- Same mechanical fix attempted 3 times with the same failure
 - Reviewer comment requires product context you don't have
 - Conflict-resolution would touch unrelated files significantly
 - You can't reproduce a CI failure locally and the logs are unclear
@@ -296,7 +310,7 @@ This command is invocation-driven. To shepherd PRs continuously:
 ## Important Rules
 
 - **Never merge PRs** — same as `/dispatcher:autopilot`
-- **No nested teams** — teammates don't spawn their own teammates
+- **No nested teams** — teammates don't spawn their own teammates; targeted read-only reviewer subagents remain available for the evidence gate
 - **One PR per teammate** — fresh context per PR, less drift
 - **Concurrency cap is real** — >5 simultaneous CI runs against the same repo saturates the runner pool. Default 3 is conservative on purpose.
 - **Default scope is the current repo** — auto-detected via `gh repo view`. Use `--all` for cross-repo, `--repo OWNER/REPO` for an explicit override. Unlike `/dispatcher:autopilot` and `/dispatcher:project-autopilot` (which hard-code `factify-inc/mono`), this command supports any repo. Always pass `--repo` to `gh` commands inside teammate prompts.
