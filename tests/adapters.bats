@@ -58,6 +58,7 @@ setup() {
     adapters/codex/plugin/scripts
     adapters/claude-code/plugin/protocols
     adapters/codex/plugin/protocols
+    adapters/cursor/protocols
     adapters/claude-code/plugin/reviewers
     adapters/codex/plugin/reviewers
     adapters/cursor/reviewers
@@ -79,6 +80,14 @@ setup() {
   for n in dispatcher autopilot finish-prs project-autopilot; do
     [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
     [ -f "$ROOT/adapters/cursor/commands/$n.md" ]
+  done
+}
+
+@test "every adapter ships the complete shared protocol references" {
+  for adapter in claude-code/plugin codex/plugin cursor; do
+    for source in "$ROOT"/adapters/core/protocols/*.md; do
+      cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
+    done
   done
 }
 
@@ -437,10 +446,10 @@ setup() {
   # let a standard codex worker default its way past the gate to `done`.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
-    'A reviewer subagent receives **only** the task doc, the diff (or the command that computes it), and its role brief.' \
+    'its role brief, and the factual evidence packet defined in `EVIDENCE_REVIEW.md`' \
     'It carries **review authority only**: it does not fix, commit, push, open PRs, or act as the worker' \
     '**"review it yourself in this context" is not a permitted fallback on `standard`/`deep`**' \
-    '**A missing review gate is never low-risk**, so a `review gate unavailable:` block is carved out of this allowance on every tier'; do
+    '**A missing review gate, pending correctness evidence, or recurrence block is never low-risk**'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
@@ -454,11 +463,11 @@ setup() {
     'Retry the spawn **once**. If it still fails, do not push, do not open a PR, and do not emit `none`:' \
     'crew status "$CREW_WORKER_ID" blocked "review gate unavailable: <what>"' \
     'crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<engine and tier, mechanism attempted, how it failed including the retry, the two legal replies>"' \
-    'the only two legal replies — **retry**, or **re-dispatch** (to an engine that can review, or as `tier: trivial`, where `none` is both legal and true)' \
+    'the only two legal replies — **retry**, or **re-dispatch** (to an engine that can review, or as `tier: trivial` only if the actual diff qualifies for the mechanical fast path)' \
     '**proceeding unreviewed at this tier is not a legal reply**' \
     '`unavailable` appears on a `blocked`/`failed` snapshot only and **never co-occurs with `done`**' \
     '**On `standard`/`deep` a `kind: implement` worker never validly reports `done` (or `pr_open`) with `review_mode: "none"`, on any engine**' \
-    '`unavailable` is narrower than "no reviewer ran": it means the gate was **reached** and no reviewer could be spawned' \
+    '`unavailable` is narrower than "no reviewer ran": it means the gate was **reached** and a required reviewer capability could not be spawned' \
     'Whether `none` is honest turns on one test — **did the run reach the review gate?**' \
     'emits `none` with `review_high: 0` per the "`0` if no reviewer ran" rule' \
     'A run that did reach it keeps whatever the gate produced — `full`/`downgraded` with its real `review_high`, or `unavailable` — even if it later fails, is stopped, or times out'; do
@@ -471,7 +480,7 @@ setup() {
   # The old parenthetical read as permission for the exact degrade the
   # unavailability path exists to close, so its absence is the regression test.
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
-  run grep -F '`none` (**no reviewer was due** — the trivial tier, or a standard/deep run that stopped before reaching the gate), or `unavailable` (a reviewer was required and could not be spawned; see below)' "$protocol"
+  run grep -F '`none` (**no reviewer was due** — the trivial tier, or a standard/deep run that stopped before reaching the gate), or `unavailable` (a required review capability could not be spawned; see below)' "$protocol"
   [ "$status" -eq 0 ]
   run grep -F '`none` (trivial / no reviewer)' "$protocol"
   [ "$status" -ne 0 ]
@@ -886,7 +895,7 @@ $hits"
   # #116: each protocol states the CRITICAL/HIGH/MEDIUM mapping
   # onto its own vocabulary exactly once — this pins both sentences so a
   # future edit can't reword one without the other drifting.
-  run grep -F 'a CRITICAL is HIGH-severity for `review_high` and for the deep second re-review' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F 'a CRITICAL is HIGH-severity for `review_high`' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   [ "$status" -eq 0 ]
   run grep -F 'CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`' "$ROOT/adapters/core/protocols/REVIEW_TASK.md"
   [ "$status" -eq 0 ]

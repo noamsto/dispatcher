@@ -79,6 +79,10 @@ in {
           source = "${self}/adapters/cursor/critics";
           recursive = true;
         };
+        ".cursor/protocols" = {
+          source = "${self}/adapters/cursor/protocols";
+          recursive = true;
+        };
       };
 
       # Codex loads plugins ONLY from a real directory under

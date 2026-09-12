@@ -106,11 +106,11 @@ mkdir -p "$root/adapters/cursor/scripts"
 cp "$root/adapters/core/dispatch-notify.sh" "$root/adapters/cursor/scripts/dispatch-notify.sh"
 chmod +x "$root/adapters/cursor/scripts/dispatch-notify.sh"
 
-# Both rosters ship loose for cursor on the same reasoning: a cursor worker
-# resolves a reviewer or a critic by path, and without these copies the only
+# Both rosters and the protocols ship loose for cursor: a cursor worker
+# resolves these references by path, and without these copies the only
 # path that resolves is the exported one, which a non-Nix install does not
 # have.
-for r in "$reviewers" "$critics"; do
+for r in "$reviewers" "$critics" "$protocols"; do
   rm -rf "$root/adapters/cursor/$(basename "$r")"
   cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
 done

@@ -49,6 +49,7 @@ setup() {
   [ -f "$dir/DISPATCHER_PROTOCOL.md" ]
   # dispatch --review resolves this one at dispatch time and aborts without it.
   [ -f "$dir/REVIEW_TASK.md" ]
+  [ -f "$dir/EVIDENCE_REVIEW.md" ]
 }
 
 @test "crew does not retain the protocols as a runtime closure reference" {
