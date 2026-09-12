@@ -7,13 +7,119 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--lazy] [--status] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
+  echo "       dispatch --spawn-role <role> [--agent E] [--model M] [--effort E]   # create a lazy grid's role pane on demand" >&2
+  echo "       dispatch --reap-roles                                            # kill this window's role panes" >&2
 }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+
+# --- role-grid helpers -----------------------------------------------------
+
+# split_role_pane <window> <worktree> <role> — create a role pane, label it with
+# @crew_role, and echo its pane id.
+split_role_pane() {
+  local win="$1" wt="$2" role="$3" pane
+  pane="$(tmux split-window -t "$win" -c "$wt" -P -F '#{pane_id}')"
+  tmux set-option -p -t "$pane" @crew_role "$role"
+  tmux set-option -p -t "$pane" pane-border-format " #[bold]$role#[nobold] "
+  printf '%s' "$pane"
+}
+
+# launch_role <pane> <role> <agent> <model> — launch the role's engine with
+# GRID_PROTOCOL as its system prompt (appended where the engine supports it,
+# first prompt otherwise). Reads $agent_name / $effort from the caller scope.
+launch_role() {
+  local pane="$1" role="$2" r_agent="$3" r_model="$4"
+  local prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
+  local first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
+  case "$r_agent" in
+  pi) tmux send-keys -t "$pane" "pi --name ${agent_name}-${role} --model $r_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter ;;
+  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $r_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
+  codex) tmux send-keys -t "$pane" "codex --profile worker -m $r_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
+  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$r_model' '$first'" Enter ;;
+  esac
+}
+
+# `dispatch --spawn-role <role>` — create a role pane on demand in the caller's
+# own tmux window/worktree, from the grid recorded in roles.json. Idempotent:
+# reuses an existing pane for that role. Used by a lazy grid's lead at a seam.
+if [ "${1:-}" = "--spawn-role" ]; then
+  role="${2:-}"
+  [ -n "$role" ] || {
+    echo "dispatch: --spawn-role needs a role name" >&2
+    exit 1
+  }
+  shift 2
+  spawn_agent=""
+  spawn_model=""
+  spawn_effort=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --agent) spawn_agent="${2:-}"; shift 2 ;;
+    --model) spawn_model="${2:-}"; shift 2 ;;
+    --effort) spawn_effort="${2:-}"; shift 2 ;;
+    *)
+      echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -f WORKER_TASK.md ] || {
+    echo "dispatch: --spawn-role must run inside a worker worktree (no WORKER_TASK.md)" >&2
+    exit 1
+  }
+  [ -n "${TMUX_PANE:-}" ] || {
+    echo "dispatch: --spawn-role must run inside tmux" >&2
+    exit 1
+  }
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  branch="$(git branch --show-current)"
+  roles_file="$crew_dir/artifacts/$branch/roles.json"
+  [ -f "$roles_file" ] || {
+    echo "dispatch: no role grid recorded for $branch (dispatch without --lazy to use an up-front grid)" >&2
+    exit 1
+  }
+  spec="$(jq -r --arg r "$role" '.[$r] // empty | "\(.agent) \(.model)"' "$roles_file")"
+  [ -n "$spec" ] || {
+    echo "dispatch: role '$role' is not part of this grid" >&2
+    exit 1
+  }
+  agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
+  effort="${spawn_effort:-$(sed -n 's/^effort: //p' WORKER_TASK.md)}"
+  spawn_agent="${spawn_agent:-${spec%% *}}"
+  spawn_model="${spawn_model:-${spec#* }}"
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
+  if [ -n "$existing" ]; then
+    echo "role $role is already running in pane $existing"
+    exit 0
+  fi
+  pane="$(split_role_pane "$win" "$PWD" "$role")"
+  launch_role "$pane" "$role" "$spawn_agent" "$spawn_model"
+  echo "spawned role $role ($spawn_agent/$spawn_model) in $pane"
+  exit 0
+fi
+
+# `dispatch --reap-roles` — kill every role pane in the caller's window, so a
+# finished grid reclaims its space without waiting for the whole window's reap.
+if [ "${1:-}" = "--reap-roles" ]; then
+  [ -n "${TMUX_PANE:-}" ] || {
+    echo "dispatch: --reap-roles must run inside tmux" >&2
+    exit 1
+  }
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | while read -r p r; do
+    [ -n "$r" ] || continue
+    [ "$p" = "$TMUX_PANE" ] && continue
+    tmux kill-pane -t "$p" 2>/dev/null || true
+  done
+  echo "reaped role panes"
+  exit 0
+fi
 
 tier="${1:-}"
 model="${2:-}"
@@ -40,6 +146,8 @@ gh_issue=""
 mcp_profile=""
 grid_roles=""
 grid_flag=""
+grid_lazy=""
+grid_status=""
 crew_id_flag=""
 plan_val="required"
 while [ $# -gt 0 ]; do
@@ -84,6 +192,14 @@ while [ $# -gt 0 ]; do
     ;;
   --grid)
     grid_flag=1
+    shift
+    ;;
+  --lazy)
+    grid_lazy=1
+    shift
+    ;;
+  --status)
+    grid_status=1
     shift
     ;;
   --crew-id)
@@ -214,6 +330,10 @@ roles_stamp=""
 if [ "${#role_names[@]}" -gt 0 ]; then
   roles_stamp="$(IFS=,; printf '%s' "${role_names[*]}")"
 fi
+if [ -n "$grid_lazy" ] && [ -z "$roles_stamp" ]; then
+  echo "dispatch: --lazy needs --grid or --roles" >&2
+  exit 1
+fi
 
 # Map an additive --mcp profile to its generated config (claude-only).
 mcp_flag=""
@@ -293,6 +413,16 @@ fi
 crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
 mkdir -p "$crew_dir"
 
+# Record the resolved role specs so a lazy grid's lead can spawn each role on
+# demand (`dispatch --spawn-role`), and so any role can be re-created after death.
+if [ "${#role_names[@]}" -gt 0 ]; then
+  roles_dir="$crew_dir/artifacts/$branch"
+  mkdir -p "$roles_dir"
+  for i in "${!role_names[@]}"; do
+    jq -n --arg n "${role_names[$i]}" --arg a "${role_agents[$i]}" --arg m "${role_models[$i]}" '{name:$n,agent:$a,model:$m}'
+  done | jq -s 'map({key:.name,value:{agent:.agent,model:.model}})|from_entries' > "$roles_dir/roles.json"
+fi
+
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
 jq -nc --arg crew "$crew_id" --arg branch "$branch" \
@@ -313,6 +443,8 @@ agent_color=$(printf '%s' "$ident" | jq -r .tmux)
     "$tier" "$effort" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name"
   # The role grid the lead should delegate to (absent = single-agent pipeline).
   [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
+  # A lazy grid creates no role panes up front; the lead spawns each at its seam.
+  [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -351,6 +483,7 @@ fi
 grid_note=""
 if [ -n "$roles_stamp" ]; then
   grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+  [ -n "$grid_lazy" ] && grid_note="$grid_note The grid is lazy: before assigning a role, create its pane with \`dispatch --spawn-role <role>\` (idempotent); reap them at the end with \`dispatch --reap-roles\`."
 fi
 
 if [ "$agent" = codex ]; then
@@ -391,37 +524,27 @@ else
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
 fi
 
-# Role grid: split the task window into one pane per role. Each role pane parks
-# on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
-# prompt. A role may run a different engine from the lead (cross-engine review).
-# Split AFTER the lead launch so the lead keeps the first pane. NOT stall-watched
-# on purpose: a parked role produces no output, which the pane-output watchdog
-# would misread as a wedge.
-if [ "${#role_names[@]}" -gt 0 ]; then
+# Role grid: materialize the panes. A lazy grid creates none up front (the lead
+# spawns each role at its seam with `dispatch --spawn-role`); otherwise split the
+# window into one pane per role. Roles park on the bus until the lead assigns them
+# work; GRID_PROTOCOL.md is their system prompt. A role may run a different engine
+# from the lead (cross-engine review). Split AFTER the lead launch so the lead
+# keeps the first pane. NOT stall-watched on purpose: a parked role produces no
+# output, which the pane-output watchdog would misread as a wedge.
+if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
-    role="${role_names[$i]}"
-    role_agent="${role_agents[$i]}"
-    role_model="${role_models[$i]}"
-    read -r role_pane < <(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')
-    tmux set-option -p -t "$role_pane" @crew_role "$role"
-    tmux set-option -p -t "$role_pane" pane-border-format " #[bold]$role#[nobold] "
-    role_prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
-    case "$role_agent" in
-    pi)
-      role_cmd="pi --name ${agent_name}-${role} --model $role_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$role_prompt'"
-      ;;
-    claude)
-      role_cmd="claude --name ${agent_name}-${role} --model $role_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$role_prompt'"
-      ;;
-    codex)
-      role_cmd="codex --profile worker -m $role_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
-      ;;
-    cursor)
-      role_cmd="CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $role_model 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
-      ;;
-    esac
-    tmux send-keys -t "$role_pane" "$role_cmd" Enter
+    role_pane="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}")"
+    launch_role "$role_pane" "${role_names[$i]}" "${role_agents[$i]}" "${role_models[$i]}"
   done
+  tmux select-layout -t "$win" tiled
+fi
+
+# Optional live status pane: a bounded roster loop over the crew bus.
+if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
+  status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
+  tmux set-option -p -t "$status_pane" @crew_role status
+  tmux set-option -p -t "$status_pane" pane-border-format " #[bold]grid status#[nobold] "
+  tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
   tmux select-layout -t "$win" tiled
 fi
 

@@ -147,8 +147,13 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
    its own engine and model (`reviewer=claude:opus`, `reviewer=<model>`), so a
    task can run a pi implementer with a claude (or codex) reviewer: the
    cross-engine review the `WORKER_PROTOCOL` calls for.
-4. **On-demand materialization + broker/status pane** for `deep`; `reap` role
-   panes.
+4. **On-demand materialization + status pane + role reap (implemented).**
+   `--lazy` (with `--grid`/`--roles`) records the resolved specs in
+   `<crew_dir>/artifacts/<branch>/roles.json` and creates no panes up front; the
+   lead materializes each role at its seam with `dispatch --spawn-role <role>`
+   (idempotent — reuses a live pane), and reclaims them with
+   `dispatch --reap-roles`. `--status` adds a live roster pane. This keeps a
+   `deep` grid from opening five idle processes at dispatch time.
 
 ## Open questions
 

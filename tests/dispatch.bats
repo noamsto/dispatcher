@@ -146,3 +146,34 @@ teardown() {
   run grep -c 'DISPATCHER_PROTOCOL_DIR:-@protocolDir@' "$DISPATCH"
   [ "$output" = "1" ]
 }
+
+@test "grid: --lazy needs a role topology" {
+  run run_dispatch standard sonnet --lazy --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--lazy needs --grid or --roles"* ]]
+}
+
+@test "grid: --spawn-role needs a role name" {
+  run run_dispatch --spawn-role
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--spawn-role needs a role name"* ]]
+}
+
+@test "grid: --spawn-role requires a worker worktree" {
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run inside a worker worktree"* ]]
+}
+
+@test "grid: lazy records role specs and spawns on demand" {
+  run grep -F -- 'roles.json' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--spawn-role' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--reap-roles' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'lazy: 1' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'crew_role status' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
