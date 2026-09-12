@@ -438,8 +438,14 @@ else
     fi
     ;;
   pi)
+    # The example mirrors the active profile: on personal, the only
+    # provider that resolves is opencode Zen — the OpenRouter example
+    # would name a ladder the operator can't pick from. See
+    # dispatch-orchestration.md "Model gate".
     if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      pi_model_example='openrouter/deepseek/deepseek-v4-pro'
+      [ "$profile" = personal ] && pi_model_example='opencode/deepseek-v4-pro'
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. $pi_model_example on $profile). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -537,18 +543,37 @@ if [ -z "$ignore_map" ]; then
     esac
     ;;
   pi)
+    # Profile-keyed: OpenRouter on work, opencode Zen on personal. The
+    # shape gate above stays profile-agnostic — only this tier-
+    # appropriateness gate knows which ladder the active profile ships.
+    # See dispatch-orchestration.md "Tier map".
     case "$tier" in
     deep)
-      tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      if [ "$profile" = work ]; then
+        tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
+        [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      else
+        tier_expected="opencode/deepseek-v4-pro"
+        [[ $model =~ ^opencode/deepseek-v4-pro$ ]] || tier_ok=0
+      fi
       ;;
     standard)
-      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      if [ "$profile" = work ]; then
+        tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
+        [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      else
+        tier_expected="opencode/minimax-m3"
+        [[ $model =~ ^opencode/minimax-m3$ ]] || tier_ok=0
+      fi
       ;;
     trivial)
-      tier_expected="openrouter/deepseek/deepseek-v4-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      if [ "$profile" = work ]; then
+        tier_expected="openrouter/deepseek/deepseek-v4-flash"
+        [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      else
+        tier_expected="opencode/deepseek-v4-flash"
+        [[ $model =~ ^opencode/deepseek-v4-flash$ ]] || tier_ok=0
+      fi
       ;;
     *) tier_ok=0 ;;
     esac

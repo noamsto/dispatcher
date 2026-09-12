@@ -306,17 +306,84 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "rejects ultra for pi (codex-only)" {
-  run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort ultra --crew-id c1 "title"
+  # Work deep rung — the personal equivalent would also trip the effort-ceiling
+  # gate, but work keeps this test focused on the engine ceiling rather than
+  # the profile-keyed ladder.
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort ultra --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"ultra is codex-only"* ]]
 }
 
 @test "pi is not work-profile gated" {
-  # pi+deepseek is a personal engine (OpenRouter), unlike the work-only
-  # codex/cursor accounts. Assert the gate does NOT fire: the run proceeds past
-  # it and fails later for an unrelated reason (no worktree in the test repo).
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 "title"
+  # pi is all-profile, unlike codex/cursor. Assert against the personal
+  # profile's standard rung (opencode/minimax-m3) — the only logged-in
+  # provider on a personal host. Run proceeds past the profile gate and
+  # fails later for an unrelated reason (no worktree in the test repo).
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --effort high --crew-id c1 "title"
   [[ "$output" != *"work-profile only"* ]]
+}
+
+@test "personal profile refuses openrouter ids with a Zen-ladder error" {
+  # The error's "expected ..." line names the Zen ladder the operator can
+  # pick from — not the OpenRouter id they typed (that's just input echo).
+  # `tier_expected` is the human-facing contract this ticket is about.
+  DISPATCH_PROFILE=personal run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  # The error's "expected ..." line must contain the Zen ladder id, not an
+  # OpenRouter one — `tier_expected` is the human-facing contract and
+  # naming the wrong ladder is the exact confusion this gate is here to
+  # avoid.
+  [[ "$output" == *"expected opencode/deepseek-v4-pro"* ]]
+}
+
+@test "work profile refuses opencode ids with a OpenRouter-ladder error" {
+  # Mirror of the personal refusal above: the `expected ...` line must
+  # name a rung of the WORK profile's ladder (OpenRouter).
+  DISPATCH_PROFILE=work run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"expected openrouter/deepseek/deepseek-v4"* ]]
+}
+
+@test "pi shape gate accepts both providers on both profiles" {
+  # Assert that the SHAPE gate (not the tier-map gate) is the one refusing
+  # bad ids: pick a (profile, model) that's shape-valid but tier-incorrect
+  # for that profile, then check we see a tier-map error
+  # (with the right `expected ...` line) and NOT a shape error.
+  DISPATCH_PROFILE=personal run run_dispatch deep opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"does not match --agent pi"* ]]
+  [[ "$output" == *"expected opencode/deepseek-v4-pro"* ]]
+  DISPATCH_PROFILE=work run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"does not match --agent pi"* ]]
+  [[ "$output" == *"expected openrouter/deepseek/deepseek-v4"* ]]
+}
+
+@test "pi shape gate rejects an unqualified id" {
+  # `sonnet` is a bare claude alias — the pi shape regex requires a
+  # provider-qualified id (a `/` part). The shape gate fires before the
+  # tier map, so the error names the gate.
+  run run_dispatch standard sonnet --agent pi --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent pi"* ]]
+  # An uppercase-prefixed id is also unqualified — the regex requires
+  # lowercase. The same gate fires.
+  run run_dispatch standard OPENROUTER/deepseek-v4-flash --agent pi --effort high --crew-id c1 "title" 2>/dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --agent pi"* ]]
+}
+
+@test "pi launcher default resolves to the active profile's deep rung" {
+  # Read the script, do not launch (this is a peer to gate tests that
+  # require an actual pi session). Both profile-specific defaults must
+  # be wired, and the profile branch must gate them.
+  DISPATCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
+  run grep -F -- 'openrouter/deepseek/deepseek-v4-pro' "$DISPATCHER"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'opencode/deepseek-v4-pro' "$DISPATCHER"
+  [ "$status" -eq 0 ]
+  run grep -F -- '"$profile" = personal' "$DISPATCHER"
+  [ "$status" -eq 0 ]
 }
 
 @test "the pi worker launch streams via the TUI with the protocol appended" {
@@ -338,23 +405,26 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "--roles rejects a work-only role agent off the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
+  # Personal profile uses Zen ladder rows; this test's only profile concern
+  # is the role engine (codex is work-only) — the openid model id just has
+  # to clear the tier map so the role parsing gets reached.
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"work-profile only"* ]]
 }
 
 @test "rejects an invalid role name" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,bad role" --effort high --crew-id c1 "title"
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles "reviewer,bad role" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"invalid role 'bad role'"* ]]
 }
 
 @test "rejects empty and duplicate role entries" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,,plan-critic" --effort high --crew-id c1 "title"
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles "reviewer,,plan-critic" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"empty entry"* ]]
 
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,reviewer" --effort high --crew-id c1 "title"
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles "reviewer,reviewer" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"duplicate role 'reviewer'"* ]]
 }
@@ -398,13 +468,13 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "a role spec rejects an empty model for an explicit engine" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=claude:" --effort high --crew-id c1 "title"
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles "reviewer=claude:" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"needs a model after 'claude:'"* ]]
 }
 
 @test "a role spec rejects shell syntax in a model" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles 'reviewer=pi:model;touch-bad' --effort high --crew-id c1 "title"
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/minimax-m3 --agent pi --roles 'reviewer=pi:model;touch-bad' --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"invalid model"* ]]
 }
@@ -990,6 +1060,15 @@ assert_gate_silent() { # <engine> <model>
     claude-opus-5-high gpt-5.6-sol-high; do
     assert_gate_silent cursor "$m"
   done
+  # Pi shape gate is profile-agnostic — every provider-qualified id in the
+  # doc's table survives gate 1, regardless of which profile it belongs to.
+  # Tier-appropriateness is asserted separately ("tier gate accepts every pi
+  # table cell" below).
+  for m in openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash \
+    opencode/deepseek-v4-pro opencode/minimax-m3 opencode/deepseek-v4-flash; do
+    assert_gate_silent pi "$m"
+  done
 }
 
 @test "tier gate accepts every claude table cell" {
@@ -1070,6 +1149,40 @@ assert_gate_silent() { # <engine> <model>
   DISPATCH_PROFILE=work run run_dispatch trivial cursor-grok-4.6-low --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch trivial composer-2.5 --agent cursor --effort low --crew-id c1 42 "tier cursor trivial composer"
+  [ "$status" -eq 0 ]
+}
+
+@test "tier gate accepts every pi table cell on both profiles" {
+  # The model map has a pi column PER profile — dispatch has to admit each
+  # rung only on the profile that ladder belongs to. Mirrors the cursor
+  # "every table cell" test (analogous structure, different provider).
+  #
+  # DISPATCH_PRECHECK=1 short-circuits after every gate above it: this is
+  # the only way to probe tier-appropriateness for pi+standard/deep because
+  # the auto role-grid spawns split-windows whose pane ids stub_launch_bins'
+  # tmux leaves empty, and the launch path can't proceed on an empty pane.
+  # work profile: OpenRouter ladder.
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 "tier pi work deep pro"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 "tier pi work deep 1-flash"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 "tier pi work standard 1-flash"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 "tier pi work standard flash"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 "tier pi work trivial flash"
+  [ "$status" -eq 0 ]
+  # personal profile: opencode Zen ladder. Personal deep admits only its
+  # worker (no cheaper Zen model between deepseek-v4-pro and minimax-m3 —
+  # glm-5.3 1.40/4.40 is more expensive than minimax-m3 0.30/1.20, so
+  # minimax-m3 is the standard rung, not a deep adjacent). deepseek-v4-flash
+  # is cheaper than minimax-m3, so it goes under personal trivial, not
+  # personal standard's cheaper slot.
+  DISPATCH_PROFILE=personal DISPATCH_PRECHECK=1 run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 "tier pi personal deep pro"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal DISPATCH_PRECHECK=1 run run_dispatch standard opencode/minimax-m3 --agent pi --effort high --crew-id c1 "tier pi personal standard m3"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal DISPATCH_PRECHECK=1 run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 "tier pi personal trivial flash"
   [ "$status" -eq 0 ]
 }
 
@@ -1189,10 +1302,17 @@ assert_gate_silent() { # <engine> <model>
   # these same tokens and would let this test pass even if the ORIGINAL
   # Model map/Burn classes text were deleted.
   doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
+  # Pi ships two profile-keyed ladders — the Model map table now lists each
+  # rung once per profile (work/personal). Both rungs must appear in the
+  # Model map doc slice AND in dispatch.sh's tier_expected strings so the
+  # gate keeps admitting them on the profile they map to.
   for token in opus sonnet haiku fable \
     gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
     kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium cursor-grok-4.6-low \
-    composer-2.5 claude-fable-5-1; do
+    composer-2.5 claude-fable-5-1 \
+    openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash \
+    opencode/deepseek-v4-pro opencode/minimax-m3 opencode/deepseek-v4-flash; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
