@@ -2437,17 +2437,29 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   poll_for 100 tick_after "$t"
   [ "$(stream_lines)" -eq 1 ]
 
-  # A different key IS re-emitted. Replacing the copy (rm, then create — the
-  # running stream keeps the old inode) changes both the exit code and the
-  # first stderr line. Not by making the inner `mkdir -p "$cdir"` fail: the
-  # stream's own tick write and its $outf redirect are in that same directory,
-  # so a file there kills the loop under `set -e` instead of failing one
-  # iteration of it — and the assertion below would then hold vacuously.
+  # A different key IS re-emitted. The replacement must be atomic (write a
+  # temp file, then `mv -f` it into place) and scoped to `watch` only: an
+  # unlink-then-create leaves a window where $STREAM_CREW is briefly absent,
+  # which a fork landing there turns into a THIRD, unrelated error key
+  # (rc=127, "No such file or directory"); and faulting every subcommand
+  # (not just `watch`) makes the loop's own `hold due` pre-check fail too,
+  # under an independent suppression key, so its "hold due: ..." line can
+  # race ahead of the "crew: fault injected" line this test asserts on. Not
+  # by making the inner `mkdir -p "$cdir"` fail: the stream's own tick write
+  # and its $outf redirect are in that same directory, so a file there kills
+  # the loop under `set -e` instead of failing one iteration of it — and the
+  # assertion below would then hold vacuously.
   rm -rf "$cdir/watch.lock.d"
-  rm -f "$STREAM_CREW"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo "crew: fault injected" >&2' 'exit 3' >"$STREAM_CREW"
+  tmp=$(mktemp "$BATS_TEST_TMPDIR/crew-copy.XXXXXX")
+  printf '%s\n' '#!/usr/bin/env bash' \
+    'case "${1:-}" in' \
+    '  watch) echo "crew: fault injected" >&2; exit 3 ;;' \
+    '  *) exit 0 ;;' \
+    'esac' >"$tmp"
+  mv -f "$tmp" "$STREAM_CREW"
 
   poll_for 200 at_least_lines 2
+  [ "$(stream_lines)" -eq 2 ]
   run jq -e '.stream == "error" and .rc == 3 and .detail == "crew: fault injected"' <<<"$(tail -n1 "$STREAM_OUT")"
   [ "$status" -eq 0 ]
   stop_stream
