@@ -58,6 +58,33 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "--roles needs a value" {
+  run run_dispatch standard sonnet --roles
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--roles needs a comma-separated list"* ]]
+}
+
+@test "--roles requires the pi engine (phase 1)" {
+  run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--roles currently requires --agent pi"* ]]
+}
+
+@test "rejects an invalid role name" {
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,bad role" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid role 'bad role'"* ]]
+}
+
+@test "the role grid splits the task window and labels panes by role" {
+  run grep -F -- 'split-window -t "$win"' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '@crew_role' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'GRID_PROTOCOL.md' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
 @test "rejects an unknown effort" {
   run run_dispatch standard sonnet --effort bogus "title"
   [ "$status" -eq 1 ]
