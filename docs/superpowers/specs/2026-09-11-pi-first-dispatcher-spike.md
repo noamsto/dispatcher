@@ -203,20 +203,81 @@ regressing the bus's inspectability; B produces real review metrics.
 - **Product coupling.** Making the _mechanism_ pi-only raises the contribution
   bar and risks the engine-neutral value proposition.
 
-## Recommendation
+## Prior art (pi package ecosystem, searched 2026-09-11)
 
-Pursue **L2 as a direction**, not a rewrite, gated on two contained spikes:
+The `pi-package` keyword covers **~9,650 npm packages**, and the primitives this
+spike proposes to build already exist — often more maturely. Closest matches:
 
-1. **Spike A first** (bus extension + event liveness). It attacks the biggest
-   real cost — `stall-watch` and pane-scraping — and its win is measurable
-   against the current harness on one task.
-2. **Spike B next** (critic pipeline via subagents) — already the tracked #140
-   follow-up; it is the natural first consumer of the pi package.
-3. **Keep L1 as the baseline** and leave the shell CLI in place; the extension
-   should wrap the same bus, so nothing regresses if the spike loses.
-4. **Do not pursue L3** until L2 has proven it is both better and maintainable.
+| Project                                                                                                                 | What it is                                                                                                                                                                                                  | Overlaps                                                                    | Gap                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **`pi-tmux-orchestrator`**                                                                                              | Pi package + Python CLI coordinating agents in a **tmux grid**; Unix-socket broker, mandatory reviewer, budgets, durable bounded state.                                                                     | tmux fleet, role topology, broker, recovery, budget, review-by-construction | pi-only workers; no engine-neutral bus; no PR-gated reap; no tier/engine/model judgment |
+| **`pi-crew`**                                                                                                           | Sub-agent orchestration with **durable state**, parallel execution, **worktree isolation**, detached runs surviving session switches, real child Pi processes, planner/verifier workflows, Prometheus/OTLP. | durable workers, worktrees, pipeline, background runs, observability        | pi-only; own README warns it is **AI-generated and unaudited**                          |
+| **`pi-agent-board`**                                                                                                    | Full-screen TUI to **dispatch/monitor/peek/reply/attach/clean up durable background Pi sessions** across projects.                                                                                          | roster, reply, durable sessions, cleanup                                    | a board over sessions, not an orchestration protocol; pi-only                           |
+| **`@edgehero/pi-dispatch`**                                                                                             | Self-hosted job harness: BullMQ worker, forge (GitHub/GitLab/…) triggers, container-per-job, spend caps, run history.                                                                                       | "a dispatcher for pi", queue, forge triggers, budget                        | **opposite architecture** (daemon + queue + containers); pi-only                        |
+| **`@quintinshaw/pi-dynamic-workflows`**                                                                                 | Workflow-script fan-out, model tiers (`small/medium/big`), **git-worktree isolation**, resume, cost accounting, `/code-review` on a PR.                                                                     | tiers, worktree isolation, fan-out, review                                  | deterministic scripts, not a judging orchestrator; pi-only; no bus/reap                 |
+| **`pi-subagents`**                                                                                                      | Subagents + workflows; foreground (in-process) and **background (detached runner)** children; **external runners** (codex-exec, read-only cursor).                                                          | durable background, per-role models, **multi-engine**                       | no bus, no roster/reap, no tier protocol                                                |
+| **`pi-background-tasks`, `pi-loop`, `pi-muselinn-harness`, `@arhen/pi-core-subagent`, `@gjczone/pi-swarm`, `pi-fleet`** | Durable background jobs, durable loops, swarm+goal+budget+queue, mailbox/intercom, local fleets.                                                                                                            | durability, budget, coordination, messaging                                 | pieces, not the whole; mostly pi-only                                                   |
 
-The strategic prize is not "run pi as an engine" — that is done. It is removing
-the pane-output liveness heuristic, making the critic pipeline native, and
-collapsing the per-engine adapter matrix into one pi package plus thin external
-runners.
+**What none has:** the dispatcher-specific combination — an **engine-neutral
+crew** (claude/codex/cursor/pi as peers), a **git-backed append-only bus** in
+`.git/crew/` (`jq`-inspectable, with `roster`/`watch`/`await`/`reap`),
+**PR-gated reaping**, and **the judgment protocol as the product** (tier × engine
+× model × effort, `--plan provided`). So there is no drop-in equivalent, but the
+orchestration/durability/worktree/board primitives are solved elsewhere.
+
+### The `pi-tmux-orchestrator` "tmux grid"
+
+Worth explaining, since it is the closest architectural match and a different
+coordination model than ours. `pi-tmux-orchestrator start` creates a **detached
+tmux grid**: one pane per **role** — `implementer`, a mandatory `reviewer`, a
+`broker/status` dashboard pane, and optional `probe` / `playwright` /
+`django-expert` — each a native Pi session (or a headless RPC pane with
+`--rpc-workers`), visible and directly steerable, with the layout adapting to the
+enabled roles. Crucially, **tmux only hosts and displays panes; it does not
+transport workflow messages.** A per-run, owner-only **Unix-socket broker**
+authenticates role bridges, accepts bounded typed reports, schedules the
+mandatory review, and fails ambiguous delivery to `uncertain` rather than
+blindly replaying. The broker/status pane is event-driven (refresh on a state
+transition or a resize signal, never polling or tailing worker output) and shows
+per-role `LINK / LIVE / ASSIGNMENT / MODEL / THINK / TOKENS / CTX` rows.
+
+Contrast with dispatcher: dispatcher is **one tmux window per worker** — a flat
+tab per independent task, no role topology — coordinated through the append-only
+`.git/crew/` JSONL bus, with liveness inferred from pane output. The grid is **one
+pane layout per run** with a fixed role topology, coordinated through a socket
+broker, with tmux demoted to a display layer. Both make the fleet visible; they
+differ on whether **tmux** (dispatcher) or a **broker** (orchestrator) is the
+coordination substrate, and on whether tmux carries state or only frames.
+
+### Implication: compose before building
+
+Before writing any L2 code, evaluate the existing packages as the substrate —
+this reframes L2 from "build a pi package" to a **compose-vs-build** decision.
+The supply-chain caveat is real: these run unattended with full user privileges,
+and at least one (pi-crew) self-describes as unaudited AI-generated code.
+
+## Recommendation (revised after prior art)
+
+**Compose first; build only the thin differentiators.** Pursue L2 as a direction,
+but gate it on evaluating prior art before writing orchestration from scratch:
+
+1. **Evaluate `pi-tmux-orchestrator` first** — the closest substrate (tmux grid +
+   broker + mandatory reviewer). Determine whether dispatcher's engine-neutral
+   bus, PR-gated reap, and tier protocol can layer on its broker/grid instead of
+   a new extension; its `uncertain`-on-ambiguous-delivery and budget enforcement
+   are things we would otherwise rebuild.
+2. **Evaluate `pi-crew`** for the durable/worktree-isolated worker plane — with a
+   hard eye on its unaudited-code warning. `pi-subagents` remains the candidate
+   for the **multi-engine** plane (external runners) and the critic pipeline.
+3. **Spike A still stands** (bus extension + event liveness / kill `stall-watch`),
+   but scope it as a _thin_ layer over whichever substrate wins, not a new fleet
+   manager. It directly attacks dispatcher's biggest real cost.
+4. **Keep L1 as the baseline** and the shell CLI in place, so nothing regresses
+   if the spike loses. **Do not pursue L3** until L2 (composed or built) has
+   proven both better and maintainable.
+
+The strategic prize is unchanged — removing the pane-output liveness heuristic,
+making the critic pipeline native, and collapsing the per-engine adapter matrix —
+but the prior art makes it likely the orchestration **engine** should be adopted,
+while dispatcher keeps the **judgment protocol, neutral bus, and PR-gated reap**
+as its contribution.
