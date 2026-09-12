@@ -5,7 +5,7 @@
 [![ci](https://github.com/noamsto/dispatcher/actions/workflows/ci.yml/badge.svg)](https://github.com/noamsto/dispatcher/actions/workflows/ci.yml)
 &nbsp;![shell](https://img.shields.io/badge/shell-bash-4EAA25)
 &nbsp;![nix](https://img.shields.io/badge/nix-flake-5277C3)
-&nbsp;![engines](https://img.shields.io/badge/engines-claude%20%7C%20codex%20%7C%20cursor-8A63D2)
+&nbsp;![engines](https://img.shields.io/badge/engines-claude%20%7C%20codex%20%7C%20cursor%20%7C%20pi-8A63D2)
 
 `dispatcher` turns one agent session into an orchestrator. It judges each task
 into a tier, an engine and a model, scaffolds one worker per task in its own git
@@ -13,9 +13,9 @@ worktree and tmux window, and coordinates the whole crew over a git-backed
 message bus. Workers survive the session that spawned them. The orchestrator
 never writes code.
 
-It runs on **Claude Code**, **OpenAI Codex** and **Cursor** — and can mix them in
-a single crew, so a refactor goes to one model while the security-sensitive
-change goes to another.
+It runs on **Claude Code**, **OpenAI Codex**, **Cursor** and **pi** — and can mix
+them in a single crew. pi adds DeepSeek and other model families through
+OpenRouter.
 
 ---
 
@@ -36,13 +36,16 @@ flowchart LR
     D -->|dispatch| W1["worker<br/>claude"]
     D -->|dispatch| W2["worker<br/>codex"]
     D -->|dispatch| W3["worker<br/>cursor"]
+    D -->|dispatch| W4["worker<br/>pi"]
     W1 --> B[("crew bus<br/><code>.git/crew/</code>")]
     W2 --> B
     W3 --> B
+    W4 --> B
     B -->|watch| D
     W1 --> PR1([PR])
     W2 --> PR2([PR])
     W3 --> PR3([PR])
+    W4 --> PR4([PR])
 ```
 
 Each worker gets its own worktree, its own tmux window, and a colour-coded
@@ -129,30 +132,33 @@ while nothing was watching.
 The harness is engine-neutral; the adapters are not. Each engine gets what it can
 actually express:
 
-|                           | Claude Code |        Codex        |    Cursor    |
-| ------------------------- | :---------: | :-----------------: | :----------: |
-| Packaging                 |   plugin    |       plugin        | loose files¹ |
-| Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |
-| Skills                    |     ✅      |         ✅          |      ✅      |
-| Subagents                 |     ✅      |   ⚠️ native only³   |     ✅³      |
-| Hooks                     |     ✅      |         ✅          |      ✅      |
-| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      |
-| Worker: code-review gate  |     ✅      |         ✅          |      ✅      |
+|                           | Claude Code |        Codex        |    Cursor    |      pi      |
+| ------------------------- | :---------: | :-----------------: | :----------: | :----------: |
+| Packaging                 |   plugin    |       plugin        | loose files¹ | loose files⁴ |
+| Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |      ❌      |
+| Skills                    |     ✅      |         ✅          |      ✅      |      ❌      |
+| Native subagents          |     ✅      |         ✅³         |     ✅³      |      ❌      |
+| Hooks                     |     ✅      |         ✅          |      ✅      |      ❌      |
+| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      | ✅ via grid  |
+| Worker: code-review gate  |     ✅      |         ✅          |      ✅      | ✅ via grid  |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
 ² Codex has no custom slash commands — custom prompts are deprecated in favour of
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
-³ Codex has native ad-hoc subagents but no declarable plugin agents; cursor has
-both but not the model this pipeline is built on.
+³ Codex has native ad-hoc subagents but no declarable plugin agents; Cursor has
+both, but not every model in its routing table exposes them.
+⁴ pi has no dispatcher adapter or native subagents. It runs the shared protocols
+directly; `--grid` supplies separate critic and reviewer processes where the tier
+requires fresh contexts.
 
 **Every tier gate runs on every engine.** A worker's pipeline depth is set by
 its tier, not by which engine drew the task: `standard` and `deep` run the
-spec/plan critics _and_ the code-review gate on all three, so
+spec/plan critics _and_ the code-review gate on all four, so
 `plan_critic_first_pass`, `review_high` and `review_mode` all carry real
 values whoever ran. Only the spawn mechanism and the rung are per-engine.
 
-**Two rosters, spawned three ways.** What each reviewer and each critic _is_
+**Two rosters, spawned four ways.** What each reviewer and each critic _is_
 ships with the harness. `adapters/core/reviewers/` holds twelve engine-neutral
 bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
 Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` and
@@ -162,7 +168,7 @@ spec and plan critics that gate a plan before any of it is written. A worker
 resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
 (or the copy its adapter ships) and hands the matched body to whatever spawn
 its engine has: a named agent on claude, an inline role brief on codex and
-cursor. A critic sits at the tier's escalate rung — it has to out-think the
+cursor, or a role-grid pane on pi. A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo.
 
@@ -251,9 +257,10 @@ For Claude Code, pass the plugin directory to `claude`:
   your Codex config. It is a runtime file, so there is no eval-time check — a
   missing profile surfaces as a launch failure in the worker pane.
 
-- **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent` and
+- **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent`, `pi` and
   [`wt`](https://worktrunk.dev) resolve from the ambient `PATH`; log each in out
-  of band.
+  of band. Pi uses the selected provider's credentials, such as
+  `OPENROUTER_API_KEY` for the default DeepSeek ladder.
 
 </details>
 
@@ -273,6 +280,7 @@ From inside a dispatcher session:
 dispatch --crew-id <id> standard sonnet --effort medium ENG-421 "fix the retry loop"
 dispatch --crew-id <id> deep opus --effort high --agent codex "redesign the export pipeline"
 dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the flag"
+dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effort high --agent pi --grid "harden the parser"
 ```
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
@@ -373,8 +381,14 @@ Next up:
   spawn Claude Code teammates, making them claude-only. The crew bus is already
   the engine-neutral equivalent — porting them makes them work everywhere and
   collapses a duplicate fan-out architecture.
-- **Closing the process-light gap** so Codex and Cursor workers get a critic
-  pipeline too.
+- **Role-grid topology** — a task window becomes a grid of role panes
+  (implementer + critics + reviewers), so the critic pipeline is engine-neutral
+  and cross-model review is structural rather than a claude-only subagent
+  feature. `dispatch --grid` derives the topology from the tier and `--roles`
+  picks each role's engine/model (`reviewer=claude:opus`); see
+  `docs/superpowers/specs/2026-09-11-role-grid-topology-design.md`.
+- **Role-grid follow-through** — materialize roles on demand instead of at task
+  launch, and surface their state directly in the task window.
 
 ## License
 

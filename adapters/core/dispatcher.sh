@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   --agent)
     agent="${2:-}"
     [ -n "$agent" ] || {
-      echo "dispatcher: --agent needs a value (claude, codex, or cursor)" >&2
+      echo "dispatcher: --agent needs a value (claude, codex, cursor, or pi)" >&2
       exit 1
     }
     shift 2
@@ -51,18 +51,22 @@ while [ $# -gt 0 ]; do
 done
 
 case "$agent" in
-claude | codex | cursor) ;;
+claude | codex | cursor | pi) ;;
 *)
-  echo "dispatcher: --agent must be claude, codex, or cursor" >&2
+  echo "dispatcher: --agent must be claude, codex, cursor, or pi" >&2
   exit 1
   ;;
 esac
 
 profile="${DISPATCH_PROFILE:-personal}"
-if [ "$agent" != claude ] && [ "$profile" != work ]; then
-  echo "dispatcher: --agent $agent is work-profile only" >&2
-  exit 1
-fi
+case "$agent" in
+codex | cursor)
+  if [ "$profile" != work ]; then
+    echo "dispatcher: --agent $agent is work-profile only" >&2
+    exit 1
+  fi
+  ;;
+esac
 
 if [ -n "$effort" ]; then
   case "$effort" in
@@ -170,6 +174,21 @@ codex | cursor)
     cursor-agent --model "${model:-kimi-k3-high}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
+  ;;
+pi)
+  # pi has a real --append-system-prompt (text or file contents), so the
+  # protocol is baked as a system prompt rather than injected as a first user
+  # prompt like codex/cursor — sturdier across compaction. --thinking is a real
+  # effort knob. --no-approve ignores a target project's local resources; the
+  # orchestrator runs in the dispatcher repo, and global ~/.pi/agent config
+  # (auth, packages) still loads.
+  set -- --name "$session_name" \
+    --model "${model:-openrouter/deepseek/deepseek-v4-pro}" \
+    --thinking "${effort:-high}" \
+    --no-approve \
+    --append-system-prompt "$protocol"
+  [ -n "$task" ] && set -- "$@" "$task"
+  pi "$@"
   ;;
 esac
 

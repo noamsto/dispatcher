@@ -440,6 +440,16 @@ setup() {
   done
 }
 
+@test "grid roles reply to the current worker session after resume" {
+  protocol="$ROOT/adapters/core/protocols/GRID_PROTOCOL.md"
+  run grep -F "lead_id=\$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)" "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'crew msg "$id" "$lead_id"' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'worker:$branch' "$protocol"
+  [ "$status" -ne 0 ]
+}
+
 @test "worker protocol pins the fresh-context reviewer contract" {
   # Both named escape hatches get their own assertion: self-review (the spawn
   # contract) and the safe-default-on-timeout allowance, which would otherwise
@@ -494,9 +504,9 @@ setup() {
   for statement in \
     '`review_mode` = which review depth actually ran (`full`|`downgraded`|`none`|`unavailable`, per the Code review gate' \
     '**Every engine runs the spec/plan critics**' \
-    'carries a real verdict on codex and cursor too and `null` keeps its narrow meaning: no plan phase ran.' \
-    '**The code review gate reads the same way**: on `standard`/`deep` all three run it like any other engine' \
-    'on `trivial` they emit `review_high: 0` with `review_mode: "none"`, the same as a trivial claude worker.' \
+    'the roster or grid supplies a fresh context' \
+    '**The code review gate reads the same way**: on `standard`/`deep` all four run it' \
+    'on `trivial` they emit `review_high: 0` with `review_mode: "none"`.' \
     'On an `unavailable` snapshot `review_high` is `null`'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
@@ -882,7 +892,7 @@ $hits"
   # and every reviewer domain, not just claim "the roster" in the abstract.
   run grep -F 'twelve engine-neutral' "$ROOT/README.md"
   [ "$status" -eq 0 ]
-  start_line="$(grep -nF '**Two rosters, spawned three ways.**' "$ROOT/README.md" | head -1 | cut -d: -f1)"
+  start_line="$(grep -nF '**Two rosters, spawned four ways.**' "$ROOT/README.md" | head -1 | cut -d: -f1)"
   [ -n "$start_line" ]
   paragraph="$(sed -n "${start_line},\$p" "$ROOT/README.md" | awk '{print} /^$/{exit}' | tr '\n' ' ')"
   for item in Go Python TypeScript shell Nix YAML Terraform SQLite Postgres \

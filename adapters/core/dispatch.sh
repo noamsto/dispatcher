@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -63,6 +63,8 @@ pr_number=""
 base_ref=""
 kind=implement
 mcp_profile=""
+grid_roles=""
+grid_flag=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
@@ -76,9 +78,9 @@ while [ $# -gt 0 ]; do
   --agent)
     agent="${2:-}"
     case "$agent" in
-    claude | codex | cursor) ;;
+    claude | codex | cursor | pi) ;;
     *)
-      echo "dispatch: --agent must be claude, codex, or cursor" >&2
+      echo "dispatch: --agent must be claude, codex, cursor, or pi" >&2
       exit 1
       ;;
     esac
@@ -102,6 +104,18 @@ while [ $# -gt 0 ]; do
       exit 1
     }
     shift 2
+    ;;
+  --roles)
+    grid_roles="${2:-}"
+    [ -n "$grid_roles" ] || {
+      echo "dispatch: --roles needs a comma-separated list of roles" >&2
+      exit 1
+    }
+    shift 2
+    ;;
+  --grid)
+    grid_flag=1
+    shift
     ;;
   --crew-id)
     crew_id_flag="${2:-}"
@@ -322,6 +336,12 @@ else
       fi
     fi
     ;;
+  pi)
+    if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
   esac
 fi
 
@@ -415,6 +435,23 @@ if [ -z "$ignore_map" ]; then
     *) tier_ok=0 ;;
     esac
     ;;
+  pi)
+    case "$tier" in
+    deep)
+      tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
   esac
   if [ "$tier_ok" = 0 ]; then
     echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
@@ -422,14 +459,14 @@ if [ -z "$ignore_map" ]; then
   fi
 fi
 
-# claude's --effort tops out at max; rejecting `ultra` here fails before the
+# claude's and pi's --effort top out at max; rejecting `ultra` here fails before the
 # worktree and pane exist, instead of at worker launch.
-if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
-  echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
+if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; then
+  echo "dispatch: --effort ultra is codex-only; $agent tops out at max" >&2
   exit 1
 fi
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch: --mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
 fi
 
@@ -513,6 +550,94 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
       fi
     fi
   fi
+fi
+
+# Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
+# half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
+# from the tier. Each spec is `name`, `name=<model>`, or `name=<agent>:<model>`;
+# a leading token from the fixed agent set is the agent, so any other text before
+# a `:` (a pi `:thinking` suffix, say) stays part of the model id.
+role_names=()
+role_agents=()
+role_models=()
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+  grid_flag=1
+fi
+if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
+  case "$tier" in
+  trivial) grid_roles="" ;;
+  standard) grid_roles="plan-critic,reviewer" ;;
+  deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
+  esac
+fi
+if [ -n "$grid_roles" ]; then
+  IFS=',' read -r -a role_specs <<<"$grid_roles"
+  for spec in "${role_specs[@]}"; do
+    [ -n "$spec" ] || {
+      echo "dispatch: role list contains an empty entry" >&2
+      exit 1
+    }
+    role="${spec%%=*}"
+    rest=""
+    [ "$role" != "$spec" ] && rest="${spec#*=}"
+    case "$role" in
+    '' | *[!A-Za-z0-9_-]*)
+      echo "dispatch: invalid role '$role' (letters, digits, _ and - only)" >&2
+      exit 1
+      ;;
+    esac
+    for existing_role in "${role_names[@]}"; do
+      [ "$existing_role" != "$role" ] || {
+        echo "dispatch: duplicate role '$role'" >&2
+        exit 1
+      }
+    done
+    role_agent="$agent"
+    role_model="$model"
+    if [ -n "$rest" ]; then
+      case "${rest%%:*}" in
+      claude | codex | cursor | pi)
+        role_agent="${rest%%:*}"
+        role_model="${rest#*:}"
+        [ -n "$role_model" ] || {
+          echo "dispatch: role '$role' needs a model after '$role_agent:'" >&2
+          exit 1
+        }
+        ;;
+      *) role_model="$rest" ;;
+      esac
+    fi
+    role_model_ok=1
+    case "$role_agent" in
+    claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] || role_model_ok=0 ;;
+    codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] || role_model_ok=0 ;;
+    cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] || role_model_ok=0 ;;
+    pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || role_model_ok=0 ;;
+    esac
+    if [ "$role_model_ok" = 0 ]; then
+      echo "dispatch: invalid model '$role_model' for role '$role'" >&2
+      exit 1
+    fi
+    if { [ "$role_agent" = claude ] || [ "$role_agent" = pi ]; } && [ "$effort" = ultra ]; then
+      echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
+      exit 1
+    fi
+    case "$role_agent" in
+    codex | cursor)
+      [ "$profile" = work ] || {
+        echo "dispatch: role '$role' uses --agent $role_agent, which is work-profile only" >&2
+        exit 1
+      }
+      ;;
+    esac
+    role_names+=("$role")
+    role_agents+=("$role_agent")
+    role_models+=("$role_model")
+  done
+fi
+roles_stamp=""
+if [ "${#role_names[@]}" -gt 0 ]; then
+  roles_stamp="$(IFS=,; printf '%s' "${role_names[*]}")"
 fi
 
 # Map an additive --mcp profile to its generated config (claude-only).
@@ -874,8 +999,8 @@ esac
 
 sanitized="${branch//\//-}"
 
-# Session id is issued here and carried in the environment by all three engine
-# launchers. epoch+pid prevents two same-second dispatches on one branch from
+# Session id is issued here and carried in the environment by all four engine
+# launch paths. epoch+pid prevents two same-second dispatches on one branch from
 # sharing an identity (#17).
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
@@ -1045,6 +1170,8 @@ fi
   if [ "$switch_mode" = resume ]; then
     printf 'resume: true\n'
   fi
+  # The role grid the lead should delegate to (absent = single-agent pipeline).
+  [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -1125,7 +1252,7 @@ if [ "$plan_val" = provided ]; then
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan
-# and partial work (#73). No apostrophes anywhere in this string: all three launch
+# and partial work (#73). No apostrophes anywhere in this string: all four launch
 # strings single-quote the prompt inside a double-quoted `tmux send-keys`
 # argument, and one apostrophe silently breaks the line.
 resume_note=""
@@ -1142,7 +1269,7 @@ if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi
 
-# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor/pi workers must
 # stamp process-authority into every execute-subagent prompt so a fresh subagent
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
 # the Agent tool; this clause is only for engines whose spawn prompt is the
@@ -1165,6 +1292,14 @@ medium) codex_subagent_effort=low ;;
 low) codex_subagent_effort=low ;;
 esac
 
+# Grid mode: tell the lead it has role panes to delegate the critic/review phases
+# to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
+# "Grid mode").
+grid_note=""
+if [ -n "$roles_stamp" ]; then
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+fi
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -1172,7 +1307,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -1188,16 +1323,56 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+elif [ "$agent" = pi ]; then
+  # pi's interactive TUI keeps pane output live. It accepts a file path as a
+  # real appended system prompt; --no-approve ignores project-local resources.
+  tmux send-keys -t "$pane" \
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter
+fi
+
+# Role grid: split the task window into one pane per role. Each role pane parks
+# on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
+# prompt. A role may run a different engine from the lead (cross-engine review).
+# Split AFTER the lead launch so the lead keeps the first pane. NOT stall-watched
+# on purpose: a parked role produces no output, which the pane-output watchdog
+# would misread as a wedge.
+if [ "${#role_names[@]}" -gt 0 ]; then
+  for i in "${!role_names[@]}"; do
+    role="${role_names[$i]}"
+    role_agent="${role_agents[$i]}"
+    role_model="${role_models[$i]}"
+    printf -v quoted_role_model '%q' "$role_model"
+    read -r role_pane < <(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')
+    tmux set-option -p -t "$role_pane" @crew_role "$role"
+    tmux set-option -p -t "$role_pane" pane-border-format " #[bold]$role#[nobold] "
+    role_prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
+    case "$role_agent" in
+    pi)
+      role_cmd="pi --name ${agent_name}-${role} --model $quoted_role_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$role_prompt'"
+      ;;
+    claude)
+      role_cmd="claude --name ${agent_name}-${role} --model $quoted_role_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$role_prompt'"
+      ;;
+    codex)
+      role_cmd="codex --profile worker -m $quoted_role_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      ;;
+    cursor)
+      role_cmd="CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_role_model 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      ;;
+    esac
+    tmux send-keys -t "$role_pane" "$role_cmd" Enter
+  done
+  tmux select-layout -t "$win" tiled
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
 # output and never ends, so neither the bus nor the SessionEnd `exited` backstop
 # notices. Pane output is only a valid liveness signal for an engine that streams
-# — every engine launched above must, which is why all three run their own TUI
+# — every engine launched above must, which is why all four run their own TUI
 # rather than a buffered headless mode. This watches the pane's output and, if it
 # goes silent through the startup window, posts `failed` so the dispatcher's
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it

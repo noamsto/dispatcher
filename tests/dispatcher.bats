@@ -8,6 +8,7 @@ setup() {
   stub_bin claude
   stub_bin codex
   stub_bin cursor-agent
+  stub_bin pi
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
   unset TMUX CREW_ID
 }
@@ -19,7 +20,7 @@ teardown() {
 @test "rejects an unknown agent" {
   run run_launcher --agent bogus
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--agent must be claude, codex, or cursor"* ]]
+  [[ "$output" == *"--agent must be claude, codex, cursor, or pi"* ]]
 }
 
 @test "gates codex behind the work profile" {
@@ -82,6 +83,18 @@ teardown() {
   DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
   run grep -F -- 'Read /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
   [ "$status" -eq 0 ]
+}
+
+@test "bakes the protocol into pi via --append-system-prompt" {
+  CREW_ID=c1 run_launcher --agent pi
+  run grep -F -- '--append-system-prompt /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "pi is not work-profile gated as an orchestrator" {
+  DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"work-profile only"* ]]
 }
 
 @test "warns that effort is ignored for cursor" {

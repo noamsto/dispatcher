@@ -80,7 +80,7 @@ reflow=$(tmux show-option -gqv @reflow_bin); [ -n "$reflow" ] && "$reflow" "$(tm
 
 - If non-empty: treat it as the first task — judge its tier + **engine** + model + effort
   per the protocol's rubric, state your call and why, then
-  `dispatch --crew-id <id> <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] <title…>`
+  `dispatch --crew-id <id> <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] <title…>`
   (substituting the literal crew id you noted for `<id>`).
 - If empty: confirm you're in dispatcher mode and wait for tasks.
 
@@ -88,6 +88,5 @@ reflow=$(tmux show-option -gqv @reflow_bin); [ -n "$reflow" ] && "$reflow" "$(tm
 > the protocol as a system prompt (sturdier across compaction); this command loads it
 > into context. For a long fan-out, prefer restarting with `dispatcher`.
 
-> Codex/cursor dispatchers are launcher-only: `dispatcher --agent codex|cursor`
-> (work profile) injects the protocol as the session's first prompt. This command
-> promotes only claude sessions — it can only ever run inside one.
+> Codex/cursor/pi dispatchers are launcher-only: `dispatcher --agent <engine>`.
+> This command promotes only claude sessions — it can only ever run inside one.

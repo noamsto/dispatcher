@@ -440,6 +440,14 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
 }
 
+@test "occupants: a pi pane reports its own literal name and is an engine" {
+  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\tpi\n')"
+  run run_crew occupants /wt/a
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
+  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
+}
+
 @test "occupants: a finished agent that dropped to a shell is still an occupant" {
   stub_tmux "$(printf '@23\tsage\t/wt/a\n')" "$(printf '@23\t%%33\tfish\n')"
   run run_crew occupants /wt/a
@@ -493,6 +501,11 @@ EOF
 
 @test "engine-cmd: codex is a live engine" {
   run run_crew engine-cmd codex
+  [ "$status" -eq 0 ]
+}
+
+@test "engine-cmd: pi is a live engine" {
+  run run_crew engine-cmd pi
   [ "$status" -eq 0 ]
 }
 

@@ -17,7 +17,7 @@ if [ "$1" = engine-cmd ]; then
   c="${2#.}"
   c="${c%-wrapped}"
   case "$c" in
-  claude | codex | cursor-agent | node) exit 0 ;;
+  claude | codex | cursor-agent | node | pi) exit 0 ;;
   esac
   exit 1
 fi
@@ -416,6 +416,31 @@ EOF
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
   grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
+  run grep -c -- '--continue' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "pi resume launches with --continue and reapplies the protocol" {
+  setup_worker_wt 'roles: plan-critic,reviewer'
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'pi --continue' "$STUB_LOG"
+  grep -q -- '--append-system-prompt /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
+  grep -q -- '--no-approve' "$STUB_LOG"
+  grep -q 'role panes (plan-critic,reviewer) may still be parked' "$STUB_LOG"
+}
+
+@test "pi --fresh drops the continue flag" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --fresh
+  [ "$status" -eq 0 ]
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ pi ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
