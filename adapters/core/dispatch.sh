@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--roles <r1,r2,...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -64,6 +64,7 @@ base_ref=""
 kind=implement
 mcp_profile=""
 grid_roles=""
+grid_flag=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
@@ -111,6 +112,10 @@ while [ $# -gt 0 ]; do
       exit 1
     }
     shift 2
+    ;;
+  --grid)
+    grid_flag=1
+    shift
     ;;
   --crew-id)
     crew_id_flag="${2:-}"
@@ -465,6 +470,7 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   exit 1
 fi
 
+<<<<<<< HEAD
 # Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
 # cache is advisory data from refresh-budget — fail open when it is missing,
 # stale (>2h), or silent on this engine ("unknown" is never "exhausted").
@@ -547,23 +553,62 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
-# Role grid (experimental, phase 1). Validate before scaffolding so a bad role
-# can't leave a half-built grid: role panes are pi-only for now, and names must
-# be safe to use as tmux option values and bus ids.
+# Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
+# half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
+# from the tier. Each spec is `name`, `name=<model>`, or `name=<agent>:<model>`;
+# a leading token from the fixed agent set is the agent, so any other text before
+# a `:` (a pi `:thinking` suffix, say) stays part of the model id.
+role_names=()
+role_agents=()
+role_models=()
+if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
+  case "$tier" in
+  trivial) grid_roles="" ;;
+  standard) grid_roles="plan-critic,reviewer" ;;
+  deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
+  esac
+fi
 if [ -n "$grid_roles" ]; then
-  if [ "$agent" != pi ]; then
-    echo "dispatch: --roles currently requires --agent pi (role panes are pi-only in phase 1)" >&2
-    exit 1
-  fi
-  IFS=',' read -r -a role_list <<<"$grid_roles"
-  for role in "${role_list[@]}"; do
+  IFS=',' read -r -a role_specs <<<"$grid_roles"
+  for spec in "${role_specs[@]}"; do
+    [ -n "$spec" ] || continue
+    role="${spec%%=*}"
+    rest=""
+    [ "$role" != "$spec" ] && rest="${spec#*=}"
     case "$role" in
     '' | *[!A-Za-z0-9_-]*)
       echo "dispatch: invalid role '$role' (letters, digits, _ and - only)" >&2
       exit 1
       ;;
     esac
+    role_agent="$agent"
+    role_model="$model"
+    if [ -n "$rest" ]; then
+      case "${rest%%:*}" in
+      claude | codex | cursor | pi)
+        role_agent="${rest%%:*}"
+        role_model="${rest#*:}"
+        [ "$role_model" = "$rest" ] && role_model="$model"
+        ;;
+      *) role_model="$rest" ;;
+      esac
+    fi
+    case "$role_agent" in
+    codex | cursor)
+      [ "$profile" = work ] || {
+        echo "dispatch: role '$role' uses --agent $role_agent, which is work-profile only" >&2
+        exit 1
+      }
+      ;;
+    esac
+    role_names+=("$role")
+    role_agents+=("$role_agent")
+    role_models+=("$role_model")
   done
+fi
+roles_stamp=""
+if [ "${#role_names[@]}" -gt 0 ]; then
+  roles_stamp="$(IFS=,; printf '%s' "${role_names[*]}")"
 fi
 
 # Map an additive --mcp profile to its generated config (claude-only).
@@ -1097,7 +1142,7 @@ fi
     printf 'resume: true\n'
   fi
   # The role grid the lead should delegate to (absent = single-agent pipeline).
-  [ -n "$grid_roles" ] && printf 'roles: %s\n' "$grid_roles"
+  [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -1220,10 +1265,10 @@ esac
 
 # Grid mode: tell the lead it has role panes to delegate the critic/review phases
 # to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
-# "Grid mode"). Only reachable when --roles is set (pi-only in phase 1).
+# "Grid mode").
 grid_note=""
-if [ -n "$grid_roles" ]; then
-  grid_note=" You lead a role grid: role panes ($grid_roles) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+if [ -n "$roles_stamp" ]; then
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
 fi
 
 if [ "$agent" = codex ]; then
@@ -1260,18 +1305,36 @@ else
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
 fi
 
-# Role grid (phase 1 mechanics): split the task window into one pane per role.
-# Each role pane parks on the bus until the lead assigns it work; GRID_PROTOCOL.md
-# is its system prompt. Split AFTER the lead launch so the lead keeps the first
-# pane. NOT stall-watched on purpose: a parked role produces no output, which the
-# pane-output watchdog would misread as a wedge.
-if [ -n "$grid_roles" ]; then
-  for role in "${role_list[@]}"; do
+# Role grid: split the task window into one pane per role. Each role pane parks
+# on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
+# prompt. A role may run a different engine from the lead (cross-engine review).
+# Split AFTER the lead launch so the lead keeps the first pane. NOT stall-watched
+# on purpose: a parked role produces no output, which the pane-output watchdog
+# would misread as a wedge.
+if [ "${#role_names[@]}" -gt 0 ]; then
+  for i in "${!role_names[@]}"; do
+    role="${role_names[$i]}"
+    role_agent="${role_agents[$i]}"
+    role_model="${role_models[$i]}"
     read -r role_pane < <(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')
     tmux set-option -p -t "$role_pane" @crew_role "$role"
     tmux set-option -p -t "$role_pane" pane-border-format " #[bold]$role#[nobold] "
-    tmux send-keys -t "$role_pane" \
-      "pi --name ${agent_name}-${role} --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve 'You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment.'" Enter
+    role_prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
+    case "$role_agent" in
+    pi)
+      role_cmd="pi --name ${agent_name}-${role} --model $role_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$role_prompt'"
+      ;;
+    claude)
+      role_cmd="claude --name ${agent_name}-${role} --model $role_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$role_prompt'"
+      ;;
+    codex)
+      role_cmd="codex --profile worker -m $role_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      ;;
+    cursor)
+      role_cmd="CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $role_model 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      ;;
+    esac
+    tmux send-keys -t "$role_pane" "$role_cmd" Enter
   done
   tmux select-layout -t "$win" tiled
 fi

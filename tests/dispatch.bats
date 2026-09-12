@@ -337,10 +337,10 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"--roles needs a comma-separated list"* ]]
 }
 
-@test "--roles requires the pi engine (phase 1)" {
-  run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 "title"
+@test "--roles rejects a work-only role agent off the work profile" {
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--roles currently requires --agent pi"* ]]
+  [[ "$output" == *"work-profile only"* ]]
 }
 
 @test "rejects an invalid role name" {
@@ -359,11 +359,25 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "grid mode is stamped into the task doc and the lead prompt" {
-  # Phase 2: the lead must know it has role panes (roles: line in WORKER_TASK.md)
-  # and be told to delegate the critic/review phases (grid_note in its prompt).
+  # The lead must know it has role panes (roles: line in WORKER_TASK.md) and be
+  # told to delegate the critic/review phases (grid_note in its prompt).
   run grep -F -- 'roles: %s' "$DISPATCH"
   [ "$status" -eq 0 ]
   run grep -F -- 'grid_note' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "--grid derives the role topology from the tier" {
+  run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'deep) grid_roles="spec-critic,plan-critic,reviewer"' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "a role spec can pick its own engine and model" {
+  run grep -F -- 'role_agent="${rest%%:*}"' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md' "$DISPATCH"
   [ "$status" -eq 0 ]
 }
 

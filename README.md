@@ -378,7 +378,8 @@ Next up:
 - **Role-grid topology** — a task window becomes a grid of role panes
   (implementer + critics + reviewers), so the critic pipeline is engine-neutral
   and cross-model review is structural rather than a claude-only subagent
-  feature. Phase 1 (`dispatch --roles`, pi-only) lands the mechanics; see
+  feature. `dispatch --grid` derives the topology from the tier and `--roles`
+  picks each role's engine/model (`reviewer=claude:opus`); see
   `docs/superpowers/specs/2026-09-11-role-grid-topology-design.md`.
 
 ## License
