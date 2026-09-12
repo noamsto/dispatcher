@@ -9,7 +9,7 @@
 # `set -euo pipefail` are prepended by writeShellApplication.
 
 usage() {
-  echo "usage: dispatch resume [--agent claude|codex|cursor] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
+  echo "usage: dispatch resume [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
 }
 
 fresh=""
@@ -129,6 +129,7 @@ tier="$(_hdr tier)"
 crew_id="$(_hdr crew_id)"
 agent_name="$(_hdr agent_name)"
 prev_worker_id="$(_hdr worker_id)"
+grid_roles="$(_hdr roles)"
 
 # The launch tuple is what makes a resume faithful; without it we would be
 # guessing at a model and effort the first dispatch already decided.
@@ -144,9 +145,9 @@ missing=""
 }
 
 case "$agent" in
-claude | codex | cursor) ;;
+claude | codex | cursor | pi) ;;
 *)
-  echo "dispatch resume: unknown engine '$agent' in the task header — pass --agent claude|codex|cursor" >&2
+  echo "dispatch resume: unknown engine '$agent' in the task header — pass --agent claude|codex|cursor|pi" >&2
   exit 1
   ;;
 esac
@@ -163,7 +164,7 @@ esac
 # passing --mcp there would have dispatch resolve and validate the config file
 # too, which Task 6 must do anyway to build the launch flag.
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch resume: mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  echo "dispatch resume: mcp is claude-only; codex/cursor/pi base MCP comes from their own profile" >&2
   exit 1
 fi
 
@@ -410,7 +411,12 @@ if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi
 
-# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
+grid_note=""
+if [ -n "$grid_roles" ]; then
+  grid_note=" You lead a role grid: role panes ($grid_roles) may still be parked in this window. Follow WORKER_PROTOCOL.md Grid mode and address them through the crew bus."
+fi
+
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor/pi workers must
 # stamp process-authority into every execute-subagent prompt so a fresh subagent
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
 # the Agent tool; this clause is only for engines whose spawn prompt is the
@@ -441,12 +447,17 @@ if [ "$agent" = codex ]; then
   cont="resume --last"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = cursor ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+elif [ "$agent" = pi ]; then
+  cont="--continue"
+  [ -n "$fresh" ] && cont=""
+  tmux send-keys -t "$pane" \
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""
@@ -454,7 +465,7 @@ else
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}'" Enter
 fi
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal

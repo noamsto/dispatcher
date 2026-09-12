@@ -34,7 +34,7 @@ _identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macO
 }
 
 # _is_engine_cmd <pane_current_command> — is this pane running an agent engine?
-# Under Nix the literal binary name doesn't always reach tmux. All three
+# Under Nix the literal binary name doesn't always reach tmux. The engines
 # engines were measured on a live pane: claude reports `.claude-wrapped`
 # (makeWrapper's hidden inner exec) and cursor-agent reports `node` (its
 # wrapper ends in `exec -a "$0" "$NODE_BIN" index.js`) — tmux reads the
@@ -51,7 +51,7 @@ _is_engine_cmd() {
   local c="${1#.}"
   c="${c%-wrapped}"
   case "$c" in
-  claude | codex | cursor-agent | node) return 0 ;;
+  claude | codex | cursor-agent | node | pi) return 0 ;;
   esac
   return 1
 }

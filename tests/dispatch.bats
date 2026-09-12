@@ -349,6 +349,16 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"invalid role 'bad role'"* ]]
 }
 
+@test "rejects empty and duplicate role entries" {
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,,plan-critic" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"empty entry"* ]]
+
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,reviewer" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"duplicate role 'reviewer'"* ]]
+}
+
 @test "the role grid splits the task window and labels panes by role" {
   run grep -F -- 'split-window -t "$win"' "$DISPATCH"
   [ "$status" -eq 0 ]
@@ -365,6 +375,7 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$status" -eq 0 ]
   run grep -F -- 'grid_note' "$DISPATCH"
   [ "$status" -eq 0 ]
+  [ "$(grep -c '\${grid_note}' "$DISPATCH")" -eq 4 ]
 }
 
 @test "--grid derives the role topology from the tier" {
@@ -374,11 +385,28 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$status" -eq 0 ]
 }
 
+@test "pi standard and deep workers get the required grid by default" {
+  run grep -F -- '[ "$agent" = pi ] && [ "$tier" != trivial ]' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
 @test "a role spec can pick its own engine and model" {
   run grep -F -- 'role_agent="${rest%%:*}"' "$DISPATCH"
   [ "$status" -eq 0 ]
   run grep -F -- '--append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md' "$DISPATCH"
   [ "$status" -eq 0 ]
+}
+
+@test "a role spec rejects an empty model for an explicit engine" {
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=claude:" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"needs a model after 'claude:'"* ]]
+}
+
+@test "a role spec rejects shell syntax in a model" {
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles 'reviewer=pi:model;touch-bad' --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid model"* ]]
 }
 
 @test "rejects an unknown effort" {

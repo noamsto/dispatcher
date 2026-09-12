@@ -338,7 +338,7 @@ else
     ;;
   pi)
     if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -438,16 +438,16 @@ if [ -z "$ignore_map" ]; then
   pi)
     case "$tier" in
     deep)
-      tier_expected="deepseek/deepseek-v4-pro or deepseek/deepseek-v4.1-flash"
-      [[ $model =~ ^deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
       ;;
     standard)
-      tier_expected="deepseek/deepseek-v4.1-flash or deepseek/deepseek-v4-flash"
-      [[ $model =~ ^deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
       ;;
     trivial)
-      tier_expected="deepseek/deepseek-v4-flash"
-      [[ $model =~ ^deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
       ;;
     *) tier_ok=0 ;;
     esac
@@ -470,7 +470,6 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   exit 1
 fi
 
-<<<<<<< HEAD
 # Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
 # cache is advisory data from refresh-budget — fail open when it is missing,
 # stale (>2h), or silent on this engine ("unknown" is never "exhausted").
@@ -561,6 +560,9 @@ fi
 role_names=()
 role_agents=()
 role_models=()
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+  grid_flag=1
+fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
   case "$tier" in
   trivial) grid_roles="" ;;
@@ -571,7 +573,10 @@ fi
 if [ -n "$grid_roles" ]; then
   IFS=',' read -r -a role_specs <<<"$grid_roles"
   for spec in "${role_specs[@]}"; do
-    [ -n "$spec" ] || continue
+    [ -n "$spec" ] || {
+      echo "dispatch: role list contains an empty entry" >&2
+      exit 1
+    }
     role="${spec%%=*}"
     rest=""
     [ "$role" != "$spec" ] && rest="${spec#*=}"
@@ -581,6 +586,12 @@ if [ -n "$grid_roles" ]; then
       exit 1
       ;;
     esac
+    for existing_role in "${role_names[@]}"; do
+      [ "$existing_role" != "$role" ] || {
+        echo "dispatch: duplicate role '$role'" >&2
+        exit 1
+      }
+    done
     role_agent="$agent"
     role_model="$model"
     if [ -n "$rest" ]; then
@@ -588,10 +599,28 @@ if [ -n "$grid_roles" ]; then
       claude | codex | cursor | pi)
         role_agent="${rest%%:*}"
         role_model="${rest#*:}"
-        [ "$role_model" = "$rest" ] && role_model="$model"
+        [ -n "$role_model" ] || {
+          echo "dispatch: role '$role' needs a model after '$role_agent:'" >&2
+          exit 1
+        }
         ;;
       *) role_model="$rest" ;;
       esac
+    fi
+    role_model_ok=1
+    case "$role_agent" in
+    claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] || role_model_ok=0 ;;
+    codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] || role_model_ok=0 ;;
+    cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] || role_model_ok=0 ;;
+    pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || role_model_ok=0 ;;
+    esac
+    if [ "$role_model_ok" = 0 ]; then
+      echo "dispatch: invalid model '$role_model' for role '$role'" >&2
+      exit 1
+    fi
+    if { [ "$role_agent" = claude ] || [ "$role_agent" = pi ]; } && [ "$effort" = ultra ]; then
+      echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
+      exit 1
     fi
     case "$role_agent" in
     codex | cursor)
@@ -970,8 +999,8 @@ esac
 
 sanitized="${branch//\//-}"
 
-# Session id is issued here and carried in the environment by all three engine
-# launchers. epoch+pid prevents two same-second dispatches on one branch from
+# Session id is issued here and carried in the environment by all four engine
+# launch paths. epoch+pid prevents two same-second dispatches on one branch from
 # sharing an identity (#17).
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
@@ -1223,7 +1252,7 @@ if [ "$plan_val" = provided ]; then
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan
-# and partial work (#73). No apostrophes anywhere in this string: all three launch
+# and partial work (#73). No apostrophes anywhere in this string: all four launch
 # strings single-quote the prompt inside a double-quoted `tmux send-keys`
 # argument, and one apostrophe silently breaks the line.
 resume_note=""
@@ -1278,7 +1307,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -1294,7 +1323,7 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources.
@@ -1302,7 +1331,7 @@ elif [ "$agent" = pi ]; then
     "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter
 fi
 
 # Role grid: split the task window into one pane per role. Each role pane parks
@@ -1316,22 +1345,23 @@ if [ "${#role_names[@]}" -gt 0 ]; then
     role="${role_names[$i]}"
     role_agent="${role_agents[$i]}"
     role_model="${role_models[$i]}"
+    printf -v quoted_role_model '%q' "$role_model"
     read -r role_pane < <(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')
     tmux set-option -p -t "$role_pane" @crew_role "$role"
     tmux set-option -p -t "$role_pane" pane-border-format " #[bold]$role#[nobold] "
     role_prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
     case "$role_agent" in
     pi)
-      role_cmd="pi --name ${agent_name}-${role} --model $role_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$role_prompt'"
+      role_cmd="pi --name ${agent_name}-${role} --model $quoted_role_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$role_prompt'"
       ;;
     claude)
-      role_cmd="claude --name ${agent_name}-${role} --model $role_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$role_prompt'"
+      role_cmd="claude --name ${agent_name}-${role} --model $quoted_role_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$role_prompt'"
       ;;
     codex)
-      role_cmd="codex --profile worker -m $role_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      role_cmd="codex --profile worker -m $quoted_role_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
       ;;
     cursor)
-      role_cmd="CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $role_model 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
+      role_cmd="CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_role_model 'Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role).'"
       ;;
     esac
     tmux send-keys -t "$role_pane" "$role_cmd" Enter
