@@ -102,11 +102,7 @@ simultaneous layout. This keeps scale honest and reuses `reap`.
 
 - Create the task window, then `tmux split-window -t <win> -c <worktree>` per
   role; `tmux select-layout -t <win> tiled` to keep the grid legible.
-- Per-pane identity: a `@crew_role` pane option, a role label in
-  `pane-border-format`, and a **stable per-role colour** (`role_color`) applied to
-  `pane-border-style`/`pane-active-border-style` — all per pane, so a role keeps
-  its colour and label through a tiled layout and a zoom (`prefix+z`).
-  `pane-border-status top` is turned on for the window so the labels render. A
+- Per-pane identity: a `@crew_role` pane option + `pane-border-format`, so a
   pane is labelled by role the way a window is labelled by codename.
 - Read-only roles get a read-only posture (`--tools read,grep,find,ls` for pi;
   the reviewer agents for claude).
@@ -151,13 +147,8 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
    its own engine and model (`reviewer=claude:opus`, `reviewer=<model>`), so a
    task can run a pi implementer with a claude (or codex) reviewer: the
    cross-engine review the `WORKER_PROTOCOL` calls for.
-4. **On-demand materialization + status pane + role reap (implemented).**
-   `--lazy` (with `--grid`/`--roles`) records the resolved specs in
-   `<crew_dir>/artifacts/<branch>/roles.json` and creates no panes up front; the
-   lead materializes each role at its seam with `dispatch --spawn-role <role>`
-   (idempotent — reuses a live pane), and reclaims them with
-   `dispatch --reap-roles`. `--status` adds a live roster pane. This keeps a
-   `deep` grid from opening five idle processes at dispatch time.
+4. **On-demand materialization + broker/status pane** for `deep`; `reap` role
+   panes.
 
 ## Open questions
 

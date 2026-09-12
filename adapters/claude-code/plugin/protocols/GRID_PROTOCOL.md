@@ -14,28 +14,25 @@ Your role is the tmux pane option `@crew_role`. Resolve it and your branch:
 role=$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_role}')
 branch=$(git branch --show-current)
 id="role:$branch:$role"
+lead_id=$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)
 ```
 
 Read `WORKER_TASK.md` for `tier:`, `crew_id:`, and the task body. Use `$id` as
-your agent id for every bus call.
+your agent id for every bus call. Read `worker_id:` as `lead_id`; replies must
+target that exact session id, not the branch-only legacy identity.
 
 ## First action
 
-Announce yourself, then **end your turn**:
+Announce yourself, then park for an assignment:
 
 ```
 crew status "$id" working
+crew await "$id" --timeout 3300
 ```
 
-You do **not** hold a `crew await`. A detached watcher — spawned by `dispatch`,
-engine-agnostic, working over the crew bus and your tmux pane — types each
-assignment into your pane as a normal user turn. So an idle role is genuinely
-idle: no repainting poll and no park cap. The watcher also reflects your state on
-the pane border (`@crew_state`: `idle` while you wait, `working` while you run).
-
-An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
-artifact to read, the question, and the seam. Handle it, post your verdict, and
-end your turn again; the watcher wakes you for the next one.
+A timeout is **empty stdout**, not an error: no assignment arrived in that
+window. Re-park, bounded — at most 3 parks — then
+`crew status "$id" failed "no assignment"` and stop.
 
 ## Assignment contract
 
@@ -51,13 +48,27 @@ files** — you are a critic/reviewer. Run tests read-only if a verdict needs th
 otherwise reason from the artifact and the diff. Tool-level read-only is not
 enforced (you have `bash` so you can reach the bus), so this is discipline.
 
+Resolve the role brief from the shared harness; the role name alone is not a
+review rubric:
+
+- `spec-critic` / `plan-critic`: read the matching
+  `$DISPATCHER_CRITICS_DIR/<role>.md` (or adapter-local `critics/<role>.md`) and
+  apply it to the assigned artifact.
+- `reviewer`: read `WORKER_TASK.md`, sibling `EVIDENCE_REVIEW.md`, and the review
+  artifact. Route the changed files through `$DISPATCHER_REVIEWERS_DIR` (or the
+  adapter-local `reviewers/`) and apply every matching body, including the
+  security trigger. You are one fresh context applying the routed batch; do not
+  delegate or replace it with an unscoped general review.
+
 ## Verdict
 
-Post your verdict to the worker, then **end your turn** — the watcher sets you
-idle and wakes you on the next assignment. Stop only if the lead said `final`:
+Post your verdict to the worker, then re-park — or stop if the lead said
+`final`. Re-read `worker_id:` immediately before every reply because a resumed
+lead has a new session id while your role pane may survive:
 
 ```
-crew msg "$id" "worker:$branch" '{
+lead_id=$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)
+crew msg "$id" "$lead_id" '{
   "role": "plan-critic",
   "seam": "plan",
   "artifact": "<crew_dir>/artifacts/<branch>/plan.md",

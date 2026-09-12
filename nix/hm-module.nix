@@ -38,7 +38,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatcher];
+      packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch];
 
       sessionVariables = {
         DISPATCH_PROFILE = cfg.profile;
@@ -49,6 +49,8 @@ in {
         # copy as the fallback when this is unset (a non-Nix install). Override
         # it in your shell to iterate on a checkout without rebuilding.
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
+        DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
+        DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
       };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc
@@ -58,6 +60,27 @@ in {
         ".cursor/rules/dispatcher.mdc".source = "${self}/adapters/cursor/rules/dispatcher.mdc";
         ".cursor/commands" = {
           source = "${self}/adapters/cursor/commands";
+          recursive = true;
+        };
+        # ".cursor/skills" is NOT claimed here: it's a shared namespace with
+        # other producers (like another module already installing aeye's
+        # skills there). A whole-directory `source` would conflict with
+        # theirs the moment ours is non-empty. Individual skills are
+        # symlinked in by the activation script below instead.
+        #
+        # The protocols tell a cursor worker to fall back to the roster copy
+        # beside commands/ whenever the exported variable is unset, so both
+        # rosters have to exist there and not only in the store.
+        ".cursor/reviewers" = {
+          source = "${self}/adapters/cursor/reviewers";
+          recursive = true;
+        };
+        ".cursor/critics" = {
+          source = "${self}/adapters/cursor/critics";
+          recursive = true;
+        };
+        ".cursor/protocols" = {
+          source = "${self}/adapters/cursor/protocols";
           recursive = true;
         };
       };
@@ -76,6 +99,19 @@ in {
         run mkdir -p "$HOME/${codexCache}"
         run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
         run chmod -R u+w "$HOME/${codexCache}"
+      '';
+
+      # ~/.cursor/skills is a shared namespace another module also links
+      # individual skills into (see the ".cursor/skills" comment above), so
+      # this links each of ours in rather than claiming the whole directory.
+      # `ln -sfn` (not `home.file`) makes it idempotent across activations and
+      # lets a store-path bump repoint an existing link. Named "spec-plan-critic",
+      # not "dispatcher-spec-plan-critic", because that's the literal name the
+      # protocol docs and skill invocations resolve it by.
+      activation.dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        skills_dir="$HOME/.cursor/skills"
+        run mkdir -p "$skills_dir"
+        run ln -sfn "${self}/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"
       '';
     };
   };

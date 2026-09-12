@@ -4,6 +4,5 @@
   "description": "Judge tasks into tier + engine + model, fan out one worker per task, coordinate over a git-backed crew bus.",
   "author": { "name": "Noam Stolero" },
   "commands": "./commands",
-  "agents": "./agents",
   "skills": "./skills"
 }

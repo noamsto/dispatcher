@@ -1,6 +1,47 @@
+# "generator is idempotent" runs scripts/gen-adapters.sh, which writes real
+# generated files into the shared checkout tree (not a per-test tmpdir) --
+# other tests in this file read those same paths. Under bats --jobs that's a
+# write/read race against the checked-out repo. Serialize this file.
+export BATS_NO_PARALLELIZE_WITHIN_FILE=true
+
 setup() {
   load helpers
   ROOT="$BATS_TEST_DIRNAME/.."
+}
+
+@test "no raw append to the shared bus log survives outside _bus_append" {
+  # Five sites drifted from the one atomic-append helper before anyone caught
+  # it (#55, #61), and #61 itself found a sixth (dispatch.sh) that the issue
+  # describing the other five never listed — nothing was stopping a raw
+  # `printf ... >>"$log"` from creeping back in. This fails loudly, by
+  # file:line, the moment one does. `_bus_append`'s own body uses `$1`/`$2`,
+  # never the literal `$log` name or the `events.jsonl` path, so it never
+  # matches its own guard; comment lines (prose mentioning the old pattern in
+  # backticks) are excluded so documentation can't trip this.
+  #
+  # Two alternatives, not one: `\$\{?log\}?` catches `$log`/`"$log"`/`${log}`
+  # regardless of brace-quoting, and `events\.jsonl` catches the log path
+  # spelled out directly (`>>"$crew_dir/events.jsonl"`) even when it's split
+  # across quotes (`>>"$crew_dir"/events.jsonl`) — a variable-name match alone
+  # would miss that shape.
+  offenders="$(grep -rnE '>>[[:space:]]*"?\$\{?log\}?"?|>>.*events\.jsonl' "$ROOT/adapters" |
+    grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  [ -z "$offenders" ]
+}
+
+@test "every standalone script's _bus_append copy matches crew.sh's" {
+  # dispatch.sh and dispatch-notify.sh each carry their own copy of this
+  # one-liner (#61) — they're separate writeShellApplication builds with no
+  # shared lib to source it from. Nothing else keeps those copies in sync, so
+  # a future fix to crew.sh's `dd` invocation (the source of truth) could
+  # silently fail to reach the other two, quietly reopening the exact splice
+  # hazard this fixes. Byte-compares the three definitions instead.
+  canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/crew.sh")"
+  [ -n "$canonical" ]
+  for f in "$ROOT/adapters/core/dispatch.sh" "$ROOT/adapters/core/dispatch-notify.sh"; do
+    found="$(grep -h '^_bus_append() {' "$f")"
+    [ "$found" = "$canonical" ]
+  done
 }
 
 @test "generator is idempotent" {
@@ -15,6 +56,17 @@ setup() {
     adapters/codex/plugin/skills
     adapters/claude-code/plugin/scripts
     adapters/codex/plugin/scripts
+    adapters/claude-code/plugin/protocols
+    adapters/codex/plugin/protocols
+    adapters/cursor/protocols
+    adapters/claude-code/plugin/reviewers
+    adapters/codex/plugin/reviewers
+    adapters/cursor/reviewers
+    adapters/claude-code/plugin/agents
+    adapters/codex/plugin/critics
+    adapters/cursor/critics
+    adapters/claude-code/plugin/skills
+    adapters/cursor/skills
   )
   "$ROOT/scripts/gen-adapters.sh" >/dev/null
   before="$(cd "$ROOT" && find "${gen_paths[@]}" -type f -exec sha256sum {} + | sort)"
@@ -28,6 +80,14 @@ setup() {
   for n in dispatcher autopilot finish-prs project-autopilot; do
     [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
     [ -f "$ROOT/adapters/cursor/commands/$n.md" ]
+  done
+}
+
+@test "every adapter ships the complete shared protocol references" {
+  for adapter in claude-code/plugin codex/plugin cursor; do
+    for source in "$ROOT"/adapters/core/protocols/*.md; do
+      cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
+    done
   done
 }
 
@@ -84,6 +144,14 @@ setup() {
   [ -x "$ROOT/adapters/codex/plugin/scripts/dispatch-notify.sh" ]
 }
 
+# Cursor has no plugin tree, so the hook ships loose for a hand-managed
+# ~/.cursor/hooks.json stanza to name by store path.
+@test "the notify hook ships executable for cursor, beside the generated commands" {
+  [ -x "$ROOT/adapters/cursor/scripts/dispatch-notify.sh" ]
+  run cmp -s "$ROOT/adapters/core/dispatch-notify.sh" "$ROOT/adapters/cursor/scripts/dispatch-notify.sh"
+  [ "$status" -eq 0 ]
+}
+
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
   run head -3 "$ROOT/adapters/cursor/rules/dispatcher.mdc"
   [[ "$output" == *"alwaysApply: true"* ]]
@@ -96,6 +164,64 @@ setup() {
   for tree in claude-code codex; do
     [ -f "$ROOT/adapters/$tree/plugin/protocols/DISPATCHER_PROTOCOL.md" ]
     [ -f "$ROOT/adapters/$tree/plugin/protocols/WORKER_PROTOCOL.md" ]
+    [ -f "$ROOT/adapters/$tree/plugin/protocols/REVIEW_TASK.md" ]
+  done
+}
+
+@test "every canonical protocol exactly matches both shipped protocol trees" {
+  for source in "$ROOT"/adapters/core/protocols/*.md; do
+    name="$(basename "$source")"
+    run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
+    [ "$status" -eq 0 ]
+    run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol defines bounded plan-shaped gate recovery" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'Before the startup bus drain, initialize `replanned = false` for this run.' \
+    'After initialization or any reset, the first qualifying amendment seeds the consecutive count at `1`.' \
+    '`A(scope step 2) → B(interface step 4) → A(scope step 2)` reaches `1 → 2 → 3` and transfers control before the third fix.' \
+    'The skipped-plan contradiction fallback and plan-shaped recovery share one execute-time budget.' \
+    'If the execute ladder has no lower rung, implement at the current worker rung; this never consumes the planning budget.' \
+    'A higher planner must be strictly above the authoritative tuple; a top or unavailable rung blocks without launching planning, and `replanned` remains false only when no earlier execute-time planning episode began.' \
+    '**Claude:** Agent model override `haiku → sonnet → opus → fable`' \
+    '**Codex:** on the exact model, increase `low → medium → high → xhigh → max`' \
+    '**Cursor:** Task model override `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`.' \
+    'Immediately before every stopping path, emit one complete latest-state metrics snapshot.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'Every pre-execute snapshot has `replanned: false`.' "$protocol"
+  [ "$status" -eq 0 ]
+}
+
+@test "worker protocol pins the resume-a-killed-run contract" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '`tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`,' \
+    'consult **Resuming a killed run** (below) first; unless resuming, run `spec-plan-critic` with `{ tier:' \
+    '`resume: true` is read first and outranks `plan:` — see **Resuming a killed run** below;' \
+    '**except under `resume: true`** (see **Resuming a killed run**): a recovered `SPEC.md` is the _output_ of a spec-critic gate in the interrupted run of this same task, not a task doc that never faced one.' \
+    'Do **not** re-run the spec or plan phases. Continue from the first unfinished step.' \
+    '**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`).' \
+    'When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url' \
+    'Consult **Resuming a killed run** (above) first; unless resuming, before the plan phase decide **once** whether to bring a top-tier consultant in to decompose the task' \
+    '`Plan: recovered (resume)` when you resumed under `resume: true`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "dispatcher protocol claim bullet pins the resume exemption and adopt release" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'already there and the branch exists, it resumes that branch and re-adds the label; free, `dispatch` adds it before any scaffolding.' \
+    '`crew adopt` on a dead-pid crew releases that crew'"'"'s own recorded claims the same way.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
   done
 }
 
@@ -176,6 +302,37 @@ setup() {
   done
 }
 
+@test "autopilot routes reviewers through the roster, not a private table" {
+  # #118: pins the roster-matching sentence on every shipped copy, rejects
+  # the retired database-reviewer/expo-mobile-reviewer/must-fix vocabulary,
+  # and checks every `*-reviewer` token against the roster directory itself
+  # so this test can't go stale.
+  roster_names="$(basename -s .md -a "$ROOT"/adapters/core/reviewers/*.md | sort -u)"
+  for f in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md"; do
+    run grep -cF 'against every roster `globs:`, honour each matched reviewer' "$f"
+    [ "$status" -eq 0 ]
+    [ "$output" -eq 1 ]
+
+    run grep -F -e 'database-reviewer' -e 'expo-mobile-reviewer' -e 'superpowers:code-reviewer' -e 'must-fix' -e 'should-fix' "$f"
+    [ "$status" -ne 0 ]
+
+    # "prefer a native reviewer agent of the same name" is deliberately
+    # backtick-free in the doc so it can't false-positive here.
+    names="$(grep -oE '`[a-z0-9-]+-reviewer`' "$f" | tr -d '`' | sort -u)"
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      if ! echo "$roster_names" | grep -qxF "$name"; then
+        echo "unknown reviewer token: $name (file: $f)" >&2
+        return 1
+      fi
+    done <<<"$names"
+  done
+}
+
 @test "the dispatcher command resolves its protocol via the env var" {
   run grep -F '$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md' "$ROOT/adapters/core/commands/dispatcher.md"
   [ "$status" -eq 0 ]
@@ -189,6 +346,745 @@ setup() {
 @test "claude-code adapter ships the critic pipeline codex cannot express" {
   [ -f "$ROOT/adapters/claude-code/plugin/agents/spec-critic.md" ]
   [ -f "$ROOT/adapters/claude-code/plugin/agents/plan-critic.md" ]
-  [ -f "$ROOT/adapters/claude-code/plugin/workflows/spec-plan-critic.js" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
+}
+
+@test "worker protocol defines the retro-note vocabulary" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '## Retro notes (all tiers)' \
+    '**Write a note only when one of the branches below is taken.**' \
+    '`command_not_found`' \
+    '`gate_thrash`' \
+    '`approach_abandoned`' \
+    '`consult_failed`' \
+    '`rung_blocked`' \
+    '`review_unavailable`' \
+    '{"seam":"<stage>","tag":"<tag>","detail":"<what>"}'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol carries retro notes in the metrics snapshot" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '"review_high":<int|null>,"review_mode":"<full|downgraded|none|unavailable>","notes":[]' \
+    '`notes` = the retro notes you accumulated this run' \
+    'An empty array is the healthy case.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol emits mid-execute retro notes immediately" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'crew msg "$CREW_WORKER_ID" "retro:$(crew id)"' \
+    '**Execute is the only stage that emits early**' \
+    'a `tmux kill-window` or a stall-watch hang never reaches a stopping path' \
+    'Like `metrics:`, `retro:` is a synthetic sink — it never wakes the dispatcher.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol points each branch at its retro tag" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'and write an `approach_abandoned` retro note.' \
+    'that is a block, not an abandoned approach, so write no `approach_abandoned` note' \
+    'Write a `consult_failed` retro note naming the consultant and the reason.' \
+    'write a `command_not_found` retro note.' \
+    'emit a `gate_thrash` retro note carrying the ledger rows via the mid-execute path' \
+    'Write a `rung_blocked` retro note naming the rung and the reason.' \
+    'write a `review_unavailable` retro note.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "dispatcher protocol synthesizes retro notes at a drained roster" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    '`misrouted`' \
+    '`fanout_binder`' \
+    '`spec_too_thin`' \
+    '`session_summary`' \
+    'crew msg "dispatcher:$CREW_ID" "retro:$CREW_ID"' \
+    'Every note must quote a specific observable' \
+    'A clean drained roster writes nothing at all.' \
+    '≥2 workers'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol binds the review gate to every engine" {
+  # The roles stay engine-neutral; only the spawn mechanism is per-engine. The
+  # rungs must keep matching rule 1's execute ladder, which is why each row's
+  # model is asserted alongside its mechanism.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '**This gate binds on every engine**: the roles below are engine-neutral, and only the spawn mechanism differs.' \
+    '| **claude** | Agent tool, one subagent per matched roster entry, its body as the brief' \
+    'Nothing matched: one general reviewer running the `find-bugs` skill.' \
+    '| **codex** | native subagent (`agents.enabled`, cap 3) with the matched roster body written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt. Rule 1'"'"'s `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort |' \
+    'The exemption covers the **diverse** reviewer only: the same-engine language reviewer and test-runner still run, and having **no** reviewer at all is the terminal path below' \
+    'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
+    '| **cursor** | Task-tool subagent with an explicit model slug, the same roster body inline |' \
+    'slug (deep → `cursor-grok-4.6-medium`, standard → `cursor-grok-4.6-low`) |' \
+    'Cap the review→fix loop at 2.'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "grid roles reply to the current worker session after resume" {
+  protocol="$ROOT/adapters/core/protocols/GRID_PROTOCOL.md"
+  run grep -F "lead_id=\$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)" "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'crew msg "$id" "$lead_id"' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'worker:$branch' "$protocol"
+  [ "$status" -ne 0 ]
+}
+
+@test "worker protocol pins the fresh-context reviewer contract" {
+  # Both named escape hatches get their own assertion: self-review (the spawn
+  # contract) and the safe-default-on-timeout allowance, which would otherwise
+  # let a standard codex worker default its way past the gate to `done`.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'its role brief, and the factual evidence packet defined in `EVIDENCE_REVIEW.md`' \
+    'It carries **review authority only**: it does not fix, commit, push, open PRs, or act as the worker' \
+    '**"review it yourself in this context" is not a permitted fallback on `standard`/`deep`**' \
+    '**A missing review gate, pending correctness evidence, or recurrence block is never low-risk**'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol makes an unspawnable reviewer terminal and loud" {
+  # The `crew status` shape matters, not just the path: dropping the worker id
+  # makes `from=blocked`, crew exits 1, and the block never reaches the bus.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'Retry the spawn **once**. If it still fails, do not push, do not open a PR, and do not emit `none`:' \
+    'crew status "$CREW_WORKER_ID" blocked "review gate unavailable: <what>"' \
+    'crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<engine and tier, mechanism attempted, how it failed including the retry, the two legal replies>"' \
+    'the only two legal replies — **retry**, or **re-dispatch** (to an engine that can review, or as `tier: trivial` only if the actual diff qualifies for the mechanical fast path)' \
+    '**proceeding unreviewed at this tier is not a legal reply**' \
+    '`unavailable` appears on a `blocked`/`failed` snapshot only and **never co-occurs with `done`**' \
+    '**On `standard`/`deep` a `kind: implement` worker never validly reports `done` (or `pr_open`) with `review_mode: "none"`, on any engine**' \
+    '`unavailable` is narrower than "no reviewer ran": it means the gate was **reached** and a required reviewer capability could not be spawned' \
+    'Whether `none` is honest turns on one test — **did the run reach the review gate?**' \
+    'emits `none` with `review_high: 0` per the "`0` if no reviewer ran" rule' \
+    'A run that did reach it keeps whatever the gate produced — `full`/`downgraded` with its real `review_high`, or `unavailable` — even if it later fails, is stopped, or times out'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "worker protocol glosses review_mode none by the gate-reached condition" {
+  # The old parenthetical read as permission for the exact degrade the
+  # unavailability path exists to close, so its absence is the regression test.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F '`none` (**no reviewer was due** — the trivial tier, or a standard/deep run that stopped before reaching the gate), or `unavailable` (a required review capability could not be spawned; see below)' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F '`none` (trivial / no reviewer)' "$protocol"
+  [ "$status" -ne 0 ]
+}
+
+@test "the metrics snapshot carves no engine out of either gate" {
+  # Both carve-outs are gone (#114 took the critic half, #108 the review half),
+  # so what needs guarding is that neither creeps back: a `null` metric excused
+  # by engine rather than by tier is the bug both closed.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '`review_mode` = which review depth actually ran (`full`|`downgraded`|`none`|`unavailable`, per the Code review gate' \
+    '**Every engine runs the spec/plan critics**' \
+    'the roster or grid supplies a fresh context' \
+    '**The code review gate reads the same way**: on `standard`/`deep` all four run it' \
+    'on `trivial` they emit `review_high: 0` with `review_mode: "none"`.' \
+    'On an `unavailable` snapshot `review_high` is `null`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+  for gone in \
+    'nor the claude code-review gate' \
+    'those stay Claude-only' \
+    'Use plain replanning, not Claude critics.'; do
+    run grep -F "$gone" "$protocol"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "the cursor rule runs both gates and names where the bodies are" {
+  # Hand-maintained — gen-adapters.sh never touches adapters/cursor/rules/, so
+  # no drift gate sees this file. With alwaysApply: true it is in every cursor
+  # session's context, and this test is its only protection.
+  rule="$ROOT/adapters/cursor/rules/dispatcher.mdc"
+  for statement in \
+    'run the plan-critic and the code-review gate like any other' \
+    'DISPATCHER_CRITICS_DIR' \
+    '`plan_critic_first_pass` verdict alongside `review_high` and `review_mode`.' \
+    '~/.cursor/critics'; do
+    run grep -F "$statement" "$rule"
+    [ "$status" -eq 0 ]
+  done
+  # A cursor session that reads any of these skips a gate it now owns.
+  for gone in \
+    'skip the plan-critic' \
+    'plan_critic_first_pass: null' \
+    'review_mode: "none"' \
+    'review_high: null'; do
+    run grep -F "$gone" "$rule"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "the reviewer roster ships verbatim into every adapter" {
+  for source in "$ROOT"/adapters/core/reviewers/*.md; do
+    name="$(basename "$source")"
+    for tree in claude-code/plugin codex/plugin cursor; do
+      run cmp -s "$source" "$ROOT/adapters/$tree/reviewers/$name"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "every reviewer carries a routable frontmatter" {
+  # A reviewer with no globs, no shebang and no when is unreachable: the gate
+  # routes by matching changed paths against globs, probes an extensionless
+  # file's first line against shebang (#119), and falls back to when for the
+  # triggers no pattern can express (security).
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$status" -eq 0 ]
+    routable="$(yq -r '((.globs // []) | length > 0) or ((.shebang // []) | length > 0) or (.when != null)' "$BATS_TEST_TMPDIR/fm.yaml")"
+    [ "$routable" = "true" ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$(basename "$f" .md)" ]
+  done
+}
+
+@test "the roster covers the languages this repo and its workers actually ship" {
+  for n in go-reviewer shell-reviewer nix-reviewer yaml-reviewer security-reviewer agent-docs-reviewer; do
+    [ -f "$ROOT/adapters/core/reviewers/$n.md" ]
+  done
+}
+
+@test "the generator removes a reviewer whose source is gone" {
+  work="$BATS_TEST_TMPDIR/roster"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/codex/plugin/reviewers/go-reviewer.md" ]
+  rm "$work/adapters/core/reviewers/go-reviewer.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  for tree in claude-code/plugin codex/plugin cursor; do
+    [ ! -f "$work/adapters/$tree/reviewers/go-reviewer.md" ]
+  done
+}
+
+@test "the review gate routes the batch over the roster" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '**The reviewers themselves ship with the harness.**' \
+    '$DISPATCHER_REVIEWERS_DIR/*.md' \
+    'one subagent per matched roster entry' \
+    'the matched roster body written into its prompt' \
+    'the same roster body inline'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the critic roster ships verbatim to the engines without an agent registry" {
+  for source in "$ROOT"/adapters/core/critics/*.md; do
+    name="$(basename "$source")"
+    for tree in codex/plugin cursor; do
+      run cmp -s "$source" "$ROOT/adapters/$tree/critics/$name"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "claude gets the same critic bodies as agents, with a pinned model" {
+  # The body has to be byte-identical to the roster's or the gate stops being
+  # the same text on every engine — only the frontmatter may differ, and only
+  # by the two keys claude alone can express.
+  for source in "$ROOT"/adapters/core/critics/*.md; do
+    name="$(basename "$source" .md)"
+    agent="$ROOT/adapters/claude-code/plugin/agents/$name.md"
+    [ -f "$agent" ]
+    strip() { awk 'NR>1 && /^---$/ {found=1; next} found' "$1"; }
+    run diff <(strip "$source") <(strip "$agent")
+    [ "$status" -eq 0 ]
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$agent" >"$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$(yq -r .model "$BATS_TEST_TMPDIR/fm.yaml")" = "opus" ]
+    [ "$(yq -r '.tools | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")" = "Read,Grep,Glob" ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$name" ]
+  done
+}
+
+@test "no critic body names a model, so no engine reads a rung it cannot spawn" {
+  # `model: opus` belongs to the generated claude agent, never to the shared
+  # body codex and cursor paste into a subagent prompt.
+  run grep -rn 'model:' "$ROOT/adapters/core/critics/"
+  [ "$status" -ne 0 ]
+}
+
+@test "every critic carries frontmatter naming itself" {
+  for f in "$ROOT"/adapters/core/critics/*.md; do
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    run yq -e '.name, .description' "$BATS_TEST_TMPDIR/fm.yaml"
+    [ "$status" -eq 0 ]
+    [ "$(yq -r .name "$BATS_TEST_TMPDIR/fm.yaml")" = "$(basename "$f" .md)" ]
+  done
+}
+
+@test "the roster holds both gates the tiers name" {
+  # standard gates on the plan, deep on the spec first — a tier whose body is
+  # missing has no gate at all.
+  [ -f "$ROOT/adapters/core/critics/plan-critic.md" ]
+  [ -f "$ROOT/adapters/core/critics/spec-critic.md" ]
+}
+
+@test "the generator removes a critic whose source is gone" {
+  work="$BATS_TEST_TMPDIR/critics"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/codex/plugin/critics/plan-critic.md" ]
+  [ -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
+  rm "$work/adapters/core/critics/plan-critic.md"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ ! -f "$work/adapters/codex/plugin/critics/plan-critic.md" ]
+  [ ! -f "$work/adapters/cursor/critics/plan-critic.md" ]
+  [ ! -f "$work/adapters/claude-code/plugin/agents/plan-critic.md" ]
+}
+
+@test "every reviewer ends with the shared tail verbatim" {
+  # Pins the anti-inflation tail (#116) byte-for-byte across the roster,
+  # so a per-file rewrite can't quietly soften the severity/verdict rules it
+  # shares with every other reviewer.
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    count="$(grep -c '^## Findings and verdict$' "$f" || true)"
+    [ "$count" -eq 1 ]
+    awk '/^## Findings and verdict$/{p=1} p' "$f" >"$BATS_TEST_TMPDIR/tail.md"
+    run cmp -s "$BATS_TEST_TMPDIR/tail.md" "$ROOT/tests/fixtures/reviewer-tail.md"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "no roster body carries an engine-specific or repo-specific idiom" {
+  # #116: the roster ships verbatim to three engines, so a phrase that
+  # only makes sense on one of them (a tool name, a path, a spawn idiom, a
+  # model pin) would silently break neutrality on the other two.
+  mapfile -t files < <(printf '%s\n' "$ROOT"/adapters/core/reviewers/*.md "$ROOT"/adapters/core/critics/*.md)
+  offenders=""
+  for pattern in '~/.claude' 'Agent tool' 'Task tool' 'subagent' \
+    'MUST BE USED' 'PROACTIVELY' 'gh pr ' 'Emergency Response' 'prdash' \
+    'factify' 'model:'; do
+    hits="$(grep -nF -- "$pattern" "${files[@]}" || true)"
+    [ -n "$hits" ] && offenders="$offenders
+$hits"
+  done
+  if [ -n "$offenders" ]; then
+    echo "$offenders" >&2
+  fi
+  [ -z "$offenders" ]
+}
+
+@test "every reviewer grades on the one severity ladder" {
+  # #116: CRITICAL/HIGH/MEDIUM is the only severity vocabulary a
+  # reviewer may use — a stray ladder rung (LOW, blocker, NOTE) means two
+  # engines could disagree about what a finding means.
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    headings="$(grep -E '^### ' "$f" || true)"
+    [ -n "$headings" ]
+    bad="$(echo "$headings" | grep -vE '^### (CRITICAL|HIGH|MEDIUM)$' || true)"
+    [ -z "$bad" ]
+    run grep -F -e 'should-fix' -e 'blocker |' -e 'NOTE:' -e 'LOW' "$f"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "the routing table is coherent" {
+  # #116: pins the frontmatter routing invariants mechanically, so a
+  # future glob/when edit can't silently break Postgres/SQLite disjointness
+  # or leave two reviewers racing on an unguarded shared glob.
+  glob_map="$BATS_TEST_TMPDIR/globs.tsv"
+  : >"$glob_map"
+  shebang_map="$BATS_TEST_TMPDIR/shebangs.tsv"
+  : >"$shebang_map"
+  postgres_when=""
+  sqlite_when=""
+  for f in "$ROOT"/adapters/core/reviewers/*.md; do
+    name="$(basename "$f" .md)"
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$f" >"$BATS_TEST_TMPDIR/fm.yaml"
+    globs_csv="$(yq -r '(.globs // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    when="$(yq -r '.when // ""' "$BATS_TEST_TMPDIR/fm.yaml")"
+    description="$(yq -r '.description // ""' "$BATS_TEST_TMPDIR/fm.yaml")"
+
+    case "$name" in
+    typescript-reviewer)
+      [[ "$globs_csv" == *'tsconfig*.json'* ]]
+      ;;
+    shell-reviewer)
+      [[ "$globs_csv" == *'.envrc'* ]]
+      ;;
+    terraform-reviewer)
+      [[ "$description" != *'YAML'* ]]
+      ;;
+    postgres-reviewer)
+      [ -n "$when" ]
+      [[ "$when" == *'atlas.hcl'* ]]
+      [[ "$when" == *'sqlc.yaml'* ]]
+      [[ "$when" != *'dependencies'* ]]
+      postgres_when="$when"
+      ;;
+    sqlite-reviewer)
+      [ -n "$when" ]
+      [[ "$when" == *'d1_databases'* ]]
+      [[ "$when" == *'no atlas.hcl'* ]]
+      [[ "$when" != *'dependencies'* ]]
+      sqlite_when="$when"
+      ;;
+    esac
+
+    IFS=',' read -ra globs <<<"$globs_csv"
+    for g in "${globs[@]}"; do
+      [ -n "$g" ] && printf '%s\t%s\n' "$g" "$name" >>"$glob_map"
+    done
+
+    shebangs_csv="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    IFS=',' read -ra shebangs <<<"$shebangs_csv"
+    for i in "${shebangs[@]}"; do
+      # Spliced unescaped into an ERE below, where it must stay unquoted to
+      # be a pattern at all. A failed compile returns 2, and inside an `if`
+      # that is indistinguishable from a clean non-match — a metacharacter
+      # entry would make the collision check go quiet instead of red.
+      if [ -n "$i" ]; then
+        [[ "$i" =~ ^[A-Za-z0-9_+-]+$ ]]
+        printf '%s\t%s\n' "$i" "$name" >>"$shebang_map"
+      fi
+    done
+  done
+
+  [ -n "$postgres_when" ]
+  [ -n "$sqlite_when" ]
+  [ "$postgres_when" != "$sqlite_when" ]
+
+  # Every glob shared by two or more reviewers must carry a non-empty
+  # `when:` on each of them, or the routing table would double-dispatch
+  # silently instead of relying on a `when:` to arbitrate.
+  # Read line by line, never `for x in $(...)`: the tokens are literal glob
+  # patterns (`*.md`, `*.go`), and an unquoted word list pathname-expands
+  # them against the invocation CWD, so any glob that happens to match a
+  # file there is replaced by that filename and its row is never checked.
+  while IFS= read -r shared_glob; do
+    names="$(awk -F'\t' -v g="$shared_glob" '$1==g{print $2}' "$glob_map" | sort -u)"
+    count="$(printf '%s\n' "$names" | wc -l)"
+    if [ "$count" -ge 2 ]; then
+      while IFS= read -r n; do
+        awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' "$ROOT/adapters/core/reviewers/$n.md" >"$BATS_TEST_TMPDIR/fm2.yaml"
+        w="$(yq -r '.when // ""' "$BATS_TEST_TMPDIR/fm2.yaml")"
+        [ -n "$w" ]
+      done <<<"$names"
+    fi
+  done < <(cut -f1 "$glob_map" | sort -u)
+
+  # A shared glob has `when:` to arbitrate it; a shared interpreter has
+  # nothing, so interpreters are disjoint outright. Kept at test top level
+  # rather than inside an `if shared` branch: with disjoint lists that branch
+  # would never execute and the check would pass by never running — the
+  # self-skipping shape #116 caught. Non-emptiness closes the same hole from
+  # the other side, where deleting every `shebang:` key leaves nothing to scan.
+  [ -s "$shebang_map" ]
+
+  while IFS= read -r interp; do
+    claimants="$(awk -F'\t' -v i="$interp" '$1==i{print $2}' "$shebang_map" | sort -u | wc -l)"
+    [ "$claimants" -eq 1 ]
+  done < <(cut -f1 "$shebang_map" | sort -u)
+
+  # The suffix is optional, so exact uniqueness above is not enough: `python`
+  # and `python3` are distinct strings that `#!/usr/bin/env python3` matches
+  # equally. The relation is directional — compare each cross-reviewer pair
+  # both ways. Two entries on one reviewer may collide harmlessly, since
+  # either way that reviewer is the one dispatched.
+  while IFS=$'\t' read -r a a_owner; do
+    while IFS=$'\t' read -r b b_owner; do
+      if [ "$a_owner" = "$b_owner" ]; then
+        continue
+      fi
+      if [[ "$b" =~ ^${a}([-.]?[0-9]+(\.[0-9]+)*)?$ ]]; then
+        echo "interpreter '$b' ($b_owner) collides with '$a' ($a_owner)" >&2
+        false
+      fi
+    done <"$shebang_map"
+  done <"$shebang_map"
+}
+
+@test "the routing rule probes an extensionless file's shebang" {
+  # Without this clause an extensionless `bin/foo` matches no glob, and the
+  # find-bugs fallback fires only when NOTHING matched — so a diff that also
+  # touches a matching file leaves the script reviewed by nobody at all.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    'A reviewer may also carry `shebang:`, interpreter names that route an **extensionless** changed file by its first line.' \
+    'then probe every extensionless changed file against every `shebang:`, then honour each matched reviewer'"'"'s `when:`' \
+    'as it stands in the worktree after the change' \
+    'The line must start with `#!` or nothing matches.' \
+    'equals that entry followed only by a version suffix'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the shebang probe is stated exactly once" {
+  # A second statement of the rule is a second source of truth. grep -o, not
+  # grep -c: this file is one line per paragraph, so a line count would score
+  # a restatement inside the same paragraph as one.
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  count="$(grep -o -F '**The shebang probe.**' "$protocol" | wc -l)"
+  [ "$count" -eq 1 ]
+}
+
+@test "the language reviewer bullet does not route by globs alone" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F 'the roster entries the changed files matched, one reviewer each' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F "the roster entries the changed files' \`globs:\` matched" "$protocol"
+  [ "$status" -ne 0 ]
+}
+
+@test "the roster declares the interpreters the probe routes" {
+  # A stated rule with nothing declaring against it routes nothing.
+  for pair in "shell-reviewer:sh,bash" "python-reviewer:python"; do
+    name="${pair%%:*}"
+    want="${pair#*:}"
+    awk 'NR==1 && /^---$/{inf=1; next} inf && /^---$/{exit} inf' \
+      "$ROOT/adapters/core/reviewers/$name.md" >"$BATS_TEST_TMPDIR/fm.yaml"
+    got="$(yq -r '(.shebang // []) | join(",")' "$BATS_TEST_TMPDIR/fm.yaml")"
+    [ "$got" = "$want" ]
+  done
+}
+
+@test "the shebang routing fixtures stay extensionless and executable" {
+  # A fixture that gains an extension, loses its shebang, or loses the
+  # executable bit that makes pre-commit classify it as shell stops being an
+  # extensionless shebang script, and stops testing anything.
+  dir="$ROOT/tests/fixtures/shebang-routing/bin"
+  for pair in "foo:#!/usr/bin/env bash" "bar:#!/usr/bin/env python3"; do
+    f="${pair%%:*}"
+    want="${pair#*:}"
+    [ -x "$dir/$f" ]
+    [[ "$f" != *.* ]]
+    [ "$(head -1 "$dir/$f")" = "$want" ]
+  done
+}
+
+@test "the README counts the roster" {
+  # #116: the roster paragraph must actually name the new count
+  # and every reviewer domain, not just claim "the roster" in the abstract.
+  run grep -F 'twelve engine-neutral' "$ROOT/README.md"
+  [ "$status" -eq 0 ]
+  start_line="$(grep -nF '**Two rosters, spawned four ways.**' "$ROOT/README.md" | head -1 | cut -d: -f1)"
+  [ -n "$start_line" ]
+  paragraph="$(sed -n "${start_line},\$p" "$ROOT/README.md" | awk '{print} /^$/{exit}' | tr '\n' ' ')"
+  for item in Go Python TypeScript shell Nix YAML Terraform SQLite Postgres \
+    'Bubble Tea' security 'agent-facing prose'; do
+    [[ "$paragraph" == *"$item"* ]]
+  done
+}
+
+@test "both protocols state the severity mapping" {
+  # #116: each protocol states the CRITICAL/HIGH/MEDIUM mapping
+  # onto its own vocabulary exactly once — this pins both sentences so a
+  # future edit can't reword one without the other drifting.
+  run grep -F 'a CRITICAL is HIGH-severity for `review_high`' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  [ "$status" -eq 0 ]
+  run grep -F 'CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`' "$ROOT/adapters/core/protocols/REVIEW_TASK.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "every shared skill reaches all three engines" {
+  for d in "$ROOT"/adapters/core/skills/*/; do
+    name="$(basename "$d")"
+    for shipped in \
+      "adapters/claude-code/plugin/skills/$name/SKILL.md" \
+      "adapters/codex/plugin/skills/$name/SKILL.md" \
+      "adapters/cursor/skills/$name/SKILL.md"; do
+      run cmp -s "$d/SKILL.md" "$ROOT/$shipped"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "the generator removes a shared skill whose source is gone" {
+  work="$BATS_TEST_TMPDIR/skills"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic/SKILL.md" ]
+  mv "$work/adapters/core/skills/spec-plan-critic" "$work/adapters/core/skills/spec-plan-critic-v2"
+  (cd "$work" && ./scripts/gen-adapters.sh >/dev/null)
+  for stale in \
+    adapters/claude-code/plugin/skills/spec-plan-critic \
+    adapters/codex/plugin/skills/spec-plan-critic \
+    adapters/cursor/skills/spec-plan-critic; do
+    [ ! -e "$work/$stale" ]
+  done
+  [ -f "$work/adapters/cursor/skills/spec-plan-critic-v2/SKILL.md" ]
+}
+
+@test "the critic gate routes over the roster on every engine" {
+  skill="$ROOT/adapters/core/skills/spec-plan-critic/SKILL.md"
+  for statement in \
+    '**The critics themselves ship with the harness.**' \
+    '$DISPATCHER_CRITICS_DIR/*.md' \
+    'the named `spec-critic` / `plan-critic` agent' \
+    'the roster body written into its prompt' \
+    'the same roster body inline' \
+    'the tier'"'"'s **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`)' \
+    'the tier'"'"'s **escalate** slug (deep → `cursor-grok-4.6-high`, standard → `cursor-grok-4.6-medium`)'; do
+    run grep -F "$statement" "$skill"
+    [ "$status" -eq 0 ]
+  done
+  # A same-context critic is the refused-spawn fallback, never an engine's default.
+  run grep -F 'degraded fallback' "$skill"
+  [ "$status" -eq 0 ]
+}
+
+@test "the worker protocol points at the critic roster too" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  for statement in \
+    '2. **Critics are independent, on every engine.**' \
+    '$DISPATCHER_CRITICS_DIR/*.md' \
+    'Any engine may use its bounded critic within this single episode'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the claude lane carries its Monitor-stream contract" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'Monitor(' \
+    'command: "crew stream --crew <your crew id>",' \
+    'persistent: true)' \
+    'crew stream --status --crew <your crew id>' \
+    '`alive` → nothing,' \
+    '`stale` → `crew stream --force --crew <your crew id>`, a live pid that' \
+    '`dead` → arm, as above.' \
+    'handle the **entire `events[]` in ONE turn**' \
+    'any later batch whose `cursor` isn'"'"'t greater' \
+    '**No `Monitor` tool** → follow the cursor lane' \
+    '`run_in_background`; cursor: a backgrounded shell with a completion notification,' \
+    '**Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn;'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the claude lane carries none of the cursor lane's park scaffolding" {
+  # Absence, not presence, is the acceptance criterion for #127: the claude
+  # lane streams via Monitor and never arms/re-arms a background watch, so
+  # none of cursor's park bookkeeping belongs there. Slice the byte range
+  # between the two literal lane headings (excluding the cursor heading
+  # itself, which would otherwise smuggle "INV-1" into the "claude" range)
+  # and grep only that slice, rather than eyeballing a diff.
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  claude_lane="$(awk '
+    /\*\*claude — streaming monitor\.\*\*/ { flag = 1 }
+    flag && /\*\*cursor — background park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$claude_lane" ]
+
+  for phrase in 'INV-1' 'arm-token' 'B1 race' 'G4 self-heal' '270, not 300'; do
+    # It must survive somewhere in the file (under cursor) ...
+    run grep -F "$phrase" "$protocol"
+    [ "$status" -eq 0 ]
+
+    # ... but never inside the claude lane's slice.
+    run grep -F "$phrase" <<<"$claude_lane"
+    if [ "$status" -eq 0 ]; then
+      echo "scaffolding phrase '$phrase' leaked into the claude lane — it must live under cursor only" >&2
+      false
+    fi
+  done
+}
+
+@test "the claude lane's hold_due wake lives inside its own slice" {
+  # Same awk range as the slice guard above, so this tracks the real claude/cursor
+  # boundary rather than a line number.
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  claude_lane="$(awk '
+    /\*\*claude — streaming monitor\.\*\*/ { flag = 1 }
+    flag && /\*\*cursor — background park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$claude_lane" ]
+
+  for statement in \
+    '"stream":"hold_due"' \
+    '**Hold due** → `holds[]` lists every matured hold; release exactly one'; do
+    run grep -F "$statement" <<<"$claude_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the cursor lane's overshoot and park primitive live below its heading" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  cursor_lane="$(awk '
+    /\*\*cursor — background park\.\*\*/ { flag = 1 }
+    flag && /\*\*codex — blocking park\.\*\*/ { exit }
+    flag
+  ' "$protocol")"
+  [ -n "$cursor_lane" ]
+
+  for statement in \
+    'woken up to one' \
+    'min(branch default, crew hold park'; do
+    run grep -F "$statement" <<<"$cursor_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the Tracker bullet states both branch forms and the three-way duplicate guard" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'GitHub `feat/<issue>-<slug>` (`dispatch.sh:563`)' \
+    'Linear `<linear-id lowercased>-<slug>`, with **no** `feat/` prefix (`dispatch.sh:656`)' \
+    'a `kind:"claim-issue"` row for `task.ref`' \
+    'a `kind:"dispatch"` row for `task.branch`' \
+    'or an existing worktree for `task.branch`'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the dispatcher protocol tells the human at all three ends of a hold" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'On placing one, name what is held' \
+    'resuming, name which hold resumed, that it resumed at full strength' \
+    'On refusing, name that the deadline is outside the'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the release predicate matches the gate's own, verbatim" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'no window of `wait.engine`' \
+    'dispatch.sh:446'; do
+    run grep -F "$statement" "$protocol"
+    [ "$status" -eq 0 ]
+  done
 }

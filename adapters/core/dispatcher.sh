@@ -91,31 +91,65 @@ if [ -n "${TMUX:-}" ]; then
   tmux set-window-option @crew_color colour99
   # No tmux event fires on a user-option set, and lazytmux's per-tick poll only
   # runs for the session a client is viewing — kick a reflow or the badge won't
-  # render until you next switch to this window.
-  tmux-reflow-windows \
-    "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" \
-    "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
+  # render until you next switch to this window. The reflow script is never on
+  # PATH — lazytmux's tmux config calls it by nix-store path — so take the path
+  # from the @reflow_bin option it stamps.
+  reflow_bin=$(tmux show-option -gqv @reflow_bin)
+  if [ -n "$reflow_bin" ]; then
+    "$reflow_bin" \
+      "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" \
+      "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
+  fi
 fi
 
 session_name=dispatcher
 [ -n "$task" ] && session_name="dispatcher: $task"
 
 # Mint + export the crew id once at launch (mirrors `dispatch`), so the launched
-# agent and every child `dispatch` inherit the SAME crew. `crew id` needs no git
-# repo. Printed because a script cannot export back to the calling shell.
-: "${CREW_ID:=$(crew id)}"
+# agent and every child `dispatch` inherit the SAME crew. `crew new` needs no
+# git repo. Printed because a script cannot export back to the calling shell.
+crew_id_was_unset=1
+[ -z "${CREW_ID:-}" ] || crew_id_was_unset=0
+: "${CREW_ID:=$(crew new)}"
 export CREW_ID
 echo "crew id: $CREW_ID"
 
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
   crew register $$
+
+  # Discovery notice (#29): a mint that silently orphans other on-disk crews is
+  # the exact split-brain this issue exists to close. `crew adopt` is the wrong
+  # remedy on this entrance — CREW_ID is already exported into the launched
+  # agent's env, so adopt's export line would land in the wrong shell; only
+  # relaunching with it set re-attaches.
+  if [ "$crew_id_was_unset" = 1 ]; then
+    {
+      other=0
+      header=1
+      while IFS=$'\t' read -r row_id _; do
+        if [ "$header" = 1 ]; then
+          header=0
+          continue
+        fi
+        [ -n "$row_id" ] || continue
+        [ "$row_id" = "$CREW_ID" ] && continue
+        other=$((other + 1))
+      done < <(crew crews)
+      if [ "$other" -gt 0 ]; then
+        echo "dispatcher: minted a NEW crew; this repo has $other other(s) — 'crew crews' lists them; to re-attach instead, relaunch as: CREW_ID=<id> dispatcher …" >&2
+      fi
+    } || true
+  fi
 fi
 
 case "$agent" in
 claude)
-  set -- --name "$session_name" --append-system-prompt-file "$protocol"
-  [ -n "$model" ] && set -- "$@" --model "$model"
-  [ -n "$effort" ] && set -- "$@" --effort "$effort"
+  # Pinned, not inherited: /model and /effort persist across sessions, so an
+  # unpinned dispatcher judges tier+engine+model on whatever the last cheap
+  # session was toggled to. high, not xhigh — same reason codex holds at high
+  # below: blocked workers wait on a bounded ~300s in-band window.
+  set -- --name "$session_name" --append-system-prompt-file "$protocol" \
+    --model "${model:-opus}" --effort "${effort:-high}"
   claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)

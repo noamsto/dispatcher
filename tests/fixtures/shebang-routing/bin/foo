@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Routing fixture for issue #119: extensionless script routed by shebang.
+set -euo pipefail
+echo "foo"

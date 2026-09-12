@@ -92,21 +92,43 @@
           # path here is what frees them from the old ~/nix-config literal.
           sub = builtins.replaceStrings ["@protocolDir@"] ["${protocols}"];
         in rec {
+          # Its own binary, not a crew subcommand: the primitive is standalone by
+          # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
+          # wraps it to post the event.
+          pr-watch = pkgs.writeShellApplication {
+            name = "pr-watch";
+            runtimeInputs = with pkgs; [gh git jq gnused gnugrep coreutils];
+            text = builtins.readFile ./adapters/core/pr-watch.sh;
+          };
+
           crew = pkgs.writeShellApplication {
             name = "crew";
             # gh + gtrash are for `reap`: it reads PR state via gh and trashes
             # the finished worker's task doc via gtrash so a post-mortem can
             # still recover it. `wt` stays ambient, as in dispatch — reap checks
             # for it and degrades to a notice when absent.
-            runtimeInputs = with pkgs; [git jq coreutils gnugrep tmux gh gtrash];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch];
             # No substitution: crew never references the protocols.
             text = builtins.readFile ./adapters/core/crew.sh;
           };
 
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux]) ++ [crew];
+            # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
+          };
+
+          # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
+          # package above lists dispatch-resume so its `resume` subcommand can
+          # exec this one, and naming dispatch here would close that into an
+          # eval-time cycle. dispatch-resume resolves `dispatch` from the
+          # ambient PATH instead — the same ambient-tool pattern dispatch
+          # itself uses for `wt`.
+          dispatch-resume = pkgs.writeShellApplication {
+            name = "dispatch-resume";
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];
+            text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
           };
 
           dispatcher = pkgs.writeShellApplication {
@@ -115,9 +137,27 @@
             text = sub (builtins.readFile ./adapters/core/dispatcher.sh);
           };
 
+          refresh-scores = pkgs.writeShellApplication {
+            name = "refresh-scores";
+            runtimeInputs = with pkgs; [curl jq coreutils];
+            text = builtins.readFile ./adapters/core/refresh-scores.sh;
+          };
+
+          refresh-budget = pkgs.writeShellApplication {
+            name = "refresh-budget";
+            runtimeInputs = with pkgs; [curl jq coreutils];
+            text = builtins.readFile ./adapters/core/refresh-budget.sh;
+          };
+
+          refresh-models = pkgs.writeShellApplication {
+            name = "refresh-models";
+            runtimeInputs = with pkgs; [jq gnugrep gnused coreutils];
+            text = builtins.readFile ./adapters/core/refresh-models.sh;
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatcher];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch];
           };
         };
 
@@ -128,6 +168,7 @@
             ++ [
               config.treefmt.build.wrapper
               pkgs.bats
+              pkgs.parallel
               pkgs.shellcheck
               pkgs.jq
               # yq-go: tests/adapters.bats parses generated codex skill
