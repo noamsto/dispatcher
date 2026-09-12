@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [LINEAR-ID|#N] <title...>" >&2
 }
 
 # Protocol directory. The env override is the dev loop: point it at a checkout
@@ -45,9 +45,9 @@ while [ $# -gt 0 ]; do
   --agent)
     agent="${2:-}"
     case "$agent" in
-    claude | codex | cursor) ;;
+    claude | codex | cursor | pi) ;;
     *)
-      echo "dispatch: --agent must be claude, codex, or cursor" >&2
+      echo "dispatch: --agent must be claude, codex, cursor, or pi" >&2
       exit 1
       ;;
     esac
@@ -132,14 +132,14 @@ if [ "$agent" = cursor ] && [ "$profile" != work ]; then
   echo "dispatch: --agent cursor is work-profile only" >&2
   exit 1
 fi
-# claude's --effort tops out at max; rejecting `ultra` here fails before the
-# worktree and pane exist, instead of at worker launch.
-if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
-  echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
+# claude's and pi's --effort top out at max; rejecting `ultra` here fails before
+# the worktree and pane exist, instead of at worker launch.
+if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; then
+  echo "dispatch: --effort ultra is codex-only; $agent tops out at max" >&2
   exit 1
 fi
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch: --mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
 fi
 
@@ -292,6 +292,18 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   tmux send-keys -t "$pane" \
     "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
+elif [ "$agent" = pi ]; then
+  # Interactive TUI with an initial prompt: it auto-submits and repaints as it
+  # works, so the pane stays a truthful liveness signal for stall-watch. `pi -p`
+  # is buffered — it prints only at the end and would read as a wedge, the same
+  # trap cursor hit (#103). --append-system-prompt takes text OR a file path (pi
+  # reads the file when the argument exists), so the protocol is a real system
+  # prompt here — unlike codex/cursor, which must inject it as a first prompt.
+  # --no-approve ignores a target repo's project-local .pi/ resources in an
+  # unattended run; global ~/.pi/agent config (auth, packages) still loads.
+  # --thinking is a real knob (unlike cursor, where effort lives in the id).
+  tmux send-keys -t "$pane" \
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end. Push when pre-push passes; open a PR.${plan_note}'" Enter
