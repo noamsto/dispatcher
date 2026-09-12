@@ -23,16 +23,21 @@ target that exact session id, not the branch-only legacy identity.
 
 ## First action
 
-Announce yourself, then park for an assignment:
+Announce yourself, then **end your turn**:
 
 ```
 crew status "$id" working
-crew await "$id" --timeout 3300
 ```
 
-A timeout is **empty stdout**, not an error: no assignment arrived in that
-window. Re-park, bounded — at most 3 parks — then
-`crew status "$id" failed "no assignment"` and stop.
+You do **not** hold a `crew await`. A detached watcher — spawned by `dispatch`,
+engine-agnostic, working over the crew bus and your tmux pane — types each
+assignment into your pane as a normal user turn. So an idle role is genuinely
+idle: no repainting poll and no park cap. The watcher also reflects your state on
+the pane border (`@crew_state`: `idle` while you wait, `working` while you run).
+
+An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
+artifact to read, the question, and the seam. Handle it, post your verdict, and
+end your turn again; the watcher wakes you for the next one.
 
 ## Assignment contract
 
@@ -62,9 +67,10 @@ review rubric:
 
 ## Verdict
 
-Post your verdict to the worker, then re-park — or stop if the lead said
-`final`. Re-read `worker_id:` immediately before every reply because a resumed
-lead has a new session id while your role pane may survive:
+Post your verdict to the worker, then **end your turn** — the watcher sets you
+idle and wakes you on the next assignment. Stop only if the lead said `final`.
+Re-read `worker_id:` immediately before every reply because a resumed lead has a
+new session id while your role pane may survive:
 
 ```
 lead_id=$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)

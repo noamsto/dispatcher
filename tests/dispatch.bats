@@ -2405,3 +2405,42 @@ EOF
   doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
   grep -qE '^mcp: ?$' "$doc"
 }
+
+@test "grid: role panes are decorated with a stable per-role colour and label" {
+  run grep -F -- 'role_color' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'decorate_pane' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-active-border-style' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '#{@crew_state}' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: known roles map to fixed colours" {
+  run grep -F -- "plan-critic) printf 'colour111'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- "reviewer) printf 'colour114'" "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: role panes spawn the engine-agnostic bus watcher" {
+  run grep -F -- '--role-watch' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'watch_role' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'send-keys -t "$watch_pane" -l' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  # The mechanism is the tmux watcher, not an engine extension.
+  run grep -c 'crew-bus.ts' "$DISPATCH"
+  [ "$output" = "0" ]
+}
+
+@test "grid: --role-watch needs a role name and a pane" {
+  run run_dispatch --role-watch
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--role-watch needs a role name"* ]]
+  run run_dispatch --role-watch reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--role-watch needs --pane"* ]]
+}
