@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--roles <r1,r2,...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -63,6 +63,7 @@ pr_number=""
 base_ref=""
 kind=implement
 mcp_profile=""
+grid_roles=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
@@ -99,6 +100,14 @@ while [ $# -gt 0 ]; do
     mcp_profile="${2:-}"
     [ -n "$mcp_profile" ] || {
       echo "dispatch: --mcp needs a profile (analytics)" >&2
+      exit 1
+    }
+    shift 2
+    ;;
+  --roles)
+    grid_roles="${2:-}"
+    [ -n "$grid_roles" ] || {
+      echo "dispatch: --roles needs a comma-separated list of roles" >&2
       exit 1
     }
     shift 2
@@ -536,6 +545,25 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
       fi
     fi
   fi
+fi
+
+# Role grid (experimental, phase 1). Validate before scaffolding so a bad role
+# can't leave a half-built grid: role panes are pi-only for now, and names must
+# be safe to use as tmux option values and bus ids.
+if [ -n "$grid_roles" ]; then
+  if [ "$agent" != pi ]; then
+    echo "dispatch: --roles currently requires --agent pi (role panes are pi-only in phase 1)" >&2
+    exit 1
+  fi
+  IFS=',' read -r -a role_list <<<"$grid_roles"
+  for role in "${role_list[@]}"; do
+    case "$role" in
+    '' | *[!A-Za-z0-9_-]*)
+      echo "dispatch: invalid role '$role' (letters, digits, _ and - only)" >&2
+      exit 1
+      ;;
+    esac
+  done
 fi
 
 # Map an additive --mcp profile to its generated config (claude-only).
@@ -1220,6 +1248,22 @@ elif [ "$agent" = pi ]; then
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
+fi
+
+# Role grid (phase 1 mechanics): split the task window into one pane per role.
+# Each role pane parks on the bus until the lead assigns it work; GRID_PROTOCOL.md
+# is its system prompt. Split AFTER the lead launch so the lead keeps the first
+# pane. NOT stall-watched on purpose: a parked role produces no output, which the
+# pane-output watchdog would misread as a wedge.
+if [ -n "$grid_roles" ]; then
+  for role in "${role_list[@]}"; do
+    read -r role_pane < <(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')
+    tmux set-option -p -t "$role_pane" @crew_role "$role"
+    tmux set-option -p -t "$role_pane" pane-border-format " #[bold]$role#[nobold] "
+    tmux send-keys -t "$role_pane" \
+      "pi --name ${agent_name}-${role} --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve 'You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment.'" Enter
+  done
+  tmux select-layout -t "$win" tiled
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
