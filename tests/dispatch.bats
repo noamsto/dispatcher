@@ -302,7 +302,33 @@ write_cursor_models_cache() { # <fetched_epoch>
 @test "rejects an unknown agent" {
   run run_dispatch standard sonnet --agent bogus --effort medium "title"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"--agent must be claude, codex, or cursor"* ]]
+  [[ "$output" == *"--agent must be claude, codex, cursor, or pi"* ]]
+}
+
+@test "rejects ultra for pi (codex-only)" {
+  run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort ultra --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ultra is codex-only"* ]]
+}
+
+@test "pi is not work-profile gated" {
+  # pi+deepseek is a personal engine (OpenRouter), unlike the work-only
+  # codex/cursor accounts. Assert the gate does NOT fire: the run proceeds past
+  # it and fails later for an unrelated reason (no worktree in the test repo).
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 "title"
+  [[ "$output" != *"work-profile only"* ]]
+}
+
+@test "the pi worker launch streams via the TUI with the protocol appended" {
+  # pi -p is buffered and would read as a wedge to stall-watch; the worker must
+  # use the streaming TUI, append the protocol as a real system prompt, and
+  # ignore project-local resources in an unattended run.
+  run grep -F -- '--append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--no-approve' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--thinking $effort' "$DISPATCH"
+  [ "$status" -eq 0 ]
 }
 
 @test "rejects an unknown effort" {

@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -76,9 +76,9 @@ while [ $# -gt 0 ]; do
   --agent)
     agent="${2:-}"
     case "$agent" in
-    claude | codex | cursor) ;;
+    claude | codex | cursor | pi) ;;
     *)
-      echo "dispatch: --agent must be claude, codex, or cursor" >&2
+      echo "dispatch: --agent must be claude, codex, cursor, or pi" >&2
       exit 1
       ;;
     esac
@@ -322,6 +322,12 @@ else
       fi
     fi
     ;;
+  pi)
+    if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      exit 1
+    fi
+    ;;
   esac
 fi
 
@@ -415,6 +421,23 @@ if [ -z "$ignore_map" ]; then
     *) tier_ok=0 ;;
     esac
     ;;
+  pi)
+    case "$tier" in
+    deep)
+      tier_expected="deepseek/deepseek-v4-pro or deepseek/deepseek-v4.1-flash"
+      [[ $model =~ ^deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      ;;
+    standard)
+      tier_expected="deepseek/deepseek-v4.1-flash or deepseek/deepseek-v4-flash"
+      [[ $model =~ ^deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      ;;
+    trivial)
+      tier_expected="deepseek/deepseek-v4-flash"
+      [[ $model =~ ^deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      ;;
+    *) tier_ok=0 ;;
+    esac
+    ;;
   esac
   if [ "$tier_ok" = 0 ]; then
     echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
@@ -422,14 +445,14 @@ if [ -z "$ignore_map" ]; then
   fi
 fi
 
-# claude's --effort tops out at max; rejecting `ultra` here fails before the
+# claude's and pi's --effort top out at max; rejecting `ultra` here fails before the
 # worktree and pane exist, instead of at worker launch.
-if [ "$agent" = claude ] && [ "$effort" = ultra ]; then
-  echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
+if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; then
+  echo "dispatch: --effort ultra is codex-only; $agent tops out at max" >&2
   exit 1
 fi
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch: --mcp is claude-only; codex/cursor base MCP comes from their own profile" >&2
+  echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
 fi
 
@@ -1142,7 +1165,7 @@ if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi
 
-# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor workers must
+# Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor/pi workers must
 # stamp process-authority into every execute-subagent prompt so a fresh subagent
 # cannot re-derive process via skills. Claude gets the same idea from rule 1 +
 # the Agent tool; this clause is only for engines whose spawn prompt is the
@@ -1189,6 +1212,11 @@ elif [ "$agent" = cursor ]; then
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   tmux send-keys -t "$pane" \
     "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
+elif [ "$agent" = pi ]; then
+  # pi's interactive TUI keeps pane output live. It accepts a file path as a
+  # real appended system prompt; --no-approve ignores project-local resources.
+  tmux send-keys -t "$pane" \
+    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}'" Enter
@@ -1197,7 +1225,7 @@ fi
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
 # output and never ends, so neither the bus nor the SessionEnd `exited` backstop
 # notices. Pane output is only a valid liveness signal for an engine that streams
-# — every engine launched above must, which is why all three run their own TUI
+# — every engine launched above must, which is why all four run their own TUI
 # rather than a buffered headless mode. This watches the pane's output and, if it
 # goes silent through the startup window, posts `failed` so the dispatcher's
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
