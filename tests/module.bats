@@ -10,40 +10,107 @@
 # others.
 export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 
+# setup_file runs once per file, before any test in it. Every test below used
+# to `nix build`/`nix eval` on its own -- each invocation is a full flake
+# evaluation, and the eight-way build alone dominates a worker's edit loop.
+# Build and evaluate exactly once here instead, and have every test read the
+# results out of $BATS_FILE_TMPDIR (the one directory bats keeps alive for
+# the whole file, unlike $BATS_TEST_TMPDIR which is per-test).
+setup_file() {
+  local root="$BATS_TEST_DIRNAME/.."
+
+  nix build --no-link --print-out-paths \
+    "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
+    "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
+    >"$BATS_FILE_TMPDIR/out-paths"
+
+  # The two eval tests below force different config shapes (options only vs.
+  # the full activated config), so they can't share one expression -- but
+  # both still fit in one `nix eval`, so evaluate both here and split the
+  # result on a newline. `--raw` just prints the string verbatim, so an
+  # embedded "\n" is a safe separator: nix's own output never contains one.
+  printf '%s\n' "
+    let
+      self = builtins.getFlake (toString $root);
+      nixlib = (import <nixpkgs> {}).lib;
+      lib = nixlib // { hm.dag.entryAfter = _: data: { inherit data; }; };
+      pkgs = import <nixpkgs> {};
+
+      optionsApplied = self.homeManagerModules.default {
+        config = { programs.dispatcher = { enable = false; profile = \"personal\"; }; };
+        inherit lib pkgs;
+      };
+      optionNames = builtins.concatStringsSep \",\" (builtins.attrNames optionsApplied.options.programs.dispatcher);
+
+      # home-manager extends lib with lib.hm; stub the single helper the
+      # module uses so config can be forced without taking a home-manager
+      # dependency. Forcing sessionVariables + file + activation is what
+      # catches a typo'd option, a bad importJSON path, or a broken
+      # interpolation. The package list is read by name instead --
+      # deepSeq on a derivation recurses through its self-referential
+      # output attrs and never finishes.
+      configApplied = self.homeManagerModules.default {
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; }; };
+        inherit lib pkgs;
+      };
+      c = configApplied.config.content;
+      configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}\";
+    in optionNames + \"\n\" + configLine
+  " >"$BATS_FILE_TMPDIR/eval-expr.nix"
+  nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
+    >"$BATS_FILE_TMPDIR/eval-out"
+}
+
 setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
+  # `nix build --print-out-paths` prints one line per installable, in the same
+  # order they were given on the command line (see setup_file) -- pinning that
+  # assumption here since a future nix reordering them would go undetected: a
+  # wrong OUT_* mapping still greps/deepSeqs against a real derivation.
+  {
+    read -r OUT_CREW
+    read -r OUT_DISPATCH
+    read -r OUT_DISPATCH_RESUME
+    read -r OUT_DISPATCHER
+    read -r OUT_REFRESH_SCORES
+    read -r OUT_REFRESH_BUDGET
+    read -r OUT_REFRESH_MODELS
+    read -r OUT_PR_WATCH
+  } <"$BATS_FILE_TMPDIR/out-paths"
+  EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
+  EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
 }
 
 @test "every package builds" {
-  run nix build --no-link "$ROOT#crew" "$ROOT#dispatch" "$ROOT#dispatch-resume" \
-    "$ROOT#dispatcher" "$ROOT#refresh-scores" "$ROOT#refresh-budget" \
-    "$ROOT#refresh-models" "$ROOT#pr-watch"
-  [ "$status" -eq 0 ]
+  # setup_file already ran the build; a failure there fails the whole file
+  # before any test runs. This just proves every out path came back.
+  for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
+    "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH"; do
+    [ -n "$out" ]
+    [ -e "$out" ]
+  done
 }
 
 @test "the protocol placeholder is substituted in dispatch" {
-  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch")"
-  run grep -c '@protocolDir@' "$out/bin/dispatch"
+  run grep -c '@protocolDir@' "$OUT_DISPATCH/bin/dispatch"
   [ "$output" = "0" ]
 }
 
 @test "the protocol placeholder is substituted in dispatcher" {
-  out="$(nix build --no-link --print-out-paths "$ROOT#dispatcher")"
-  run grep -c '@protocolDir@' "$out/bin/dispatcher"
+  run grep -c '@protocolDir@' "$OUT_DISPATCHER/bin/dispatcher"
   [ "$output" = "0" ]
 }
 
 @test "the protocol placeholder is substituted in dispatch-resume" {
-  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch-resume")"
-  run grep -c '@protocolDir@' "$out/bin/dispatch-resume"
+  run grep -c '@protocolDir@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
   [ "$output" = "0" ]
 }
 
 @test "the substituted protocol dir actually contains the protocols" {
   # A substituted-but-wrong path would leave every dispatched worker unable to
   # find its protocol, and nothing else would notice until a live run.
-  out="$(nix build --no-link --print-out-paths "$ROOT#dispatch")"
-  dir="$(grep -o '/nix/store/[^"}]*' "$out/bin/dispatch" | grep -i protocol | head -1)"
+  dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -i protocol | head -1)"
   [ -n "$dir" ]
   [ -f "$dir/WORKER_PROTOCOL.md" ]
   [ -f "$dir/DISPATCHER_PROTOCOL.md" ]
@@ -56,81 +123,33 @@ setup() {
   # `crew` intentionally reads its source directly; unlike dispatch and
   # dispatcher it must not gain a runtime dependency on the protocol tree.
   protocols="$(nix store add-path "$ROOT/adapters/core/protocols")"
-  out="$(nix build --no-link --print-out-paths "$ROOT#crew")"
-  run nix-store -q --requisites "$out"
+  run nix-store -q --requisites "$OUT_CREW"
   [ "$status" -eq 0 ]
   [[ "$output" != *"$protocols"* ]]
 }
 
-# Evaluate a nix expression from a file, returning stdout only.
-#
-# Two reasons not to inline `nix eval --expr`: bats' `run` merges stderr into
-# $output, and `nix eval --impure` emits warnings in some environments (a CI
-# checkout does, a clean local tree does not) that would prefix the value and
-# break an anchored match. A file also avoids nesting three levels of quotes.
-nix_eval() {
-  printf '%s\n' "$1" >"$BATS_TEST_TMPDIR/expr.nix"
-  nix eval --impure --raw --file "$BATS_TEST_TMPDIR/expr.nix" 2>/dev/null
-}
-
 @test "the module declares its options" {
-  run nix_eval "
-    let
-      self = builtins.getFlake (toString $ROOT);
-      lib = (import <nixpkgs> {}).lib;
-      pkgs = import <nixpkgs> {};
-      applied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = false; profile = \"personal\"; }; };
-        inherit lib pkgs;
-      };
-    in builtins.concatStringsSep \",\" (builtins.attrNames applied.options.programs.dispatcher)
-  "
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"enable"* ]]
-  [[ "$output" == *"profile"* ]]
+  [[ "$EVAL_OPTIONS" == *"enable"* ]]
+  [[ "$EVAL_OPTIONS" == *"profile"* ]]
 }
 
 @test "the module's config body evaluates, and wires the protocol dir for real" {
   # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
-  # here would otherwise surface only in a consumer's rebuild. Forcing `options`
-  # alone does NOT catch that — this forces the config body.
+  # here would otherwise surface only in a consumer's rebuild. setup_file's
+  # deepSeq forces the config body, not just the options -- that's what
+  # actually catches a typo'd option, a bad importJSON path, or a broken
+  # interpolation.
   #
-  # home-manager extends lib with lib.hm; stub the single helper the module uses
-  # so config can be forced without taking a home-manager dependency. Forcing
-  # sessionVariables + file + activation is what catches a typo'd option, a bad
-  # importJSON path, or a broken interpolation. The package list is read by name
-  # instead — `deepSeq` on a derivation recurses through its self-referential
-  # output attrs and never finishes.
-  #
-  # Returns the resolved value rather than grepping the source, so it proves the
-  # variable is actually wired into sessionVariables — not merely that the token
-  # appears somewhere in the file.
-  run nix_eval "
-    let
-      self = builtins.getFlake (toString $ROOT);
-      nixlib = (import <nixpkgs> {}).lib;
-      lib = nixlib // { hm.dag.entryAfter = _: data: { inherit data; }; };
-      pkgs = import <nixpkgs> {};
-      applied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; }; };
-        inherit lib pkgs;
-      };
-      c = applied.config.content;
-    in
-      builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}\"
-  "
-  [ "$status" -eq 0 ]
   # Assert the wiring, not the flavour of path it resolves to: whether `self`
   # lands in the store or stays a source path depends on how the flake was
   # evaluated (a CI checkout differs from a local dev tree), and that is not the
   # behaviour under test. Removing either export still fails here — a missing
-  # attribute makes the eval itself error, so $status catches it.
-  [[ "$output" == work\|* ]]
+  # attribute makes setup_file's eval error, which fails the whole file.
+  [[ "$EVAL_CONFIG" == work\|* ]]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$output" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
-  [[ "$output" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics ]]
+  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
+  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {
