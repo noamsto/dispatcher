@@ -401,7 +401,16 @@ _pi_agent_dir() {
   # needs its nearest existing ancestor to be a searchable directory; anything
   # else must be a regular file, since jq blocks forever on a FIFO.
   probe="$ambient/auth.json"
-  while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do probe=$(dirname "$probe"); done
+  # `$(dirname "$probe")` would strip a trailing newline from a path component
+  # via command substitution, letting a dangling link/mode-000 dir/FIFO under a
+  # newline-suffixed name masquerade as an existing ancestor. Parameter
+  # expansion doesn't strip trailing newlines; probe is always absolute (see
+  # above), so stripping to "" only happens one level below "/" and the
+  # fallback restores it, guaranteeing termination.
+  while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do
+    probe=${probe%/*}
+    probe=${probe:-/}
+  done
   if [ "$probe" = "$ambient/auth.json" ] || [ ! -d "$probe" ] || [ ! -x "$probe" ]; then
     [ -f "$ambient/auth.json" ] || {
       echo "crew: $ambient/auth.json is not a reachable regular file — refusing to seed pi credentials" >&2
