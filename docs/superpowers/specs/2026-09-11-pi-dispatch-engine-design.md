@@ -170,9 +170,14 @@ resume` / `dispatch --spawn-role` that launches pi. It is not written by
   - The read-through pins the absolute `jq` store path resolved at seed
     time; a `nix-collect-garbage` that removes that `jq` before the next
     re-seed makes key lookups fail until the next dispatch re-seeds.
-  - The seeder fails closed when the ambient `auth.json` exists but is
-    unreadable or not a JSON object — only a missing file seeds an empty
-    auth.
+  - The seeder fails closed unless the ambient `auth.json` is a readable
+    regular file holding a JSON object; only a genuinely missing file (its
+    nearest existing ancestor a searchable directory) seeds an empty auth. A
+    dangling or looping symlink, a FIFO, a directory, or a path behind an
+    unsearchable directory is refused. A read-through that fails later at
+    request time leaves that pi process without the file key for its
+    lifetime (pi caches the failed result and falls back to the provider env
+    var).
   - The seeder refuses when `~/.pi/dispatcher-worker` is a symlink, is not
     a directory, or resolves to the same place as, or nested with, the
     ambient agent dir.

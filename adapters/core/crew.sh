@@ -357,7 +357,7 @@ _write_if_changed() { # $1=target $2=mode $3=content
 # the ambient file, so the secret stays out of the worker dir. OAuth entries are
 # dropped (a refresh would write back), as are `env` maps (they can hold secrets).
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings auth
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings auth probe
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -397,7 +397,17 @@ _pi_agent_dir() {
 
   auth='{}'
   # Only a missing file means "no keys"; a broken one must not launch a keyless worker.
-  if [ -e "$ambient/auth.json" ]; then
+  # [ -e ] is also false for a dangling or looping symlink and behind an
+  # unsearchable dir, so "missing" needs its nearest existing ancestor to be a
+  # searchable directory. Anything else must be a regular file before jq opens
+  # it — jq blocks forever on a FIFO.
+  probe="$ambient/auth.json"
+  while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do probe=$(dirname "$probe"); done
+  if [ "$probe" = "$ambient/auth.json" ] || [ ! -d "$probe" ] || [ ! -x "$probe" ]; then
+    [ -f "$ambient/auth.json" ] || {
+      echo "crew: $ambient/auth.json is not a reachable regular file — refusing to seed pi credentials" >&2
+      exit 1
+    }
     auth=$(jq -s --arg jq "$(command -v jq)" --arg path "$ambient/auth.json" '
     (if length == 1 and (.[0] | type) == "object" then .[0] else error("not an object") end)
     | with_entries(

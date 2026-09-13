@@ -692,6 +692,96 @@ _pi_broken_auth() {
   [[ "$key" == *"$AMBIENT/auth.json"* ]]
 }
 
+# Seed once, then drop the ambient auth.json so the test can put a non-regular
+# entry (or nothing reachable) in its place.
+_pi_seeded() {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  before=$(sha256sum "$WORKER/auth.json")
+  rm "$AMBIENT/auth.json"
+}
+
+# The timeout turns a seeder blocked on open() into a failure instead of a hung suite.
+_pi_run_seed() {
+  run --separate-stderr timeout 10 bash -euo pipefail "$CREW" pi-agent-dir
+}
+
+_pi_assert_refused() {
+  [ "$status" -ne 0 ]
+  [ "$status" -ne 124 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"refusing to seed pi credentials"* ]]
+  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+}
+
+@test "pi-agent-dir: a dangling ambient auth.json symlink is refused, worker auth kept" {
+  _pi_seeded
+  ln -s "$HOME/unmounted/auth.json" "$AMBIENT/auth.json"
+  _pi_run_seed
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: a looping ambient auth.json symlink is refused" {
+  _pi_seeded
+  ln -s auth.json "$AMBIENT/auth.json"
+  _pi_run_seed
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: an ambient auth.json symlinked to a directory is refused" {
+  _pi_seeded
+  mkdir "$AMBIENT/d"
+  ln -s d "$AMBIENT/auth.json"
+  _pi_run_seed
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: a FIFO ambient auth.json is refused without blocking" {
+  _pi_seeded
+  mkfifo "$AMBIENT/auth.json"
+  _pi_run_seed
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: an ambient auth.json behind an unsearchable dir is refused" {
+  [ "$(id -u)" -eq 0 ] && skip "root searches mode 000 dirs"
+  _pi_seeded
+  mkdir "$HOME/locked"
+  printf '{}\n' >"$HOME/locked/auth.json"
+  ln -s "$HOME/locked/auth.json" "$AMBIENT/auth.json"
+  chmod 000 "$HOME/locked"
+  _pi_run_seed
+  # Before any assertion, so a failure cannot leave a dir teardown's rm -rf trips on.
+  chmod 700 "$HOME/locked"
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: a dangling ambient dir symlink is refused" {
+  _pi_seeded
+  rm -r "$AMBIENT"
+  ln -s "$HOME/unmounted" "$AMBIENT"
+  _pi_run_seed
+  _pi_assert_refused
+}
+
+@test "pi-agent-dir: a missing ambient dir seeds an empty auth" {
+  _pi_fixture
+  rm -r "$AMBIENT"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
+}
+
+@test "pi-agent-dir: a relative ambient auth.json symlink is read through" {
+  _pi_fixture
+  mkdir -p "$HOME/.pi/secrets"
+  mv "$AMBIENT/auth.json" "$HOME/.pi/secrets/auth.json"
+  ln -s ../secrets/auth.json "$AMBIENT/auth.json"
+  run_crew pi-agent-dir >/dev/null
+  key=$(jq -r .opencode.key "$WORKER/auth.json")
+  [[ "$key" == *"$AMBIENT/auth.json"* ]]
+  [ "$(cd / && bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
+}
+
 @test "sessions: folds each session separately, oldest first" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
