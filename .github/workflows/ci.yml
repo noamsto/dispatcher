@@ -1,9 +1,7 @@
 name: ci
 on:
-  # Both branches: `extract` is the default branch until the initial history is
-  # fast-forwarded onto main, and the README badge tracks the default branch.
   push:
-    branches: [main, extract]
+    branches: [main]
   pull_request:
 
 jobs:
