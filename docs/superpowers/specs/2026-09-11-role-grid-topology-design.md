@@ -1,7 +1,9 @@
 # Role-grid topology — a crew per task window
 
 **Date:** 2026-09-11
-**Status:** design — phase 1 (mechanics) implemented; coordination protocol is phase 2
+**Status:** implemented — all four phases shipped. Phase 1: #146. Phase 2: #148
+(verified live on noamsto/crew-smoke). Phase 3: #149, #150. Phase 4: #151, plus
+pane decoration and engine-agnostic role watch in #153, #154, #155.
 **Related:** #140 (pi engine), #142 (pi-first spike), `docs/superpowers/specs/2026-09-11-pi-first-dispatcher-spike.md`
 
 ## Problem
@@ -136,6 +138,13 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
 1. **Mechanics (implemented).** `dispatch --roles <list>` creates the task window
    with a lead pane plus one pane per role, each launched with `GRID_PROTOCOL.md`,
    a `@crew_role` label, and a role-scoped identity. Default behavior unchanged.
+   Acceptance "parked role panes do not trigger stall-watch" is satisfied: role
+   panes are launched via `watch_role`/`launch_role` with no `stall-watch`
+   invocation for them at all — only the lead pane is watched
+   (`adapters/core/dispatch.sh:1598`) — and the up-front role-split loop is
+   commented "NOT stall-watched on purpose: a parked role produces no output,
+   which the pane-output watchdog would misread as a wedge"
+   (`adapters/core/dispatch.sh:1568-1571`).
 2. **Coordination (implemented, verified live).** `GRID_PROTOCOL.md` assignment/
    verdict contract; the lead writes the artifact, assigns the role, awaits the
    verdict, folds stragglers, and releases with `final`. Verified on
@@ -147,18 +156,24 @@ marks "not yet wired". With role panes it is just a different `--agent` per pane
    its own engine and model (`reviewer=claude:opus`, `reviewer=<model>`), so a
    task can run a pi implementer with a claude (or codex) reviewer: the
    cross-engine review the `WORKER_PROTOCOL` calls for.
-4. **On-demand materialization + broker/status pane** for `deep`; `reap` role
-   panes.
+4. **On-demand materialization + broker/status pane (implemented).** `--lazy`
+   defers a role pane's creation until `dispatch --spawn-role <role>` is called
+   at its seam, `--reap-roles` kills every role pane in the caller's window, and
+   `--status` opens a live roster pane over the crew bus. No dedicated broker
+   pane shipped — the lead remains the sequencer (open question 1 stands).
 
 ## Open questions
 
-1. **Lead-coordinated vs broker-coordinated.** Phase 1 makes the lead the
-   sequencer. A broker pane (pi-tmux-orchestrator style) removes sequencing from
+1. **Lead-coordinated vs broker-coordinated (still open).** The lead remains
+   the sequencer through all four phases; no broker/status-pane sequencer
+   shipped. A broker pane (pi-tmux-orchestrator style) removes sequencing from
    the model but adds a component.
-2. **Seam artifacts: files vs bus payloads.** Files are simple and diffable;
-   bus payloads are unified but bloat the log.
-3. **Idle panes vs churn.** Park-until-assigned keeps panes cheap but idle;
-   materialize-on-demand is leaner but adds window mutation.
+2. **Seam artifacts: files vs bus payloads (answered).** Files: `GRID_PROTOCOL.md`
+   fixes the convention at `<crew_dir>/artifacts/<branch>/<seam>.md`, an
+   absolute path the lead names in the assignment.
+3. **Idle panes vs churn (answered).** `--lazy` + `--spawn-role`/`--reap-roles`
+   ships materialize-on-demand: a role pane is created at its seam and reaped
+   after its verdict, rather than parked idle for the task's lifetime.
 4. **How a role proves it ran** (verdict schema, evidence, metrics) reuses the
    outcome-metrics record shape.
 
