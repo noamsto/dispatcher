@@ -59,6 +59,18 @@ decorate_pane() {
   tmux set-option -w -t "$pane" pane-border-status top
 }
 
+# An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
+# must abort before pi ever launches.
+pi_agent_dir=""
+seed_pi_agent_dir() {
+  pi_agent_dir="$(crew pi-agent-dir)" || pi_agent_dir=""
+  case "$pi_agent_dir" in
+  /*) [ -d "$pi_agent_dir" ] && return 0 ;;
+  esac
+  echo "dispatch: could not seed the pi worker agent dir (crew pi-agent-dir) — refusing to launch pi against ~/.pi/agent" >&2
+  exit 1
+}
+
 # split_role_pane <window> <worktree> <role> — create a role pane, decorate it,
 # and echo its pane id.
 split_role_pane() {
@@ -72,12 +84,19 @@ split_role_pane() {
 # GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name / $effort from the caller scope.
 launch_role() {
-  local pane="$1" role="$2" r_agent="$3" r_model="$4" prompt first quoted_model
+  local pane="$1" role="$2" r_agent="$3" r_model="$4" prompt first quoted_model quoted_dir
   printf -v quoted_model '%q' "$r_model"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
   case "$r_agent" in
-  pi) tmux send-keys -t "$pane" "pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter ;;
+  pi)
+    [ -n "$pi_agent_dir" ] || {
+      echo "dispatch: could not seed the pi worker agent dir (crew pi-agent-dir) — refusing to launch pi against ~/.pi/agent" >&2
+      exit 1
+    }
+    printf -v quoted_dir '%q' "$pi_agent_dir"
+    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter
+    ;;
   claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
   codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
   cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model '$first'" Enter ;;
@@ -207,6 +226,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "role $role is already running in pane $existing"
     exit 0
   fi
+  [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$PWD" "$role")"
   launch_role "$role_pane" "$role" "$spawn_agent" "$spawn_model"
   watch_role "$role" "$role_pane"
@@ -550,7 +570,9 @@ else
     ;;
   pi)
     if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      pi_shape_example="openrouter/deepseek/deepseek-v4-pro"
+      [ "$profile" = personal ] && pi_shape_example="opencode/deepseek-v4-pro"
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. $pi_shape_example). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -652,14 +674,26 @@ if [ -z "$ignore_map" ]; then
     deep)
       tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
+        tier_expected="$tier_expected, or opencode/deepseek-v4-pro or opencode/deepseek-v4-flash"
+        [[ $model =~ ^opencode/deepseek-v4-(pro|flash)$ ]] && tier_ok=1
+      fi
       ;;
     standard)
       tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
+        tier_expected="$tier_expected, or opencode/deepseek-v4-flash"
+        [[ $model =~ ^opencode/deepseek-v4-flash$ ]] && tier_ok=1
+      fi
       ;;
     trivial)
       tier_expected="openrouter/deepseek/deepseek-v4-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
+        tier_expected="$tier_expected, or opencode/deepseek-v4-flash"
+        [[ $model =~ ^opencode/deepseek-v4-flash$ ]] && tier_ok=1
+      fi
       ;;
     *) tier_ok=0 ;;
     esac
@@ -888,6 +922,19 @@ title="$*"
 # the first dispatch already accepted by passing the existing --ignore-map.
 if [ -n "${DISPATCH_PRECHECK:-}" ]; then
   exit 0
+fi
+
+# Seed once per run, before any window is created: the lead and its role panes
+# share this one seed. Lazy roles are seeded on demand by --spawn-role instead.
+if [ "$agent" = pi ]; then
+  seed_pi_agent_dir
+elif [ -z "$grid_lazy" ]; then
+  for role_agent in "${role_agents[@]}"; do
+    if [ "$role_agent" = pi ]; then
+      seed_pi_agent_dir
+      break
+    fi
+  done
 fi
 
 # slug: lowercase, non-alnum -> single dash, first 40 chars, strip edge dashes.
@@ -1555,8 +1602,9 @@ elif [ "$agent" = cursor ]; then
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources.
+  printf -v quoted_dir '%q' "$pi_agent_dir"
   tmux send-keys -t "$pane" \
-    "pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter

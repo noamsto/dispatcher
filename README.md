@@ -260,7 +260,10 @@ For Claude Code, pass the plugin directory to `claude`:
 - **Engine CLIs and auth.** `claude`, `codex`, `cursor-agent`, `pi` and
   [`wt`](https://worktrunk.dev) resolve from the ambient `PATH`; log each in out
   of band. Pi uses the selected provider's credentials, such as
-  `OPENROUTER_API_KEY` for the default DeepSeek ladder.
+  `OPENROUTER_API_KEY` for the default DeepSeek ladder. pi workers run with a
+  dispatcher-owned `PI_CODING_AGENT_DIR` (`~/.pi/dispatcher-worker`) that reads
+  `api_key` credentials through from `~/.pi/agent/auth.json` without copying
+  them. OAuth-only providers need the provider's env var instead.
 
 </details>
 
@@ -282,6 +285,9 @@ dispatch --crew-id <id> deep opus --effort high --agent codex "redesign the expo
 dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the flag"
 dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effort high --agent pi --grid "harden the parser"
 ```
+
+The pi example above uses the work/OpenRouter ladder; personal hosts use
+`opencode/deepseek-v4-flash` instead.
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
 effort and crew back from `WORKER_TASK.md` and continues the engine's own

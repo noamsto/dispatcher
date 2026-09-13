@@ -1,6 +1,7 @@
 setup() {
   load helpers
   RESUME="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
+  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_resume() { bash -euo pipefail "$RESUME" "$@"; }
   setup_repo
   export HOME="$TEST_REPO"
@@ -13,6 +14,7 @@ setup() {
   cat >"$STUB_DIR/crew" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = pi-agent-dir ]; then exec bash -euo pipefail "$CREW_REAL" pi-agent-dir; fi
 if [ "$1" = engine-cmd ]; then
   c="${2#.}"
   c="${c%-wrapped}"
@@ -427,10 +429,11 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'pi --continue' "$STUB_LOG"
+  grep -q "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --continue" "$STUB_LOG"
   grep -q -- '--append-system-prompt /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
   grep -q -- '--no-approve' "$STUB_LOG"
   grep -q 'role panes (plan-critic,reviewer) may still be parked' "$STUB_LOG"
+  [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
 }
 
 @test "pi --fresh drops the continue flag" {
@@ -440,8 +443,63 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ pi ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "pi resume fails closed when the agent dir cannot be seeded" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = pi-agent-dir ]; then exit 0; fi
+if [ "$1" = engine-cmd ]; then
+  c="${2#.}"
+  c="${c%-wrapped}"
+  case "$c" in
+  claude | codex | cursor-agent | node | pi) exit 0 ;;
+  esac
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'send-keys' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "pi resume --print does not seed the agent dir" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  [ ! -d "$HOME/.pi/dispatcher-worker" ]
+}
+
+@test "pi resume leaves the ambient ~/.pi/agent fixture untouched and does not leak secrets" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"SECRET-RESUME-FIXTURE"}}\n' >"$HOME/.pi/agent/auth.json"
+  printf '{"defaultProjectTrust":"always"}\n' >"$HOME/.pi/agent/settings.json"
+  before_auth=$(sha256sum "$HOME/.pi/agent/auth.json")
+  before_settings=$(sha256sum "$HOME/.pi/agent/settings.json")
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(sha256sum "$HOME/.pi/agent/auth.json")" = "$before_auth" ]
+  [ "$(sha256sum "$HOME/.pi/agent/settings.json")" = "$before_settings" ]
+  run grep -rF SECRET-RESUME-FIXTURE "$HOME/.pi/dispatcher-worker"
   [ "$status" -ne 0 ]
 }
 
