@@ -59,9 +59,8 @@ decorate_pane() {
   tmux set-option -w -t "$pane" pane-border-status top
 }
 
-# pi_agent_dir: the seeded worker-scoped PI_CODING_AGENT_DIR, set by
-# seed_pi_agent_dir(). Fail closed: an empty value falls back to
-# ~/.pi/agent, so a broken seeder must abort before pi ever launches.
+# An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
+# must abort before pi ever launches.
 pi_agent_dir=""
 seed_pi_agent_dir() {
   pi_agent_dir="$(crew pi-agent-dir)" || pi_agent_dir=""
@@ -1603,7 +1602,6 @@ elif [ "$agent" = cursor ]; then
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources.
-  # PI_CODING_AGENT_DIR keeps the worker off the user's interactive ~/.pi/agent.
   printf -v quoted_dir '%q' "$pi_agent_dir"
   tmux send-keys -t "$pane" \
     "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter

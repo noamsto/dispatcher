@@ -333,9 +333,8 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
-  # Personal pi standard auto-enables the plan-critic,reviewer grid
-  # (dispatch.sh ~810-818), so the role-pane assertions below exercise real
-  # role-pane launches, not a vacuous grep.
+  # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
+  # what gives the role-pane assertions below real launches to check.
   stub_launch_bins
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode":{"type":"api_key","key":"SECRET-DISPATCH-FIXTURE"}}\n' >"$HOME/.pi/agent/auth.json"
@@ -2616,10 +2615,8 @@ EOF
   [[ "$output" == *"must run inside a worker worktree"* ]]
 }
 
-# _spawn_role_fixture — a worker worktree (here, TEST_REPO itself, switched
-# onto a feature branch) with WORKER_TASK.md and a recorded roles.json for a
-# pi reviewer role, plus a tmux stub that answers display-message/list-panes
-# and hands back %6 for split-window.
+# _spawn_role_fixture — TEST_REPO as a worker worktree with a recorded pi
+# reviewer role, ready for `dispatch --spawn-role reviewer`.
 _spawn_role_fixture() {
   git switch -q -c feat/9-x
   git commit -q --allow-empty -m init

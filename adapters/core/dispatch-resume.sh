@@ -471,7 +471,6 @@ elif [ "$agent" = cursor ]; then
 elif [ "$agent" = pi ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
-  # PI_CODING_AGENT_DIR keeps the worker off the user's interactive ~/.pi/agent.
   tmux send-keys -t "$pane" \
     "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
 else

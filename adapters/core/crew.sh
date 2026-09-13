@@ -396,11 +396,10 @@ _pi_agent_dir() {
   _write_if_changed "$dir/settings.json" 644 "$settings"
 
   auth='{}'
-  # Only a missing file means "no keys"; a broken one must not launch a keyless worker.
-  # [ -e ] is also false for a dangling or looping symlink and behind an
-  # unsearchable dir, so "missing" needs its nearest existing ancestor to be a
-  # searchable directory. Anything else must be a regular file before jq opens
-  # it — jq blocks forever on a FIFO.
+  # Only a genuinely missing file means "no keys". [ -e ] is also false for a
+  # dangling or looping symlink and behind an unsearchable dir, so "missing"
+  # needs its nearest existing ancestor to be a searchable directory; anything
+  # else must be a regular file, since jq blocks forever on a FIFO.
   probe="$ambient/auth.json"
   while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do probe=$(dirname "$probe"); done
   if [ "$probe" = "$ambient/auth.json" ] || [ ! -d "$probe" ] || [ ! -x "$probe" ]; then
