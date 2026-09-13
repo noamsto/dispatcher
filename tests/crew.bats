@@ -764,12 +764,8 @@ _pi_assert_refused() {
   _pi_assert_refused
 }
 
-# `$(dirname "$probe")` strips a trailing newline from its own output, so a
-# path component named "weird\n" gets silently rewritten to "weird" while
-# walking up for the nearest existing ancestor. Plant a real, searchable
-# "weird" dir alongside a dangling "weird\n" symlink: the corrupted walk lands
-# on "weird" (looks like a fine missing-file ancestor) instead of stopping on
-# the real dangling component, and would wrongly seed {} with rc 0.
+# "weird" is a real searchable dir; "weird\n" is a dangling symlink one level
+# up in the real (uncorrupted) ancestor walk — see crew.sh's dirname comment.
 @test "pi-agent-dir: an ambient path component ending in a newline is refused, not stripped" {
   _pi_seeded
   mkdir -p "$HOME/.pi/weird"
