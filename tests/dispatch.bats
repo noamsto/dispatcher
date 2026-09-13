@@ -3,6 +3,7 @@ bats_require_minimum_version 1.5.0 # `run !`
 setup() {
   load helpers
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
+  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
   # A work shell exports DISPATCH_PROFILE and any dispatcher session exports
@@ -13,6 +14,17 @@ setup() {
   unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
   stub_bin tmux
   stub_bin crew
+  # pi-agent-dir delegates to the real crew.sh so pi launch tests exercise a
+  # real seed; every other subcommand keeps stub_bin's generic log-and-succeed.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
   stub_bin gh
   stub_bin wt
   stub_bin direnv
@@ -84,6 +96,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -319,16 +332,74 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"work-profile only"* ]]
 }
 
-@test "the pi worker launch streams via the TUI with the protocol appended" {
-  # pi -p is buffered and would read as a wedge to stall-watch; the worker must
-  # use the streaming TUI, append the protocol as a real system prompt, and
-  # ignore project-local resources in an unattended run.
-  run grep -F -- '--append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md' "$DISPATCH"
+@test "the pi worker launch uses the worker agent dir and does not trust the target repo" {
+  # Personal pi standard auto-enables the plan-critic,reviewer grid
+  # (dispatch.sh ~810-818), so the role-pane assertions below exercise real
+  # role-pane launches, not a vacuous grep.
+  stub_launch_bins
+  mkdir -p "$TEST_REPO/.pi/extensions"
+  printf '{"packages":["evil"],"defaultProjectTrust":"always"}\n' >"$TEST_REPO/.pi/settings.json"
+  printf 'export default {};\n' >"$TEST_REPO/.pi/extensions/x.ts"
+  git -C "$TEST_REPO" add .pi/settings.json .pi/extensions/x.ts
+  git -C "$TEST_REPO" commit -qm 'add pi project files'
+
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"SECRET-DISPATCH-FIXTURE"}}\n' >"$HOME/.pi/agent/auth.json"
+  printf '{"defaultProjectTrust":"always"}\n' >"$HOME/.pi/agent/settings.json"
+  before_auth=$(sha256sum "$HOME/.pi/agent/auth.json")
+  before_settings=$(sha256sum "$HOME/.pi/agent/settings.json")
+
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "worker agent dir trust test"
   [ "$status" -eq 0 ]
-  run grep -F -- '--no-approve' "$DISPATCH"
-  [ "$status" -eq 0 ]
-  run grep -F -- '--thinking $effort' "$DISPATCH"
-  [ "$status" -eq 0 ]
+
+  worker_dir="$HOME/.pi/dispatcher-worker"
+  lead_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris --model" "$STUB_LOG")
+  [[ "$lead_line" == *"--no-approve"* ]]
+  [[ "$lead_line" == *"--append-system-prompt /opt/protocols/WORKER_PROTOCOL.md"* ]]
+  [[ "$lead_line" == *"--thinking high"* ]]
+
+  plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" "$STUB_LOG")
+  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-reviewer" "$STUB_LOG")
+  [[ "$plan_critic_line" == *"--no-approve"* ]]
+  [[ "$reviewer_line" == *"--no-approve"* ]]
+
+  # No pi send-keys line escaped the worker-dir prefix.
+  total_pi_lines=$(grep -cF -- ' pi --name' "$STUB_LOG" || true)
+  prefixed_pi_lines=$(grep -cF -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" "$STUB_LOG" || true)
+  [ "$total_pi_lines" = "$prefixed_pi_lines" ]
+  [ "$total_pi_lines" -eq 3 ]
+
+  [ "$(jq -r .defaultProjectTrust "$worker_dir/settings.json")" = never ]
+  [ "$(jq -r 'has("packages")' "$worker_dir/settings.json")" = false ]
+
+  [ "$(sha256sum "$HOME/.pi/agent/auth.json")" = "$before_auth" ]
+  [ "$(sha256sum "$HOME/.pi/agent/settings.json")" = "$before_settings" ]
+
+  run grep -rF SECRET-DISPATCH-FIXTURE "$worker_dir"
+  [ "$status" -ne 0 ]
+}
+
+@test "pi dispatch refuses to launch when the agent dir cannot be seeded" {
+  stub_launch_bins
+  # A crew stub whose pi-agent-dir prints nothing (the generic log-and-succeed
+  # behaviour), so the seed comes back empty and the launch must abort first.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "fail closed on unseedable dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'send-keys' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "--roles needs a value" {
@@ -958,8 +1029,8 @@ EOF
 
 # Asserts only that the gate stayed silent — a full launch per model would need
 # a distinct branch per row and buys nothing the acceptance tests do not cover.
-assert_gate_silent() { # <engine> <model>
-  DISPATCH_PROFILE=work run run_dispatch standard "$2" --agent "$1" --effort medium --ignore-map --crew-id c1 42 "map row $2"
+assert_gate_silent() { # <engine> <model> [profile]
+  DISPATCH_PROFILE="${3:-work}" run run_dispatch standard "$2" --agent "$1" --effort medium --ignore-map --crew-id c1 42 "map row $2"
   if [[ "$output" == *"Model gate"* ]]; then
     printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
     return 1
@@ -976,8 +1047,9 @@ assert_gate_silent() { # <engine> <model>
 
 @test "every model the docs name passes its engine's arm" {
   # Hand-copied from dispatch-orchestration.md: the model map, the cursor
-  # alternatives prose, the codex legacy generations, and the orchestrator
-  # table. Copied, so it makes drift loud rather than impossible.
+  # alternatives prose, the codex legacy generations, the orchestrator
+  # table, and pi's work/personal-opencode routes. Copied, so it makes
+  # drift loud rather than impossible.
   for m in opus sonnet haiku claude-fable-5-1; do
     assert_gate_silent claude "$m"
   done
@@ -989,6 +1061,13 @@ assert_gate_silent() { # <engine> <model>
     composer-2.5 composer-2.5-fast \
     claude-opus-5-high gpt-5.6-sol-high; do
     assert_gate_silent cursor "$m"
+  done
+  for m in openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash; do
+    assert_gate_silent pi "$m" work
+  done
+  for m in opencode/deepseek-v4-pro opencode/deepseek-v4-flash; do
+    assert_gate_silent pi "$m" personal
   done
 }
 
@@ -1070,6 +1149,43 @@ assert_gate_silent() { # <engine> <model>
   DISPATCH_PROFILE=work run run_dispatch trivial cursor-grok-4.6-low --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
   [ "$status" -eq 0 ]
   DISPATCH_PROFILE=work run run_dispatch trivial composer-2.5 --agent cursor --effort low --crew-id c1 42 "tier cursor trivial composer"
+  [ "$status" -eq 0 ]
+}
+
+@test "work refuses the personal opencode route on pi deep" {
+  DISPATCH_PROFILE=work run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode rejected on work"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not deep's row"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+}
+
+@test "tier gate accepts every pi table cell on the personal opencode route" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode pro"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal run run_dispatch deep opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi deep opencode flash"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard opencode flash"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial opencode flash"
+  [ "$status" -eq 0 ]
+}
+
+@test "personal refuses opencode/deepseek-v4-pro one rung down from deep" {
+  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi standard opencode pro rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+
+  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi trivial opencode pro rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not trivial's row"* ]]
+  [[ "$output" == *"--ignore-map"* ]]
+}
+
+@test "personal still accepts the OpenRouter row on pi standard" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard openrouter still accepted"
   [ "$status" -eq 0 ]
 }
 
@@ -1192,7 +1308,8 @@ assert_gate_silent() { # <engine> <model>
   for token in opus sonnet haiku fable \
     gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
     kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium cursor-grok-4.6-low \
-    composer-2.5 claude-fable-5-1; do
+    composer-2.5 claude-fable-5-1 \
+    openrouter/deepseek/deepseek-v4-pro opencode/deepseek-v4-pro opencode/deepseek-v4-flash; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
@@ -2469,4 +2586,57 @@ EOF
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"must run inside a worker worktree"* ]]
+}
+
+# _spawn_role_fixture — a worker worktree (here, TEST_REPO itself, switched
+# onto a feature branch) with WORKER_TASK.md and a recorded roles.json for a
+# pi reviewer role, plus a tmux stub that answers display-message/list-panes
+# and hands back %6 for split-window.
+_spawn_role_fixture() {
+  git switch -q -c feat/9-x
+  git commit -q --allow-empty -m init
+  printf 'agent_name: iris\neffort: high\n' >WORKER_TASK.md
+  export TMUX_PANE=%5
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles_dir="$common/crew/artifacts/feat/9-x"
+  mkdir -p "$roles_dir"
+  printf '{"reviewer":{"agent":"pi","model":"opencode/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
+
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '@1' ;;
+list-panes) ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "grid: --spawn-role seeds the worker agent dir before launching a pi role" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  run grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-reviewer" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--no-approve' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: --spawn-role aborts a pi role before split-window when the agent dir cannot be seeded" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'split-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
 }

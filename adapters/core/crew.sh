@@ -339,6 +339,60 @@ _hold_render() {
                 .task.ref, .task.branch, .task.title] | @tsv'
 }
 
+# _write_if_changed — running pi workers share the target dir, so replace via a
+# same-dir temp + mv (never truncate in place) and skip identical content.
+_write_if_changed() { # $1=target $2=mode $3=content
+  local tmp
+  if [ -f "$1" ] && printf '%s\n' "$3" | cmp -s - "$1"; then
+    return 0
+  fi
+  tmp=$(mktemp "$(dirname "$1")/.seed.XXXXXX")
+  printf '%s\n' "$3" >"$tmp"
+  chmod "$2" "$tmp"
+  mv -f "$tmp" "$1"
+}
+
+# _pi_agent_dir — seed the worker-scoped PI_CODING_AGENT_DIR and print its path.
+# auth.json never holds a literal key: each one becomes a `!jq` read-through of
+# the ambient file, so the secret stays out of the worker dir. OAuth entries are
+# dropped (a refresh would write back), as are `env` maps (they can hold secrets).
+_pi_agent_dir() {
+  local dir="$HOME/.pi/dispatcher-worker" ambient settings auth
+  ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+  case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
+  ambient="${ambient%/}"
+  # A relative dir would break the read-through once pi runs in another cwd; an
+  # inherited worker dir would make the seed read itself.
+  case "$ambient" in /*) ;; *) ambient="$HOME/.pi/agent" ;; esac
+  [ "$ambient" != "$dir" ] || ambient="$HOME/.pi/agent"
+
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+
+  settings=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
+    "$dir/settings.json" 2>/dev/null) || settings='{}'
+  settings=$(jq -n --argjson base "$settings" '$base + {defaultProjectTrust: "never"}')
+  _write_if_changed "$dir/settings.json" 644 "$settings"
+
+  auth=$(jq -s --arg jq "$(command -v jq)" --arg path "$ambient/auth.json" '
+    (if length == 1 and (.[0] | type) == "object" then .[0] else {} end)
+    | with_entries(
+        select((.key | test("^[a-z0-9][a-z0-9._-]*$"))
+          and (.value | type) == "object"
+          and .value.type == "api_key"
+          and (.value.key | type) == "string")
+        | .key as $name
+        | .value = {type: "api_key", key: (
+            if (.value.key | startswith("!") or test("^\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?$"))
+            then .value.key
+            else "!" + ($jq | @sh) + " -r " + ((".[\"" + $name + "\"].key") | @sh) + " " + ($path | @sh)
+            end)})
+  ' "$ambient/auth.json" 2>/dev/null) || auth='{}'
+  _write_if_changed "$dir/auth.json" 600 "$auth"
+
+  printf '%s\n' "$dir"
+}
+
 sub="${1:-}"
 shift || true
 
@@ -383,6 +437,10 @@ if [ "$sub" = engine-cmd ]; then
   }
   _is_engine_cmd "$1"
   exit $?
+fi
+if [ "$sub" = pi-agent-dir ]; then
+  _pi_agent_dir
+  exit 0
 fi
 
 # repo-keyed bus dir; --path-format=absolute so main-checkout and worktrees
@@ -3628,7 +3686,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

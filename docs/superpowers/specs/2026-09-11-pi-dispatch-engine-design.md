@@ -1,7 +1,8 @@
 # pi as a fourth dispatch engine (+ deepseek models)
 
 **Date:** 2026-09-11
-**Status:** draft — spike pending; `omp` bake-off scoped but not committed
+**Status:** v1 shipped (#141); worker-scoped agent dir, trust hardening and the
+profile-keyed tier gate built under #140; `omp` bake-off still pending.
 
 ## Problem
 
@@ -92,7 +93,23 @@ decision, not a project. `--mcp <profile>` stays claude-only (it is a claude
 `--mcp-config` flag); pi's base stack comes from its own config, same shape as
 codex/cursor.
 
+**Finding (2026-09-13) — not adopted yet.** `pi-mcp-adapter@2.33.0` depends on
+`@modelcontextprotocol/client` and `/core` via `https://pkg.pr.new` commit-preview
+tarball URLs — outside the npm registry's integrity/provenance — plus native
+addons (`@napi-rs/keyring`, `fs-native-extensions`). Adopting it now would mean a
+runtime npm fetch plus native builds on an unattended worker's cold start, and
+concurrent worker panes racing one install in the shared dir. The ambient MCP
+config (`~/.config/mcp/mcp.json`, Nix-generated) lists only `context7`. Unblock
+path: package it in `llm-agents.nix`, then load it with `-e <store path>` and a
+worker settings stanza with `configPath` + `hostConfigDiscovery: "off"`. The
+worker seed (D4) deliberately leaves `packages` unset.
+
 ### D3 — pi workers are **full-pipeline**, not process-light
+
+**Superseded (2026-09-13).** The role grid (#146–#155) gives standard/deep pi
+dispatches external critic/reviewer panes (`plan-critic`, `spec-critic`,
+`reviewer`), so the `pi-subagents` critic port below is not built. Keep the
+original text for context.
 
 This is the differentiator versus codex/cursor. `pi-subagents` provides the
 mechanism the claude-only critic pipeline needs (fresh-context children), and
@@ -128,6 +145,39 @@ semantics independent of the user's interactive pi config, and avoids two
 owners writing one settings file. The user's global `~/.pi/agent/` is never
 touched by dispatcher.
 
+**As built (#140)**
+
+- **Location:** `~/.pi/dispatcher-worker`, one dir shared by all pi workers.
+- **Writer:** seeded by `crew pi-agent-dir` on every `dispatch` / `dispatch
+resume` / `dispatch --spawn-role` that launches pi. It is not written by
+  hm-module, because the dir is mutable (pi writes `settings.json`,
+  `models-store.json`, sessions) and D4 forbids Nix owning a mutable pi
+  settings file.
+- **Seed contents:** `settings.json` merges in `defaultProjectTrust: "never"`
+  and keeps pi-written keys. `auth.json` is 0600 and regenerated each launch
+  but replaced only when it differs.
+- **Credential provisioning rationale:** a fresh dir is credential-less.
+  Copying `auth.json` would duplicate secrets. A symlink would let an OAuth
+  refresh or `/login` write through into `~/.pi/agent`. So each ambient
+  `api_key` entry becomes a
+  `"!<abs jq path> -r '.[\"<name>\"].key' <ambient auth.json>"` read-through,
+  using pi's documented `!command` key resolution. `!cmd` / single `$VAR`
+  references are copied verbatim.
+- **Limits:** OAuth entries and provider-scoped `env` maps are not
+  provisioned (use the env-var route). An ambient key changed into a
+  reference after seeding reads back literally until the next launch
+  re-seeds.
+- **Atomic writes** (temp file + `mv`). Benign race: the settings merge can
+  drop a pi bookkeeping key written between the read and the `mv`.
+- **Launch sites:** the worker launch, up-front role panes, the lazy
+  `--spawn-role`, and resume. Each prefixes `PI_CODING_AGENT_DIR=<dir>` and
+  fails closed (refuses to launch) if the seeder yields no directory, because
+  an empty value would fall back to `~/.pi/agent`.
+- **One-time break:** a pi worker started before this change keeps its
+  session under `~/.pi/agent/sessions`, so resume it with `dispatch resume
+--fresh`.
+- A refused dispatch may still have seeded the dir (idempotent, harmless).
+
 ### D5 — Trust boundary: workers run `--no-approve`
 
 Unattended workers execute in arbitrary target repos. `--no-approve` (and/or
@@ -137,6 +187,16 @@ being auto-installed and executed. We want **global (worker-dir) resources, not
 project resources**. `hostConfigDiscovery` stays `"off"` for the MCP adapter so
 a repo can't inject MCP servers into an unattended run. This is a security
 requirement, not a preference — pi packages run with full system access.
+
+**As built (#140)** — three layers:
+
+- `--no-approve` on every pi launch;
+- `defaultProjectTrust: "never"` in the worker settings;
+- the worker dir's own empty trust store, so the user's saved `/trust`
+  decisions never apply to workers.
+
+Coverage: bats with a stubbed pi/tmux asserts the launch env/flags and that
+`~/.pi/agent` is untouched, plus the live probe in KEY FINDINGS.
 
 ### D6 — `omp` is **not** the baseline; it is a scoped experiment
 
@@ -227,6 +287,30 @@ Recorded so they are never re-derived. The launch line is validated end-to-end.
   `dispatch` still rejects `ultra` for pi.
 - **No MCP/subagents in v1.** Neither `pi-mcp-adapter` nor `pi-subagents` is
   installed, so the worker is single-agent — exactly as the protocol states.
+  See the D2 finding (2026-09-13) for why the adapter still isn't adopted, and
+  D3 for the role-grid supersession of the critic port.
+
+## KEY FINDINGS (measured 2026-09-13, pi 0.85.1)
+
+- **opencode ladder gap.** The opencode catalog has `deepseek-v4-pro` and
+  `deepseek-v4-flash` but no `deepseek-v4.1-flash`, so the personal standard
+  rung collapses onto `opencode/deepseek-v4-flash`. `dispatch`'s tier gate is
+  profile-keyed: personal accepts opencode and OpenRouter; work is OpenRouter
+  only.
+- **`PI_CODING_AGENT_DIR` read-through probe.** A scratch dir holding only
+  settings `{defaultProjectTrust:"never"}` and a `!jq` read-through `auth.json`
+  answered `pi -p --no-approve --model opencode/deepseek-v4-flash` → `HELLO`;
+  pi did not rewrite `auth.json` on startup.
+- **Trust probe.** A hostile repo held `.pi/extensions/marker.ts` (writes a
+  marker on load) and `.pi/APPEND_SYSTEM.md`. Markers written were 0 with
+  `--no-approve`, 0 with no flag plus `defaultProjectTrust: "never"`, and 1
+  with `--approve` (the control). A fingerprint of `~/.pi/agent`
+  (files/sizes/mtimes, sessions excluded, plus session count) was identical
+  before and after. Two approve/default reruns timed out at 150s on the
+  provider, and only their marker results are used.
+- **pi-mcp-adapter deps** — as in the D2 finding.
+- pi scopes `--continue` lookups in a custom session dir to the cwd (pi
+  CHANGELOG).
 
 ## Scoped experiment: upstream pi vs `omp`
 
@@ -254,9 +338,9 @@ omp as a separate fifth engine.
 | `adapters/core/protocols/DISPATCHER_PROTOCOL.md`    | engine-lever candidate list; scaffold line; profile constraint; a pi section under "Read the bus" (park primitive).                                                                                                                                                                                |
 | `adapters/core/protocols/dispatch-orchestration.md` | choosing-tree diagram; **pi ladder** column in the model map; orchestrator-engines row; effort prose (`--thinking` is real, unlike cursor); MCP section (adapter, lazy).                                                                                                                           |
 | `adapters/core/protocols/WORKER_PROTOCOL.md`        | **full-pipeline** pi carve-out (D3): ported critic agents, role→model map, not the codex/cursor process-light path; consult roster gains pi; metrics section gains pi.                                                                                                                             |
-| `adapters/pi/` (new)                                | projected commands (prompt-templates / skills), ported `spec-critic` / `plan-critic` agent markdown, `spec-plan-critic` skill, worker `settings.json` + MCP config.                                                                                                                                |
+| `adapters/pi/` (new)                                | projected commands (prompt-templates / skills), ported `spec-critic` / `plan-critic` agent markdown, `spec-plan-critic` skill, worker `settings.json` + MCP config. **Not built** — superseded by the role grid (D3) and the `crew pi-agent-dir` seed (D4).                                        |
 | `scripts/gen-adapters.sh`                           | project `core/commands/` into pi's shape; ship protocols in the pi tree.                                                                                                                                                                                                                           |
-| `nix/hm-module.nix`                                 | write the pi adapter tree and the worker-scoped `PI_CODING_AGENT_DIR` seed.                                                                                                                                                                                                                        |
+| `nix/hm-module.nix`                                 | write the pi adapter tree and the worker-scoped `PI_CODING_AGENT_DIR` seed. **Not built** — the dir is mutable, so `crew pi-agent-dir` seeds it at launch instead (D4).                                                                                                                            |
 | `flake.nix`                                         | no engine packaging (ambient PATH); possibly nothing.                                                                                                                                                                                                                                              |
 | `tests/*.bats`                                      | dispatch (unknown agent, gate, launch, `--thinking` mapping), dispatcher (stub `pi`), adapters (pi tree, idempotence), module.                                                                                                                                                                     |
 | `README.md`                                         | engine matrix + badge; install prerequisites (pi package set, auth).                                                                                                                                                                                                                               |
@@ -267,9 +351,9 @@ omp as a separate fifth engine.
 dispatch <tier> <pi-model> --effort <e> --agent pi [id] <title>
   → worktree + tmux window + WORKER_TASK.md
   → PI_CODING_AGENT_DIR=~/.pi/dispatcher-worker pi --no-approve
-       --provider <p> --model <m> --thinking <e>
-       --append-system-prompt-file WORKER_PROTOCOL.md "<launch prompt>"
-  → full pipeline via pi-subagents (plan-critic → execute → gates → review)
+       --model <provider/id> --thinking <e>
+       --append-system-prompt WORKER_PROTOCOL.md "<launch prompt>"
+  → standard/deep: role-grid critic/reviewer panes (plan-critic → execute → gates → review)
   → reports working → pr_open → done via `crew` (engine-agnostic)
   → opens a PR
 ```

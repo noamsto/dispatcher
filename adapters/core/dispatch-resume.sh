@@ -257,6 +257,21 @@ if [ -n "$do_print" ]; then
   exit 0
 fi
 
+# Fail closed: an empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent,
+# so a broken seeder must abort before the worker ever launches against it.
+if [ "$agent" = pi ]; then
+  pi_agent_dir="$(crew pi-agent-dir)" || pi_agent_dir=""
+  case "$pi_agent_dir" in
+  /*) [ -d "$pi_agent_dir" ] || pi_agent_dir="" ;;
+  *) pi_agent_dir="" ;;
+  esac
+  [ -n "$pi_agent_dir" ] || {
+    echo "dispatch resume: could not seed the pi worker agent dir (crew pi-agent-dir) — refusing to launch pi against ~/.pi/agent" >&2
+    exit 1
+  }
+  printf -v quoted_pi_dir '%q' "$pi_agent_dir"
+fi
+
 if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
   # Same client-geometry handling as dispatch: a detached new-window otherwise
@@ -456,8 +471,9 @@ elif [ "$agent" = cursor ]; then
 elif [ "$agent" = pi ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
+  # PI_CODING_AGENT_DIR keeps the worker off the user's interactive ~/.pi/agent.
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""

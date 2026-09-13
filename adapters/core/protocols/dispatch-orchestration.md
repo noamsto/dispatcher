@@ -64,9 +64,9 @@ review depth.
 
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** | **`openrouter/deepseek/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes |
-| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid |
+| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** | work **`openrouter/deepseek/deepseek-v4-pro`** · personal **`opencode/deepseek-v4-pro`** (or the OpenRouter id) + spec-critic, plan-critic, reviewer panes |
+| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | work **`openrouter/deepseek/deepseek-v4.1-flash`** · personal **`opencode/deepseek-v4-flash`** + plan-critic, reviewer panes |
+| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | work **`openrouter/deepseek/deepseek-v4-flash`** · personal **`opencode/deepseek-v4-flash`** — no grid |
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
@@ -187,7 +187,12 @@ the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
   the dispatcher session) runs it, not out of the box.
 - **pi** — a provider-qualified id. The default OpenRouter ladder uses
   `openrouter/deepseek/<model>`; this shape and the concrete defaults were
-  verified against `pi --list-models`.
+  verified against `pi --list-models`. On the personal profile, the
+  `opencode/deepseek-v4-*` route is also tier-appropriate (`dispatcher.sh`
+  defaults personal to `opencode/deepseek-v4-pro`) — `opencode` has
+  `deepseek-v4-pro` and `deepseek-v4-flash` but no `deepseek-v4.1-flash`
+  equivalent, so personal `standard` collapses onto `opencode/deepseek-v4-flash`
+  (the same id as `trivial`).
 
 The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
 map gate below enforces **tier-appropriateness**; the map above stays the

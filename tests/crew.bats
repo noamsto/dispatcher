@@ -520,6 +520,105 @@ EOF
   [[ "$output" == *"engine-cmd <pane_current_command>"* ]]
 }
 
+# Ambient pi dir with one entry per auth.json case the seeder distinguishes.
+_pi_fixture() {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  unset PI_CODING_AGENT_DIR
+  AMBIENT="$HOME/.pi/agent"
+  WORKER="$HOME/.pi/dispatcher-worker"
+  mkdir -p "$AMBIENT"
+  cat >"$AMBIENT/auth.json" <<'EOF'
+{
+  "opencode": {"type": "api_key", "key": "SECRET-FIXTURE-123"},
+  "openrouter": {"type": "api_key", "key": "$OPENROUTER_API_KEY", "env": {"X": "y"}},
+  "deepseek": {"type": "api_key", "key": "!echo x"},
+  "anthropic": {"type": "oauth", "access": "a", "refresh": "r", "expires": 1},
+  "a b": {"type": "api_key", "key": "bad-name"},
+  "lit": {"type": "api_key", "key": "sk-a$b"}
+}
+EOF
+  printf '{"defaultProjectTrust":"always"}\n' >"$AMBIENT/settings.json"
+  printf '{}\n' >"$AMBIENT/trust.json"
+}
+
+@test "pi-agent-dir: prints only the worker dir and seeds never-trust settings" {
+  _pi_fixture
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [ "$output" = "$WORKER" ]
+  [ -d "$WORKER" ]
+  [ "$(stat -c %a "$WORKER")" = 700 ]
+  [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
+}
+
+@test "pi-agent-dir: literal keys are read through, never copied" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  run grep -rF SECRET-FIXTURE-123 "$WORKER"
+  [ "$status" -eq 1 ]
+  run grep -rF 'sk-a$b' "$WORKER"
+  [ "$status" -eq 1 ]
+  key=$(jq -r .opencode.key "$WORKER/auth.json")
+  [[ "$key" == '!'* ]]
+  [[ "$key" == *auth.json* ]]
+  [ "$(bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
+  key=$(jq -r .lit.key "$WORKER/auth.json")
+  [ "$(bash -c "${key#!}")" = 'sk-a$b' ]
+}
+
+@test "pi-agent-dir: references stay verbatim; oauth, bad names and env are dropped" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c .openrouter "$WORKER/auth.json")" = '{"type":"api_key","key":"$OPENROUTER_API_KEY"}' ]
+  [ "$(jq -r .deepseek.key "$WORKER/auth.json")" = '!echo x' ]
+  [ "$(jq 'has("anthropic")' "$WORKER/auth.json")" = false ]
+  [ "$(jq 'has("a b")' "$WORKER/auth.json")" = false ]
+}
+
+@test "pi-agent-dir: auth is 600 and the ambient dir is untouched" {
+  _pi_fixture
+  before=$(sha256sum "$AMBIENT"/*)
+  run_crew pi-agent-dir >/dev/null
+  [ "$(stat -c %a "$WORKER/auth.json")" = 600 ]
+  [ "$(sha256sum "$AMBIENT"/*)" = "$before" ]
+  [ ! -e "$WORKER/trust.json" ]
+}
+
+@test "pi-agent-dir: re-seed keeps pi-written settings and forces never" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  printf '{"lastChangelogVersion":"9","defaultProjectTrust":"always"}\n' >"$WORKER/settings.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -r .lastChangelogVersion "$WORKER/settings.json")" = 9 ]
+  [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
+}
+
+@test "pi-agent-dir: a no-op re-seed leaves auth in place and no temp files" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  before=$(stat -c '%i %Y' "$WORKER/auth.json" "$WORKER/settings.json")
+  run_crew pi-agent-dir >/dev/null
+  [ "$(stat -c '%i %Y' "$WORKER/auth.json" "$WORKER/settings.json")" = "$before" ]
+  [ -z "$(find "$WORKER" -name '.seed.*')" ]
+}
+
+@test "pi-agent-dir: no ambient auth.json seeds an empty auth" {
+  _pi_fixture
+  rm "$AMBIENT/auth.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
+}
+
+@test "pi-agent-dir: a relative PI_CODING_AGENT_DIR falls back to ~/.pi/agent" {
+  _pi_fixture
+  mkdir -p rel
+  printf '{"opencode":{"type":"api_key","key":"!echo rel"}}\n' >rel/auth.json
+  PI_CODING_AGENT_DIR=rel run_crew pi-agent-dir >/dev/null
+  key=$(jq -r .opencode.key "$WORKER/auth.json")
+  [[ "$key" == *"$AMBIENT/auth.json"* ]]
+}
+
 @test "sessions: folds each session separately, oldest first" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
