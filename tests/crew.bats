@@ -610,6 +610,79 @@ EOF
   [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
 }
 
+# Seed once, break the ambient auth.json with $1, and expect a refusal that
+# leaves the seeded worker auth.json byte-identical.
+_pi_broken_auth() {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  before=$(sha256sum "$WORKER/auth.json")
+  printf '%s\n' "$1" >"$AMBIENT/auth.json"
+}
+
+@test "pi-agent-dir: a malformed ambient auth.json is refused, worker auth kept" {
+  _pi_broken_auth '{"opencode":{"ty'
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"$AMBIENT/auth.json is unreadable or not a JSON object"* ]]
+  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+}
+
+@test "pi-agent-dir: a non-object ambient auth.json is refused" {
+  _pi_broken_auth '[]'
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"not a JSON object"* ]]
+  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+}
+
+@test "pi-agent-dir: an unreadable ambient auth.json is refused" {
+  [ "$(id -u)" -eq 0 ] && skip "root reads mode 000 files"
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  before=$(sha256sum "$WORKER/auth.json")
+  chmod 000 "$AMBIENT/auth.json"
+  run --separate-stderr run_crew pi-agent-dir
+  chmod 600 "$AMBIENT/auth.json"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"unreadable or not a JSON object"* ]]
+  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+}
+
+@test "pi-agent-dir: a worker dir symlinked to the ambient dir is refused" {
+  _pi_fixture
+  ln -s "$AMBIENT" "$WORKER"
+  before=$(sha256sum "$AMBIENT/auth.json" "$AMBIENT/settings.json")
+  mode=$(stat -c %a "$AMBIENT")
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"symlink or not a directory"* ]]
+  [ "$(sha256sum "$AMBIENT/auth.json" "$AMBIENT/settings.json")" = "$before" ]
+  [ "$(stat -c %a "$AMBIENT")" = "$mode" ]
+}
+
+@test "pi-agent-dir: a worker dir that is a regular file is refused" {
+  _pi_fixture
+  printf 'x\n' >"$WORKER"
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [ "$(cat "$WORKER")" = x ]
+}
+
+@test "pi-agent-dir: a PI_CODING_AGENT_DIR aliasing the worker dir is refused" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  ln -s "$WORKER" "$HOME/alias"
+  before=$(sha256sum "$WORKER/auth.json")
+  PI_CODING_AGENT_DIR="$HOME/alias" run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"refusing to seed pi worker dir"* ]]
+  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+}
+
 @test "pi-agent-dir: a relative PI_CODING_AGENT_DIR falls back to ~/.pi/agent" {
   _pi_fixture
   mkdir -p rel

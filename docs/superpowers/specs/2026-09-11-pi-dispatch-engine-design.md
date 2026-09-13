@@ -167,6 +167,15 @@ resume` / `dispatch --spawn-role` that launches pi. It is not written by
   provisioned (use the env-var route). An ambient key changed into a
   reference after seeding reads back literally until the next launch
   re-seeds.
+  - The read-through pins the absolute `jq` store path resolved at seed
+    time; a `nix-collect-garbage` that removes that `jq` before the next
+    re-seed makes key lookups fail until the next dispatch re-seeds.
+  - The seeder fails closed when the ambient `auth.json` exists but is
+    unreadable or not a JSON object — only a missing file seeds an empty
+    auth.
+  - The seeder refuses when `~/.pi/dispatcher-worker` is a symlink, is not
+    a directory, or resolves to the same place as, or nested with, the
+    ambient agent dir.
 - **Atomic writes** (temp file + `mv`). Benign race: the settings merge can
   drop a pi bookkeeping key written between the read and the `mv`.
 - **Launch sites:** the worker launch, up-front role panes, the lazy

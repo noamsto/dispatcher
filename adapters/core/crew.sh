@@ -357,7 +357,7 @@ _write_if_changed() { # $1=target $2=mode $3=content
 # the ambient file, so the secret stays out of the worker dir. OAuth entries are
 # dropped (a refresh would write back), as are `env` maps (they can hold secrets).
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" ambient settings auth
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings auth
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -366,16 +366,40 @@ _pi_agent_dir() {
   case "$ambient" in /*) ;; *) ambient="$HOME/.pi/agent" ;; esac
   [ "$ambient" != "$dir" ] || ambient="$HOME/.pi/agent"
 
+  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
+  if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    echo "crew: $dir is a symlink or not a directory — refusing to seed pi worker dir" >&2
+    exit 1
+  fi
   mkdir -p "$dir"
   chmod 700 "$dir"
+
+  # A symlinked parent or an aliased PI_CODING_AGENT_DIR defeats the literal check above.
+  dir_real=$(cd "$dir" && pwd -P)
+  if [ -d "$ambient" ]; then
+    ambient_real=$(cd "$ambient" && pwd -P)
+    case "$dir_real/" in "$ambient_real/"*)
+      echo "crew: $dir resolves inside the ambient pi dir $ambient — refusing to seed pi worker dir" >&2
+      exit 1
+      ;;
+    esac
+    case "$ambient_real/" in "$dir_real/"*)
+      echo "crew: ambient pi dir $ambient resolves inside $dir — refusing to seed pi worker dir" >&2
+      exit 1
+      ;;
+    esac
+  fi
 
   settings=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
     "$dir/settings.json" 2>/dev/null) || settings='{}'
   settings=$(jq -n --argjson base "$settings" '$base + {defaultProjectTrust: "never"}')
   _write_if_changed "$dir/settings.json" 644 "$settings"
 
-  auth=$(jq -s --arg jq "$(command -v jq)" --arg path "$ambient/auth.json" '
-    (if length == 1 and (.[0] | type) == "object" then .[0] else {} end)
+  auth='{}'
+  # Only a missing file means "no keys"; a broken one must not launch a keyless worker.
+  if [ -e "$ambient/auth.json" ]; then
+    auth=$(jq -s --arg jq "$(command -v jq)" --arg path "$ambient/auth.json" '
+    (if length == 1 and (.[0] | type) == "object" then .[0] else error("not an object") end)
     | with_entries(
         select((.key | test("^[a-z0-9][a-z0-9._-]*$"))
           and (.value | type) == "object"
@@ -387,7 +411,11 @@ _pi_agent_dir() {
             then .value.key
             else "!" + ($jq | @sh) + " -r " + ((".[\"" + $name + "\"].key") | @sh) + " " + ($path | @sh)
             end)})
-  ' "$ambient/auth.json" 2>/dev/null) || auth='{}'
+  ' "$ambient/auth.json" 2>/dev/null) || {
+      echo "crew: $ambient/auth.json is unreadable or not a JSON object — refusing to seed pi credentials" >&2
+      exit 1
+    }
+  fi
   _write_if_changed "$dir/auth.json" 600 "$auth"
 
   printf '%s\n' "$dir"

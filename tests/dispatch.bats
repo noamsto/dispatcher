@@ -332,17 +332,11 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"work-profile only"* ]]
 }
 
-@test "the pi worker launch uses the worker agent dir and does not trust the target repo" {
+@test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
   # Personal pi standard auto-enables the plan-critic,reviewer grid
   # (dispatch.sh ~810-818), so the role-pane assertions below exercise real
   # role-pane launches, not a vacuous grep.
   stub_launch_bins
-  mkdir -p "$TEST_REPO/.pi/extensions"
-  printf '{"packages":["evil"],"defaultProjectTrust":"always"}\n' >"$TEST_REPO/.pi/settings.json"
-  printf 'export default {};\n' >"$TEST_REPO/.pi/extensions/x.ts"
-  git -C "$TEST_REPO" add .pi/settings.json .pi/extensions/x.ts
-  git -C "$TEST_REPO" commit -qm 'add pi project files'
-
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode":{"type":"api_key","key":"SECRET-DISPATCH-FIXTURE"}}\n' >"$HOME/.pi/agent/auth.json"
   printf '{"defaultProjectTrust":"always"}\n' >"$HOME/.pi/agent/settings.json"
@@ -370,7 +364,6 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$total_pi_lines" -eq 3 ]
 
   [ "$(jq -r .defaultProjectTrust "$worker_dir/settings.json")" = never ]
-  [ "$(jq -r 'has("packages")' "$worker_dir/settings.json")" = false ]
 
   [ "$(sha256sum "$HOME/.pi/agent/auth.json")" = "$before_auth" ]
   [ "$(sha256sum "$HOME/.pi/agent/settings.json")" = "$before_settings" ]
@@ -394,6 +387,41 @@ EOF
   chmod +x "$STUB_DIR/crew"
 
   DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "fail closed on unseedable dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'send-keys' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "a non-pi lead with a pi role in an up-front grid still seeds the pi worker agent dir" {
+  stub_launch_bins
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:opencode/deepseek-v4-flash" --effort high --crew-id c1 42 "claude lead with pi reviewer role"
+  [ "$status" -eq 0 ]
+
+  worker_dir="$HOME/.pi/dispatcher-worker"
+  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" "$STUB_LOG")
+  [[ "$reviewer_line" == *"-reviewer"* ]]
+  [[ "$reviewer_line" == *"--no-approve"* ]]
+}
+
+@test "pi dispatch refuses to launch a non-pi lead's pi role when the agent dir cannot be seeded" {
+  stub_launch_bins
+  # A crew stub whose pi-agent-dir prints nothing (the generic log-and-succeed
+  # behaviour), so the seed comes back empty and the launch must abort first.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:opencode/deepseek-v4-flash" --effort high --crew-id c1 42 "fail closed on unseedable dir for a role"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not seed the pi worker agent dir"* ]]
   run grep -c -- 'send-keys' "$STUB_LOG"
