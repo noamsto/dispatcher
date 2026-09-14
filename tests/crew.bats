@@ -1933,9 +1933,10 @@ EOF
   c=$(fx_subbatch "27m 27s" "4m 0s")
   d=$(fx_subbatch "27m 42s" "4m 15s")
   e=$(fx_subbatch "27m 58s" "4m 30s")
-  stall_sampler "$a" "$b" "$c" "$d" "$e" "$e"
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
+  stall_sampler "$a" "$b" "$c" "$d" "$e" "$e" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 6
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 15
   [ "$status" -eq 0 ]
   run bash -c "bus | grep -c . || true"
   [ "$output" = "0" ]
@@ -2031,11 +2032,12 @@ EOF
 }
 
 @test "stall-watch: one post per episode, then a working clearance that re-arms" {
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
   p=$(fx_prompt_trust)
   q=$(fx_idle_box)
-  stall_sampler "$p" "$p" "$p" "$q" "$p" "$p" "$p"
+  stall_sampler "$p" "$p" "$p" "$q" "$p" "$p" "$p" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 7
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 20
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 3 ]
   [[ "${lines[0]}" == blocked\|prompt:* ]]
@@ -2057,9 +2059,10 @@ EOF
 @test "stall-watch: a clearance before --dead cancels the escalation" {
   p=$(fx_idle_box)
   q=$(fx_meter "5m 29s" "25.0k")
-  stall_sampler "$p" "$p" "$p" "$q" "$q" "$q"
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
+  stall_sampler "$p" "$p" "$p" "$q" "$q" "$q" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 3 --max-life 6
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 3 --max-life 15
   run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
   [ "$output" = "0" ]
   run bash -c "bus | grep -c 'quiet: cleared' || true"
@@ -2069,10 +2072,11 @@ EOF
 @test "stall-watch: a prompt: episode NEVER escalates (C-1)" {
   # An unanswered answerable question is waiting work, not death. Escalating it
   # would reproduce session 3 with a 30-minute delay.
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
   p=$(fx_prompt_trust)
-  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 20
   run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
   [ "$output" = "0" ]
   run bash -c "bus | grep -c 'prompt:' || true"
@@ -2229,10 +2233,11 @@ EOF
 
 @test "stall-watch: a quota: episode NEVER escalates (C-1 quota variant)" {
   # Mirrors "a prompt: episode NEVER escalates (C-1)" for the quota discriminator.
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
   p=$(fx_prompt_quota)
-  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 20
   run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
   [ "$output" = "0" ]
   run bash -c "bus | grep -c 'quota:' || true"
@@ -2284,10 +2289,11 @@ EOF
 }
 
 @test "stall-watch: a session-limit quota: episode NEVER escalates" {
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
   p=$(fx_session_limit_refusal)
-  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 8
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 20
   run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
   [ "$output" = "0" ]
   run bash -c "bus | grep -c 'quota:' || true"
