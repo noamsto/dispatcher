@@ -874,6 +874,30 @@ _pi_assert_refused() {
   [ "$(echo "$output" | jq -r '.[0].state')" = "blocked" ]
 }
 
+@test "sessions: a session-less row after a terminal session does not revive it" {
+  t=$(($(date +%s) * 1000))
+  seed_raw "worker:feat/x#s1-1" done "" "" "$t"
+  seed_raw worker:feat/x working "" "" "$((t + 1000))"
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r 'length')" = "2" ]
+  [ "$(echo "$output" | jq -r '.[0].session')" = "s1-1" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "done" ]
+  [ "$(echo "$output" | jq -r 'last.session')" = "null" ]
+}
+
+@test "sessions: a resume row starts its session" {
+  t=$(($(date +%s) * 1000))
+  seed_start dispatch s1-1 "$t"
+  seed_raw "worker:feat/x#s1-1" working "" "" "$((t + 1000))"
+  seed_start resume s2-2 "$((t + 2000))"
+  seed_raw worker:feat/x blocked "" "" "$((t + 3000))"
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r 'length')" = "2" ]
+  [ "$(echo "$output" | jq -r '.[0].state')" = "working" ]
+  [ "$(echo "$output" | jq -r 'last.session')" = "s2-2" ]
+  [ "$(echo "$output" | jq -r 'last.state')" = "blocked" ]
+}
+
 @test "sessions: --crew scopes the fold" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
@@ -982,6 +1006,28 @@ _pi_assert_refused() {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="msg") | .to' "$log"
   [ -z "$output" ]
+}
+
+@test "reply: a session-less heartbeat after a finished session refuses" {
+  t=$(($(date +%s) * 1000))
+  seed_raw "worker:feat/x#s1-1" done "" "" "$t"
+  seed_raw worker:feat/x working "" "" "$((t + 1000))"
+  CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ -z "$output" ]
+}
+
+@test "reply: a session-less row after a resume row reaches the resumed session" {
+  t=$(($(date +%s) * 1000))
+  seed_start dispatch s1-1 "$t"
+  seed_raw "worker:feat/x#s1-1" working "" "" "$((t + 1000))"
+  seed_start resume s2-2 "$((t + 2000))"
+  seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9" watchdog "$((t + 3000))"
+  CREW_ID=c1 run_crew reply "worker:feat/x" "resume-directive"
+  run run_crew inbox "worker:feat/x#s2-2" c1
+  [[ "$output" == *"resume-directive"* ]]
 }
 
 @test "await: a branch-only worker id exits non-zero" {
@@ -1683,6 +1729,17 @@ seed_raw() {
             + (if $src!="" then {source:$src} else {} end))}' >>"$logf"
 }
 
+# seed_start <dispatch|resume> <session> <ts_ms> — a session-start row on feat/x,
+# shaped like dispatch.sh's and dispatch-resume.sh's, which `crew` cannot write.
+seed_start() {
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg k "$1" --arg s "$2" --argjson ts "$3" \
+    '{ts:$ts, crew_id:"c1", kind:$k, branch:"feat/x", session:$s,
+      worker_id:("worker:feat/x#" + $s)}' >>"$logf"
+}
+
 # stall_sampler <frame-file>... — install a CREW_STALL_SAMPLE_CMD that emits the
 # given frames one per call and repeats the last one forever. The literal token
 # GONE makes the sampler exit non-zero from that call on (pane vanished).
@@ -2251,6 +2308,42 @@ EOF
     --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
   run bash -c "bus | jq -r 'select(.body.source==\"watchdog\") | .from'"
   [ "$output" = "worker:feat/a#b#s1-1" ]
+}
+
+@test "stall-watch: a watchdog steps aside once a newer session posts on its branch" {
+  seed_raw "worker:feat/x#s2-2" working "" ""
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch "worker:feat/x#s1-1" --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: an older session's post does not disarm a newer watchdog" {
+  seed_raw "worker:feat/x#s1-1" working "" ""
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch "worker:feat/x#s2-2" --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.body.source==\"watchdog\") | .from'"
+  [ "$output" = "worker:feat/x#s2-2" ]
+}
+
+@test "stall-watch: a resumed worker's stale watchdog cannot capture a branch-only reply" {
+  t=$((($(date +%s) - 60) * 1000))
+  seed_start dispatch s1-1 "$t"
+  seed_raw "worker:feat/x#s1-1" working "" "" "$((t + 1000))"
+  seed_start resume s2-2 "$((t + 2000))"
+  seed_raw "worker:feat/x#s2-2" working resumed ""
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch "worker:feat/x#s1-1" --pane %9 \
+    --engine claude --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  CREW_ID=c1 run_crew reply "worker:feat/x" "resume-directive"
+  run run_crew inbox "worker:feat/x#s2-2" c1
+  [[ "$output" == *"resume-directive"* ]]
 }
 
 @test "stall-watch: INV-W1 — a terminal state already on the bus produces zero writes" {

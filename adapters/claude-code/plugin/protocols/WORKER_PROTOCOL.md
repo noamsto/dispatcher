@@ -84,7 +84,7 @@ review gates above), the seam is:
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.
 5. **Fold stragglers** after every await, before advancing, exactly as in
-   "Report to the bus": `crew inbox "worker:$(git branch --show-current)" --since <seen>`.
+   "Report to the bus": `crew inbox "$CREW_WORKER_ID" --since <seen>`.
 
 A role is **one-shot per assignment** — after posting its verdict it re-parks.
 When the pipeline is done, release the roles so they exit:
@@ -150,7 +150,7 @@ This is a single pass, not a held wait (unlike `crew await`): empty output ⇒ n
 - **Seen-cursor:** already initialized by the **First action** drain (never re-initialize it to `now` here — that re-opens the pre-start blind spot). After a peek (or await) returns messages you **read and handled**, advance `seen` to the max `.ts` of _those_ messages only — `seen=$(printf '%s\n' "$msgs" | jq -s 'map(.ts) | max')` — never to an unrelated max. A peek returning nothing does not move the cursor.
 - **On a directive:** apply **receiving-code-review** discipline — verify the instruction before acting, don't perform agreement. Then redirect the pipeline, or on a "stop" wind down cleanly and stamp `crew status "$CREW_WORKER_ID" <state>` appropriately (e.g. `failed "stopped by dispatcher"`).
 - **Latency is honest, not instant:** a redirect surfaces only at the _next_ seam, so its latency is the remaining time in the current stage. A redirect posted mid-`execute` (the longest stage for deep workers) is not seen until execute finishes. **The peek is NOT a kill switch** — for a hard abort the dispatcher uses `tmux kill-window` (→ SessionEnd `exited`), which stays the reliable stop.
-- **Completion peeks (all tiers).** Three more seams, in pipeline order: **pre-push** — after `/deslop` and any review→fix round, immediately before `git push` (in addition to the post-review seam above, since cleanup and fix rounds run between them); **pre-PR** — after `git push` succeeds, immediately before `gh pr create` (immediately followed by `pr_open`); **pre-done** — after `pr_open` and the metrics snapshot, immediately before `done`. Same seen-cursor rules as above. Without them a directive posted during the final push/PR stage is never read, and once `done` is posted `crew reply` refuses the session — these are the last seams that can still catch one.
+- **Completion peeks (all tiers).** Three more seams, in pipeline order: **pre-push** — after `/deslop` and any review→fix round, immediately before `git push` (in addition to the post-review seam above, since cleanup and fix rounds run between them); **pre-PR** — after `git push` succeeds, immediately before `gh pr create`, or immediately before posting `pr_open` on the existing-PR path; **pre-done** — after `pr_open` and the metrics snapshot, immediately before `done`. Same seen-cursor rules as above. Without them a directive posted during the final push/PR stage is never read, and once `done` is posted `crew reply` refuses the session — these are the last seams that can still catch one.
   - **Work-changing directive:** do not post the next status; re-stamp `working`; re-enter the affected stage and go back through every gate it invalidates (fast gate, review, `/deslop`, push). If a PR is already open (pre-done, or any resume), finish on the existing-PR path — `gh pr view --json url,state`, push to it, skip `gh pr create`, post `pr_open` with that url — never a second `gh pr create`. Re-entry after `pr_open` legitimately returns the worker from finished to active in the dispatcher's accounting.
   - **Conflicting or unclear directive:** the block→await path in "Report to the bus".
   - **Verified no-op / acknowledgement:** advance the cursor and proceed.
@@ -302,7 +302,9 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   durable, it wakes the dispatcher, and it resumes you in place.
 - **Heartbeat at the seams.** Re-stamp
   `crew status "$CREW_WORKER_ID" working "<stage>"` at each pipeline
-  seam the checkpoint peek already defines. It costs nothing, it does **not** wake the
+  seam the checkpoint peek already defines — except the pre-PR and pre-done completion
+  peeks, where `working` is posted only when a directive re-opens the pipeline, so it stays
+  the re-entry signal. It costs nothing, it does **not** wake the
   dispatcher (`crew watch` ignores `working`), it keeps `roster`'s `age_s` meaning "time
   since last sign of life", and it damps the liveness watchdog below. Its limit, stated
   so you don't rely on it: a seam heartbeat **cannot** fire from inside a long tool call,

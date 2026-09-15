@@ -121,7 +121,11 @@ _is_session_id() {
 # A session-less status row (watchdog, bare heartbeat, legacy) belongs to the
 # sessioned session that had started by its ts: left as its own null entry it
 # could become `last`, and `reply` would address a bare id no live inbox reads
-# (#173). Only a row no session precedes stays a null entry.
+# (#173). A resume row starts a session exactly as a dispatch row does, or a
+# row landing before the resumed worker's first status would pick the dead
+# predecessor. The row stays a null entry when no session precedes it, or when
+# that session's own last word was terminal: a finished session reads no inbox,
+# so reviving it would hand `reply` a dead address instead of a refusal.
 _sessions() {
   local branch="$1" crewf="$2"
   [ -f "$log" ] || {
@@ -132,8 +136,9 @@ _sessions() {
       def split_wid: ltrimstr("worker:") as $r
         | ($r | capture("#(?<s>s[0-9]+-[0-9]+)$").s // null) as $s
         | {branch: (if $s == null then $r else ($r | rtrimstr("#" + $s)) end), session: $s};
+      def is_terminal: . as $x | (["done","failed","exited"] | index($x // "")) != null;
       map(select($crew=="" or .crew_id==$crew))
-      | ( map(select(.kind=="dispatch" and .branch==$b))
+      | ( map(select((.kind=="dispatch" or .kind=="resume") and .branch==$b))
           | map({session:(.session // null), ts:.ts}) ) as $disp
       | ( map(select(.kind=="status" and ((.from // "") | startswith("worker:")))
               | ((.from) | split_wid) as $w
@@ -141,9 +146,12 @@ _sessions() {
               | {session:$w.session, state:.body.state, ts:.ts}) ) as $raw
       | ( ($disp + $raw) | map(select(.session != null)) | group_by(.session)
           | map({session:.[0].session, start:(map(.ts) | min)}) ) as $starts
+      | ( $raw | map(select(.session != null)) ) as $sessioned
       | ( $raw | map(if .session != null then . else
             .ts as $t
-            | .session = ($starts | map(select(.start <= $t)) | max_by(.start) | .session)
+            | ($starts | map(select(.start <= $t)) | max_by(.start) | .session) as $s
+            | ($sessioned | map(select(.session == $s and .ts < $t)) | max_by(.ts) | .state) as $prev
+            | if ($prev | is_terminal) then . else .session = $s end
           end) ) as $st
       | ( ($disp + $st) | map(.session) | unique ) as $ids
       | [ $ids[] as $s
@@ -2886,6 +2894,11 @@ stall-watch)
   # carry the invoking session id, because a bare `from` becomes a session-less
   # row that strands a branch-only `reply` (#173). Only a session suffix is
   # stripped, so a branch containing '#' keys the same here and in _sessions.
+  # A sessioned watchdog owns its pane only until a newer session posts on the
+  # branch: resume reuses the pane and starts a second watchdog without killing
+  # this one, and a killed engine posts no terminal state to stop it. Left
+  # running it samples the successor's pane and posts under the dead session
+  # id, which then reads as the branch's newest session and captures `reply`.
   id="worker:${arg#worker:}"
   if _is_session_id "$id"; then
     from_id="$id"
@@ -3027,24 +3040,42 @@ PANES
   # this process started sorts below the cutoff and reads as a previous run.
   # Previous runs are minutes away, so the slack cannot reach one.
   run_start_ms=$((($(date +%s) - 1) * 1000))
+  own_epoch=""
+  if [ "$from_id" != "$me" ]; then
+    own_epoch="${from_id##*#s}"
+    own_epoch="${own_epoch%-*}"
+  fi
   bus_ts=0
   bus_state=""
   bus_source=""
   bus_detail=""
+  # Step-aside (see INV-W0) lives here, not in each caller, so the main loop and
+  # every pre-append re-read (INV-W1) see it with no gap. Only a session whose
+  # epoch is not older than ours counts: a straggler post from the predecessor
+  # must not disarm the watchdog that now owns the pane. Bare rows and our own
+  # rows never count, and a bare-invoked watchdog has no session to yield.
   _bus_refresh() {
-    local l
+    local rows l
     bus_ts=0
     bus_state=""
     bus_source=""
     bus_detail=""
     [ -f "$log" ] || return 0
-    l=$(jq -r --arg c "$crew" --arg m "$me" --argjson t0 "$run_start_ms" '
+    rows=$(jq -r --arg c "$crew" --arg m "$me" --arg f "$from_id" \
+      --arg e0 "$own_epoch" --argjson t0 "$run_start_ms" '
         select(.crew_id==$c and .kind=="status" and .ts>=$t0
                and (.from==$m or (.from|startswith($m+"#"))))
-        | [(.ts|tostring), .body.state, (.body.source // ""), (.body.detail // "")]
-        | @tsv' "$log" 2>/dev/null | tail -1 || true)
-    [ -n "$l" ] || return 0
-    IFS=$'\t' read -r bus_ts bus_state bus_source bus_detail <<BUSLINE
+        | ([.from | capture("^(?<w>.*)#s(?<e>[0-9]+)-[0-9]+$")] | first) as $sid
+        | [(if $e0 != "" and .from != $f and $sid != null and $sid.w == $m
+               and ($sid.e|tonumber) >= ($e0|tonumber) then "1" else "0" end),
+           (.ts|tostring), .body.state, (.body.source // ""), (.body.detail // "")]
+        | @tsv' "$log" 2>/dev/null || true)
+    [ -n "$rows" ] || return 0
+    case $'\n'"$rows" in
+    *$'\n1\t'*) exit 0 ;;
+    esac
+    l="${rows##*$'\n'}"
+    IFS=$'\t' read -r _ bus_ts bus_state bus_source bus_detail <<BUSLINE
 $l
 BUSLINE
     return 0
