@@ -90,6 +90,11 @@ For each critic/review phase you have a pane for, the seam is:
    crew msg "$CREW_WORKER_ID" "role:$(git branch --show-current):<role>" \
      '{"seam":"plan","artifact":"<abs path>","question":"Is this plan sound?"}'
    ```
+   For the review seam, carry the roster (or `"roster_skipped":"repo-local discovery skipped: <reason>"` in its place):
+   ```
+   crew msg "$CREW_WORKER_ID" "role:$(git branch --show-current):reviewer" \
+     '{"seam":"review","artifact":"<abs path to review.diff>","roster":"<abs path to roster.json>","question":"Review this diff."}'
+   ```
 3. **Await the verdict** — from your bash tool, with a tool timeout above the
    await timeout (e.g. 360000ms):
    ```

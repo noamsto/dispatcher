@@ -119,8 +119,8 @@ _repo_fm() {
     reason="name does not match basename"
     return
   fi
-  if ! fm_globs=$(_token_list "$fm_globs" '^[A-Za-z0-9._*?/+-]{1,128}$') ||
-    ! fm_shebang=$(_token_list "$fm_shebang" '^[A-Za-z0-9._+-]{1,32}$'); then
+  if ! fm_globs=$(_token_list "$fm_globs" '^[A-Za-z0-9._*?/+-]{1,128}\z') ||
+    ! fm_shebang=$(_token_list "$fm_shebang" '^[A-Za-z0-9._+-]{1,32}\z'); then
     reason="invalid routing frontmatter"
     return
   fi

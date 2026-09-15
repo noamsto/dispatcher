@@ -36,7 +36,7 @@ idle: no repainting poll and no park cap. The watcher also reflects your state o
 the pane border (`@crew_state`: `idle` while you wait, `working` while you run).
 
 An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
-artifact to read, the question, and the seam. Handle it, post your verdict, and
+artifact to read, the question, the seam, and for a review the roster or its skip reason. Handle it, post your verdict, and
 end your turn again; the watcher wakes you for the next one.
 
 ## Assignment contract
@@ -46,7 +46,8 @@ The lead assigns work with a `crew msg` to `$id` naming:
 - the **artifact** to read — an absolute path the lead gives you, by convention
   under the crew dir (`<crew_dir>/artifacts/<branch>/<seam>.md`),
 - the **question** (which verdict it wants),
-- the **seam** (`spec`, `plan`, `execute`, `review`).
+- the **seam** (`spec`, `plan`, `execute`, `review`),
+- for `seam: review`, either the **roster** — the absolute path of the resolved roster JSON — or **roster_skipped** — the lead's `repo-local discovery skipped: <reason>`; with neither, discovery is skipped.
 
 On wake, read the artifact and do your role's job. **Do not edit implementation
 files** — you are a critic/reviewer. Run tests read-only if a verdict needs them;
