@@ -68,6 +68,8 @@ review depth.
 | `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | work **`openrouter/deepseek/deepseek-v4.1-flash`** · personal **`opencode/deepseek-v4-flash`** + plan-critic, reviewer panes |
 | `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | work **`openrouter/deepseek/deepseek-v4-flash`** · personal **`opencode/deepseek-v4-flash`** — no grid |
 
+**Every `deep` row also grids by default** — claude, codex, and cursor each pick up the same `spec-critic,plan-critic,reviewer` panes pi's `deep` cell already shows, all on the lead's own engine and model unless `--roles` says otherwise. Only pi grids on `standard` too.
+
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
 `-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
 and there is **no bare `gpt-5.6`** — dispatching one dies on a 400, "model is not
@@ -119,10 +121,20 @@ sets codex `agents.*` guardrails and a process-authority spawn clause only —
 never model slugs for execute subagents (those stay in this table / rule 1).
 Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
-Pi has no native subagents. Standard and deep Pi dispatches therefore derive a
-role grid automatically; the lead implements while separate panes provide the
-fresh critic and reviewer contexts. `--roles` can override a role's engine and
-model for deliberate cross-engine review.
+The role grid is now the **default on `deep`, on every engine** — not only
+pi's — so cross-engine review is structural rather than a claude-only subagent
+feature. Pi has no native subagents at all, so it additionally defaults on
+`standard`; claude/codex/cursor keep their in-process spec/plan critics and
+code-review gate on `standard` and only pick up the grid on `deep`. With no
+`--roles` given, every role pane inherits the lead's own agent and model (the
+**single-engine fallback**): a claude-only host still gets a full
+`spec-critic,plan-critic,reviewer` grid, all on claude, and dispatch never
+refuses or reaches for an engine the caller didn't ask for. `--roles` opts
+into deliberate cross-engine review (`reviewer=codex:gpt-5.6-sol`); `--grid`
+still forces the grid on standard for a non-pi engine. `--no-grid` opts back
+out of the default on any non-pi engine, and is refused for pi
+standard/deep — pi has no other way to get a fresh critic/reviewer context.
+`--no-grid` combined with `--grid` or `--roles` is a usage error.
 
 **Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
@@ -300,7 +312,7 @@ is identical across engines; the crew-watch park primitive is not — see
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
-- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Pi supplies an independent DeepSeek/OpenRouter family and automatically gets external critic/reviewer panes on standard/deep; the other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
+- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic/reviewer panes on `deep`; pi supplies an independent DeepSeek/OpenRouter family and, having no native subagents at all, additionally defaults to the grid on `standard`. The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id.
 
 ## MCP is no longer a routing factor

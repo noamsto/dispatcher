@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -288,6 +288,7 @@ mcp_profile=""
 grid_roles=""
 grid_flag=""
 grid_lazy=""
+no_grid=""
 grid_status=""
 crew_id_flag=""
 plan_val="required"
@@ -339,6 +340,10 @@ while [ $# -gt 0 ]; do
     ;;
   --grid)
     grid_flag=1
+    shift
+    ;;
+  --no-grid)
+    no_grid=1
     shift
     ;;
   --lazy)
@@ -806,8 +811,23 @@ fi
 role_names=()
 role_agents=()
 role_models=()
-if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-  grid_flag=1
+if [ -n "$no_grid" ]; then
+  if [ -n "$grid_flag" ] || [ -n "$grid_roles" ]; then
+    echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
+    exit 1
+  fi
+  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+    echo "dispatch: --no-grid cannot be used with --agent pi on standard/deep — pi has no native subagents and needs the grid for fresh critic/reviewer contexts" >&2
+    exit 1
+  fi
+fi
+# pi keeps its existing standard+deep default; every engine now also defaults
+# to the grid on deep. Roles inherit the lead's own agent/model below when
+# --roles doesn't say otherwise, so this never requires a second engine.
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
+  if { [ "$agent" = pi ] && [ "$tier" != trivial ]; } || [ "$tier" = deep ]; then
+    grid_flag=1
+  fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
   case "$tier" in
