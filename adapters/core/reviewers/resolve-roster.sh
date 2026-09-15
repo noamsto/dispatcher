@@ -55,7 +55,8 @@ for tool in git jq yq; do
 done
 [[ $(yq --version 2>&1) == *mikefarah* ]] || die "yq is not yq-go"
 repo=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || die "not a git work tree: $repo"
-base=$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}") || die "base does not resolve to a commit: $base"
+commit=$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}") || die "base does not resolve to a commit: $base"
+base=$commit
 shopt -s nullglob
 harness_files=("$harness"/*.md)
 [ ${#harness_files[@]} -gt 0 ] || die "no reviewer *.md in harness directory: $harness"
@@ -109,7 +110,7 @@ jq -s -e 'any(.[]; .tail != "")' "$tmp/harness.jsonl" >/dev/null ||
   die 'harness has no reviewer carrying "## Findings and verdict"'
 
 _discover() {
-  local dir mode rec meta path name oid entry reason
+  local dir mode type rec meta path name oid entry reason
   for dir in .dispatcher .dispatcher/reviewers; do
     mode=$(_mode "$dir")
     [ -n "$mode" ] || return 0
@@ -127,12 +128,19 @@ _discover() {
     name=${path#.dispatcher/reviewers/}
     [[ $name == *.md ]] || continue
     name=${name%.md}
+    mode=${meta%% *}
+    type=${meta#* }
+    type=${type%% *}
+    oid=${meta##* }
+    # The raw name never reaches the output: it is repo text, not a safe path.
     if ! [[ $name =~ ^[a-z0-9-]+$ ]]; then
-      _reject "$path" "invalid name"
+      if [ "$type" = blob ]; then
+        _reject ".dispatcher/reviewers/<invalid name, $oid>" "invalid name"
+      else
+        _reject ".dispatcher/reviewers/<invalid name>" "invalid name"
+      fi
       continue
     fi
-    mode=${meta%% *}
-    oid=${meta##* }
     if [ "$mode" != 100644 ] && [ "$mode" != 100755 ]; then
       _reject "$path" "not a regular file at base (mode $mode)"
       continue
@@ -144,6 +152,15 @@ _discover() {
       _reject "$path" "no frontmatter"
       continue
     fi
+    # yq expands aliases without bound, so an alias bomb would hang it.
+    if [ "$(wc -c <"$tmp/fm.yaml")" -gt 8192 ]; then
+      _reject "$path" "frontmatter too large"
+      continue
+    fi
+    if grep -Eq '(^|[[:space:][{,:])[&*][A-Za-z0-9_-]' "$tmp/fm.yaml"; then
+      _reject "$path" "yaml anchors not allowed"
+      continue
+    fi
     if ! _fm_json "$tmp/fm.yaml" "$tmp/fm.json"; then
       _reject "$path" "unparseable frontmatter"
       continue
@@ -153,7 +170,7 @@ _discover() {
       if .name != $name then "name does not match basename"
       elif (string_list("globs") and string_list("shebang") and (.when == null or (.when | type) == "string")) | not
       then "invalid routing frontmatter"
-      elif ((.globs // []) | length > 0) or ((.shebang // []) | length > 0) or ((.when // "") | length > 0) | not
+      elif ((.globs // []) | length > 0) or ((.shebang // []) | length > 0) | not
       then "no routing frontmatter"
       else empty end' "$tmp/fm.json")
     if [ -n "$reason" ]; then
@@ -174,7 +191,11 @@ _discover
 git -C "$repo" diff --name-only --no-renames -z "$base" -- .dispatcher >"$tmp/changes"
 changes=()
 while IFS= read -r -d '' path; do
-  changes+=("$path")
+  if [[ $path =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    changes+=("$path")
+  else
+    changes+=("<unsafe path, $(printf '%s' "$path" | git -C "$repo" hash-object --stdin)>")
+  fi
 done <"$tmp/changes"
 
 jq -n --arg base "$base" \
@@ -210,8 +231,8 @@ jq -n --arg base "$base" \
             end ]
         + [ $repo[]
             | select(.name | IN($claimed[]) | not)
-            | {name, source: "repo", repo_path: .path, aliases: [], globs, shebang, when,
-               harness_globs: [], harness_shebang: [], override: null, ignored_when: null,
+            | {name, source: "repo", repo_path: .path, aliases: [], globs, shebang, when: null,
+               harness_globs: [], harness_shebang: [], override: null, ignored_when: .when,
                brief: frame(.; "new entry"; $default_tail)} ]
         | sort_by(.name)),
       rejected: (
