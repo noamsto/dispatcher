@@ -2010,10 +2010,13 @@ EOF
 @test "stall-watch: session-3 regression — a static trust prompt is prompt:, never failed or stalled:" {
   # The measured 3/3 false positive. A pane byte-static across the whole --stall
   # window, inside --window, carrying the trust frame.
+  # --max-life 8: the single expected event must fire before the top-of-loop
+  # exit; at 4 a stretched pre-sample gap could starve it (#185, same as D0's
+  # fix below).
   p=$(fx_prompt_trust)
   stall_sampler "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 4
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
   run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == prompt:* ]]
@@ -2025,10 +2028,13 @@ EOF
 
 @test "stall-watch: D0 posts blocked with a diagnosis-free stalled: detail" {
   # Full-string match on purpose: a reintroduced `(suspected …)` fails CI.
+  # --max-life 8 gives D0 (`--stall 1`) headroom: at `--max-life 3` one
+  # stretched pre-sample gap could exit the loop before the second sample and
+  # starve the single expected event (#185).
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 3
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
@@ -2079,10 +2085,13 @@ EOF
 }
 
 @test "stall-watch: D3 posts blocked/quiet: on a byte-identical pane in steady state" {
+  # --max-life 8: D3 needs `quiet_for >= --idle 2`, and the run must still be
+  # alive when it fires; at 4 one stretched pre-sample gap could exit the loop
+  # first and starve the single expected event (#185, same as D0's fix above).
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 4
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 8
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == "blocked|quiet: pane unchanged for "* ]]
@@ -2091,14 +2100,19 @@ EOF
 @test "stall-watch: healthy subagent batch produces ZERO events" {
   # A1's measured false-positive driver, verbatim: meter present, clock rising,
   # parent token string static at 73.2k, live subagent row throughout. D2 is
-  # vetoed by the row; D1 is vetoed by the meter; D3 by the byte changes.
+  # vetoed by the row, D3 by the byte changes, D1 by the meter.
+  # Every frame before GONE is byte-distinct ON PURPOSE: the detector
+  # thresholds are wall-clock (`date +%s`) deltas, so one stretched
+  # inter-sample gap satisfies `--idle 2` — a repeated final frame let D3 post
+  # `quiet:` and flake this zero-events oracle under `bats --jobs` load (#185).
   a=$(fx_subbatch "26m 57s" "3m 29s")
   b=$(fx_subbatch "27m 12s" "3m 45s")
   c=$(fx_subbatch "27m 27s" "4m 0s")
   d=$(fx_subbatch "27m 42s" "4m 15s")
   e=$(fx_subbatch "27m 58s" "4m 30s")
+  f=$(fx_subbatch "28m 13s" "4m 45s")
   # GONE ends the run on sample exhaustion, not a --max-life race (#169).
-  stall_sampler "$a" "$b" "$c" "$d" "$e" "$e" GONE
+  stall_sampler "$a" "$b" "$c" "$d" "$e" "$f" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
     --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 15
   [ "$status" -eq 0 ]
@@ -2128,7 +2142,12 @@ EOF
   b=$(fx_meter "5m 44s" "26.1k")
   c=$(fx_meter "5m 59s" "27.4k")
   d=$(fx_meter "6m 14s" "28.8k")
-  stall_sampler "$a" "$b" "$c" "$d"
+  # GONE stops the sampler repeating its last frame: an un-GONE'd tail would
+  # sample `d` twice, and one stretched wall-clock gap meets `--idle 2` and
+  # lets D3 post, breaking the zero-events oracle (#185). The run exits on
+  # --max-life 5 with fails=1 here, which is fine — the oracle only needs the
+  # detectors silent.
+  stall_sampler "$a" "$b" "$c" "$d" GONE
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
     --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 5
   run bash -c "bus | grep -c . || true"
@@ -2176,8 +2195,11 @@ EOF
 @test "stall-watch: --engine codex gets no prompt or meter detector, and never failed" {
   p=$(fx_prompt_trust)
   stall_sampler "$p" "$p" "$p" "$p" "$p"
+  # --max-life 8: the single expected stalled: line must fire before the
+  # top-of-loop exit; at 4 a stretched pre-sample gap could starve it (#185,
+  # same as D0's fix above).
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
-    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 4
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
   # The static pane is not classifiable for codex, so it falls to D0s.
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
@@ -2210,10 +2232,12 @@ EOF
 }
 
 @test "stall-watch: a quiet: episode escalates to failed after --dead" {
+  # --max-life 15 keeps the `blocked`→`failed` (+--dead 2) sequence inside the
+  # run even when stretched samples push the D3 fire late (#185).
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 15
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == blocked\|quiet:* ]]
@@ -2565,7 +2589,7 @@ EOF
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 15
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == blocked\|quiet:* ]]
@@ -2577,7 +2601,7 @@ EOF
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 9
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 2 --max-life 15
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == blocked\|quiet:* ]]
