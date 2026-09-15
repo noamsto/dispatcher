@@ -476,6 +476,16 @@ EOF
   [ "$(grep -c '\${grid_note}' "$DISPATCH")" -eq 4 ]
 }
 
+@test "grid_note never tells the lead the review gate is substitutive" {
+  # The injected launch-prompt text is what actually drives worker behavior;
+  # it must not resurrect the old "delegate review instead of running it
+  # in-process" framing the additive-review-gate fix removed everywhere else.
+  run grep -F -- 'instead of running them in-process' "$DISPATCH"
+  [ "$status" -ne 0 ]
+  run grep -F -- 'delegate to the bus only the phases that have a pane' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
 @test "--grid derives the role topology from the tier" {
   run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
   [ "$status" -eq 0 ]

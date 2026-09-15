@@ -1602,12 +1602,13 @@ medium) codex_subagent_effort=low ;;
 low) codex_subagent_effort=low ;;
 esac
 
-# Grid mode: tell the lead it has role panes to delegate the critic/review phases
-# to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
+# Grid mode: tell the lead it has role panes, and that delegation is
+# pane-scoped — only a phase with a pane skips the in-process path. The
+# native code-review gate always runs regardless (WORKER_PROTOCOL.md →
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ]; then
-  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
 fi
 
 if [ "$agent" = codex ]; then

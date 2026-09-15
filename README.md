@@ -173,7 +173,10 @@ spec and plan critics that gate a plan before any of it is written. A worker
 resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
 (or the copy its adapter ships) and hands the matched body to whatever spawn
 its engine has: a named agent on claude, an inline role brief on codex and
-cursor, or a role-grid pane on pi. A critic sits at the tier's escalate rung — it has to out-think the
+cursor, or a role-grid pane — pi always, for both critics and reviewers; the
+other three by default on `deep`, but for critics only (their code-review
+gate always spawns the native named-agent/inline-brief mechanism, never a
+grid pane). A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo.
 
