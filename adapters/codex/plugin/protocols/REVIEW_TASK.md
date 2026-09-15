@@ -8,7 +8,7 @@ Read `pr:` from `WORKER_TASK.md` — that number is the PR under review.
 
 ## Never change the tree
 
-No edits, no commits, no push, no PR, no merge, no branch or tag. Your only writes are review comments through `gh`. A findings scratch file at the worktree root is fine; it must never reach the index.
+No edits, no commits, no push, no PR, no merge, no branch or tag. Your only write to the PR is the one review event described below (`gh api …/reviews`) — never a separate `gh pr comment`, `gh pr review --approve`/`--request-changes`, or a second `reviews` call. A findings scratch file at the worktree root is fine; it must never reach the index.
 
 ## The worktree is the PR head
 
@@ -46,6 +46,13 @@ Nothing gates this review before it lands, so the refuter pass is the only thing
 
 Deslop the **comment prose you wrote** (not the code — the code is not yours): drop hedging, preamble, praise padding, restatement of what the code does, and repetition between what-is-wrong and the fix. A comment that says nothing concrete after deslopping is dropped along with its finding.
 
+**P1 — peek before you post.** Immediately before the `gh api …/reviews` call below, peek the bus: `crew inbox "$CREW_WORKER_ID" --since <seen-cursor>` — same seen-cursor rules as `WORKER_PROTOCOL.md`'s **Checkpoint-peek**. On first arrival at P1, initialize a P1 re-run count of 0; this is separate from, and does not consume, the block→await cycle cap in "Report to the bus".
+
+- **Work-changing directive, P1 re-run count still 0:** do not post; re-stamp `working`; increment the count to 1; re-run **Dispatch reviewers directly**, **Verify adversarially**, and the deslop pass above; return to P1.
+- **Work-changing directive, P1 re-run count already 1:** block→await, per `WORKER_PROTOCOL.md`'s "Report to the bus". On reply, incorporate the answer into the review body/comments you are about to post and proceed to post — never a further reviewer-batch re-run, whatever the reply says. On timeout, follow the blocked→failed path without posting.
+- **Conflicting or unclear directive:** block→await immediately, same reply/timeout handling as above.
+- **Verified no-op / acknowledgement:** advance the cursor and proceed to post.
+
 Then post **one** review event — not N comment spams:
 
 ```bash
@@ -62,7 +69,15 @@ Approve (`event=APPROVE`) only when **zero** findings survive verification and d
 
 **Never approve a draft.** Read `gh pr view "$pr" --json isDraft --jq .isDraft` before approving, not after.
 
+**Decided once, at P1.** The review event you post at P1 is the verdict — a GitHub review event is immutable once posted, so nothing after it may contradict it. `approved` in the tally (below) means exactly "the posted review event was `event=APPROVE`", read from what you actually posted, never re-derived or revised afterward.
+
 ## Report the tally, then stop
+
+**P2 — peek before the tally, review-worker override.** Immediately before the `crew msg` call below, peek the bus the same way as P1. The review event is already posted and immutable, so **this replaces the Completion peeks work-changing branch in `WORKER_PROTOCOL.md` at this seam**: a review worker never re-enters the review stage once the review event is posted. Every directive found at P2 — work-changing, conflicting, or unclear alike — goes block→await, naming the already-posted review's url and the PR, and never reopens or contradicts it.
+
+- On reply: the answer may change only the tally payload below or the `crew status done` detail string — never the PR. If the reply insists on a PR write, stamp `failed` naming the posted review url instead of writing to the PR again. If the reply is merely ambiguous about whether a PR write is actually required, stay `blocked` and ask a clarifying question, per "Report to the bus".
+- On timeout: same blocked→await cadence as every other seam — `crew status "$CREW_WORKER_ID" blocked "<why> — awaited 300s, no reply"`, carrying the full tally payload (the fields below) in the detail so the outcome is recorded even if the second cycle also times out. Cap at 2 cycles; after the second timeout, `crew status "$CREW_WORKER_ID" failed "blocked, no dispatcher reply"`.
+- Verified no-op / acknowledgement: advance the cursor and proceed to the tally.
 
 Post the tally as one message to the dispatcher, then terminate at `done` — a review worker never reaches `pr_open`, because it opens nothing:
 

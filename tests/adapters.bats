@@ -1088,3 +1088,42 @@ $hits"
     [ "$status" -eq 0 ]
   done
 }
+
+# --- #176: review-worker completion peeks (P1/P2) and APPROVE decided once ---
+
+@test "every review-task copy pins the P1 and P2 completion peeks" {
+  for copy in \
+    "$ROOT/adapters/core/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/claude-code/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/codex/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/cursor/protocols/REVIEW_TASK.md"; do
+    for statement in \
+      '**P1 — peek before you post.** Immediately before the `gh api …/reviews` call below, peek the bus: `crew inbox "$CREW_WORKER_ID" --since <seen-cursor>`' \
+      '**Work-changing directive, P1 re-run count still 0:**' \
+      '**Work-changing directive, P1 re-run count already 1:** block→await' \
+      '**P2 — peek before the tally, review-worker override.**' \
+      'this replaces the Completion peeks work-changing branch in `WORKER_PROTOCOL.md` at this seam' \
+      'a review worker never re-enters the review stage once the review event is posted' \
+      'If the reply insists on a PR write, stamp `failed` naming the posted review url' \
+      'same blocked→await cadence as every other seam'; do
+      run grep -F "$statement" "$copy"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "every review-task copy decides APPROVE once and bars a follow-up PR write" {
+  for copy in \
+    "$ROOT/adapters/core/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/claude-code/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/codex/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/cursor/protocols/REVIEW_TASK.md"; do
+    for statement in \
+      'never a separate `gh pr comment`, `gh pr review --approve`/`--request-changes`, or a second `reviews` call.' \
+      '**Decided once, at P1.**' \
+      '"the posted review event was `event=APPROVE`"'; do
+      run grep -F "$statement" "$copy"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
