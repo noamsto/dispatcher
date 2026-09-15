@@ -3332,9 +3332,6 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 # ---- wake (#186) ----
 #
 # Frame fixtures and a stateful tmux stub for `crew wake-class` / `crew nudge`.
-# Deliberately separate from `stub_tmux` above (the stall-watch harness):
-# nudge drives one resolved pane through send-keys/capture-pane/show-options,
-# which stub_tmux does not model, so this block owns its own PATH stub.
 
 WAKE_PROMPT='crew wake: read your crew inbox and continue'
 
@@ -3797,9 +3794,7 @@ _wake_class_locales() {
 }
 
 @test "wake-class: submitted -> busy" {
-  # The submitted fixture's own construction (P-2: the `· Smooshing…` spinner
-  # sits directly above the top rule) satisfies re_spinner inside the S3
-  # busy-detection window, so it classifies busy, not idle.
+  # A spinner right above the top rule marks a started turn.
   _wake_frames_only
   run run_crew wake-class <"$WAKE_DIR/frames/submitted"
   [ "$status" -eq 0 ]
@@ -4269,9 +4264,9 @@ _wake_class_locales() {
   [[ "$output" == *"engine codex"* ]]
 }
 
-# ---- wake: batch A (F1 submit verify, F2 budget, F3 consumed, F4 busy) ------
+# ---- wake: submit verify, typing budget, consumed anchor, busy detection ----
 
-@test "nudge: F1 an old echo collapsed into the window with no spinner is unverified" {
+@test "nudge: an old echo collapsed into the window with no spinner is unverified" {
   wake_tmux_setup far_echo_idle
   _wake_fake_clock
   WAKE_TYPE_NEXT=far_echo_typed WAKE_ENTER_NEXT=near_echo_idle
@@ -4282,7 +4277,7 @@ _wake_class_locales() {
   [ "$(_wake_calls 'Enter')" -eq 1 ]
 }
 
-@test "nudge: F1 a short pane showing only the new echo over its spinner delivers" {
+@test "nudge: a short pane showing only the new echo over its spinner delivers" {
   wake_tmux_setup stale_echo_idle
   _wake_fake_clock
   WAKE_ENTER_NEXT=submitted
@@ -4293,7 +4288,7 @@ _wake_class_locales() {
   _wake_assert_typed_once
 }
 
-@test "nudge: F1 a spinner under more than six tool lines verifies by the worker's working row" {
+@test "nudge: a spinner under more than six tool lines verifies by the worker's working row" {
   wake_tmux_setup idle
   _wake_fake_clock
   WAKE_ENTER_NEXT=submitted_tools WAKE_ENTER_ROW=1
@@ -4304,7 +4299,7 @@ _wake_class_locales() {
   _wake_assert_typed_once
 }
 
-@test "nudge: F2 --timeout 38 --interval 2 on an idle pane delivers" {
+@test "nudge: --timeout 38 --interval 2 on an idle pane delivers" {
   wake_tmux_setup idle
   _wake_fake_clock
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 38 --interval 2
@@ -4313,7 +4308,7 @@ _wake_class_locales() {
   _wake_assert_typed_once
 }
 
-@test "wake: F2 reply --wake-timeout 36 is under the 38s floor — usage error before any append" {
+@test "wake: reply --wake-timeout 36 is under the 38s floor — usage error before any append" {
   wake_tmux_setup idle
   CREW_ID=c1 run run_crew reply "worker:feat/x" "decision" --wake-timeout 36
   [ "$status" -eq 1 ]
@@ -4323,7 +4318,7 @@ _wake_class_locales() {
   [ ! -s "$WAKE_DIR/calls.log" ]
 }
 
-@test "nudge: F2 CREW_WAKE_FLOOR in the environment cannot lower the typing floor" {
+@test "nudge: CREW_WAKE_FLOOR in the environment cannot lower the typing floor" {
   wake_tmux_setup idle
   CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 0
   [ "$status" -eq 1 ]
@@ -4331,7 +4326,7 @@ _wake_class_locales() {
   [ "$(_wake_calls '^capture-pane')" -eq 0 ]
 }
 
-@test "nudge: F2 a lock wait that runs out the typing budget refuses as lock, not busy" {
+@test "nudge: a lock wait that runs out the typing budget refuses as lock, not busy" {
   wake_tmux_setup idle
   _wake_fake_clock
   _wake_hold_lock
@@ -4343,7 +4338,7 @@ _wake_class_locales() {
   [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
-@test "nudge: F2 an Enter that never lands at the floor timeout ends within the timeout" {
+@test "nudge: an Enter that never lands at the floor timeout ends within the timeout" {
   wake_tmux_setup idle
   _wake_fake_clock
   WAKE_ENTER_NOOP=1
@@ -4355,7 +4350,7 @@ _wake_class_locales() {
   [ $(($(_wake_now) - start)) -le 39 ]
 }
 
-@test "nudge: F3 a worker that resumed before the nudge is consumed without typing" {
+@test "nudge: a worker that resumed before the nudge is consumed without typing" {
   _wake_stub_base busy_meter
   _wake_fake_clock
   _wake_seed_resumed
@@ -4365,7 +4360,7 @@ _wake_class_locales() {
   [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
-@test "nudge: F3 a resumed worker behind a live lock is consumed without typing" {
+@test "nudge: a resumed worker behind a live lock is consumed without typing" {
   _wake_stub_base busy_meter
   _wake_fake_clock
   _wake_seed_resumed
@@ -4378,7 +4373,7 @@ _wake_class_locales() {
   [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
-@test "nudge: F3 a session-less watchdog blocked row after working re-anchors — a trust frame refuses permanently" {
+@test "nudge: a session-less watchdog blocked row after working re-anchors — a trust frame refuses permanently" {
   _wake_stub_base trust_unnumbered
   _wake_seed_resumed
   seed_raw "worker:feat/x" blocked "prompt: trust" watchdog "$(($(date +%s) * 1000 - 2000))"
@@ -4388,37 +4383,37 @@ _wake_class_locales() {
   [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
-@test "wake-class: F4 a multi-word spinner verb is busy in every locale" {
+@test "wake-class: a multi-word spinner verb is busy in every locale" {
   _wake_frames_only
   _wake_class_locales busy_multiword busy
 }
 
-@test "wake-class: F4 a path ellipsis directly above the box is idle in every locale" {
+@test "wake-class: a path ellipsis directly above the box is idle in every locale" {
   _wake_frames_only
   _wake_class_locales idle_path idle
 }
 
-@test "wake-class: F4 a '- etc…' line directly above the box is idle in every locale" {
+@test "wake-class: a '- etc…' line directly above the box is idle in every locale" {
   _wake_frames_only
   _wake_class_locales idle_etc idle
 }
 
-@test "wake-class: F4 an assistant bullet with an ellipsis above the box is idle in every locale" {
+@test "wake-class: an assistant bullet with an ellipsis above the box is idle in every locale" {
   _wake_frames_only
   _wake_class_locales idle_bullet idle
 }
 
-@test "wake-class: F4 Hebrew text with an ellipsis above the box is idle in every locale" {
+@test "wake-class: Hebrew text with an ellipsis above the box is idle in every locale" {
   _wake_frames_only
   _wake_class_locales idle_hebrew idle
 }
 
-@test "wake-class: F4 a meter with a non-spinner line nearest the box is busy in every locale" {
+@test "wake-class: a meter with a non-spinner line nearest the box is busy in every locale" {
   _wake_frames_only
   _wake_class_locales busy_meter_only busy
 }
 
-@test "wake-class: F4 a ghost split into two adjacent dim spans is idle in every locale" {
+@test "wake-class: a ghost split into two adjacent dim spans is idle in every locale" {
   _wake_frames_only
   _wake_class_locales idle_ghost_split idle
 }

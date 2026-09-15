@@ -292,7 +292,7 @@ _is_quota_session_limit() {
 _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
 _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
-# The wake classifier (#186) reads `capture-pane -e` frames of a claude pane.
+# The wake classifier reads `capture-pane -e` frames of a claude pane.
 # `re_wake_spinner` is broader than `re_meter` on purpose: a turn's first
 # seconds paint `· Smooshing…` with no token count yet, and reading that as idle
 # would type into a running turn. It is only tried on the line nearest the box
@@ -485,8 +485,8 @@ WAKE_SUBMIT_S=15
 WAKE_VERIFY_S=$((WAKE_TYPE_S + 2 * WAKE_SUBMIT_S))
 
 # _wake_floor <interval> — the smallest timeout a wake can type within: the
-# verify windows, the wait for the second idle sample (an interval of 0 still
-# polls about once a second), and 1s for `date +%s` truncation.
+# verify windows, the wait for the second idle sample (counted as at least 1s),
+# and 1s for `date +%s` truncation.
 _wake_floor() {
   local i=$1
   [ "$i" -ge 1 ] || i=1
