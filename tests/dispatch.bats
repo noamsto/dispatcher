@@ -2006,6 +2006,22 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$output" = "s7-7" ]
 }
 
+@test "dispatch event carries plan" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .plan' "$log"
+  [ "$output" = "required" ]
+}
+
+@test "dispatch event carries plan: provided when --plan provided is passed" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 42 "implement thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .plan' "$log"
+  [ "$output" = "provided" ]
+}
+
 @test "session: claims the branch on the bus before the window exists (#32)" {
   stub_launch_bins
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run_dispatch \
@@ -2692,6 +2708,28 @@ EOF
   grep -q '^worker_id: worker:feat/42-do-a-thing#' "$task"
   run ! grep -q '^stale_header:' "$task"
   [ "$(grep -cFx '## Task' "$task")" -eq 1 ]
+}
+
+# resume:false on the create-mode row, resume:true on the row for the
+# re-dispatch that resumes onto the branch the first row created.
+@test "resume: dispatch event carries resume:false on create and resume:true on re-dispatch" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -s -r '[.[] | select(.kind=="dispatch")] | sort_by(.ts) | .[0].resume' "$log"
+  [ "$output" = "false" ]
+  run jq -s -r '[.[] | select(.kind=="dispatch")] | sort_by(.ts) | .[1].resume' "$log"
+  [ "$output" = "true" ]
 }
 
 # `crew adopt` cannot infer a claim from the kind:"dispatch" row — that row

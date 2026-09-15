@@ -1498,7 +1498,8 @@ dispatch_shape="${DISPATCH_SHAPE:-}"
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title}')
+  --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume}')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # FleetView-style codename+color, derived from the branch (deterministic).

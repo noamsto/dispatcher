@@ -33,11 +33,12 @@ Run these steps in order:
 
      | engine | critic mechanism | critic rung |
      | ------ | ---------------- | ----------- |
-     | **claude** | the named `spec-critic` / `plan-critic` agent | unchanged — each agent definition owns its model |
+     | **claude** | the plugin's `spec-critic` / `plan-critic` agent type, spawned unnamed and in the foreground (a `name:` makes it a background teammate, which cannot gate — see below) | unchanged — each agent definition owns its model |
      | **codex** | native subagent (`agents.enabled`, cap 3) with the roster body written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt | the tier's **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`); effort is whatever `dispatch` pinned, since codex has no per-spawn override |
      | **cursor** | Task-tool subagent with an explicit model slug, the same roster body inline | the tier's **escalate** slug (deep → `cursor-grok-4.6-high`, standard → `cursor-grok-4.6-medium`) |
 
      The escalate rung, not the worker's own: a critic that cannot out-think the draft it gates agrees with it. That is what claude's static `model: opus` pin has always encoded — the other two engines now read the same way off the model map in `dispatch-orchestration.md`.
+   - **The spawn is synchronous, on every engine.** Whatever mechanism the table above names, it is a blocking call: the caller does not proceed to step 3 or to execute until the critic's verdict has actually been read. A named background teammate, or any async/mailbox delivery, does not satisfy this — it returns control before a verdict exists, which is exactly how a plan gets executed against a critic that hasn't spoken yet.
    - **What isolation buys you, and what you lose without it.** A fresh-context critic has no stake in the draft it's reviewing, so it catches what the author is blind to. All three engines can spawn one, so a critic sharing the author's context is a **degraded fallback**, taken only when the spawn is refused: it is no longer independent of the author, so it will be more agreeable and more likely to rubber-stamp its own reasoning — read that verdict more skeptically, and say so in the escalation if one follows. Either way, the revision cap and escalate-on-exhaustion rule below still bind.
 
 3. **If `revise` (with ≥1 `blocking` finding) or `reject`** — revise the plan. For `revise`, incorporate **only the blocking** findings; for `reject` (the plan is fundamentally unsound), revise to address the reject rationale wholesale. Then re-run step 2. Cap at **2 revisions total**. A `revise`/`accept` verdict that carries only **non-blocking `notes[]`** does **not** trigger a revision round: apply those notes at the implementer's discretion during execution and proceed. (The `plan-critic` guarantees `revise` ⇒ ≥1 blocking finding — see that roster entry.)
@@ -50,7 +51,7 @@ Run these steps in order:
 
 Same as standard but run a spec phase first:
 
-1. Spec draft → `spec-critic` (same roster, spawn table and fresh-context rule as step 2 above) → up to 2 revisions
+1. Spec draft → `spec-critic` (same roster, spawn table, fresh-context rule, and synchronous-spawn rule as step 2 above) → up to 2 revisions
 2. Feed accepted spec into plan phase (same loop above)
 
 ## Rules

@@ -24,6 +24,33 @@ seed_dispatch() {
     '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:$b, engine:$e, model:$m, tier:$t, effort:"medium", title:"t"}' >>"$logf"
 }
 
+# seed_dispatch_plan <branch> <ts_ms> <plan> [tier] [task_kind] [resume] — a
+# dispatch event carrying the plan/task_kind/resume fields the
+# plan_required_unaudited flag reads, for tests that need them. A separate
+# helper rather than new seed_dispatch positionals, since many other tests
+# already call seed_dispatch with its current 5 positionals.
+seed_dispatch_plan() {
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg b "$1" --argjson ts "$2" --arg p "$3" --arg t "${4:-standard}" \
+    --arg k "${5:-implement}" --argjson r "${6:-false}" \
+    '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:$b, engine:"claude", model:"sonnet",
+      tier:$t, effort:"medium", title:"t", plan:$p, task_kind:$k, resume:$r}' >>"$logf"
+}
+
+# seed_resume <branch> <ts_ms> — a `dispatch resume` bus row in the shape
+# dispatch-resume.sh actually writes: no `from` field, unlike every other
+# event these fixtures seed.
+seed_resume() {
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg b "$1" --argjson ts "$2" \
+    '{ts:$ts, crew_id:"c1", kind:"resume", branch:$b, worker_id:("worker:"+$b+"#s2"),
+      prev_worker_id:("worker:"+$b+"#s1"), engine:"claude", model:"sonnet", session:"s2", continued:true}' >>"$logf"
+}
+
 # seed_status <from> <ts_ms> <state> — a status event with an explicit ts
 # (`crew status` always stamps `now`, too coarse for the windowing fixtures).
 seed_status() {
@@ -393,6 +420,121 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
   CREW_ID=c1 run --separate-stderr run_crew watch --since 0 --timeout 1 --interval 1
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+# ---------------------------------------------------------------------------
+# plan_required_unaudited (#179)
+# ---------------------------------------------------------------------------
+
+@test "plan_required_unaudited: plan required, standard tier, null verdict flags" {
+  seed_dispatch_plan feat/planreq 1000 required standard
+  seed_msg 'worker:feat/planreq#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
+  seed_status 'worker:feat/planreq#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = $'feat/planreq\tclaude\tsonnet\tstandard\tdone\tplan_required_unaudited' ]
+
+  run run_crew retro --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '[.tags[].tag] | index("plan_required_unaudited") != null' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "plan_required_unaudited: trivial tier does not flag" {
+  seed_dispatch_plan feat/trivial 1000 required trivial
+  seed_msg 'worker:feat/trivial#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_status 'worker:feat/trivial#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: review task_kind does not flag" {
+  seed_dispatch_plan feat/review 1000 required standard review
+  seed_msg 'worker:feat/review#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_status 'worker:feat/review#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: a dispatch-resume row in the window does not flag" {
+  seed_dispatch_plan feat/resumewin 1000 required standard
+  seed_resume feat/resumewin 1100
+  seed_msg 'worker:feat/resumewin#s2' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_status 'worker:feat/resumewin#s2' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: resume:true on the dispatch row does not flag" {
+  seed_dispatch_plan feat/resumeflag 1000 required standard implement true
+  seed_msg 'worker:feat/resumeflag#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_status 'worker:feat/resumeflag#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: a recorded verdict does not flag" {
+  seed_dispatch_plan feat/verdicted 1000 required standard
+  seed_msg 'worker:feat/verdicted#s1' metrics:c1 1200 '{"plan_critic_first_pass":"accept"}'
+  seed_status 'worker:feat/verdicted#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: plan provided does not flag" {
+  seed_dispatch_plan feat/planprovided 1000 provided standard
+  seed_msg 'worker:feat/planprovided#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_status 'worker:feat/planprovided#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: no metrics snapshot at all does not flag" {
+  seed_dispatch_plan feat/nometrics 1000 required standard
+  seed_status 'worker:feat/nometrics#s1' 1300 failed
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: a run that stopped before the review gate does not flag" {
+  seed_dispatch_plan feat/noreviewgate 1000 required standard
+  seed_msg 'worker:feat/noreviewgate#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"none"}'
+  seed_status 'worker:feat/noreviewgate#s1' 1300 blocked
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: an out-of-window resume does not suppress a later independent run" {
+  seed_dispatch_plan feat/indep 1000 required standard
+  seed_resume feat/indep 1100
+  seed_msg 'worker:feat/indep#s2' metrics:c1 1200 '{"plan_critic_first_pass":"accept"}'
+  seed_status 'worker:feat/indep#s2' 1300 done
+
+  seed_dispatch_plan feat/indep 5000 required standard
+  seed_msg 'worker:feat/indep#s3' metrics:c1 5200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
+  seed_status 'worker:feat/indep#s3' 5300 done
+
+  run run_crew retro --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '[.tags[].tag] | index("plan_required_unaudited") != null' <<<"$output"
+  [ "$status" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------

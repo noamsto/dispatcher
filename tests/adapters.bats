@@ -1130,6 +1130,35 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
   done
 }
 
+@test "worker protocol pins plan: required as binding and gating verdicts as awaited, on every copy" {
+  for doc in \
+    adapters/core/protocols/WORKER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/cursor/protocols/WORKER_PROTOCOL.md; do
+    for statement in \
+      '`plan: required` is binding.**' \
+      'raise it on the bus (block→await, "Report to the bus") and let the dispatcher decide' \
+      '## Gating verdicts are awaited (all engines)' \
+      'A **named background teammate**, a backgrounded spawn (claude: `run_in_background`; cursor/codex: a detached shell or notification-on-completion call), or any mailbox/async delivery **must not gate** a stage' \
+      'A late verdict invalidates the stage it gated.'; do
+      run grep -F "$statement" "$ROOT/$doc"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "spec-plan-critic pins a synchronous critic spawn on every copy" {
+  for doc in \
+    adapters/core/skills/spec-plan-critic/SKILL.md \
+    adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md \
+    adapters/codex/plugin/skills/spec-plan-critic/SKILL.md \
+    adapters/cursor/skills/spec-plan-critic/SKILL.md; do
+    run grep -F 'The spawn is synchronous, on every engine.' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "grid and autopilot route over the resolved roster" {
   for grid in \
     "$ROOT/adapters/core/protocols/GRID_PROTOCOL.md" \
@@ -1514,7 +1543,7 @@ $hits"
   for statement in \
     '**The critics themselves ship with the harness.**' \
     '$DISPATCHER_CRITICS_DIR/*.md' \
-    'the named `spec-critic` / `plan-critic` agent' \
+    "the plugin's \`spec-critic\` / \`plan-critic\` agent type" \
     'the roster body written into its prompt' \
     'the same roster body inline' \
     'the tier'"'"'s **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`)' \
