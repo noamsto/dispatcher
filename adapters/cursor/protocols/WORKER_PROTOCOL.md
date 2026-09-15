@@ -44,7 +44,7 @@ Before choosing the next stage for a behavioral bug, shared contract change, or
 PR-feedback fix, read sibling `EVIDENCE_REVIEW.md`. Its evidence, review-risk,
 recurrence, and handoff rules apply to provided plans and resumed runs too.
 
-- **trivial** — implement directly, run the gate, open the PR. No spec, no plan, no critics, no review. You still peek once before push — with no seams at all you are a worker the dispatcher cannot redirect.
+- **trivial** — implement directly, run the gate, open the PR. No spec, no plan, no critics, no review. You still run the three completion peeks (**Checkpoint-peek**) — with no other seams, they are the only points a dispatcher redirect can reach you.
 - **standard** — consult **Plan of record** (below) first; unless the plan already exists, run the `spec-plan-critic` workflow with `{ tier: 'standard', ... }` (plan + plan-critic only). Then execute the plan (of record, or returned by the workflow) via subagents, then the **fast deterministic gate**, then the code-review gate (one batch plus targeted re-review when required), then `/deslop` + push + PR.
 - **deep** — consult **Resuming a killed run** (below) first; unless resuming, run `spec-plan-critic` with `{ tier: 'deep', ... }` (spec + spec-critic, then — see **Orchestration consult** — an optional consultant decomposition seeds plan + plan-critic), then execute, then the **fast deterministic gate**, then the code-review gate (one parallel review batch, reconciled once, then a **conditional** second re-review), then `/deslop` + push + PR.
 
@@ -115,7 +115,7 @@ Do **not** re-run the spec or plan phases. Continue from the first unfinished st
 
 If the artifacts are absent or contradicted by the tree (a named file doesn't exist, the approach doesn't fit the code), fall back to the tier's normal phases — the same re-entry rule **Plan of record** states for its own skip paths.
 
-**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`). A resume can land on a branch that already reached `pr_open`, which the terminal step below ("open a PR, and stop") and the launch prompt's push mandate otherwise treat as unconditional — an unguarded resumed worker runs a full pipeline and then hard-fails on `gh pr create`. When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url — a missing or wrong url there mis-drives `crew reap`.
+**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`). A resume can land on a branch that already reached `pr_open`, which the terminal step below ("open a PR, and stop") and the launch prompt's push mandate otherwise treat as unconditional — an unguarded resumed worker runs a full pipeline and then hard-fails on `gh pr create`. When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url — a missing or wrong url there mis-drives `crew reap`. The pre-done completion peek's re-entry (**Checkpoint-peek**) uses this same existing-PR path.
 
 **Session identity never carries forward across a resume.** A resume mints a new `worker_id` for this session. If your restored transcript contains bus calls made under a previous session's id, those literals are retired — read `$CREW_WORKER_ID` fresh from your environment for every bus call in this session, never copy an id forward from an earlier call in the transcript.
 
@@ -139,7 +139,7 @@ Consult **Resuming a killed run** (above) first; unless resuming, before the pla
 
 ## Checkpoint-peek (all tiers)
 
-At each pipeline **seam** — after spec, after plan, after execute, after the fast gate, after review, and on **trivial** the single pre-push seam — **before** sinking cost into the next stage, do a non-blocking peek for a dispatcher stop/redirect directive:
+At each pipeline **seam** — after spec, after plan, after execute, after the fast gate, after review, and the three completion peeks (pre-push, pre-PR, pre-done — see **Completion peeks** below), which are **trivial**'s only seams — **before** sinking cost into the next stage, do a non-blocking peek for a dispatcher stop/redirect directive:
 
 ```
 crew inbox "$CREW_WORKER_ID" --since <seen-cursor>
@@ -150,6 +150,10 @@ This is a single pass, not a held wait (unlike `crew await`): empty output ⇒ n
 - **Seen-cursor:** already initialized by the **First action** drain (never re-initialize it to `now` here — that re-opens the pre-start blind spot). After a peek (or await) returns messages you **read and handled**, advance `seen` to the max `.ts` of _those_ messages only — `seen=$(printf '%s\n' "$msgs" | jq -s 'map(.ts) | max')` — never to an unrelated max. A peek returning nothing does not move the cursor.
 - **On a directive:** apply **receiving-code-review** discipline — verify the instruction before acting, don't perform agreement. Then redirect the pipeline, or on a "stop" wind down cleanly and stamp `crew status "$CREW_WORKER_ID" <state>` appropriately (e.g. `failed "stopped by dispatcher"`).
 - **Latency is honest, not instant:** a redirect surfaces only at the _next_ seam, so its latency is the remaining time in the current stage. A redirect posted mid-`execute` (the longest stage for deep workers) is not seen until execute finishes. **The peek is NOT a kill switch** — for a hard abort the dispatcher uses `tmux kill-window` (→ SessionEnd `exited`), which stays the reliable stop.
+- **Completion peeks (all tiers).** Three more seams, in pipeline order: **pre-push** — after `/deslop` and any review→fix round, immediately before `git push` (in addition to the post-review seam above, since cleanup and fix rounds run between them); **pre-PR** — after `git push` succeeds, immediately before `gh pr create` (immediately followed by `pr_open`); **pre-done** — after `pr_open` and the metrics snapshot, immediately before `done`. Same seen-cursor rules as above. Without them a directive posted during the final push/PR stage is never read, and once `done` is posted `crew reply` refuses the session — these are the last seams that can still catch one.
+  - **Work-changing directive:** do not post the next status; re-stamp `working`; re-enter the affected stage and go back through every gate it invalidates (fast gate, review, `/deslop`, push). If a PR is already open (pre-done, or any resume), finish on the existing-PR path — `gh pr view --json url,state`, push to it, skip `gh pr create`, post `pr_open` with that url — never a second `gh pr create`. Re-entry after `pr_open` legitimately returns the worker from finished to active in the dispatcher's accounting.
+  - **Conflicting or unclear directive:** the block→await path in "Report to the bus".
+  - **Verified no-op / acknowledgement:** advance the cursor and proceed.
 
 ## Fast deterministic gate (standard/deep)
 
@@ -297,7 +301,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   is the `crew status blocked` + `crew msg` + `crew await` sequence above; it is
   durable, it wakes the dispatcher, and it resumes you in place.
 - **Heartbeat at the seams.** Re-stamp
-  `crew status "worker:$(git branch --show-current)" working "<stage>"` at each pipeline
+  `crew status "$CREW_WORKER_ID" working "<stage>"` at each pipeline
   seam the checkpoint peek already defines. It costs nothing, it does **not** wake the
   dispatcher (`crew watch` ignores `working`), it keeps `roster`'s `age_s` meaning "time
   since last sign of life", and it damps the liveness watchdog below. Its limit, stated
@@ -307,10 +311,10 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   worker; it samples your pane and can append `blocked` with `body.source:"watchdog"`
   and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`), or
   `failed` with a `dead:` prefix when the same evidence still holds 30 minutes later. It
-  never posts a `msg` and never answers a prompt for you. If you find a watchdog
-  `blocked` in your own history, you are by definition alive: re-stamp
-  `crew status worker:<branch> working` and carry on — no reply is owed, and none is
-  waiting for you in `crew await`.
+  posts under your session id, never posts a `msg`, and never answers a prompt for you.
+  If you find a watchdog `blocked` in your own history, you are by definition alive:
+  re-stamp `crew status "$CREW_WORKER_ID" working` and carry on — no reply is owed, and
+  none is waiting for you in `crew await`.
 - **Two things a fresh worktree does to you.** Claude Code may draw its workspace-trust
   question (`Quick safety check: Is this a project you created or one you trust?`) before
   anything else runs — nothing proceeds until it is answered, and it is answered at the
@@ -339,7 +343,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
    Execute-subagent prompts grant **implementation authority only**. They do not read `WORKER_PROTOCOL.md`; stamp process-authority into every spawn so a subagent cannot re-derive worker process via skills, open PRs, or act as the worker.
 2. **Critics are independent, on every engine.** Never self-review — use fresh contexts: the workflow on claude/codex/cursor, or the stamped critic role panes in grid mode. **The critics themselves ship with the harness**: bodies live at `$DISPATCHER_CRITICS_DIR/*.md`, falling back to the adapter-local `critics/` when that variable is unset, and on claude they are the plugin's own named agents. The brief is the same text regardless of spawn mechanism. Ingest verdicts with receiving-code-review discipline: verify the finding, don't perform agreement.
 3. **Revision cap is 2.** The workflow enforces it. If it returns `escalations[]`, surface them verbatim in the PR body under "## Escalated" — do not silently proceed as if clean.
-4. **Push through the gate.** Order before push: code-review gate (standard/deep) → `/deslop` → `git push`. `/deslop` is required by the pre-push guard (for fully unattended runs, `ALLOW_PUSH_WITHOUT_DESLOP=1 git push …` is honored inline). **Non-claude engines (codex, cursor, pi) skip `/deslop`** — the deslop guard is a Claude Code PreToolUse hook that only intercepts Claude tool calls, so it never fires for a codex/cursor/pi process and no bypass env is needed. Any behavioral change from cleanup or a hook fix returns to the affected evidence and targeted review gates before retrying push. `git push` then triggers the git pre-push hook (typecheck/lint/unit/build-num), which applies to **every** pusher regardless of engine; on failure, fix and re-push, do not bypass.
+4. **Push through the gate.** Order before push: code-review gate (standard/deep) → `/deslop` → pre-push peek → `git push`. `/deslop` is required by the pre-push guard (for fully unattended runs, `ALLOW_PUSH_WITHOUT_DESLOP=1 git push …` is honored inline). **Non-claude engines (codex, cursor, pi) skip `/deslop`** — the deslop guard is a Claude Code PreToolUse hook that only intercepts Claude tool calls, so it never fires for a codex/cursor/pi process and no bypass env is needed. Any behavioral change from cleanup or a hook fix returns to the affected evidence and targeted review gates before retrying push. `git push` then triggers the git pre-push hook (typecheck/lint/unit/build-num), which applies to **every** pusher regardless of engine; on failure, fix and re-push, do not bypass.
 5. **Open the PR with `gh pr create`; read `draft:` from `WORKER_TASK.md` and pass `--draft` only when it is `true`.** Keep the assignee and closes requirement. Ready PRs remain the default because they are immediately reviewable unless the dispatcher explicitly opts into draft mode. The PR body must include the closes line from your task file (`Closes #<N>` for a GitHub issue, or `Closes ENG-<N>` for a Linear ticket — copy it verbatim), any escalations, and any unresolved review notes. If you **skipped the plan phase** (plan of record), add a `## Plan` heading with the line `Plan: task doc (provided)` when the dispatcher stamped `plan: provided`, `Plan: task doc (self-gate)` when you self-assessed a legacy doc, or `Plan: recovered (resume)` when you resumed under `resume: true` — so the skip's origin is auditable.
 6. **Never** run `wrangler deploy`, `wrangler ... --remote`, or `wrangler secret` on a prod-credentialed box. If a step seems to need one, stop and flag it — don't try to work around it.
 7. **Never print a secret, and never read a file whose content is secrets.** No `cat`/`head`/`sed`/`grep` (without `-c`/`-q`) over `.env`, `.env.*`, `.aws/credentials`, `.netrc`, or private keys; no `Read`/`Grep` at them either; no expanding a secret-named variable into output (`echo "${SOME_API_KEY:-x}"` prints the key — a malformed default is the classic way this happens); no bare `env`/`printenv`. **The value is never needed:** the tool that consumes it reads the environment itself, and a *missing* key fails loudly — that failure is your signal. To confirm a key is merely present, count without printing (`grep -c '^NAME=' .env`) or just run the tool and read its error. `.env.example` and friends are safe: they hold `op://` references, not values.
@@ -349,7 +353,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
 
 ## When done
 
-Open the PR, then `crew status "$CREW_WORKER_ID" pr_open "" <url>` → emit the complete metrics snapshot → `crew status "$CREW_WORKER_ID" done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+Pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - **Every worker — emit outcome metrics before you stop.** On **all** tiers, append a metrics record to the bus so this run can be rated:
   ```

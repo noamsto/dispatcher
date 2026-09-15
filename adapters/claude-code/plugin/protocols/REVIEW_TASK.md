@@ -64,13 +64,16 @@ Approve (`event=APPROVE`) only when **zero** findings survive verification and d
 
 ## Report the tally, then stop
 
-Post the tally as one message to the dispatcher, then terminate at `done` — a review worker never reaches `pr_open`, because it opens nothing:
+Post the tally as one message to the dispatcher, peek once more, then terminate at `done` — a review worker never reaches `pr_open`, because it opens nothing:
 
 ```bash
-crew msg "worker:$(git branch --show-current)" "dispatcher:$CREW_ID" \
+crew msg "$CREW_WORKER_ID" "dispatcher:$CREW_ID" \
   '{"pr":<N>,"lane":"<inline|fan-out>","reviewers":["…"],"findings":{"blocker":0,"should-fix":0,"clarity":0},"approved":<true|false>,"review_url":"<url>","gaps":["…"]}'
-crew status "worker:$(git branch --show-current)" done "reviewed PR <N> — <review_url>" "<pr_url>"
+crew inbox "$CREW_WORKER_ID" --since <seen>
+crew status "$CREW_WORKER_ID" done "reviewed PR <N> — <review_url>" "<pr_url>"
 ```
+
+The `crew inbox` call is the pre-done peek that `WORKER_PROTOCOL.md`'s **Checkpoint-peek** defines — a review worker opens no PR, so it has no pre-push or pre-PR seam, only this one.
 
 Map reviewer severities onto the tally as CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`.
 
