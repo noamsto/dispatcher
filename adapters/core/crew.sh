@@ -2375,7 +2375,7 @@ retro)
               and (($d.resume // false) != true)
               and $m != null
               and (($m.plan_critic_first_pass // null) == null)
-              and (($m.review_mode // "none") != "none")
+              and (($m.review_mode // null) != "none")
            then [{seam: "plan", tag: "plan_required_unaudited",
                   detail: "plan: required but plan_critic_first_pass is null in the metrics snapshot"}]
            else [] end) as $flag
