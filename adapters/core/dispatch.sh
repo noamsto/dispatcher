@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -288,6 +288,7 @@ mcp_profile=""
 grid_roles=""
 grid_flag=""
 grid_lazy=""
+no_grid=""
 grid_status=""
 crew_id_flag=""
 plan_val="required"
@@ -339,6 +340,10 @@ while [ $# -gt 0 ]; do
     ;;
   --grid)
     grid_flag=1
+    shift
+    ;;
+  --no-grid)
+    no_grid=1
     shift
     ;;
   --lazy)
@@ -806,15 +811,45 @@ fi
 role_names=()
 role_agents=()
 role_models=()
-if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-  grid_flag=1
+if [ -n "$no_grid" ]; then
+  if [ -n "$grid_flag" ] || [ -n "$grid_roles" ]; then
+    echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
+    exit 1
+  fi
+  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+    echo "dispatch: --no-grid cannot be used with --agent pi on standard/deep — pi has no native subagents and needs the grid for fresh critic/reviewer contexts" >&2
+    exit 1
+  fi
+fi
+# pi keeps its existing standard+deep default (critics AND its review-gate
+# reviewer, since pi has no native review batch). Every other engine now also
+# defaults to a grid on deep, but only for the critic phases — claude/codex/
+# cursor already run a full native review-gate batch, so the default carries
+# no reviewer role for them (see WORKER_PROTOCOL.md "Grid mode"). Roles
+# inherit the lead's own agent/model below when --roles doesn't say
+# otherwise, so this never requires a second engine. A review-kind worker has
+# no spec/plan phase, so it never gets a default grid; nor does a non-pi deep
+# dispatch whose plan is already provided, since that leaves no critic role
+# to default to.
+grid_default_non_pi=""
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ] && [ "$kind" != review ]; then
+  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
+    grid_flag=1
+  elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
+    grid_flag=1
+    grid_default_non_pi=1
+  fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
-  case "$tier" in
-  trivial) grid_roles="" ;;
-  standard) grid_roles="plan-critic,reviewer" ;;
-  deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
-  esac
+  if [ -n "$grid_default_non_pi" ]; then
+    grid_roles="spec-critic,plan-critic"
+  else
+    case "$tier" in
+    trivial) grid_roles="" ;;
+    standard) grid_roles="plan-critic,reviewer" ;;
+    deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
+    esac
+  fi
 fi
 if [ -n "$grid_roles" ]; then
   IFS=',' read -r -a role_specs <<<"$grid_roles"
@@ -1567,12 +1602,13 @@ medium) codex_subagent_effort=low ;;
 low) codex_subagent_effort=low ;;
 esac
 
-# Grid mode: tell the lead it has role panes to delegate the critic/review phases
-# to, over the bus, instead of running them in-process (WORKER_PROTOCOL.md →
+# Grid mode: tell the lead it has role panes, and that delegation is
+# pane-scoped — only a phase with a pane skips the in-process path. The
+# native code-review gate always runs regardless (WORKER_PROTOCOL.md →
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ]; then
-  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate the critic/review phases to them over the bus instead of running them in-process."
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
 fi
 
 if [ "$agent" = codex ]; then

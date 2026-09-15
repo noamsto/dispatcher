@@ -476,6 +476,16 @@ EOF
   [ "$(grep -c '\${grid_note}' "$DISPATCH")" -eq 4 ]
 }
 
+@test "grid_note never tells the lead the review gate is substitutive" {
+  # The injected launch-prompt text is what actually drives worker behavior;
+  # it must not resurrect the old "delegate review instead of running it
+  # in-process" framing the additive-review-gate fix removed everywhere else.
+  run grep -F -- 'instead of running them in-process' "$DISPATCH"
+  [ "$status" -ne 0 ]
+  run grep -F -- 'delegate to the bus only the phases that have a pane' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
 @test "--grid derives the role topology from the tier" {
   run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
   [ "$status" -eq 0 ]
@@ -486,6 +496,157 @@ EOF
 @test "pi standard and deep workers get the required grid by default" {
   run grep -F -- '[ "$agent" = pi ] && [ "$tier" != trivial ]' "$DISPATCH"
   [ "$status" -eq 0 ]
+}
+
+@test "deep dispatches on every engine default to the grid too" {
+  run grep -F -- 'elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "deep claude defaults to a critics-only grid on the lead's own engine and model" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "deep claude grid default"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-deep-claude-grid-default/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic' "$task"
+  run grep -F -- 'spec-critic' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "deep codex (work profile) defaults to a critics-only grid on the lead's own engine and model" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "deep codex grid default"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-deep-codex-grid-default/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic' "$task"
+}
+
+@test "deep cursor (work profile) defaults to a critics-only grid on the lead's own engine and model" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "deep cursor grid default"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-deep-cursor-grid-default/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic' "$task"
+}
+
+@test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "pi deep full grid default"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-pi-deep-full-grid-default/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
+}
+
+@test "single-engine fallback: personal-profile deep claude grids critics-only, entirely on claude, no refusal" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "single engine fallback"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"work-profile only"* ]]
+  task="$TEST_REPO/.dispatch-wt/feat-42-single-engine-fallback/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic' "$task"
+  # No role spec named a foreign agent/model — every pane launches as claude.
+  run grep -c -- ' codex ' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'cursor-agent' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "kind=review workers get no default grid" {
+  stub_pr_bins review-target
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --pr 99 --review --crew-id c1 "review kind no grid"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/review-target/WORKER_TASK.md"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
+}
+
+@test "non-pi deep with --plan provided gets no default grid" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --plan provided --effort high --crew-id c1 42 "plan provided no grid"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-plan-provided-no-grid/WORKER_TASK.md"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
+}
+
+@test "pi deep with --plan provided still grids (reviewer is its review gate)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --plan provided --effort high --crew-id c1 42 "pi plan provided still grids"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-pi-plan-provided-still-grids/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
+}
+
+@test "explicit --grid keeps the full topology on non-pi deep regardless of --plan provided" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --plan provided --grid --effort high --crew-id c1 42 "explicit grid full topology"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-explicit-grid-full-topology/WORKER_TASK.md"
+  grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
+}
+
+@test "--roles reviewer on a claude deep lead adds an additive pane, not a substitute" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "additive reviewer pane"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-additive-reviewer-pane/WORKER_TASK.md"
+  grep -Fx 'roles: reviewer' "$task"
+}
+
+@test "standard claude has no default grid" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "standard claude no grid"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-standard-claude-no-grid/WORKER_TASK.md"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
+}
+
+@test "trivial never grids, on any engine" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch trivial sonnet --agent claude --effort low --crew-id c1 42 "trivial claude no grid"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-trivial-claude-no-grid/WORKER_TASK.md"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
+}
+
+@test "--no-grid suppresses the default grid for deep claude" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --no-grid --effort high --crew-id c1 42 "no grid deep claude"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-no-grid-deep-claude/WORKER_TASK.md"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
+}
+
+@test "--no-grid is refused for pi standard and deep" {
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --no-grid --effort high --crew-id c1 "no grid pi standard"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+
+  run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --no-grid --effort high --crew-id c1 "no grid pi deep"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+}
+
+@test "--no-grid conflicts with --grid and with --roles" {
+  run run_dispatch deep opus --agent claude --no-grid --grid --effort high --crew-id c1 "no grid vs grid"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--no-grid conflicts with --grid/--roles"* ]]
+
+  run run_dispatch deep opus --agent claude --no-grid --roles reviewer --effort high --crew-id c1 "no grid vs roles"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--no-grid conflicts with --grid/--roles"* ]]
+}
+
+@test "--roles still overrides the default grid" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "roles override default"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-roles-override-default/WORKER_TASK.md"
+  grep -Fx 'roles: reviewer' "$task"
 }
 
 @test "a role spec can pick its own engine and model" {
