@@ -482,7 +482,7 @@ EOF
 
 @test "a non-grid dispatch keeps the lead's border unmarked" {
   stub_launch_bins
-  # Standard claude has no default grid (#596), so this reaches window
+  # Standard claude has no default grid, so this reaches window
   # creation as a plain single-pane worker window.
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort high --crew-id c1 42 "non-grid lead border"
   [ "$status" -eq 0 ]
@@ -497,7 +497,7 @@ EOF
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid crew name unchanged"
   [ "$status" -eq 0 ]
   # The join key is set verbatim, and the marker never lands in any @crew_name
-  # value — the border format line is the only place it belongs (#178).
+  # value — the border format line is the only place it belongs.
   run grep -F -- 'set-window-option -t %1 @crew_name iris' "$STUB_LOG"
   [ "$status" -eq 0 ]
   run grep -E -- '@crew_name[^}]* lead' "$STUB_LOG"

@@ -1544,10 +1544,8 @@ tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
 # A grid lead's window border carries a "lead" marker; role panes label
-# themselves at pane level, so this window-level change touches only the lead.
-# A plain single-pane worker window keeps the bare codename — "lead" means
-# nothing without roles. @crew_name is never extended: it is the occupancy
-# join key crew occupants and the empty-vs-non-empty occupancy check read.
+# themselves at pane level, so this touches only the lead. @crew_name stays
+# the bare codename — it is the occupancy join key.
 lead_marker=" "
 if [ "${#role_names[@]}" -gt 0 ]; then
   lead_marker=" lead "
