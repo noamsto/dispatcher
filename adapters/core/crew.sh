@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# File-based coordination bus: id | identity | status | msg | watch | roster | inbox | stall-watch | pr-watch | log
+# File-based coordination bus: id | identity | status | msg | reply | nudge | watch | roster | inbox | stall-watch | pr-watch | log
 # A real CLI on PATH (not a fish fn) so BOTH the dispatcher (fish) and workers
 # (their bash tool) can call it. Pure jq + append; the log is the state. The
 # shebang + `set -euo pipefail` are prepended by writeShellApplication, so this
@@ -166,6 +166,39 @@ _sessions() {
       | map(. + {age_s: (((now*1000) - .ts) / 1000 | floor)})' "$log"
 }
 
+# A branch-only worker target resolves to the newest session on that branch, so
+# the dispatcher keeps writing `worker:<branch>` while the message lands on a
+# session that exists NOW. Resolving at send time is what makes inheritance
+# impossible: a stopped session's successor has a different id, so a directive
+# written for the former is never addressed to the latter (#17).
+_resolve_worker() {
+  local to="$1" crew="$2" br newest
+  case "$to" in
+  worker:*)
+    if _is_session_id "$to"; then
+      : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
+    else
+      br="${to#worker:}"
+      newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      [ -n "$newest" ] && [ "$newest" != null ] || {
+        echo "crew: no session on $br — dispatch a worker before replying to one" >&2
+        return 1
+      }
+      if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
+        echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
+        return 1
+      fi
+      if [ "$(printf '%s' "$newest" | jq -r .session)" = null ]; then
+        echo "crew: $br has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch" >&2
+        return 1
+      fi
+      to=$(printf '%s' "$newest" | jq -r .worker_id)
+    fi
+    ;;
+  esac
+  printf '%s\n' "$to"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
@@ -258,6 +291,378 @@ _is_quota_session_limit() {
 }
 _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
 _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+
+# The wake classifier (#186) reads `capture-pane -e` frames of a claude pane.
+# `re_spinner` is broader than `re_meter` on purpose: a turn's first seconds
+# paint `· Smooshing…` with no token count yet, and reading that as idle would
+# type into a running turn. Same multibyte rule as above: `…` is a group.
+re_spinner='^[^[:alnum:][:space:]]+[[:space:]]+[A-Z][a-z]+(…)'
+re_rule='^(─)+( [^─]+ (─)+)?[[:space:]]*$'
+re_todo='^[[:space:]]*(☐|☒|✔|◻|◼)'
+
+_strip_csi() { printf '%s\n' "$1" | sed -E $'s/\e\\[[0-9;:?]*[A-Za-z]//g'; }
+
+# _box_rules <plain> -> "<top> <bottom>" line numbers of the input box: the last
+# two rule lines, with the line right under the top one starting with `❯`.
+_box_rules() {
+  local rules top bot
+  rules=$(printf '%s\n' "$1" | grep -nE "$re_rule" | cut -d: -f1 | tail -2 || true)
+  top=$(printf '%s\n' "$rules" | sed -n 1p)
+  bot=$(printf '%s\n' "$rules" | sed -n 2p)
+  [ -n "$bot" ] && [ "$bot" -gt $((top + 1)) ] || return 1
+  case "$(printf '%s\n' "$1" | sed -n "$((top + 1))p")" in
+  ❯*) ;;
+  *) return 1 ;;
+  esac
+  printf '%s %s\n' "$top" "$bot"
+}
+
+# _input_box <escaped-capture> — prints the box text with dim spans deleted and
+# escapes, `❯`, NBSP and whitespace stripped (empty for an empty box); returns 0.
+# Returns 1 when no box is found, 2 for a dim span with no terminator. The dim
+# spans are claude's ghost suggestion, which a plain capture cannot tell from
+# typed text; an unterminated one could hide real input, so it fails safe.
+_input_box() {
+  local geo top bot t pre rest term best best_cut cut
+  geo=$(_box_rules "$(_strip_csi "$1")") || return 1
+  top=${geo% *} bot=${geo#* }
+  t=$(printf '%s\n' "$1" | sed -n "$((top + 1)),$((bot - 1))p")
+  while [[ "$t" == *$'\e[2m'* ]]; do
+    pre=${t%%$'\e[2m'*}
+    rest=${t#*$'\e[2m'}
+    best="" best_cut=""
+    for term in $'\e[0m' $'\e[22m' $'\e[m'; do
+      [[ "$rest" == *"$term"* ]] || continue
+      cut=${rest%%"$term"*}
+      if [ -z "$best" ] || [ "${#cut}" -lt "${#best_cut}" ]; then
+        best=$term best_cut=$cut
+      fi
+    done
+    [ -n "$best" ] || return 2
+    t=$pre${rest#*"$best"}
+  done
+  t=$(_strip_csi "$t")
+  t=${t//❯/}
+  t=${t//$'\xc2\xa0'/}
+  printf '%s\n' "${t//[[:space:]]/}"
+}
+
+# _wake_class <escaped-capture> -> prompt|quota|busy|vimmode|unsent|idle|unknown.
+# Busy signals are read only in bounded windows around the box, so a meter line
+# left in old transcript cannot pin busy: `above` is the last 6 non-empty lines
+# over the top rule, not counting subagent rows, `⎿` rows and todo rows (a
+# parallel batch or todo list would otherwise push the meter out). Live subagent
+# rows paint in the skipped block over the box and under the status bar.
+_wake_class() {
+  local plain last geo top bot below line i n=0 in_block=1 above="" skipped="" box rc=0
+  local -a lines=()
+  plain=$(_strip_csi "$1")
+  if _is_quota_session_limit "$plain"; then
+    echo quota
+    return 0
+  fi
+  # Subsumes _is_prompt, whose footer check is this same last-line test; the
+  # trust prompt is un-numbered, so the option line cannot be required here.
+  last=$(printf '%s\n' "$plain" | grep -v '^[[:space:]]*$' | tail -1 || true)
+  case "$last" in
+  *"Enter to confirm"* | *"Enter to select"*)
+    echo prompt
+    return 0
+    ;;
+  esac
+  geo=$(_box_rules "$plain") || {
+    echo unknown
+    return 0
+  }
+  top=${geo% *} bot=${geo#* }
+  below=$(printf '%s\n' "$plain" | sed -n "$((bot + 1)),\$p")
+  if printf '%s\n' "$below" | grep -oE -- '-- [A-Z]+ --' | grep -qvxE -- '(-- INSERT --)?'; then
+    echo vimmode
+    return 0
+  fi
+  if [ "$top" -gt 1 ]; then
+    while IFS= read -r line; do
+      lines+=("$line")
+    done < <(printf '%s\n' "$plain" | sed -n "1,$((top - 1))p")
+  fi
+  for ((i = ${#lines[@]} - 1; i >= 0 && n < 6; i--)); do
+    line=${lines[i]}
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    if [[ "$line" =~ $re_subrow ]] || [[ "$line" =~ ^[[:space:]]*(⎿) ]] || [[ "$line" =~ $re_todo ]]; then
+      [ "$in_block" = 0 ] || skipped+="$line"$'\n'
+      continue
+    fi
+    in_block=0
+    above+="$line"$'\n'
+    n=$((n + 1))
+  done
+  if [ -n "$(_meter_line "$above")" ] || printf '%s\n' "$above" | grep -qE "$re_spinner" ||
+    _has_subrow "$skipped" || _has_subrow "$below"; then
+    echo busy
+    return 0
+  fi
+  box=$(_input_box "$1") || rc=$?
+  if [ "$rc" != 0 ] || [ -n "$box" ]; then
+    echo unsent
+  else
+    echo idle
+  fi
+}
+
+WAKE_PROMPT='crew wake: read your crew inbox and continue'
+
+# _wake_pane <branch> — the one engine pane of the worker window rooted at the
+# branch's worktree (the _occupants keying). Role-grid panes carry a pane-level
+# @crew_state and are skipped; the option is read with -p because a format
+# string would fall back to a window or session value.
+_wake_pane() {
+  local wtp wins panes wid nm path pid cmd win_ids=" " found="" n=0
+  wtp=$(git worktree list --porcelain 2>/dev/null |
+    awk -v b="branch refs/heads/$1" '/^worktree /{p = substr($0, 10)} $0 == b {print p; exit}' || true)
+  if [ -n "$wtp" ]; then
+    wins=$(tmux list-windows -a -F '#{window_id}	#{@crew_name}	#{pane_current_path}' 2>/dev/null || true)
+    panes=$(tmux list-panes -a -F '#{window_id}	#{pane_id}	#{pane_current_command}' 2>/dev/null || true)
+    while IFS=$'\t' read -r wid nm path; do
+      [ -n "$wid" ] && [ -n "$nm" ] && [ "$nm" != dispatcher ] && [ "$path" = "$wtp" ] || continue
+      win_ids+="$wid "
+    done <<<"$wins"
+    while IFS=$'\t' read -r wid pid cmd; do
+      [ -n "$wid" ] && [[ "$win_ids" == *" $wid "* ]] || continue
+      _is_engine_cmd "$cmd" || continue
+      [ -z "$(tmux show-options -pqv -t "$pid" @crew_state 2>/dev/null || true)" ] || continue
+      found=$pid
+      n=$((n + 1))
+    done <<<"$panes"
+  fi
+  case "$n" in
+  0)
+    echo "no engine pane" >&2
+    return 1
+    ;;
+  1) printf '%s\n' "$found" ;;
+  *)
+    echo "ambiguous panes" >&2
+    return 1
+    ;;
+  esac
+}
+
+# _nudge_say <outcome> <reason> <pane_or_empty> <hint_or_empty> — the one stderr
+# line of a nudge outcome.
+_nudge_say() {
+  local s="crew: nudge: $1: $2"
+  [ -z "$3" ] || s+=" (pane $3)"
+  [ -z "$4" ] || s+=" — $4"
+  printf '%s\n' "$s" >&2
+}
+
+# Trap state lives in globals: an EXIT trap fires after _nudge's locals are gone.
+_nudge_cleanup() {
+  if [ -n "${_nw_ld:-}" ] && [ "$(cat "$_nw_ld/pid" 2>/dev/null || true)" = "$$" ]; then
+    _lock_release "$_nw_ld"
+  fi
+}
+_nudge_interrupt() {
+  if [ -n "${_nw_typed:-}" ]; then
+    echo "crew: nudge: interrupted: pane $_nw_pane may hold the unsent wake text" >&2
+    exit 4
+  fi
+  exit 3
+}
+
+# _wake_echoed <escaped-capture> — the submitted wake prompt shows as a
+# transcript line above the box.
+_wake_echoed() {
+  local plain geo line
+  plain=$(_strip_csi "$1")
+  geo=$(_box_rules "$plain") || return 1
+  while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    [ "$line" = "❯ $WAKE_PROMPT" ] || [ "$line" = "❯"$'\xc2\xa0'"$WAKE_PROMPT" ] && return 0
+  done < <(printf '%s\n' "$plain" | sed -n "1,$((${geo% *} - 1))p")
+  return 1
+}
+
+# _nudge <worker-id> <crew> <since_ms> <timeout_s> <interval_s> — returns the
+# `crew nudge` exit code. It sets traps and holds a lock, so every caller runs it
+# in a subshell, which also keeps an interrupt from killing the caller's own exit.
+_nudge() {
+  local wid="$1" crew="$2" since="$3" timeout="$4" interval="$5"
+  local r sid br row engine pane ld held try deadline state text cls idle=0 seen="" want box brc pause end enters
+  local retry hint5="do not retry; capture the pane and act by hand" hint4="capture the pane before anything else"
+  case "$wid" in
+  worker:?*) ;;
+  *)
+    echo "crew: nudge: '$wid' is not a worker:<branch>[#sid] id" >&2
+    return 1
+    ;;
+  esac
+  if ! _is_session_id "$wid"; then
+    wid=$(_resolve_worker "$wid" "$crew") || return 1
+  fi
+  r=${wid#worker:}
+  sid=${r##*#}
+  br=${r%"#$sid"}
+  row=$(_sessions "$br" "$crew" | jq -c --arg s "$sid" 'map(select(.session == $s)) | last' 2>/dev/null || true)
+  if [ -z "$row" ] || [ "$row" = null ]; then
+    echo "crew: nudge: no session $wid on the bus — re-dispatch or fix the address" >&2
+    return 1
+  fi
+  if [ "$(jq -r .terminal <<<"$row")" = true ]; then
+    echo "crew: nudge: $wid is $(jq -r .state <<<"$row") — a stopped session never reads its inbox; re-dispatch" >&2
+    return 1
+  fi
+  retry="retry: crew nudge $wid after capturing the pane"
+
+  # A watchdog-attributed row may be session-less, so match the branch id too.
+  if [ "$(jq -r .state <<<"$row")" = blocked ] &&
+    jq -e --arg c "$crew" --arg w "$wid" --arg b "worker:$br" --argjson ts "$(jq .ts <<<"$row")" \
+      'select(.crew_id == $c and .kind == "status" and .ts == $ts and (.from == $w or .from == $b)
+         and (.body.source // "") == "watchdog" and ((.body.detail // "") | startswith("quota:")))' \
+      "$log" >/dev/null 2>&1; then
+    _nudge_say "refused (permanent)" quota "" "worker is quota-parked — do not answer or wake it (see DISPATCHER_PROTOCOL quota:)"
+    return 5
+  fi
+
+  engine=$(jq -r --arg c "$crew" --arg s "$sid" \
+    'select(.crew_id == $c and (.kind == "dispatch" or .kind == "resume") and .session == $s) | .engine // ""' \
+    "$log" 2>/dev/null | tail -1 || true)
+  if [ "$engine" != claude ]; then
+    _nudge_say "refused (permanent)" "engine ${engine:-unknown}" "" "$hint5"
+    return 5
+  fi
+
+  if ! pane=$(_wake_pane "$br" 2>&1); then
+    _nudge_say "refused (permanent)" "$pane" "" "$hint5"
+    return 5
+  fi
+
+  mkdir -p "$dir/wake"
+  ld="$dir/wake/$sid"
+  if ! _lock_acquire "$ld" "$$"; then
+    held=$(cat "$ld/pid" 2>/dev/null || true)
+    if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
+      _nudge_say in-progress "another wake for $wid holds the lock" "$pane" ""
+      return 0
+    fi
+    for try in 1 2; do
+      sleep 0.2
+      if _lock_acquire "$ld" "$$"; then
+        try=ok
+        break
+      fi
+    done
+    if [ "$try" != ok ]; then
+      _nudge_say "refused (transient)" lock "$pane" "$retry"
+      return 3
+    fi
+  fi
+  _nw_ld=$ld _nw_pane=$pane _nw_typed=""
+  trap _nudge_cleanup EXIT
+  trap _nudge_interrupt INT TERM
+
+  deadline=$(($(date +%s) + timeout))
+  while :; do
+    # A watchdog `working "… cleared"` row is not the worker reading its inbox,
+    # but any terminal row, the watchdog's `failed dead:` included, is a stop.
+    state=$(jq -r --arg c "$crew" --arg w "$wid" --argjson since "$since" \
+      'select(.crew_id == $c and .kind == "status" and .from == $w and .ts > $since
+         and ((.body.state == "done" or .body.state == "failed" or .body.state == "exited")
+              or (.body.state != "blocked" and (.body.source // "") != "watchdog")))
+       | .body.state' "$log" 2>/dev/null | tail -1 || true)
+    case "$state" in
+    done | failed | exited)
+      _nudge_say "refused (permanent)" "worker stopped" "$pane" "$hint5"
+      return 5
+      ;;
+    ?*)
+      _nudge_say consumed "the worker read the reply in-band; nothing typed" "$pane" ""
+      return 0
+      ;;
+    esac
+    text=$(tmux capture-pane -e -p -t "$pane" 2>/dev/null || true)
+    cls=$(_wake_class "$text")
+    case "$cls" in
+    prompt | quota)
+      _nudge_say "refused (permanent)" "$cls" "$pane" "$hint5"
+      return 5
+      ;;
+    vimmode | unsent)
+      _nudge_say "refused (transient)" "$cls" "$pane" "$retry"
+      return 3
+      ;;
+    idle)
+      seen=1
+      idle=$((idle + 1))
+      if [ "$idle" -ge 2 ]; then
+        # 5s type-verify + 15s submit-verify + 15s for the one Enter retry.
+        [ $((deadline - $(date +%s))) -ge 35 ] && break
+        _nudge_say "refused (transient)" busy "$pane" "$retry"
+        return 3
+      fi
+      ;;
+    busy)
+      seen=1
+      idle=0
+      ;;
+    *) idle=0 ;;
+    esac
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      if [ -n "$seen" ]; then
+        _nudge_say "refused (transient)" busy "$pane" "$retry"
+        return 3
+      fi
+      _nudge_say "refused (permanent)" unknown-frame "$pane" "$hint5"
+      return 5
+    fi
+    sleep "$interval"
+  done
+
+  pause=$interval
+  [ "$pause" != 0 ] || pause=0.2
+  want=${WAKE_PROMPT//[[:space:]]/}
+  _nw_typed=1
+  tmux send-keys -t "$pane" -l "$WAKE_PROMPT"
+  end=$(($(date +%s) + 5))
+  while :; do
+    text=$(tmux capture-pane -e -p -t "$pane" 2>/dev/null || true)
+    brc=0
+    box=$(_input_box "$text") || brc=$?
+    [ "$brc" = 0 ] && [ "$box" = "$want" ] && break
+    # A render in progress is always a prefix of the wake text; anything else
+    # is someone else's input, and Enter would submit it.
+    if [ "$brc" = 0 ] && [ -n "$box" ] && [[ "$want" != "$box"* ]]; then
+      _nudge_say unverified "input collided" "$pane" "$hint4"
+      return 4
+    fi
+    if [ "$(date +%s)" -ge "$end" ]; then
+      _nudge_say unverified "typed text not visible" "$pane" "$hint4"
+      return 4
+    fi
+    sleep "$pause"
+  done
+
+  for enters in 1 2; do
+    tmux send-keys -t "$pane" Enter
+    end=$(($(date +%s) + 15))
+    while :; do
+      text=$(tmux capture-pane -e -p -t "$pane" 2>/dev/null || true)
+      brc=0
+      box=$(_input_box "$text") || brc=$?
+      if [ "$brc" = 0 ] && [ -z "$box" ] && _wake_echoed "$text"; then
+        _nw_typed=""
+        _nudge_say delivered "wake prompt submitted and verified" "$pane" ""
+        return 0
+      fi
+      [ "$(date +%s)" -lt "$end" ] || break
+      sleep "$pause"
+    done
+    [ "$enters" = 1 ] && [ "$brc" = 0 ] && [ "$box" = "$want" ] || break
+  done
+  _nudge_say unverified "submit not verified" "$pane" "$hint4"
+  return 4
+}
 
 # A bus line MUST fit in one write(). `printf '%s\n' … >>"$log"` is NOT reliably
 # atomic under O_APPEND: bash's printf builtin doesn't guarantee one write(2)
@@ -573,6 +978,10 @@ if [ "$sub" = engine-cmd ]; then
   _is_engine_cmd "$1"
   exit $?
 fi
+if [ "$sub" = wake-class ]; then
+  _wake_class "$(cat)"
+  exit 0
+fi
 if [ "$sub" = pi-agent-dir ]; then
   _pi_agent_dir
   exit 0
@@ -653,57 +1062,114 @@ status | msg)
   _bus_append "$log" "$line"
   ;;
 reply)
-  # reply <to> <body> — sugar over `msg`; from is dispatcher:<crew> so the
-  # dispatcher needn't reconstruct its own id.
+  # reply <to> <body> [--no-wake] [--wake-timeout S] — sugar over `msg`; from is
+  # dispatcher:<crew> so the dispatcher needn't reconstruct its own id. A reply
+  # to a blocked worker session also wakes it (`nudge`). Exit 1 only when
+  # nothing was appended; after the append a failed wake exits 3/4/5.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
     exit 1
   }
-  mkdir -p "$dir"
-  # A branch-only worker target resolves to the newest session on that branch, so
-  # the dispatcher keeps writing `worker:<branch>` while the message lands on a
-  # session that exists NOW. Resolving at send time is what makes inheritance
-  # impossible: a stopped session's successor has a different id, so a directive
-  # written for the former is never addressed to the latter (#17).
-  to="${1:-}"
-  case "$to" in
-  worker:*)
-    if _is_session_id "$to"; then
-      : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
-    else
-      br="${to#worker:}"
-      newest=$(_sessions "$br" "$crew" | jq -c 'last')
-      [ -n "$newest" ] && [ "$newest" != null ] || {
-        echo "crew: no session on $br — dispatch a worker before replying to one" >&2
+  wake=1
+  wake_timeout=60
+  args=("$@")
+  set -- "${args[@]:2}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --no-wake)
+      wake=""
+      shift
+      ;;
+    --wake-timeout)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || {
+        echo "crew: --wake-timeout needs a whole number of seconds" >&2
         exit 1
       }
-      if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
-        echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
-        exit 1
-      fi
-      if [ "$(printf '%s' "$newest" | jq -r .session)" = null ]; then
-        echo "crew: $br has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch" >&2
-        exit 1
-      fi
-      to=$(printf '%s' "$newest" | jq -r .worker_id)
-    fi
-    ;;
-  esac
+      wake_timeout="$2"
+      shift 2
+      ;;
+    *)
+      echo "crew: reply: unknown arg '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  mkdir -p "$dir"
+  to=$(_resolve_worker "${args[0]:-}" "$crew") || exit 1
   _build_reply() {
     jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
   }
-  line=$(_fit_line _build_reply "${2:-}")
+  line=$(_fit_line _build_reply "${args[1]:-}")
   _bus_append "$log" "$line"
+  # An explicit sid the bus does not know has no blocked state, so it skips the
+  # wake and is still delivered verbatim.
+  if [ -n "$wake" ] && [[ "$to" == worker:* ]] && _is_session_id "$to"; then
+    r=${to#worker:}
+    sid=${r##*#}
+    st=$(_sessions "${r%"#$sid"}" "$crew" | jq -r --arg s "$sid" 'map(select(.session == $s)) | last | .state // ""')
+    if [ "$st" = blocked ]; then
+      rc=0
+      (_nudge "$to" "$crew" "$(jq -r .ts <<<"$line")" "$wake_timeout" 2) || rc=$?
+      [ "$rc" != 0 ] || exit 0
+      # Exit 1 means nothing was written, and this reply was.
+      [ "$rc" != 1 ] || rc=5
+      echo "crew: reply: the reply is on the bus — do not resend" >&2
+      exit "$rc"
+    fi
+  fi
+  ;;
+nudge)
+  # nudge <worker:branch[#sid]> [--since TS] [--timeout S] [--interval S] — type
+  # the wake prompt into a blocked claude worker's idle pane and verify it was
+  # submitted. Exit 0 delivered|consumed|in-progress, 1 usage/session, 3
+  # transient refusal, 4 unverified, 5 permanent refusal; one stderr line.
+  crew=$(_crew_id)
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
+    exit 1
+  }
+  target="${1:-}"
+  [ -n "$target" ] || {
+    echo "crew: nudge <worker:branch[#sid]> [--since TS] [--timeout S] [--interval S]" >&2
+    exit 1
+  }
+  shift
+  since=$(jq -nc 'now*1000|floor')
+  timeout=60
+  interval=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --since | --timeout | --interval)
+      [[ "${2:-}" =~ ^[0-9]+$ ]] || {
+        echo "crew: nudge: $1 needs a whole number" >&2
+        exit 1
+      }
+      case "$1" in
+      --since) since="$2" ;;
+      --timeout) timeout="$2" ;;
+      --interval) interval="$2" ;;
+      esac
+      shift 2
+      ;;
+    *)
+      echo "crew: nudge: unknown arg '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  rc=0
+  (_nudge "$target" "$crew" "$since" "$timeout" "$interval") || rc=$?
+  exit "$rc"
   ;;
 await)
   # await <agent> [--timeout S] [--interval S] — block until a msg addressed to
   # <agent> arrives (ts strictly after the await started), print it, exit 0.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
-  # spin loop. A late reply is never lost — it stays in the durable log for the
-  # next activation.
+  # spin loop. A late reply is never lost — it stays in the durable log;
+  # `crew reply` wakes an ended turn (see `nudge`).
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
@@ -3821,7 +4287,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--no-wake] [--wake-timeout S] | nudge <worker> [--since TS] [--timeout S] [--interval S] | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
