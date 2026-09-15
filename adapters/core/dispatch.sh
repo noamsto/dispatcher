@@ -28,6 +28,23 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
+# _require_protocol_files <dir> <file...> — abort before any scaffolding if
+# a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
+# can point at a stale checkout (#177); this stops the launch instead of
+# spawning an engine against a missing --append-system-prompt(-file) target.
+_require_protocol_files() {
+  local dir="$1" f missing=()
+  shift
+  for f in "$@"; do
+    [ -f "$dir/$f" ] || missing+=("$f")
+  done
+  [ "${#missing[@]}" -eq 0 ] && return 0
+  local override=""
+  [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && override=" (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)"
+  echo "dispatch: missing protocol file(s) in \$PROTOCOL_DIR ($dir)${override}: ${missing[*]} — refusing to launch" >&2
+  exit 1
+}
+
 # --- role-grid helpers -----------------------------------------------------
 
 # role_color <role> — a stable tmux colour per role. Known roles get a semantic
@@ -204,6 +221,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role must run inside tmux" >&2
     exit 1
   }
+  _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   branch="$(git branch --show-current)"
   roles_file="$crew_dir/artifacts/$branch/roles.json"
@@ -924,6 +942,10 @@ if [ -n "$grid_lazy" ] && [ -z "$roles_stamp" ]; then
   echo "dispatch: --lazy needs --grid or --roles" >&2
   exit 1
 fi
+
+required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
+[ -n "$roles_stamp" ] && required_protocol_files+=(GRID_PROTOCOL.md)
+_require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 
 # Map an additive --mcp profile to its generated config (claude-only).
 mcp_flag=""

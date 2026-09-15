@@ -28,7 +28,9 @@ EOF
   stub_bin gh
   stub_bin wt
   stub_bin direnv
-  export DISPATCHER_PROTOCOL_DIR=/opt/protocols
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
 }
 
 teardown() {
@@ -348,7 +350,7 @@ write_cursor_models_cache() { # <fetched_epoch>
   worker_dir="$HOME/.pi/dispatcher-worker"
   lead_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris --model" "$STUB_LOG")
   [[ "$lead_line" == *"--no-approve"* ]]
-  [[ "$lead_line" == *"--append-system-prompt /opt/protocols/WORKER_PROTOCOL.md"* ]]
+  [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"* ]]
   [[ "$lead_line" == *"--thinking high"* ]]
 
   plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" "$STUB_LOG")
@@ -527,6 +529,32 @@ EOF
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-deep-cursor-grid-default/WORKER_TASK.md"
   grep -Fx 'roles: spec-critic,plan-critic' "$task"
+}
+
+@test "a plain non-grid dispatch aborts before scaffolding when WORKER_PROTOCOL.md is missing" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-worker"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "no worker protocol"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"WORKER_PROTOCOL.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "deep dispatch aborts before scaffolding when GRID_PROTOCOL.md is missing from the protocol dir" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-grid"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "deep grid missing protocol file"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"GRID_PROTOCOL.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {
@@ -2823,6 +2851,19 @@ EOF
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'split-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "grid: --spawn-role aborts before split-window when GRID_PROTOCOL.md is missing" {
+  _spawn_role_fixture
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-grid"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"GRID_PROTOCOL.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }

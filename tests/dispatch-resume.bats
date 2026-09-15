@@ -38,7 +38,9 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 exit 0
 EOF
   chmod +x "$STUB_DIR/dispatch"
-  export DISPATCHER_PROTOCOL_DIR=/opt/protocols
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   git commit --allow-empty -qm init
 }
 
@@ -123,6 +125,19 @@ setup_worker_wt() { # [extra header lines...]
   [ "$status" -eq 1 ]
   [[ "$output" == *"header is missing"* ]]
   [[ "$output" == *"engine"* ]]
+}
+
+@test "aborts before scaffolding when a required protocol file is missing" {
+  setup_worker_wt
+  cd "$WT"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-incomplete"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"EVIDENCE_REVIEW.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "--print reports the resolved launch and does not launch" {
@@ -363,7 +378,7 @@ EOF
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' "$STUB_LOG"
   grep -q -- '--model sonnet' "$STUB_LOG"
   grep -q -- '--effort medium' "$STUB_LOG"
-  grep -q -- '--append-system-prompt-file /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
+  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG"
 }
 
 @test "--fresh drops the continue flag" {
@@ -430,7 +445,7 @@ EOF
   run run_resume
   [ "$status" -eq 0 ]
   grep -q "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --continue" "$STUB_LOG"
-  grep -q -- '--append-system-prompt /opt/protocols/WORKER_PROTOCOL.md' "$STUB_LOG"
+  grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG"
   grep -q -- '--no-approve' "$STUB_LOG"
   grep -q 'role panes (plan-critic,reviewer) may still be parked' "$STUB_LOG"
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
