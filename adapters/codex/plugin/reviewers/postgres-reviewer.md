@@ -2,6 +2,7 @@
 name: postgres-reviewer
 description: "Reviews PostgreSQL schema, migrations and queries in Atlas and sqlc repos: lock-aware migrations, schema design, sqlc hygiene and query performance."
 globs: ["*.sql"]
+aliases: ["pg-atlas-reviewer"]
 when: "when the repo has an atlas.hcl or a sqlc.yaml/sqlc.json (these win over any SQLite marker); also the default for any *.sql diff with neither those, nor a d1_databases binding, nor SQLite-only syntax. Never together with sqlite-reviewer"
 ---
 

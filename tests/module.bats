@@ -1,5 +1,5 @@
 # Every test here runs a real `nix build`/`nix eval`/`nix store` against the
-# shared local flake -- including one `nix build` of 8 outputs at once and a
+# shared local flake -- including one `nix build` of 9 outputs at once and a
 # fresh <nixpkgs> resolution. On a cold cache (true on every fresh CI runner)
 # that races internally on the git-fetcher cache, independent of bats-level
 # concurrency -- it fails the same way run alone as run in parallel with
@@ -12,7 +12,7 @@ export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 
 # setup_file runs once per file, before any test in it. Every test below used
 # to `nix build`/`nix eval` on its own -- each invocation is a full flake
-# evaluation, and the eight-way build alone dominates a worker's edit loop.
+# evaluation, and the nine-way build alone dominates a worker's edit loop.
 # Build and evaluate exactly once here instead, and have every test read the
 # results out of $BATS_FILE_TMPDIR (the one directory bats keeps alive for
 # the whole file, unlike $BATS_TEST_TMPDIR which is per-test).
@@ -22,6 +22,7 @@ setup_file() {
   nix build --no-link --print-out-paths \
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
+    "$root#reviewer-roster" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The two eval tests below force different config shapes (options only vs.
@@ -77,6 +78,7 @@ setup() {
     read -r OUT_REFRESH_BUDGET
     read -r OUT_REFRESH_MODELS
     read -r OUT_PR_WATCH
+    read -r OUT_REVIEWER_ROSTER
   } <"$BATS_FILE_TMPDIR/out-paths"
   EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
@@ -86,7 +88,8 @@ setup() {
   # setup_file already ran the build; a failure there fails the whole file
   # before any test runs. This just proves every out path came back.
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
-    "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH"; do
+    "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
+    "$OUT_REVIEWER_ROSTER"; do
     [ -n "$out" ]
     [ -e "$out" ]
   done
@@ -148,7 +151,7 @@ setup() {
   [[ "$EVAL_CONFIG" == work\|* ]]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch"* ]]
+  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster"* ]]
   [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics ]]
 }
 
@@ -185,4 +188,35 @@ setup() {
   [ "$status" -eq 0 ]
   run grep -F '.cursor/skills' <<<"$skills_block"
   [ "$status" -eq 0 ]
+}
+
+@test "the reviewers placeholder is substituted in reviewer-roster" {
+  run grep -c '@reviewersDir@' "$OUT_REVIEWER_ROSTER/bin/reviewer-roster"
+  [ "$output" = "0" ]
+}
+
+@test "reviewer-roster carries yq-go and jq in its closure" {
+  yq_path="$(grep -o '/nix/store/[^"}]*' "$OUT_REVIEWER_ROSTER/bin/reviewer-roster" | grep 'yq-go' | head -1)"
+  [ -n "$yq_path" ]
+  jq_path="$(grep -o '/nix/store/[^"}]*' "$OUT_REVIEWER_ROSTER/bin/reviewer-roster" | grep -- '-jq-' | head -1)"
+  [ -n "$jq_path" ]
+}
+
+@test "reviewer-roster resolves the harness roster with no env override" {
+  export GIT_CONFIG_GLOBAL=/dev/null
+  repo="$BATS_TEST_TMPDIR/smoke-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b main
+  git -C "$repo" config user.email test@example.com
+  git -C "$repo" config user.name test
+  echo seed >"$repo/seed.txt"
+  git -C "$repo" add seed.txt
+  git -C "$repo" commit -q -m seed
+
+  run env -u DISPATCHER_REVIEWERS_DIR "$OUT_REVIEWER_ROSTER/bin/reviewer-roster" --base HEAD --repo "$repo"
+  [ "$status" -eq 0 ]
+
+  want="$(find "$ROOT/adapters/core/reviewers" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+  [ "$(jq '.reviewers | length' <<<"$output")" -eq "$want" ]
+  [ "$(jq '[.reviewers[] | select(.source != "harness")] | length' <<<"$output")" -eq 0 ]
 }

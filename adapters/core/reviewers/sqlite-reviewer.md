@@ -2,6 +2,7 @@
 name: sqlite-reviewer
 description: "Reviews SQLite and Cloudflare D1 schema, migrations and queries: type affinity, tenant scoping without RLS, batch atomicity and the ALTER TABLE limits."
 globs: ["*.sql"]
+aliases: ["database-reviewer"]
 when: "only when the repo has no atlas.hcl and no sqlc.yaml/sqlc.json, and either a wrangler.toml/wrangler.json* with a d1_databases binding or a *.sql file using SQLite-only syntax (STRICT, WITHOUT ROWID, INTEGER PRIMARY KEY AUTOINCREMENT); then postgres-reviewer does not run"
 ---
 
