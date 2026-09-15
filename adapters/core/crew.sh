@@ -105,12 +105,27 @@ WINS
   printf '%s' "$out"
 }
 
+# _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
+# s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
+# `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
+_is_session_id() {
+  [[ "${1##*#}" =~ ^s[0-9]+-[0-9]+$ ]]
+}
+
 # _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
 # oldest -> newest. Every fold is per SESSION: aggregating across a branch is how
 # three workers came to read as one flip-flopping identity (#17). A session with a
 # dispatch event but no status yet is still listed (state null) — dispatch needs to
 # see a booting worker. No crew filter by default, same reason `reap` has none: the
 # sessions worth inspecting are the ones from earlier dispatcher crews.
+# A session-less status row (watchdog, bare heartbeat, legacy) belongs to the
+# sessioned session that had started by its ts: left as its own null entry it
+# could become `last`, and `reply` would address a bare id no live inbox reads
+# (#173). A resume row starts a session exactly as a dispatch row does, or a
+# row landing before the resumed worker's first status would pick the dead
+# predecessor. The row stays a null entry when no session precedes it, or when
+# that session's own last word was terminal: a finished session reads no inbox,
+# so reviving it would hand `reply` a dead address instead of a refusal.
 _sessions() {
   local branch="$1" crewf="$2"
   [ -f "$log" ] || {
@@ -118,15 +133,26 @@ _sessions() {
     return 0
   }
   jq -s -c --arg b "$branch" --arg crew "$crewf" '
-      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      def wid_session: ltrimstr("worker:") | (if test("#") then (split("#") | last) else null end);
+      def split_wid: ltrimstr("worker:") as $r
+        | ($r | capture("#(?<s>s[0-9]+-[0-9]+)$").s // null) as $s
+        | {branch: (if $s == null then $r else ($r | rtrimstr("#" + $s)) end), session: $s};
+      def is_terminal: . as $x | (["done","failed","exited"] | index($x // "")) != null;
       map(select($crew=="" or .crew_id==$crew))
-      | ( map(select(.kind=="dispatch" and .branch==$b))
+      | ( map(select((.kind=="dispatch" or .kind=="resume") and .branch==$b))
           | map({session:(.session // null), ts:.ts}) ) as $disp
-      | ( map(select(.kind=="status"
-                     and ((.from // "") | startswith("worker:"))
-                     and ((.from) | wid_branch) == $b))
-          | map({session:((.from) | wid_session), state:.body.state, ts:.ts}) ) as $st
+      | ( map(select(.kind=="status" and ((.from // "") | startswith("worker:")))
+              | ((.from) | split_wid) as $w
+              | select($w.branch == $b)
+              | {session:$w.session, state:.body.state, ts:.ts}) ) as $raw
+      | ( ($disp + $raw) | map(select(.session != null)) | group_by(.session)
+          | map({session:.[0].session, start:(map(.ts) | min)}) ) as $starts
+      | ( $raw | map(select(.session != null)) ) as $sessioned
+      | ( $raw | map(if .session != null then . else
+            .ts as $t
+            | ($starts | map(select(.start <= $t)) | max_by(.start) | .session) as $s
+            | ($sessioned | map(select(.session == $s and .ts <= $t)) | max_by(.ts) | .state) as $prev
+            | if ($prev | is_terminal) then . else .session = $s end
+          end) ) as $st
       | ( ($disp + $st) | map(.session) | unique ) as $ids
       | [ $ids[] as $s
           | ($st | map(select(.session == $s)) | sort_by(.ts) | last) as $latest
@@ -580,12 +606,7 @@ reply)
   to="${1:-}"
   case "$to" in
   worker:*)
-    # Distinguish explicit session id from branch-only: extract the suffix after
-    # the last '#' and check whether it has the sid shape s<epoch>-<pid>. A '#'
-    # embedded in the branch name (legal in git) does not match that shape, so
-    # those branch-only addresses fall through to _sessions resolution.
-    _rest="${to##*#}"
-    if [[ "$_rest" =~ ^s[0-9]+-[0-9]+$ ]]; then
+    if _is_session_id "$to"; then
       : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
     else
       br="${to#worker:}"
@@ -596,6 +617,10 @@ reply)
       }
       if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
         echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
+        exit 1
+      fi
+      if [ "$(printf '%s' "$newest" | jq -r .session)" = null ]; then
+        echo "crew: $br has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch" >&2
         exit 1
       fi
       to=$(printf '%s' "$newest" | jq -r .worker_id)
@@ -626,6 +651,10 @@ await)
     echo "crew: await <agent> [--timeout S] [--interval S]" >&2
     exit 1
   }
+  case "$me" in worker:*) _is_session_id "$me" || {
+    echo "crew: $sub: '$me' has no session suffix — pass the session id (\$CREW_WORKER_ID); a branch-only worker id matches no message" >&2
+    exit 1
+  } ;; esac
   shift || true
   timeout=300
   interval=2
@@ -1597,6 +1626,10 @@ inbox)
   # non-blocking single pass (no loop, unlike watch/await): return only msgs
   # strictly newer than TS. Omitting it returns all msgs to the agent, unchanged.
   me="${1:-}"
+  case "$me" in worker:*) _is_session_id "$me" || {
+    echo "crew: $sub: '$me' has no session suffix — pass the session id (\$CREW_WORKER_ID); a branch-only worker id matches no message" >&2
+    exit 1
+  } ;; esac
   shift || true
   crew=""
   since=""
@@ -2857,9 +2890,24 @@ stall-watch)
   # BOTH `worker:<branch>#s<session>` and a bare `<branch>`, and a watchdog
   # cannot know which one launched it. Under exact-string matching every safety
   # check below silently no-ops and the roster splits into two rows for one
-  # worker (measured: EVIDENCE-2026-08-10.txt).
-  branch="${arg#worker:}"
-  branch="${branch%%#*}"
+  # worker (measured: EVIDENCE-2026-08-10.txt). Reads stay branch-keyed; writes
+  # carry the invoking session id, because a bare `from` becomes a session-less
+  # row that strands a branch-only `reply` (#173). Only a session suffix is
+  # stripped, so a branch containing '#' keys the same here and in _sessions.
+  # A sessioned watchdog owns its pane only until a newer session posts on the
+  # branch: resume reuses the pane and starts a second watchdog without killing
+  # this one, and a killed engine posts no terminal state to stop it. Left
+  # running it samples the successor's pane and posts under the dead session
+  # id, which then reads as the branch's newest session and captures `reply`.
+  id="worker:${arg#worker:}"
+  if _is_session_id "$id"; then
+    from_id="$id"
+    branch="${id%#*}"
+    branch="${branch#worker:}"
+  else
+    branch="${id#worker:}"
+    from_id="worker:$branch"
+  fi
   me="worker:$branch"
   crew=$(_crew_id)
   [ -n "$crew" ] || {
@@ -2992,24 +3040,40 @@ PANES
   # this process started sorts below the cutoff and reads as a previous run.
   # Previous runs are minutes away, so the slack cannot reach one.
   run_start_ms=$((($(date +%s) - 1) * 1000))
+  own_epoch=""
+  if [ "$from_id" != "$me" ]; then
+    own_epoch="${from_id##*#s}"
+    own_epoch="${own_epoch%-*}"
+  fi
   bus_ts=0
   bus_state=""
   bus_source=""
   bus_detail=""
+  # Step-aside (see INV-W0): only a session whose epoch is not older than ours
+  # counts, so a straggler post from the predecessor cannot disarm the watchdog
+  # that now owns the pane.
   _bus_refresh() {
-    local l
+    local rows l
     bus_ts=0
     bus_state=""
     bus_source=""
     bus_detail=""
     [ -f "$log" ] || return 0
-    l=$(jq -r --arg c "$crew" --arg m "$me" --argjson t0 "$run_start_ms" '
+    rows=$(jq -r --arg c "$crew" --arg m "$me" --arg f "$from_id" \
+      --arg e0 "$own_epoch" --argjson t0 "$run_start_ms" '
         select(.crew_id==$c and .kind=="status" and .ts>=$t0
                and (.from==$m or (.from|startswith($m+"#"))))
-        | [(.ts|tostring), .body.state, (.body.source // ""), (.body.detail // "")]
-        | @tsv' "$log" 2>/dev/null | tail -1 || true)
-    [ -n "$l" ] || return 0
-    IFS=$'\t' read -r bus_ts bus_state bus_source bus_detail <<BUSLINE
+        | ([.from | capture("^(?<w>.*)#s(?<e>[0-9]+)-[0-9]+$")] | first) as $sid
+        | [(if $e0 != "" and .from != $f and $sid != null and $sid.w == $m
+               and ($sid.e|tonumber) >= ($e0|tonumber) then "1" else "0" end),
+           (.ts|tostring), .body.state, (.body.source // ""), (.body.detail // "")]
+        | @tsv' "$log" 2>/dev/null || true)
+    [ -n "$rows" ] || return 0
+    case $'\n'"$rows" in
+    *$'\n1\t'*) exit 0 ;;
+    esac
+    l="${rows##*$'\n'}"
+    IFS=$'\t' read -r _ bus_ts bus_state bus_source bus_detail <<BUSLINE
 $l
 BUSLINE
     return 0
@@ -3026,7 +3090,7 @@ BUSLINE
     esac
     mkdir -p "$dir"
     local line
-    line=$(jq -nc --arg crew "$crew" --arg from "$me" --arg state "$1" --arg detail "$2" \
+    line=$(jq -nc --arg crew "$crew" --arg from "$from_id" --arg state "$1" --arg detail "$2" \
       '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
           kind:"status", body:{state:$state, detail:$detail, source:"watchdog"}}')
     _bus_append "$log" "$line"
