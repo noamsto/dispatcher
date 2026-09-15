@@ -611,15 +611,11 @@ teardown() {
     fi
   done
 
-  # No alias may equal a roster basename, or a caller couldn't tell whether
-  # they meant the entry itself or another entry's alias for it.
   while IFS= read -r alias; do
     run grep -qxF "$alias" "$names_list"
     [ "$status" -ne 0 ]
   done < <(cut -f1 "$alias_map" | sort -u)
 
-  # No alias may be claimed by two entries, or resolution couldn't tell
-  # which one a caller meant.
   while IFS= read -r alias; do
     claimants="$(awk -F'\t' -v a="$alias" '$1==a{print $2}' "$alias_map" | sort -u | wc -l)"
     [ "$claimants" -eq 1 ]

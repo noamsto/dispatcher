@@ -156,9 +156,9 @@
           };
 
           # yq-go is a runtime input, not just a devShell one: the resolver
-          # parses repo-local `.dispatcher/reviewers/*.md` frontmatter at run
-          # time and must not depend on whatever yq happens to be ambient on
-          # a caller's PATH.
+          # parses the harness reviewers' frontmatter with it and its preflight
+          # rejects any other yq, so it must not depend on whatever yq happens
+          # to be ambient on a caller's PATH.
           reviewer-roster = pkgs.writeShellApplication {
             name = "reviewer-roster";
             runtimeInputs = with pkgs; [git jq yq-go coreutils gawk];
