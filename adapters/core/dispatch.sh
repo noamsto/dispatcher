@@ -1543,7 +1543,16 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
-tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+# A grid lead's window border carries a "lead" marker; role panes label
+# themselves at pane level, so this window-level change touches only the lead.
+# A plain single-pane worker window keeps the bare codename — "lead" means
+# nothing without roles. @crew_name is never extended: it is the occupancy
+# join key crew occupants and the empty-vs-non-empty occupancy check read.
+lead_marker=" "
+if [ "${#role_names[@]}" -gt 0 ]; then
+  lead_marker=" lead "
+fi
+tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold]${lead_marker}"
 
 # Deep claude workers get the read-only codex MCP for cross-model review
 # (work profile only — mcp-codex.json is generated work-gated).

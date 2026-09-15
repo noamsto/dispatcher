@@ -466,6 +466,44 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "a grid lead's window border carries the lead marker" {
+  stub_launch_bins
+  # Lazy grid: role_names is populated and roles.json recorded, but no role
+  # pane spawns up front, so the run stays quiet (no watch_role loops).
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
+  [ "$status" -eq 0 ]
+  # Window-level border labels the lead; the pane-level role border format is
+  # untouched (it would regress role panes).
+  run grep -F -- 'set-window-option -t %1 pane-border-format  #[bold]#{@crew_name}#[nobold] lead' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-border-format " #[bold]#{@crew_role}#[nobold] #{@crew_state} "' "$DISPATCH"
+  [ "$status" -eq 0 ]
+}
+
+@test "a non-grid dispatch keeps the lead's border unmarked" {
+  stub_launch_bins
+  # Standard claude has no default grid (#596), so this reaches window
+  # creation as a plain single-pane worker window.
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort high --crew-id c1 42 "non-grid lead border"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'pane-border-format  #[bold]#{@crew_name}#[nobold] lead' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -F -- 'set-window-option -t %1 pane-border-format  #[bold]#{@crew_name}#[nobold]' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "a grid lead's @crew_name stays the bare codename" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid crew name unchanged"
+  [ "$status" -eq 0 ]
+  # The join key is set verbatim, and the marker never lands in any @crew_name
+  # value — the border format line is the only place it belongs (#178).
+  run grep -F -- 'set-window-option -t %1 @crew_name iris' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -E -- '@crew_name[^}]* lead' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
 @test "grid mode is stamped into the task doc and the lead prompt" {
   # The lead must know it has role panes (roles: line in WORKER_TASK.md) and be
   # told to delegate the critic/review phases (grid_note in its prompt).
