@@ -2357,17 +2357,11 @@ retro)
                | sort_by(.ts) | (.[-1] // null)
                | if . == null then null else (.body | body_obj) end) as $m
         | (if $m == null then [] else ($m.notes | note_list) end) as $snap
-        # `plan: required` with no plan-critic verdict recorded in the metrics
-        # snapshot is a protocol violation (#179) the worker itself may not have
-        # noticed — flag it here, from the bus alone, rather than trusting a
-        # self-report. Excluded: trivial/review-kind runs (no plan phase to begin
-        # with), both resume shapes (a `dispatch resume` row in the window, or
-        # `resume:true` on the dispatch row itself) — "do not re-run the plan
-        # phase" on resume is correct behavior, not a skipped gate — and runs
-        # that stopped before reaching the review gate (review_mode: "none":
-        # permission blocks, spec-critic failures, dispatcher stops during
-        # startup) — those legitimately carry a null plan_critic_first_pass
-        # because the run never got far enough to skip anything.
+        # `plan: required` with a null plan-critic verdict flags a skipped gate
+        # (#179) — except tier/task_kind runs with no plan phase, a resumed run
+        # (either shape — a `dispatch resume` row has no `from`, hence $resumed
+        # above), or a run that never reached the review gate (review_mode ==
+        # "none"), which never got far enough to skip anything.
         | (if $d.plan == "required"
               and ($d.tier // null) != "trivial"
               and (($d.task_kind // "implement") != "review")
