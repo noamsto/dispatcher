@@ -885,6 +885,17 @@ _pi_assert_refused() {
   [ "$(echo "$output" | jq -r 'last.session')" = "null" ]
 }
 
+@test "sessions: a session-less row in the same millisecond as a terminal session does not revive it" {
+  t=$(($(date +%s) * 1000))
+  seed_raw "worker:feat/x#s1-1" done "" "" "$t"
+  seed_raw worker:feat/x working "" "" "$t"
+  run run_crew sessions feat/x
+  [ "$(echo "$output" | jq -r 'length')" = "2" ]
+  [ "$(echo "$output" | jq -r '.[] | select(.session == "s1-1") | .state')" = "done" ]
+  [ "$(echo "$output" | jq -r '[.[] | select(.session == "s1-1" and .terminal)] | length')" = "1" ]
+  [ "$(echo "$output" | jq -r '[.[] | select(.session != null and .state == "working")] | length')" = "0" ]
+}
+
 @test "sessions: a resume row starts its session" {
   t=$(($(date +%s) * 1000))
   seed_start dispatch s1-1 "$t"
@@ -1012,6 +1023,17 @@ _pi_assert_refused() {
   t=$(($(date +%s) * 1000))
   seed_raw "worker:feat/x#s1-1" done "" "" "$t"
   seed_raw worker:feat/x working "" "" "$((t + 1000))"
+  CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ -z "$output" ]
+}
+
+@test "reply: a session-less row in the same millisecond as a finished session refuses" {
+  t=$(($(date +%s) * 1000))
+  seed_raw "worker:feat/x#s1-1" done "" "" "$t"
+  seed_raw worker:feat/x working "" "" "$t"
   CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"

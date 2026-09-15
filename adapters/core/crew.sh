@@ -150,7 +150,7 @@ _sessions() {
       | ( $raw | map(if .session != null then . else
             .ts as $t
             | ($starts | map(select(.start <= $t)) | max_by(.start) | .session) as $s
-            | ($sessioned | map(select(.session == $s and .ts < $t)) | max_by(.ts) | .state) as $prev
+            | ($sessioned | map(select(.session == $s and .ts <= $t)) | max_by(.ts) | .state) as $prev
             | if ($prev | is_terminal) then . else .session = $s end
           end) ) as $st
       | ( ($disp + $st) | map(.session) | unique ) as $ids

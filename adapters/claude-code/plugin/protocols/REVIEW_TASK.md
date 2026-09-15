@@ -64,15 +64,7 @@ Approve (`event=APPROVE`) only when **zero** findings survive verification and d
 
 ## Report the tally, then stop
 
-First run the pre-done peek from `WORKER_PROTOCOL.md`'s **Checkpoint-peek** as its own step, and read its output before going on — a review worker opens no PR, so this is its only completion peek:
-
-```bash
-crew inbox "$CREW_WORKER_ID" --since <seen>
-```
-
-Handle any directive per **Checkpoint-peek**. A work-changing directive re-runs the affected review steps and lands as one follow-up `gh pr comment`, never a second review event; the tally below then reflects it.
-
-Then post the tally as one message to the dispatcher and terminate at `done` — a review worker never reaches `pr_open`, because it opens nothing:
+Post the tally as one message to the dispatcher, then terminate at `done` — a review worker never reaches `pr_open`, because it opens nothing:
 
 ```bash
 crew msg "$CREW_WORKER_ID" "dispatcher:$CREW_ID" \
