@@ -196,6 +196,69 @@ _lock_acquire() {
 
 _lock_release() { rm -rf "$1"; }
 
+# Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
+# bracket expression consumes one BYTE, so a single-character class would
+# never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
+# measured false-positive guard. Hence `+` on the glyph classes and an
+# alternation rather than a bracket set for `❯`.
+re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
+re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+
+# Geometry anchor: the footer must be the pane's LAST non-empty line, with a
+# numbered option within the 6 non-empty lines above it. A pane that is not
+# parked on a prompt ends on its input box, never on transcript text (A3), so
+# a prompt frame merely scrolling through — this very repo's bats fixtures —
+# cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
+# fixtures become a false-positive source.
+_is_prompt() {
+  local tail_n last above
+  tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
+  last=$(printf '%s\n' "$tail_n" | tail -1)
+  case "$last" in
+  *"Enter to select"* | *"Enter to confirm"*) ;;
+  *) return 1 ;;
+  esac
+  above=$(printf '%s\n' "$tail_n" | sed '$d')
+  printf '%s\n' "$above" | grep -qE "$re_option"
+}
+# _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
+# (never alone): _is_prompt already proves the pane is on-screen and shaped
+# like an option-select frame; this only decides WHICH option-select frame it
+# is. Searched over the last 12 non-empty lines — wider than _is_prompt's
+# tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
+# unlike the pinned fixtures above it, so its exact line count above the
+# footer is unknown and a too-tight window risks silently degrading to
+# generic `prompt:`) but still bounded, not the whole capture: an unbounded
+# search would classify a genuinely different, answerable prompt as `quota:`
+# merely because this literal phrase happens to be visible somewhere higher
+# on the same screen (e.g. a worker with this very protocol doc scrolled
+# into view) — and `quota:` is sticky and escalation-exempt, so that
+# mislabel would leave a real question unanswered indefinitely.
+_is_quota_prompt() {
+  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
+}
+# _is_quota_session_limit — content discriminator for the session-limit
+# refusal frame: a normal working pane, not an option-select prompt, so
+# unlike _is_quota_prompt it is not gated behind _is_prompt.
+# All three anchors must be present: any one alone false-triggers on a worker
+# that merely has this repo's own docs or fixtures on screen, and quota: is
+# sticky and escalation-exempt. The tail bound is the same hazard — the real
+# frame carries the two transcript anchors at non-empty depth 7-8, so a long
+# queued prompt in the input box can push them out of the window and this
+# detector silently misses the frame. `uses your weekly limit` sits in a
+# persistent hint row at depth 3, so it gets the tighter window.
+_is_quota_session_limit() {
+  local tail_n tail_n6
+  tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
+  tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
+  printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
+    printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
+    printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
+}
+_meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
+_has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+
 # A bus line MUST fit in one write(). `printf '%s\n' … >>"$log"` is NOT reliably
 # atomic under O_APPEND: bash's printf builtin doesn't guarantee one write(2)
 # syscall per line, so under concurrent writers a line above a few KB can land
@@ -3010,14 +3073,6 @@ stall-watch)
     sig_meter=0
     ;;
   esac
-  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
-  # bracket expression consumes one BYTE, so a single-character class would
-  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
-  # measured false-positive guard. Hence `+` on the glyph classes and an
-  # alternation rather than a bracket set for `❯`.
-  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
-  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
-  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
 
   # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
   # D0/D3 read the hash, D1/D2 read the text.
@@ -3157,60 +3212,6 @@ BUSLINE
       esac
     fi
   }
-
-  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
-  # numbered option within the 6 non-empty lines above it. A pane that is not
-  # parked on a prompt ends on its input box, never on transcript text (A3), so
-  # a prompt frame merely scrolling through — this very repo's bats fixtures —
-  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
-  # fixtures become a false-positive source.
-  _is_prompt() {
-    local tail_n last above
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
-    last=$(printf '%s\n' "$tail_n" | tail -1)
-    case "$last" in
-    *"Enter to select"* | *"Enter to confirm"*) ;;
-    *) return 1 ;;
-    esac
-    above=$(printf '%s\n' "$tail_n" | sed '$d')
-    printf '%s\n' "$above" | grep -qE "$re_option"
-  }
-  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
-  # (never alone): _is_prompt already proves the pane is on-screen and shaped
-  # like an option-select frame; this only decides WHICH option-select frame it
-  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
-  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
-  # unlike the pinned fixtures above it, so its exact line count above the
-  # footer is unknown and a too-tight window risks silently degrading to
-  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
-  # search would classify a genuinely different, answerable prompt as `quota:`
-  # merely because this literal phrase happens to be visible somewhere higher
-  # on the same screen (e.g. a worker with this very protocol doc scrolled
-  # into view) — and `quota:` is sticky and escalation-exempt, so that
-  # mislabel would leave a real question unanswered indefinitely.
-  _is_quota_prompt() {
-    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
-  }
-  # _is_quota_session_limit — content discriminator for the session-limit
-  # refusal frame: a normal working pane, not an option-select prompt, so
-  # unlike _is_quota_prompt it is not gated behind _is_prompt.
-  # All three anchors must be present: any one alone false-triggers on a worker
-  # that merely has this repo's own docs or fixtures on screen, and quota: is
-  # sticky and escalation-exempt. The tail bound is the same hazard — the real
-  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
-  # queued prompt in the input box can push them out of the window and this
-  # detector silently misses the frame. `uses your weekly limit` sits in a
-  # persistent hint row at depth 3, so it gets the tighter window.
-  _is_quota_session_limit() {
-    local tail_n tail_n6
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
-    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
-    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
-      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
-      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
-  }
-  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
-  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
   start=$(date +%s)
   sleep "$grace"
