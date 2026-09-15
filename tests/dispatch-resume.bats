@@ -140,6 +140,52 @@ setup_worker_wt() { # [extra header lines...]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
+@test "refuses a protocol dir whose PROTOCOL_REV does not match the script marker" {
+  setup_worker_wt
+  cd "$WT"
+  # Baked-marker simulation, mirroring flake.nix's replaceStrings (see
+  # _substituted_dispatch in dispatch.bats).
+  sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  printf 'deadbeef00000000' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
+  [[ "$output" == *"0123456789abcdef"* ]]
+  [[ "$output" == *"deadbeef00000000"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "resume proceeds when PROTOCOL_REV matches the script marker" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  printf '0123456789abcdef' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a raw (unsubstituted) resume script skips the revision check with a one-line warning" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unsubstituted protocol revision"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "--print reports the resolved launch and does not launch" {
   setup_worker_wt
   cd "$WT"

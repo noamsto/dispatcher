@@ -122,6 +122,30 @@ setup() {
   [ -f "$dir/EVIDENCE_REVIEW.md" ]
 }
 
+@test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
+  run grep -c '@protocolRev@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  run grep -c '@protocolRev@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  [ "$output" = "0" ]
+}
+
+@test "the built scripts and the built protocol dir carry the same revision" {
+  # The baked @protocolRev@ (guard marker, #184) and the PROTOCOL_REV file in
+  # the baked default protocol dir must agree. A protocol edit that was not
+  # regenerated via scripts/gen-adapters.sh fails here — the guard is
+  # self-checking, and the CI drift gate enforces the same freshness.
+  dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -i protocol | head -1)"
+  [ -n "$dir" ]
+  [ -f "$dir/PROTOCOL_REV" ]
+  rev_dir="$(cat "$dir/PROTOCOL_REV")"
+  [ -n "$rev_dir" ]
+  rev_dispatch="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH/bin/dispatch" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
+  rev_resume="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH_RESUME/bin/dispatch-resume" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
+  [ -n "$rev_dispatch" ]
+  [ "$rev_dispatch" = "$rev_dir" ]
+  [ "$rev_resume" = "$rev_dispatch" ]
+}
+
 @test "crew does not retain the protocols as a runtime closure reference" {
   # `crew` intentionally reads its source directly; unlike dispatch and
   # dispatcher it must not gain a runtime dependency on the protocol tree.
