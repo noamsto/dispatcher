@@ -3446,6 +3446,37 @@ _wake_write_frames() {
     printf '  ⚠ /low-priority to continue now at lower priority · uses your weekly limit\n'
     printf '%s\n' "$status_insert"
   } >"$WAKE_DIR/frames/quota_limit"
+
+  printf '%s\n%s\n%s\n%s\n%s\n' \
+    "✻ Sautéing…" "$top" "$box_empty" "$bottom" "$status_insert" \
+    >"$WAKE_DIR/frames/busy_accented"
+
+  printf '%s\n%s\n%s\n%s\n%s\n' \
+    "✢ Beboppin'… (12s · ↓ 1.2k tokens)" "$top" "$box_empty" "$bottom" "$status_insert" \
+    >"$WAKE_DIR/frames/busy_apostrophe"
+
+  printf '%s\n%s\n%s\n%s\n' "$top" "${fgreset}❯${nbsp}${dim}[Pasted text #1 +40 lines]${reset0}" \
+    "$bottom" "$status_insert" >"$WAKE_DIR/frames/dim_placeholder"
+
+  printf '%s\n%s\n%s\n%s\n' "$top" "${fgreset}❯${nbsp}hello ${dim}world${reset0}" \
+    "$bottom" "$status_insert" >"$WAKE_DIR/frames/dim_after_typed"
+
+  # An earlier wake's echo still inside the echo window over an idle box.
+  local echo_line="❯ $WAKE_PROMPT"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$echo_line" "● ok, reading" "$top" "$box_empty" "$bottom" "$status_insert" \
+    >"$WAKE_DIR/frames/stale_echo_idle"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$echo_line" "● ok, reading" "$top" "$box_typed" "$bottom" "$status_insert" \
+    >"$WAKE_DIR/frames/stale_echo_typed"
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$echo_line" "● ok, reading" "$echo_line" "· Smooshing…" \
+    "$top" "$box_empty" "$bottom" "$status_insert" \
+    >"$WAKE_DIR/frames/stale_echo_submitted"
+
+  cp "$WAKE_DIR/frames/idle" "$WAKE_DIR/frames/collide"
+  printf '%s\n%s\n%s\n%s\n' "$top" "${fgreset}❯${nbsp}please also check the logs$WAKE_PROMPT" \
+    "$bottom" "$status_insert" >"$WAKE_DIR/frames/collided"
 }
 
 # _wake_frames_only — just the frame fixtures, for `wake-class` unit tests
@@ -3499,12 +3530,36 @@ send-keys)
     [ "$a" = "Enter" ] && enter=1
   done
   if [ "$lit" = 1 ]; then
+    prev=""
+    for a in "$@"; do
+      [ "$prev" = "-l" ] && printf 'payload=%s\n' "$a" >>"$WAKE_DIR/calls.log"
+      prev="$a"
+    done
     case "$st" in
-    idle | idle_ghost | submitted | busy_transcript) printf 'typed' >"$WAKE_DIR/state" ;;
+    *typed | *submitted) printf 'double-typed\n' >>"$WAKE_DIR/calls.log" ;;
     esac
-  elif [ "$enter" = 1 ]; then
-    if [ -z "${WAKE_ENTER_NOOP:-}" ] && [ "$st" = typed ]; then
-      printf 'submitted' >"$WAKE_DIR/state"
+    if [ -z "${WAKE_TYPE_NOOP:-}" ]; then
+      case "$st" in
+      idle | idle_ghost | submitted | busy_transcript) printf 'typed' >"$WAKE_DIR/state" ;;
+      stale_echo_idle) printf 'stale_echo_typed' >"$WAKE_DIR/state" ;;
+      collide) printf 'collided' >"$WAKE_DIR/state" ;;
+      esac
+    fi
+  elif [ "$enter" = 1 ] && [ -z "${WAKE_ENTER_NOOP:-}" ]; then
+    next=""
+    case "$st" in
+    typed) next=submitted ;;
+    stale_echo_typed)
+      # WAKE_ENTER_CLEARS: the box empties with no new echo (an Esc/clear).
+      if [ -n "${WAKE_ENTER_CLEARS:-}" ]; then
+        printf 'stale_echo_idle' >"$WAKE_DIR/state"
+      else
+        next=stale_echo_submitted
+      fi
+      ;;
+    esac
+    if [ -n "$next" ]; then
+      printf '%s' "$next" >"$WAKE_DIR/state"
       common=$(git -C "$WAKE_REPO" rev-parse --path-format=absolute --git-common-dir)
       jq -nc --arg f "worker:feat/x#$sid" \
         '{ts:(now*1000|floor), crew_id:"c1", from:$f, to:"dispatcher:c1", kind:"status", body:{state:"working"}}' \
@@ -3576,6 +3631,30 @@ wake_tmux_setup() {
   local sid="${WAKE_SID:-s1-1}"
   _wake_seed_dispatch claude "$sid"
   seed_raw "worker:feat/x#$sid" blocked "need a decision" ""
+}
+
+# _wake_calls <pattern> — how many calls.log lines match (0 when none).
+_wake_calls() { grep -c -- "$1" "$WAKE_DIR/calls.log" || true; }
+
+# _wake_assert_typed_once [pane] — exactly one literal send, carrying exactly
+# the wake prompt, never typed over already-typed text.
+_wake_assert_typed_once() {
+  [ "$(_wake_calls ' -l ')" -eq 1 ]
+  grep -qF -- "send-keys -t ${1:-%7} -l $WAKE_PROMPT" "$WAKE_DIR/calls.log"
+  [ "$(_wake_calls '^payload=')" -eq 1 ]
+  [ "$(grep '^payload=' "$WAKE_DIR/calls.log")" = "payload=$WAKE_PROMPT" ]
+  [ "$(_wake_calls '^double-typed')" -eq 0 ]
+}
+
+# _wake_class_locales <frame> <class> — the frame classifies <class> under the
+# default locale, LC_ALL=C, and LC_ALL=C.UTF-8 when the system has it.
+_wake_class_locales() {
+  local f="$WAKE_DIR/frames/$1"
+  [ "$(run_crew wake-class <"$f")" = "$2" ]
+  [ "$(LC_ALL=C bash -euo pipefail "$CREW" wake-class <"$f")" = "$2" ]
+  if locale -a 2>/dev/null | grep -qixE 'c\.utf-?8'; then
+    [ "$(LC_ALL=C.UTF-8 bash -euo pipefail "$CREW" wake-class <"$f")" = "$2" ]
+  fi
 }
 
 # ---- wake-class: one word per pinned frame -------------------------------
@@ -3688,6 +3767,43 @@ wake_tmux_setup() {
   [ "$output" = quota ]
 }
 
+@test "wake-class: busy_accented -> busy in every locale" {
+  _wake_frames_only
+  _wake_class_locales busy_accented busy
+}
+
+@test "wake-class: busy_apostrophe -> busy in every locale" {
+  _wake_frames_only
+  _wake_class_locales busy_apostrophe busy
+}
+
+@test "wake-class: every pinned fixture classifies the same under LC_ALL=C" {
+  _wake_frames_only
+  local pair
+  for pair in idle=idle idle_ghost=idle ghost_unterminated=unsent typed=unsent \
+    submitted=busy busy_meter=busy busy_early=busy busy_subbatch_many=busy \
+    busy_subrow=busy busy_transcript=idle unsent=unsent trust_unnumbered=prompt \
+    normal_mode=vimmode garbage=unknown quota_limit=quota \
+    dim_placeholder=unsent dim_after_typed=unsent stale_echo_idle=idle; do
+    [ "$(run_crew wake-class <"$WAKE_DIR/frames/${pair%=*}")" = "${pair#*=}" ]
+    [ "$(LC_ALL=C bash -euo pipefail "$CREW" wake-class <"$WAKE_DIR/frames/${pair%=*}")" = "${pair#*=}" ]
+  done
+}
+
+@test "wake-class: dim_placeholder -> unsent" {
+  _wake_frames_only
+  run run_crew wake-class <"$WAKE_DIR/frames/dim_placeholder"
+  [ "$status" -eq 0 ]
+  [ "$output" = unsent ]
+}
+
+@test "wake-class: dim_after_typed -> unsent" {
+  _wake_frames_only
+  run run_crew wake-class <"$WAKE_DIR/frames/dim_after_typed"
+  [ "$status" -eq 0 ]
+  [ "$output" = unsent ]
+}
+
 # ---- wake: reply wakes a blocked worker -----------------------------------
 
 @test "wake: RED on main — reply to a blocked session whose await ended wakes an idle pane" {
@@ -3696,12 +3812,22 @@ wake_tmux_setup() {
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   msg_ts=$(jq -r 'select(.kind=="msg" and .body=="decision") | .ts' "$log" | tail -1)
-  grep -qF "send-keys -t %7 -l $WAKE_PROMPT" "$WAKE_DIR/calls.log"
+  _wake_assert_typed_once
   run jq -s -r --argjson t "$msg_ts" \
     '[.[] | select(.kind=="status" and .from=="worker:feat/x#s1-1" and .body.state=="working" and .ts>=$t)] | length' \
     "$log"
   [ "$output" -ge 1 ]
   ! grep -qF "decision" "$WAKE_DIR/calls.log"
+}
+
+@test "wake: reply --wake-timeout under the typing floor is a usage error before any append" {
+  wake_tmux_setup idle
+  CREW_ID=c1 run run_crew reply "worker:feat/x" "decision" --wake-timeout 20
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--wake-timeout must be >= 35s (the typing floor)"* ]]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(jq -s '[.[] | select(.kind == "msg")] | length' "$log")" -eq 0 ]
+  [ ! -s "$WAKE_DIR/calls.log" ]
 }
 
 @test "wake: reply to a working session makes no tmux call" {
@@ -3756,18 +3882,28 @@ wake_tmux_setup() {
 
 # ---- nudge: transient / permanent / unverified outcomes -------------------
 
+# The busy/unknown deadline tests zero the typing floor, so a frame misread as
+# idle would deliver inside --timeout 2 and fail the refusal assertions.
+
 @test "nudge: busy_meter keeps polling and refuses transient at the deadline" {
   wake_tmux_setup busy_meter
-  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
   [ "$status" -eq 3 ]
-  ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
 @test "nudge: busy_early keeps polling and refuses transient at the deadline" {
   wake_tmux_setup busy_early
-  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
   [ "$status" -eq 3 ]
-  ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
+}
+
+@test "nudge: busy_subrow — a subagent row under the status bar is busy" {
+  wake_tmux_setup busy_subrow
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
+  [ "$status" -eq 3 ]
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
 @test "nudge: unsent refuses transient immediately with a single capture" {
@@ -3792,9 +3928,10 @@ wake_tmux_setup() {
 
 @test "nudge: an unrecognized frame that never resolves is unknown-frame at the deadline" {
   wake_tmux_setup garbage
-  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
   [ "$status" -eq 5 ]
   [[ "$output" == *"unknown-frame"* ]]
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
 @test "nudge: idle_ghost delivers — literal keys then Enter" {
@@ -3807,6 +3944,42 @@ wake_tmux_setup() {
   [ -n "$lit_line" ]
   [ -n "$enter_line" ]
   [ "$lit_line" -lt "$enter_line" ]
+  _wake_assert_typed_once
+}
+
+@test "nudge: text that collides with the typed wake refuses unverified without Enter" {
+  wake_tmux_setup collide
+  CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"input collided"* ]]
+  [ "$(_wake_calls 'Enter')" -eq 0 ]
+}
+
+@test "nudge: typed text that never renders refuses unverified without Enter" {
+  wake_tmux_setup idle
+  WAKE_TYPE_NOOP=1
+  export WAKE_TYPE_NOOP
+  CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
+  [ "$status" -eq 4 ]
+  [[ "$output" == *"typed text not visible"* ]]
+  [ "$(_wake_calls 'Enter')" -eq 0 ]
+}
+
+@test "nudge: an earlier wake's echo does not verify an Enter that submitted nothing" {
+  wake_tmux_setup stale_echo_idle
+  WAKE_ENTER_CLEARS=1
+  export WAKE_ENTER_CLEARS
+  CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
+  [ "$status" -eq 4 ]
+  [[ "$output" != *"delivered"* ]]
+}
+
+@test "nudge: a new echo under an earlier wake's echo delivers" {
+  wake_tmux_setup stale_echo_idle
+  CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
 }
 
 @test "nudge: an Enter that never lands retries once then refuses unverified" {
@@ -3822,7 +3995,7 @@ wake_tmux_setup() {
   wake_tmux_setup busy_meter
   WAKE_CONSUME_AFTER=2
   export WAKE_CONSUME_AFTER
-  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 30 --interval 0
+  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 60 --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"consumed"* ]]
   ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
@@ -3838,15 +4011,30 @@ wake_tmux_setup() {
   ! grep -q '^capture-pane' "$WAKE_DIR/calls.log"
 }
 
-@test "nudge: a live lock holder is in-progress" {
+@test "nudge: a live lock holder is waited out, then the wake delivers" {
   wake_tmux_setup idle
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew/wake/s1-1"
   printf '%s' "$$" >"$common/crew/wake/s1-1/pid"
+  (
+    sleep 1
+    rm -rf "$common/crew/wake/s1-1"
+  ) >/dev/null 2>&1 3>&- &
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
   [ "$status" -eq 0 ]
-  [[ "$output" == *"in-progress"* ]]
-  ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
+  [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
+}
+
+@test "nudge: a live lock holder past the deadline refuses transient lock" {
+  wake_tmux_setup idle
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew/wake/s1-1"
+  printf '%s' "$$" >"$common/crew/wake/s1-1/pid"
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 0
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"refused (transient): lock"* ]]
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
 @test "nudge: a dead lock holder is reclaimed and delivers" {
@@ -3860,6 +4048,7 @@ wake_tmux_setup() {
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
 }
 
 @test "nudge: a missing wake dir still delivers" {
@@ -3869,13 +4058,15 @@ wake_tmux_setup() {
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
 }
 
-@test "nudge: an idle pane still refuses transient under the 35s typing floor" {
+@test "nudge: --timeout under the 35s typing floor is a usage error" {
   wake_tmux_setup idle
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 20 --interval 0
-  [ "$status" -eq 3 ]
-  ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew: nudge: --timeout must be >= 35s (the typing floor)"* ]]
+  [ "$(_wake_calls '^capture-pane')" -eq 0 ]
 }
 
 @test "nudge: an explicit unknown session id refuses as a usage error" {
@@ -3892,6 +4083,7 @@ wake_tmux_setup() {
   [ "$status" -eq 0 ]
   grep -qE '^(capture-pane|send-keys).* -t %7( |$)' "$WAKE_DIR/calls.log"
   ! grep -qE '^(capture-pane|send-keys).* -t %8( |$)' "$WAKE_DIR/calls.log"
+  _wake_assert_typed_once %7
 }
 
 @test "nudge: two unmarked engine panes are ambiguous" {
@@ -3909,7 +4101,7 @@ wake_tmux_setup() {
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --since "$since_ts" --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"delivered"* ]]
-  grep -qF -- '-l' "$WAKE_DIR/calls.log"
+  _wake_assert_typed_once
 }
 
 @test "nudge: a watchdog quota-parked status refuses permanently without a capture" {
@@ -3926,13 +4118,14 @@ wake_tmux_setup() {
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
 }
 
 @test "nudge: busy_subbatch_many — a live subagent batch above the box is busy" {
   wake_tmux_setup busy_subbatch_many
-  CREW_ID=c1 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
+  CREW_ID=c1 CREW_WAKE_FLOOR=0 run run_crew nudge "worker:feat/x" --timeout 2 --interval 1
   [ "$status" -eq 3 ]
-  ! grep -q '^send-keys' "$WAKE_DIR/calls.log"
+  [ "$(_wake_calls '^send-keys')" -eq 0 ]
 }
 
 @test "nudge: a resume row's engine supersedes an earlier dispatch's" {
@@ -3946,6 +4139,7 @@ wake_tmux_setup() {
   CREW_ID=c1 run run_crew nudge "worker:feat/x" --interval 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"delivered"* ]]
+  _wake_assert_typed_once
 }
 
 @test "nudge: a dispatch row's engine wins when no later resume claims the session" {

@@ -296,7 +296,11 @@ _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 # `re_spinner` is broader than `re_meter` on purpose: a turn's first seconds
 # paint `· Smooshing…` with no token count yet, and reading that as idle would
 # type into a running turn. Same multibyte rule as above: `…` is a group.
-re_spinner='^[^[:alnum:][:space:]]+[[:space:]]+[A-Z][a-z]+(…)'
+# Neither this nor `re_wake_meter` constrains the verb's characters: a letter
+# class is locale-dependent (`Sautéing` misses `[a-z]` under LC_ALL=C) and
+# verbs carry punctuation (`Beboppin'`), and either miss reads a turn as idle.
+re_spinner='^[^[:alnum:][:space:]]+[[:space:]]+[^[:space:]]+(…)'
+re_wake_meter='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]*[^[:space:]]+(…)[[:space:]]\('
 re_rule='^(─)+( [^─]+ (─)+)?[[:space:]]*$'
 re_todo='^[[:space:]]*(☐|☒|✔|◻|◼)'
 
@@ -317,19 +321,30 @@ _box_rules() {
   printf '%s %s\n' "$top" "$bot"
 }
 
-# _input_box <escaped-capture> — prints the box text with dim spans deleted and
-# escapes, `❯`, NBSP and whitespace stripped (empty for an empty box); returns 0.
-# Returns 1 when no box is found, 2 for a dim span with no terminator. The dim
-# spans are claude's ghost suggestion, which a plain capture cannot tell from
-# typed text; an unterminated one could hide real input, so it fails safe.
+# _box_text <escaped-text> — escapes, `❯`, NBSP and whitespace stripped.
+_box_text() {
+  local t
+  t=$(_strip_csi "$1")
+  t=${t//❯/}
+  t=${t//$'\xc2\xa0'/}
+  printf '%s\n' "${t//[[:space:]]/}"
+}
+
+# _input_box <escaped-capture> — prints the box text, stripped as _box_text
+# (empty for an empty box); returns 0. Returns 1 when no box is found, 2 for a
+# dim span with no terminator. claude's ghost suggestion is a dim span that is
+# the box's whole content, and only that span is dropped: a dim `[Pasted text
+# …]` placeholder or dim text beside typed text is real input, and an
+# unterminated span could hide some, so both fail safe as content.
 _input_box() {
-  local geo top bot t pre rest term best best_cut cut
+  local geo top bot t out="" rest term best best_cut cut spans=0 ghost=""
   geo=$(_box_rules "$(_strip_csi "$1")") || return 1
   top=${geo% *} bot=${geo#* }
   t=$(printf '%s\n' "$1" | sed -n "$((top + 1)),$((bot - 1))p")
-  while [[ "$t" == *$'\e[2m'* ]]; do
-    pre=${t%%$'\e[2m'*}
-    rest=${t#*$'\e[2m'}
+  rest=$t
+  while [[ "$rest" == *$'\e[2m'* ]]; do
+    out+=${rest%%$'\e[2m'*}
+    rest=${rest#*$'\e[2m'}
     best="" best_cut=""
     for term in $'\e[0m' $'\e[22m' $'\e[m'; do
       [[ "$rest" == *"$term"* ]] || continue
@@ -339,12 +354,23 @@ _input_box() {
       fi
     done
     [ -n "$best" ] || return 2
-    t=$pre${rest#*"$best"}
+    ghost=$best_cut
+    spans=$((spans + 1))
+    rest=${rest#*"$best"}
   done
-  t=$(_strip_csi "$t")
-  t=${t//❯/}
-  t=${t//$'\xc2\xa0'/}
-  printf '%s\n' "${t//[[:space:]]/}"
+  out+=$rest
+  ghost=$(_box_text "$ghost")
+  if [ "$spans" = 1 ] && [ -z "$(_box_text "$out")" ] && [[ "$ghost" != "["* ]]; then
+    echo
+    return 0
+  fi
+  _box_text "$t"
+}
+
+# _wake_side_row <plain-line> — a subagent row, `⎿` row or todo row: painted
+# beside the transcript, so the bounded windows above the box skip it.
+_wake_side_row() {
+  [[ "$1" =~ $re_subrow ]] || [[ "$1" =~ ^[[:space:]]*(⎿) ]] || [[ "$1" =~ $re_todo ]]
 }
 
 # _wake_class <escaped-capture> -> prompt|quota|busy|vimmode|unsent|idle|unknown.
@@ -388,7 +414,7 @@ _wake_class() {
   for ((i = ${#lines[@]} - 1; i >= 0 && n < 6; i--)); do
     line=${lines[i]}
     [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-    if [[ "$line" =~ $re_subrow ]] || [[ "$line" =~ ^[[:space:]]*(⎿) ]] || [[ "$line" =~ $re_todo ]]; then
+    if _wake_side_row "$line"; then
       [ "$in_block" = 0 ] || skipped+="$line"$'\n'
       continue
     fi
@@ -396,7 +422,7 @@ _wake_class() {
     above+="$line"$'\n'
     n=$((n + 1))
   done
-  if [ -n "$(_meter_line "$above")" ] || printf '%s\n' "$above" | grep -qE "$re_spinner" ||
+  if printf '%s\n' "$above" | grep -qE "$re_wake_meter" || printf '%s\n' "$above" | grep -qE "$re_spinner" ||
     _has_subrow "$skipped" || _has_subrow "$below"; then
     echo busy
     return 0
@@ -410,6 +436,17 @@ _wake_class() {
 }
 
 WAKE_PROMPT='crew wake: read your crew inbox and continue'
+
+# _wake_floor — the seconds a wake needs left to type and verify: 5s
+# type-verify + 15s submit-verify + 15s for the one Enter retry.
+# CREW_WAKE_FLOOR overrides it (a test hook; a non-negative integer).
+_wake_floor() {
+  [[ "${CREW_WAKE_FLOOR:-35}" =~ ^[0-9]+$ ]] || {
+    echo "crew: CREW_WAKE_FLOOR must be a non-negative integer" >&2
+    return 1
+  }
+  printf '%s\n' "${CREW_WAKE_FLOOR:-35}"
+}
 
 # _wake_pane <branch> — the one engine pane of the worker window rooted at the
 # branch's worktree (the _occupants keying). Role-grid panes carry a pane-level
@@ -470,18 +507,34 @@ _nudge_interrupt() {
   exit 3
 }
 
-# _wake_echoed <escaped-capture> — the submitted wake prompt shows as a
-# transcript line above the box.
-_wake_echoed() {
-  local plain geo line
+# _wake_echoes <escaped-capture> -> "<in_window> <total>": whether the submitted
+# wake prompt's transcript echo (`❯ <wake>`) lies in the last 6 non-empty lines
+# over the top rule (not counting spinner/meter lines and side rows — the live
+# submit paints `· Smooshing…` between the echo and the box), and how many
+# echoes the capture holds above the box. An echo from an earlier wake can sit
+# in that window, so only a new one (see _nudge) proves this Enter submitted.
+_wake_echoes() {
+  local plain geo line i n=0 win=0 total=0
+  local -a lines=()
   plain=$(_strip_csi "$1")
-  geo=$(_box_rules "$plain") || return 1
-  while IFS= read -r line; do
-    line=${line#"${line%%[![:space:]]*}"}
-    line=${line%"${line##*[![:space:]]}"}
-    [ "$line" = "❯ $WAKE_PROMPT" ] || [ "$line" = "❯"$'\xc2\xa0'"$WAKE_PROMPT" ] && return 0
-  done < <(printf '%s\n' "$plain" | sed -n "1,$((${geo% *} - 1))p")
-  return 1
+  if geo=$(_box_rules "$plain") && [ "${geo% *}" -gt 1 ]; then
+    while IFS= read -r line; do
+      line=${line#"${line%%[![:space:]]*}"}
+      line=${line%"${line##*[![:space:]]}"}
+      lines+=("$line")
+    done < <(printf '%s\n' "$plain" | sed -n "1,$((${geo% *} - 1))p")
+  fi
+  for ((i = ${#lines[@]} - 1; i >= 0; i--)); do
+    line=${lines[i]}
+    if [ "$line" = "❯ $WAKE_PROMPT" ] || [ "$line" = "❯"$'\xc2\xa0'"$WAKE_PROMPT" ]; then
+      total=$((total + 1))
+      [ "$n" -ge 6 ] || win=1
+    fi
+    [ -n "$line" ] && [ "$n" -lt 6 ] || continue
+    _wake_side_row "$line" || [[ "$line" =~ $re_spinner ]] || [[ "$line" =~ $re_wake_meter ]] ||
+      n=$((n + 1))
+  done
+  printf '%s %s\n' "$win" "$total"
 }
 
 # _nudge <worker-id> <crew> <since_ms> <timeout_s> <interval_s> — returns the
@@ -489,7 +542,8 @@ _wake_echoed() {
 # in a subshell, which also keeps an interrupt from killing the caller's own exit.
 _nudge() {
   local wid="$1" crew="$2" since="$3" timeout="$4" interval="$5"
-  local r sid br row engine pane ld held try deadline state text cls idle=0 seen="" want box brc pause end enters
+  local r sid br row engine pane ld held try="" deadline state text cls idle=0 seen="" want box brc pause end enters
+  local floor echoes now_echoes
   local retry hint5="do not retry; capture the pane and act by hand" hint4="capture the pane before anything else"
   case "$wid" in
   worker:?*) ;;
@@ -538,15 +592,27 @@ _nudge() {
     return 5
   fi
 
+  floor=$(_wake_floor) || return 1
+  pause=$interval
+  [ "$pause" != 0 ] || pause=0.2
+  deadline=$(($(date +%s) + timeout))
   mkdir -p "$dir/wake"
   ld="$dir/wake/$sid"
   if ! _lock_acquire "$ld" "$$"; then
     held=$(cat "$ld/pid" 2>/dev/null || true)
+    # Wait out a live holder rather than report success: it may deliver
+    # nothing, and a SIGKILLed holder's pid can be reused.
     if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
-      _nudge_say in-progress "another wake for $wid holds the lock" "$pane" ""
-      return 0
+      until _lock_acquire "$ld" "$$"; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+          _nudge_say "refused (transient)" lock "$pane" "$retry"
+          return 3
+        fi
+        sleep "$pause"
+      done
+      try=ok
     fi
-    for try in 1 2; do
+    [ "$try" = ok ] || for try in 1 2; do
       sleep 0.2
       if _lock_acquire "$ld" "$$"; then
         try=ok
@@ -562,7 +628,6 @@ _nudge() {
   trap _nudge_cleanup EXIT
   trap _nudge_interrupt INT TERM
 
-  deadline=$(($(date +%s) + timeout))
   while :; do
     # A watchdog `working "… cleared"` row is not the worker reading its inbox,
     # but any terminal row, the watchdog's `failed dead:` included, is a stop.
@@ -596,8 +661,7 @@ _nudge() {
       seen=1
       idle=$((idle + 1))
       if [ "$idle" -ge 2 ]; then
-        # 5s type-verify + 15s submit-verify + 15s for the one Enter retry.
-        [ $((deadline - $(date +%s))) -ge 35 ] && break
+        [ $((deadline - $(date +%s))) -ge "$floor" ] && break
         _nudge_say "refused (transient)" busy "$pane" "$retry"
         return 3
       fi
@@ -619,9 +683,8 @@ _nudge() {
     sleep "$interval"
   done
 
-  pause=$interval
-  [ "$pause" != 0 ] || pause=0.2
   want=${WAKE_PROMPT//[[:space:]]/}
+  echoes=$(_wake_echoes "$text")
   _nw_typed=1
   tmux send-keys -t "$pane" -l "$WAKE_PROMPT"
   end=$(($(date +%s) + 5))
@@ -650,7 +713,9 @@ _nudge() {
       text=$(tmux capture-pane -e -p -t "$pane" 2>/dev/null || true)
       brc=0
       box=$(_input_box "$text") || brc=$?
-      if [ "$brc" = 0 ] && [ -z "$box" ] && _wake_echoed "$text"; then
+      now_echoes=$(_wake_echoes "$text")
+      if [ "$brc" = 0 ] && [ -z "$box" ] && [ "${now_echoes% *}" = 1 ] &&
+        { [ "${echoes% *}" = 0 ] || [ "${now_echoes#* }" -gt "${echoes#* }" ]; }; then
         _nw_typed=""
         _nudge_say delivered "wake prompt submitted and verified" "$pane" ""
         return 0
@@ -1095,6 +1160,13 @@ reply)
       ;;
     esac
   done
+  if [ -n "$wake" ]; then
+    floor=$(_wake_floor) || exit 1
+    [ "$wake_timeout" -ge "$floor" ] || {
+      echo "crew: reply: --wake-timeout must be >= ${floor}s (the typing floor)" >&2
+      exit 1
+    }
+  fi
   mkdir -p "$dir"
   to=$(_resolve_worker "${args[0]:-}" "$crew") || exit 1
   _build_reply() {
@@ -1123,7 +1195,7 @@ reply)
 nudge)
   # nudge <worker:branch[#sid]> [--since TS] [--timeout S] [--interval S] — type
   # the wake prompt into a blocked claude worker's idle pane and verify it was
-  # submitted. Exit 0 delivered|consumed|in-progress, 1 usage/session, 3
+  # submitted. Exit 0 delivered|consumed, 1 usage/session, 3
   # transient refusal, 4 unverified, 5 permanent refusal; one stderr line.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
@@ -1159,6 +1231,11 @@ nudge)
       ;;
     esac
   done
+  floor=$(_wake_floor) || exit 1
+  [ "$timeout" -ge "$floor" ] || {
+    echo "crew: nudge: --timeout must be >= ${floor}s (the typing floor)" >&2
+    exit 1
+  }
   rc=0
   (_nudge "$target" "$crew" "$since" "$timeout" "$interval") || rc=$?
   exit "$rc"
