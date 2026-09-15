@@ -20,5 +20,8 @@ alwaysApply: true
   `$DISPATCHER_CRITICS_DIR` / `$DISPATCHER_REVIEWERS_DIR` (or `~/.cursor/critics`
   and `~/.cursor/reviewers`) hold the bodies. Emit a real
   `plan_critic_first_pass` verdict alongside `review_high` and `review_mode`.
+- The review gate resolves the roster with `reviewer-roster` (repo-local
+  `.dispatcher/reviewers` at base plus harness `aliases:`) and inlines each
+  `brief`.
 
 Run `crew` with no arguments for the full subcommand surface.

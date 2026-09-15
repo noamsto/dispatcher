@@ -155,9 +155,19 @@
             text = builtins.readFile ./adapters/core/refresh-models.sh;
           };
 
+          # yq-go is a runtime input, not just a devShell one: the resolver
+          # parses repo-local `.dispatcher/reviewers/*.md` frontmatter at run
+          # time and must not depend on whatever yq happens to be ambient on
+          # a caller's PATH.
+          reviewer-roster = pkgs.writeShellApplication {
+            name = "reviewer-roster";
+            runtimeInputs = with pkgs; [git jq yq-go coreutils gawk];
+            text = builtins.replaceStrings ["@reviewersDir@"] ["${./adapters/core/reviewers}"] (builtins.readFile ./adapters/core/reviewers/resolve-roster.sh);
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster];
           };
         };
 
