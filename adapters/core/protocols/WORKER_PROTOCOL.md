@@ -53,15 +53,20 @@ recurrence, and handoff rules apply to provided plans and resumed runs too.
 `WORKER_TASK.md` may stamp a `roles:` line. If it does, you are the **lead** of a
 role grid: those roles are already running as panes in your window, sharing this
 worktree, and parked on the crew bus under
-`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`). In
-grid mode you **do not** run the `spec-plan-critic` workflow or spawn the claude
-critic subagents — you delegate the critic/review phases your tier and
-plan-of-record call for to the role panes over the bus. **That is the point:**
-the pipeline stops depending on one engine's subagent feature, and the reviewers
-can be a different engine from you.
+`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`).
+**You delegate only the phases that have a role pane in your window** — a
+pane's presence is what tells you to skip the in-process path for that phase,
+not your tier alone. A `spec-critic` or `plan-critic` pane means: do not run
+the `spec-plan-critic` workflow or spawn the claude critic subagent for that
+phase — delegate it to the pane instead. **The code review gate is
+different: it always runs its engine-native roster batch** (see "Code review
+gate" below) for claude, codex, and cursor, regardless of grid mode — a
+`reviewer` pane on one of those engines (from an explicit `--roles`) is
+**additive**, a deliberate cross-engine second opinion, not a replacement for
+the native batch. For **pi**, which has no native batch mechanism at all, the
+`reviewer` pane **is** the review gate, same as before.
 
-For each critic/review phase your tier runs (the `spec-critic` / `plan-critic` /
-review gates above), the seam is:
+For each critic/review phase you have a pane for, the seam is:
 
 1. **Write the artifact** into the crew dir (from `WORKER_TASK.md`):
    `<crew_dir>/artifacts/<branch>/<seam>.md` — `<seam>` is `spec`, `plan`, or
@@ -215,7 +220,9 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
   | **claude** | Agent tool, one subagent per matched roster entry, its body as the brief; a native `*-reviewer` agent of the same name is preferred where the environment defines one (same persona, tighter tool scoping) | unchanged — each agent definition owns its model |
   | **codex** | native subagent (`agents.enabled`, cap 3) with the matched roster body written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt. Rule 1's `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort | the tier's **execute** rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |
   | **cursor** | Task-tool subagent with an explicit model slug, the same roster body inline | the tier's **execute** slug (deep → `cursor-grok-4.6-medium`, standard → `cursor-grok-4.6-low`) |
-  | **pi** | the task's reviewer role-grid pane, with the matched roster body included in the review artifact | the role model stamped by `dispatch` |
+  | **pi** | the task's reviewer role-grid pane, with the matched roster body included in the review artifact — pi has no native batch mechanism, so this pane **is** the review gate | the role model stamped by `dispatch` |
+
+  **Claude, codex, and cursor always run this native batch, even in grid mode** — a `reviewer` role pane on one of them (from an explicit `--roles`) is an additive cross-engine second opinion on top of it, never a substitute. Only pi, having no native batch mechanism, uses its `reviewer` pane as the review gate itself.
 
   - **Language reviewer** — the roster entries the changed files matched, one reviewer each, spawned per the table above, with the single risk promotion from `EVIDENCE_REVIEW.md` when triggered. **If the plan phase was skipped** (plan of record), instruct this reviewer to add an explicit **approach-sanity** check against the task doc — is this the _right_ fix, not merely a faithful one? — since no plan-critic vetted the approach.
   - **Targeted test-runner** — a subagent that runs the change's acceptance-criteria / behavior-specific tests and reports pass/fail; its result feeds the reconcile as deterministic evidence.

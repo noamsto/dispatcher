@@ -150,9 +150,12 @@ skills — so each command ships as a skill, invoked `$autopilot` or via `/skill
 both, but not every model in its routing table exposes them.
 ⁴ pi has no dispatcher adapter or native subagents. It runs the shared protocols
 directly; `--grid` supplies separate critic and reviewer processes where the tier
-requires fresh contexts — on pi that's `standard` and `deep` both, since it has
-no other way to get one. The other three engines pick up the same grid by
-default on `deep` only, with `--no-grid` available to opt back out.
+requires fresh contexts — on pi that's `standard` and `deep` both, since its
+`reviewer` pane doubles as its code-review gate, having no native batch of its
+own. The other three engines already run a native reviewer batch, so their
+`deep` default grid is critics-only (`spec-critic,plan-critic`, no
+`reviewer`) — a fresh out-of-process context for spec/plan review, not a
+substitute for the native code-review batch. `--no-grid` opts back out.
 
 **Every tier gate runs on every engine.** A worker's pipeline depth is set by
 its tier, not by which engine drew the task: `standard` and `deep` run the
@@ -290,10 +293,13 @@ dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effor
 
 The pi example above uses the work/OpenRouter ladder; personal hosts use
 `opencode/deepseek-v4-flash` instead. `--grid` there is redundant, not
-required: every `deep` dispatch grids by default on every engine (pi also
-grids on `standard`, unconditionally), with each role landing on the lead's
-own engine/model unless `--roles` says otherwise. Pass `--no-grid` to opt a
-non-pi `deep` dispatch back out; it's refused for pi standard/deep.
+required: pi grids on `standard` and `deep` unconditionally, with `reviewer`
+included both times since pi has no native review batch of its own. Every
+`deep` dispatch on the other three engines also grids by default, but
+critics-only (`spec-critic,plan-critic`) — their native code-review batch is
+unaffected. Either way each role lands on the lead's own engine/model unless
+`--roles` says otherwise. Pass `--no-grid` to opt a non-pi `deep` dispatch
+back out; it's refused for pi standard/deep.
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
 effort and crew back from `WORKER_TASK.md` and continues the engine's own

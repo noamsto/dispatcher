@@ -231,17 +231,28 @@ is back.
 - **Claim (GitHub-issue repos only).** Every issue here is already assigned to the repo owner, so assignee can't signal a claim — the `dispatched` label does instead. An existing-issue dispatch checks that label before touching anything: already there and the resolved branch doesn't exist, it aborts naming the issue (no branch/worktree/window); already there and the branch exists, it resumes that branch and re-adds the label; free, `dispatch` adds it before any scaffolding. A minted issue is stamped at creation. `crew reap` removes the label when it reclaims a worker whose PR merged or closed, resolving the issue from the PR's `closingIssuesReferences`; `crew adopt` on a dead-pid crew releases that crew's own recorded claims the same way. Linear-tracked dispatches are unaffected — Linear has its own status/assignee semantics.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out.
-- **Role grid.** `--grid` derives `plan-critic,reviewer` for standard and adds
-  `spec-critic` for deep. This is now the **default on `deep`, for every
-  engine** — not only pi's; pi additionally defaults on `standard` because its
-  required fresh contexts cannot exist in-process at all. With no `--roles`,
-  every role pane runs on the lead's own engine and model (never a second
-  engine the caller didn't ask for, and never refused for having only one
-  engine available). Use `--roles` to override the topology or choose a role
-  model/engine, for example `--roles reviewer=claude:opus`. Pass `--no-grid`
-  to opt a non-pi engine out of its default; it's refused for pi
-  standard/deep, and a usage error together with `--grid` or `--roles`. Role
-  panes share the worktree, communicate through the bus, and never own the PR.
+- **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
+  for standard and adds `spec-critic` for deep, on any engine. **The default**
+  (no `--grid`/`--roles`/`--no-grid` given) differs on `deep`: pi still
+  defaults to the full `spec-critic,plan-critic,reviewer` topology — its
+  `reviewer` pane *is* its review gate, having no native reviewer batch of its
+  own — but claude/codex/cursor default to **`spec-critic,plan-critic` only**.
+  Those three already run a full native reviewer-roster batch at the
+  code-review gate, so the default grid must not silently replace it with a
+  single pane; it exists to give the spec/plan critics a fresh out-of-process
+  context, the same reason pi's grid exists at all. A `--roles reviewer=...`
+  on a non-pi lead is additive — a deliberate cross-engine second opinion
+  alongside the native batch, never a substitute. Two cases get no default
+  grid: a `--review` worker (no spec/plan phase) and a non-pi `deep` dispatch
+  under `--plan provided` (no critic role left once planning is settled).
+  With no `--roles`, every role pane runs on the lead's own engine and model
+  (never a second engine the caller didn't ask for, and never refused for
+  having only one engine available). Use `--roles` to override the topology
+  or choose a role model/engine, for example `--roles reviewer=claude:opus`.
+  Pass `--no-grid` to opt a non-pi engine out of its default; it's refused
+  for pi standard/deep, and a usage error together with `--grid` or
+  `--roles`. Role panes share the worktree, communicate through the bus, and
+  never own the PR.
 - **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine; Pi's default ladder is **profile-keyed** — `openrouter/deepseek/...` on work, `opencode/...` on personal (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Codex and cursor are work-profile only; pi is all-profile via two routes (OpenRouter on work, opencode Zen on personal). Each needs one-time provider authentication against its active provider. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
 - **MCP.** Claude, codex, and cursor inherit the configured base MCP stack. Pi uses its own global configuration. Add `--mcp <profile>` to layer on an extra Claude-only profile: `analytics` (posthog, work only). Unknown/ungenerated profiles abort before launch; non-Claude `--mcp` is rejected.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.

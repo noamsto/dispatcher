@@ -821,20 +821,35 @@ if [ -n "$no_grid" ]; then
     exit 1
   fi
 fi
-# pi keeps its existing standard+deep default; every engine now also defaults
-# to the grid on deep. Roles inherit the lead's own agent/model below when
-# --roles doesn't say otherwise, so this never requires a second engine.
-if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
-  if { [ "$agent" = pi ] && [ "$tier" != trivial ]; } || [ "$tier" = deep ]; then
+# pi keeps its existing standard+deep default (critics AND its review-gate
+# reviewer, since pi has no native review batch). Every other engine now also
+# defaults to a grid on deep, but only for the critic phases — claude/codex/
+# cursor already run a full native review-gate batch, so the default carries
+# no reviewer role for them (see WORKER_PROTOCOL.md "Grid mode"). Roles
+# inherit the lead's own agent/model below when --roles doesn't say
+# otherwise, so this never requires a second engine. A review-kind worker has
+# no spec/plan phase, so it never gets a default grid; nor does a non-pi deep
+# dispatch whose plan is already provided, since that leaves no critic role
+# to default to.
+grid_default_non_pi=""
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ] && [ "$kind" != review ]; then
+  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
     grid_flag=1
+  elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
+    grid_flag=1
+    grid_default_non_pi=1
   fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
-  case "$tier" in
-  trivial) grid_roles="" ;;
-  standard) grid_roles="plan-critic,reviewer" ;;
-  deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
-  esac
+  if [ -n "$grid_default_non_pi" ]; then
+    grid_roles="spec-critic,plan-critic"
+  else
+    case "$tier" in
+    trivial) grid_roles="" ;;
+    standard) grid_roles="plan-critic,reviewer" ;;
+    deep) grid_roles="spec-critic,plan-critic,reviewer" ;;
+    esac
+  fi
 fi
 if [ -n "$grid_roles" ]; then
   IFS=',' read -r -a role_specs <<<"$grid_roles"
