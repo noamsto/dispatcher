@@ -105,6 +105,17 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
+# A substituted-build simulation for the protocol-rev guard (#184): flake.nix's
+# replaceStrings bakes the content hash into the built scripts as a literal.
+# A bats run of the raw script cannot carry one, so the guard tests run a
+# scratch copy with a marker baked the same way. The red tests prove the guard
+# refuses on the substituted path; the raw-script path skips with a warning.
+_substituted_dispatch() {
+  sed 's/@protocolRev@/0123456789abcdef/' "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-subst.sh"
+  export DISPATCH_SUBST="$BATS_TEST_TMPDIR/dispatch-subst.sh"
+  run_subst_dispatch() { bash -euo pipefail "$DISPATCH_SUBST" "$@"; }
+}
+
 # Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the
 # PR head, wt attaches a worktree to that existing branch (no -c), crew/tmux as
 # in stub_launch_bins. $1 is the PR's head branch. headRefOid is the branch's
@@ -593,6 +604,61 @@ EOF
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "refuses a protocol dir whose PROTOCOL_REV does not match the script marker" {
+  stub_launch_bins
+  _substituted_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  printf 'deadbeef00000000' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev mismatch"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
+  [[ "$output" == *"0123456789abcdef"* ]]
+  [[ "$output" == *"deadbeef00000000"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "refuses a stale protocol dir whose PROTOCOL_REV is missing" {
+  stub_launch_bins
+  _substituted_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale protocols"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"carries no PROTOCOL_REV"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "a matching PROTOCOL_REV dispatches normally" {
+  stub_launch_bins
+  _substituted_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  printf '0123456789abcdef' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev match"
+  [ "$status" -eq 0 ]
+  grep -q 'switch' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "a raw (unsubstituted) script skips the revision check with a one-line warning" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "checkout dev loop"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"unsubstituted protocol revision"* ]]
+  grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {
@@ -2889,6 +2955,20 @@ EOF
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not seed the pi worker agent dir"* ]]
+  run grep -c -- 'split-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "grid: --spawn-role refuses a stale protocol dir without PROTOCOL_REV" {
+  _spawn_role_fixture
+  _substituted_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md" "$DISPATCHER_PROTOCOL_DIR/GRID_PROTOCOL.md"
+  run run_subst_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"carries no PROTOCOL_REV"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }

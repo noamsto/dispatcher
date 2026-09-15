@@ -33,6 +33,29 @@ cus="$root/adapters/cursor/skills"
 cca="$root/adapters/claude-code/plugin/agents"
 ccs="$root/adapters/claude-code/plugin/skills"
 
+# The protocol revision marker (#184): a content hash of adapters/core/protocols
+# minus PROTOCOL_REV itself, byte-identical to flake.nix's protocolRev (sorted
+# `name:sha256;` entries, sha256 of the concatenation, first 16 hex chars).
+# Committed file so a checkout of the protocols dir is self-describing;
+# flake.nix recomputes the same value, so a protocol edit that forgets this
+# step is caught by module.bats and the CI drift gate. Written before the
+# cp -r loops below, so the plugin-tree copies ship it too.
+protocol_rev="$(
+  entries=""
+  while IFS= read -r line; do
+    entries+="$line"
+  done < <(
+    for f in "$protocols"/*; do
+      [ -f "$f" ] || continue
+      name="$(basename "$f")"
+      [ "$name" = PROTOCOL_REV ] && continue
+      printf '%s:%s;\n' "$name" "$(sha256sum "$f" | awk '{print $1}')"
+    done | LC_ALL=C sort
+  )
+  printf '%s' "$entries" | sha256sum | awk '{print $1}' | cut -c1-16
+)"
+printf '%s' "$protocol_rev" >"$protocols/PROTOCOL_REV"
+
 # Read a frontmatter description through a YAML parser and re-emit it through
 # one, rather than hand-rolling quote/backslash escaping. Descriptions
 # routinely contain ": " (invalid as a bare YAML scalar), and naive
