@@ -12,6 +12,12 @@
 # ^[a-z0-9-]+$ before its content is read, so only validated names reach the
 # framed brief header. A repo body is inlined as delimited untrusted content,
 # followed by the harness contract and the harness grading tail.
+#
+# Repo frontmatter never reaches a YAML parser (yq reads only the trusted
+# harness): _repo_fm accepts a line grammar with no anchors, aliases or nesting,
+# so it cannot be made to hang. Outside the framed body, the only repo text in
+# the output is a validated name, glob/shebang tokens from a fixed character
+# allowlist, and `when:` as a git hash, never its readable text.
 set -euo pipefail
 export LC_ALL=C
 
@@ -84,6 +90,51 @@ _fm_json() {
   yq -p yaml -o json '.' "$1" >"$2" 2>/dev/null && jq -e 'type == "object"' "$2" >/dev/null
 }
 
+# Repo frontmatter $1 for entry $2. On success sets fm_globs and fm_shebang
+# (compact JSON lists) and fm_when (the raw value); otherwise sets reason.
+# Grammar: blank and `#` lines skipped; every other line is `key: value` with
+# no indentation, each key at most once, keys only from the six below.
+_repo_fm() {
+  local line key value seen=" " name=""
+  local line_re='^(name|description|aliases|globs|shebang|when):( (.*))?$'
+  local name_re='^("[a-z0-9-]+"|[a-z0-9-]+)$'
+  fm_globs='[]' fm_shebang='[]' fm_when=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ $line =~ ^[[:space:]]*$ || $line == \#* ]] && continue
+    if ! [[ $line =~ $line_re ]] || [[ $seen == *" ${BASH_REMATCH[1]} "* ]]; then
+      reason="unparseable frontmatter"
+      return
+    fi
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[3]}
+    seen="$seen$key "
+    case $key in
+    name) name=$value ;;
+    globs) fm_globs=$value ;;
+    shebang) fm_shebang=$value ;;
+    when) fm_when=$value ;;
+    esac
+  done <"$1"
+  if ! [[ $name =~ $name_re ]] || [ "${name//\"/}" != "$2" ]; then
+    reason="name does not match basename"
+    return
+  fi
+  if ! fm_globs=$(_token_list "$fm_globs" '^[A-Za-z0-9._*?/+-]{1,128}$') ||
+    ! fm_shebang=$(_token_list "$fm_shebang" '^[A-Za-z0-9._+-]{1,32}$'); then
+    reason="invalid routing frontmatter"
+    return
+  fi
+  if [ "$fm_globs" = "[]" ] && [ "$fm_shebang" = "[]" ]; then
+    reason="no routing frontmatter"
+  fi
+}
+
+# JSON text $1 as a compact list of at most 32 strings matching regex $2.
+_token_list() {
+  jq -cne --arg v "$1" --arg re "$2" \
+    '$v | fromjson? | select(type == "array" and length <= 32 and all(.[]; type == "string" and test($re)))'
+}
+
 _reject() {
   jq -nc --arg path "$1" --arg reason "$2" '{path: $path, reason: $reason}' >>"$tmp/rejected.jsonl"
 }
@@ -110,7 +161,7 @@ jq -s -e 'any(.[]; .tail != "")' "$tmp/harness.jsonl" >/dev/null ||
   die 'harness has no reviewer carrying "## Findings and verdict"'
 
 _discover() {
-  local dir mode type rec meta path name oid entry reason
+  local dir mode type rec meta path name oid entry reason when_token fm_globs fm_shebang fm_when
   for dir in .dispatcher .dispatcher/reviewers; do
     mode=$(_mode "$dir")
     [ -n "$mode" ] || return 0
@@ -152,38 +203,27 @@ _discover() {
       _reject "$path" "no frontmatter"
       continue
     fi
-    # yq expands aliases without bound, so an alias bomb would hang it.
     if [ "$(wc -c <"$tmp/fm.yaml")" -gt 8192 ]; then
       _reject "$path" "frontmatter too large"
       continue
     fi
-    if grep -Eq '(^|[[:space:][{,:])[&*][A-Za-z0-9_-]' "$tmp/fm.yaml"; then
-      _reject "$path" "yaml anchors not allowed"
-      continue
-    fi
-    if ! _fm_json "$tmp/fm.yaml" "$tmp/fm.json"; then
-      _reject "$path" "unparseable frontmatter"
-      continue
-    fi
-    reason=$(jq -r --arg name "$name" '
-      def string_list($k): .[$k] == null or ((.[$k] | type) == "array" and all(.[$k][]; type == "string"));
-      if .name != $name then "name does not match basename"
-      elif (string_list("globs") and string_list("shebang") and (.when == null or (.when | type) == "string")) | not
-      then "invalid routing frontmatter"
-      elif ((.globs // []) | length > 0) or ((.shebang // []) | length > 0) | not
-      then "no routing frontmatter"
-      else empty end' "$tmp/fm.json")
+    reason=""
+    _repo_fm "$tmp/fm.yaml" "$name"
     if [ -n "$reason" ]; then
       _reject "$path" "$reason"
       continue
     fi
+    when_token=""
+    if [ -n "$fm_when" ] && [ "$fm_when" != '""' ]; then
+      when_token="<repo when, $(printf '%s' "$fm_when" | git -C "$repo" hash-object --stdin)>"
+    fi
 
     _body "$entry" >"$tmp/body"
-    jq -c --arg name "$name" --arg path "$path" --rawfile body "$tmp/body" \
+    jq -nc --arg name "$name" --arg path "$path" --rawfile body "$tmp/body" \
       --arg h "$(git -C "$repo" hash-object --stdin <"$tmp/body")" \
-      '{name: $name, path: $path, globs: (.globs // []), shebang: (.shebang // []),
-        when: (if (.when // "") == "" then null else .when end), body: $body, h: $h}' \
-      "$tmp/fm.json" >>"$tmp/repo.jsonl"
+      --argjson globs "$fm_globs" --argjson shebang "$fm_shebang" --arg when "$when_token" \
+      '{name: $name, path: $path, globs: $globs, shebang: $shebang,
+        when: (if $when == "" then null else $when end), body: $body, h: $h}' >>"$tmp/repo.jsonl"
   done <"$tmp/entries"
 }
 _discover
