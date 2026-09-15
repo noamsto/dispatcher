@@ -3049,11 +3049,9 @@ PANES
   bus_state=""
   bus_source=""
   bus_detail=""
-  # Step-aside (see INV-W0) lives here, not in each caller, so the main loop and
-  # every pre-append re-read (INV-W1) see it with no gap. Only a session whose
-  # epoch is not older than ours counts: a straggler post from the predecessor
-  # must not disarm the watchdog that now owns the pane. Bare rows and our own
-  # rows never count, and a bare-invoked watchdog has no session to yield.
+  # Step-aside (see INV-W0): only a session whose epoch is not older than ours
+  # counts, so a straggler post from the predecessor cannot disarm the watchdog
+  # that now owns the pane.
   _bus_refresh() {
     local rows l
     bus_ts=0
