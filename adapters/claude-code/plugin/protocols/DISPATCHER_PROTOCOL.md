@@ -522,9 +522,9 @@ Two reads remain for detail:
 
     | exit | meaning | action |
     | ---- | ------- | ------ |
-    | 0 | `delivered`\|`consumed` | none — the wake succeeded or wasn't needed |
-    | 1 | usage/no or terminal session (nothing touched), or a timeout below the 35s typing floor | nothing was written; fix the address or re-dispatch |
-    | 3 | transient: `busy`\|`unsent`\|`vimmode`\|`lock` (`lock`: another wake for this worker is still running) | capture the pane (`tmux capture-pane -e -p -t %N`), then retry `crew nudge worker:<branch>` |
+    | 0 | `delivered`\|`consumed` (`consumed` also covers "worker no longer blocked") | none — the wake succeeded or wasn't needed |
+    | 1 | usage/no or terminal session (nothing touched), or a `--timeout`/`--wake-timeout` below the typing floor (verify budget + poll interval + 1s: 38s for `crew reply`) | nothing was written; fix the address or re-dispatch |
+    | 3 | transient: `busy`\|`unsent`\|`vimmode`\|`lock` (`lock`: another wake for this worker is still running — reported when the lock wait consumed the typing budget, otherwise `busy`) | capture the pane (`tmux capture-pane -e -p -t %N`), then retry `crew nudge worker:<branch>` |
     | 4 | unverified (keys sent) | capture the pane before anything else |
     | 5 | permanent: `engine`\|`prompt`\|`quota`\|`unknown-frame`\|`no engine pane`\|`ambiguous panes`\|`worker stopped` | do not retry — for non-claude engines answer inside the worker's ~300s await window, for `quota` stop and don't answer, otherwise act by hand |
 
