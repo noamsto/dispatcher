@@ -517,11 +517,30 @@ Two reads remain for detail:
 
 - `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), the same event's `engine`/`model`/`tier`, a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
 - `crew inbox dispatcher:$CREW_ID` — worker **questions** in full (messages only; status lives in the roster).
-- A worker that's `blocked` has posted its question and is **awaiting your reply in-band** (a bounded ~300s wait). Answer promptly with `crew reply worker:<branch> "<answer>"` — it resumes in place, no tmux, no re-dispatch. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
+- A worker that's `blocked` has posted its question and is **awaiting your reply in-band**. Answer promptly with `crew reply worker:<branch> "<answer>"` — `crew reply` appends the reply, then waits (≤60s by default) and wakes it: `consumed` when the worker read it in-band from `crew await`, or a verified wake prompt when its turn has ended. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
+  - `crew reply`/`crew nudge` exit codes:
+
+    | exit | meaning | action |
+    | ---- | ------- | ------ |
+    | 0 | `delivered`\|`consumed`\|`in-progress` | none — the wake succeeded or wasn't needed |
+    | 1 | usage/no or terminal session (nothing touched) | nothing was written; fix the address or re-dispatch |
+    | 3 | transient: `busy`\|`unsent`\|`vimmode`\|`lock` | capture the pane (`tmux capture-pane -e -p -t %N`), then retry `crew nudge worker:<branch>` |
+    | 4 | unverified (keys sent) | capture the pane before anything else |
+    | 5 | permanent: `engine`\|`prompt`\|`quota`\|`unknown-frame`\|`no engine pane`\|`ambiguous panes`\|`worker stopped` | do not retry — for non-claude engines answer inside the worker's ~300s await window, for `quota` stop and don't answer, otherwise act by hand |
+
+    **Never re-send the reply** on any non-zero exit other than 1.
+  - **Manual pane injection (last resort):** only after `crew nudge` returned 5 or 4, and a human decision.
+    1. `tmux capture-pane -e -p -t %N` and confirm no meter/spinner and no non-dim text in the input box.
+    2. `tmux send-keys -t %N -l` the wake prompt (`crew wake: read your crew inbox and continue`) — never the directive, which stays on the bus.
+    3. Capture again and confirm the box holds exactly that text.
+    4. `tmux send-keys -t %N Enter`.
+    5. Capture again and confirm the box is empty and the transcript shows the prompt.
+
   **This applies only to a worker's own `blocked`.** A `blocked` carrying
-  `source: "watchdog"` has no question behind it and nobody in `crew await` — `crew reply`
-  there is a no-op that looks like an answer. Go to the pane instead (verify, then act,
-  above).
+  `source: "watchdog"` has no question behind it and nobody in `crew await` —
+  `crew reply` now also wakes such a worker when its pane is idle (except a
+  watchdog `quota:`-blocked one, which it refuses). If the wake refuses, go to
+  the pane instead (verify, then act, above).
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
 
 ## Roster diagram
