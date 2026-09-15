@@ -12,6 +12,23 @@ usage() {
   echo "usage: dispatch resume [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
 }
 
+# _require_protocol_files <dir> <file...> — abort before any scaffolding if
+# a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
+# can point at a stale checkout (#177); this stops the launch instead of
+# spawning an engine against a missing --append-system-prompt(-file) target.
+_require_protocol_files() {
+  local dir="$1" f missing_files=()
+  shift
+  for f in "$@"; do
+    [ -f "$dir/$f" ] || missing_files+=("$f")
+  done
+  [ "${#missing_files[@]}" -eq 0 ] && return 0
+  local override=""
+  [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && override=" (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)"
+  echo "dispatch resume: missing protocol file(s) in \$PROTOCOL_DIR ($dir)${override}: ${missing_files[*]} — refusing to launch" >&2
+  exit 1
+}
+
 fresh=""
 do_print=""
 ignore_budget=""
@@ -159,6 +176,9 @@ trivial | standard | deep) ;;
   exit 1
   ;;
 esac
+
+PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+_require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
 
 # mcp is claude-only, and this is the one gate the precheck below cannot make:
 # passing --mcp there would have dispatch resolve and validate the config file
@@ -315,7 +335,6 @@ tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_colo
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
 tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
 
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 kind="$(_hdr kind)"
 plan_val="$(_hdr plan)"
 
