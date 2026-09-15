@@ -33,7 +33,7 @@ Run these steps in order:
 
      | engine | critic mechanism | critic rung |
      | ------ | ---------------- | ----------- |
-     | **claude** | the named `spec-critic` / `plan-critic` agent | unchanged — each agent definition owns its model |
+     | **claude** | the plugin's `spec-critic` / `plan-critic` agent type, spawned unnamed and in the foreground (a `name:` makes it a background teammate, which cannot gate — see below) | unchanged — each agent definition owns its model |
      | **codex** | native subagent (`agents.enabled`, cap 3) with the roster body written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt | the tier's **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`); effort is whatever `dispatch` pinned, since codex has no per-spawn override |
      | **cursor** | Task-tool subagent with an explicit model slug, the same roster body inline | the tier's **escalate** slug (deep → `cursor-grok-4.6-high`, standard → `cursor-grok-4.6-medium`) |
 
@@ -51,7 +51,7 @@ Run these steps in order:
 
 Same as standard but run a spec phase first:
 
-1. Spec draft → `spec-critic` (same roster, spawn table and fresh-context rule as step 2 above) → up to 2 revisions
+1. Spec draft → `spec-critic` (same roster, spawn table, fresh-context rule, and synchronous-spawn rule as step 2 above) → up to 2 revisions
 2. Feed accepted spec into plan phase (same loop above)
 
 ## Rules

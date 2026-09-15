@@ -2361,9 +2361,13 @@ retro)
         # snapshot is a protocol violation (#179) the worker itself may not have
         # noticed — flag it here, from the bus alone, rather than trusting a
         # self-report. Excluded: trivial/review-kind runs (no plan phase to begin
-        # with), and both resume shapes (a `dispatch resume` row in the window, or
+        # with), both resume shapes (a `dispatch resume` row in the window, or
         # `resume:true` on the dispatch row itself) — "do not re-run the plan
-        # phase" on resume is correct behavior, not a skipped gate.
+        # phase" on resume is correct behavior, not a skipped gate — and runs
+        # that stopped before reaching the review gate (review_mode: "none":
+        # permission blocks, spec-critic failures, dispatcher stops during
+        # startup) — those legitimately carry a null plan_critic_first_pass
+        # because the run never got far enough to skip anything.
         | (if $d.plan == "required"
               and ($d.tier // null) != "trivial"
               and (($d.task_kind // "implement") != "review")
@@ -2371,6 +2375,7 @@ retro)
               and (($d.resume // false) != true)
               and $m != null
               and (($m.plan_critic_first_pass // null) == null)
+              and (($m.review_mode // "none") != "none")
            then [{seam: "plan", tag: "plan_required_unaudited",
                   detail: "plan: required but plan_critic_first_pass is null in the metrics snapshot"}]
            else [] end) as $flag

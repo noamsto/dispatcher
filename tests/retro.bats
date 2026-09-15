@@ -428,7 +428,7 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
 
 @test "plan_required_unaudited: plan required, standard tier, null verdict flags" {
   seed_dispatch_plan feat/planreq 1000 required standard
-  seed_msg 'worker:feat/planreq#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'
+  seed_msg 'worker:feat/planreq#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
   seed_status 'worker:feat/planreq#s1' 1300 done
 
   run run_crew retro
@@ -500,6 +500,41 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
   run run_crew retro
   [ "$status" -eq 0 ]
   [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: no metrics snapshot at all does not flag" {
+  seed_dispatch_plan feat/nometrics 1000 required standard
+  seed_status 'worker:feat/nometrics#s1' 1300 failed
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: a run that stopped before the review gate does not flag" {
+  seed_dispatch_plan feat/noreviewgate 1000 required standard
+  seed_msg 'worker:feat/noreviewgate#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"none"}'
+  seed_status 'worker:feat/noreviewgate#s1' 1300 blocked
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: an out-of-window resume does not suppress a later independent run" {
+  seed_dispatch_plan feat/indep 1000 required standard
+  seed_resume feat/indep 1100
+  seed_msg 'worker:feat/indep#s2' metrics:c1 1200 '{"plan_critic_first_pass":"accept"}'
+  seed_status 'worker:feat/indep#s2' 1300 done
+
+  seed_dispatch_plan feat/indep 5000 required standard
+  seed_msg 'worker:feat/indep#s3' metrics:c1 5200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
+  seed_status 'worker:feat/indep#s3' 5300 done
+
+  run run_crew retro --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '[.tags[].tag] | index("plan_required_unaudited") != null' <<<"$output"
+  [ "$status" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------

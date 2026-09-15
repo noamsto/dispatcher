@@ -1140,7 +1140,7 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
       '`plan: required` is binding.**' \
       'raise it on the bus (block→await, "Report to the bus") and let the dispatcher decide' \
       '## Gating verdicts are awaited (all engines)' \
-      'A **named background teammate**, a `run_in_background` spawn, or any mailbox/async delivery **must not gate** a stage' \
+      'A **named background teammate**, a backgrounded spawn (claude: `run_in_background`; cursor/codex: a detached shell or notification-on-completion call), or any mailbox/async delivery **must not gate** a stage' \
       'A late verdict invalidates the stage it gated.'; do
       run grep -F "$statement" "$ROOT/$doc"
       [ "$status" -eq 0 ]
@@ -1543,7 +1543,7 @@ $hits"
   for statement in \
     '**The critics themselves ship with the harness.**' \
     '$DISPATCHER_CRITICS_DIR/*.md' \
-    'the named `spec-critic` / `plan-critic` agent' \
+    "the plugin's \`spec-critic\` / \`plan-critic\` agent type" \
     'the roster body written into its prompt' \
     'the same roster body inline' \
     'the tier'"'"'s **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`)' \
