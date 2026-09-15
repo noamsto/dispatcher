@@ -2324,9 +2324,13 @@ retro)
             else ($cell + (" " * $p)) end
         ] | join("  ");
 
+    # Unlike every other tag here, "plan_required_unaudited" is not authored by
+    # a worker or the dispatcher — `crew retro` synthesizes it itself from the
+    # bus below. Do not add it to a WORKER_PROTOCOL.md/DISPATCHER_PROTOCOL.md
+    # retro-notes table; there is no writer to document.
     ["command_not_found", "gate_thrash", "approach_abandoned", "consult_failed",
-     "rung_blocked", "review_unavailable", "other", "misrouted", "fanout_binder",
-     "spec_too_thin", "session_summary"] as $vocab
+     "rung_blocked", "review_unavailable", "plan_required_unaudited", "other",
+     "misrouted", "fanout_binder", "spec_too_thin", "session_summary"] as $vocab
     | . as $all
     | ($all | map(select(.kind == "dispatch"))) as $disp
     # Dispatch-boundary windowing, as `crew rate` folds it: run i owns
@@ -2339,6 +2343,9 @@ retro)
         | $runs[$i] as $d
         | $d.ts as $t0
         | (if $i + 1 < $n then $runs[$i+1].ts else 9999999999999 end) as $t1
+        # A `dispatch resume` row has no `from` field, so it is invisible to
+        # $ev (which is filtered by `from`) — match it directly off $all instead.
+        | ($all | any(.kind == "resume" and .branch == $b and .ts >= $t0 and .ts < $t1)) as $resumed
         | ($all | map(select(
               .kind != "dispatch"
               and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
@@ -2348,7 +2355,25 @@ retro)
         # a resumed run supersede rather than duplicate (design §Mechanism).
         | ($ev | map(select(.kind == "msg" and ((.to // "") | startswith("metrics:"))))
                | sort_by(.ts) | (.[-1] // null)
-               | if . == null then [] else ((.body | body_obj) | .notes | note_list) end) as $snap
+               | if . == null then null else (.body | body_obj) end) as $m
+        | (if $m == null then [] else ($m.notes | note_list) end) as $snap
+        # `plan: required` with no plan-critic verdict recorded in the metrics
+        # snapshot is a protocol violation (#179) the worker itself may not have
+        # noticed — flag it here, from the bus alone, rather than trusting a
+        # self-report. Excluded: trivial/review-kind runs (no plan phase to begin
+        # with), and both resume shapes (a `dispatch resume` row in the window, or
+        # `resume:true` on the dispatch row itself) — "do not re-run the plan
+        # phase" on resume is correct behavior, not a skipped gate.
+        | (if $d.plan == "required"
+              and ($d.tier // null) != "trivial"
+              and (($d.task_kind // "implement") != "review")
+              and ($resumed | not)
+              and (($d.resume // false) != true)
+              and $m != null
+              and (($m.plan_critic_first_pass // null) == null)
+           then [{seam: "plan", tag: "plan_required_unaudited",
+                  detail: "plan: required but plan_critic_first_pass is null in the metrics snapshot"}]
+           else [] end) as $flag
         | ($ev | map(select(.kind == "msg"
                             and ((.to // "") | startswith("retro:"))
                             and ((.from // "") | startswith("worker:"))))
@@ -2363,7 +2388,7 @@ retro)
                       | if (type == "object" or type == "array") then null else . end
                       // "—"),
             t0: $t0, is_run: true,
-            notes: (($seam + $snap) | dedupe_notes) }
+            notes: (($seam + $snap + $flag) | dedupe_notes) }
       ] as $wrows
     # Dispatcher notes are crew-scoped, not run-scoped: their `from` matches no
     # branch, so no window can hold them.
