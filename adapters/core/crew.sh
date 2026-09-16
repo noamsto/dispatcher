@@ -3827,6 +3827,8 @@ SCAFFOLD
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
           git branch -D "$branch" >/dev/null 2>&1 || true
+        elif [ -z "$pr_head" ]; then
+          note "kept local branch $branch — could not verify the merged PR head"
         else
           note "kept local branch $branch — tip diverges from the merged PR head"
         fi
