@@ -3067,14 +3067,14 @@ EOF
 
 @test "stall-watch: D4 posts one blocked/load: once when 1m load exceeds cores for --load" {
   export CREW_STALL_LOAD_CMD='printf "99.9 32\n"'
-  export CREW_STALL_TOP_CMD='printf "dispatcher/feat-187 yes 99.0\n/tmp/x cc1 44.0\n"'
+  export CREW_STALL_TOP_CMD='printf "dispatcher/feat-187 yes 4242 99.0\n/tmp/x cc1 9999 44.0\n"'
   p=$(fx_idle_box)
   stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 8
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
-  [[ "${lines[0]}" == "blocked|load: 1m load 99.9 on 32 cores for "*" (top: dispatcher/feat-187 yes 99.0 | /tmp/x cc1 44.0)" ]]
+  [[ "${lines[0]}" == "blocked|load: 1m load 99.9 on 32 cores for "*" (top: dispatcher/feat-187 yes 4242 99.0 | /tmp/x cc1 9999 44.0)" ]]
 }
 
 @test "stall-watch: D4 stays silent when the load is at or below the core count" {

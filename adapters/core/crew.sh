@@ -3105,15 +3105,16 @@ PANES
     fi
   }
 
-  # _top_consumers — up to two preformatted "cwd-tail comm pcpu%" lines, read
-  # only at post time (never per tick). The sed collapses each cwd to its last
-  # two path segments so the comm discriminator survives the roster's 120-char
+  # _top_consumers — up to two preformatted "cwd-tail comm pid pcpu%" lines,
+  # read only at post time (never per tick). The sed collapses each cwd to its
+  # last two path segments so the comm discriminator AND the pid (the kill
+  # target the dispatcher's load: bullet names) survive the roster's 120-char
   # cut; a cwd of "/" or an unreadable cwd stays as ps reports it.
   _top_consumers() {
     if [ -n "${CREW_STALL_TOP_CMD:-}" ]; then
       eval "$CREW_STALL_TOP_CMD" 2>/dev/null || true
     else
-      ps -eo cwd=,comm=,pcpu= --sort=-pcpu 2>/dev/null \
+      ps -eo cwd=,comm=,pid=,pcpu= --sort=-pcpu 2>/dev/null \
         | sed -E 's#.*/([^/]+/[^/]+) #\1 #' | head -2 || true
     fi
   }

@@ -507,8 +507,8 @@ self-reported. Its `detail` always begins with one of seven reserved prefixes:
   shell waiting on `direnv allow`, and a dead process all arrive under this prefix.
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
-  count, and the top CPU consumers with their `cwd`s. **Attribute, then act** — never
-  kill the pane it names:
+  count, and the top CPU consumers with their `cwd`s, `comm`, and `pid`s.
+  **Attribute, then act** — never kill the pane it names:
   - top consumers are live worker worktrees running builds/lint → the machine-drag
     ceiling: stop dispatching, let the roster drain.
   - `comm` is a bare burner (`yes`/`stress`/`lookbusy`) whose `cwd` is a sibling's or a
