@@ -131,7 +131,9 @@ _protocol_dir_rev() { # <dir>
     names+=("$(basename "$file")")
   done
   shopt -u dotglob nullglob
-  mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
   for name in "${names[@]}"; do
     entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
   done

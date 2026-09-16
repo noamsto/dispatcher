@@ -157,7 +157,9 @@ setup_worker_wt() { # [extra header lines...]
       names+=("$(basename "$f")")
     done
     shopt -u dotglob nullglob
-    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
     entries=""
     for name in "${names[@]}"; do
       entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
@@ -189,7 +191,9 @@ setup_worker_wt() { # [extra header lines...]
       names+=("$(basename "$f")")
     done
     shopt -u dotglob nullglob
-    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
     entries=""
     for name in "${names[@]}"; do
       entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'

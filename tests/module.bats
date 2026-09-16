@@ -149,7 +149,9 @@ setup() {
       names+=("$(basename "$f")")
     done
     shopt -u dotglob nullglob
-    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
     entries=""
     for name in "${names[@]}"; do
       entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
@@ -169,9 +171,12 @@ setup() {
   # six-file tree: a naive line-sort or a non-dotglob glob silently diverges
   # the day a dotfile or a prefix-named pair lands in the protocol dir, making
   # the built-in default refuse every dispatch with an inexplicable hash
-  # mismatch. Pin that here with the two shapes that break naive rules:
-  # '.hidden' (glob '*/*' misses dotfiles) and 'X'/'X1' (line-sort puts X1
-  # first because '1' < ':'; attrNames puts X first).
+  # mismatch. Pin that here with the three shapes that break naive rules:
+  # '.hidden' (glob '*/*' misses dotfiles), 'X'/'X1' (line-sort puts X1 first
+  # because '1' < ':'; attrNames puts X first), and an EMPTY dir (a raw
+  # `printf '%s\n' "${names[@]}"` with zero elements emits a blank line, so an
+  # unsorted mapfile would inject an empty name — guards omitted, it hashes
+  # `sha256sum "$dir/"` and diverges from Nix's sha256("")).
   scratch="$BATS_TEST_TMPDIR/edge-protocols"
   mkdir -p "$scratch"
   printf 'a' >"$scratch/.hidden"
@@ -179,34 +184,40 @@ setup() {
   printf 'c' >"$scratch/X1"
   printf 'd' >"$scratch/GRID"
   printf 'e' >"$scratch/GRID_PROTOCOL.md"
+  empty="$BATS_TEST_TMPDIR/edge-protocols-empty"
+  mkdir -p "$empty"
 
-  rev_nix="$(nix eval --impure --raw --expr "
-    let
-      dir = builtins.toPath \"$scratch\";
-      files = builtins.attrNames (builtins.readDir dir);
-    in builtins.substring 0 16 (builtins.hashString \"sha256\"
-      (builtins.concatStringsSep \"\" (map
-        (n: \"\${n}:\${builtins.hashFile \"sha256\" (dir + \"/\${n}\")};\")
-        files)))")"
-  [ -n "$rev_nix" ]
+  for d in "$scratch" "$empty"; do
+    rev_nix="$(nix eval --impure --raw --expr "
+      let
+        dir = builtins.toPath \"$d\";
+        files = builtins.attrNames (builtins.readDir dir);
+      in builtins.substring 0 16 (builtins.hashString \"sha256\"
+        (builtins.concatStringsSep \"\" (map
+          (n: \"\${n}:\${builtins.hashFile \"sha256\" (dir + \"/\${n}\")};\")
+          files)))")"
+    [ -n "$rev_nix" ]
 
-  rev_bash="$(
-    names=()
-    shopt -s dotglob nullglob
-    for f in "$scratch"/*; do
-      [ -f "$f" ] || continue
-      names+=("$(basename "$f")")
-    done
-    shopt -u dotglob nullglob
-    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
-    entries=""
-    for name in "${names[@]}"; do
-      entries+="${name}:$(sha256sum "$scratch/$name" | cut -d' ' -f1);"$'\n'
-    done
-    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
-  )"
-  [ -n "$rev_bash" ]
-  [ "$rev_nix" = "$rev_bash" ]
+    rev_bash="$(
+      names=()
+      shopt -s dotglob nullglob
+      for f in "$d"/*; do
+        [ -f "$f" ] || continue
+        names+=("$(basename "$f")")
+      done
+      shopt -u dotglob nullglob
+      if [ ${#names[@]} -gt 0 ]; then
+        mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+      fi
+      entries=""
+      for name in "${names[@]}"; do
+        entries+="${name}:$(sha256sum "$d/$name" | cut -d' ' -f1);"$'\n'
+      done
+      printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+    )"
+    [ -n "$rev_bash" ]
+    [ "$rev_nix" = "$rev_bash" ]
+  done
 }
 
 @test "crew does not retain the protocols as a runtime closure reference" {

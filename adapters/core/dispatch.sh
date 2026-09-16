@@ -85,7 +85,9 @@ _check_protocol_rev() {
     names+=("$(basename "$file")")
   done
   shopt -u dotglob nullglob
-  mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  if [ ${#names[@]} -gt 0 ]; then
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  fi
   for name in "${names[@]}"; do
     sig="$(sha256sum "$dir/$name" | cut -d' ' -f1)"
     entries+="${name}:${sig};"$'\n'
