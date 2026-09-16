@@ -280,9 +280,11 @@ For Claude Code, pass the plugin directory to `claude`:
   [`wt`](https://worktrunk.dev) resolve from the ambient `PATH`; log each in out
   of band. Pi uses the selected provider's credentials, such as
   `OPENROUTER_API_KEY` for the default DeepSeek ladder. pi workers run with a
-  dispatcher-owned `PI_CODING_AGENT_DIR` (`~/.pi/dispatcher-worker`) that reads
-  `api_key` credentials through from `~/.pi/agent/auth.json` without copying
-  them. OAuth-only providers need the provider's env var instead.
+  dispatcher-owned `PI_CODING_AGENT_DIR` (`~/.pi/dispatcher-worker`) whose
+  `auth.json` is a symlink to `~/.pi/agent/auth.json`, so `/login` credentials —
+  OAuth included — reach workers unchanged, and a token refresh writes back to
+  the one real file. The model catalog is copied rather than linked: workers
+  share the dir and pi rewrites it on refresh.
 
 </details>
 
