@@ -2911,12 +2911,12 @@ hold)
   ;;
 stall-watch)
   # stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S]
-  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S]
+  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S]
   #
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
   # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Five detectors read one pane capture per tick:
+  # working (#31). Six detectors read one pane capture per tick:
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
@@ -2925,6 +2925,8 @@ stall-watch)
   #                  option-select prompt, 2 samples (see _is_quota_session_limit)
   #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
   #   D3 quiet:      byte-identical pane for --idle
+  #   D4 load:       host 1m load above the core count for --load seconds —
+  #                  engine-independent, and it never escalates
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
@@ -2940,7 +2942,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S]" >&2
+    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -2980,6 +2982,8 @@ stall-watch)
   idle=1800
   dead=1800
   max_life=43200
+  load_win=300
+  host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
     --pane)
@@ -3016,6 +3020,10 @@ stall-watch)
       ;;
     --max-life)
       max_life="${2:-}"
+      shift 2
+      ;;
+    --load)
+      load_win="${2:-}"
       shift 2
       ;;
     *)
@@ -3084,6 +3092,30 @@ $panes
 PANES
     fi
     [ -n "$cmd" ] && _is_engine_cmd "$cmd"
+  }
+
+  # _load_read — emit ONE line "load1 nproc" (the D4 parse contract). The
+  # override supplies both numbers; the default computes host_cores once (B1)
+  # and reads the 1-minute average from /proc/loadavg.
+  _load_read() {
+    if [ -n "${CREW_STALL_LOAD_CMD:-}" ]; then
+      eval "$CREW_STALL_LOAD_CMD" 2>/dev/null || true
+    else
+      awk -v n="$host_cores" '{print $1, n}' /proc/loadavg 2>/dev/null || true
+    fi
+  }
+
+  # _top_consumers — up to two preformatted "cwd-tail comm pcpu%" lines, read
+  # only at post time (never per tick). The sed collapses each cwd to its last
+  # two path segments so the comm discriminator survives the roster's 120-char
+  # cut; a cwd of "/" or an unreadable cwd stays as ps reports it.
+  _top_consumers() {
+    if [ -n "${CREW_STALL_TOP_CMD:-}" ]; then
+      eval "$CREW_STALL_TOP_CMD" 2>/dev/null || true
+    else
+      ps -eo cwd=,comm=,pcpu= --sort=-pcpu 2>/dev/null \
+        | sed -E 's#.*/([^/]+/[^/]+) #\1 #' | head -2 || true
+    fi
   }
 
   # C-3 — every bus read is scoped to THIS run. events.jsonl is append-only per
@@ -3263,6 +3295,8 @@ BUSLINE
   d1b_hits=0
   d1b_at=0
   d3_at=0
+  d4_at=0
+  d4_since=0
   _bus_refresh
   while :; do
     now=$(date +%s)
@@ -3302,6 +3336,38 @@ BUSLINE
       suppressed=1
     fi
     quiet_for=$((now - last_change))
+
+    # ---- D4: host load --------------------------------------------------
+    # Engine-independent: reads the HOST, not the pane, so claude/codex/cursor/pi
+    # all get it. --load seconds of load1 above the core count posts one load:
+    # blocked episode; it clears when load drops back to/under the cores. Never
+    # escalates (arms d4_at, never d2_at/d3_at). A malformed read stays silent
+    # that tick rather than failing the whole watchdog.
+    if [ "$suppressed" = 0 ]; then
+      loadline=$(_load_read)
+      if [[ "$loadline" =~ ^[0-9]+([.][0-9]+)?[[:space:]]+[0-9]+$ ]]; then
+        read -r l1 cores <<<"$loadline"
+        if awk -v l="$l1" -v c="$cores" 'BEGIN{exit !(l > c)}'; then
+          [ "$d4_since" = 0 ] && d4_since="$now"
+          if [ "$d4_at" = 0 ] && [ $((now - d4_since)) -ge "$load_win" ]; then
+            detail2="load: 1m load $l1 on $cores cores for $((now - d4_since))s"
+            top=$(_top_consumers)
+            if [ -n "$top" ]; then
+              detail2="$detail2 (top: $(printf '%s\n' "$top" | sed -n '1,2p' | awk 'NR>1{printf " | "}{printf "%s",$0}'))"
+            fi
+            if _post_blocked "load:" "$detail2"; then
+              d4_at="$now"
+            fi
+          fi
+        else
+          if [ "$d4_at" != 0 ]; then
+            _post_clear "load:"
+          fi
+          d4_at=0
+          d4_since=0
+        fi
+      fi
+    fi
 
     # ---- D1: interactive prompt --------------------------------------------
     # Presence, not transition: the workspace-trust frame is on screen from the
@@ -3572,6 +3638,26 @@ reap)
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
 
+  # _reap_procs — emit "pid<TAB>cwd" lines for every enumerable process (the
+  # caller filters by cwd prefix and ancestor). Linux /proc only, which is fine:
+  # the whole harness is tmux + systemd + /proc already. CREW_REAP_PROC_CMD
+  # overrides the enumeration for tests that must not touch the real /proc.
+  _reap_procs() {
+    local pid cwd c
+    if [ -n "${CREW_REAP_PROC_CMD:-}" ]; then
+      eval "$CREW_REAP_PROC_CMD" 2>/dev/null || true
+      return 0
+    fi
+    for c in /proc/[0-9]*/cwd; do
+      [ -e "$c" ] || continue
+      pid=${c%/cwd}
+      pid=${pid#/proc/}
+      cwd=$(readlink "$c" 2>/dev/null || true)
+      [ -n "$cwd" ] || continue
+      printf '%s\t%s\n' "$pid" "$cwd"
+    done
+  }
+
   # CREW_RATE_AUTOSWEEP: unset/1 (default) = detached async sweep; sync =
   # foreground, for an operator watching a sweep or diagnosing a skipped one;
   # 0 = no sweep at all, which exists for test isolation and is NOT a
@@ -3805,6 +3891,37 @@ PANES
       continue
     fi
 
+    # Kill leftover processes reparented out of the pane but still rooted in this
+    # worktree (the #187 class: `yes` hogs reparented to systemd). Skip our own
+    # process and its ancestors; a dangling cwd (dir already gone) still matches
+    # by string. Runs BEFORE the --dry-run continue so dry runs report it too.
+    ancestors="$$ $BASHPID"
+    p="$BASHPID"
+    while [ "$p" -gt 1 ]; do
+      pp=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null || true)
+      [ -n "$pp" ] || break
+      ancestors="$ancestors $pp"
+      p="$pp"
+    done
+    while IFS=$'\t' read -r rpid rcwd; do
+      [ -n "$rpid" ] || continue
+      case " $ancestors " in
+      *" $rpid "*) continue ;;
+      esac
+      case "$rcwd/" in
+      "$wtpath"/*) ;;
+      *) continue ;;
+      esac
+      if [ -n "$dry" ]; then
+        say "would kill pid $rpid (cwd $rcwd)"
+        continue
+      fi
+      kill "$rpid" 2>/dev/null || true
+      say "killed pid $rpid (cwd $rcwd)"
+    done <<PROCS
+$(_reap_procs)
+PROCS
+
     if [ -n "$dry" ]; then
       say "would reap $branch ($pr_state) @ $wtpath"
       continue
@@ -3890,7 +4007,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

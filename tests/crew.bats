@@ -1384,6 +1384,55 @@ EOF
   [[ "$output" == *"would reap feat/reap-me"* ]]
 }
 
+@test "reap: dry-run reports leftover processes whose cwd is in the worktree" {
+  git commit --allow-empty -q -m init
+  git branch feat/reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-proc-wt"
+  git worktree add -q "$wt_path" feat/reap-me
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  export CREW_REAP_PROC_CMD="printf '4242\t$wt_path/subdir\n9999\t/elsewhere\n'"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [[ "$output" == *"would kill pid 4242"* ]]
+  [[ "$output" != *"would kill pid 9999"* ]]
+}
+
+@test "reap: a real run kills (best-effort) leftover worktree processes" {
+  # kill is best-effort: the fake pid below does not exist, so `kill 4242 || true`
+  # succeeds via the || true and the say still fires. The assertion is the wiring:
+  # the step runs before wt remove and names the right pid, never the /elsewhere one.
+  git commit --allow-empty -q -m init
+  git branch feat/reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-proc-real-wt"
+  git worktree add -q "$wt_path" feat/reap-me
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  export CREW_REAP_PROC_CMD="printf '4242\t$wt_path/subdir\n9999\t/elsewhere\n'"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [[ "$output" == *"killed pid 4242"* ]]
+  [[ "$output" != *"killed pid 9999"* ]]
+}
+
 @test "reap: keeps a worktree whose pane runs the wrapped engine" {
   git commit --allow-empty -q -m init
   git branch feat/reap-live
@@ -2168,6 +2217,30 @@ cat "$f"
 EOS
   chmod +x "$SAMPLER_DIR/sample"
   export CREW_STALL_SAMPLE_CMD="$SAMPLER_DIR/sample"
+}
+
+# stall_load_sampler <"load1 cores"-line>... — install a CREW_STALL_LOAD_CMD that
+# emits the given lines one per call and repeats the last one forever. Used by
+# the D4 host-load tests so no real load is ever generated (the host is shared with
+# live sibling workers).
+stall_load_sampler() {
+  LOAD_DIR="$BATS_TEST_TMPDIR/load.$$"
+  mkdir -p "$LOAD_DIR"
+  printf '%s\n' "$@" >"$LOAD_DIR/frames"
+  printf '0' >"$LOAD_DIR/n"
+  cat >"$LOAD_DIR/load" <<'EOS'
+#!/usr/bin/env bash
+d="$(dirname "$0")"
+n=$(cat "$d/n")
+n=$((n + 1))
+printf '%s' "$n" >"$d/n"
+total=$(wc -l <"$d/frames")
+i="$n"
+[ "$i" -gt "$total" ] && i="$total"
+sed -n "${i}p" "$d/frames"
+EOS
+  chmod +x "$LOAD_DIR/load"
+  export CREW_STALL_LOAD_CMD="$LOAD_DIR/load"
 }
 
 # frame_file <name> — read a frame from stdin, write it, echo its path.
@@ -2990,6 +3063,105 @@ EOF
   [[ "${lines[0]}" == blocked\|quiet:* ]]
   run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
   [ "$output" = "0" ]
+}
+
+@test "stall-watch: D4 posts one blocked/load: once when 1m load exceeds cores for --load" {
+  export CREW_STALL_LOAD_CMD='printf "99.9 32\n"'
+  export CREW_STALL_TOP_CMD='printf "dispatcher/feat-187 yes 99.0\n/tmp/x cc1 44.0\n"'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|load: 1m load 99.9 on 32 cores for "*" (top: dispatcher/feat-187 yes 99.0 | /tmp/x cc1 44.0)" ]]
+}
+
+@test "stall-watch: D4 stays silent when the load is at or below the core count" {
+  export CREW_STALL_LOAD_CMD='printf "1.0 32\n"'
+  export CREW_STALL_TOP_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 5
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D4 ignores a transient burst shorter than --load" {
+  stall_load_sampler "99.9 32" "1.0 32"
+  export CREW_STALL_TOP_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 5 --max-life 6
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D4 clears itself when the load drops back to the cores" {
+  stall_load_sampler "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "1.0 32"
+  export CREW_STALL_TOP_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 12
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == blocked\|load:* ]]
+  [[ "${lines[1]}" == "working|load: cleared" ]]
+}
+
+@test "stall-watch: D4 load: is supersedable by quiet: and does not re-post stale" {
+  # load: and quiet: are mutually non-sticky: a static pane lets quiet: overwrite
+  # the load: detail; when load then drops, _post_clear "load:" no-ops on the
+  # wrong prefix but d4_at still resets, so a later single high sample does NOT
+  # re-post until the sustained --load window elapses again.
+  stall_load_sampler "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "99.9 32" "1.0 32" "99.9 32" "1.0 32"
+  export CREW_STALL_TOP_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --load 2 --max-life 14
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == blocked\|load:* ]]
+  [[ "${lines[1]}" == blocked\|quiet:* ]]
+  run bash -c "bus | grep -c 'load: cleared' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D4 stays silent on a malformed load read" {
+  export CREW_STALL_LOAD_CMD='printf "garbage\n"'
+  export CREW_STALL_TOP_CMD='printf ""'
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 4
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D4 runs engine-independent (codex and no --engine)" {
+  for eng in codex ""; do
+    rm -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+    export CREW_STALL_LOAD_CMD='printf "99.9 32\n"'
+    export CREW_STALL_TOP_CMD='printf ""'
+    p=$(fx_idle_box)
+    stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
+    if [ -n "$eng" ]; then
+      CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine "$eng" \
+        --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 8
+    else
+      CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 \
+        --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --load 2 --max-life 8
+    fi
+    run bash -c "bus | grep -c 'blocked' || true"
+    [ "$output" = "1" ]
+    run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+    [[ "$output" == load:* ]]
+  done
 }
 
 @test "roster: carries source and truncates detail to 120 chars" {

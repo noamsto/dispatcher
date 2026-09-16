@@ -283,7 +283,7 @@ is back.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.
 
 - **Hand out disjoint work.** Assignment beats locking — never give two workers overlapping files/scope.
-- **Cap fan-out by tier weight, then let reality move the cap.** Each worker's real load is multiplicative — it spawns execution subagents _and_ a reviewer — so a `deep` worker is far heavier than a `trivial` one. A deep worker now runs its critic and reviewer as panes on every engine; the existing deep weight already assumes a reviewer, so it is unchanged. Weight them **`trivial`=1, `standard`=2, `deep`=3** and treat **8 as a _starting_ budget, not a wall**: sum the live roster's weights and keep dispatching up to it (≈2 deep, 4 standard, or 8 trivial), but don't open cold with 3 deep workers at once. The budget is soft — the real cap is the first concrete binder you hit: an API 429/overload, the machine dragging under builds and **lint passes**, or blocked-worker questions piling up faster than you can answer. When you hit one, _that's_ your ceiling — hold there and let the roster drain before adding more. (The old fixed ≤4 was an unmeasured guess; this lets a real run set the limit.) **Lint is the burstiest of those binders** — a whole-repo linter (`golangci-lint`, `treefmt`, `nix flake check`) saturates every core on its own, and workers converge on it together at the fast-gate seam. CPU is _shared_, so unlike a 429 one worker's burst stalls every sibling and your own tool calls with it: read machine drag as a fleet-wide ceiling, not one worker's problem, even when the roster weight is still under budget.
+- **Cap fan-out by tier weight, then let reality move the cap.** Each worker's real load is multiplicative — it spawns execution subagents _and_ a reviewer — so a `deep` worker is far heavier than a `trivial` one. A deep worker now runs its critic and reviewer as panes on every engine; the existing deep weight already assumes a reviewer, so it is unchanged. Weight them **`trivial`=1, `standard`=2, `deep`=3** and treat **8 as a _starting_ budget, not a wall**: sum the live roster's weights and keep dispatching up to it (≈2 deep, 4 standard, or 8 trivial), but don't open cold with 3 deep workers at once. The budget is soft — the real cap is the first concrete binder you hit: an API 429/overload, the machine dragging under builds and **lint passes**, or blocked-worker questions piling up faster than you can answer. When you hit one, _that's_ your ceiling — hold there and let the roster drain before adding more. (The old fixed ≤4 was an unmeasured guess; this lets a real run set the limit.) **Lint is the burstiest of those binders** — a whole-repo linter (`golangci-lint`, `treefmt`, `nix flake check`) saturates every core on its own, and workers converge on it together at the fast-gate seam. CPU is _shared_, so unlike a 429 one worker's burst stalls every sibling and your own tool calls with it: read machine drag as a fleet-wide ceiling, not one worker's problem, even when the roster weight is still under budget. A `load:` watchdog detail (below) is the bus's own measurement of exactly that binder: when one arrives, treat it as the concrete ceiling the budget above holds back for.
 
 ## Read the bus (not `gh`/`tmux` scraping)
 
@@ -476,7 +476,7 @@ fan-out budget, so the same wakeup tells you when to dispatch the next queued ta
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of six reserved prefixes:
+self-reported. Its `detail` always begins with one of seven reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
@@ -505,6 +505,20 @@ self-reported. Its `detail` always begins with one of six reserved prefixes:
 - `stalled:` — a static pane inside the startup window whose frame the watchdog could
   **not** classify. Deliberately its weakest claim: an unrecognised prompt family, a
   shell waiting on `direnv allow`, and a dead process all arrive under this prefix.
+- `load:` — the host's 1-minute load has stayed above the core count for the
+  watchdog's `--load` window (default 5 min). The detail carries the load, the core
+  count, and the top CPU consumers with their `cwd`s. **Attribute, then act** — never
+  kill the pane it names:
+  - top consumers are live worker worktrees running builds/lint → the machine-drag
+    ceiling: stop dispatching, let the roster drain.
+  - `comm` is a bare burner (`yes`/`stress`/`lookbusy`) whose `cwd` is a sibling's or a
+    reaped worktree → orphaned hogs: kill those pids, then check whether the owning
+    worker is still alive.
+  - a bare burner with an empty or `/` `cwd` (unreadable/deleted) → treat as orphaned
+    hogs too.
+  `load:` is always `blocked`, never `failed`, and never escalates. Per-worker `load:`
+  events are expected to arrive in a burst — coalescing duplicates is your job (handle
+  the batch in one turn), not a reason to treat any single one as a false positive.
 - `dead:` — a `turn-stall:`/`quiet:` episode whose evidence still held a further 30 min.
   For `quiet:` this now additionally requires the engine process to be gone, not just
   the static frame; `turn-stall:`'s escalation is unchanged. This is the **only**
@@ -516,7 +530,9 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 **verify, then act**:
 
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
-   `detail` exists to make this one command possible.
+   `detail` exists to make this one command possible. A `load:` detail names process
+   `cwd`s, not a pane — skip the capture and go to the `load:` bullet's
+   attribute-then-act branch.
 2. The pane confirms a prompt → answer it in place (except `quota:` — see above: stop,
    don't answer).
 3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.

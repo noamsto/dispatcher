@@ -381,7 +381,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   so it does not protect a subagent batch — the watchdog's own conjuncts do.
 - **A watchdog may post on your behalf.** `dispatch` spawns `crew stall-watch` per
   worker; it samples your pane and can append `blocked` with `body.source:"watchdog"`
-  and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`), or
+  and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`, `load:`), or
   `failed` with a `dead:` prefix when the same evidence still holds 30 minutes later. It
   posts under your session id, never posts a `msg`, and never answers a prompt for you.
   If you find a watchdog `blocked` in your own history, you are by definition alive:
@@ -422,6 +422,15 @@ Immediately before every stopping path, emit one complete latest-state metrics s
    **This binds every subagent you spawn — put the rule in their prompts.** A read-only reviewer grounding itself in the repo will otherwise `grep .env` as a matter of course, and that is a real incident, not a hypothetical: it is one of the two that produced this rule (the other was the malformed expansion above). Read-only does not mean leak-free — the leak is the *output*, not a write.
    **If a value does surface:** stop, post a `blocked` status disclosing it, and recommend rotating that credential. Do **not** repeat the value in any message, file, commit, or PR, and do **not** try to scrub your transcript — rotation is the remediation, and re-reading the file to clean it risks a second exposure.
    As with `/deslop` in rule 4, a Claude Code `PreToolUse` guard enforces most of this for Claude tool calls — and, exactly as there, **it never fires for a codex or cursor process**. On those engines this rule *is* the enforcement.
+8. **Clean up every background process you start.** Any load generator, server, watcher, or background shell a worker launches is its property for the whole run. Register cleanup up front — `trap '<reap the pids>' EXIT INT TERM` — so every exit path (`done`, `failed`, a kill, a timeout, an early exit) stops them; make the cleanup time-bounded; and confirm they are gone (`pgrep -f <pattern>` returns nothing) before advancing to the next stage. Load generators (`yes`, `stress`, `lookbusy`, `md5sum </dev/urandom`, …) are not exempt, ever — a harness that exits must not leave its hogs reparented to the init system.
+
+### Deliberate load (timing repros)
+
+Reproducing a timing flake that needs CPU contention is allowed, but it is a crew-wide event on a shared host. Before starting a load generator:
+
+1. **Cap it** — run it inside `systemd-run --user --scope -p CPUQuota=<N>%` (N ≤ 50) rather than a bare `yes > /dev/null` per core. The cap, not a lock, is the protection: even one uncapped loop throttles every sibling's gates.
+2. **Announce it** — `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id> "<starting a CPU-capped load test …>"`, and a matching `…ended` message when it finishes.
+3. **Register it** under Rule 8's trap so it dies on every exit path.
 
 ## When done
 
