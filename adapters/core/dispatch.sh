@@ -670,9 +670,7 @@ else
     ;;
   pi)
     if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      pi_shape_example="openrouter/deepseek/deepseek-v4-pro"
-      [ "$profile" = personal ] && pi_shape_example="opencode/deepseek-v4-pro"
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. $pi_shape_example). See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -774,26 +772,14 @@ if [ -z "$ignore_map" ]; then
     deep)
       tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
-      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
-        tier_expected="$tier_expected, or opencode/deepseek-v4-pro or opencode/deepseek-v4-flash"
-        [[ $model =~ ^opencode/deepseek-v4-(pro|flash)$ ]] && tier_ok=1
-      fi
       ;;
     standard)
       tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
-      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
-        tier_expected="$tier_expected, or opencode/deepseek-v4-flash"
-        [[ $model =~ ^opencode/deepseek-v4-flash$ ]] && tier_ok=1
-      fi
       ;;
     trivial)
       tier_expected="openrouter/deepseek/deepseek-v4-flash"
       [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
-      if [ "$profile" = personal ] && [ "$tier_ok" = 0 ]; then
-        tier_expected="$tier_expected, or opencode/deepseek-v4-flash"
-        [[ $model =~ ^opencode/deepseek-v4-flash$ ]] && tier_ok=1
-      fi
       ;;
     *) tier_ok=0 ;;
     esac

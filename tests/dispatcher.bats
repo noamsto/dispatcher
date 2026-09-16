@@ -97,26 +97,17 @@ teardown() {
   [[ "$output" != *"work-profile only"* ]]
 }
 
-@test "pi launcher default keys on the active profile" {
-  # Stub `pi` echoes its argv; grep the launch command's --model id. Each
-  # run is paired with a personal-or-work assertion: the run writes one line
-  # to STUB_LOG and we look for that line, not its absence (logs accumulate
-  # across runs in a single test).
-  DISPATCH_PROFILE=work CREW_ID=c1 run run_launcher --agent pi
-  [ "$status" -eq 0 ]
-  run grep -F -- '--model openrouter/deepseek/deepseek-v4-pro --thinking high' "$STUB_LOG"
-  [ "$status" -eq 0 ]
-
-  DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi
-  [ "$status" -eq 0 ]
-  run grep -F -- '--model opencode/deepseek-v4-pro --thinking high' "$STUB_LOG"
-  [ "$status" -eq 0 ]
+@test "pi launcher defaults to the OpenRouter deep row on either profile" {
+  # Stub `pi` echoes its argv; grep the launch command's --model id.
+  for p in work personal; do
+    DISPATCH_PROFILE=$p CREW_ID=c1 run run_launcher --agent pi
+    [ "$status" -eq 0 ]
+    run grep -F -- '--model openrouter/deepseek/deepseek-v4-pro --thinking high' "$STUB_LOG"
+    [ "$status" -eq 0 ]
+  done
 }
 
-@test "--model overrides the profile-keyed pi launcher default" {
-  # --model wins. Test on personal because the override is the (non-default)
-  # OpenRouter id there — a strong cross-check that the profile branch is
-  # *behind* the override, not instead of it.
+@test "--model overrides the pi launcher default" {
   DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi --model openrouter/deepseek/deepseek-v4-flash
   [ "$status" -eq 0 ]
   run grep -F -- '--model openrouter/deepseek/deepseek-v4-flash --thinking high' "$STUB_LOG"

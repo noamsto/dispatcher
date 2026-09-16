@@ -307,15 +307,13 @@ dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the f
 dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effort high --agent pi --grid "harden the parser"
 ```
 
-The pi example above uses the work/OpenRouter ladder; personal hosts use
-`opencode/deepseek-v4-flash` instead. `--grid` there is redundant, not
-required: pi grids on `standard` and `deep` unconditionally, with `reviewer`
-included both times since pi has no native review batch of its own. Every
-`deep` dispatch on the other three engines also grids by default, but
-critics-only (`spec-critic,plan-critic`) — their native code-review batch is
-unaffected. Either way each role lands on the lead's own engine/model unless
-`--roles` says otherwise. Pass `--no-grid` to opt a non-pi `deep` dispatch
-back out; it's refused for pi standard/deep.
+`--grid` in the pi example is redundant, not required: pi grids on `standard`
+and `deep` unconditionally, with `reviewer` included both times since pi has no
+native review batch of its own. Every `deep` dispatch on the other three
+engines also grids by default, but critics-only (`spec-critic,plan-critic`) —
+their native code-review batch is unaffected. Either way each role lands on the
+lead's own engine/model unless `--roles` says otherwise. Pass `--no-grid` to
+opt a non-pi `deep` dispatch back out; it's refused for pi standard/deep.
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
 effort and crew back from `WORKER_TASK.md` and continues the engine's own

@@ -379,7 +379,7 @@ write_cursor_models_cache() { # <fetched_epoch>
   before_auth=$(sha256sum "$HOME/.pi/agent/auth.json")
   before_settings=$(sha256sum "$HOME/.pi/agent/settings.json")
 
-  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "worker agent dir trust test"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "worker agent dir trust test"
   [ "$status" -eq 0 ]
 
   worker_dir="$HOME/.pi/dispatcher-worker"
@@ -422,7 +422,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/crew"
 
-  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "fail closed on unseedable dir"
+  DISPATCH_PROFILE=personal run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "fail closed on unseedable dir"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not seed the pi worker agent dir"* ]]
   run grep -c -- 'send-keys' "$STUB_LOG"
@@ -434,7 +434,7 @@ EOF
 @test "a non-pi lead with a pi role in an up-front grid still seeds the pi worker agent dir" {
   stub_launch_bins
 
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:opencode/deepseek-v4-flash" --effort high --crew-id c1 42 "claude lead with pi reviewer role"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "claude lead with pi reviewer role"
   [ "$status" -eq 0 ]
 
   worker_dir="$HOME/.pi/dispatcher-worker"
@@ -457,7 +457,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/crew"
 
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:opencode/deepseek-v4-flash" --effort high --crew-id c1 42 "fail closed on unseedable dir for a role"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "fail closed on unseedable dir for a role"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not seed the pi worker agent dir"* ]]
   run grep -c -- 'send-keys' "$STUB_LOG"
@@ -1405,8 +1405,8 @@ assert_gate_silent() { # <engine> <model> [profile]
 @test "every model the docs name passes its engine's arm" {
   # Hand-copied from dispatch-orchestration.md: the model map, the cursor
   # alternatives prose, the codex legacy generations, the orchestrator
-  # table, and pi's work/personal-opencode routes. Copied, so it makes
-  # drift loud rather than impossible.
+  # table, and pi's OpenRouter route. Copied, so it makes drift loud rather
+  # than impossible.
   for m in opus sonnet haiku claude-fable-5-1; do
     assert_gate_silent claude "$m"
   done
@@ -1422,8 +1422,6 @@ assert_gate_silent() { # <engine> <model> [profile]
   for m in openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
     openrouter/deepseek/deepseek-v4-flash; do
     assert_gate_silent pi "$m" work
-  done
-  for m in opencode/deepseek-v4-pro opencode/deepseek-v4-flash; do
     assert_gate_silent pi "$m" personal
   done
 }
@@ -1509,41 +1507,33 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$status" -eq 0 ]
 }
 
-@test "work refuses the personal opencode route on pi deep" {
-  DISPATCH_PROFILE=work run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode rejected on work"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not deep's row"* ]]
-  [[ "$output" == *"--ignore-map"* ]]
+@test "every profile refuses the retired opencode route on pi" {
+  for p in work personal; do
+    DISPATCH_PROFILE=$p run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode rejected on $p"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not deep's row"* ]]
+    [[ "$output" == *"--ignore-map"* ]]
+
+    DISPATCH_PROFILE=$p run run_dispatch standard opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard opencode rejected on $p"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not standard's row"* ]]
+  done
 }
 
-@test "tier gate accepts every pi table cell on the personal opencode route" {
+@test "tier gate accepts every pi table cell on both profiles" {
   stub_launch_bins
-  DISPATCH_PROFILE=personal run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode pro"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=personal run run_dispatch deep opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi deep opencode flash"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard opencode flash"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial opencode flash"
-  [ "$status" -eq 0 ]
-}
-
-@test "personal refuses opencode/deepseek-v4-pro one rung down from deep" {
-  DISPATCH_PROFILE=personal run run_dispatch standard opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi standard opencode pro rejected"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not standard's row"* ]]
-  [[ "$output" == *"--ignore-map"* ]]
-
-  DISPATCH_PROFILE=personal run run_dispatch trivial opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi trivial opencode pro rejected"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not trivial's row"* ]]
-  [[ "$output" == *"--ignore-map"* ]]
-}
-
-@test "personal still accepts the OpenRouter row on pi standard" {
-  stub_launch_bins
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard openrouter still accepted"
-  [ "$status" -eq 0 ]
+  for p in work personal; do
+    DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep pro $p"
+    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi deep v41 flash $p"
+    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard v41 flash $p"
+    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard flash $p"
+    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial flash $p"
+    [ "$status" -eq 0 ]
+  done
 }
 
 @test "tier gate rejects a bracketed composer id on every tier" {
@@ -1666,7 +1656,8 @@ assert_gate_silent() { # <engine> <model> [profile]
     gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
     kimi-k3-high cursor-grok-4.6-high cursor-grok-4.6-medium cursor-grok-4.6-low \
     composer-2.5 claude-fable-5-1 \
-    openrouter/deepseek/deepseek-v4-pro opencode/deepseek-v4-pro opencode/deepseek-v4-flash; do
+    openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
@@ -3065,7 +3056,7 @@ _spawn_role_fixture() {
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   roles_dir="$common/crew/artifacts/feat/9-x"
   mkdir -p "$roles_dir"
-  printf '{"reviewer":{"agent":"pi","model":"opencode/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
+  printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
 
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
