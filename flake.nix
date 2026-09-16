@@ -90,22 +90,23 @@
           # @protocolDir@ is the build-time default for the env-overridable
           # PROTOCOL_DIR in dispatch.sh / dispatcher.sh. Substituting a store
           # path here is what frees them from the old ~/nix-config literal.
-          # @protocolRev@ (#184) is a content hash of the same directory (minus
-          # PROTOCOL_REV itself) baked into dispatch.sh / dispatch-resume.sh;
-          # their runtime guard refuses a $PROTOCOL_DIR whose PROTOCOL_REV file
-          # differs, so a stale DISPATCHER_PROTOCOL_DIR export can no longer
-          # launch workers against an old protocol contract. Computed here, not
-          # readFile'd from the committed PROTOCOL_REV: a protocol edit that was
-          # not regenerated via scripts/gen-adapters.sh yields a package whose
-          # baked rev ≠ the shipped dir file — caught by the module tests and
-          # the CI drift gate. readDir/attrNames sort byte-wise and hashFile
-          # reads the store copy, so this is reproducible, pure, and free of
-          # timestamps or git calls.
+          # @protocolRev@ (#184, #193) is a content hash of the same directory
+          # baked into dispatch.sh / dispatch-resume.sh; their runtime guard
+          # recomputes that hash from the files actually in $PROTOCOL_DIR and
+          # refuses a mismatch, so a stale DISPATCHER_PROTOCOL_DIR export can
+          # no longer launch workers against an old protocol contract. There is
+          # no committed PROTOCOL_REV file to read or regenerate — the guard is
+          # definitionally fresh, which is what lets two PRs editing different
+          # protocol files merge in either order without conflict. readDir/
+          # attrNames sort byte-wise and hashFile reads the store copy, so this
+          # is reproducible, pure, and free of timestamps or git calls; the
+          # runtime bash copy of the rule lives in _check_protocol_rev and is
+          # pinned to this one by tests/module.bats.
           protocolFiles = builtins.attrNames (builtins.readDir protocols);
           protocolRev = builtins.substring 0 16 (builtins.hashString "sha256"
             (builtins.concatStringsSep "" (map
               (n: "${n}:${builtins.hashFile "sha256" (protocols + "/${n}")};")
-              (builtins.filter (n: n != "PROTOCOL_REV") protocolFiles))));
+              protocolFiles)));
           sub =
             builtins.replaceStrings
             ["@protocolDir@" "@protocolRev@"]

@@ -48,11 +48,12 @@ in {
         # the shell scripts cannot reach. Each plugin also ships a protocols/
         # copy as the fallback when this is unset (a non-Nix install). Override
         # it in your shell to iterate on a checkout without rebuilding.
-        # #184: dispatch / dispatch-resume refuse a $PROTOCOL_DIR whose
-        # PROTOCOL_REV file does not match the built-in revision, so a stale
-        # value held by a long-lived shell or tmux server now aborts with an
-        # actionable message rather than silently running workers against an
-        # old protocol contract.
+        # #184/#193: dispatch / dispatch-resume recompute the built-in
+        # protocol revision as a content hash of the files actually in
+        # $PROTOCOL_DIR, so a stale value held by a long-lived shell or tmux
+        # server hashes differently and aborts with an actionable message
+        # rather than silently running workers against an old protocol
+        # contract. There is no committed PROTOCOL_REV file to regenerate.
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
         DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
         DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";

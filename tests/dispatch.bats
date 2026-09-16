@@ -105,15 +105,39 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
-# A substituted-build simulation for the protocol-rev guard (#184): flake.nix's
-# replaceStrings bakes the content hash into the built scripts as a literal.
-# A bats run of the raw script cannot carry one, so the guard tests run a
-# scratch copy with a marker baked the same way. The red tests prove the guard
+# A substituted-build simulation for the protocol-rev guard (#184, #193):
+# flake.nix's replaceStrings bakes the content hash into the built scripts as a
+# literal. A bats run of the raw script cannot carry one, so the guard tests run
+# a scratch copy with a marker baked the same way. $1 is the rev to bake
+# (default: one that no real content hashes to, so "refuses" tests need not
+# precompute anything); a matching test computes the fixture dir's runtime hash
+# via _protocol_dir_rev and bakes that instead. The red tests prove the guard
 # refuses on the substituted path; the raw-script path skips with a warning.
-_substituted_dispatch() {
-  sed 's/@protocolRev@/0123456789abcdef/' "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-subst.sh"
+_substituted_dispatch() { # [rev]
+  local rev="${1:-0123456789abcdef}"
+  sed "s/@protocolRev@/$rev/" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-subst.sh"
   export DISPATCH_SUBST="$BATS_TEST_TMPDIR/dispatch-subst.sh"
   run_subst_dispatch() { bash -euo pipefail "$DISPATCH_SUBST" "$@"; }
+}
+
+# The runtime hash rule, mirrored from _check_protocol_rev (and flake.nix):
+# the directory's files (dotfiles included), names sorted byte-wise, each
+# hashed as `name:sha256;`, sha256 of the concatenation, first 16 hex.
+_protocol_dir_rev() { # <dir>
+  local dir="$1" entries="" names=() file
+  shopt -s dotglob nullglob
+  for file in "$dir"/*; do
+    [ -f "$file" ] || continue
+    names+=("$(basename "$file")")
+  done
+  shopt -u dotglob nullglob
+  if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
+  for name in "${names[@]}"; do
+    entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
+  done
+  printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
 }
 
 # Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the
@@ -606,24 +630,24 @@ EOF
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "refuses a protocol dir whose PROTOCOL_REV does not match the script marker" {
+@test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
   stub_launch_bins
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  printf 'deadbeef00000000' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev mismatch"
   [ "$status" -ne 0 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"0123456789abcdef"* ]]
-  [[ "$output" == *"deadbeef00000000"* ]]
+  [[ "$output" == *"$rev_dir"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "refuses a stale protocol dir whose PROTOCOL_REV is missing" {
+@test "refuses a stale protocol dir whose content differs from the script marker" {
   stub_launch_bins
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
@@ -631,19 +655,19 @@ EOF
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale protocols"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"carries no PROTOCOL_REV"* ]]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "a matching PROTOCOL_REV dispatches normally" {
+@test "a protocol dir hashing to the script marker dispatches normally" {
   stub_launch_bins
-  _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  printf '0123456789abcdef' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
+  _substituted_dispatch "$rev"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev match"
   [ "$status" -eq 0 ]
   grep -q 'switch' "$STUB_LOG"
@@ -2997,7 +3021,7 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "grid: --spawn-role refuses a stale protocol dir without PROTOCOL_REV" {
+@test "grid: --spawn-role refuses a stale protocol dir whose content differs from the script marker" {
   _spawn_role_fixture
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
@@ -3005,7 +3029,7 @@ EOF
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md" "$DISPATCHER_PROTOCOL_DIR/GRID_PROTOCOL.md"
   run run_subst_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
-  [[ "$output" == *"carries no PROTOCOL_REV"* ]]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
