@@ -53,7 +53,10 @@ recurrence, and handoff rules apply to provided plans and resumed runs too.
 `WORKER_TASK.md` may stamp a `roles:` line. If it does, you are the **lead** of a
 role grid: those roles are already running as panes in your window, sharing this
 worktree, and parked on the crew bus under
-`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`).
+`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`) —
+**unless the task doc also stamps `lazy: 1`**, in which case no role pane
+exists yet and you materialize each one yourself, on demand, before its first
+assignment (see the seam below).
 **You delegate only the phases that have a role pane in your window** — a
 pane's presence is what tells you to skip the in-process path for that phase,
 not your tier alone. A `spec-critic` or `plan-critic` pane means: do not run
@@ -67,6 +70,17 @@ the native batch. For **pi**, which has no native batch mechanism at all, the
 `reviewer` pane **is** the review gate, same as before.
 
 For each critic/review phase you have a pane for, the seam is:
+
+**Under a lazy grid** (`lazy: 1`), a role's pane may not exist yet — before
+step 1, if the role isn't already running, call
+`dispatch --spawn-role <role>` (idempotent: a no-op if the pane already
+exists). `--agent`/`--model` override the recorded `roles.json` spec for that
+one spawn; `--effort` overrides the task doc's `effort:` for it — so you never
+need to re-dispatch just to change a lazily-spawned role's model. A spawn that
+fails (missing `roles.json`, the role isn't part of this grid, or you're not
+in tmux) gets the same handling as a died pane below — fall back to the
+normal in-process path when your engine can spawn a fresh context, or follow
+the unavailable-gate block on pi.
 
 1. **Write the artifact** into the crew dir (from `WORKER_TASK.md`):
    `<crew_dir>/artifacts/<branch>/<seam>.md` — `<seam>` is `spec`, `plan`, or
@@ -133,7 +147,10 @@ without a manual `tmux kill-window`:
 If a role has died (pane gone),
 fall back to the normal path for that phase when the engine can spawn a fresh
 context. Pi cannot; on pi, follow the existing unavailable-gate block instead
-of reviewing in the lead context.
+of reviewing in the lead context. You may also call `dispatch --reap-roles`
+once the pipeline is done — it kills every role pane in your window (not only
+ones you lazily spawned), on top of the per-role `{"final":true}` release
+above, not a replacement for it.
 
 ## Gating verdicts are awaited (all engines)
 

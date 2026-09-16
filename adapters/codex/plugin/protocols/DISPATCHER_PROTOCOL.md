@@ -253,6 +253,31 @@ is back.
   for pi standard/deep, and a usage error together with `--grid` or
   `--roles`. Role panes share the worktree, communicate through the bus, and
   never own the PR.
+- **Lazy grid.** `--lazy` records the topology to `roles.json` in the crew
+  dir and stamps `lazy: 1` into `WORKER_TASK.md`, but creates **no** panes up
+  front — the lead materializes each role on demand with
+  `dispatch --spawn-role <role>` (idempotent; reads `roles.json`, creates the
+  pane in the caller's own window/worktree) and may `dispatch --reap-roles`
+  to kill every role pane in its window when done. It rides *whichever*
+  topology resolves — an explicit `--grid`/`--roles`, or a topology that
+  resolves by default (pi standard/deep; non-pi `deep` unless `--review` or
+  `--plan provided`) — so a default-grid `deep` dispatch takes `--lazy` on
+  its own. **Do not add `--grid` "to satisfy" `--lazy`** on such a dispatch:
+  `--grid` changes the topology itself, switching a non-pi `deep`'s default
+  `spec-critic,plan-critic` to `spec-critic,plan-critic,reviewer` (this same
+  bullet, above), silently defaulting on the very `reviewer` pane that must
+  never be defaulted onto a non-pi lead. `--lazy` is a usage error only when
+  *no* roles resolve at all — `trivial`, non-pi `standard` with no
+  `--grid`/`--roles`, or combined with `--no-grid`. What it buys is narrow
+  and temporary, not "lazy saves tokens": an idle eager pane already costs no
+  repainting poll and no park cap (`GRID_PROTOCOL.md`) once a
+  `dispatch --role-watch` types assignments into it. The real savings are the
+  one-time startup read of `GRID_PROTOCOL.md` + `WORKER_TASK.md` (against the
+  same subscription quota the budget lever rations), a live engine process
+  for a role never spawned, and screen space. Reach for it when a role is
+  genuinely likely to go unused for a large part of the run — a `deep`
+  dispatch you don't expect to survive to its plan seam, or a
+  cost-sensitive/high-fan-out batch — not as a blanket default.
 - **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. The `<model>` slot must match the engine; Pi's default ladder is **profile-keyed** — `openrouter/deepseek/...` on work, `opencode/...` on personal (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Codex and cursor are work-profile only; pi is all-profile via two routes (OpenRouter on work, opencode Zen on personal). Each needs one-time provider authentication against its active provider. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
 - **MCP.** Claude, codex, and cursor inherit the configured base MCP stack. Pi uses its own global configuration. Add `--mcp <profile>` to layer on an extra Claude-only profile: `analytics` (posthog, work only). Unknown/ungenerated profiles abort before launch; non-Claude `--mcp` is rejected.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.

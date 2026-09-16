@@ -103,7 +103,8 @@ simultaneous layout. This keeps scale honest and reuses `reap`.
 ## tmux mechanics
 
 - Create the task window, then `tmux split-window -t <win> -c <worktree>` per
-  role; `tmux select-layout -t <win> tiled` to keep the grid legible.
+  role; `tmux select-layout -t <win> main-vertical` (with `main-pane-width
+60%`) to keep the lead's pane roomy and the role panes legible.
 - Per-pane identity: a `@crew_role` pane option + `pane-border-format`, so a
   pane is labelled by role the way a window is labelled by codename.
 - Read-only roles get a read-only posture (`--tools read,grep,find,ls` for pi;
