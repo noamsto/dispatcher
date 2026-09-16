@@ -147,7 +147,7 @@ claude)
   # Pinned, not inherited: /model and /effort persist across sessions, so an
   # unpinned dispatcher judges tier+engine+model on whatever the last cheap
   # session was toggled to. high, not xhigh — same reason codex holds at high
-  # below: blocked workers wait on a bounded ~300s in-band window.
+  # below: blocked workers wait on a bounded ~2h in-band window.
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
     --model "${model:-opus}" --effort "${effort:-high}"
   claude "$@" ${task:+"$task"}
@@ -158,7 +158,7 @@ codex | cursor)
   prompt="Read $protocol and adopt the dispatcher role for the rest of this session: judge each task into tier + engine + model + effort per the rubric, scaffold one worker per task via dispatch, and run the crew-watch loop per YOUR engine's section of the protocol (you are a $agent dispatcher). CREW_ID is already exported in this environment, so dispatch and crew calls inherit it."
   [ -n "$task" ] && prompt="$prompt First task: $task"
   if [ "$agent" = codex ]; then
-    # Effort high, not xhigh: blocked workers wait on a bounded ~300s in-band
+    # Effort high, not xhigh: blocked workers wait on a bounded ~2h in-band
     # window; xhigh turns would let blocks go stale. service_tier pinned — the
     # interactive /fast toggle persists locally and would otherwise leak into
     # the unattended dispatcher at 2.5x cost.

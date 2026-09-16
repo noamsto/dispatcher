@@ -303,7 +303,7 @@ ships:
 | engine | model | effort |
 | ------ | ----- | ------ |
 | claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
-| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~300s in-band window |
+| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window |
 | cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
 | pi | work **`openrouter/deepseek/deepseek-v4-pro`** · personal **`opencode/deepseek-v4-pro`** (profile-keyed) | **high** through `--thinking` |
 

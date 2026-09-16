@@ -1069,6 +1069,94 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"hi"'* ]]
 }
 
+# #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
+# blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
+# is delivered in-band instead of stranding the worker. These tests pin the
+# composition of the crew commands that loop relies on, using `--timeout 0`
+# (an instant timeout) and future-dated seeded rows — the fake-clock pattern,
+# no real sleeps. The `crew status`/`crew await`/`crew inbox` commands
+# themselves are covered by their own tests; here the loop's delivery paths
+# and its ending are pinned.
+
+@test "blocked-cycle: a reply arriving in a later cycle is still delivered in-band" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # Cycle 1: the window has nothing in it, so it times out (exit 0, empty
+  # stdout — the timeout marker). --separate-stderr: the "await ended" note
+  # goes to stderr, so $output is genuinely the reply stream.
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # Per-cycle liveness re-stamp, then the dispatcher replies dated inside cycle
+  # 2's window (a future ts: `crew await` matches .ts > its own start, so a
+  # reply dated during the window is what a cycle delivers).
+  CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle 1 of 24)"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  t=$(($(date +%s) * 1000))
+  jq -nc --arg to "$id" --argjson ts "$((t + 1000))" \
+    '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
+  # Cycle 2: the reply is delivered in-band and the worker resumes in place.
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run run_crew status "$id" working "resumed"
+  # No failure was ever posted.
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "0" ]
+}
+
+@test "blocked-cycle: a reply that missed the await is caught by the straggler fold" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # Cycle 1 times out empty...
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # ...and the dispatcher's reply lands after that window closed: it is older
+  # than the NEXT cycle's start, so no future `crew await` can deliver it. The
+  # worker protocol therefore folds stragglers after every timeout —
+  # `crew inbox --since <seen>` — which returns it and resumes the worker.
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  t=$(($(date +%s) * 1000))
+  jq -nc --arg to "$id" --argjson ts "$t" \
+    '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run run_crew status "$id" working "resumed"
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "0" ]
+}
+
+@test "blocked-cycle: budget exhaustion fails exactly once after every cycle re-stamped blocked" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # A 3-cycle budget on an empty bus: every cycle re-stamps blocked (the
+  # per-cycle liveness signal), and the budget's exhaustion posts exactly one
+  # failed — never one per cycle, never zero.
+  i=1
+  while [ "$i" -le 3 ]; do
+    CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle $i of 24)"
+    i=$((i + 1))
+  done
+  CREW_ID=c1 run run_crew status "$id" failed "blocked, no dispatcher reply"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  # every cycle re-stamped blocked (3 cycle rows), and the budget's
+  # exhaustion posted exactly one failed with the canonical detail.
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="blocked") | select(.body.detail | contains("cycle"))] | length' "$log"
+  [ "$output" = "3" ]
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "1" ]
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")][0].body.detail' "$log"
+  [ "$output" = "blocked, no dispatcher reply" ]
+}
+
 @test "inbox: a branch-only worker id exits non-zero" {
   run run_crew inbox "worker:feat/x" c1
   [ "$status" -eq 1 ]
