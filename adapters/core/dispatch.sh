@@ -320,10 +320,15 @@ fi
 # creation, task-document rewrite and new-window paths this file is built
 # around. Intercepted here so the subcommand reads as part of dispatch, and
 # before the positional tier parse below, which would reject it as a tier.
-if [ "${1:-}" = resume ]; then
-  shift
-  exec dispatch-resume "$@"
-fi
+# Scan all arguments so leading flags (e.g. --agent pi) don't mask resume;
+# strip the resume token itself — dispatch-resume does not parse it.
+for _arg in "$@"; do
+  if [ "$_arg" = resume ]; then
+    _resume_args=()
+    for _a in "$@"; do [ "$_a" != resume ] && _resume_args+=("$_a"); done
+    exec dispatch-resume "${_resume_args[@]}"
+  fi
+done
 
 tier="${1:-}"
 model="${2:-}"
