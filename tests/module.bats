@@ -130,20 +130,94 @@ setup() {
 }
 
 @test "the built scripts and the built protocol dir carry the same revision" {
-  # The baked @protocolRev@ (guard marker, #184) and the PROTOCOL_REV file in
-  # the baked default protocol dir must agree. A protocol edit that was not
-  # regenerated via scripts/gen-adapters.sh fails here — the guard is
-  # self-checking, and the CI drift gate enforces the same freshness.
+  # The baked @protocolRev@ (guard marker, #184/#193) must equal the runtime
+  # hash of the baked default protocol dir: sorted `name:sha256;` entries,
+  # sha256 of the concatenation, first 16 hex chars — the rule flake.nix uses
+  # to bake it and _check_protocol_rev uses to recompute it. One algorithm,
+  # two implementations, pinned here: a protocol edit that drifts them apart
+  # (or a checkout that no longer matches the build) fails this test. There is
+  # no PROTOCOL_REV file to compare against any more — the guard hashes the
+  # directory itself.
   dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -i protocol | head -1)"
   [ -n "$dir" ]
-  [ -f "$dir/PROTOCOL_REV" ]
-  rev_dir="$(cat "$dir/PROTOCOL_REV")"
+  [ ! -f "$dir/PROTOCOL_REV" ]
+  rev_dir="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$dir"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
+    entries=""
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+  )"
   [ -n "$rev_dir" ]
   rev_dispatch="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH/bin/dispatch" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
   rev_resume="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH_RESUME/bin/dispatch-resume" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
   [ -n "$rev_dispatch" ]
   [ "$rev_dispatch" = "$rev_dir" ]
   [ "$rev_resume" = "$rev_dispatch" ]
+}
+
+@test "the runtime and Nix rules agree on an edge-case dir (dotfile, prefix names)" {
+  # The two implementations must be byte-identical on more than the current
+  # six-file tree: a naive line-sort or a non-dotglob glob silently diverges
+  # the day a dotfile or a prefix-named pair lands in the protocol dir, making
+  # the built-in default refuse every dispatch with an inexplicable hash
+  # mismatch. Pin that here with the three shapes that break naive rules:
+  # '.hidden' (glob '*/*' misses dotfiles), 'X'/'X1' (line-sort puts X1 first
+  # because '1' < ':'; attrNames puts X first), and an EMPTY dir (a raw
+  # `printf '%s\n' "${names[@]}"` with zero elements emits a blank line, so an
+  # unsorted mapfile would inject an empty name — guards omitted, it hashes
+  # `sha256sum "$dir/"` and diverges from Nix's sha256("")).
+  scratch="$BATS_TEST_TMPDIR/edge-protocols"
+  mkdir -p "$scratch"
+  printf 'a' >"$scratch/.hidden"
+  printf 'b' >"$scratch/X"
+  printf 'c' >"$scratch/X1"
+  printf 'd' >"$scratch/GRID"
+  printf 'e' >"$scratch/GRID_PROTOCOL.md"
+  empty="$BATS_TEST_TMPDIR/edge-protocols-empty"
+  mkdir -p "$empty"
+
+  for d in "$scratch" "$empty"; do
+    rev_nix="$(nix eval --impure --raw --expr "
+      let
+        dir = builtins.toPath \"$d\";
+        files = builtins.attrNames (builtins.readDir dir);
+      in builtins.substring 0 16 (builtins.hashString \"sha256\"
+        (builtins.concatStringsSep \"\" (map
+          (n: \"\${n}:\${builtins.hashFile \"sha256\" (dir + \"/\${n}\")};\")
+          files)))")"
+    [ -n "$rev_nix" ]
+
+    rev_bash="$(
+      names=()
+      shopt -s dotglob nullglob
+      for f in "$d"/*; do
+        [ -f "$f" ] || continue
+        names+=("$(basename "$f")")
+      done
+      shopt -u dotglob nullglob
+      if [ ${#names[@]} -gt 0 ]; then
+        mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+      fi
+      entries=""
+      for name in "${names[@]}"; do
+        entries+="${name}:$(sha256sum "$d/$name" | cut -d' ' -f1);"$'\n'
+      done
+      printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+    )"
+    [ -n "$rev_bash" ]
+    [ "$rev_nix" = "$rev_bash" ]
+  done
 }
 
 @test "crew does not retain the protocols as a runtime closure reference" {

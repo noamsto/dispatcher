@@ -183,6 +183,58 @@ teardown() {
   done
 }
 
+@test "no PROTOCOL_REV file ships in any protocol tree (#193)" {
+  # #193: the revision marker is a runtime-derived hash, not a committed file —
+  # one no longer exists to go stale, conflict on, or regenerate. Asserting its
+  # absence in the canonical tree AND all three generated copies pins the
+  # removal: the old generator wrote it into all four, so just deleting the
+  # canonical file would leave the copies silently shipping it.
+  for tree in "$ROOT/adapters/core/protocols" "$ROOT/adapters/claude-code/plugin/protocols" "$ROOT/adapters/codex/plugin/protocols" "$ROOT/adapters/cursor/protocols"; do
+    [ ! -f "$tree/PROTOCOL_REV" ]
+  done
+}
+
+@test "protocol PRs editing different files merge in either order (#193)" {
+  # The old PROTOCOL_REV made every protocol PR touch the same line, so two
+  # such PRs always conflicted and the second squash merge left main stale. With
+  # the revision derived at runtime there is no shared file: two branches each
+  # editing a different protocol file must merge in either order with no
+  # conflict and no regeneration step. Script the merges rather than describe
+  # them — this is the acceptance case, pinned as a test.
+  setup_repo
+  mkdir -p "$TEST_REPO/adapters/core/protocols"
+  printf 'alpha\n' >"$TEST_REPO/adapters/core/protocols/GRID_PROTOCOL.md"
+  printf 'beta\n' >"$TEST_REPO/adapters/core/protocols/REVIEW_TASK.md"
+  git -C "$TEST_REPO" add -A
+  git -C "$TEST_REPO" commit -qm seed
+  seed="$(git -C "$TEST_REPO" rev-parse HEAD)"
+
+  # Branch A edits GRID_PROTOCOL.md, branch B edits REVIEW_TASK.md.
+  git -C "$TEST_REPO" switch -qc a
+  printf 'alpha-a\n' >>"$TEST_REPO/adapters/core/protocols/GRID_PROTOCOL.md"
+  git -C "$TEST_REPO" commit -qam 'edit GRID_PROTOCOL.md (A)'
+  git -C "$TEST_REPO" switch -q --detach "$seed"
+  git -C "$TEST_REPO" switch -qc b
+  printf 'beta-b\n' >>"$TEST_REPO/adapters/core/protocols/REVIEW_TASK.md"
+  git -C "$TEST_REPO" commit -qam 'edit REVIEW_TASK.md (B)'
+
+  # Order 1: A then B.
+  git -C "$TEST_REPO" switch -q --detach "$seed"
+  git -C "$TEST_REPO" switch -q main
+  git -C "$TEST_REPO" merge -q --no-edit a
+  git -C "$TEST_REPO" merge -q --no-edit b
+  grep -q 'alpha-a' "$TEST_REPO/adapters/core/protocols/GRID_PROTOCOL.md"
+  grep -q 'beta-b' "$TEST_REPO/adapters/core/protocols/REVIEW_TASK.md"
+
+  # Order 2: B then A, from the same seed.
+  git -C "$TEST_REPO" switch -q --detach "$seed"
+  git -C "$TEST_REPO" switch -qc main2
+  git -C "$TEST_REPO" merge -q --no-edit b
+  git -C "$TEST_REPO" merge -q --no-edit a
+  grep -q 'alpha-a' "$TEST_REPO/adapters/core/protocols/GRID_PROTOCOL.md"
+  grep -q 'beta-b' "$TEST_REPO/adapters/core/protocols/REVIEW_TASK.md"
+}
+
 @test "worker protocol defines bounded plan-shaped gate recovery" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
