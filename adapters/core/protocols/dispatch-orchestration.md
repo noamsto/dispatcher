@@ -299,7 +299,9 @@ that one dispatched model and leaves the ≥95% stop armed — the escape an
 agent can actually reach for, since `--ignore-budget` reads as spend
 authorization to the auto-mode classifier and a dispatcher agent can't pass
 it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
-remains the human's spend decision.
+remains the human's spend decision. Codex carries a codex-only sibling: the
+window-independent absolute-limit stop from `limit_reached` (#201), described
+in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
 
 | engine | premium                                        | downgrade target        |
 | ------ | ----------------------------------------------- | ------------------------ |

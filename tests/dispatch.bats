@@ -913,6 +913,19 @@ budget_json_at() { # <engine> <pct> <resets_in_s|null>
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+# Write a fresh codex cache whose limit_reached block is the caller's jq
+# object literal (unquoted keys are jq object syntax, so it is spliced into
+# the jq program, not passed as JSON), with an EMPTY windows map so the
+# >=95% gate is inert and only the #201 absolute-limit gate can fire.
+# Parallel to codex_budget_json() above.
+codex_limit_json() { # <limit_reached jq object literal>
+  local lr="$1"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {}, limit_reached: '"$lr"'}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
   budget_json 97 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
@@ -1687,6 +1700,78 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$status" -eq 1 ]
   [[ "$output" == *"quota exhausted"* ]]
   [[ "$output" != *"the premium rung"* ]]
+}
+
+@test "codex absolute limit refuses on a named rate-limit-reached type" {
+  codex_limit_json '{rate_limit_reached_type: "workspace_owner_credits_depleted"}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs rate limit reached"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted (absolute limit: workspace_owner_credits_depleted)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "codex absolute limit refuses on a zeroed individual spend limit" {
+  codex_limit_json '{individual_remaining_percent: 0}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs individual drained"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted (absolute limit: spend control: 0% remaining)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "codex absolute limit refuses on spend control reached" {
+  codex_limit_json '{spend_control_reached: true}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs spend control"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted (absolute limit: spend control reached)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "codex absolute limit refuses when ordinary use is denied" {
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs ordinary denied"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted (absolute limit: ordinary use not allowed)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "codex absolute-limit gate passes when the signals are healthy" {
+  stub_launch_bins
+  codex_limit_json '{ordinary_usage_allowed: true, rate_limit_reached_type: null, spend_control_reached: null, individual_remaining_percent: 100}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs healthy"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "a legacy codex cache without limit_reached still passes" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"7d": {used_pct: 30, resets_at: null}}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "legacy codex cache"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "--ignore-budget bypasses the codex absolute-limit gate" {
+  stub_launch_bins
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --ignore-budget --crew-id c1 42 "abs ignore budget"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a stale codex cache with an absolute limit fails open" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(($(date +%s) - 10000))" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {}, limit_reached: {ordinary_usage_allowed: false}}, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "stale abs limit"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "a 5h spike with 7d low does not trigger the budget rung gate" {

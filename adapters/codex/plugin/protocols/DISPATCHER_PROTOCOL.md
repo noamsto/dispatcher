@@ -194,6 +194,19 @@ cache; do not infer that `null` means free or unlimited.
   is `DISPATCH_IGNORE_RUNG=<model>`; overriding both gates is
   `--ignore-budget`, the human's spend decision — say so when you take
   either.
+- **Codex absolute limits (`limit_reached`) are a second, window-independent
+  exhaustion signal** (#201). The app-server snapshot can be authoritative-
+  exhausted while every percent window is below 95% — it denies ordinary
+  usage outright (`ordinary_usage_allowed: false`), names a rate-limit-reached
+  reason (`rate_limit_reached_type`, e.g.
+  `workspace_owner_credits_depleted`), marks spend control reached
+  (`spend_control_reached: true`), or reports a zeroed individual spend limit
+  (`individual_remaining_percent: 0`). `dispatch` refuses `--agent codex` on
+  any of these with the same message shape and `--ignore-budget` escape as the
+  ≥95% stop. `refresh-budget` also records each engine's `plan_type` (codex
+  from the snapshot; claude's oauth payload has no plan key, so `null`; cursor
+  unobservable) and prints it in the summary. Missing data never blocks — an
+  older cache without `plan_type`/`limit_reached` gates exactly as before.
 - **cursor's quota is unobservable** — treat it as neutral, but it's the engine
   most likely to surprise you; route the work you'd shed first there, not the
   work you'd shed last.

@@ -835,6 +835,30 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
+# Codex absolute-limit gate (#201): a codex response can be authoritative-
+# exhausted while every percent window is below 95% (or no window exists) —
+# the backend denies ordinary usage, names a rate-limit-reached reason, marks
+# spend control reached, or reports a zeroed individual spend limit. Refuse
+# codex on any of them, same severity and escape as the >=95% stop. Missing
+# or stale data (older cache without limit_reached) fails open, like the rest
+# of the budget gate.
+if [ -z "$ignore_budget" ] && [ "$agent" = codex ] && [ -f "$budget_file" ]; then
+  codex_abs=$(jq -r --argjson now "$(date +%s)" '
+    if (.fetched_epoch + 7200) < $now then empty
+    elif .engines.codex == null then empty
+    else (.engines.codex.limit_reached // {}) as $l
+      | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
+        elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
+        elif $l.spend_control_reached == true then "spend control reached"
+        elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
+        else empty end
+    end' "$budget_file" 2>/dev/null || true)
+  if [ -n "$codex_abs" ]; then
+    echo "dispatch: codex quota exhausted (absolute limit: $codex_abs) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    exit 1
+  fi
+fi
+
 # Budget-aware rung refusal (#89): once codex/claude/cursor's 7d
 # burn crosses 70%, refuse the premium rung specifically and name the
 # standard-class alternative — before the engine goes fully dark at
