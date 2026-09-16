@@ -539,6 +539,7 @@ _pi_fixture() {
 EOF
   printf '{"defaultProjectTrust":"always"}\n' >"$AMBIENT/settings.json"
   printf '{}\n' >"$AMBIENT/trust.json"
+  printf '{"models":[{"id":"deepseek/deepseek-v4.1-flash"}]}\n' >"$AMBIENT/models-store.json"
 }
 
 @test "pi-agent-dir: prints only the worker dir and seeds never-trust settings" {
@@ -552,37 +553,70 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
 }
 
-@test "pi-agent-dir: literal keys are read through, never copied" {
+@test "pi-agent-dir: auth links to the ambient file, never copies it" {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  run grep -rF SECRET-FIXTURE-123 "$WORKER"
+  [ -L "$WORKER/auth.json" ]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+  # A copy is what leaked a secret into the worker dir; a link holds a path.
+  run grep -rF SECRET-FIXTURE-123 "$WORKER" --exclude-dir=.
   [ "$status" -eq 1 ]
-  run grep -rF 'sk-a$b' "$WORKER"
-  [ "$status" -eq 1 ]
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == '!'* ]]
-  [[ "$key" == *auth.json* ]]
-  [ "$(bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
-  key=$(jq -r .lit.key "$WORKER/auth.json")
-  [ "$(bash -c "${key#!}")" = 'sk-a$b' ]
 }
 
-@test "pi-agent-dir: references stay verbatim; oauth, bad names and env are dropped" {
+@test "pi-agent-dir: every entry stays reachable through the link, oauth included" {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  [ "$(jq -c .openrouter "$WORKER/auth.json")" = '{"type":"api_key","key":"$OPENROUTER_API_KEY"}' ]
-  [ "$(jq -r .deepseek.key "$WORKER/auth.json")" = '!echo x' ]
-  [ "$(jq 'has("anthropic")' "$WORKER/auth.json")" = false ]
-  [ "$(jq 'has("a b")' "$WORKER/auth.json")" = false ]
+  # The api_key-only filter dropped these, leaving an oauth-only machine with {} (#198).
+  [ "$(jq -r .anthropic.type "$WORKER/auth.json")" = oauth ]
+  [ "$(jq -r .anthropic.access "$WORKER/auth.json")" = a ]
+  [ "$(jq -r .opencode.key "$WORKER/auth.json")" = SECRET-FIXTURE-123 ]
+  [ "$(jq -c .openrouter "$WORKER/auth.json")" = '{"type":"api_key","key":"$OPENROUTER_API_KEY","env":{"X":"y"}}' ]
 }
 
-@test "pi-agent-dir: auth is 600 and the ambient dir is untouched" {
+@test "pi-agent-dir: a pi-side token refresh writes through to the ambient file" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  # pi rewrites auth.json in place on refresh; through the link that must land
+  # in the ambient file, not strand a divergent copy in the shared worker dir.
+  jq '.anthropic.access = "refreshed"' "$WORKER/auth.json" >"$WORKER/auth.next"
+  cat "$WORKER/auth.next" >"$WORKER/auth.json"
+  rm "$WORKER/auth.next"
+  [ -L "$WORKER/auth.json" ]
+  [ "$(jq -r .anthropic.access "$AMBIENT/auth.json")" = refreshed ]
+}
+
+@test "pi-agent-dir: the ambient dir is untouched and trust.json is not seeded" {
   _pi_fixture
   before=$(sha256sum "$AMBIENT"/*)
+  mode=$(stat -c %a "$AMBIENT/auth.json")
   run_crew pi-agent-dir >/dev/null
-  [ "$(stat -c %a "$WORKER/auth.json")" = 600 ]
   [ "$(sha256sum "$AMBIENT"/*)" = "$before" ]
+  [ "$(stat -c %a "$AMBIENT/auth.json")" = "$mode" ]
   [ ! -e "$WORKER/trust.json" ]
+}
+
+@test "pi-agent-dir: the model catalog is copied, not linked" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  # Workers share this dir; a link would aim N concurrent refreshes at the real catalog.
+  [ ! -L "$WORKER/models-store.json" ]
+  [ "$(jq -r '.models[0].id' "$WORKER/models-store.json")" = deepseek/deepseek-v4.1-flash ]
+  [ "$(stat -c %a "$WORKER/models-store.json")" = 644 ]
+}
+
+@test "pi-agent-dir: a re-seed refreshes a stale or corrupted catalog copy" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  printf 'torn{\n' >"$WORKER/models-store.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -r '.models[0].id' "$WORKER/models-store.json")" = deepseek/deepseek-v4.1-flash ]
+}
+
+@test "pi-agent-dir: no ambient catalog leaves the worker without one" {
+  _pi_fixture
+  rm "$AMBIENT/models-store.json"
+  run_crew pi-agent-dir >/dev/null
+  [ ! -e "$WORKER/models-store.json" ]
 }
 
 @test "pi-agent-dir: re-seed keeps pi-written settings and forces never" {
@@ -610,22 +644,26 @@ EOF
   [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
 }
 
-# Seed once, break the ambient auth.json with $1, and expect a refusal that
-# leaves the seeded worker auth.json byte-identical.
+# Seed once, break the ambient auth.json with $1, and expect a refusal. The
+# worker file is a link, so "kept" is about the link, not its content.
 _pi_broken_auth() {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   printf '%s\n' "$1" >"$AMBIENT/auth.json"
 }
 
-@test "pi-agent-dir: a malformed ambient auth.json is refused, worker auth kept" {
+_pi_assert_link_kept() {
+  [ -L "$WORKER/auth.json" ]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+}
+
+@test "pi-agent-dir: a malformed ambient auth.json is refused, worker link kept" {
   _pi_broken_auth '{"opencode":{"ty'
   run --separate-stderr run_crew pi-agent-dir
   [ "$status" -ne 0 ]
   [ -z "$output" ]
   [[ "$stderr" == *"$AMBIENT/auth.json is unreadable or not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a non-object ambient auth.json is refused" {
@@ -633,20 +671,19 @@ _pi_broken_auth() {
   run --separate-stderr run_crew pi-agent-dir
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: an unreadable ambient auth.json is refused" {
   [ "$(id -u)" -eq 0 ] && skip "root reads mode 000 files"
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   chmod 000 "$AMBIENT/auth.json"
   run --separate-stderr run_crew pi-agent-dir
   chmod 600 "$AMBIENT/auth.json"
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"unreadable or not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a worker dir symlinked to the ambient dir is refused" {
@@ -688,8 +725,7 @@ _pi_broken_auth() {
   mkdir -p rel
   printf '{"opencode":{"type":"api_key","key":"!echo rel"}}\n' >rel/auth.json
   PI_CODING_AGENT_DIR=rel run_crew pi-agent-dir >/dev/null
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == *"$AMBIENT/auth.json"* ]]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
 }
 
 # Seed once, then drop the ambient auth.json so the test can put a non-regular
@@ -697,7 +733,6 @@ _pi_broken_auth() {
 _pi_seeded() {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   rm "$AMBIENT/auth.json"
 }
 
@@ -711,7 +746,7 @@ _pi_assert_refused() {
   [ "$status" -ne 124 ]
   [ -z "$output" ]
   [[ "$stderr" == *"refusing to seed pi credentials"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a dangling ambient auth.json symlink is refused, worker auth kept" {
@@ -782,15 +817,16 @@ _pi_assert_refused() {
   [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
 }
 
-@test "pi-agent-dir: a relative ambient auth.json symlink is read through" {
+@test "pi-agent-dir: a relative ambient auth.json symlink still resolves" {
   _pi_fixture
   mkdir -p "$HOME/.pi/secrets"
   mv "$AMBIENT/auth.json" "$HOME/.pi/secrets/auth.json"
   ln -s ../secrets/auth.json "$AMBIENT/auth.json"
   run_crew pi-agent-dir >/dev/null
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == *"$AMBIENT/auth.json"* ]]
-  [ "$(cd / && bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
+  # The worker link is absolute, so the ambient link's relative target resolves
+  # against the ambient dir — not the worker dir and not pi's cwd.
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+  [ "$(cd / && jq -r .opencode.key "$WORKER/auth.json")" = SECRET-FIXTURE-123 ]
 }
 
 @test "sessions: folds each session separately, oldest first" {
