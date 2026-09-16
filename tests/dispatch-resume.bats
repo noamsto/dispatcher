@@ -140,7 +140,7 @@ setup_worker_wt() { # [extra header lines...]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "refuses a protocol dir whose PROTOCOL_REV does not match the script marker" {
+@test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
   setup_worker_wt
   cd "$WT"
   # Baked-marker simulation, mirroring flake.nix's replaceStrings (see
@@ -149,17 +149,33 @@ setup_worker_wt() { # [extra header lines...]
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  printf 'deadbeef00000000' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  rev_dir="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
+    entries=""
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+  )"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 1 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"0123456789abcdef"* ]]
-  [[ "$output" == *"deadbeef00000000"* ]]
+  [[ "$output" == *"$rev_dir"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "resume proceeds when PROTOCOL_REV matches the script marker" {
+@test "resume proceeds when the protocol dir hashes to the script marker" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' '' fish
   cd "$WT"
@@ -167,7 +183,24 @@ setup_worker_wt() { # [extra header lines...]
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  printf '0123456789abcdef' >"$DISPATCHER_PROTOCOL_DIR/PROTOCOL_REV"
+  rev="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    if [ ${#names[@]} -gt 0 ]; then
+      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    fi
+    entries=""
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+  )"
+  sed "s/@protocolRev@/$rev/" "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
