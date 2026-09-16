@@ -117,11 +117,13 @@ not skip the message. A lead that never sends `final` is still reclaimed
 without a manual `tmux kill-window`:
 
 - **Reap reclaims a finished grid window without a release (#194).** Once the
-  lead's last status is terminal (`done`/`failed`/`exited`) and the `--idle`
-  threshold passes, reap's **idle-release phase** kills the window — engine
-  commands and role panes included — and the **reclaim phase of the same
-  pass** removes the worktree once the PR merged (or closed) and no pane is
-  live. No `final` message is required.
+  lead's last status is terminal and the `--idle` threshold passes, reap's
+  **idle-release phase** kills the window — engine commands and role panes
+  included — for a `done` or `failed` lead, and for an `exited` lead only
+  while **no engine process is live** in the tree (the #69 backstop: an
+  `exited` row can be a false read from a subagent pane). The **reclaim phase
+  of the same pass** then removes the worktree once the PR merged (or closed)
+  and no pane is live. No `final` message is required.
 - **Role rows never count as failures (#194).** A role writes under
   `role:<branch>:<role>`, not `worker:<branch>`. `crew rate` and `crew retro`
   fold only `worker:`-prefixed rows, so an idle-timeout `status failed` with

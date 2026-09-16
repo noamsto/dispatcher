@@ -1441,6 +1441,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 *state*) printf '%s\n' 'MERGED' ;;
 *closingIssuesReferences*) printf '%s\n' '42' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/42-reap-me)" ;;
 esac
 exit 0
 EOF
@@ -1453,7 +1454,8 @@ EOF
   grep -q 'pr view https://example.com/pr/7 --json closingIssuesReferences' "$STUB_LOG"
   grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
   # A merged PR's squash-merged branch is not an ancestor of main — reap
-  # deletes it deliberately once gh confirms the merge (#194).
+  # deletes it deliberately once gh confirms the merge (#194). The stub's
+  # headRefOid answers the local tip so the delete guard passes.
   ! git show-ref --verify --quiet refs/heads/feat/42-reap-me
 }
 
@@ -1545,6 +1547,12 @@ EOF
   wt_path="$BATS_TEST_TMPDIR/squash-wt"
   git worktree add -q "$wt_path" feat/squash-me
   wt_path=$(cd "$wt_path" && pwd -P)
+  # The squash shape from the wild: the branch really is ahead of main (its
+  # commits are gone from the squash merge), which is why wt refuses to
+  # delete it and why reap must do so deliberately.
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "squash-me work"
   stub_tmux "" ""
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -1552,6 +1560,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 *state*) printf '%s\n' 'MERGED' ;;
 *closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/squash-me)" ;;
 esac
 exit 0
 EOF
@@ -1567,6 +1576,41 @@ EOF
   jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
   [ ! -d "$wt_path" ]
   ! git show-ref --verify --quiet refs/heads/feat/squash-me
+}
+
+@test "reap: a merged branch whose local tip diverges from the PR head is kept" {
+  # Review-fix guard: the branch is only force-deleted when the local tip is
+  # exactly the merged PR head. A resumed run or a human that committed past
+  # the merge would otherwise have those commits orphaned by -D. The worktree
+  # is still reaped and the label still released — only the branch survives.
+  git commit -q --allow-empty -m init
+  git branch feat/diverged
+  wt_path="$BATS_TEST_TMPDIR/diverged-wt"
+  git worktree add -q "$wt_path" feat/diverged
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "diverged work"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' '0000000000000000000000000000000000000000' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/diverged" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/diverged (MERGED)"* ]]
+  [[ "$output" == *"kept local branch feat/diverged — tip diverges from the merged PR head"* ]]
+  grep -q 'issue edit 99 --remove-label dispatched' "$STUB_LOG"
+  [ ! -d "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/diverged
 }
 
 @test "reap: a genuinely failed removal is still kept — no reap row, no label, no branch delete" {
@@ -1689,6 +1733,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 *state*) printf '%s\n' 'MERGED' ;;
 *closingIssuesReferences*) printf '' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/grid-me)" ;;
 esac
 exit 0
 EOF

@@ -3817,11 +3817,19 @@ SCAFFOLD
 
       # A squash-merged PR's branch is never an ancestor of main, so git
       # (and wt) still read it as unmerged — delete it deliberately now that
-      # gh has confirmed the merge. Only a MERGED PR: a CLOSED PR's branch may
-      # hold work worth reviving, and a branch already deleted (a real merge
-      # or a prior reap) is a no-op.
+      # gh has confirmed the merge, but ONLY when the local tip is exactly
+      # the merged PR head. A resumed run or a human may have committed past
+      # the merge, and those commits would be orphaned by a forced delete
+      # (recoverable via reflog, but not by glance). Only a MERGED PR: a
+      # CLOSED PR's branch may hold work worth reviving, and a branch already
+      # deleted (a real merge or a prior reap) is a no-op.
       if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
-        git branch -D "$branch" >/dev/null 2>&1 || true
+        pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
+        if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
+          git branch -D "$branch" >/dev/null 2>&1 || true
+        else
+          note "kept local branch $branch — tip diverges from the merged PR head"
+        fi
       fi
 
       # Release the claim: drop `dispatched` from the issue(s) this PR
