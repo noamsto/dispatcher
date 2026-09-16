@@ -565,6 +565,7 @@ _pi_fixture() {
 EOF
   printf '{"defaultProjectTrust":"always"}\n' >"$AMBIENT/settings.json"
   printf '{}\n' >"$AMBIENT/trust.json"
+  printf '{"models":[{"id":"deepseek/deepseek-v4.1-flash"}]}\n' >"$AMBIENT/models-store.json"
 }
 
 @test "pi-agent-dir: prints only the worker dir and seeds never-trust settings" {
@@ -578,37 +579,70 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
 }
 
-@test "pi-agent-dir: literal keys are read through, never copied" {
+@test "pi-agent-dir: auth links to the ambient file, never copies it" {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  run grep -rF SECRET-FIXTURE-123 "$WORKER"
+  [ -L "$WORKER/auth.json" ]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+  # A copy is what leaked a secret into the worker dir; a link holds a path.
+  run grep -rF SECRET-FIXTURE-123 "$WORKER" --exclude-dir=.
   [ "$status" -eq 1 ]
-  run grep -rF 'sk-a$b' "$WORKER"
-  [ "$status" -eq 1 ]
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == '!'* ]]
-  [[ "$key" == *auth.json* ]]
-  [ "$(bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
-  key=$(jq -r .lit.key "$WORKER/auth.json")
-  [ "$(bash -c "${key#!}")" = 'sk-a$b' ]
 }
 
-@test "pi-agent-dir: references stay verbatim; oauth, bad names and env are dropped" {
+@test "pi-agent-dir: every entry stays reachable through the link, oauth included" {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  [ "$(jq -c .openrouter "$WORKER/auth.json")" = '{"type":"api_key","key":"$OPENROUTER_API_KEY"}' ]
-  [ "$(jq -r .deepseek.key "$WORKER/auth.json")" = '!echo x' ]
-  [ "$(jq 'has("anthropic")' "$WORKER/auth.json")" = false ]
-  [ "$(jq 'has("a b")' "$WORKER/auth.json")" = false ]
+  # The api_key-only filter dropped these, leaving an oauth-only machine with {} (#198).
+  [ "$(jq -r .anthropic.type "$WORKER/auth.json")" = oauth ]
+  [ "$(jq -r .anthropic.access "$WORKER/auth.json")" = a ]
+  [ "$(jq -r .opencode.key "$WORKER/auth.json")" = SECRET-FIXTURE-123 ]
+  [ "$(jq -c .openrouter "$WORKER/auth.json")" = '{"type":"api_key","key":"$OPENROUTER_API_KEY","env":{"X":"y"}}' ]
 }
 
-@test "pi-agent-dir: auth is 600 and the ambient dir is untouched" {
+@test "pi-agent-dir: a pi-side token refresh writes through to the ambient file" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  # pi rewrites auth.json in place on refresh; through the link that must land
+  # in the ambient file, not strand a divergent copy in the shared worker dir.
+  jq '.anthropic.access = "refreshed"' "$WORKER/auth.json" >"$WORKER/auth.next"
+  cat "$WORKER/auth.next" >"$WORKER/auth.json"
+  rm "$WORKER/auth.next"
+  [ -L "$WORKER/auth.json" ]
+  [ "$(jq -r .anthropic.access "$AMBIENT/auth.json")" = refreshed ]
+}
+
+@test "pi-agent-dir: the ambient dir is untouched and trust.json is not seeded" {
   _pi_fixture
   before=$(sha256sum "$AMBIENT"/*)
+  mode=$(stat -c %a "$AMBIENT/auth.json")
   run_crew pi-agent-dir >/dev/null
-  [ "$(stat -c %a "$WORKER/auth.json")" = 600 ]
   [ "$(sha256sum "$AMBIENT"/*)" = "$before" ]
+  [ "$(stat -c %a "$AMBIENT/auth.json")" = "$mode" ]
   [ ! -e "$WORKER/trust.json" ]
+}
+
+@test "pi-agent-dir: the model catalog is copied, not linked" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  # Workers share this dir; a link would aim N concurrent refreshes at the real catalog.
+  [ ! -L "$WORKER/models-store.json" ]
+  [ "$(jq -r '.models[0].id' "$WORKER/models-store.json")" = deepseek/deepseek-v4.1-flash ]
+  [ "$(stat -c %a "$WORKER/models-store.json")" = 644 ]
+}
+
+@test "pi-agent-dir: a re-seed refreshes a stale or corrupted catalog copy" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  printf 'torn{\n' >"$WORKER/models-store.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -r '.models[0].id' "$WORKER/models-store.json")" = deepseek/deepseek-v4.1-flash ]
+}
+
+@test "pi-agent-dir: no ambient catalog leaves the worker without one" {
+  _pi_fixture
+  rm "$AMBIENT/models-store.json"
+  run_crew pi-agent-dir >/dev/null
+  [ ! -e "$WORKER/models-store.json" ]
 }
 
 @test "pi-agent-dir: re-seed keeps pi-written settings and forces never" {
@@ -636,22 +670,26 @@ EOF
   [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
 }
 
-# Seed once, break the ambient auth.json with $1, and expect a refusal that
-# leaves the seeded worker auth.json byte-identical.
+# Seed once, break the ambient auth.json with $1, and expect a refusal. The
+# worker file is a link, so "kept" is about the link, not its content.
 _pi_broken_auth() {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   printf '%s\n' "$1" >"$AMBIENT/auth.json"
 }
 
-@test "pi-agent-dir: a malformed ambient auth.json is refused, worker auth kept" {
+_pi_assert_link_kept() {
+  [ -L "$WORKER/auth.json" ]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+}
+
+@test "pi-agent-dir: a malformed ambient auth.json is refused, worker link kept" {
   _pi_broken_auth '{"opencode":{"ty'
   run --separate-stderr run_crew pi-agent-dir
   [ "$status" -ne 0 ]
   [ -z "$output" ]
   [[ "$stderr" == *"$AMBIENT/auth.json is unreadable or not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a non-object ambient auth.json is refused" {
@@ -659,20 +697,19 @@ _pi_broken_auth() {
   run --separate-stderr run_crew pi-agent-dir
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: an unreadable ambient auth.json is refused" {
   [ "$(id -u)" -eq 0 ] && skip "root reads mode 000 files"
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   chmod 000 "$AMBIENT/auth.json"
   run --separate-stderr run_crew pi-agent-dir
   chmod 600 "$AMBIENT/auth.json"
   [ "$status" -ne 0 ]
   [[ "$stderr" == *"unreadable or not a JSON object"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a worker dir symlinked to the ambient dir is refused" {
@@ -714,8 +751,7 @@ _pi_broken_auth() {
   mkdir -p rel
   printf '{"opencode":{"type":"api_key","key":"!echo rel"}}\n' >rel/auth.json
   PI_CODING_AGENT_DIR=rel run_crew pi-agent-dir >/dev/null
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == *"$AMBIENT/auth.json"* ]]
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
 }
 
 # Seed once, then drop the ambient auth.json so the test can put a non-regular
@@ -723,7 +759,6 @@ _pi_broken_auth() {
 _pi_seeded() {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
-  before=$(sha256sum "$WORKER/auth.json")
   rm "$AMBIENT/auth.json"
 }
 
@@ -737,7 +772,7 @@ _pi_assert_refused() {
   [ "$status" -ne 124 ]
   [ -z "$output" ]
   [[ "$stderr" == *"refusing to seed pi credentials"* ]]
-  [ "$(sha256sum "$WORKER/auth.json")" = "$before" ]
+  _pi_assert_link_kept
 }
 
 @test "pi-agent-dir: a dangling ambient auth.json symlink is refused, worker auth kept" {
@@ -808,15 +843,16 @@ _pi_assert_refused() {
   [ "$(jq -c . "$WORKER/auth.json")" = '{}' ]
 }
 
-@test "pi-agent-dir: a relative ambient auth.json symlink is read through" {
+@test "pi-agent-dir: a relative ambient auth.json symlink still resolves" {
   _pi_fixture
   mkdir -p "$HOME/.pi/secrets"
   mv "$AMBIENT/auth.json" "$HOME/.pi/secrets/auth.json"
   ln -s ../secrets/auth.json "$AMBIENT/auth.json"
   run_crew pi-agent-dir >/dev/null
-  key=$(jq -r .opencode.key "$WORKER/auth.json")
-  [[ "$key" == *"$AMBIENT/auth.json"* ]]
-  [ "$(cd / && bash -c "${key#!}")" = SECRET-FIXTURE-123 ]
+  # The worker link is absolute, so the ambient link's relative target resolves
+  # against the ambient dir — not the worker dir and not pi's cwd.
+  [ "$(readlink "$WORKER/auth.json")" = "$AMBIENT/auth.json" ]
+  [ "$(cd / && jq -r .opencode.key "$WORKER/auth.json")" = SECRET-FIXTURE-123 ]
 }
 
 @test "sessions: folds each session separately, oldest first" {
@@ -1093,6 +1129,94 @@ _pi_assert_refused() {
   wait
   [ "$status" -eq 0 ]
   [[ "$output" == *'"body":"hi"'* ]]
+}
+
+# #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
+# blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
+# is delivered in-band instead of stranding the worker. These tests pin the
+# composition of the crew commands that loop relies on, using `--timeout 0`
+# (an instant timeout) and future-dated seeded rows — the fake-clock pattern,
+# no real sleeps. The `crew status`/`crew await`/`crew inbox` commands
+# themselves are covered by their own tests; here the loop's delivery paths
+# and its ending are pinned.
+
+@test "blocked-cycle: a reply arriving in a later cycle is still delivered in-band" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # Cycle 1: the window has nothing in it, so it times out (exit 0, empty
+  # stdout — the timeout marker). --separate-stderr: the "await ended" note
+  # goes to stderr, so $output is genuinely the reply stream.
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # Per-cycle liveness re-stamp, then the dispatcher replies dated inside cycle
+  # 2's window (a future ts: `crew await` matches .ts > its own start, so a
+  # reply dated during the window is what a cycle delivers).
+  CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle 1 of 24)"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  t=$(($(date +%s) * 1000))
+  jq -nc --arg to "$id" --argjson ts "$((t + 1000))" \
+    '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
+  # Cycle 2: the reply is delivered in-band and the worker resumes in place.
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run run_crew status "$id" working "resumed"
+  # No failure was ever posted.
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "0" ]
+}
+
+@test "blocked-cycle: a reply that missed the await is caught by the straggler fold" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # Cycle 1 times out empty...
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # ...and the dispatcher's reply lands after that window closed: it is older
+  # than the NEXT cycle's start, so no future `crew await` can deliver it. The
+  # worker protocol therefore folds stragglers after every timeout —
+  # `crew inbox --since <seen>` — which returns it and resumes the worker.
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  t=$(($(date +%s) * 1000))
+  jq -nc --arg to "$id" --argjson ts "$t" \
+    '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run run_crew status "$id" working "resumed"
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "0" ]
+}
+
+@test "blocked-cycle: budget exhaustion fails exactly once after every cycle re-stamped blocked" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run run_crew status "$id" working
+  CREW_ID=c1 run run_crew status "$id" blocked "why?"
+  # A 3-cycle budget on an empty bus: every cycle re-stamps blocked (the
+  # per-cycle liveness signal), and the budget's exhaustion posts exactly one
+  # failed — never one per cycle, never zero.
+  i=1
+  while [ "$i" -le 3 ]; do
+    CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle $i of 24)"
+    i=$((i + 1))
+  done
+  CREW_ID=c1 run run_crew status "$id" failed "blocked, no dispatcher reply"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  # every cycle re-stamped blocked (3 cycle rows), and the budget's
+  # exhaustion posted exactly one failed with the canonical detail.
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="blocked") | select(.body.detail | contains("cycle"))] | length' "$log"
+  [ "$output" = "3" ]
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")] | length' "$log"
+  [ "$output" = "1" ]
+  run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")][0].body.detail' "$log"
+  [ "$output" = "blocked, no dispatcher reply" ]
 }
 
 @test "inbox: a branch-only worker id exits non-zero" {

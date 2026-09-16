@@ -378,12 +378,47 @@ _write_if_changed() { # $1=target $2=mode $3=content
   mv -f "$tmp" "$1"
 }
 
+# _link_if_changed — point a worker file at its ambient original. pi resolves
+# auth.json under PI_CODING_AGENT_DIR and offers no path override, so the worker
+# needs its own entry; linking rather than copying is what keeps oauth usable,
+# since pi writes with a plain writeFileSync (no temp+rename anywhere in the
+# bundle) and a token refresh therefore lands in the ambient file instead of
+# stranding a divergent copy in this shared dir.
+_link_if_changed() { # $1=target $2=source
+  local tmp
+  # -d also catches a symlinked dir, which would swallow the mv as a rename into it.
+  if [ -d "$1" ]; then
+    echo "crew: $1 is a directory — refusing to seed pi worker dir" >&2
+    exit 1
+  fi
+  if [ "$(readlink "$1" 2>/dev/null)" = "$2" ]; then
+    return 0
+  fi
+  tmp=$(mktemp -u "$(dirname "$1")/.seed.XXXXXX")
+  ln -s "$2" "$tmp"
+  mv -f "$tmp" "$1"
+}
+
+# _copy_if_changed — snapshot an ambient cache file into the worker dir.
+_copy_if_changed() { # $1=target $2=source
+  local tmp
+  if cmp -s "$2" "$1" 2>/dev/null; then
+    return 0
+  fi
+  tmp=$(mktemp "$(dirname "$1")/.seed.XXXXXX")
+  cat "$2" >"$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$1"
+}
+
 # _pi_agent_dir — seed the worker-scoped PI_CODING_AGENT_DIR and print its path.
-# auth.json never holds a literal key: each one becomes a `!jq` read-through of
-# the ambient file, so the secret stays out of the worker dir. OAuth entries are
-# dropped (a refresh would write back), as are `env` maps (they can hold secrets).
+# auth.json is linked, not filtered into `!jq` read-throughs: that filter dropped
+# every oauth entry, which on an OAuth-login machine is all of them, leaving
+# workers with no credential at all (#198). models-store.json is copied instead —
+# it is a cache pi rewrites on refresh, and every worker shares this dir, so a
+# link would aim N concurrent writers at the user's real catalog.
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings auth probe
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -421,7 +456,6 @@ _pi_agent_dir() {
   settings=$(jq -n --argjson base "$settings" '$base + {defaultProjectTrust: "never"}')
   _write_if_changed "$dir/settings.json" 644 "$settings"
 
-  auth='{}'
   # Only a genuinely missing file means "no keys". [ -e ] is also false for a
   # dangling or looping symlink and behind an unsearchable dir, so "missing"
   # needs its nearest existing ancestor to be a searchable directory; anything
@@ -442,25 +476,24 @@ _pi_agent_dir() {
       echo "crew: $ambient/auth.json is not a reachable regular file — refusing to seed pi credentials" >&2
       exit 1
     }
-    auth=$(jq -s --arg jq "$(command -v jq)" --arg path "$ambient/auth.json" '
-    (if length == 1 and (.[0] | type) == "object" then .[0] else error("not an object") end)
-    | with_entries(
-        select((.key | test("^[a-z0-9][a-z0-9._-]*$"))
-          and (.value | type) == "object"
-          and .value.type == "api_key"
-          and (.value.key | type) == "string")
-        | .key as $name
-        | .value = {type: "api_key", key: (
-            if (.value.key | startswith("!") or test("^\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?$"))
-            then .value.key
-            else "!" + ($jq | @sh) + " -r " + ((".[\"" + $name + "\"].key") | @sh) + " " + ($path | @sh)
-            end)})
-  ' "$ambient/auth.json" 2>/dev/null) || {
+    # Linking hands pi the file unparsed, so validate here — a worker that dies on
+    # a malformed auth.json reports it as "no API key", three layers from the cause.
+    jq -e 'type == "object"' "$ambient/auth.json" >/dev/null 2>&1 || {
       echo "crew: $ambient/auth.json is unreadable or not a JSON object — refusing to seed pi credentials" >&2
       exit 1
     }
+    _link_if_changed "$dir/auth.json" "$ambient/auth.json"
+  else
+    # No ambient file: seed an empty object so pi falls through to the env vars.
+    _write_if_changed "$dir/auth.json" 600 '{}'
   fi
-  _write_if_changed "$dir/auth.json" 600 "$auth"
+
+  # A cold catalog costs more than the "custom model id" warning: pi loses the
+  # model's context window, cost and thinkingLevelMap — the last is what
+  # --thinking resolves against.
+  if [ -f "$ambient/models-store.json" ]; then
+    _copy_if_changed "$dir/models-store.json" "$ambient/models-store.json"
+  fi
 
   printf '%s\n' "$dir"
 }
@@ -640,7 +673,7 @@ await)
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
-  # next activation.
+  # worker's next inbox check.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
