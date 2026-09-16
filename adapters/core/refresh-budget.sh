@@ -56,6 +56,9 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
           else (try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null) end;
         {
           source: "oauth_usage",
+          # The oauth usage payload carries no plan/subscription key (verified
+          # live — see the #201 spec), so the tier is unknowable: null.
+          plan_type: null,
           # `//` treats false as empty, so it cannot default a boolean: test
           # presence explicitly. Missing spend_limit_reached -> assume reached
           # (conservative: no credits cover).
@@ -82,6 +85,7 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
     (($(date +%s) - $(stat -c %Y "$STATUSLINE_CACHE") < STALE_AFTER_S)); then
     jq -e '.rate_limits | {
       source: "statusline_cache",
+      plan_type: null,
       credits_cover: null,
       windows: (
         {}
@@ -212,6 +216,7 @@ WINS
   jq -n --argjson p5 "$max5" --argjson p7 "$max7" --argjson r5 "$resets5" --argjson r7 "$resets7" '
     {
       source: "pane_scrape",
+      plan_type: null,
       credits_cover: null,
       windows: (
         {"5h": {used_pct: $p5, resets_at: $r5}}
@@ -242,15 +247,34 @@ probe_codex() {
     def wname($s):
       if $s == null then "unknown"
       elif $s <= 18600 then "5h" elif $s <= 90000 then "1d" elif $s <= 691200 then "7d" else "other" end;
-    (map(select(.id == 2)) | .[0].result.rateLimits) as $r
+    (map(select(.id == 2)) | .[0].result) as $res
+    | ($res.rateLimits) as $r
     | {
         source: "app-server",
         credits_cover: ($r.credits.hasCredits // false),
+        plan_type: ($r.planType // null),
         windows: (
           {}
           + (if $r.primary.usedPercent != null then {(wname($r.primary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.primary.usedPercent, resets_at: $r.primary.resetsAt}} else {} end)
           + (if $r.secondary != null and $r.secondary.usedPercent != null then {(wname($r.secondary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.secondary.usedPercent, resets_at: $r.secondary.resetsAt}} else {} end)
-        )
+        ),
+        # Absolute-limit signals alongside the relative percent windows, so
+        # dispatch can gate on exhaustion no percent window expresses (#201).
+        # ordinaryUsageAllowed is top-level on the response; the rest sit under
+        # rateLimits. jq indexes a missing/null sub-object to null, so each
+        # field degrades to null rather than failing the probe. The boolean
+        # fields are written WITHOUT `// null`: `//` substitutes on `false`
+        # too, which would collapse an explicit `ordinaryUsageAllowed: false`
+        # (the exhaustion signal) into null and disarm the gate.
+        limit_reached: {
+          ordinary_usage_allowed: $res.ordinaryUsageAllowed,
+          rate_limit_reached_type: $r.rateLimitReachedType,
+          spend_control_reached: $r.spendControlReached,
+          credits_unlimited: $r.credits.unlimited,
+          credits_balance: $r.credits.balance,
+          individual_remaining_percent: $r.individualLimit.remainingPercent,
+          individual_resets_at: $r.individualLimit.resetsAt
+        }
       }
   ' <<<"$resp" 2>/dev/null
 }
@@ -355,7 +379,7 @@ main() {
   jq -r --argjson now "$now" "$jq_time_defs"'
     .engines | to_entries[] | .key as $e |
     if .value == null then "\($e): unknown"
-    else "\($e): " + ([.value.windows | to_entries[] |
+    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) + ([.value.windows | to_entries[] |
         "\(.key) \(.value.used_pct)% used" +
         (if .value.resets_at then
            " (resets \(.value.resets_at | todateiso8601)" +

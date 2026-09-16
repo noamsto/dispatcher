@@ -61,6 +61,10 @@ EOF
 # shim invocation time (offset by SHIM_CODEX_RESETS_IN seconds) rather than
 # a baked-in epoch, so a test built on it can't age into failure; omitting
 # the offset omits resetsAt entirely, for the null-reset case.
+# SHIM_CODEX_LEGACY emits the pre-#201 frame (no planType, no top-level
+# ordinaryUsageAllowed, no credits.unlimited/balance, no individualLimit,
+# no spendControlReached/rateLimitReachedType): what an old codex build or
+# an older cached response carries.
 write_codex_shim() {
   cat >"$STUB_DIR/codex" <<'EOF'
 #!/usr/bin/env bash
@@ -68,7 +72,9 @@ if [[ -n "${SHIM_CODEX_FAIL:-}" ]]; then
   exit 1
 fi
 printf '%s\n' '{"id":1,"result":{}}'
-if [[ -n "${SHIM_CODEX_GENERIC:-}" ]]; then
+if [[ -n "${SHIM_CODEX_LEGACY:-}" ]]; then
+  printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true}}}}'
+elif [[ -n "${SHIM_CODEX_GENERIC:-}" ]]; then
   printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":1440},"credits":{"hasCredits":true},"planType":"team"}}}'
 elif [[ -n "${SHIM_CODEX_CUSTOM:-}" ]]; then
   resets_field=""
@@ -78,7 +84,7 @@ elif [[ -n "${SHIM_CODEX_CUSTOM:-}" ]]; then
   printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":%s,"windowDurationMins":%s%s},"credits":{"hasCredits":true},"planType":"team"}}}\n' \
     "$SHIM_CODEX_USED_PCT" "$SHIM_CODEX_WINDOW_MINS" "$resets_field"
 else
-  printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true},"planType":"team"}}}'
+  printf '%s\n' '{"id":2,"result":{"ordinaryUsageAllowed":true,"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true,"unlimited":false,"balance":"12.34"},"individualLimit":null,"spendControlReached":null,"planType":"team","rateLimitReachedType":null}}}'
 fi
 EOF
   chmod +x "$STUB_DIR/codex"
@@ -185,6 +191,64 @@ EOF
   [ "$output" = "61" ]
   run jq '.engines.codex.credits_cover' "$cache"
   [ "$output" = "true" ]
+}
+
+@test "codex records plan_type and the absolute-limit signals from the response" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq -r '.engines.codex.plan_type' "$cache"
+  [ "$output" = "team" ]
+  run jq '.engines.codex.limit_reached.ordinary_usage_allowed' "$cache"
+  [ "$output" = "true" ]
+  run jq '.engines.codex.limit_reached.rate_limit_reached_type' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.spend_control_reached' "$cache"
+  [ "$output" = "null" ]
+  # credits.unlimited is a boolean false, not the `// null` collapse of it.
+  run jq '.engines.codex.limit_reached.credits_unlimited' "$cache"
+  [ "$output" = "false" ]
+  run jq -r '.engines.codex.limit_reached.credits_balance' "$cache"
+  [ "$output" = "12.34" ]
+  run jq '.engines.codex.limit_reached.individual_remaining_percent' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.individual_resets_at' "$cache"
+  [ "$output" = "null" ]
+}
+
+@test "claude plan_type stays null: the oauth payload carries no plan key" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq '.engines.claude.plan_type' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "the summary line prints the codex plan tier in brackets" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"codex: [team] 5h 42% used"* ]]
+}
+
+@test "a legacy codex response records a null tier and null absolute-limit fields" {
+  SHIM_CODEX_LEGACY=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.codex.plan_type' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.ordinary_usage_allowed' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.rate_limit_reached_type' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.spend_control_reached' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.credits_unlimited' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.credits_balance' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.individual_remaining_percent' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.codex.limit_reached.individual_resets_at' "$cache"
+  [ "$output" = "null" ]
 }
 
 @test "a codex failure degrades to null, never to exhausted" {
