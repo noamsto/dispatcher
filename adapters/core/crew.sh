@@ -640,7 +640,7 @@ await)
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
-  # next activation.
+  # worker's next inbox check.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2

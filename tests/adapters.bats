@@ -525,6 +525,70 @@ teardown() {
   done
 }
 
+# --- #186: blocked workers keep awaiting in bounded cycles instead of stopping ---
+
+@test "worker protocol pins the bounded blocked→await cycle on every copy" {
+  for doc in \
+    adapters/core/protocols/WORKER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/cursor/protocols/WORKER_PROTOCOL.md; do
+    for statement in \
+      '**keep waiting in bounded cycles**' \
+      '**total wait budget of 24 cycles (~2h)**' \
+      'K running 1 to 24' \
+      'it is how `crew stall-watch` and the dispatcher see the worker is alive' \
+      'emit `crew status "$CREW_WORKER_ID" failed "blocked, no dispatcher reply"`' \
+      '`crew reply` alone does not wake a stopped session' \
+      'dispatcher must **re-dispatch** you'; do
+      run grep -F "$statement" "$ROOT/$doc"
+      [ "$status" -eq 0 ]
+    done
+    # The two phrasings this change deleted: the false "resume on next
+    # activation" promise and the 2-cycle cap.
+    for gone in \
+      'you resume on next activation' \
+      'Cap block→await cycles at 2'; do
+      run grep -F "$gone" "$ROOT/$doc"
+      [ "$status" -ne 0 ]
+    done
+  done
+}
+
+@test "dispatcher protocol pins in-band delivery and terminal re-dispatch on every copy" {
+  for doc in \
+    adapters/core/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
+    for statement in \
+      'stays inside `crew await` in repeated 300s cycles for up to a **~2h total budget (~24 cycles)**' \
+      'resumes the worker in place — no tmux, no re-dispatch' \
+      'it is **terminal** — re-dispatch it with the context baked in, and do not attempt to wake it' \
+      '**Manual pane injection is a human last resort, never an automatic path.**' \
+      'never do it while the pane shows' \
+      '`quota:` wait (see the watchdog steps above'; do
+      run grep -F "$statement" "$ROOT/$doc"
+      [ "$status" -eq 0 ]
+    done
+    run grep -F 'a bounded ~300s wait' "$ROOT/$doc"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "every review-task copy mirrors the bounded blocked→await cadence" {
+  for copy in \
+    "$ROOT/adapters/core/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/claude-code/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/codex/plugin/protocols/REVIEW_TASK.md" \
+    "$ROOT/adapters/cursor/protocols/REVIEW_TASK.md"; do
+    run grep -F 'on the **bounded-cycle** budget of `WORKER_PROTOCOL.md`' "$copy"
+    [ "$status" -eq 0 ]
+    run grep -F 'Cap at 2 cycles' "$copy"
+    [ "$status" -ne 0 ]
+  done
+}
+
 @test "the cursor rule runs both gates and names where the bodies are" {
   # Hand-maintained — gen-adapters.sh never touches adapters/cursor/rules/, so
   # no drift gate sees this file. With alwaysApply: true it is in every cursor
