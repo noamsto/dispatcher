@@ -130,14 +130,29 @@ setup() {
 }
 
 @test "the built scripts and the built protocol dir carry the same revision" {
-  # The baked @protocolRev@ (guard marker, #184) and the PROTOCOL_REV file in
-  # the baked default protocol dir must agree. A protocol edit that was not
-  # regenerated via scripts/gen-adapters.sh fails here — the guard is
-  # self-checking, and the CI drift gate enforces the same freshness.
+  # The baked @protocolRev@ (guard marker, #184/#193) must equal the runtime
+  # hash of the baked default protocol dir: sorted `name:sha256;` entries,
+  # sha256 of the concatenation, first 16 hex chars — the rule flake.nix uses
+  # to bake it and _check_protocol_rev uses to recompute it. One algorithm,
+  # two implementations, pinned here: a protocol edit that drifts them apart
+  # (or a checkout that no longer matches the build) fails this test. There is
+  # no PROTOCOL_REV file to compare against any more — the guard hashes the
+  # directory itself.
   dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -i protocol | head -1)"
   [ -n "$dir" ]
-  [ -f "$dir/PROTOCOL_REV" ]
-  rev_dir="$(cat "$dir/PROTOCOL_REV")"
+  [ ! -f "$dir/PROTOCOL_REV" ]
+  rev_dir="$(
+    entries=""
+    while IFS= read -r line; do
+      entries+="$line"
+    done < <(
+      for f in "$dir"/*; do
+        [ -f "$f" ] || continue
+        printf '%s:%s;\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+      done | LC_ALL=C sort
+    )
+    printf '%s' "$entries" | sha256sum | cut -d' ' -f1 | cut -c1-16
+  )"
   [ -n "$rev_dir" ]
   rev_dispatch="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH/bin/dispatch" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
   rev_resume="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH_RESUME/bin/dispatch-resume" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
