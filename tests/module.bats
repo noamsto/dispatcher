@@ -142,16 +142,19 @@ setup() {
   [ -n "$dir" ]
   [ ! -f "$dir/PROTOCOL_REV" ]
   rev_dir="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$dir"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
     entries=""
-    while IFS= read -r line; do
-      entries+="$line"
-    done < <(
-      for f in "$dir"/*; do
-        [ -f "$f" ] || continue
-        printf '%s:%s;\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
-      done | LC_ALL=C sort
-    )
-    printf '%s' "$entries" | sha256sum | cut -d' ' -f1 | cut -c1-16
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
   )"
   [ -n "$rev_dir" ]
   rev_dispatch="$(grep -oE 'stamped_rev="[0-9a-f]{16}"' "$OUT_DISPATCH/bin/dispatch" | head -1 | sed -n 's/stamped_rev="\([0-9a-f]\{16\}\)"/\1/p')"
@@ -159,6 +162,51 @@ setup() {
   [ -n "$rev_dispatch" ]
   [ "$rev_dispatch" = "$rev_dir" ]
   [ "$rev_resume" = "$rev_dispatch" ]
+}
+
+@test "the runtime and Nix rules agree on an edge-case dir (dotfile, prefix names)" {
+  # The two implementations must be byte-identical on more than the current
+  # six-file tree: a naive line-sort or a non-dotglob glob silently diverges
+  # the day a dotfile or a prefix-named pair lands in the protocol dir, making
+  # the built-in default refuse every dispatch with an inexplicable hash
+  # mismatch. Pin that here with the two shapes that break naive rules:
+  # '.hidden' (glob '*/*' misses dotfiles) and 'X'/'X1' (line-sort puts X1
+  # first because '1' < ':'; attrNames puts X first).
+  scratch="$BATS_TEST_TMPDIR/edge-protocols"
+  mkdir -p "$scratch"
+  printf 'a' >"$scratch/.hidden"
+  printf 'b' >"$scratch/X"
+  printf 'c' >"$scratch/X1"
+  printf 'd' >"$scratch/GRID"
+  printf 'e' >"$scratch/GRID_PROTOCOL.md"
+
+  rev_nix="$(nix eval --impure --raw --expr "
+    let
+      dir = builtins.toPath \"$scratch\";
+      files = builtins.attrNames (builtins.readDir dir);
+    in builtins.substring 0 16 (builtins.hashString \"sha256\"
+      (builtins.concatStringsSep \"\" (map
+        (n: \"\${n}:\${builtins.hashFile \"sha256\" (dir + \"/\${n}\")};\")
+        files)))")"
+  [ -n "$rev_nix" ]
+
+  rev_bash="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$scratch"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+    entries=""
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$scratch/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+  )"
+  [ -n "$rev_bash" ]
+  [ "$rev_nix" = "$rev_bash" ]
 }
 
 @test "crew does not retain the protocols as a runtime closure reference" {

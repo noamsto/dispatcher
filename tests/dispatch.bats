@@ -121,18 +121,21 @@ _substituted_dispatch() { # [rev]
 }
 
 # The runtime hash rule, mirrored from _check_protocol_rev (and flake.nix):
-# sorted `name:sha256;` entries, sha256 of the concatenation, first 16 hex.
+# the directory's files (dotfiles included), names sorted byte-wise, each
+# hashed as `name:sha256;`, sha256 of the concatenation, first 16 hex.
 _protocol_dir_rev() { # <dir>
-  local dir="$1" entries="" line
-  while IFS= read -r line; do
-    entries+="$line"
-  done < <(
-    for f in "$dir"/*; do
-      [ -f "$f" ] || continue
-      printf '%s:%s;\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
-    done | LC_ALL=C sort
-  )
-  printf '%s' "$entries" | sha256sum | cut -d' ' -f1 | cut -c1-16
+  local dir="$1" entries="" names=() file
+  shopt -s dotglob nullglob
+  for file in "$dir"/*; do
+    [ -f "$file" ] || continue
+    names+=("$(basename "$file")")
+  done
+  shopt -u dotglob nullglob
+  mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  for name in "${names[@]}"; do
+    entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
+  done
+  printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
 }
 
 # Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the

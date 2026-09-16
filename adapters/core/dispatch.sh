@@ -48,19 +48,23 @@ _require_protocol_files() {
 # _check_protocol_rev <dir> <label> — refuse a protocol directory whose content
 # does not match this script's baked revision (#184, #193). The build
 # substitutes the content hash of adapters/core/protocols for @protocolRev@;
-# at runtime this recomputes the same hash from the files actually in $dir
-# (sorted `name:sha256;` entries, sha256 of the concatenation, first 16 hex
-# chars — the rule flake.nix bakes at build time and scripts/gen-adapters.sh
-# used when PROTOCOL_REV was a committed file) and refuses a mismatch before
-# any scaffolding. A stale dir — an old store path held by a long-lived
-# DISPATCHER_PROTOCOL_DIR export, or a checkout whose content drifted from the
-# script's build — hashes differently and is refused; there is no committed
-# PROTOCOL_REV file left to go stale, so two PRs editing different protocol
-# files can merge in either order. Six small files hash in a few milliseconds.
-# A raw checkout script (marker unsubstituted) cannot bind a revision and
-# skips with a one-line warning.
+# at runtime this recomputes the same hash from the files actually in $dir and
+# refuses a mismatch before any scaffolding. The rule is byte-identical to
+# flake.nix's: the directory's files (dotfiles included, matching readDir),
+# names sorted byte-wise (matching builtins.attrNames), each hashed —
+# `name:sha256;` entries, sha256 of the concatenation, first 16 hex chars. It
+# is pinned against the Nix implementation by tests/module.bats, including an
+# edge-case dir (dotfile, prefix-named pair) where a naive line-sort or a
+# non-dotglob glob would diverge. A stale dir — an old store path held by a
+# long-lived DISPATCHER_PROTOCOL_DIR export, or a checkout whose content
+# drifted from the script's build — hashes differently and is refused; there
+# is no committed PROTOCOL_REV file left to go stale, so two PRs editing
+# different protocol files can merge in either order. Six small files hash in
+# a few milliseconds. A raw checkout script (marker unsubstituted) cannot bind
+# a revision and skips with a one-line warning.
 _check_protocol_rev() {
-  local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries="" file name
+  local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries=""
+  local names=() file name sig
   # The sentinel is the placeholder's *shape*, not the literal: flake.nix's
   # replaceStrings (and a test's sed) rewrite every @protocolRev@ occurrence,
   # so a literal comparison would make a substituted script skip its own
@@ -69,14 +73,27 @@ _check_protocol_rev() {
     echo "$label: unsubstituted protocol revision (raw checkout script) — skipping the protocol revision consistency check" >&2
     return 0
   fi
+  # Names only, not `name:hash;` lines: sorting full lines diverges from
+  # attrNames when one name is a prefix of another ('X' vs 'X1' — line-sort
+  # puts X1 first because '1' < ':'). dotglob makes the glob see dotfiles the
+  # way readDir does; nullglob keeps an empty dir from globbing a literal '*'
+  # into the file set. Sorting by name then hashing in that order mirrors
+  # flake.nix's attrNames + map exactly.
+  shopt -s dotglob nullglob
   for file in "$dir"/*; do
     [ -f "$file" ] || continue
-    name="$(basename "$file")"
-    entries+="${name}:$(sha256sum "$file" | cut -d' ' -f1);"$'\n'
+    names+=("$(basename "$file")")
   done
-  # Sort the entries byte-wise (LC_ALL=C, matching builtins.attrNames) and
-  # strip the line breaks before hashing, exactly as gen-adapters did.
-  dir_rev="$(printf '%s' "$entries" | LC_ALL=C sort | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16)"
+  shopt -u dotglob nullglob
+  mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  for name in "${names[@]}"; do
+    sig="$(sha256sum "$dir/$name" | cut -d' ' -f1)"
+    entries+="${name}:${sig};"$'\n'
+  done
+  # The newlines are a construction convenience only — strip them before
+  # hashing, matching flake.nix's concatStringsSep "" (clean line-join with no
+  # separator).
+  dir_rev="$(printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16)"
   if [ "$dir_rev" != "$stamped_rev" ]; then
     echo "$label: protocol directory version mismatch — refusing to launch" >&2
     echo "$label:   script protocol revision: $stamped_rev" >&2

@@ -32,11 +32,13 @@ _require_protocol_files() {
 # _check_protocol_rev <dir> <label> — refuse a protocol directory whose content
 # does not match this script's baked revision (#184, #193). See dispatch.sh's
 # copy of this helper for the full contract: a substituted marker recomputes
-# the build's content hash from the files actually in $dir and refuses a
+# the build's content hash from the files actually in $dir (same rule, same
+# edge-case handling — sorted bare names, dotfiles included) and refuses a
 # mismatch before any scaffolding; a raw checkout script skips with a one-line
 # warning. There is no committed PROTOCOL_REV file to read.
 _check_protocol_rev() {
-  local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries="" file name
+  local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries=""
+  local names=() file name sig
   # The sentinel is the placeholder's *shape*, not the literal: flake.nix's
   # replaceStrings (and a test's sed) rewrite every @protocolRev@ occurrence,
   # so a literal comparison would make a substituted script skip its own
@@ -45,12 +47,20 @@ _check_protocol_rev() {
     echo "$label: unsubstituted protocol revision (raw checkout script) — skipping the protocol revision consistency check" >&2
     return 0
   fi
+  shopt -s dotglob nullglob
   for file in "$dir"/*; do
     [ -f "$file" ] || continue
-    name="$(basename "$file")"
-    entries+="${name}:$(sha256sum "$file" | cut -d' ' -f1);"$'\n'
+    names+=("$(basename "$file")")
   done
-  dir_rev="$(printf '%s' "$entries" | LC_ALL=C sort | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16)"
+  shopt -u dotglob nullglob
+  mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  for name in "${names[@]}"; do
+    sig="$(sha256sum "$dir/$name" | cut -d' ' -f1)"
+    entries+="${name}:${sig};"$'\n'
+  done
+  # Newlines are a construction convenience only — strip before hashing to
+  # match flake.nix's concatStringsSep "".
+  dir_rev="$(printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16)"
   if [ "$dir_rev" != "$stamped_rev" ]; then
     echo "$label: protocol directory version mismatch — refusing to launch" >&2
     echo "$label:   script protocol revision: $stamped_rev" >&2

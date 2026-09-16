@@ -186,10 +186,10 @@ teardown() {
 @test "no PROTOCOL_REV file ships in any protocol tree (#193)" {
   # #193: the revision marker is a runtime-derived hash, not a committed file —
   # one no longer exists to go stale, conflict on, or regenerate. Asserting its
-  # absence in the canonical tree AND the two plugin copies pins the removal:
-  # the old generator wrote it into all three, so just deleting the canonical
-  # file would leave the copies silently shipping it.
-  for tree in "$ROOT/adapters/core/protocols" "$ROOT/adapters/claude-code/plugin/protocols" "$ROOT/adapters/codex/plugin/protocols"; do
+  # absence in the canonical tree AND all three generated copies pins the
+  # removal: the old generator wrote it into all four, so just deleting the
+  # canonical file would leave the copies silently shipping it.
+  for tree in "$ROOT/adapters/core/protocols" "$ROOT/adapters/claude-code/plugin/protocols" "$ROOT/adapters/codex/plugin/protocols" "$ROOT/adapters/cursor/protocols"; do
     [ ! -f "$tree/PROTOCOL_REV" ]
   done
 }

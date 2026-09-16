@@ -150,16 +150,19 @@ setup_worker_wt() { # [extra header lines...]
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
     entries=""
-    while IFS= read -r line; do
-      entries+="$line"
-    done < <(
-      for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
-        [ -f "$f" ] || continue
-        printf '%s:%s;\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
-      done | LC_ALL=C sort
-    )
-    printf '%s' "$entries" | sha256sum | cut -d' ' -f1 | cut -c1-16
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
   )"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 1 ]
@@ -179,16 +182,19 @@ setup_worker_wt() { # [extra header lines...]
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev="$(
+    names=()
+    shopt -s dotglob nullglob
+    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
+      [ -f "$f" ] || continue
+      names+=("$(basename "$f")")
+    done
+    shopt -u dotglob nullglob
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
     entries=""
-    while IFS= read -r line; do
-      entries+="$line"
-    done < <(
-      for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
-        [ -f "$f" ] || continue
-        printf '%s:%s;\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
-      done | LC_ALL=C sort
-    )
-    printf '%s' "$entries" | sha256sum | cut -d' ' -f1 | cut -c1-16
+    for name in "${names[@]}"; do
+      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
+    done
+    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
   )"
   sed "s/@protocolRev@/$rev/" "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
