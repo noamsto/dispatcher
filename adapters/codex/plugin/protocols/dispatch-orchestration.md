@@ -147,6 +147,20 @@ non-pi engine, and is refused for pi standard/deep — pi has no other way to
 get a fresh critic/reviewer context. `--no-grid` combined with `--grid` or
 `--roles` is a usage error.
 
+`--lazy` records whichever topology resolves — explicit or the engine/tier
+default above — without creating any panes; the lead materializes each role
+with `dispatch --spawn-role <role>` at its seam and may `dispatch
+--reap-roles` when done (see `WORKER_PROTOCOL.md` → "Grid mode"). It needs no
+`--grid`/`--roles` of its own when a default already resolves one (non-pi
+`deep`, pi standard/deep) — adding `--grid` there would change the topology
+itself (adding `reviewer` on non-pi deep), not just make it lazy. **The
+default topology stays eager**: both non-pi deep default roles are used by
+any task that reaches its plan seam, so laziness only defers a one-time
+startup-read cost, not a permanent saving; pi's `reviewer` pane is its only
+review gate, so a lazy pi grid nobody spawns ships with no review at all.
+`--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
+"Lazy grid"), never a default.
+
 **Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 Pi has no fresh recovery-planner role in the current topology, so a
