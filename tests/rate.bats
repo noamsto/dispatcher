@@ -528,6 +528,32 @@ EOF
   [ "$output" = "incomplete" ]
 }
 
+@test "outcome: a role pane's idle-timeout failed row never counts as a worker failure" {
+  # #194 Gap 3: a grid role that never receives the lead's {"final":true}
+  # release idles until its watcher posts status `failed` with detail
+  # `no assignment` — but it posts on the ROLE identity, not the worker's.
+  # Only `worker:` rows fold into a run's outcome classification; the role
+  # row must leave a run whose worker said `done` classified as done, in both
+  # crew rate and crew retro, so a successful role is never recorded as a
+  # failure.
+  seed_dispatch feat/role-timeout 1000
+  seed_status "worker:feat/role-timeout#s1-1" 1200 done
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:300000, crew_id:"c1", from:"role:feat/role-timeout:plan-critic", to:"dispatcher:c1",
+            kind:"status", body:{state:"failed", detail:"no assignment"}}' >>"$logf"
+  CREW_ID=c1 run run_crew rate
+  [ "$status" -eq 0 ]
+  run jq -r '.[0] | "\(.outcome) \(.terminal_state)"' <<<"$(store_rows)"
+  [ "$output" = "done done" ]
+  # crew retro renders only runs carrying a note — seed one so the row exists.
+  CREW_ID=c1 run_crew msg "worker:feat/role-timeout#s1-1" "retro:c1" \
+    '{"seam":"review","tag":"other","detail":"layout note"}'
+  CREW_ID=c1 run run_crew retro
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"done"* ]]
+  [[ "$output" != *"failed"* ]]
+}
+
 @test "terminal_state: records the worker's own last state, distinguishing done from failed" {
   seed_dispatch ts-done 1000
   seed_status worker:ts-done 1500 done
