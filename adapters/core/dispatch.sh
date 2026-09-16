@@ -113,6 +113,16 @@ decorate_pane() {
   tmux set-option -w -t "$pane" pane-border-status top
 }
 
+# layout_grid <window> — main-vertical, pinning the lead (pane 1, launched
+# before any role pane splits off it) to 60% width. Role panes only carry
+# short verdict traffic and need far less room than the lead's diff/test/tool
+# output.
+layout_grid() {
+  local win="$1"
+  tmux set-window-option -t "$win" main-pane-width 60%
+  tmux select-layout -t "$win" main-vertical
+}
+
 # An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
 # must abort before pi ever launches.
 pi_agent_dir=""
@@ -1728,7 +1738,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
     launch_role "$role_pane" "$role" "${role_agents[$i]}" "${role_models[$i]}"
     watch_role "$role" "$role_pane"
   done
-  tmux select-layout -t "$win" tiled
+  layout_grid "$win"
 fi
 
 # Optional live status pane (--status): a bounded roster loop over the crew bus.
@@ -1736,7 +1746,7 @@ if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
   decorate_pane "$status_pane" status
   tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
-  tmux select-layout -t "$win" tiled
+  layout_grid "$win"
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
