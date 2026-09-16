@@ -76,6 +76,12 @@ review rubric:
 
 Post your verdict to the worker, then **end your turn** — the watcher sets you
 idle and wakes you on the next assignment. Stop only if the lead said `final`.
+If the lead never sends `final`, your pane idles until the lead's terminal
+status ages past reap's idle threshold and reap kills the window (see
+`WORKER_PROTOCOL.md` "Grid mode (role panes)") — the watcher's idle timeout
+may post a `status failed` with detail `no assignment` first; that row is
+`role:`-prefixed, so it never folds into `crew rate`/`crew retro` outcome
+classification and is never recorded as a worker failure (#194).
 Re-read `worker_id:` immediately before every reply because a resumed lead has a
 new session id while your role pane may survive:
 

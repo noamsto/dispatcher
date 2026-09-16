@@ -3607,10 +3607,13 @@ reap)
   # sync with the writers or a new scaffold file pins the worktree forever:
   # WORKER_TASK.md (dispatch.sh, `>"$wt_path/WORKER_TASK.md"`),
   # SPEC.md/PLAN.md/DECOMPOSITION.md (WORKER_PROTOCOL.md's spec-plan-critic
-  # flow), and docs/superpowers/plans/*.md (the superpowers writing-plans
-  # skill). Anchored on the porcelain `?? ` prefix and the full path so a
+  # flow), REVIEW_NOTES.md (EVIDENCE_REVIEW.md's "Recurrence and handoff"
+  # worktree-root ledger), docs/superpowers/plans/*.md (the superpowers
+  # writing-plans skill), and PLAN_ROUND<N>.md (the superpowers writing-plans
+  # round plans, e.g. PLAN_ROUND4.md observed in a reaped worker tree).
+  # Anchored on the porcelain `?? ` prefix and the full path so a
   # real file merely named e.g. `src/PLAN.md` still counts as dirt.
-  reap_scaffold_re='^\?\? (WORKER_TASK\.md|SPEC\.md|PLAN\.md|DECOMPOSITION\.md|docs/superpowers/plans/[^/]*\.md)$'
+  reap_scaffold_re='^\?\? (WORKER_TASK\.md|SPEC\.md|PLAN\.md|DECOMPOSITION\.md|REVIEW_NOTES\.md|PLAN_ROUND[0-9]+\.md|docs/superpowers/plans/[^/]*\.md)$'
 
   # Idle release: a session that reached a terminal state but whose window is
   # still sitting there keeps the tree occupied, and the PR gate below deliberately
@@ -3774,12 +3777,20 @@ PANES
       continue
     fi
 
-    # The task doc is dispatch's own artifact, but it is untracked — left in
-    # place it reads as uncommitted work and `wt remove` refuses the worktree.
-    # gtrash so a post-mortem can still recover it.
-    if [ -f "$wtpath/WORKER_TASK.md" ]; then
-      gtrash put "$wtpath/WORKER_TASK.md" >/dev/null 2>&1 || true
-    fi
+    # Every scaffold artifact is untracked, and `wt remove` refuses ANY dirty
+    # worktree — the dirt check above only declares them non-dirt so our own
+    # pipeline never pins a finished tree forever; each file must ALSO be
+    # moved out physically before wt runs, or the refusal fires anyway
+    # (feat/113-116-127-142 all sat blocked by untracked PLAN.md/SPEC.md
+    # alone). gtrash everything so a post-mortem can still recover it.
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      scaffold=$(printf '%s' "$line" | sed -nE 's/^\?\? (.*)$/\1/p')
+      [ -n "$scaffold" ] || continue
+      gtrash put "$wtpath/$scaffold" >/dev/null 2>&1 || true
+    done <<SCAFFOLD
+$(git -C "$wtpath" status --porcelain --untracked-files=all | grep -E "$reap_scaffold_re" || true)
+SCAFFOLD
     # Kill the window ourselves rather than leaning on worktrunk's post-remove
     # hook: that hook short-circuits under $CLAUDECODE, so relying on it would
     # make cleanup work for codex/cursor dispatchers only (#123 in reverse).
@@ -3787,15 +3798,31 @@ PANES
       awk -v p="$wtpath" '$2 == p || $3 == p {print $1}'); do
       tmux kill-window -t "$wid" 2>/dev/null || true
     done
-    # No -f: work is never deleted just because a PR merged — wt refuses a dirty
-    # worktree, backing up the pre-check above. Branch deletion is wt's call: it
-    # keeps unmerged ones. --no-hooks because the window is already gone.
-    if wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1; then
+    # Judge success by the OBSERVABLE OUTCOME, not wt's exit status. This repo
+    # squash-merges, so a merged PR's branch is never an ancestor of main; `wt
+    # remove` removes the worktree, refuses to delete the "unmerged" branch,
+    # and can exit non-zero even though the worktree is gone — reap then left
+    # the branch, wrote no reap row and never released the dispatched label
+    # (#194). --no-hooks because the window is already gone; no -f, because a
+    # genuinely dirty worktree must survive.
+    wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1 || true
+    wtleft=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
       reaped=$((reaped + 1))
       say "reaped $branch ($pr_state)"
       line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
         '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
       _bus_append "$log" "$line"
+
+      # A squash-merged PR's branch is never an ancestor of main, so git
+      # (and wt) still read it as unmerged — delete it deliberately now that
+      # gh has confirmed the merge. Only a MERGED PR: a CLOSED PR's branch may
+      # hold work worth reviving, and a branch already deleted (a real merge
+      # or a prior reap) is a no-op.
+      if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
+        git branch -D "$branch" >/dev/null 2>&1 || true
+      fi
 
       # Release the claim: drop `dispatched` from the issue(s) this PR
       # closes. Best-effort — a Linear PR closes no GitHub issue, and any gh

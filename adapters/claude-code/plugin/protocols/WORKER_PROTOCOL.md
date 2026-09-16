@@ -109,8 +109,26 @@ For each critic/review phase you have a pane for, the seam is:
 
 A role is **one-shot per assignment** — after posting its verdict it re-parks.
 When the pipeline is done, release the roles so they exit:
-`crew msg "$CREW_WORKER_ID" "role:$(git branch --show-current):<role>" '{"final":true}'`; the
-window is reaped with the worker regardless. If a role has died (pane gone),
+`crew msg "$CREW_WORKER_ID" "role:$(git branch --show-current):<role>" '{"final":true}'`.
+**Releasing your roles is a completion step, not a courtesy** — a missed release
+leaves the panes idling until their watchers time out and post `status failed`
+with detail `no assignment`. Nothing is lost if it happens (see below), but do
+not skip the message. A lead that never sends `final` is still reclaimed
+without a manual `tmux kill-window`:
+
+- **Reap reclaims a finished grid window without a release (#194).** Once the
+  lead's last status is terminal (`done`/`failed`/`exited`) and the `--idle`
+  threshold passes, reap's **idle-release phase** kills the window — engine
+  commands and role panes included — and the **reclaim phase of the same
+  pass** removes the worktree once the PR merged (or closed) and no pane is
+  live. No `final` message is required.
+- **Role rows never count as failures (#194).** A role writes under
+  `role:<branch>:<role>`, not `worker:<branch>`. `crew rate` and `crew retro`
+  fold only `worker:`-prefixed rows, so an idle-timeout `status failed` with
+  detail `no assignment` never changes a run's outcome classification — a
+  role that succeeded is never recorded as a failed run.
+
+If a role has died (pane gone),
 fall back to the normal path for that phase when the engine can spawn a fresh
 context. Pi cannot; on pi, follow the existing unavailable-gate block instead
 of reviewing in the lead context.

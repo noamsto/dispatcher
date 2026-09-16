@@ -101,6 +101,32 @@ EOF
   export PATH="$STUB_DIR:$PATH"
 }
 
+# stub_wt_removes — a wt whose `remove` REALLY removes the worktree (like the
+# real binary: it deletes the working tree and its registration) but exits
+# non-zero WITHOUT deleting the branch — the exact squash-merge shape #194
+# fixes. This repo squash-merges, so a merged PR's branch is never an ancestor
+# of main: `wt remove` exits non-zero because it refuses to delete the branch
+# it reads as unmerged, even though the removal it was asked for succeeded.
+# reap must judge success by the observable outcome (worktree gone), not by
+# the exit status, and reap (not wt) deletes the branch for a MERGED PR.
+stub_wt_removes() {
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = remove ]; then
+  # `wt remove --foreground --no-hooks <branch>` — the branch is the last arg.
+  branch="${!#}"
+  wtp=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+  [ -n "$wtp" ] && rm -rf "$wtp"
+  git worktree prune
+  echo "Branch unmerged; to delete, run wt remove -D" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
 @test "id: honours CREW_ID when set" {
   CREW_ID=1720800000-12345 run run_crew id
   [ "$status" -eq 0 ]
@@ -1419,13 +1445,16 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_bin wt
+  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/42-reap-me" done "" "https://example.com/pr/7"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/42-reap-me"* ]]
   grep -q 'pr view https://example.com/pr/7 --json closingIssuesReferences' "$STUB_LOG"
   grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+  # A merged PR's squash-merged branch is not an ancestor of main — reap
+  # deletes it deliberately once gh confirms the merge (#194).
+  ! git show-ref --verify --quiet refs/heads/feat/42-reap-me
 }
 
 @test "reap: a dispatched label-removal failure does not abort the sweep" {
@@ -1445,7 +1474,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_bin wt
+  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/43-reap-me" done "" "https://example.com/pr/9"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -1472,7 +1501,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_bin wt
+  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/45-reap-me" done "" "https://example.com/pr/11"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -1497,13 +1526,198 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_bin wt
+  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/44-reap-me" done "" "https://example.com/pr/10"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/44-reap-me"* ]]
   ! grep -q 'issue edit' "$STUB_LOG"
 }
+
+@test "reap: a squash-merged PR is reaped by outcome — reap row, label, branch deletion" {
+  # #194 Gap 1: this repo squash-merges, so a merged PR's branch is never an
+  # ancestor of main. `wt remove` removes the worktree, refuses to delete the
+  # "unmerged" branch, and can exit non-zero even so. reap must judge success
+  # by the observable outcome (the worktree is gone), write the reap row,
+  # release the dispatched label, and delete the local branch deliberately.
+  git commit -q --allow-empty -m init
+  git branch feat/squash-me
+  wt_path="$BATS_TEST_TMPDIR/squash-wt"
+  git worktree add -q "$wt_path" feat/squash-me
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/squash-me" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/squash-me (MERGED)"* ]]
+  grep -q 'pr view https://example.com/pr/8 --json closingIssuesReferences' "$STUB_LOG"
+  grep -q 'issue edit 99 --remove-label dispatched' "$STUB_LOG"
+  jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
+  [ ! -d "$wt_path" ]
+  ! git show-ref --verify --quiet refs/heads/feat/squash-me
+}
+
+@test "reap: a genuinely failed removal is still kept — no reap row, no label, no branch delete" {
+  # #194 Gap 1 guard: a stale `wt remove` failure is judged by the worktree
+  # still being present — the branch is reported kept, no reap row is written,
+  # the dispatched label stays, and the local branch survives.
+  git commit -q --allow-empty -m init
+  git branch feat/stuck
+  wt_path="$BATS_TEST_TMPDIR/stuck-wt"
+  git worktree add -q "$wt_path" feat/stuck
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+echo "Cannot remove worktree: feat/stuck has uncommitted changes" >&2
+exit 1
+EOF
+  chmod +x "$STUB_DIR/wt"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/stuck" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/stuck — wt remove failed"* ]]
+  ! grep -q 'remove-label' "$STUB_LOG"
+  [ -d "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/stuck
+  ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: REVIEW_NOTES.md and round plans are scaffold — trashed, not deleted, worktree reaped" {
+  # #194 Gap 2: EVIDENCE_REVIEW.md's worktree-root REVIEW_NOTES.md ledger and
+  # the superpowers writing-plans round artifacts (PLAN_ROUND4.md observed in
+  # a real worker tree) are untracked scaffold "our own pipeline wrote". They
+  # must neither read as uncommitted work nor survive as physical files that
+  # block `wt remove` — they are gtrash'd like WORKER_TASK.md, so a
+  # post-mortem can still recover them.
+  git commit -q --allow-empty -m init
+  git branch feat/noted
+  wt_path="$BATS_TEST_TMPDIR/noted-wt"
+  git worktree add -q "$wt_path" feat/noted
+  wt_path=$(cd "$wt_path" && pwd -P)
+  : >"$wt_path/WORKER_TASK.md"
+  : >"$wt_path/REVIEW_NOTES.md"
+  : >"$wt_path/PLAN_ROUND4.md"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  # gtrash that really moves the file into a trash dir, so the test proves
+  # "trashed, not deleted" — the files must survive for recovery.
+  cat >"$STUB_DIR/gtrash" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = put ]; then
+  mkdir -p "$STUB_DIR/trash"
+  mv "$2" "$STUB_DIR/trash/"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gtrash"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/noted" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/noted (MERGED)"* ]]
+  [ -f "$STUB_DIR/trash/WORKER_TASK.md" ]
+  [ -f "$STUB_DIR/trash/REVIEW_NOTES.md" ]
+  [ -f "$STUB_DIR/trash/PLAN_ROUND4.md" ]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: a finished grid window (lead + role panes) is released, then its worktree reclaimed" {
+  # #194 Gap 3: grid leads never send the {"final":true} release, so a
+  # finished grid window — a lead pane and role panes, all engine commands —
+  # idles in place. reap must reclaim it without a manual tmux kill-window:
+  # the idle-release phase kills the window (engine or not, once the lead's
+  # status is terminal), and the reclaim phase of the SAME pass removes the
+  # worktree once the PR merged and no pane is live. The tmux stub is
+  # stateful: kill-window removes the window's rows, exactly like the real
+  # server, so the post-release engine scan sees no panes.
+  git commit -q --allow-empty -m init
+  git branch feat/grid-me
+  wt_path="$BATS_TEST_TMPDIR/grid-wt"
+  git worktree add -q "$wt_path" feat/grid-me
+  wt_path=$(cd "$wt_path" && pwd -P)
+  : >"$wt_path/WORKER_TASK.md"
+  : >"$wt_path/REVIEW_NOTES.md"
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tpi\n@23\t%%34\tpi\n')"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-windows) cat "$STUB_DIR/wins.txt" ;;
+list-panes) cat "$STUB_DIR/panes.txt" ;;
+kill-window) : >"$STUB_DIR/wins.txt"; : >"$STUB_DIR/panes.txt" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  cat >"$STUB_DIR/gtrash" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = put ]; then
+  mkdir -p "$STUB_DIR/trash"
+  mv "$2" "$STUB_DIR/trash/"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gtrash"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/grid-me#s1-1" done "" "https://example.com/pr/30"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"released @23"* ]]
+  [[ "$output" == *"reaped feat/grid-me (MERGED)"* ]]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  [ -f "$STUB_DIR/trash/REVIEW_NOTES.md" ]
+  [ ! -d "$wt_path" ]
+  ! git show-ref --verify --quiet refs/heads/feat/grid-me
+  # A later pass is a clean no-op — the worktree is already gone.
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  [ "$status" -eq 0 ]
+}
+
 
 @test "reap: an exited worker with a merged PR is reclaimed" {
   # #68 defect 1: the reclaim filter used to accept only "done", pinning the
