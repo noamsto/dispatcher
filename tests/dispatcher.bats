@@ -17,16 +17,42 @@ teardown() {
   teardown_repo
 }
 
+path_without_real() {
+  local cli="$1" dir kept=()
+  local IFS=:
+  # shellcheck disable=SC2206 # word-splitting on IFS=: is the point here
+  local dirs=($PATH)
+  for dir in "${dirs[@]}"; do
+    if [ "$dir" != "$STUB_DIR" ] && [ -x "$dir/$cli" ]; then
+      continue
+    fi
+    kept+=("$dir")
+  done
+  (IFS=:; echo "${kept[*]}")
+}
+
 @test "rejects an unknown agent" {
   run run_launcher --agent bogus
   [ "$status" -eq 1 ]
   [[ "$output" == *"--agent must be claude, codex, cursor, or pi"* ]]
 }
 
-@test "gates codex behind the work profile" {
-  DISPATCH_PROFILE=personal run run_launcher --agent codex
+@test "rejects an engine that is not on the roster" {
+  DISPATCH_ENGINES="claude pi" run run_launcher --agent codex
   [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
+  [[ "$output" == *"--agent codex is not enabled here (enabled: claude pi)"* ]]
+}
+
+@test "rejects an enabled engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_launcher --agent codex
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is enabled but not installed (no 'codex' on PATH)"* ]]
+}
+
+@test "an unset roster admits every engine" {
+  CREW_ID=c1 run run_launcher --agent cursor
+  [ "$status" -eq 0 ]
 }
 
 @test "rejects an unknown effort" {
@@ -92,9 +118,9 @@ teardown() {
 }
 
 @test "pi is not work-profile gated as an orchestrator" {
-  DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi
+  CREW_ID=c1 run run_launcher --agent pi
   [ "$status" -eq 0 ]
-  [[ "$output" != *"work-profile only"* ]]
+  [[ "$output" != *"not enabled here"* ]]
 }
 
 @test "pi launcher defaults to the OpenRouter deep row on either profile" {
