@@ -17,6 +17,35 @@ _ensure_dispatched_label() {
     --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
 }
 
+# Post a best-effort context comment on a dispatched GitHub issue. The
+# `dispatched` label stays the claim semaphore; this comment is history only
+# and must never abort a dispatch (#210).
+_post_dispatch_comment() {
+  local issue="$1" name="$2" engine="$3" model="$4" tier="$5" effort="$6" \
+    branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}"
+  local verb="dispatched"
+  [ "$resume" = true ] && verb="(resumed) dispatched"
+  local body
+  body="$(cat <<EOF
+🚀 **$name** $verb — $engine · $model · $tier
+
+| | |
+|---|---|
+| **Branch** | \`$branch\` |
+| **Worktree** | \`$wt_path\` |
+| **Agent** | $engine · $model · $tier (effort: $effort) |
+| **Session** | \`$session\` |
+| **Worker** | \`$worker_id\` |
+| **Crew** | \`$crew_id\` |
+
+<!-- dispatched -->
+EOF
+)"
+  gh issue comment "$issue" --body "$body" >/dev/null 2>&1 || {
+    echo "dispatch: could not post dispatch-context comment on issue #$issue (non-fatal)" >&2
+  }
+}
+
 # crew.sh's atomic-append helper, duplicated (not sourced): this file builds
 # as its own standalone writeShellApplication with no shared lib. A bare
 # `printf >>` isn't one write(2), so concurrent writers to this shared log
@@ -1569,6 +1598,17 @@ _bus_append "$crew_dir/events.jsonl" "$line"
 ident=$(crew identity "$branch")
 agent_name=$(printf '%s' "$ident" | jq -r .name)
 agent_color=$(printf '%s' "$ident" | jq -r .tmux)
+
+# GitHub-issue dispatch only: post a context comment (codename, engine/model/
+# tier, branch, worktree, session, worker id, crew id) for at-a-glance
+# history. Linear dispatches and `--pr` review dispatches set neither
+# $gh_issue nor $num, so this is a no-op for them (#210).
+comment_issue="${gh_issue:-${num:-}}"
+if [ -n "$comment_issue" ]; then
+  _post_dispatch_comment "$comment_issue" "$agent_name" "$agent" "$model" "$tier" "$effort" \
+    "$branch" "$wt_path" "$session" "$worker_id" "$crew_id" \
+    "$([ "$switch_mode" = resume ] && echo true || echo "")"
+fi
 
 # A resume issued without re-passing $DISPATCH_SPEC would otherwise leave a
 # header-only doc, destroying the task text — and, on a `plan: provided` run, the
