@@ -1760,6 +1760,7 @@ rate)
     # denominator, n is the row's total — and only the final branch differs:
     # --json prints that structure as-is, the table renders and pads it.
     printf '%s' "$rows" | jq -r --argjson want_json "$json" '
+      . as $recs |
       def median:
         sort | length as $l
         | if $l == 0 then null
@@ -1789,6 +1790,61 @@ rate)
       def render_agg(k; n; text):
         if k == 0 then "—"
         else (text + (if k != n then "(\(k))" else "" end) + (if k < 5 then "!" else "" end))
+        end;
+
+      # Tier x effort cross-tab, computed from the same $recs as a second
+      # aggregation. known_efforts is the full --effort vocabulary (dispatch.sh:455);
+      # tier_baseline names the typical rung per tier, marked with a trailing
+      # "*" in the rendered cell (same suffix-on-cell-text idiom as the
+      # "!"/"(k)" suffixes render_agg already appends). Any effort outside
+      # known_efforts, or missing entirely, buckets to "unknown" — the
+      # columns are always all 7, in this order, so the shape is stable
+      # even when every row is "unknown".
+      def known_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"];
+      def tier_baseline: {trivial: "low", standard: "medium", deep: "high"};
+      def bucket_effort($e): if ($e != null) and (known_efforts | index($e)) then $e else "unknown" end;
+
+      # Renders the whole cross-tab section (leading blank line through the
+      # trailing legend line) as an array of lines, or [] when there are no
+      # records — kept separate from the main table width/pad computation
+      # above so that render path does not regress.
+      def cross_tab_lines:
+        if ($recs | length) == 0 then []
+        else
+          (known_efforts + ["unknown"]) as $cols
+          | ($recs | map(.tier) | unique) as $tiers
+          | ($tiers | map(. as $t
+              | $cols | map(. as $c
+                  | ($recs | map(select(.tier == $t and (bucket_effort(.effort) == $c))) | length)
+                )
+            )) as $counts
+          | (["tier"] + $cols) as $ct_headers
+          | ([true] + ($cols | map(false))) as $ct_left
+          | ($tiers | to_entries | map(
+              .key as $ti | .value as $t
+              | [$t] + ($cols | to_entries | map(
+                  .key as $ci | .value as $c
+                  | ($counts[$ti][$ci] | tostring) as $base
+                  | if (tier_baseline[$t] // null) == $c then ($base + "*") else $base end
+                ))
+            )) as $ct_rows
+          | ([$ct_headers] + $ct_rows) as $ct_all
+          | ($ct_headers | length) as $ct_ncols
+          | ([range(0; $ct_ncols) | . as $c | ($ct_all | map(.[$c] | length) | max)]) as $ct_widths
+          | ([range(0; $ct_ncols) | . as $c
+              | $ct_headers[$c] as $cell
+              | ($ct_widths[$c] - ($cell|length)) as $pad
+              | if $ct_left[$c] then ($cell + (" " * $pad)) else ((" " * $pad) + $cell) end
+             ] | join("  ")) as $ct_header_line
+          | ($ct_rows | map(
+              . as $row
+              | [range(0; $ct_ncols) | . as $c
+                 | $row[$c] as $cell
+                 | ($ct_widths[$c] - ($cell|length)) as $pad
+                 | if $ct_left[$c] then ($cell + (" " * $pad)) else ((" " * $pad) + $cell) end
+                ] | join("  ")
+            )) as $ct_body_lines
+          | ([""] + [$ct_header_line] + $ct_body_lines + ["* = tier-typical effort rung"])
         end;
 
       def stats:
@@ -1914,6 +1970,7 @@ rate)
               | ([$header_line] + $body_lines
                  + ["", "! own sample < 5 — anecdote, not evidence.   value(k) = measured over k of n runs.   — = unmeasured."]
                  + ["\($flagged_count) of \($total) rows carry at least one small-sample quantity."]
+                 + cross_tab_lines
                 ) | join("\n")
             end
         end

@@ -153,9 +153,38 @@ codex   sol     deep      1!    0    0     1  100!       —  55m!         —  
 
 ! own sample < 5 — anecdote, not evidence.   value(k) = measured over k of n runs.   — = unmeasured.
 3 of 3 rows carry at least one small-sample quantity.
+
+tier      low  medium  high  xhigh  max  ultra  unknown
+deep        0       0    0*      0    0      0       15
+standard    0      0*     0      0    0      0        4
+* = tier-typical effort rung
 EOF
   )
   [ "$output" = "$expected" ]
+}
+
+# Covers the `unknown` paths the worked-example fixture above doesn't: an
+# `.effort` value outside known_efforts ("ludicrous"), and real rungs across
+# two tiers, to pin the tier-typical `*` marker on the right cell.
+@test "rate --report: tier x effort cross-tab buckets real, missing, and unrecognized effort values" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"run_id":"e1","engine":"claude","model":"opus","tier":"deep","effort":"high","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"run_id":"e2","engine":"claude","model":"opus","tier":"deep","effort":"low","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"run_id":"e3","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"run_id":"e4","engine":"claude","model":"sonnet","tier":"standard","effort":"ludicrous","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  cross_tab="$(printf '%s\n' "$output" | tail -n 4)"
+  expected_cross_tab=$(cat <<'EOF'
+tier      low  medium  high  xhigh  max  ultra  unknown
+deep        1       0    1*      0    0      0        0
+standard    0      1*     0      0    0      0        1
+* = tier-typical effort rung
+EOF
+  )
+  [ "$cross_tab" = "$expected_cross_tab" ]
 }
 
 # ---------------------------------------------------------------------------
