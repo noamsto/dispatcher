@@ -259,7 +259,7 @@ When a worker reports an evidence/review/recurrence block, resolve the stated
 decision or route to a supported reviewer; green CI is not a waiver.
 
 ```
-dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model],…>] [--plan provided|required] [--pr N] [--review] [LINEAR-ID] <title…>
+dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--pr N] [--review] [LINEAR-ID] <title…>
 ```
 
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line, task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
@@ -292,22 +292,37 @@ is back.
   grid: a `--review` worker (no spec/plan phase) and a non-pi `deep` dispatch
   under `--plan provided` (no critic role left once planning is settled).
   With no `--roles`, every role pane runs on the lead's own engine, model,
-  **and effort** (never a second engine the caller didn't ask for, and never
+  and effort (never a second engine the caller didn't ask for, and never
   refused for having only one engine available). Use `--roles` to override
   the topology or choose a role model/engine, for example `--roles
-  reviewer=claude:opus` — the grammar is `role[=model|agent:model]`
-  (`dispatch.sh:995-1013`), with no effort slot, so a role pane's effort is
-  never set by `--roles` itself. Vary it only two ways: a cursor role folds
-  effort into its model id, same as a cursor lead (`--roles
-  reviewer=cursor:cursor-grok-4.6-high`); or the lead spawns a **lazy** role
-  with `dispatch --spawn-role <role> --effort <E>` once it's running in its
-  own worktree (`dispatch.sh:294,324` — without the override a lazy role
-  reads `effort:` back from `WORKER_TASK.md`, i.e. the lead's own). Because
-  the value is shared, `dispatch` refuses `--effort ultra` whenever any role
-  runs on claude or pi, even under a codex lead (`dispatch.sh:1021`). A pi
-  role pane inherits the lead's rung through `--thinking`, and DeepSeek only
-  exposes `off`/`high`/`xhigh`, so an inherited `medium` or `low` clamps to
-  `high` (`WORKER_PROTOCOL.md` → rule 1, pi row).
+  reviewer=claude:opus` — the grammar is `role[=model|agent:model][@effort]`
+  (`dispatch.sh:1051-1066`). `@effort` is the primary way to depart from the
+  lead's own effort per role, for example `--roles
+  reviewer=claude:opus@xhigh` to carry a cheap lead with an expensive
+  critic. Omit `@effort` and the role inherits the lead's own
+  (`dispatch.sh:1051`) — that stays the default and the compatibility
+  contract, deliberately with no role→effort default table beyond it: a
+  role name doesn't encode task difficulty the way a tier does, so an
+  explicit override is the one judgement worth making, not one to look up.
+  `dispatch` validates an explicit `@effort` the same way it validates the
+  lead's own `--effort` (`dispatch.sh:13-18,1061-1064`), and a cursor role
+  still rejects one — cursor folds intensity into its model id, not a
+  separate knob, so encode it there instead, same as a cursor lead
+  (`dispatch.sh:1102`). A claude or pi role effort of `ultra` is refused per
+  role (`dispatch.sh:1106-1107`) — the same rung ceiling the lead itself is
+  held to (`dispatch.sh:878-882`), but the two checks are now independent:
+  a codex lead running at `ultra` can host a claude or pi role at any
+  non-`ultra` effort, since a role's effort no longer rides the lead's.
+  `roles.json` carries the resolved `effort` field per role
+  (`dispatch.sh:1715`), so a **lazy** role spawned later with `dispatch
+  --spawn-role <role>` reads it back (`dispatch.sh:372-374`) the same way it
+  reads the recorded agent/model; an explicit `--effort <E>` on that spawn
+  call still overrides the saved value, falling back to the task doc's own
+  `effort:` only when neither is set (`dispatch.sh:373-374`). A pi role pane
+  still rides the lead's rung through `--thinking` by default (or an
+  explicit `@effort`), and DeepSeek only exposes `off`/`high`/`xhigh`, so a
+  resolved `medium` or `low` clamps to `high` (`WORKER_PROTOCOL.md` → rule
+  1, pi row).
   Pass `--no-grid` to opt a non-pi engine out of its default; it's refused
   for pi standard/deep, and a usage error together with `--grid` or
   `--roles`. Role panes share the worktree, communicate through the bus, and
