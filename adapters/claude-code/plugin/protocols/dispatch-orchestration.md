@@ -77,9 +77,13 @@ supported when using Codex with a ChatGPT account". Authoritative list for this
 account is `jq -r '.models[].slug' ~/.codex/models_cache.json` (also `gpt-5.5`,
 `gpt-5.4`, `gpt-5.4-mini` — previous generations, no longer a rung here).
 
-Codex reasoning effort still scales with tier automatically (deep→high,
-standard→medium, trivial→low), independent of which gpt model is chosen. Above
-`xhigh` the ladder continues with `max` (both engines) and codex-only `ultra`
+Codex's tier-typical rung (deep→high, standard→medium, trivial→low) is the
+starting point, independent of which gpt model is chosen — not an automatic
+default: `--effort` is a required flag `dispatch` refuses to scaffold without
+(`dispatch.sh:532-533`), and the dispatcher departs from the tier-typical rung
+on the raise/hold signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth
+lever". Above `xhigh` the ladder continues with `max` (both engines) and
+codex-only `ultra`
 (maximum reasoning with automatic task delegation) — `ultra` exists on `-sol` /
 `-terra` only, `-luna` caps at `max`. Session effort `ultra` is itself an
 orchestration layer: `dispatch` still enables `agents.*` but pins
@@ -327,7 +331,7 @@ is identical across engines; the crew-watch park primitive is not — see
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
 - **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent DeepSeek/OpenRouter family and, having no native subagents at all, additionally defaults to the grid on `standard` and keeps a `reviewer` pane as its review gate (the other three engines review natively). The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
-- **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id.
+- **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
 
 ## MCP is no longer a routing factor
 

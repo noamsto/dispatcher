@@ -53,19 +53,54 @@ default-plus-exception:
 
 Pick the **model** from the model map in `dispatch-orchestration.md` for the tier
 and engine you chose — that file's tables are the only place model versions live.
-`--effort`
-is a separate REQUIRED flag on `dispatch`, judged independently from tier — it sets
-the reasoning effort passed to whichever engine you picked (claude/codex/pi;
-cursor folds effort into the model id, so `--effort` is accepted-and-ignored there), it is
-not derived from tier. Ladder: `low|medium|high|xhigh|max` on both engines, plus
-codex-only `ultra` (maximum reasoning with **automatic task delegation**,
-`gpt-5.6-sol`/`-terra`) — `dispatch` rejects `ultra` for claude and pi. For codex,
-`dispatch` also pins `agents.enabled`, `agents.max_concurrent_threads_per_session=3`,
-and `agents.default_subagent_reasoning_effort` one rung below the session
-(floor `low`, never `ultra`). Session `ultra` already orchestrates — do not
-choose `ultra` expecting a second harness execute-subagent layer on top; see
-`dispatch-orchestration.md` and `WORKER_PROTOCOL.md` rule 1. Cursor `deep`
-workers use **`kimi-k3-high`** from the model map (Kimi plans, Grok implements).
+Cursor `deep` workers use **`kimi-k3-high`** from the model map (Kimi plans, Grok
+implements).
+
+**Effort is a sixth lever — judge it, don't derive it.** `--effort` is a separate
+REQUIRED flag on `dispatch`, judged independently from tier — it sets the
+reasoning effort passed to whichever engine you picked (claude/codex/pi; cursor
+folds effort into the model id, so `--effort` is accepted-and-ignored there).
+What makes it judgeable is a three-way separation, stated once and held to:
+**tier = review depth, model = strength, effort = how deep a single turn
+reasons.** A task that's hard because it *spans* components — many files, a
+cross-service contract, an unclear owner — is a tier signal. A task that's hard
+*inside one turn* — the reasoning has to hold together without a chance to
+course-correct — is an effort signal. Conflating the two either burns `xhigh` on
+a task that actually needed a second reviewer, or adds a critic pass to a task
+that just needed the worker to think longer before writing.
+
+Start from the tier-typical rung — `trivial`→`low`, `standard`→`medium`,
+`deep`→`high` — then depart from it on signals, the same way `--plan` starts
+from `required` and departs on the doc you wrote (see "Plan-depth" above).
+
+- **Raise toward `xhigh`** when: the hard part lives inside one turn of
+  reasoning — a subtle invariant, an ordering/concurrency argument, a
+  cross-file consistency proof that has to be gotten right on the first pass;
+  the dispatch is `deep` + `--plan provided`, where the plan-critic is
+  skipped and no fresh reviewer checks the file list, approach, or
+  acceptance criteria you wrote (the worker's own spec-critic still runs, but
+  only against the root-cause/mechanism framing — see `WORKER_PROTOCOL.md` →
+  "Plan of record", `plan: provided`); or it's a re-dispatch after the same
+  model at `high` already produced a wrong diagnosis or plan — raise effort
+  before raising the model, since `opus --effort xhigh` is the rung below
+  reaching for fable.
+- **Hold at `high` or below** when: you expect the worker to block and ask
+  questions (long turns stretch the in-band reply loop — the same bounded-wait
+  reason the orchestrator table gives for holding its own session at `high`,
+  see `dispatch-orchestration.md` → "Orchestrator engines"); the work is
+  wide-but-shallow; or the budget is tight. Say plainly: the mechanical
+  pace-rule gate below (→ "Budget is the fifth lever") reads only the
+  **rung** — the burn class the model falls into — not the effort, so
+  nothing refuses an expensive `xhigh` dispatch near the wall for you.
+
+Ladder: `low|medium|high|xhigh|max` on claude/codex/pi, plus codex-only `ultra`
+(maximum reasoning with **automatic task delegation**, `gpt-5.6-sol`/`-terra`) —
+`dispatch` rejects `ultra` for claude and pi. For codex, `dispatch` also pins
+`agents.enabled`, `agents.max_concurrent_threads_per_session=3`, and
+`agents.default_subagent_reasoning_effort` one rung below the session (floor
+`low`, never `ultra`). Session `ultra` already orchestrates — do not choose
+`ultra` expecting a second harness execute-subagent layer on top; see
+`dispatch-orchestration.md` and `WORKER_PROTOCOL.md` rule 1.
 
 **External standings are a hint, not a ranking.** `refresh-scores` caches LMArena
 standings (plus OpenRouter/Artificial Analysis indices when keyed) to
@@ -256,10 +291,23 @@ is back.
   alongside the native batch, never a substitute. Two cases get no default
   grid: a `--review` worker (no spec/plan phase) and a non-pi `deep` dispatch
   under `--plan provided` (no critic role left once planning is settled).
-  With no `--roles`, every role pane runs on the lead's own engine and model
-  (never a second engine the caller didn't ask for, and never refused for
-  having only one engine available). Use `--roles` to override the topology
-  or choose a role model/engine, for example `--roles reviewer=claude:opus`.
+  With no `--roles`, every role pane runs on the lead's own engine, model,
+  **and effort** (never a second engine the caller didn't ask for, and never
+  refused for having only one engine available). Use `--roles` to override
+  the topology or choose a role model/engine, for example `--roles
+  reviewer=claude:opus` — the grammar is `role[=model|agent:model]`
+  (`dispatch.sh:995-1013`), with no effort slot, so a role pane's effort is
+  never set by `--roles` itself. Vary it only two ways: a cursor role folds
+  effort into its model id, same as a cursor lead (`--roles
+  reviewer=cursor:cursor-grok-4.6-high`); or the lead spawns a **lazy** role
+  with `dispatch --spawn-role <role> --effort <E>` once it's running in its
+  own worktree (`dispatch.sh:294,324` — without the override a lazy role
+  reads `effort:` back from `WORKER_TASK.md`, i.e. the lead's own). Because
+  the value is shared, `dispatch` refuses `--effort ultra` whenever any role
+  runs on claude or pi, even under a codex lead (`dispatch.sh:1021`). A pi
+  role pane inherits the lead's rung through `--thinking`, and DeepSeek only
+  exposes `off`/`high`/`xhigh`, so an inherited `medium` or `low` clamps to
+  `high` (`WORKER_PROTOCOL.md` → rule 1, pi row).
   Pass `--no-grid` to opt a non-pi engine out of its default; it's refused
   for pi standard/deep, and a usage error together with `--grid` or
   `--roles`. Role panes share the worktree, communicate through the bus, and
