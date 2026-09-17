@@ -869,6 +869,61 @@ EOF
   [[ "$output" == *"invalid model"* ]]
 }
 
+@test "role effort suffixes launch independently and persist their resolved values" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:sonnet@low,critic@ultra" --effort high --crew-id c1 42 "per-role effort"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort low' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'codex --profile worker -m gpt-5.6-sol -c model_reasoning_effort=ultra' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-per-role-effort/WORKER_TASK.md"
+  roles="$(sed -n 's/^crew_dir: //p' "$task")/artifacts/feat/42-per-role-effort/roles.json"
+  run jq -r '.reviewer.effort + ":" + .critic.effort' "$roles"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'low:ultra' ]
+}
+
+@test "role effort suffix grammar rejects malformed and cursor forms" {
+  for roles in 'reviewer@' '@high' 'reviewer@high@low' 'reviewer@high=sonnet'; do
+    run run_dispatch standard sonnet --roles "$roles" --effort high --crew-id c1 "bad role effort"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid role effort suffix"* || "$output" == *"invalid effort"* ]]
+  done
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --roles 'reviewer=cursor:claude-opus-5-high@high' --effort high --crew-id c1 "cursor effort"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bracketed model"* ]]
+}
+
+@test "role-local ultra is rejected for claude and pi" {
+  for roles in \
+    'reviewer=claude:sonnet@ultra' \
+    'reviewer=pi:openrouter/deepseek/deepseek-v4-flash@ultra'; do
+    DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles "$roles" --effort high --crew-id c1 "role ultra"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"does not support --effort ultra"* ]]
+  done
+}
+
+@test "an eager role without an effort suffix inherits the lead effort" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles 'reviewer=claude:sonnet' --effort max --crew-id c1 42 "inherited role effort"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "an ultra codex lead may give claude and pi roles non-ultra effort" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:sonnet@max,critic=pi:openrouter/deepseek/deepseek-v4-flash@high" --effort ultra --crew-id c1 42 "ultra lead roles"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- '--thinking high' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "rejects an unknown effort" {
   run run_dispatch standard sonnet --effort bogus "title"
   [ "$status" -eq 1 ]
@@ -3124,6 +3179,54 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- '--no-approve' "$STUB_LOG"
   [ "$status" -eq 0 ]
+}
+
+@test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles="$common/crew/artifacts/feat/9-x/roles.json"
+  printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash","effort":"low"},"critic":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash","effort":"low"},"legacy":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  run grep -F -- '--thinking low' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch --spawn-role critic --effort max
+  [ "$status" -eq 0 ]
+  run grep -F -- '--thinking max' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch --spawn-role legacy
+  [ "$status" -eq 0 ]
+  run grep -F -- '--thinking high' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: --spawn-role validates final agent, model, and effort overrides" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid agent"* ]]
+
+  run run_dispatch --spawn-role reviewer --agent claude --model gpt-5.6-sol
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid model"* ]]
+
+  run run_dispatch --spawn-role reviewer --effort nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid effort"* ]]
+}
+
+@test "grid: --spawn-role rejects an explicit effort for the final cursor agent" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles="$common/crew/artifacts/feat/9-x/roles.json"
+  printf '{"reviewer":{"agent":"cursor","model":"composer-2.5","effort":"low"}}\n' >"$roles"
+
+  run run_dispatch --spawn-role reviewer --effort high
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"uses --agent cursor, which has no --effort"* ]]
+  [[ "$output" == *"bracketed model"* ]]
 }
 
 @test "grid: --spawn-role aborts a pi role before split-window when the agent dir cannot be seeded" {

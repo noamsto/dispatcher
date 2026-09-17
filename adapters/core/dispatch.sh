@@ -7,7 +7,25 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+}
+
+valid_effort() {
+  case "$1" in
+  low | medium | high | xhigh | max | ultra) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+valid_role_model() {
+  local role_agent="$1" role_model="$2"
+  case "$role_agent" in
+  claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] ;;
+  codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] ;;
+  cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] ;;
+  pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] ;;
+  *) return 1 ;;
+  esac
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -211,11 +229,11 @@ pi_skill_args() {
   return 0
 }
 
-# launch_role <pane> <worktree> <role> <agent> <model> — launch the role's engine
+# launch_role <pane> <worktree> <role> <agent> <model> <effort> — launch the role's engine
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
-# otherwise). Reads $agent_name / $effort from the caller scope.
+# otherwise). Reads $agent_name from the caller scope.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" prompt first quoted_model quoted_dir
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir
   printf -v quoted_model '%q' "$r_model"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
@@ -226,10 +244,10 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") '$prompt'" Enter
+    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") '$prompt'" Enter
     ;;
-  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
-  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
+  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
+  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
   cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model '$first'" Enter ;;
   esac
 }
@@ -316,11 +334,12 @@ if [ "${1:-}" = "--spawn-role" ]; then
   spawn_agent=""
   spawn_model=""
   spawn_effort=""
+  spawn_effort_explicit=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --agent) spawn_agent="${2:-}"; shift 2 ;;
     --model) spawn_model="${2:-}"; shift 2 ;;
-    --effort) spawn_effort="${2:-}"; shift 2 ;;
+    --effort) spawn_effort="${2:-}"; spawn_effort_explicit=1; shift 2 ;;
     *)
       echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
       exit 1
@@ -344,15 +363,37 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: no role grid recorded for $branch (dispatch without --lazy to use an up-front grid)" >&2
     exit 1
   }
-  spec="$(jq -r --arg r "$role" '.[$r] // empty | "\(.agent) \(.model)"' "$roles_file")"
+  spec="$(jq -r --arg r "$role" '.[$r] // empty | [.agent, .model, (.effort // "")] | @tsv' "$roles_file")"
   [ -n "$spec" ] || {
     echo "dispatch: role '$role' is not part of this grid" >&2
     exit 1
   }
   agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
-  effort="${spawn_effort:-$(sed -n 's/^effort: //p' WORKER_TASK.md)}"
-  spawn_agent="${spawn_agent:-${spec%% *}}"
-  spawn_model="${spawn_model:-${spec#* }}"
+  IFS=$'\t' read -r saved_agent saved_model saved_effort <<<"$spec"
+  task_effort="$(sed -n 's/^effort: //p' WORKER_TASK.md)"
+  effort="${spawn_effort:-${saved_effort:-$task_effort}}"
+  spawn_agent="${spawn_agent:-$saved_agent}"
+  spawn_model="${spawn_model:-$saved_model}"
+  case "$spawn_agent" in
+  claude | codex | cursor | pi) ;;
+  *) echo "dispatch: --spawn-role '$role' has invalid agent '$spawn_agent'" >&2; exit 1 ;;
+  esac
+  valid_role_model "$spawn_agent" "$spawn_model" || {
+    echo "dispatch: invalid model '$spawn_model' for role '$role'" >&2
+    exit 1
+  }
+  valid_effort "$effort" || {
+    echo "dispatch: --spawn-role '$role' has invalid effort '$effort' (expected low, medium, high, xhigh, max, or ultra)" >&2
+    exit 1
+  }
+  if [ "$spawn_agent" = cursor ] && [ -n "$spawn_effort_explicit" ]; then
+    echo "dispatch: role '$role' uses --agent cursor, which has no --effort; encode intensity in the bracketed model (for example cursor-model[effort=high])" >&2
+    exit 1
+  fi
+  if { [ "$spawn_agent" = claude ] || [ "$spawn_agent" = pi ]; } && [ "$effort" = ultra ]; then
+    echo "dispatch: role '$role' uses --agent $spawn_agent, which does not support --effort ultra" >&2
+    exit 1
+  fi
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
   if [ -n "$existing" ]; then
@@ -361,7 +402,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$PWD" "$role")"
-  launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model"
+  launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
@@ -959,6 +1000,7 @@ fi
 role_names=()
 role_agents=()
 role_models=()
+role_efforts=()
 if [ -n "$no_grid" ]; then
   if [ -n "$grid_flag" ] || [ -n "$grid_roles" ]; then
     echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
@@ -1006,9 +1048,26 @@ if [ -n "$grid_roles" ]; then
       echo "dispatch: role list contains an empty entry" >&2
       exit 1
     }
-    role="${spec%%=*}"
+    role_effort="$effort"
+    role_spec="$spec"
+    role_effort_explicit=""
+    if [[ $role_spec == *"@"* ]]; then
+      role_spec_prefix="${role_spec%@*}"
+      role_effort="${role_spec##*@}"
+      if [ -z "$role_spec_prefix" ] || [ -z "$role_effort" ] || [[ $role_spec_prefix == *"@"* ]]; then
+        echo "dispatch: invalid role effort suffix in '$spec' (use role[=model|agent:model][@effort])" >&2
+        exit 1
+      fi
+      role_effort_explicit=1
+      valid_effort "$role_effort" || {
+        echo "dispatch: invalid effort '$role_effort' for role '$role_spec_prefix' (expected low, medium, high, xhigh, max, or ultra)" >&2
+        exit 1
+      }
+      role_spec="$role_spec_prefix"
+    fi
+    role="${role_spec%%=*}"
     rest=""
-    [ "$role" != "$spec" ] && rest="${spec#*=}"
+    [ "$role" != "$role_spec" ] && rest="${role_spec#*=}"
     case "$role" in
     '' | *[!A-Za-z0-9_-]*)
       echo "dispatch: invalid role '$role' (letters, digits, _ and - only)" >&2
@@ -1036,18 +1095,15 @@ if [ -n "$grid_roles" ]; then
       *) role_model="$rest" ;;
       esac
     fi
-    role_model_ok=1
-    case "$role_agent" in
-    claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] || role_model_ok=0 ;;
-    codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] || role_model_ok=0 ;;
-    cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] || role_model_ok=0 ;;
-    pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || role_model_ok=0 ;;
-    esac
-    if [ "$role_model_ok" = 0 ]; then
+    if ! valid_role_model "$role_agent" "$role_model"; then
       echo "dispatch: invalid model '$role_model' for role '$role'" >&2
       exit 1
     fi
-    if { [ "$role_agent" = claude ] || [ "$role_agent" = pi ]; } && [ "$effort" = ultra ]; then
+    if [ "$role_agent" = cursor ] && [ -n "$role_effort_explicit" ]; then
+      echo "dispatch: role '$role' uses --agent cursor, which has no --effort; encode intensity in the bracketed model (for example cursor-model[effort=high])" >&2
+      exit 1
+    fi
+    if { [ "$role_agent" = claude ] || [ "$role_agent" = pi ]; } && [ "$role_effort" = ultra ]; then
       echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
       exit 1
     fi
@@ -1062,6 +1118,7 @@ if [ -n "$grid_roles" ]; then
     role_names+=("$role")
     role_agents+=("$role_agent")
     role_models+=("$role_model")
+    role_efforts+=("$role_effort")
   done
 fi
 roles_stamp=""
@@ -1655,8 +1712,8 @@ if [ "${#role_names[@]}" -gt 0 ]; then
   roles_dir="$crew_dir/artifacts/$branch"
   mkdir -p "$roles_dir"
   for i in "${!role_names[@]}"; do
-    jq -n --arg n "${role_names[$i]}" --arg a "${role_agents[$i]}" --arg m "${role_models[$i]}" '{name:$n,agent:$a,model:$m}'
-  done | jq -s 'map({key:.name,value:{agent:.agent,model:.model}})|from_entries' > "$roles_dir/roles.json"
+    jq -n --arg n "${role_names[$i]}" --arg a "${role_agents[$i]}" --arg m "${role_models[$i]}" --arg e "${role_efforts[$i]}" '{name:$n,agent:$a,model:$m,effort:$e}'
+  done | jq -s 'map({key:.name,value:{agent:.agent,model:.model,effort:.effort}})|from_entries' > "$roles_dir/roles.json"
 fi
 
 # A detached new-window can inherit tmux's fallback size instead of the client
@@ -1828,7 +1885,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     role="${role_names[$i]}"
     role_pane="$(split_role_pane "$win" "$wt_path" "$role")"
-    launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}"
+    launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     watch_role "$role" "$role_pane"
   done
   layout_grid "$win"
