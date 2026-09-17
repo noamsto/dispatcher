@@ -2290,6 +2290,15 @@ Hooks need review
 EOF
 }
 
+fx_codex_hooks_review_reordered() {
+  frame_file codex_hooks_review_reordered <<'EOF'
+Hooks need review
+  Hooks can run outside the sandbox after you trust them.
+  1 hook is new or changed.
+› 1. Review hooks  2. Trust all and continue  3. Continue without trusting
+EOF
+}
+
 # The same trust frame scrolled into the transcript: the input box is the last
 # non-empty line, so the geometry anchor must reject it (this is what keeps this
 # very test file from being a false-positive source).
@@ -2685,6 +2694,16 @@ EOF
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %9"* ]]
+}
+
+@test "stall-watch: codex reordered Hooks need review lines fall through to startup silence" {
+  p=$(fx_codex_hooks_review_reordered)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
 }
 
 @test "stall-watch: a missing --engine enables no signature detector" {

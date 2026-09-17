@@ -3236,12 +3236,10 @@ BUSLINE
   # Every visible line is anchored and the option row must end the pane, so a
   # task discussing hooks in its transcript cannot satisfy this signature.
   _is_codex_hook_review_prompt() {
-    local tail_n
+    local tail_n expected
     tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
-    printf '%s\n' "$tail_n" | grep -qxF 'Hooks need review' &&
-      printf '%s\n' "$tail_n" | grep -qxF '  1 hook is new or changed.' &&
-      printf '%s\n' "$tail_n" | grep -qxF '  Hooks can run outside the sandbox after you trust them.' &&
-      printf '%s\n' "$tail_n" | grep -qxF '› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+    [ "$tail_n" = "$expected" ]
   }
 
   # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
