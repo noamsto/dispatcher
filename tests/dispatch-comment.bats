@@ -1,9 +1,8 @@
 bats_require_minimum_version 1.5.0
 
-# Coverage for `_post_dispatch_comment` (#210): a best-effort `gh issue
-# comment` posted on a GitHub-issue dispatch, carrying worker context, that
-# must never abort the dispatch and must never fire for Linear or --pr
-# dispatches.
+# Coverage for `_post_dispatch_comment`: a best-effort `gh issue comment`
+# posted on a GitHub-issue dispatch, carrying worker context, that must
+# never abort the dispatch and must never fire for Linear or --pr dispatches.
 
 setup() {
   load helpers

@@ -19,7 +19,7 @@ _ensure_dispatched_label() {
 
 # Post a best-effort context comment on a dispatched GitHub issue. The
 # `dispatched` label stays the claim semaphore; this comment is history only
-# and must never abort a dispatch (#210).
+# and must never abort a dispatch.
 _post_dispatch_comment() {
   local issue="$1" name="$2" engine="$3" model="$4" tier="$5" effort="$6" \
     branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}"
@@ -1599,10 +1599,9 @@ ident=$(crew identity "$branch")
 agent_name=$(printf '%s' "$ident" | jq -r .name)
 agent_color=$(printf '%s' "$ident" | jq -r .tmux)
 
-# GitHub-issue dispatch only: post a context comment (codename, engine/model/
-# tier, branch, worktree, session, worker id, crew id) for at-a-glance
-# history. Linear dispatches and `--pr` review dispatches set neither
-# $gh_issue nor $num, so this is a no-op for them (#210).
+# GitHub-issue dispatch only: post a context comment for at-a-glance history.
+# Linear dispatches and `--pr` review dispatches set neither $gh_issue nor
+# $num, so this is a no-op for them.
 comment_issue="${gh_issue:-${num:-}}"
 if [ -n "$comment_issue" ]; then
   _post_dispatch_comment "$comment_issue" "$agent_name" "$agent" "$model" "$tier" "$effort" \
