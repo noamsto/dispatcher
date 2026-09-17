@@ -202,6 +202,14 @@ project resources**. `hostConfigDiscovery` stays `"off"` for the MCP adapter so
 a repo can't inject MCP servers into an unattended run. This is a security
 requirement, not a preference — pi packages run with full system access.
 
+One deliberate carve-out: a worker _is_ handed its own worktree's skill dirs
+(`.pi/skills`, `.agents/skills`) through explicit `--skill` flags. Skills are
+declarative instruction text in a system prompt, not code that installs itself;
+the worker already reads the repo with full tool access, so this is parity with
+the claude/cursor workers, which get real worktree trust. `--no-approve` still
+blocks project settings, extensions and packages, which is where auto-execution
+lives. See `pi_skill_args` in `dispatch.sh` / `dispatch-resume.sh`.
+
 **As built (#140)** — three layers:
 
 - `--no-approve` on every pi launch;

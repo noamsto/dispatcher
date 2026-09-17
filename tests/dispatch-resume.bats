@@ -530,6 +530,29 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
 }
 
+@test "pi resume passes the worktree's project skills with --skill" {
+  setup_worker_wt
+  mkdir -p "$WT/.agents/skills/preview"
+  printf -- '---\nname: preview\ndescription: seeded\n---\n' >"$WT/.agents/skills/preview/SKILL.md"
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q -- "--no-approve --skill $WT/.agents/skills " "$STUB_LOG"
+}
+
+@test "pi resume omits --skill when the worktree has no project skills" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -F -- '--skill' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
 @test "pi --fresh drops the continue flag" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
