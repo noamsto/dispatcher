@@ -388,6 +388,7 @@ bats tests/           # full suite -- run before pushing
 bats tests/dispatch.bats   # one file -- the fast inner loop while editing
 nix flake check       # formatting + pre-commit
 ./scripts/gen-adapters.sh   # regenerate adapters after editing a command body
+./scripts/cache-report.sh   # read-only: per-model pi prompt-cache hit rate across worker sessions
 ```
 
 `tests/module.bats` builds every package once per file run (via `setup_file`,
