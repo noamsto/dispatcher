@@ -32,7 +32,7 @@
 
 ### Task 1: Give the dispatch suite a deterministic engine PATH
 
-`tests/dispatch.bats` stubs `tmux`, `crew`, `gh`, `wt` and `direnv` but never the engine CLIs, so today it silently inherits whatever engines the developer has installed. CI runs bats on a bare GitHub runner with none of them. The moment Task 3 exercises a PATH probe, every launch test in this file would fail in CI and pass locally. This task removes that dependency first, changing no production code.
+`tests/dispatch.bats` stubs `tmux`, `crew`, `gh`, `wt` and `direnv` but never the engine CLIs, so today it silently inherits whatever engines the developer has installed. CI runs bats on a bare GitHub runner with none of them. The moment Task 2 adds a PATH probe, every launch test in this file would fail in CI and pass locally. This task removes that dependency first, changing no production code.
 
 `tests/dispatcher.bats` already stubs all four (`stub_bin claude/codex/cursor-agent/pi`) and needs no change.
 
@@ -43,7 +43,7 @@
 **Interfaces:**
 
 - Consumes: `stub_bin <name>` from `tests/helpers.bash:70` — writes a log-and-exit-0 stub into `$STUB_DIR` and prepends that dir to `PATH`.
-- Produces: every engine CLI resolves inside `$STUB_DIR` for all tests in `tests/dispatch.bats`. Tasks 2, 3, 4 and 6 rely on this.
+- Produces: every engine CLI resolves inside `$STUB_DIR` for all tests in `tests/dispatch.bats`. Tasks 2, 3 and 5 rely on this.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -96,7 +96,7 @@ git commit -m "test(dispatch): stub engine CLIs so the suite owns its PATH"
 
 ### Task 2: Roster gate for the lead engine
 
-Replace the two work-only blocks with the roster check. The availability probe ships in the same helper; Task 3 is the test that proves it.
+Replace the two work-only blocks with the roster check and the availability probe. Both ship in one helper, so both are tested here, red-first.
 
 **Files:**
 
@@ -105,7 +105,7 @@ Replace the two work-only blocks with the roster check. The availability probe s
 
 **Interfaces:**
 
-- Produces, for Tasks 4 and 6:
+- Produces, for Tasks 3 and 5:
   - `ENGINES_ALL="claude codex cursor pi"` — canonical order, and the unset default.
   - `engine_cli <engine>` — prints the CLI name; only `cursor` differs (`cursor-agent`).
   - `engine_enabled <engine>` — returns 0 when the engine is in `$DISPATCH_ENGINES`, or when that variable is unset/empty.
@@ -135,12 +135,28 @@ Add to `tests/dispatch.bats`:
   [[ "$output" != *"work-profile only"* ]]
   [[ "$output" != *"not enabled here"* ]]
 }
+
+@test "rejects an enabled engine whose CLI is missing" {
+  # PATH keeps the stub dir (tmux, crew, gh, wt are needed to get this far)
+  # but the engine stub is removed, so only the probe can fail.
+  rm "$STUB_DIR/codex"
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is enabled but not installed (no 'codex' on PATH)"* ]]
+}
+
+@test "the probe looks for cursor-agent, not cursor" {
+  rm "$STUB_DIR/cursor-agent"
+  DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
+}
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `nix develop -c bats tests/dispatch.bats -f "roster"`
-Expected: FAIL — the first with no `not enabled here` in output, the third still printing `work-profile only`.
+Run: `nix develop -c bats tests/dispatch.bats -f "roster\|missing\|cursor-agent"`
+Expected: all five FAIL — no `not enabled here` or `is enabled but not installed` in any output, and the third still printing `work-profile only`.
 
 - [ ] **Step 3: Replace the work-only block**
 
@@ -195,12 +211,16 @@ check_engine "$agent" "--agent $agent"
 Run: `nix develop -c bats tests/dispatch.bats`
 Expected: PASS, whole file. The pre-existing pi test at `dispatch.bats:368` (`[[ "$output" != *"work-profile only"* ]]`) still passes — that string no longer exists anywhere.
 
-- [ ] **Step 5: Shellcheck**
+- [ ] **Step 5: Confirm the cursor-agent test is real**
+
+Temporarily change `engine_cli`'s `cursor)` branch to `*)`, re-run `nix develop -c bats tests/dispatch.bats -f "cursor-agent"`, confirm it FAILS with `no 'cursor' on PATH`, then revert the edit and confirm it PASSES again. Without this, that test would also pass against a broken map on a machine where a `cursor` binary happens to exist.
+
+- [ ] **Step 6: Shellcheck**
 
 Run: `nix develop -c shellcheck adapters/core/dispatch.sh`
 Expected: no output, exit 0.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```
 git add adapters/core/dispatch.sh tests/dispatch.bats
@@ -209,57 +229,7 @@ git commit -m "feat(dispatch): gate the lead engine on a configurable roster"
 
 ---
 
-### Task 3: Prove the availability probe
-
-`check_engine` already probes PATH. This task proves it with tests that remove one stub, and is a separate commit so the probe can be reviewed on its own.
-
-**Files:**
-
-- Test: `tests/dispatch.bats`
-
-**Interfaces:**
-
-- Consumes: `check_engine`, `engine_cli` from Task 2.
-
-- [ ] **Step 1: Write the tests**
-
-```bash
-@test "rejects an enabled engine whose CLI is missing" {
-  # PATH keeps the stub dir (tmux, crew, gh, wt are needed to get this far)
-  # but the engine stub is removed, so only the probe can fail.
-  rm "$STUB_DIR/codex"
-  DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"--agent codex is enabled but not installed (no 'codex' on PATH)"* ]]
-}
-
-@test "the probe looks for cursor-agent, not cursor" {
-  rm "$STUB_DIR/cursor-agent"
-  DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
-}
-```
-
-- [ ] **Step 2: Run them against Task 2's implementation**
-
-Run: `nix develop -c bats tests/dispatch.bats -f "missing\|cursor-agent"`
-Expected: PASS. If either fails, the bug is in Task 2's `check_engine` — fix it there rather than weakening the test.
-
-- [ ] **Step 3: Confirm the second test is real**
-
-Temporarily change `engine_cli`'s `cursor)` branch to `*)`, re-run `nix develop -c bats tests/dispatch.bats -f "cursor-agent"`, confirm it FAILS with `no 'cursor' on PATH`, then revert the edit and confirm it PASSES again.
-
-- [ ] **Step 4: Commit**
-
-```
-git add tests/dispatch.bats
-git commit -m "test(dispatch): cover the engine availability probe"
-```
-
----
-
-### Task 4: Gate per-role engines
+### Task 3: Gate per-role engines
 
 `--roles reviewer=cursor:composer-2.5` picks a different engine per role (cross-engine review). It carries its own copy of the work-only rule at `dispatch.sh:1025-1032`, which must become the same check or a disabled engine slips in through a grid.
 
@@ -310,7 +280,7 @@ git commit -m "feat(dispatch): gate per-role engines on the same roster"
 
 ---
 
-### Task 5: Gate the orchestrator engine
+### Task 4: Gate the orchestrator engine
 
 `dispatcher.sh` launches the orchestrator itself and carries its own copy of the rule at `:61-69`. Its messages are prefixed `dispatcher:`, not `dispatch:`.
 
@@ -413,7 +383,7 @@ git commit -m "feat(dispatcher): gate the orchestrator engine on the roster"
 
 ---
 
-### Task 6: `dispatch --engines`
+### Task 5: `dispatch --engines`
 
 The dispatcher model chooses the engine. It needs one command that answers "what can I actually dispatch here", because the roster is machine-local and the probe is dynamic.
 
@@ -424,7 +394,7 @@ The dispatcher model chooses the engine. It needs one command that answers "what
 
 **Interfaces:**
 
-- Consumes: `engine_cli`, `engine_enabled`, `ENGINES_ALL` from Task 2 — **which must be defined above the new flag block.** Task 2 defines them around line 578, _below_ `--reap-roles` at 342, so this task moves the `ENGINES_ALL` / `engine_cli` / `engine_enabled` / `check_engine` definitions up to sit immediately before the `# \`dispatch --reap-roles\``comment. Leave`profile="${DISPATCH_PROFILE:-personal}"` and the `check_engine "$agent" "--agent $agent"` call where Task 2 put them.
+- Consumes: `engine_cli`, `engine_enabled`, `ENGINES_ALL` from Task 2 — **which must be defined above the new flag block.** Task 2 defines them around line 578, _below_ `--reap-roles` at 342, so this task moves the `ENGINES_ALL` / `engine_cli` / `engine_enabled` / `check_engine` definitions up to sit immediately before the `--reap-roles` block. Leave `profile="${DISPATCH_PROFILE:-personal}"` and the `check_engine "$agent" "--agent $agent"` call where Task 2 put them.
 - Produces: `dispatch --engines`, printing enabled ∧ available engines one per line in `ENGINES_ALL` order, exit 0. Prints nothing and still exits 0 when none qualify.
 
 - [ ] **Step 1: Write the failing tests**
@@ -482,7 +452,7 @@ Note for shellcheck: `for e in $ENGINES_ALL` is an intentional unquoted word spl
 - [ ] **Step 4: Run the tests**
 
 Run: `nix develop -c bats tests/dispatch.bats`
-Expected: PASS, whole file — the move must not disturb Tasks 2-4.
+Expected: PASS, whole file — the move must not disturb Tasks 2-3.
 
 - [ ] **Step 5: Shellcheck and commit**
 
@@ -494,7 +464,7 @@ git commit -m "feat(dispatch): add --engines, the effective roster"
 
 ---
 
-### Task 7: The `engines` option and artifact gating
+### Task 6: The `engines` option and artifact gating
 
 **Files:**
 
@@ -665,7 +635,7 @@ git commit -m "feat(nix): add programs.dispatcher.engines and gate artifacts on 
 
 ---
 
-### Task 8: Point the protocols at the roster
+### Task 7: Point the protocols at the roster
 
 The dispatcher model judges engine choice from prose. Several passages state the work-only rule as fact; all must instead send it to `dispatch --engines`.
 
@@ -677,7 +647,7 @@ The dispatcher model judges engine choice from prose. Several passages state the
 
 **Interfaces:**
 
-- Consumes: `dispatch --engines` from Task 6.
+- Consumes: `dispatch --engines` from Task 5.
 
 - [ ] **Step 1: Find every claim to fix**
 
