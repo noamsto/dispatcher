@@ -402,18 +402,41 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"not enabled here"* ]]
 }
 
+# path_without_real <cli> — $PATH with $STUB_DIR kept and every OTHER
+# directory that would resolve a real <cli> dropped. `rm "$STUB_DIR/<cli>"`
+# alone only uncovers whatever the developer's machine has installed further
+# down PATH (this box has real codex/cursor/cursor-agent CLIs on it, since a
+# maintainer of this repo daily-drives all three); the probe tests below need
+# the removed engine to be genuinely unresolvable, not just absent from the
+# stub dir, while leaving every other directory (and the tools before the
+# gate need, e.g. bash and grep) intact.
+path_without_real() {
+  local cli="$1" dir kept=()
+  local IFS=:
+  # shellcheck disable=SC2206 # word-splitting on IFS=: is the point here
+  local dirs=($PATH)
+  for dir in "${dirs[@]}"; do
+    if [ "$dir" != "$STUB_DIR" ] && [ -x "$dir/$cli" ]; then
+      continue
+    fi
+    kept+=("$dir")
+  done
+  IFS=:
+  printf '%s' "${kept[*]}"
+}
+
 @test "rejects an enabled engine whose CLI is missing" {
   # PATH keeps the stub dir (tmux, crew, gh, wt are needed to get this far)
   # but the engine stub is removed, so only the probe can fail.
   rm "$STUB_DIR/codex"
-  DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
   [ "$status" -eq 1 ]
   [[ "$output" == *"--agent codex is enabled but not installed (no 'codex' on PATH)"* ]]
 }
 
 @test "the probe looks for cursor-agent, not cursor" {
   rm "$STUB_DIR/cursor-agent"
-  DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
+  PATH="$(path_without_real cursor-agent)" DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
   [ "$status" -eq 1 ]
   [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
 }
