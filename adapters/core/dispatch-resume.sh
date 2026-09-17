@@ -12,6 +12,18 @@ usage() {
   echo "usage: dispatch resume [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
 }
 
+# pi_skill_args <worktree> — emit --skill flags for the worktree's own project
+# skill dirs. Duplicated from dispatch.sh (standalone build); see the comment
+# there for why the pi launch's --no-approve needs an explicit --skill to see
+# project skills.
+pi_skill_args() {
+  local wt="$1" d
+  for d in "$wt/.pi/skills" "$wt/.agents/skills"; do
+    [ -d "$d" ] && printf ' --skill %q' "$d"
+  done
+  return 0
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -536,7 +548,7 @@ elif [ "$agent" = pi ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""

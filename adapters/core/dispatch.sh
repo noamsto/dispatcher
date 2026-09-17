@@ -168,11 +168,25 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
-# launch_role <pane> <role> <agent> <model> — launch the role's engine with
-# GRID_PROTOCOL as its system prompt (appended where supported, first prompt
+# pi_skill_args <worktree> — emit --skill flags for the worktree's own project
+# skill dirs (pi's project skill locations). The pi launches below pass
+# --no-approve, which disables project discovery wholesale, so a worker must be
+# handed its skills explicitly; --skill is additive and a missing path is only a
+# warning. Only skills cross this line — project .pi settings, packages and
+# extensions stay blocked, which is why this isn't just dropping --no-approve.
+pi_skill_args() {
+  local wt="$1" d
+  for d in "$wt/.pi/skills" "$wt/.agents/skills"; do
+    [ -d "$d" ] && printf ' --skill %q' "$d"
+  done
+  return 0
+}
+
+# launch_role <pane> <worktree> <role> <agent> <model> — launch the role's engine
+# with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name / $effort from the caller scope.
 launch_role() {
-  local pane="$1" role="$2" r_agent="$3" r_model="$4" prompt first quoted_model quoted_dir
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" prompt first quoted_model quoted_dir
   printf -v quoted_model '%q' "$r_model"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
@@ -183,7 +197,7 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve '$prompt'" Enter
+    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") '$prompt'" Enter
     ;;
   claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto '$prompt'" Enter ;;
   codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox '$first'" Enter ;;
@@ -318,7 +332,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$PWD" "$role")"
-  launch_role "$role_pane" "$role" "$spawn_agent" "$spawn_model"
+  launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model"
   watch_role "$role" "$role_pane"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
@@ -1755,10 +1769,11 @@ elif [ "$agent" = cursor ]; then
     "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
-  # real appended system prompt; --no-approve ignores project-local resources.
+  # real appended system prompt; --no-approve ignores project-local resources,
+  # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
   tmux send-keys -t "$pane" \
-    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
 else
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter
@@ -1774,7 +1789,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     role="${role_names[$i]}"
     role_pane="$(split_role_pane "$win" "$wt_path" "$role")"
-    launch_role "$role_pane" "$role" "${role_agents[$i]}" "${role_models[$i]}"
+    launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}"
     watch_role "$role" "$role_pane"
   done
   layout_grid "$win"
