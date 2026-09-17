@@ -1790,9 +1790,12 @@ if [ "$plan_val" = provided ]; then
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan
-# and partial work (#73). No apostrophes anywhere in this string: all four launch
-# strings single-quote the prompt inside a double-quoted `tmux send-keys`
-# argument, and one apostrophe silently breaks the line.
+# and partial work (#73). Every launch branch below builds its prompt as a plain
+# variable and quotes it with a POSIX single-quote escape (quoted_prompt), so
+# apostrophes survive into the pane's shell intact. The pane's real shell is
+# fish, whose single-quote parsing (unlike POSIX sh) still treats a backslash
+# specially, so this doesn't hold for a backslash next to another backslash or
+# an apostrophe.
 resume_note=""
 if [ "$switch_mode" = resume ]; then
   resume_note=" You are resuming an interrupted run on this branch, not starting it: do not re-run the spec or plan phases. Read SPEC.md and PLAN.md (repo root or docs/superpowers/) and git status before anything else, then continue from the first unfinished step. Check whether this branch already has an open PR before you push, and push to that PR instead of opening a second one."
@@ -1845,8 +1848,11 @@ if [ "$agent" = codex ]; then
   # latency nobody is watching.
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -1861,18 +1867,27 @@ elif [ "$agent" = cursor ]; then
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources,
   # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
   tmux send-keys -t "$pane" \
-    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}'" Enter
+    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
 else
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}'" Enter
+    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
 fi
 
 # Role grid: split the task window into one pane per role. Each role pane parks

@@ -606,6 +606,67 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# #216: grid_note's literal `'Grid mode'` apostrophes sit inside a manually
+# single-quoted chunk of the tmux send-keys argument, so the pane's own shell
+# sees them as real quoting, not literal text. This replays the exact launch
+# string dispatch.sh builds through a real shell (bash — the devShell/CI
+# shell; see PLAN.md "Regression test replays via bash -c" for why that is
+# still valid proof even though the real pane shell is fish) and checks what
+# argv the engine binary actually receives. It asserts the CORRECT behavior
+# (one intact prompt argument), so it is expected to fail red against the
+# unfixed dispatch.sh, and turn green once the quoting mechanism is fixed.
+@test "grid_note's embedded apostrophes survive intact into the codex lead's argv" {
+  stub_launch_bins
+
+  # A throwaway codex stub: dump the argv it receives, NUL-separated, so the
+  # test can tell one intact argument from several broken ones without any
+  # shell re-quoting of its own getting in the way.
+  cat >"$STUB_DIR/codex" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >"$STUB_DIR/codex_argv"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/codex"
+
+  # deep + --agent codex with no --roles defaults to the critics-only grid
+  # (spec-critic,plan-critic), which is what sets grid_note in the lead's
+  # prompt — the exact repro shape from the bug report.
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "grid note apostrophe repro"
+  [ "$status" -eq 0 ]
+
+  # The same grid also spawns two role-pane codex launches via launch_role;
+  # those have no agents.* flags (verified by reading launch_role's codex
+  # branch), so this marker isolates the lead's line alone.
+  launch="$(grep 'send-keys' "$STUB_LOG" | grep -F 'agents.enabled=true')"
+  [ -n "$launch" ]
+  [ "$(printf '%s\n' "$launch" | wc -l)" -eq 1 ]
+
+  cmd="${launch#send-keys -t %1 }"
+  cmd="${cmd% Enter}"
+  bash -c "$cmd"
+
+  argv=()
+  while IFS= read -r -d '' arg; do
+    argv+=("$arg")
+  done <"$STUB_DIR/codex_argv"
+
+  # Fixed flags today: --profile worker -m <model> -c model_reasoning_effort=
+  # <effort> -c service_tier=default -c agents.enabled=true -c
+  # agents.max_concurrent_threads_per_session=3 -c
+  # agents.default_subagent_reasoning_effort=<subagent effort>
+  # --dangerously-bypass-approvals-and-sandbox — 15 tokens, followed by
+  # exactly one correctly-quoted prompt argument (16 total). Today the
+  # pane's shell instead closes the manual quote at the first apostrophe in
+  # grid_note's "'Grid mode'", so the prompt splits into two argv elements —
+  # one ending in "...WORKER_PROTOCOL.md Grid" and a stray one starting with
+  # "mode", matching the exact "unexpected argument 'mode ...'" error from
+  # the bug report.
+  [ "${#argv[@]}" -eq 16 ]
+
+  # The exact contiguous span the bug splits, apostrophes intact.
+  [[ "${argv[15]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+}
+
 @test "--grid derives the role topology from the tier" {
   run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
   [ "$status" -eq 0 ]
