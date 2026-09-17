@@ -1141,14 +1141,7 @@ if [ -n "$grid_roles" ]; then
       echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
       exit 1
     fi
-    case "$role_agent" in
-    codex | cursor)
-      [ "$profile" = work ] || {
-        echo "dispatch: role '$role' uses --agent $role_agent, which is work-profile only" >&2
-        exit 1
-      }
-      ;;
-    esac
+    check_engine "$role_agent" "role '$role' uses --agent $role_agent"
     role_names+=("$role")
     role_agents+=("$role_agent")
     role_models+=("$role_model")

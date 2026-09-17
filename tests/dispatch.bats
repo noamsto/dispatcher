@@ -590,10 +590,16 @@ EOF
   [[ "$output" == *"--roles needs a comma-separated list"* ]]
 }
 
-@test "--roles rejects a work-only role agent off the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
+@test "a role cannot use an engine that is off the roster" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 --roles reviewer=cursor:composer-2.5 "role roster test"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
+  [[ "$output" == *"role 'reviewer' uses --agent cursor is not enabled here"* ]]
+}
+
+@test "--roles rejects a role agent not in the roster" {
+  DISPATCH_ENGINES="pi" run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not enabled here"* ]]
 }
 
 @test "rejects an invalid role name" {
