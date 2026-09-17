@@ -710,19 +710,47 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
   exit 1
 }
 
-# Work-only engine gate. $DISPATCH_PROFILE is set from osConfig.profile by
-# home-manager (was a source-baked literal in the fish heredoc). Reject before
-# scaffolding a worktree, so the failure is a clear message not a later
-# `codex: command not found`.
+# Engine gate. An engine must be enabled (on this machine's roster) and
+# available (its CLI installed). $DISPATCH_ENGINES is set from
+# programs.dispatcher.engines by home-manager; unset means every engine, so a
+# non-Nix checkout and the test suite need no extra setup. $DISPATCH_PROFILE no
+# longer gates engines — it is still read below for the work+claude+deep rung.
 profile="${DISPATCH_PROFILE:-personal}"
-if [ "$agent" = codex ] && [ "$profile" != work ]; then
-  echo "dispatch: --agent codex is work-profile only (no personal codex account)" >&2
-  exit 1
-fi
-if [ "$agent" = cursor ] && [ "$profile" != work ]; then
-  echo "dispatch: --agent cursor is work-profile only" >&2
-  exit 1
-fi
+ENGINES_ALL="claude codex cursor pi"
+
+# engine_cli <engine> — the CLI that engine runs as. Only cursor differs.
+engine_cli() {
+  case "$1" in
+  cursor) printf 'cursor-agent' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+# engine_enabled <engine> — is it on this machine's roster?
+engine_enabled() {
+  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+# check_engine <engine> <context> — reject before scaffolding a worktree, so a
+# missing engine is a clear message and not a later `codex: command not found`
+# in a pane the branch and issue already paid for.
+check_engine() {
+  local cli
+  engine_enabled "$1" || {
+    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
+    exit 1
+  }
+  cli="$(engine_cli "$1")"
+  command -v "$cli" >/dev/null 2>&1 || {
+    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
+    exit 1
+  }
+}
+
+check_engine "$agent" "--agent $agent"
 
 # Model gate. Reject a slug the chosen engine cannot run before anything is
 # scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the

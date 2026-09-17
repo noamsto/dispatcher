@@ -382,6 +382,42 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"work-profile only"* ]]
 }
 
+@test "rejects an engine that is not on the roster" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is not enabled here (enabled: claude pi)"* ]]
+}
+
+@test "an unset roster admits every engine" {
+  # The compatibility contract: a non-Nix checkout exports nothing.
+  run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [[ "$output" != *"not enabled here"* ]]
+}
+
+@test "the roster gate replaces the work-profile gate" {
+  # codex off a work profile used to be rejected on profile alone; with a
+  # roster that lists it, profile is no longer the gate.
+  DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [[ "$output" != *"work-profile only"* ]]
+  [[ "$output" != *"not enabled here"* ]]
+}
+
+@test "rejects an enabled engine whose CLI is missing" {
+  # PATH keeps the stub dir (tmux, crew, gh, wt are needed to get this far)
+  # but the engine stub is removed, so only the probe can fail.
+  rm "$STUB_DIR/codex"
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is enabled but not installed (no 'codex' on PATH)"* ]]
+}
+
+@test "the probe looks for cursor-agent, not cursor" {
+  rm "$STUB_DIR/cursor-agent"
+  DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
+}
+
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
   # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
   # what gives the role-pane assertions below real launches to check.
@@ -1052,20 +1088,8 @@ EOF
   [[ "$output" == *"--effort must be low, medium, high, xhigh, max, or ultra"* ]]
 }
 
-@test "gates codex behind the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"codex is work-profile only"* ]]
-}
-
-@test "gates cursor behind the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard kimi-k3-high --agent cursor --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
-}
-
-@test "the profile gate fires before any worktree is scaffolded" {
-  DISPATCH_PROFILE=personal run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
+@test "the roster gate fires before any worktree is scaffolded" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   # The gate rejects before ANY stubbed binary runs, so $STUB_LOG is never
   # created — `grep -c` on a missing file errors rather than printing 0.
