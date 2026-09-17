@@ -667,6 +667,61 @@ EOF
   [[ "${argv[15]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
 }
 
+# #216/#217: the POSIX single-quote-escape idiom (escaped=${prompt//\'/\'\\\'\'};
+# quoted_prompt="'$escaped'") is now the one thing standing between six call
+# sites (the four main launch branches plus launch_role's prompt and first)
+# and shell injection. Neither $prompt nor $first carries an apostrophe today,
+# so this proves the MECHANISM itself is sound rather than replaying today's
+# inputs: it runs the exact two-line formula against a string hostile enough
+# to have broken naive escaping — an embedded quote, a semicolon, a backtick
+# command substitution, and a $(...) command substitution — and checks what a
+# real shell does with the result.
+@test "the single-quote-escape idiom neutralizes a hostile prompt string" {
+  marker1="$BATS_TEST_TMPDIR/pwned_marker"
+  marker2="$BATS_TEST_TMPDIR/pwned_marker2"
+  rm -f "$marker1" "$marker2"
+
+  # A throwaway argv-dump stub: it creates no file itself, so any marker that
+  # shows up afterward can only have come from the payload actually running.
+  stub="$BATS_TEST_TMPDIR/argv_dump"
+  argv_file="$BATS_TEST_TMPDIR/argv_dump.out"
+  cat >"$stub" <<EOF
+#!/usr/bin/env bash
+printf '%s\0' "\$@" >"$argv_file"
+exit 0
+EOF
+  chmod +x "$stub"
+
+  prompt="it's over; \`touch $marker1\`; \$(touch $marker2)"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
+
+  bash -c "$stub $quoted_prompt"
+
+  argv=()
+  while IFS= read -r -d '' arg; do
+    argv+=("$arg")
+  done <"$argv_file"
+
+  # Exactly one argument reached the stub — no word-splitting on the
+  # semicolon or the quote.
+  [ "${#argv[@]}" -eq 1 ]
+  # The text made it through byte-for-byte: quote, semicolon, backtick and
+  # $(...) all literal.
+  [ "${argv[0]}" = "$prompt" ]
+  # Neither command substitution ran.
+  [ ! -e "$marker1" ]
+  [ ! -e "$marker2" ]
+}
+
+@test "the escape idiom is applied at every prompt-quoting call site" {
+  # Six call sites now build their tmux send-keys prompt this way: the four
+  # main launch branches (codex, cursor, pi, claude) plus launch_role's
+  # $prompt and $first. A change to this count means a call site was added,
+  # removed, or reverted to manual quoting — worth a second look either way.
+  [ "$(grep -cF -- 'escaped=${' "$DISPATCH")" -eq 6 ]
+}
+
 @test "--grid derives the role topology from the tier" {
   run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
   [ "$status" -eq 0 ]
