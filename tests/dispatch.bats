@@ -606,6 +606,114 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# #216: grid_note's literal `'Grid mode'` apostrophes sit inside a manually
+# single-quoted chunk of the tmux send-keys argument, so the pane's own shell
+# sees them as real quoting, not literal text. This replays the exact launch
+# string dispatch.sh builds through bash — the devShell/CI-guaranteed shell,
+# not fish (the real pane shell): the POSIX single-quote-escape idiom being
+# tested is shell-agnostic, so bash is sufficient proof of the escaping itself.
+@test "grid_note's embedded apostrophes survive intact into the codex lead's argv" {
+  stub_launch_bins
+
+  # A throwaway codex stub: dump the argv it receives, NUL-separated, so the
+  # test can tell one intact argument from several broken ones without any
+  # shell re-quoting of its own getting in the way.
+  cat >"$STUB_DIR/codex" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >"$STUB_DIR/codex_argv"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/codex"
+
+  # deep + --agent codex with no --roles defaults to the critics-only grid
+  # (spec-critic,plan-critic), which is what sets grid_note in the lead's
+  # prompt — the exact repro shape from the bug report.
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "grid note apostrophe repro"
+  [ "$status" -eq 0 ]
+
+  # The same grid also spawns two role-pane codex launches via launch_role;
+  # those have no agents.* flags (verified by reading launch_role's codex
+  # branch), so this marker isolates the lead's line alone.
+  launch="$(grep 'send-keys' "$STUB_LOG" | grep -F 'agents.enabled=true')"
+  [ -n "$launch" ]
+  [ "$(printf '%s\n' "$launch" | wc -l)" -eq 1 ]
+
+  cmd="${launch#send-keys -t %1 }"
+  cmd="${cmd% Enter}"
+  bash -c "$cmd"
+
+  argv=()
+  while IFS= read -r -d '' arg; do
+    argv+=("$arg")
+  done <"$STUB_DIR/codex_argv"
+
+  # Fixed flags today: --profile worker -m <model> -c model_reasoning_effort=
+  # <effort> -c service_tier=default -c agents.enabled=true -c
+  # agents.max_concurrent_threads_per_session=3 -c
+  # agents.default_subagent_reasoning_effort=<subagent effort>
+  # --dangerously-bypass-approvals-and-sandbox — 15 tokens, followed by
+  # exactly one correctly-quoted prompt argument (16 total).
+  [ "${#argv[@]}" -eq 16 ]
+
+  # The exact contiguous span the bug splits, apostrophes intact.
+  [[ "${argv[15]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+}
+
+# #216/#217: the POSIX single-quote-escape idiom (escaped=${prompt//\'/\'\\\'\'};
+# quoted_prompt="'$escaped'") is now the one thing standing between six call
+# sites (the four main launch branches plus launch_role's prompt and first)
+# and shell injection. Neither $prompt nor $first carries an apostrophe today,
+# so this proves the MECHANISM itself is sound rather than replaying today's
+# inputs: it runs the exact two-line formula against a string hostile enough
+# to have broken naive escaping — an embedded quote, a semicolon, a backtick
+# command substitution, and a $(...) command substitution — and checks what a
+# real shell does with the result.
+@test "the single-quote-escape idiom neutralizes a hostile prompt string" {
+  marker1="$BATS_TEST_TMPDIR/pwned_marker"
+  marker2="$BATS_TEST_TMPDIR/pwned_marker2"
+  rm -f "$marker1" "$marker2"
+
+  # A throwaway argv-dump stub: it creates no file itself, so any marker that
+  # shows up afterward can only have come from the payload actually running.
+  stub="$BATS_TEST_TMPDIR/argv_dump"
+  argv_file="$BATS_TEST_TMPDIR/argv_dump.out"
+  cat >"$stub" <<EOF
+#!/usr/bin/env bash
+printf '%s\0' "\$@" >"$argv_file"
+exit 0
+EOF
+  chmod +x "$stub"
+
+  prompt="it's over; \`touch $marker1\`; \$(touch $marker2)"
+  escaped=${prompt//\'/\'\\\'\'}
+  quoted_prompt="'$escaped'"
+
+  bash -c "$stub $quoted_prompt"
+
+  argv=()
+  while IFS= read -r -d '' arg; do
+    argv+=("$arg")
+  done <"$argv_file"
+
+  # Exactly one argument reached the stub — no word-splitting on the
+  # semicolon or the quote.
+  [ "${#argv[@]}" -eq 1 ]
+  # The text made it through byte-for-byte: quote, semicolon, backtick and
+  # $(...) all literal.
+  [ "${argv[0]}" = "$prompt" ]
+  # Neither command substitution ran.
+  [ ! -e "$marker1" ]
+  [ ! -e "$marker2" ]
+}
+
+@test "the escape idiom is applied at every prompt-quoting call site" {
+  # Six call sites now build their tmux send-keys prompt this way: the four
+  # main launch branches (codex, cursor, pi, claude) plus launch_role's
+  # $prompt and $first. A change to this count means a call site was added,
+  # removed, or reverted to manual quoting — worth a second look either way.
+  [ "$(grep -cF -- 'escaped=${' "$DISPATCH")" -eq 6 ]
+}
+
 @test "--grid derives the role topology from the tier" {
   run grep -F -- 'standard) grid_roles="plan-critic,reviewer"' "$DISPATCH"
   [ "$status" -eq 0 ]
