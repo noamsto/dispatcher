@@ -2278,6 +2278,18 @@ Enter to confirm
 EOF
 }
 
+# Captured from the Codex worker hook-review prompt in WORKER_TASK.md. This is
+# intentionally verbatim: Codex gets no broader prompt signature without a
+# captured frame.
+fx_codex_hooks_review() {
+  frame_file codex_hooks_review <<'EOF'
+Hooks need review
+  1 hook is new or changed.
+  Hooks can run outside the sandbox after you trust them.
+› 1. Review hooks  2. Trust all and continue  3. Continue without trusting
+EOF
+}
+
 # The same trust frame scrolled into the transcript: the input box is the last
 # non-empty line, so the geometry anchor must reject it (this is what keeps this
 # very test file from being a false-positive source).
@@ -2648,7 +2660,7 @@ EOF
   done
 }
 
-@test "stall-watch: --engine codex gets no prompt or meter detector, and never failed" {
+@test "stall-watch: codex leaves an uncaptured Claude prompt frame to startup silence" {
   p=$(fx_prompt_trust)
   stall_sampler "$p" "$p" "$p" "$p" "$p"
   # --max-life 8: the single expected stalled: line must fire before the
@@ -2656,12 +2668,23 @@ EOF
   # same as D0's fix above).
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
     --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
-  # The static pane is not classifiable for codex, so it falls to D0s.
+  # The static Claude frame is not classifiable for Codex, so it falls to D0.
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
   run bash -c "bus | grep -c 'prompt:' || true"
   [ "$output" = "0" ]
+}
+
+@test "stall-watch: codex Hooks need review capture posts blocked/prompt:" {
+  p=$(fx_codex_hooks_review)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %9"* ]]
 }
 
 @test "stall-watch: a missing --engine enables no signature detector" {

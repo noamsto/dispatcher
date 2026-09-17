@@ -3038,17 +3038,25 @@ stall-watch)
   }
   # Signature table. Enabling an engine is DATA, not logic: capture its prompt
   # and meter frames on a work-profile host, pin them as fixtures, add a row.
-  # codex/cursor deliberately get the frame-free detectors (D0/D3) only — a
-  # cursor footer that permanently contained an `Enter to select`-like string
+  # Codex's single verified hook-review frame is deliberately narrower than
+  # Claude's prompt geometry. cursor gets frame-free detectors (D0/D3) only —
+  # a cursor footer that permanently contained an `Enter to select`-like string
   # would pin every cursor worker at `blocked` forever.
   case "$engine" in
   claude)
     sig_prompt=1
     sig_meter=1
+    sig_session_limit=1
+    ;;
+  codex)
+    sig_prompt=1
+    sig_meter=0
+    sig_session_limit=0
     ;;
   *)
     sig_prompt=0
     sig_meter=0
+    sig_session_limit=0
     ;;
   esac
   # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
@@ -3224,6 +3232,18 @@ BUSLINE
     fi
   }
 
+  # The Codex hook-review frame is pasted verbatim in fx_codex_hooks_review.
+  # Every visible line is anchored and the option row must end the pane, so a
+  # task discussing hooks in its transcript cannot satisfy this signature.
+  _is_codex_hook_review_prompt() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
+    printf '%s\n' "$tail_n" | grep -qxF 'Hooks need review' &&
+      printf '%s\n' "$tail_n" | grep -qxF '  1 hook is new or changed.' &&
+      printf '%s\n' "$tail_n" | grep -qxF '  Hooks can run outside the sandbox after you trust them.' &&
+      printf '%s\n' "$tail_n" | grep -qxF '› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+  }
+
   # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
   # numbered option within the 6 non-empty lines above it. A pane that is not
   # parked on a prompt ends on its input box, never on transcript text (A3), so
@@ -3232,6 +3252,10 @@ BUSLINE
   # fixtures become a false-positive source.
   _is_prompt() {
     local tail_n last above
+    if [ "$engine" = codex ]; then
+      _is_codex_hook_review_prompt "$1"
+      return
+    fi
     tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
     last=$(printf '%s\n' "$tail_n" | tail -1)
     case "$last" in
@@ -3475,9 +3499,8 @@ BUSLINE
     # of the two above: no option-select geometry for D1, and it matches neither
     # re_meter nor re_subrow, so D2 reads it as "no active turn" and resets.
     # Without this block it falls through to D3 quiet:, which escalates (#93).
-    # sig_prompt is reused here only as "claude signature verified" — D1b
-    # requires no prompt geometry.
-    if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] && _is_quota_session_limit "$text"; then
+    # The frame is verified for Claude only and requires no prompt geometry.
+    if [ "$suppressed" = 0 ] && [ "$sig_session_limit" = 1 ] && _is_quota_session_limit "$text"; then
       d1b_hits=$((d1b_hits + 1))
       if [ "$d1b_hits" -ge 2 ] && [ "$d1b_at" = 0 ]; then
         if _post_blocked "quota:" "quota: session limit — do not re-dispatch; wait for the reset shown in pane $pane, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"; then
