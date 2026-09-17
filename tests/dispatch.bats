@@ -609,12 +609,9 @@ EOF
 # #216: grid_note's literal `'Grid mode'` apostrophes sit inside a manually
 # single-quoted chunk of the tmux send-keys argument, so the pane's own shell
 # sees them as real quoting, not literal text. This replays the exact launch
-# string dispatch.sh builds through a real shell (bash — the devShell/CI
-# shell; see PLAN.md "Regression test replays via bash -c" for why that is
-# still valid proof even though the real pane shell is fish) and checks what
-# argv the engine binary actually receives. It asserts the CORRECT behavior
-# (one intact prompt argument), so it is expected to fail red against the
-# unfixed dispatch.sh, and turn green once the quoting mechanism is fixed.
+# string dispatch.sh builds through bash — the devShell/CI-guaranteed shell,
+# not fish (the real pane shell): the POSIX single-quote-escape idiom being
+# tested is shell-agnostic, so bash is sufficient proof of the escaping itself.
 @test "grid_note's embedded apostrophes survive intact into the codex lead's argv" {
   stub_launch_bins
 
@@ -655,12 +652,7 @@ EOF
   # agents.max_concurrent_threads_per_session=3 -c
   # agents.default_subagent_reasoning_effort=<subagent effort>
   # --dangerously-bypass-approvals-and-sandbox — 15 tokens, followed by
-  # exactly one correctly-quoted prompt argument (16 total). Today the
-  # pane's shell instead closes the manual quote at the first apostrophe in
-  # grid_note's "'Grid mode'", so the prompt splits into two argv elements —
-  # one ending in "...WORKER_PROTOCOL.md Grid" and a stray one starting with
-  # "mode", matching the exact "unexpected argument 'mode ...'" error from
-  # the bug report.
+  # exactly one correctly-quoted prompt argument (16 total).
   [ "${#argv[@]}" -eq 16 ]
 
   # The exact contiguous span the bug splits, apostrophes intact.
