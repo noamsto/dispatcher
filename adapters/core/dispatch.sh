@@ -228,11 +228,9 @@ split_role_pane() {
 # project .pi settings, packages and extensions stay blocked, which is why this
 # isn't just dropping --no-approve.
 #
-# $SKILLS_DIR is last and is what makes WORKER_PROTOCOL's own citations
-# resolvable on pi (#225): the protocol names `spec-plan-critic` as the
-# authority for the plan schema and the critic table, and claude reads it as a
-# plugin skill while codex and cursor get copies projected into their adapter
-# trees. pi had neither, so it was referred to a body it could not open.
+# $SKILLS_DIR carries the harness's own skills, which WORKER_PROTOCOL cites as
+# the authority for the plan schema and the critic table. pi is the only engine
+# with no adapter tree of its own to load them from.
 pi_skill_args() {
   local wt="$1" d
   for d in "$wt/.pi/skills" "$wt/.agents/skills" "$SKILLS_DIR"; do

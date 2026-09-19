@@ -108,13 +108,9 @@
               (n: "${n}:${builtins.hashFile "sha256" (protocols + "/${n}")};")
               protocolFiles)));
           # @skillsDir@ is the build-time default for the env-overridable
-          # DISPATCHER_SKILLS_DIR that pi workers are handed via --skill.
-          # Only pi needs it: claude loads these as plugin skills and codex /
-          # cursor get copies projected by gen-adapters.sh, so pi is the one
-          # engine that would otherwise be pointed at a body it cannot open.
-          # Delivered by path rather than as a fourth generated copy —
-          # adapters/core/skills is the single source the other three project
-          # from, and a copy would be one more tree to keep in sync.
+          # DISPATCHER_SKILLS_DIR that pi workers are handed via --skill. The
+          # source tree itself, not a projection: gen-adapters.sh copies this
+          # same directory into the other three adapter trees.
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings

@@ -15,8 +15,7 @@ usage() {
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
 # skill dirs and for the harness's own skills ($SKILLS_DIR, set below).
 # Duplicated from dispatch.sh (standalone build); see the comment there for why
-# the pi launch's --no-approve needs an explicit --skill, and why the harness
-# skills have to travel by path.
+# the pi launch's --no-approve needs an explicit --skill.
 pi_skill_args() {
   local wt="$1" d
   for d in "$wt/.pi/skills" "$wt/.agents/skills" "$SKILLS_DIR"; do

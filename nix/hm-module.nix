@@ -57,9 +57,8 @@ in {
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
         DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
         DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
-        # pi only: claude loads these as plugin skills and codex/cursor get
-        # generated copies, so pi is the one engine that needs the source tree
-        # handed to it by path (#225). dispatch passes it via --skill.
+        # pi only: the other three load the harness skills from their own
+        # adapter trees, so pi is the one engine dispatch has to hand a path.
         DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";
       };
 

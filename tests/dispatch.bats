@@ -451,8 +451,6 @@ EOF
 
   # The lead carries WORKER_PROTOCOL.md; each grid role pane gets its own
   # --skill too, but this asserts the worker launch specifically.
-  # Project skills come first and the harness dir last, so WORKER_PROTOCOL's
-  # own citations resolve without a worktree ever shadowing them by accident.
   lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG")
   [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 
