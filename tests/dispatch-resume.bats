@@ -41,6 +41,11 @@ EOF
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  # Stands in for the store path flake.nix bakes as @skillsDir@ (#225).
+  export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
+  mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
+  printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \
+    >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
   git commit --allow-empty -qm init
 }
 
@@ -530,7 +535,7 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
 }
 
-@test "pi resume passes the worktree's project skills with --skill" {
+@test "pi resume passes the worktree's project skills and the harness skills with --skill" {
   setup_worker_wt
   mkdir -p "$WT/.agents/skills/preview"
   printf -- '---\nname: preview\ndescription: seeded\n---\n' >"$WT/.agents/skills/preview/SKILL.md"
@@ -539,11 +544,25 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- "--no-approve --skill $WT/.agents/skills " "$STUB_LOG"
+  grep -q -- "--no-approve --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " "$STUB_LOG"
 }
 
-@test "pi resume omits --skill when the worktree has no project skills" {
+@test "pi resume passes only the harness skills when the worktree has none" {
   setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q -- "--no-approve --skill $DISPATCHER_SKILLS_DIR " "$STUB_LOG"
+  [ "$(grep -cF -- '--skill' "$STUB_LOG")" -eq 1 ]
+}
+
+# A non-Nix install leaves @skillsDir@ unsubstituted, so the path is not a
+# directory and the probe has to drop it rather than hand pi a literal.
+@test "pi resume omits --skill when neither the worktree nor the harness dir exists" {
+  setup_worker_wt
+  export DISPATCHER_SKILLS_DIR="$TEST_REPO/no-such-skills"
   sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"

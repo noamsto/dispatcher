@@ -107,10 +107,19 @@
             (builtins.concatStringsSep "" (map
               (n: "${n}:${builtins.hashFile "sha256" (protocols + "/${n}")};")
               protocolFiles)));
+          # @skillsDir@ is the build-time default for the env-overridable
+          # DISPATCHER_SKILLS_DIR that pi workers are handed via --skill.
+          # Only pi needs it: claude loads these as plugin skills and codex /
+          # cursor get copies projected by gen-adapters.sh, so pi is the one
+          # engine that would otherwise be pointed at a body it cannot open.
+          # Delivered by path rather than as a fourth generated copy —
+          # adapters/core/skills is the single source the other three project
+          # from, and a copy would be one more tree to keep in sync.
+          skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@"]
-            ["${protocols}" "${protocolRev}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@"]
+            ["${protocols}" "${protocolRev}" "${skills}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only

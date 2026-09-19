@@ -31,6 +31,12 @@ EOF
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  # Stands in for the store path flake.nix bakes as @skillsDir@; pi launches
+  # pass it with --skill (#225).
+  export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
+  mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
+  printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \
+    >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
 }
 
 teardown() {
@@ -387,7 +393,8 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$lead_line" == *"--no-approve"* ]]
   [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"* ]]
   [[ "$lead_line" == *"--thinking high"* ]]
-  [[ "$lead_line" != *"--skill"* ]]
+  # No project skills in this worktree, so the harness dir is the only --skill.
+  [[ "$lead_line" == *"--no-approve --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" "$STUB_LOG")
   reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-reviewer" "$STUB_LOG")
@@ -409,7 +416,7 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$status" -ne 0 ]
 }
 
-@test "pi worker launch passes the worktree's project skills with --skill" {
+@test "pi worker launch passes the worktree's project skills and the harness skills with --skill" {
   stub_launch_bins
   # Seed a project skill into the worktree the wt stub creates. dispatch looks
   # the worktree path up after `wt switch`, so it must exist by then. A real
@@ -444,13 +451,15 @@ EOF
 
   # The lead carries WORKER_PROTOCOL.md; each grid role pane gets its own
   # --skill too, but this asserts the worker launch specifically.
+  # Project skills come first and the harness dir last, so WORKER_PROTOCOL's
+  # own citations resolve without a worktree ever shadowing them by accident.
   lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG")
-  [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills "* ]]
+  [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   # The role pane goes through launch_role, whose worktree arrives as an
   # argument — assert the grid path passes it through.
   role_line=$(grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-plan-critic" "$STUB_LOG")
-  [[ "$role_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills "* ]]
+  [[ "$role_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 }
 
 @test "pi dispatch refuses to launch when the agent dir cannot be seeded" {
