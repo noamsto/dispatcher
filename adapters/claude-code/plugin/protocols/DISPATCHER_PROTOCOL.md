@@ -227,7 +227,7 @@ cache; do not infer that `null` means free or unlimited.
   dispatch, not a habit.
 - **`credits_cover: true`** means the engine bills real money past the plan
   limit — the gate still fires regardless. Overriding just the rung refusal
-  is `DISPATCH_IGNORE_RUNG=<model>`; overriding both gates is
+  is `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`; overriding both gates is
   `--ignore-budget`, the human's spend decision — say so when you take
   either.
 - **Codex absolute limits (`limit_reached`) are a second, window-independent
