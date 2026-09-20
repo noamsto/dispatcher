@@ -17,20 +17,6 @@ teardown() {
   teardown_repo
 }
 
-path_without_real() {
-  local cli="$1" dir kept=()
-  local IFS=:
-  # shellcheck disable=SC2206 # word-splitting on IFS=: is the point here
-  local dirs=($PATH)
-  for dir in "${dirs[@]}"; do
-    if [ "$dir" != "$STUB_DIR" ] && [ -x "$dir/$cli" ]; then
-      continue
-    fi
-    kept+=("$dir")
-  done
-  (IFS=:; echo "${kept[*]}")
-}
-
 @test "rejects an unknown agent" {
   run run_launcher --agent bogus
   [ "$status" -eq 1 ]
