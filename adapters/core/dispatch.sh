@@ -132,6 +132,37 @@ budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 # (a non-Nix install) it is not a directory, and pi_skill_args' probe drops it.
 SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
 
+# Engine roster helpers must precede every early command, including lazy role
+# spawning, so every launch path rejects a disabled engine before scaffolding.
+ENGINES_ALL="claude codex cursor pi"
+
+engine_cli() {
+  case "$1" in
+  cursor) printf 'cursor-agent' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+engine_enabled() {
+  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+check_engine() {
+  local cli
+  engine_enabled "$1" || {
+    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
+    exit 1
+  }
+  cli="$(engine_cli "$1")"
+  command -v "$cli" >/dev/null 2>&1 || {
+    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
+    exit 1
+  }
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -462,6 +493,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' uses --agent $spawn_agent, which does not support --effort ultra" >&2
     exit 1
   fi
+  check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
   if [ -n "$existing" ]; then
@@ -476,37 +508,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
 fi
-
-# Engine roster helpers are here so the early `--engines` command can run
-# before it needs a crew, worktree, or any dispatch scaffolding.
-ENGINES_ALL="claude codex cursor pi"
-
-engine_cli() {
-  case "$1" in
-  cursor) printf 'cursor-agent' ;;
-  *) printf '%s' "$1" ;;
-  esac
-}
-
-engine_enabled() {
-  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
-  *" $1 "*) return 0 ;;
-  esac
-  return 1
-}
-
-check_engine() {
-  local cli
-  engine_enabled "$1" || {
-    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
-    exit 1
-  }
-  cli="$(engine_cli "$1")"
-  command -v "$cli" >/dev/null 2>&1 || {
-    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
-    exit 1
-  }
-}
 
 # `dispatch --reap-roles` — kill every role pane in the caller's window.
 if [ "${1:-}" = "--reap-roles" ]; then

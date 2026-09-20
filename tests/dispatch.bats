@@ -3459,6 +3459,18 @@ EOF
   [[ "$output" == *"invalid effort"* ]]
 }
 
+@test "grid: --spawn-role rejects an engine outside the roster before splitting" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles="$common/crew/artifacts/feat/9-x/roles.json"
+  printf '{"reviewer":{"agent":"codex","model":"gpt-5.6-terra","effort":"medium"}}\n' >"$roles"
+
+  DISPATCH_ENGINES="claude pi" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
+  [ ! -e "$STUB_LOG" ]
+}
+
 @test "grid: --spawn-role rejects an explicit effort for the final cursor agent" {
   _spawn_role_fixture
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
