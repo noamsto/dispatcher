@@ -122,25 +122,25 @@ store_rows() { jq -s -c 'group_by(.run_id) | map(max_by(.swept_at))' "$XDG_DATA_
 @test "rate --report: renders the spec's worked example byte-for-byte" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
-{"run_id":"g1-r1","engine":"claude","model":"opus","tier":"deep","outcome":"incomplete","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
-{"run_id":"g1-r2","engine":"claude","model":"opus","tier":"deep","outcome":"running","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
-{"run_id":"g1-r3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r4","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":0,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r5","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":4,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r6","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r7","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r8","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r9","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r10","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r11","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":false,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r12","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"CLOSED","time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r13","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g1-r14","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":2,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
-{"run_id":"g2-r15","engine":"claude","model":"sonnet","tier":"standard","outcome":"running","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
-{"run_id":"g2-r16","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"MERGED","time_to_merge_ms":5400000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":3960000,"swept_at":1}
-{"run_id":"g2-r17","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"MERGED","time_to_merge_ms":5400000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":3960000,"swept_at":1}
-{"run_id":"g2-r18","engine":"claude","model":"sonnet","tier":"standard","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"CLOSED","time_to_merge_ms":null,"rework_count":2,"review_high":0,"review_mode":"high","review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":false,"unresolved_notes":0,"reverted":null,"cost_proxy":3960000,"swept_at":1}
-{"run_id":"g3-r19","engine":"codex","model":"sol","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":3300000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":2,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":1,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":3,"reverted":null,"cost_proxy":21600000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r1","engine":"claude","model":"opus","tier":"deep","outcome":"incomplete","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r2","engine":"claude","model":"opus","tier":"deep","outcome":"running","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r4","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":0,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r5","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":4,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r6","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r7","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r8","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r9","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r10","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r11","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"MERGED","time_to_merge_ms":7560000,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":false,"unresolved_notes":0,"reverted":false,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r12","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"CLOSED","time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r13","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1-r14","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":2280000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":2,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":0,"reverted":null,"cost_proxy":15120000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g2-r15","engine":"claude","model":"sonnet","tier":"standard","outcome":"running","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g2-r16","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"MERGED","time_to_merge_ms":5400000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":3960000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g2-r17","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"MERGED","time_to_merge_ms":5400000,"rework_count":1,"review_high":1,"review_mode":"high","review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":1,"reverted":false,"cost_proxy":3960000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g2-r18","engine":"claude","model":"sonnet","tier":"standard","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":1260000,"pr_state":"CLOSED","time_to_merge_ms":null,"rework_count":2,"review_high":0,"review_mode":"high","review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":false,"unresolved_notes":0,"reverted":null,"cost_proxy":3960000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g3-r19","engine":"codex","model":"sol","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":3300000,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":2,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":1,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":3,"reverted":null,"cost_proxy":21600000,"swept_at":1}
 EOF
   run run_crew rate --report
   [ "$status" -eq 0 ]
@@ -153,6 +153,7 @@ codex   sol     deep      1!    0    0     1  100!       —  55m!         —  
 
 ! own sample < 5 — anecdote, not evidence.   value(k) = measured over k of n runs.   — = unmeasured.
 3 of 3 rows carry at least one small-sample quantity.
+Scoped to acme/widgets: 19 runs.
 
 tier      low  medium  high  xhigh  max  ultra  unknown
 deep        0       0    0*      0    0      0       15
@@ -169,10 +170,10 @@ EOF
 @test "rate --report: tier x effort cross-tab buckets real, missing, and unrecognized effort values" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
-{"run_id":"e1","engine":"claude","model":"opus","tier":"deep","effort":"high","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
-{"run_id":"e2","engine":"claude","model":"opus","tier":"deep","effort":"low","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
-{"run_id":"e3","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
-{"run_id":"e4","engine":"claude","model":"sonnet","tier":"standard","effort":"ludicrous","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"e1","engine":"claude","model":"opus","tier":"deep","effort":"high","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"e2","engine":"claude","model":"opus","tier":"deep","effort":"low","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"e3","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"e4","engine":"claude","model":"sonnet","tier":"standard","effort":"ludicrous","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
 EOF
   run run_crew rate --report
   [ "$status" -eq 0 ]
@@ -185,6 +186,107 @@ standard    0      1*     0      0    0      0        1
 EOF
   )
   [ "$cross_tab" = "$expected_cross_tab" ]
+}
+
+@test "rate --report --pooled: aggregates across every repo, footer names them" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"p1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"p2","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"run_id":"p3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report --pooled
+  [ "$status" -eq 0 ]
+  footer="$(printf '%s\n' "$output" | grep '^Pooled over')"
+  [ "$footer" = "Pooled over 3 runs from 3 repos: acme/gadgets, acme/widgets, unknown." ]
+}
+
+@test "rate --report (default): scopes to the current repo, excluding other repos' rows" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"s1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"s2","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"s3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report --json
+  [ "$status" -eq 0 ]
+  run jq -e 'length == 1 and .[0].n.value == 2' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  footer="$(printf '%s\n' "$output" | grep '^Scoped to')"
+  [ "$footer" = "Scoped to acme/widgets: 2 runs." ]
+}
+
+@test "rate --report (default): current repo has zero matching rows in a non-empty store" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/gadgets","run_id":"z1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/widgets: no runs swept for this repo yet" ]
+}
+
+@test "rate --report: the cross-tab honours the same scoped population as the rollup" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"x1","engine":"claude","model":"opus","tier":"deep","effort":"high","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"x2","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  cross_tab="$(printf '%s\n' "$output" | tail -n 3)"
+  expected_cross_tab=$(cat <<'EOF'
+tier  low  medium  high  xhigh  max  ultra  unknown
+deep    0       0    1*      0    0      0        0
+* = tier-typical effort rung
+EOF
+  )
+  [ "$cross_tab" = "$expected_cross_tab" ]
+
+  run run_crew rate --report --pooled
+  [ "$status" -eq 0 ]
+  cross_tab="$(printf '%s\n' "$output" | tail -n 4)"
+  expected_cross_tab=$(cat <<'EOF'
+tier      low  medium  high  xhigh  max  ultra  unknown
+deep        0       0    1*      0    0      0        0
+standard    0      1*     0      0    0      0        0
+* = tier-typical effort rung
+EOF
+  )
+  [ "$cross_tab" = "$expected_cross_tab" ]
+}
+
+@test "rate --report: the '!' small-sample marker reflects the scoped population, not the pooled one" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"m1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"m2","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"m3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"m4","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"m5","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/gadgets","run_id":"m6","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+EOF
+  run run_crew rate --report --pooled
+  [ "$status" -eq 0 ]
+  row="$(printf '%s\n' "$output" | grep '^claude  ')"
+  [[ "$row" != *"6"*"!"* ]]
+  [[ "$row" == *" 6 "* ]]
+
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  row="$(printf '%s\n' "$output" | grep '^claude  ')"
+  [[ "$row" == *" 3! "* ]]
+}
+
+@test "rate --report: outside any resolvable git remote, current-repo resolution falls back to the toplevel directory name without crashing" {
+  git remote remove origin
+  expected_fallback="$(basename "$(git rev-parse --show-toplevel)")"
+  run run_crew rate --report
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$expected_fallback"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -207,8 +309,8 @@ EOF
 @test "--report: a stale row is superseded by a fresh row sharing run_id" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
-{"run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"incomplete","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
-{"run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":2}
+{"repo":"acme/widgets","run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"incomplete","reached_pr":false,"time_to_pr_ms":null,"pr_state":null,"time_to_merge_ms":null,"rework_count":null,"review_high":null,"review_mode":null,"review_rounds":null,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":null,"reverted":null,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":2}
 EOF
   run run_crew rate --report --json
   [ "$status" -eq 0 ]
@@ -326,8 +428,14 @@ EOF
   [ ! -e "$XDG_DATA_HOME/crew/ratings.jsonl" ]
 }
 
-@test "--report on an empty store prints the header and exits 0" {
+@test "--report on an empty store: the default scoped view reports no runs for this repo" {
   run run_crew rate --report
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/widgets: no runs swept for this repo yet" ]
+}
+
+@test "rate --report --pooled on an empty store prints the header and exits 0" {
+  run run_crew rate --report --pooled
   [ "$status" -eq 0 ]
   [ "$output" = "engine  model  tier  n  inc  run  pend  pr%  merge%  ttpr  ttmerge  rework  high  rounds  blocked  ci1  notes  rev  cost" ]
 }
@@ -335,7 +443,13 @@ EOF
 @test "--json without --report is an error" {
   run run_crew rate --json
   [ "$status" -eq 1 ]
-  [[ "$output" == *"rate takes --report and --json"* ]]
+  [[ "$output" == *"rate takes --report, --json, and --pooled"* ]]
+}
+
+@test "--pooled without --report is an error" {
+  run run_crew rate --pooled
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"rate takes --report, --json, and --pooled"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -665,8 +779,8 @@ EOF
 @test "--report --json: aggregates carry {value,k,n}; raw counts stay plain numbers" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
-{"run_id":"g1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
-{"run_id":"g2","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":150,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":1,"reverted":null,"cost_proxy":300,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":100,"swept_at":1}
+{"repo":"acme/widgets","run_id":"g2","engine":"claude","model":"opus","tier":"deep","outcome":"pr_open","reached_pr":true,"time_to_pr_ms":150,"pr_state":"OPEN","time_to_merge_ms":null,"rework_count":1,"review_high":null,"review_mode":null,"review_rounds":1,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":null,"unresolved_notes":1,"reverted":null,"cost_proxy":300,"swept_at":1}
 EOF
   run run_crew rate --report --json
   [ "$status" -eq 0 ]
