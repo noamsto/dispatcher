@@ -13,12 +13,12 @@ usage() {
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
-# skill dirs. Duplicated from dispatch.sh (standalone build); see the comment
-# there for why the pi launch's --no-approve needs an explicit --skill to see
-# project skills.
+# skill dirs and for the harness's own skills ($SKILLS_DIR, set below).
+# Duplicated from dispatch.sh (standalone build); see the comment there for why
+# the pi launch's --no-approve needs an explicit --skill.
 pi_skill_args() {
   local wt="$1" d
-  for d in "$wt/.pi/skills" "$wt/.agents/skills"; do
+  for d in "$wt/.pi/skills" "$wt/.agents/skills" "$SKILLS_DIR"; do
     [ -d "$d" ] && printf ' --skill %q' "$d"
   done
   return 0
@@ -234,6 +234,11 @@ trivial | standard | deep) ;;
 esac
 
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+
+# Harness skill directory for pi workers; see pi_skill_args above and the
+# matching block in dispatch.sh.
+SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
+
 _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 

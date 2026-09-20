@@ -75,6 +75,11 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
 
+# Harness skill directory, handed to pi workers via --skill. Same env-override
+# dev loop as PROTOCOL_DIR, same build-time store-path default. Unsubstituted
+# (a non-Nix install) it is not a directory, and pi_skill_args' probe drops it.
+SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -216,14 +221,19 @@ split_role_pane() {
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
-# skill dirs (pi's project skill locations). The pi launches below pass
-# --no-approve, which disables project discovery wholesale, so a worker must be
-# handed its skills explicitly; --skill is additive and a missing path is only a
-# warning. Only skills cross this line — project .pi settings, packages and
-# extensions stay blocked, which is why this isn't just dropping --no-approve.
+# skill dirs (pi's project skill locations) and for the harness's own skills.
+# The pi launches below pass --no-approve, which disables project discovery
+# wholesale, so a worker must be handed its skills explicitly; --skill is
+# additive and a missing path is only a warning. Only skills cross this line —
+# project .pi settings, packages and extensions stay blocked, which is why this
+# isn't just dropping --no-approve.
+#
+# $SKILLS_DIR carries the harness's own skills, which WORKER_PROTOCOL cites as
+# the authority for the plan schema and the critic table. pi is the only engine
+# with no adapter tree of its own to load them from.
 pi_skill_args() {
   local wt="$1" d
-  for d in "$wt/.pi/skills" "$wt/.agents/skills"; do
+  for d in "$wt/.pi/skills" "$wt/.agents/skills" "$SKILLS_DIR"; do
     [ -d "$d" ] && printf ' --skill %q' "$d"
   done
   return 0

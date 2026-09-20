@@ -107,10 +107,15 @@
             (builtins.concatStringsSep "" (map
               (n: "${n}:${builtins.hashFile "sha256" (protocols + "/${n}")};")
               protocolFiles)));
+          # @skillsDir@ is the build-time default for the env-overridable
+          # DISPATCHER_SKILLS_DIR that pi workers are handed via --skill. The
+          # source tree itself, not a projection: gen-adapters.sh copies this
+          # same directory into the other three adapter trees.
+          skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@"]
-            ["${protocols}" "${protocolRev}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@"]
+            ["${protocols}" "${protocolRev}" "${skills}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only

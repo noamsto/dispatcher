@@ -56,7 +56,7 @@ setup_file() {
       };
       c = configApplied.config.content;
       configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}\";
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}\";
     in optionNames + \"\n\" + configLine
   " >"$BATS_FILE_TMPDIR/eval-expr.nix"
   nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
@@ -120,6 +120,21 @@ setup() {
   # dispatch --review resolves this one at dispatch time and aborts without it.
   [ -f "$dir/REVIEW_TASK.md" ]
   [ -f "$dir/EVIDENCE_REVIEW.md" ]
+}
+
+@test "the skills placeholder is substituted in dispatch and dispatch-resume" {
+  # pi is handed this path with --skill; unsubstituted it is not a directory,
+  # so the launch would silently drop the harness skills instead of failing.
+  run grep -c '@skillsDir@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  run grep -c '@skillsDir@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  [ "$output" = "0" ]
+}
+
+@test "the substituted skills dir actually contains the harness skills" {
+  dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -- '-skills$' | head -1)"
+  [ -n "$dir" ]
+  [ -f "$dir/spec-plan-critic/SKILL.md" ]
 }
 
 @test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
@@ -250,7 +265,7 @@ setup() {
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
   [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster"* ]]
-  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics ]]
+  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {

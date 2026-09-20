@@ -57,6 +57,9 @@ in {
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
         DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
         DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
+        # pi only: the other three load the harness skills from their own
+        # adapter trees, so pi is the one engine dispatch has to hand a path.
+        DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";
       };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc

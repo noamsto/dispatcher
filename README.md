@@ -136,7 +136,7 @@ actually express:
 | ------------------------- | :---------: | :-----------------: | :----------: | :----------: |
 | Packaging                 |   plugin    |       plugin        | loose files¹ | loose files⁴ |
 | Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |      ❌      |
-| Skills                    |     ✅      |         ✅          |      ✅      |      ❌      |
+| Skills                    |     ✅      |         ✅          |      ✅      |     ✅⁵      |
 | Native subagents          |     ✅      |         ✅³         |     ✅³      |      ❌      |
 | Hooks                     |     ✅      |         ✅          |      ✅      |      ❌      |
 | Worker: spec/plan critics |     ✅      |         ✅          |      ✅      | ✅ via grid  |
@@ -156,6 +156,10 @@ own. The other three engines already run a native reviewer batch, so their
 `deep` default grid is critics-only (`spec-critic,plan-critic`, no
 `reviewer`) — a fresh out-of-process context for spec/plan review, not a
 substitute for the native code-review batch. `--no-grid` opts back out.
+⁵ pi has no plugin tree, so the harness skills reach it by path: `dispatch`
+passes `--skill $DISPATCHER_SKILLS_DIR` (the `adapters/core/skills` source
+itself, not a generated copy) alongside the worktree's own project skills. The
+launch's `--no-approve` disables discovery, so this flag is the only channel.
 
 **Every tier gate runs on every engine.** A worker's pipeline depth is set by
 its tier, not by which engine drew the task: `standard` and `deep` run the
@@ -225,8 +229,8 @@ programs.dispatcher = {
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
 `refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
-`DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR` and
-`DISPATCHER_CRITICS_DIR`, installs the Codex plugin and writes the Cursor
+`DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`
+and `DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
 rule, commands, skills and rosters.
 
 For Claude Code, pass the plugin directory to `claude`:
