@@ -174,7 +174,7 @@ must supply a replacement; the lead cannot count self-replanning as independent.
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
-**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.6-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults are work-profile only. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
+**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.6-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults require their engine to be in the machine-local `dispatch --engines` roster. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
 `crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
 
@@ -312,10 +312,9 @@ is premium on both dimensions needs a matching escape for each (or
 
 ## Orchestrator engines (dispatcher session)
 
-The dispatcher itself can run on any engine —
-`dispatcher --agent claude|codex|cursor|pi`. Codex and Cursor are work-profile
-gated; pi is all-profile. Orchestrator defaults — bump this table when a model
-ships:
+The dispatcher itself can run on any engine in the machine-local
+`dispatch --engines` roster — `dispatcher --agent claude|codex|cursor|pi`.
+Orchestrator defaults — bump this table when a model ships:
 
 | engine | model | effort |
 | ------ | ----- | ------ |
@@ -337,7 +336,7 @@ is identical across engines; the crew-watch park primitive is not — see
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
-- **Engine = who implements.** Judged per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent DeepSeek/OpenRouter family and, having no native subagents at all, additionally defaults to the grid on `standard` and keeps a `reviewer` pane as its review gate (the other three engines review natively). The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
+- **Engine = who implements.** First run `dispatch --engines`; judge only its output per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent DeepSeek/OpenRouter family and, having no native subagents at all, additionally defaults to the grid on `standard` and keeps a `reviewer` pane as its review gate (the other three engines review natively). The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
 
 ## MCP is no longer a routing factor
