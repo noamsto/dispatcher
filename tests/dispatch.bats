@@ -28,13 +28,9 @@ EOF
   stub_bin gh
   stub_bin wt
   stub_bin direnv
-  # The engine CLIs are never executed by a launch (dispatch hands tmux a
-  # command string), but dispatch probes them for availability. Stub all four
-  # so the suite depends on the stub dir instead of the developer's install.
-  stub_bin claude
-  stub_bin codex
-  stub_bin cursor-agent
-  stub_bin pi
+  # Engine CLIs are stubbed by setup_repo (they are never executed by a
+  # launch — dispatch hands tmux a command string — but dispatch probes them
+  # for availability).
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}

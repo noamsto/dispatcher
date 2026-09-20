@@ -5,10 +5,6 @@ setup() {
   setup_repo
   stub_bin tmux
   stub_bin crew
-  stub_bin claude
-  stub_bin codex
-  stub_bin cursor-agent
-  stub_bin pi
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
   unset TMUX CREW_ID
 }

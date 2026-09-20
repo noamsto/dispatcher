@@ -25,6 +25,15 @@ setup_repo() {
   git config user.email test@example.com
   git config user.name test
   export TEST_REPO
+  # Every engine CLI stubbed by default: dispatch's on-PATH probe
+  # (check_engine) must not fail a test merely because this environment (CI)
+  # has no real engine CLIs installed. A test that needs a genuinely missing
+  # binary removes its stub afterward (`rm "$STUB_DIR/<cli>"` +
+  # path_without_real), so the probe's own negative tests stay honest.
+  stub_bin claude
+  stub_bin codex
+  stub_bin cursor-agent
+  stub_bin pi
 }
 
 assert_isolated_xdg_data_home() {
