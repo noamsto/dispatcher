@@ -25,7 +25,7 @@ setup_file() {
     "$root#reviewer-roster" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
-  # The two eval tests below force different config shapes (options only vs.
+  # The three eval tests below force different config shapes (options only vs.
   # the full activated config), so they can't share one expression -- but
   # both still fit in one `nix eval`, so evaluate both here and split the
   # result on a newline. `--raw` just prints the string verbatim, so an
@@ -51,13 +51,21 @@ setup_file() {
       # deepSeq on a derivation recurses through its self-referential
       # output attrs and never finishes.
       configApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; }; };
         inherit lib pkgs;
       };
       c = configApplied.config.content;
       configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
         \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}\";
-    in optionNames + \"\n\" + configLine
+
+      cursorlessApplied = self.homeManagerModules.default {
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; }; };
+        inherit lib pkgs;
+      };
+      c2 = cursorlessApplied.config.content;
+      cursorlessLine = builtins.deepSeq [c2.home.file c2.home.activation]
+        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}\";
+    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine
   " >"$BATS_FILE_TMPDIR/eval-expr.nix"
   nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
     >"$BATS_FILE_TMPDIR/eval-out"
@@ -82,6 +90,7 @@ setup() {
   } <"$BATS_FILE_TMPDIR/out-paths"
   EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
+  EVAL_CURSORLESS="$(sed -n '3p' "$BATS_FILE_TMPDIR/eval-out")"
 }
 
 @test "every package builds" {
@@ -249,6 +258,10 @@ setup() {
   [[ "$EVAL_OPTIONS" == *"profile"* ]]
 }
 
+@test "the module declares the engines option" {
+  [[ "$EVAL_OPTIONS" == *"engines"* ]]
+}
+
 @test "the module's config body evaluates, and wires the protocol dir for real" {
   # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
   # here would otherwise surface only in a consumer's rebuild. setup_file's
@@ -268,6 +281,19 @@ setup() {
   [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills ]]
 }
 
+@test "a roster without cursor installs no cursor artifacts" {
+  [[ "$EVAL_CURSORLESS" != *".cursor/"* ]]
+  [[ "$EVAL_CURSORLESS" != *"dispatcherCursorSkills"* ]]
+}
+
+@test "a roster without codex installs no codex plugin activation" {
+  [[ "$EVAL_CURSORLESS" != *"dispatcherCodexPlugin"* ]]
+}
+
+@test "the roster is exported for the CLIs" {
+  [[ "$EVAL_CURSORLESS" == *"|claude pi" ]]
+}
+
 @test "the codex plugin is copied as a real dir, never symlinked" {
   # Codex loads plugins only from a real directory under ~/.codex/plugins/cache.
   # A symlinked tree reports "installed, enabled" in `codex plugin list` while
@@ -280,7 +306,7 @@ setup() {
   # A renamed/moved activation attribute would make this extraction match
   # zero lines and silently disarm the guard below — assert it isn't empty
   # first, so that failure mode fails loudly instead of passing green.
-  codex_block="$(awk '/activation\.dispatcherCodexPlugin/{f=1} f{print; if (/^ *$/) exit}' "$ROOT/nix/hm-module.nix")"
+  codex_block="$(awk '/dispatcherCodexPlugin =/{f=1} f{print; if (/^ *\/\//) exit}' "$ROOT/nix/hm-module.nix")"
   [ -n "$codex_block" ]
   run grep -cE 'mkOutOfStoreSymlink|ln -s' <<<"$codex_block"
   [ "$output" = "0" ]
@@ -295,7 +321,7 @@ setup() {
   # Scoped to the dispatcherCursorSkills activation block (same extraction
   # style as the codex test above) so this can't pass on an unrelated ln -sfn
   # elsewhere while the actual symlink activation was dropped.
-  skills_block="$(awk '/activation\.dispatcherCursorSkills/{f=1} f{print; if (/^ *$/) exit}' "$ROOT/nix/hm-module.nix")"
+  skills_block="$(awk '/dispatcherCursorSkills =/{f=1} f{print; if (/^ *$/) exit}' "$ROOT/nix/hm-module.nix")"
   [ -n "$skills_block" ]
   run grep -F 'ln -sfn' <<<"$skills_block"
   [ "$status" -eq 0 ]

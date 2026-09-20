@@ -10,6 +10,7 @@ self: {
   codexPlugin = "${self}/adapters/codex/plugin";
   codexVersion = (lib.importJSON "${codexPlugin}/.codex-plugin/plugin.json").version;
   codexCache = ".codex/plugins/cache/dispatcher/dispatcher";
+  hasEngine = e: lib.elem e cfg.engines;
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -18,8 +19,23 @@ in {
       type = lib.types.enum ["work" "personal"];
       default = "personal";
       description = ''
-        Gates the codex and cursor engines, which are work-profile only.
-        Replaces the DISPATCH_PROFILE environment variable.
+        The machine's profile. Read by the CLIs for the work+claude+deep rung
+        and the work-only analytics MCP profile. Engine availability is
+        `engines`, not this.
+      '';
+    };
+
+    engines = lib.mkOption {
+      type = lib.types.listOf (lib.types.enum ["claude" "codex" "cursor" "pi"]);
+      default = ["claude" "pi"];
+      description = ''
+        Engines this machine may dispatch. Exported as DISPATCH_ENGINES and
+        gates the per-engine artifacts installed below. An engine must also be
+        installed: the CLIs probe PATH before scaffolding. Unset at runtime
+        (a non-Nix checkout), the CLIs allow all four.
+
+        Defaults to the two all-profile engines, which is the roster the
+        removed work-profile gate produced on a personal machine.
       '';
     };
 
@@ -42,6 +58,7 @@ in {
 
       sessionVariables = {
         DISPATCH_PROFILE = cfg.profile;
+        DISPATCH_ENGINES = lib.concatStringsSep " " cfg.engines;
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
         # command and the cursor rule are markdown an agent reads live and
         # resolves through its Bash tool, which a build-time substitution into
@@ -65,7 +82,7 @@ in {
       # Cursor has no plugin format — loose files are the only channel. The .mdc
       # rule is silently ignored without `alwaysApply: true` frontmatter, which
       # the shipped file provides.
-      file = {
+      file = lib.optionalAttrs (hasEngine "cursor") {
         ".cursor/rules/dispatcher.mdc".source = "${self}/adapters/cursor/rules/dispatcher.mdc";
         ".cursor/commands" = {
           source = "${self}/adapters/cursor/commands";
@@ -103,25 +120,29 @@ in {
       # [plugins."dispatcher@dispatcher"] stanzas in ~/.codex/config.toml are
       # hand-managed (no store path, so not Nix's) — see README. The adapter is
       # inert without them.
-      activation.dispatcherCodexPlugin = lib.hm.dag.entryAfter ["writeBoundary"] ''
-        run rm -rf "$HOME/${codexCache}"
-        run mkdir -p "$HOME/${codexCache}"
-        run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
-        run chmod -R u+w "$HOME/${codexCache}"
-      '';
-
-      # ~/.cursor/skills is a shared namespace another module also links
-      # individual skills into (see the ".cursor/skills" comment above), so
-      # this links each of ours in rather than claiming the whole directory.
-      # `ln -sfn` (not `home.file`) makes it idempotent across activations and
-      # lets a store-path bump repoint an existing link. Named "spec-plan-critic",
-      # not "dispatcher-spec-plan-critic", because that's the literal name the
-      # protocol docs and skill invocations resolve it by.
-      activation.dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
-        skills_dir="$HOME/.cursor/skills"
-        run mkdir -p "$skills_dir"
-        run ln -sfn "${self}/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"
-      '';
+      activation =
+        lib.optionalAttrs (hasEngine "codex") {
+          dispatcherCodexPlugin = lib.hm.dag.entryAfter ["writeBoundary"] ''
+            run rm -rf "$HOME/${codexCache}"
+            run mkdir -p "$HOME/${codexCache}"
+            run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
+            run chmod -R u+w "$HOME/${codexCache}"
+          '';
+        }
+        // lib.optionalAttrs (hasEngine "cursor") {
+          # ~/.cursor/skills is a shared namespace another module also links
+          # individual skills into (see the ".cursor/skills" comment above), so
+          # this links each of ours in rather than claiming the whole directory.
+          # `ln -sfn` (not `home.file`) makes it idempotent across activations and
+          # lets a store-path bump repoint an existing link. Named "spec-plan-critic",
+          # not "dispatcher-spec-plan-critic", because that's the literal name the
+          # protocol docs and skill invocations resolve it by.
+          dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
+            skills_dir="$HOME/.cursor/skills"
+            run mkdir -p "$skills_dir"
+            run ln -sfn "${self}/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"
+          '';
+        };
     };
   };
 }
