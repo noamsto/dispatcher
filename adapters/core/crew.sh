@@ -1725,6 +1725,8 @@ rate)
   # 2026-08-10-crew-rate-reconcile-report-design.md.
   report=false
   json=false
+  pooled=false
+  current_repo=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --report)
@@ -1735,22 +1737,34 @@ rate)
       json=true
       shift
       ;;
+    --pooled)
+      pooled=true
+      shift
+      ;;
     *)
-      echo "crew: rate takes --report and --json" >&2
+      echo "crew: rate takes --report, --json, and --pooled" >&2
       exit 1
       ;;
     esac
   done
-  if [ "$json" = true ] && [ "$report" = false ]; then
-    echo "crew: rate takes --report and --json" >&2
+  if { [ "$json" = true ] || [ "$pooled" = true ]; } && [ "$report" = false ]; then
+    echo "crew: rate takes --report, --json, and --pooled" >&2
     exit 1
   fi
 
   if [ "$report" = true ]; then
-    # Reads the global store only — no local bus, no network (spec §crew
+    # Reads the global store only — still zero network calls (spec §crew
     # rate --report). The `crew roster` idiom: last row wins per run_id. A
     # missing or empty store folds to [], which renders as the header alone
     # so "no data yet" stays visibly distinct from "command did nothing".
+    # Unless --pooled is passed, this also resolves the local repo identity
+    # (git config / git rev-parse, both local-only) to scope the report to
+    # the current repo.
+    if [ "$pooled" = false ]; then
+      current_repo=$(git config --get remote.origin.url 2>/dev/null | sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
+      toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
+      current_repo="${current_repo:-$(basename "${toplevel:-unknown-repo}")}"
+    fi
     store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
     store="$store_dir/ratings.jsonl"
     rows=$(jq -s -c 'group_by(.run_id) | map(max_by(.swept_at))' "$store" 2>/dev/null || true)
@@ -1759,8 +1773,10 @@ rate)
     # computed once as {value, k, n} — k is the aggregate's OWN
     # denominator, n is the row's total — and only the final branch differs:
     # --json prints that structure as-is, the table renders and pads it.
-    printf '%s' "$rows" | jq -r --argjson want_json "$json" '
+    printf '%s' "$rows" | jq -r --argjson want_json "$json" --arg current_repo "$current_repo" --argjson pooled "$pooled" '
       . as $recs |
+      # scoped mode intentionally drops rows with no/null .repo — an unlabeled row cannot be claimed to belong to "this repo".
+      (if $pooled then $recs else ($recs | map(select(.repo == $current_repo))) end) as $recs |
       def median:
         sort | length as $l
         | if $l == 0 then null
@@ -1790,6 +1806,17 @@ rate)
       def render_agg(k; n; text):
         if k == 0 then "—"
         else (text + (if k != n then "(\(k))" else "" end) + (if k < 5 then "!" else "" end))
+        end;
+
+      def footer_line:
+        if $pooled then
+          ($recs | map(.repo // "unknown") | unique) as $buckets
+          | ($buckets | length) as $r
+          | ($buckets | sort) as $sorted
+          | (if $r > 10 then (($sorted[0:10] | join(", ")) + ", and \($r - 10) more") else ($sorted | join(", ")) end) as $names
+          | "Pooled over \($recs | length) runs from \($r) repo\(if $r == 1 then "" else "s" end): \($names)."
+        else
+          "Scoped to \($current_repo): \($recs | length) runs."
         end;
 
       # Tier x effort cross-tab, computed from the same $recs as a second
@@ -1848,7 +1875,8 @@ rate)
         end;
 
       def stats:
-        group_by([.engine, .model, .tier])
+        $recs
+        | group_by([.engine, .model, .tier])
         | map(
             . as $g
             | ($g | nrows) as $n
@@ -1951,7 +1979,8 @@ rate)
               | ($widths[$c] - ($cell|length)) as $pad
               | if $left[$c] then ($cell + (" " * $pad)) else ((" " * $pad) + $cell) end
              ] | join("  ")) as $header_line
-          | if ($groups | length) == 0 then $header_line
+          | if ($groups | length) == 0 then
+              (if $pooled then $header_line else "\($current_repo): no runs swept for this repo yet" end)
             else
               ($rows | map(
                   . as $row
@@ -1970,6 +1999,7 @@ rate)
               | ([$header_line] + $body_lines
                  + ["", "! own sample < 5 — anecdote, not evidence.   value(k) = measured over k of n runs.   — = unmeasured."]
                  + ["\($flagged_count) of \($total) rows carry at least one small-sample quantity."]
+                 + [footer_line]
                  + cross_tab_lines
                 ) | join("\n")
             end
@@ -4086,7 +4116,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
