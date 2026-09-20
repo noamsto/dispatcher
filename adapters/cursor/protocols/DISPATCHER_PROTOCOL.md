@@ -140,7 +140,7 @@ cache; do not infer that `null` means free or unlimited.
   because it only runs at dispatch time. Near the wall, size the fan-out to
   what fits before the reset, not to the roster budget.
 - **≥70% on the `7d` window, pace-aware** — narrower and mechanical, not
-  merely advisory: `dispatch` refuses the premium rung for an engine when its
+  merely advisory: `dispatch` refuses a premium model rung or effort for an engine when its
   `7d` window is **both** ≥70% used **and** more than 15 points ahead of the
   window's elapsed fraction (`elapsed = clamp(100 * (604800 - (resets_at -
   now)) / 604800, 0, 100)`) — burning faster than the window refills, not
@@ -150,10 +150,12 @@ cache; do not infer that `null` means free or unlimited.
   "about to reset" exemption, and a property of the inequality rather than a
   second branch to keep in sync. When `resets_at` is null, pace isn't
   computable and the gate falls back to the flat `>=70` rule it's always had.
-  Either way it names the standard-class alternative. See
+  Either way it names the lower model or effort alternative. `xhigh` and
+  `max` are premium effort (to `high` and `xhigh` respectively); `high` is
+  not. The check covers every lead, eager role, and final lazy-role override. See
   `dispatch-orchestration.md` → "Tier map".
 - **Two overrides, different blast radii.** `DISPATCH_IGNORE_RUNG=<the exact
-  model id>` bypasses only this rung refusal, for that one dispatched model,
+  model id or effort>` bypasses only its matching refusal for that launch target,
   and leaves the ≥95% hard stop armed — the escape an agent can actually
   type, since `--ignore-budget` reads as spend authorization to the
   auto-mode classifier and a dispatcher agent can't pass it. `--ignore-budget`
@@ -225,7 +227,7 @@ cache; do not infer that `null` means free or unlimited.
   dispatch, not a habit.
 - **`credits_cover: true`** means the engine bills real money past the plan
   limit — the gate still fires regardless. Overriding just the rung refusal
-  is `DISPATCH_IGNORE_RUNG=<model>`; overriding both gates is
+  is `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`; overriding both gates is
   `--ignore-budget`, the human's spend decision — say so when you take
   either.
 - **Codex absolute limits (`limit_reached`) are a second, window-independent

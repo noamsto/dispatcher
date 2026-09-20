@@ -28,6 +28,57 @@ valid_role_model() {
   esac
 }
 
+# pace_rule_target <agent> <model> <effort> — refuse one premium launch target
+# when its fresh 7d window is materially ahead of pace.
+pace_rule_target() {
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct used_pct ahead pace_notice pace_clause
+  [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
+  case "$target_agent:$target_model" in
+  claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*) model_downgrade="sonnet" ;;
+  codex:gpt-5.6-sol) model_downgrade="gpt-5.6-terra" ;;
+  cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[* ) model_downgrade="cursor-grok-4.6-medium" ;;
+  esac
+  case "$target_effort" in
+  max) effort_downgrade="xhigh" ;;
+  xhigh) effort_downgrade="high" ;;
+  esac
+  [ -n "$model_downgrade$effort_downgrade" ] || return 0
+  rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
+    def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
+      | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+    if (.fetched_epoch + 7200) < $now then empty
+    elif .engines[$e] == null or .engines[$e].windows["7d"] == null then empty
+    else .engines[$e].windows["7d"] as $w
+      | if $w.used_pct < 70 then empty
+        elif $w.resets_at == null then "\($w.used_pct)"
+        else ($w.used_pct - elapsed_pct($w)) as $ahead
+          | if $ahead > 15 then "\($w.used_pct)|\($ahead | round)" else empty end
+        end
+    end' "$budget_file" 2>/dev/null || true)
+  [ -n "$rung_pct" ] || return 0
+  used_pct="$rung_pct" pace_notice="" pace_clause=""
+  if [[ $rung_pct == *"|"* ]]; then
+    used_pct="${rung_pct%%|*}"; ahead="${rung_pct#*|}"
+    pace_notice=" ($ahead ahead of pace)"; pace_clause=" and $ahead points ahead of pace"
+  fi
+  if [ -n "$model_downgrade" ]; then
+    if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
+      echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at 7d ${used_pct}%${pace_notice}" >&2
+    else
+      echo "dispatch: $target_agent 7d is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      exit 1
+    fi
+  fi
+  if [ -n "$effort_downgrade" ]; then
+    if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_effort" ]; then
+      echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at 7d ${used_pct}%${pace_notice}" >&2
+    else
+      echo "dispatch: $target_agent 7d is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      exit 1
+    fi
+  fi
+}
+
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
 # does — must never abort a dispatch on that account.
 _ensure_dispatched_label() {
@@ -74,6 +125,7 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 
 # Harness skill directory, handed to pi workers via --skill. Same env-override
 # dev loop as PROTOCOL_DIR, same build-time store-path default. Unsubstituted
@@ -349,11 +401,13 @@ if [ "${1:-}" = "--spawn-role" ]; then
   spawn_model=""
   spawn_effort=""
   spawn_effort_explicit=""
+  ignore_budget=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --agent) spawn_agent="${2:-}"; shift 2 ;;
     --model) spawn_model="${2:-}"; shift 2 ;;
     --effort) spawn_effort="${2:-}"; spawn_effort_explicit=1; shift 2 ;;
+    --ignore-budget) ignore_budget=1; shift ;;
     *)
       echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
       exit 1
@@ -414,6 +468,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "role $role is already running in pane $existing"
     exit 0
   fi
+  pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$PWD" "$role")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
@@ -943,69 +998,6 @@ if [ -z "$ignore_budget" ] && [ "$agent" = codex ] && [ -f "$budget_file" ]; the
   fi
 fi
 
-# Budget-aware rung refusal (#89): once codex/claude/cursor's 7d
-# burn crosses 70%, refuse the premium rung specifically and name the
-# standard-class alternative — before the engine goes fully dark at
-# 95% (the gate above). See dispatch-orchestration.md "Tier map".
-if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
-  rung_downgrade=""
-  case "$agent:$model" in
-  claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*)
-    rung_downgrade="sonnet"
-    ;;
-  codex:gpt-5.6-sol)
-    rung_downgrade="gpt-5.6-terra"
-    ;;
-  # Matches bare and bracketed forms: cursor-grok-4.6-high[effort=high] is
-  # dispatchable via the Tier map gate's deep row too. Inert today —
-  # refresh-budget.sh hardcodes cursor quota to null.
-  cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[*)
-    rung_downgrade="cursor-grok-4.6-medium"
-    ;;
-  esac
-  if [ -n "$rung_downgrade" ]; then
-    # A window is a rate limit, not a balance: past the 70% floor, refuse only
-    # when burn is also >15 points ahead of the window's elapsed fraction
-    # (dispatch-orchestration.md "Tier map"). A null resets_at degrades to the
-    # flat >=70 rule; 7d is the only key read here, so its length is always
-    # 604800. Emits "<used>" on the flat path, "<used>|<ahead>" on the pace
-    # one — test for the "|" before splitting, since ${v#*|} yields the whole
-    # string when there is none.
-    rung_pct=$(jq -r --arg e "$agent" --argjson now "$(date +%s)" '
-      def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
-        | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
-      if (.fetched_epoch + 7200) < $now then empty
-      elif .engines[$e] == null then empty
-      elif .engines[$e].windows["7d"] == null then empty
-      else
-        .engines[$e].windows["7d"] as $w
-        | if $w.used_pct < 70 then empty
-          elif $w.resets_at == null then "\($w.used_pct)"
-          else
-            ($w.used_pct - elapsed_pct($w)) as $ahead
-            | if $ahead > 15 then "\($w.used_pct)|\($ahead | round)" else empty end
-          end
-      end' "$budget_file" 2>/dev/null || true)
-    if [ -n "$rung_pct" ]; then
-      used_pct="$rung_pct"
-      pace_notice=""
-      pace_clause=""
-      if [[ $rung_pct == *"|"* ]]; then
-        used_pct="${rung_pct%%|*}"
-        ahead="${rung_pct#*|}"
-        pace_notice=" ($ahead ahead of pace)"
-        pace_clause=" and $ahead points ahead of pace"
-      fi
-      if [ "${DISPATCH_IGNORE_RUNG:-}" = "$model" ]; then
-        echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$model' on --agent $agent at 7d ${used_pct}%${pace_notice}" >&2
-      else
-        echo "dispatch: $agent 7d is at ${used_pct}%${pace_clause} — the premium rung ($model) is refused; use the standard rung ($rung_downgrade) instead, set DISPATCH_IGNORE_RUNG=$model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
-        exit 1
-      fi
-    fi
-  fi
-fi
-
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
 # half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
 # from the tier. Each spec is `name`, `name=<model>`, or `name=<agent>:<model>`;
@@ -1142,6 +1134,15 @@ fi
 if [ -n "$grid_lazy" ] && [ -z "$roles_stamp" ]; then
   echo "dispatch: --lazy needs --grid or --roles" >&2
   exit 1
+fi
+
+# All launch targets are resolved now. Validate the lead and every eager role
+# before any pane is created; lazy roles validate their final override later.
+pace_rule_target "$agent" "$model" "$effort"
+if [ -z "$grid_lazy" ]; then
+  for i in "${!role_names[@]}"; do
+    pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
+  done
 fi
 
 required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)

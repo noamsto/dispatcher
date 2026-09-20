@@ -275,7 +275,7 @@ above). Reaching for it is **the human's model decision**, the same framing
 `DISPATCHER_PROTOCOL.md` uses for `--ignore-budget`'s "the human's spend
 decision".
 
-**Budget-aware rung refusal.** Layered above (checked after) the Tier map
+**Budget-aware launch refusal.** Layered above (checked after) the Tier map
 gate itself, so an off-row model is rejected by the Tier map check first,
 regardless of budget. `dispatch` refuses the premium rung for an engine when
 its `7d` window is **both** ≥70% used **and** more than 15 points ahead of
@@ -288,14 +288,21 @@ means pace isn't computable and the gate falls back to the flat ≥70 rule it
 always had. Either way it names the downgrade target below — before the
 engine goes fully dark at the existing ≥95% gate (`DISPATCHER_PROTOCOL.md` →
 "Budget is the fifth lever"). Two overrides, different blast radii:
-`DISPATCH_IGNORE_RUNG=<the exact model id>` bypasses just this refusal for
-that one dispatched model and leaves the ≥95% stop armed — the escape an
+`DISPATCH_IGNORE_RUNG=<the exact model id or effort>` bypasses just the
+matching model or effort refusal for that one launch target and leaves the ≥95% stop armed — the escape an
 agent can actually reach for, since `--ignore-budget` reads as spend
 authorization to the auto-mode classifier and a dispatcher agent can't pass
 it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
 remains the human's spend decision. Codex carries a codex-only sibling: the
 window-independent absolute-limit stop from `limit_reached` (#201), described
 in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
+
+The same rule applies independently to every lead and eager role target, and
+to a lazy role after its persisted values and CLI overrides resolve. Premium
+effort is `xhigh` (downgrade `high`) and `max` (downgrade `xhigh`); `high` is
+not premium. Model refusal is checked before effort refusal, so a target that
+is premium on both dimensions needs a matching escape for each (or
+`--ignore-budget`).
 
 | engine | premium                                        | downgrade target        |
 | ------ | ----------------------------------------------- | ------------------------ |

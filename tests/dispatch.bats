@@ -2038,6 +2038,58 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" == *"34 points ahead of pace"* ]]
 }
 
+@test "pace gate refuses premium effort, but allows high and --ignore-budget" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "effort refuses"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (xhigh)"* ]]
+  [[ "$output" == *"use high instead"* ]]
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep sonnet --effort high --crew-id c1 42 "high allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep sonnet --effort xhigh --ignore-budget --crew-id c1 42 "ignore effort"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pace gate effort escape is exact and null reset still refuses" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  DISPATCH_IGNORE_RUNG=xhigh run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "exact effort"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"effort refusal skipped"* ]]
+
+  budget_json_at claude 77 345600
+  DISPATCH_IGNORE_RUNG=max run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "mismatched effort"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort"* ]]
+
+  budget_json_at claude 90 null
+  run run_dispatch deep sonnet --effort max --crew-id c1 42 "null effort"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (max)"* ]]
+  [[ "$output" != *"ahead of pace"* ]]
+}
+
+@test "pace gate checks explicit and inherited eager role effort before panes" {
+  budget_json_at claude 77 345600
+  run run_dispatch deep sonnet --roles 'reviewer@xhigh' --effort high --crew-id c1 42 "explicit role effort"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (xhigh)"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -qE 'split-window|send-keys' "$STUB_LOG"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep sonnet --roles reviewer --effort max --crew-id c1 42 "inherited role effort"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (max)"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -qE 'split-window|send-keys' "$STUB_LOG"
+}
+
 @test "budget rung gate allows 7d burn that is at or behind pace" {
   stub_launch_bins
   budget_json_at claude 77 86400
@@ -3314,6 +3366,25 @@ EOF
   run run_dispatch --spawn-role legacy
   [ "$status" -eq 0 ]
   run grep -F -- '--thinking high' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: lazy pace gate checks final effort before splitting and honors --ignore-budget" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles="$common/crew/artifacts/feat/9-x/roles.json"
+  printf '{"reviewer":{"agent":"claude","model":"sonnet","effort":"high"}}\n' >"$roles"
+  budget_json_at claude 77 345600
+
+  run run_dispatch --spawn-role reviewer --effort xhigh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (xhigh)"* ]]
+  run grep -c -- 'split-window' "$STUB_LOG"
+  [ "$output" -eq 0 ]
+
+  run run_dispatch --spawn-role reviewer --effort xhigh --ignore-budget
+  [ "$status" -eq 0 ]
+  run grep -q -- 'split-window' "$STUB_LOG"
   [ "$status" -eq 0 ]
 }
 
