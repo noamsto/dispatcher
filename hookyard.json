@@ -1,0 +1,11 @@
+{
+  "handlers": [
+    {
+      "id": "dispatch-notify",
+      "exec": "adapters/core/dispatch-notify.sh",
+      "events": ["pi:session_shutdown"],
+      "engines": ["pi"],
+      "lane": "fire_and_forget"
+    }
+  ]
+}
