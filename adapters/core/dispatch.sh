@@ -477,6 +477,37 @@ if [ "${1:-}" = "--spawn-role" ]; then
   exit 0
 fi
 
+# Engine roster helpers are here so the early `--engines` command can run
+# before it needs a crew, worktree, or any dispatch scaffolding.
+ENGINES_ALL="claude codex cursor pi"
+
+engine_cli() {
+  case "$1" in
+  cursor) printf 'cursor-agent' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+engine_enabled() {
+  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+check_engine() {
+  local cli
+  engine_enabled "$1" || {
+    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
+    exit 1
+  }
+  cli="$(engine_cli "$1")"
+  command -v "$cli" >/dev/null 2>&1 || {
+    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
+    exit 1
+  }
+}
+
 # `dispatch --reap-roles` — kill every role pane in the caller's window.
 if [ "${1:-}" = "--reap-roles" ]; then
   [ -n "${TMUX_PANE:-}" ] || {
@@ -490,6 +521,18 @@ if [ "${1:-}" = "--reap-roles" ]; then
     tmux kill-pane -t "$p" 2>/dev/null || true
   done
   echo "reaped role panes"
+  exit 0
+fi
+
+# `dispatch --engines` — the effective roster: enabled AND installed, in
+# canonical order. The dispatcher protocol reads this before judging.
+if [ "${1:-}" = "--engines" ]; then
+  # shellcheck disable=SC2086 # intentional split of the fixed space-separated roster
+  for e in $ENGINES_ALL; do
+    engine_enabled "$e" || continue
+    command -v "$(engine_cli "$e")" >/dev/null 2>&1 || continue
+    echo "$e"
+  done
   exit 0
 fi
 
@@ -716,39 +759,6 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 # non-Nix checkout and the test suite need no extra setup. $DISPATCH_PROFILE no
 # longer gates engines — it is still read below for the work+claude+deep rung.
 profile="${DISPATCH_PROFILE:-personal}"
-ENGINES_ALL="claude codex cursor pi"
-
-# engine_cli <engine> — the CLI that engine runs as. Only cursor differs.
-engine_cli() {
-  case "$1" in
-  cursor) printf 'cursor-agent' ;;
-  *) printf '%s' "$1" ;;
-  esac
-}
-
-# engine_enabled <engine> — is it on this machine's roster?
-engine_enabled() {
-  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
-  *" $1 "*) return 0 ;;
-  esac
-  return 1
-}
-
-# check_engine <engine> <context> — reject before scaffolding a worktree, so a
-# missing engine is a clear message and not a later `codex: command not found`
-# in a pane the branch and issue already paid for.
-check_engine() {
-  local cli
-  engine_enabled "$1" || {
-    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
-    exit 1
-  }
-  cli="$(engine_cli "$1")"
-  command -v "$cli" >/dev/null 2>&1 || {
-    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
-    exit 1
-  }
-}
 
 check_engine "$agent" "--agent $agent"
 

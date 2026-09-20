@@ -418,6 +418,25 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
 }
 
+@test "--engines prints the effective roster" {
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'claude\ncodex\npi' ]]
+}
+
+@test "--engines omits an engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'claude\npi' ]]
+}
+
+@test "--engines needs no crew id, worktree or tmux" {
+  run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no crew id"* ]]
+}
+
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
   # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
   # what gives the role-pane assertions below real launches to check.
