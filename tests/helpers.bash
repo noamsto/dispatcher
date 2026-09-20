@@ -25,6 +25,15 @@ setup_repo() {
   git config user.email test@example.com
   git config user.name test
   export TEST_REPO
+  # Every engine CLI stubbed by default: dispatch's on-PATH probe
+  # (check_engine) must not fail a test merely because this environment (CI)
+  # has no real engine CLIs installed. A test that needs a genuinely missing
+  # binary removes its stub afterward (`rm "$STUB_DIR/<cli>"` +
+  # path_without_real), so the probe's own negative tests stay honest.
+  stub_bin claude
+  stub_bin codex
+  stub_bin cursor-agent
+  stub_bin pi
 }
 
 assert_isolated_xdg_data_home() {
@@ -78,4 +87,27 @@ EOF
   chmod +x "$STUB_DIR/$1"
   export STUB_DIR STUB_LOG
   export PATH="$STUB_DIR:$PATH"
+}
+
+# path_without_real <cli> — $PATH with $STUB_DIR kept and every OTHER
+# directory that would resolve a real <cli> dropped. `rm "$STUB_DIR/<cli>"`
+# alone only uncovers whatever the developer's machine has installed further
+# down PATH (this box has real codex/cursor/cursor-agent CLIs on it, since a
+# maintainer of this repo daily-drives all three); the probe tests below need
+# the removed engine to be genuinely unresolvable, not just absent from the
+# stub dir, while leaving every other directory (and the tools before the
+# gate need, e.g. bash and grep) intact.
+path_without_real() {
+  local cli="$1" dir kept=()
+  local IFS=:
+  # shellcheck disable=SC2206 # word-splitting on IFS=: is the point here
+  local dirs=($PATH)
+  for dir in "${dirs[@]}"; do
+    if [ "$dir" != "$STUB_DIR" ] && [ -x "$dir/$cli" ]; then
+      continue
+    fi
+    kept+=("$dir")
+  done
+  IFS=:
+  printf '%s' "${kept[*]}"
 }

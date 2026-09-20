@@ -223,15 +223,18 @@ imports = [inputs.dispatcher.homeManagerModules.default];
 
 programs.dispatcher = {
   enable = true;
-  profile = "work"; # gates the codex and cursor engines
+  profile = "work";
+  engines = ["claude" "pi" "codex"];
 };
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
-`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
+`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE` and
+`DISPATCH_ENGINES`,
 `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`
 and `DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
-rule, commands, skills and rosters.
+rule, commands, skills and rosters when those engines are included in
+`engines`.
 
 For Claude Code, pass the plugin directory to `claude`:
 

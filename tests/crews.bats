@@ -47,13 +47,10 @@ _run_dispatch_no_crew_id() {
 
 # _stub_launcher_agents — dispatcher.sh execs a real agent CLI and touches
 # tmux before it ever reaches the discovery-notice logic under test; without
-# these stubs (tests/dispatcher.bats's full setup) the launch dies or stamps
-# the developer's live tmux window.
+# this stub (tests/dispatcher.bats's full setup) the launch stamps the
+# developer's live tmux window. Engine CLIs are already stubbed by setup_repo.
 _stub_launcher_agents() {
   stub_bin tmux
-  stub_bin claude
-  stub_bin codex
-  stub_bin cursor-agent
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
   unset TMUX
 }

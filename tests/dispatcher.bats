@@ -5,10 +5,6 @@ setup() {
   setup_repo
   stub_bin tmux
   stub_bin crew
-  stub_bin claude
-  stub_bin codex
-  stub_bin cursor-agent
-  stub_bin pi
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
   unset TMUX CREW_ID
 }
@@ -23,10 +19,22 @@ teardown() {
   [[ "$output" == *"--agent must be claude, codex, cursor, or pi"* ]]
 }
 
-@test "gates codex behind the work profile" {
-  DISPATCH_PROFILE=personal run run_launcher --agent codex
+@test "rejects an engine that is not on the roster" {
+  DISPATCH_ENGINES="claude pi" run run_launcher --agent codex
   [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
+  [[ "$output" == *"--agent codex is not enabled here (enabled: claude pi)"* ]]
+}
+
+@test "rejects an enabled engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_launcher --agent codex
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is enabled but not installed (no 'codex' on PATH)"* ]]
+}
+
+@test "an unset roster admits every engine" {
+  CREW_ID=c1 run run_launcher --agent cursor
+  [ "$status" -eq 0 ]
 }
 
 @test "rejects an unknown effort" {
@@ -92,9 +100,9 @@ teardown() {
 }
 
 @test "pi is not work-profile gated as an orchestrator" {
-  DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi
+  CREW_ID=c1 run run_launcher --agent pi
   [ "$status" -eq 0 ]
-  [[ "$output" != *"work-profile only"* ]]
+  [[ "$output" != *"not enabled here"* ]]
 }
 
 @test "pi launcher defaults to the OpenRouter deep row on either profile" {

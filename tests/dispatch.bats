@@ -28,6 +28,9 @@ EOF
   stub_bin gh
   stub_bin wt
   stub_bin direnv
+  # Engine CLIs are stubbed by setup_repo (they are never executed by a
+  # launch — dispatch hands tmux a command string — but dispatch probes them
+  # for availability).
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
@@ -375,6 +378,61 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"work-profile only"* ]]
 }
 
+@test "rejects an engine that is not on the roster" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is not enabled here (enabled: claude pi)"* ]]
+}
+
+@test "an unset roster admits every engine" {
+  # The compatibility contract: a non-Nix checkout exports nothing.
+  run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [[ "$output" != *"not enabled here"* ]]
+}
+
+@test "the roster gate replaces the work-profile gate" {
+  # codex off a work profile used to be rejected on profile alone; with a
+  # roster that lists it, profile is no longer the gate.
+  DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "roster test"
+  [[ "$output" != *"work-profile only"* ]]
+  [[ "$output" != *"not enabled here"* ]]
+}
+
+@test "rejects an enabled engine whose CLI is missing" {
+  # PATH keeps the stub dir (tmux, crew, gh, wt are needed to get this far)
+  # but the engine stub is removed, so only the probe can fail.
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is enabled but not installed (no 'codex' on PATH)"* ]]
+}
+
+@test "the probe looks for cursor-agent, not cursor" {
+  rm "$STUB_DIR/cursor-agent"
+  PATH="$(path_without_real cursor-agent)" DISPATCH_ENGINES="claude cursor pi" run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 "probe test"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no 'cursor-agent' on PATH"* ]]
+}
+
+@test "--engines prints the effective roster" {
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'claude\ncodex\npi' ]]
+}
+
+@test "--engines omits an engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'claude\npi' ]]
+}
+
+@test "--engines needs no crew id, worktree or tmux" {
+  run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no crew id"* ]]
+}
+
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
   # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
   # what gives the role-pane assertions below real launches to check.
@@ -524,10 +582,16 @@ EOF
   [[ "$output" == *"--roles needs a comma-separated list"* ]]
 }
 
-@test "--roles rejects a work-only role agent off the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
+@test "a role cannot use an engine that is off the roster" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 --roles reviewer=cursor:composer-2.5 "role roster test"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
+  [[ "$output" == *"role 'reviewer' uses --agent cursor is not enabled here"* ]]
+}
+
+@test "--roles rejects a role agent not in the roster" {
+  DISPATCH_ENGINES="pi" run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=codex:gpt-5.6-sol" --effort high --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not enabled here"* ]]
 }
 
 @test "rejects an invalid role name" {
@@ -1045,20 +1109,8 @@ EOF
   [[ "$output" == *"--effort must be low, medium, high, xhigh, max, or ultra"* ]]
 }
 
-@test "gates codex behind the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"codex is work-profile only"* ]]
-}
-
-@test "gates cursor behind the work profile" {
-  DISPATCH_PROFILE=personal run run_dispatch standard kimi-k3-high --agent cursor --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"work-profile only"* ]]
-}
-
-@test "the profile gate fires before any worktree is scaffolded" {
-  DISPATCH_PROFILE=personal run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
+@test "the roster gate fires before any worktree is scaffolded" {
+  DISPATCH_ENGINES="claude pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
   # The gate rejects before ANY stubbed binary runs, so $STUB_LOG is never
   # created — `grep -c` on a missing file errors rather than printing 0.
@@ -3403,6 +3455,18 @@ EOF
   [[ "$output" == *"invalid effort"* ]]
 }
 
+@test "grid: --spawn-role rejects an engine outside the roster before splitting" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles="$common/crew/artifacts/feat/9-x/roles.json"
+  printf '{"reviewer":{"agent":"codex","model":"gpt-5.6-terra","effort":"medium"}}\n' >"$roles"
+
+  DISPATCH_ENGINES="claude pi" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
+  [ ! -e "$STUB_LOG" ]
+}
+
 @test "grid: --spawn-role rejects an explicit effort for the final cursor agent" {
   _spawn_role_fixture
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
@@ -3456,4 +3520,14 @@ EOF
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+@test "the suite resolves engine CLIs from the stub dir, not the developer's machine" {
+  # Without this, a PATH probe in dispatch.sh passes locally (real engines
+  # installed) and fails on a bare CI runner. Pin the dependency here.
+  for cli in claude codex cursor-agent pi; do
+    run command -v "$cli"
+    [ "$status" -eq 0 ]
+    [[ "$output" == "$STUB_DIR/$cli" ]]
+  done
 }

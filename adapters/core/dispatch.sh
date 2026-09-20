@@ -132,6 +132,37 @@ budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 # (a non-Nix install) it is not a directory, and pi_skill_args' probe drops it.
 SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
 
+# Engine roster helpers must precede every early command, including lazy role
+# spawning, so every launch path rejects a disabled engine before scaffolding.
+ENGINES_ALL="claude codex cursor pi"
+
+engine_cli() {
+  case "$1" in
+  cursor) printf 'cursor-agent' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+engine_enabled() {
+  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+check_engine() {
+  local cli
+  engine_enabled "$1" || {
+    echo "dispatch: $2 is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
+    exit 1
+  }
+  cli="$(engine_cli "$1")"
+  command -v "$cli" >/dev/null 2>&1 || {
+    echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
+    exit 1
+  }
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -462,6 +493,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' uses --agent $spawn_agent, which does not support --effort ultra" >&2
     exit 1
   fi
+  check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
   if [ -n "$existing" ]; then
@@ -490,6 +522,18 @@ if [ "${1:-}" = "--reap-roles" ]; then
     tmux kill-pane -t "$p" 2>/dev/null || true
   done
   echo "reaped role panes"
+  exit 0
+fi
+
+# `dispatch --engines` — the effective roster: enabled AND installed, in
+# canonical order. The dispatcher protocol reads this before judging.
+if [ "${1:-}" = "--engines" ]; then
+  # shellcheck disable=SC2086 # intentional split of the fixed space-separated roster
+  for e in $ENGINES_ALL; do
+    engine_enabled "$e" || continue
+    command -v "$(engine_cli "$e")" >/dev/null 2>&1 || continue
+    echo "$e"
+  done
   exit 0
 fi
 
@@ -710,19 +754,14 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
   exit 1
 }
 
-# Work-only engine gate. $DISPATCH_PROFILE is set from osConfig.profile by
-# home-manager (was a source-baked literal in the fish heredoc). Reject before
-# scaffolding a worktree, so the failure is a clear message not a later
-# `codex: command not found`.
+# Engine gate. An engine must be enabled (on this machine's roster) and
+# available (its CLI installed). $DISPATCH_ENGINES is set from
+# programs.dispatcher.engines by home-manager; unset means every engine, so a
+# non-Nix checkout and the test suite need no extra setup. $DISPATCH_PROFILE no
+# longer gates engines — it is still read below for the work+claude+deep rung.
 profile="${DISPATCH_PROFILE:-personal}"
-if [ "$agent" = codex ] && [ "$profile" != work ]; then
-  echo "dispatch: --agent codex is work-profile only (no personal codex account)" >&2
-  exit 1
-fi
-if [ "$agent" = cursor ] && [ "$profile" != work ]; then
-  echo "dispatch: --agent cursor is work-profile only" >&2
-  exit 1
-fi
+
+check_engine "$agent" "--agent $agent"
 
 # Model gate. Reject a slug the chosen engine cannot run before anything is
 # scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
@@ -1113,14 +1152,7 @@ if [ -n "$grid_roles" ]; then
       echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
       exit 1
     fi
-    case "$role_agent" in
-    codex | cursor)
-      [ "$profile" = work ] || {
-        echo "dispatch: role '$role' uses --agent $role_agent, which is work-profile only" >&2
-        exit 1
-      }
-      ;;
-    esac
+    check_engine "$role_agent" "role '$role' uses --agent $role_agent"
     role_names+=("$role")
     role_agents+=("$role_agent")
     role_models+=("$role_model")

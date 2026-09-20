@@ -58,15 +58,34 @@ claude | codex | cursor | pi) ;;
   ;;
 esac
 
-profile="${DISPATCH_PROFILE:-personal}"
-case "$agent" in
-codex | cursor)
-  if [ "$profile" != work ]; then
-    echo "dispatcher: --agent $agent is work-profile only" >&2
-    exit 1
-  fi
-  ;;
-esac
+# Engine gate. Enabled (this machine's roster) and available (CLI installed).
+# Unset $DISPATCH_ENGINES means every engine. Duplicated from dispatch.sh on
+# purpose: adapters/core has no shared library, each script bakes standalone.
+ENGINES_ALL="claude codex cursor pi"
+
+engine_cli() {
+  case "$1" in
+  cursor) printf 'cursor-agent' ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+engine_enabled() {
+  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
+  *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+engine_enabled "$agent" || {
+  echo "dispatcher: --agent $agent is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
+  exit 1
+}
+cli="$(engine_cli "$agent")"
+command -v "$cli" >/dev/null 2>&1 || {
+  echo "dispatcher: --agent $agent is enabled but not installed (no '$cli' on PATH)" >&2
+  exit 1
+}
 
 if [ -n "$effort" ]; then
   case "$effort" in
