@@ -577,12 +577,12 @@ fi
 
 # `dispatch --role-exited <role> --branch <b> --pane <p>` — the continuation typed
 # after a role's engine command (see launch_role); it runs only once that engine
-# is back at the pane's shell. The pane option @crew_exited marks the role dead
-# (pane-local, unrelated to the bus `exited` state); --since is the launch time, so
-# a `final` sent to an earlier incarnation of the role does not hide this crash. A lead's `{"final":true}` release is
-# the graceful exit and stays silent; anything else is a role that died before its
-# verdict, so tell the dispatcher (`blocked` wakes `crew watch`; `exited` would
-# not) and the lead (whose `crew await` would otherwise wait forever).
+# is back at the pane's shell. @crew_exited is a pane-local marker, unrelated to
+# the bus `exited` state. A lead's `{"final":true}` release is the graceful exit and
+# stays silent; --since is the launch time, so a `final` sent to an earlier
+# incarnation of the role does not hide this crash. Anything else is a role that
+# died before its verdict: tell the dispatcher (`blocked` wakes `crew watch`;
+# `exited` would not) and the lead, whose `crew await` would otherwise wait forever.
 if [ "${1:-}" = "--role-exited" ]; then
   role="${2:-}"
   [ -n "$role" ] || {
