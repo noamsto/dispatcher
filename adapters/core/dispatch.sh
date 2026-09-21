@@ -248,7 +248,7 @@ _check_protocol_rev() {
 
 # role_color <role> — a stable tmux colour per role. Known roles get a semantic
 # colour; anything else falls back to crew's deterministic FleetView palette, so
-# a role is always the same colour run to run.
+# a role is always the same colour run to run (`--hash`: never occupancy-shifted).
 role_color() {
   case "$1" in
   spec-critic) printf 'colour141' ;; # mauve
@@ -256,7 +256,7 @@ role_color() {
   reviewer) printf 'colour114' ;;    # green
   security) printf 'colour174' ;;    # red
   consult) printf 'colour180' ;;     # yellow
-  *) crew identity "$1" 2>/dev/null | jq -r '.tmux // "colour250"' ;;
+  *) crew identity --hash "$1" 2>/dev/null | jq -r '.tmux // "colour250"' ;;
   esac
 }
 
@@ -1511,7 +1511,9 @@ if ! ln -s "$$" "$dispatch_lock" 2>/dev/null; then
   fi
   exit 1
 fi
-trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"' EXIT INT TERM HUP
+ident_locked=""
+ident_lock="$crew_dir/identity.lock"
+trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || rmdir "$ident_lock" 2>/dev/null' EXIT INT TERM HUP
 
 # Reuse-or-refuse (#17). git allows exactly one worktree per branch, so a dispatch
 # onto a branch that already has one lands in the same directory. Occupancy is a
@@ -1787,6 +1789,22 @@ if [ -n "$pr_number" ]; then
   fi
 fi
 
+# FleetView-style codename+color: the branch's recorded one, else a slot no live
+# worker holds. Picked and recorded under one lock so two racing dispatches
+# cannot read the same free slot; the recorded name is what roster, tmux and
+# `--name` all read back.
+for _ in $(seq 1 100); do
+  if mkdir "$ident_lock" 2>/dev/null; then
+    ident_locked=1
+    break
+  fi
+  sleep 0.1
+done
+[ -n "$ident_locked" ] || echo "dispatch: identity lock busy after 10s — picking a codename unlocked" >&2
+ident=$(crew identity "$branch" "$crew_id")
+agent_name=$(printf '%s' "$ident" | jq -r .name)
+agent_color=$(printf '%s' "$ident" | jq -r .tmux)
+
 # Log the dispatch decision to the crew bus for later `crew report`.
 dispatch_shape="${DISPATCH_SHAPE:-}"
 # task_kind rides along because only `dispatch` knows it: a `--review` worker is
@@ -1796,13 +1814,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume}')
+  --argjson ident "$ident" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume} + $ident')
 _bus_append "$crew_dir/events.jsonl" "$line"
-
-# FleetView-style codename+color, derived from the branch (deterministic).
-ident=$(crew identity "$branch")
-agent_name=$(printf '%s' "$ident" | jq -r .name)
-agent_color=$(printf '%s' "$ident" | jq -r .tmux)
+if [ -n "$ident_locked" ]; then
+  rmdir "$ident_lock" 2>/dev/null || true
+  ident_locked=""
+fi
 
 # GitHub-issue dispatch only: post a context comment for at-a-glance history.
 # Linear dispatches and `--pr` review dispatches set neither $gh_issue nor

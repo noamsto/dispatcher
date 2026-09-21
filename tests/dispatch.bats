@@ -3824,3 +3824,46 @@ EOF
     [[ "$output" == "$STUB_DIR/$cli" ]]
   done
 }
+
+@test "identity: two branches on one hash slot dispatched into one crew get different names" {
+  stub_launch_bins
+  cat >"$STUB_DIR/crew" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+esac
+exit 0
+EOF2
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 33 "thing"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 38 "thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -s -r '[.[] | select(.kind=="dispatch")] | [.[].name] | unique | length' "$log"
+  [ "$output" = "2" ]
+  run jq -s -r '[.[] | select(.kind=="dispatch")] | [.[].tmux] | unique | length' "$log"
+  [ "$output" = "2" ]
+  n2="$(jq -s -r '[.[] | select(.kind=="dispatch")] | .[1].tmux' "$log")"
+  grep -q "@crew_color $n2" "$STUB_LOG"
+}
+
+@test "identity: re-dispatching a branch keeps its recorded name" {
+  stub_launch_bins
+  cat >"$STUB_DIR/crew" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+esac
+exit 0
+EOF2
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$crew_dir"
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/42-thing","name":"cobalt","color":"royalblue","tmux":"colour68"}' >"$crew_dir/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "thing"
+  [ "$status" -eq 0 ]
+  grep -q 'set-window-option -t %1 @crew_name cobalt' "$STUB_LOG"
+}
