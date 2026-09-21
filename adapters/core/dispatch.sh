@@ -303,6 +303,18 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
+# shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
+# for splicing into a tmux send-keys command line the pane's own shell re-parses.
+# Embedded ' is closed, escaped, and reopened, so no character in the text
+# (quotes, $, backticks, em dashes) can split the argument or be expanded. Not
+# printf %q: that emits $'…' for non-printables or under a C locale, which
+# fish — the pane shell — cannot parse.
+shell_quote() {
+  local -n _out="$1"
+  local _text="$2"
+  _out="'${_text//\'/\'\\\'\'}'"
+}
+
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
 # skill dirs (pi's project skill locations) and for the harness's own skills.
 # The pi launches below pass --no-approve, which disables project discovery
@@ -326,14 +338,12 @@ pi_skill_args() {
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name from the caller scope.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first escaped
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first
   printf -v quoted_model '%q' "$r_model"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
-  escaped=${first//\'/\'\\\'\'}
-  quoted_first="'$escaped'"
+  shell_quote quoted_prompt "$prompt"
+  shell_quote quoted_first "$first"
   case "$r_agent" in
   pi)
     [ -n "$pi_agent_dir" ] || {
@@ -1896,8 +1906,7 @@ if [ "$agent" = codex ]; then
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
+  shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
 elif [ "$agent" = cursor ]; then
@@ -1915,8 +1924,7 @@ elif [ "$agent" = cursor ]; then
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
+  shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
 elif [ "$agent" = pi ]; then
@@ -1925,14 +1933,12 @@ elif [ "$agent" = pi ]; then
   # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
+  shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}"
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
+  shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
 fi
