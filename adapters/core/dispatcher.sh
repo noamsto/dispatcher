@@ -121,8 +121,20 @@ if [ -n "${TMUX:-}" ]; then
   fi
 fi
 
-session_name=dispatcher
-[ -n "$task" ] && session_name="dispatcher: $task"
+# A bare `dispatcher` is the usual launch (issues get pasted afterwards), so the
+# name must tell sessions apart in tmux and in the engine's resume picker on its
+# own: repo of the main checkout + launch minute. Only claude and pi have a name
+# flag; codex and cursor sessions stay unnamed.
+if [ -n "$task" ]; then
+  session_name="dispatcher: $task"
+else
+  if common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    repo=$(basename "$(dirname "$common_dir")")
+  else
+    repo=$(basename "$PWD")
+  fi
+  session_name="dispatcher · $repo · $(date '+%m-%d %H:%M')"
+fi
 
 # Mint + export the crew id once at launch (mirrors `dispatch`), so the launched
 # agent and every child `dispatch` inherit the SAME crew. `crew new` needs no
