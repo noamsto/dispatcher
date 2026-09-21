@@ -65,7 +65,7 @@ review rubric:
 - `spec-critic` / `plan-critic`: read the matching
   `$DISPATCHER_CRITICS_DIR/<role>.md` (or adapter-local `critics/<role>.md`) and
   apply it to the assigned artifact.
-- `reviewer`: read `WORKER_TASK.md`, sibling `EVIDENCE_REVIEW.md`, and the review
+- `reviewer`: read `WORKER_TASK.md`, `EVIDENCE_REVIEW.md` (in `protocol_dir:` from `WORKER_TASK.md`), and the review
   artifact. Read the resolved roster only from the absolute path in your assignment's `roster` field
   — written by the lead from the `reviewer-roster` resolver (`resolve-roster.sh`
   when that binary is not on PATH) — route the changed files through its

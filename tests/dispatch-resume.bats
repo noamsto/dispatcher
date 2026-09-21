@@ -465,6 +465,16 @@ EOF
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG"
 }
 
+@test "restamps protocol_dir into an older task doc and names it in the claude prompt" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$WT/WORKER_TASK.md"
+  grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+}
+
 @test "--fresh drops the continue flag" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

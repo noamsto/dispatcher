@@ -8,7 +8,7 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 ## First action
 
-Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), and `worker_id:` (your bus identity). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup.
+Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), `worker_id:` (your bus identity), and `protocol_dir:` (the absolute directory holding this file and its siblings `EVIDENCE_REVIEW.md`, `GRID_PROTOCOL.md`, `REVIEW_TASK.md` — read those from there, never by searching the filesystem). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup.
 
 Announce yourself:
 `crew status "$CREW_WORKER_ID" working`
@@ -41,7 +41,7 @@ captured. Every later read is `--since $seen` per **Checkpoint-peek**.
 ## Pipeline by tier
 
 Before choosing the next stage for a behavioral bug, shared contract change, or
-PR-feedback fix, read sibling `EVIDENCE_REVIEW.md`. Its evidence, review-risk,
+PR-feedback fix, read `EVIDENCE_REVIEW.md` from `protocol_dir:`. Its evidence, review-risk,
 recurrence, and handoff rules apply to provided plans and resumed runs too.
 
 - **trivial** — implement directly, run the gate, open the PR. No spec, no plan, no critics, no review. You still run the three completion peeks (**Checkpoint-peek**) — with no other seams, they are the only points a dispatcher redirect can reach you.
@@ -53,7 +53,7 @@ recurrence, and handoff rules apply to provided plans and resumed runs too.
 `WORKER_TASK.md` may stamp a `roles:` line. If it does, you are the **lead** of a
 role grid: those roles are already running as panes in your window, sharing this
 worktree, and parked on the crew bus under
-`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md`) —
+`role:$(git branch --show-current):<role>` (they follow `GRID_PROTOCOL.md` in `protocol_dir:`) —
 **unless the task doc also stamps `lazy: 1`**, in which case no role pane
 exists yet and you materialize each one yourself, on demand, before its first
 assignment (see the seam below).

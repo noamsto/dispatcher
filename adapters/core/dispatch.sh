@@ -1829,8 +1829,8 @@ fi
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
 {
-  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\n' \
-    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id"
+  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
+    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
   if [ -n "$pr_number" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
@@ -1990,13 +1990,17 @@ if [ -n "$roles_stamp" ]; then
   grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
 fi
 
+# WORKER_PROTOCOL.md reaches pi/claude leads as a system prompt, so its
+# "sibling" protocol files have no referent unless the directory is named.
+protocol_note=" Protocol files (EVIDENCE_REVIEW.md, GRID_PROTOCOL.md, ...) live in $PROTOCOL_DIR — also stamped as protocol_dir: in WORKER_TASK.md."
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
   # latency nobody is watching.
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
@@ -2014,7 +2018,7 @@ elif [ "$agent" = cursor ]; then
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
@@ -2023,12 +2027,12 @@ elif [ "$agent" = pi ]; then
   # real appended system prompt; --no-approve ignores project-local resources,
   # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
 else
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
     "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
