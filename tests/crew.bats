@@ -1131,6 +1131,77 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"hi"'* ]]
 }
 
+# #240: a reply appended after the worker's question but before `crew await`
+# started was hidden behind await's own `start=now` cursor and lost. The wait now
+# anchors on the session's own latest outbound question *per counterpart*, so a
+# reply that landed in that gap is still delivered.
+@test "await: a reply that landed before await starts is delivered" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
+# The anchor is per counterpart, not "latest outbound to anyone": a later
+# outbound to a third party must not hide an earlier reply from the dispatcher.
+@test "await: a later outbound to a third party does not hide an earlier reply" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "worker:feat/y#s2-2" "unrelated"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
+@test "await: an answer to an earlier question is not redelivered after a newer question" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "A1"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "A2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"A2"'* ]]
+}
+
+# At-least-once: the log holds no consumed-state, so with no new outbound to the
+# counterpart a repeat await returns the same reply again. This is intended, and
+# pinned so a future change to it is deliberate.
+@test "await: a second await with no new question re-delivers the reply" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
+# Sensitive by design: this fails if any status row (watchdog or plain blocked)
+# is re-admitted to the anchor computation. A status row is *not* a question, so
+# a reply posted before the await must not become deliverable through it.
+@test "await: a watchdog-sourced blocked status never anchors the wait" {
+  id="worker:feat/x#s1-1"
+  seed_raw "$id" blocked "prompt: interactive prompt in pane %9" watchdog
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 # #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the
