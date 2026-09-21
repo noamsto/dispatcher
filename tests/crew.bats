@@ -1202,6 +1202,21 @@ _pi_assert_refused() {
   [ -z "$output" ]
 }
 
+# A hard kill mid-append leaves a torn trailing line (crew.sh documents this
+# crash mode; tests/crews.bats pins the same tolerance for `crews`). await must
+# still read the well-formed reply above it, not abort the whole log read.
+@test "await: a torn trailing log line does not hide a reply" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
 # #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the

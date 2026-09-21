@@ -732,11 +732,11 @@ await)
     if [ -f "$log" ]; then
       # Anchor per counterpart: a msg from X is due when it is newer than this
       # session's latest outbound msg to X; a conversation with no outbound from
-      # us falls back to `start`. The log is streamed through `reduce`, so a later
-      # outbound to a *third* party never hides an earlier reply, and no status
-      # row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -nc --arg crew "$crew" --arg me "$me" --argjson since "$start" '
-        reduce inputs as $e (
+      # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
+      # (the hard-kill crash mode) instead of aborting the whole read, and no
+      # status row (blocked re-stamp, watchdog) can move the anchor (#240).
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" '
+        reduce (inputs | fromjson?) as $e (
           {anchors: {}, cands: []};
           if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
           then .anchors[$e.to] = $e.ts
