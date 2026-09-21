@@ -1003,60 +1003,83 @@ _escalation_target() {
   esac
 }
 
-# _prior_failed_model <branch> <crew_dir> — prints the model of the most recent
-# failed worker on this branch. Prints nothing if no prior failed exists.
+# _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
+# dispatch that the branch's latest terminal worker status (failed/done/pr_open)
+# ended, provided that status is `failed` and the dispatch ran at <tier>.
+# Prints nothing when the branch is not currently failed at that tier.
 _prior_failed_model() {
-  local branch="$1" dir="$2" events
+  local branch="$1" dir="$2" tier="$3" events
   events="$dir/events.jsonl"
   [ -f "$events" ] || return 0
-  jq -r --arg b "$branch" '
-    [., inputs]
-    | . as $all
+  jq -r --arg b "$branch" --arg t "$tier" '
+    [., inputs] | . as $all
     | ([$all[] | select(.kind == "status" and
         ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
-        and .body.state == "failed") | .ts]) as $failed_ts
-    | if ($failed_ts | length) == 0 then empty
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+        | sort_by(.ts) | last) as $last
+    | if $last == null or $last.body.state != "failed" then empty
       else $all
-      | map(select(.kind == "dispatch" and .branch == $b
-          and .ts < ($failed_ts | max)))
+      | map(select(.kind == "dispatch" and .branch == $b and .tier == $t
+          and .ts < $last.ts))
       | sort_by(-.ts)
       | .[0].model // empty
       end
   ' "$events" 2>/dev/null || true
 }
 
+# _escalation_model_matches <target> <model> — true when <model> names the
+# escalation <target> exactly (claude's target is the alias `opus`, which the
+# claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
+_escalation_model_matches() {
+  local target="$1" m="$2"
+  case "$target" in
+  opus) [[ $m =~ ^(opus|claude-opus-.*)$ ]] ;;
+  cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
+  *) [ "$m" = "$target" ] ;;
+  esac
+}
+
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
-# 1. A worker on this branch posted status "failed" AND that worker's session
-#    has a matching dispatch event on the same branch (anti-spoofing), AND
-# 2. No dispatch or resume event on this branch already carries escalated_from.
+# 1. The branch's latest terminal worker status (failed/done/pr_open) is
+#    `failed`, AND that worker's session has a matching dispatch or resume
+#    event on the same branch (anti-spoofing), AND
+# 2. No dispatch or resume event on this branch carries escalated_from, AND no
+#    dispatch followed the first failure (an unstamped record-only hop or a
+#    same-model retry is an attempt too).
 _prior_failed_escalation_available() {
   local branch="$1" dir="$2" events
   events="$dir/events.jsonl"
   [ -f "$events" ] || return 1
-  # Check 1: any failed status event on this branch whose session has a
-  # matching dispatch row? This prevents fabricated failed status events —
-  # the worker must have been actually dispatched on this branch.
+  # Check 1: the latest terminal status is a failure posted by a session that
+  # was really dispatched (or resumed) on this branch.
   jq -e --arg b "$branch" '
     [., inputs] | . as $all
-    | ([$all[] | select(.kind == "dispatch" and .branch == $b) | .session]) as $sessions
-    | [.[] | select(.kind == "status" and .from != null
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .session]) as $sessions
+    | [$all[] | select(.kind == "status" and .from != null
         and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and .body.state == "failed")]
-    | [.[] | . as $item | ($sessions | index($item.from | sub("^worker:[^#]*#"; ""))) as $idx | select($idx != null)]
-    | length > 0
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+    | sort_by(.ts) | last as $last
+    | $last != null and $last.body.state == "failed"
+      and ($sessions | index($last.from | sub("^worker:[^#]*#"; ""))) != null
   ' "$events" >/dev/null 2>&1 || return 1
-  # Check 2: no prior dispatch or resume event on this branch already carries escalated_from?
+  # Check 2: one-shot. No escalation stamp yet, and no dispatch after the
+  # first failure (dispatch rows cover in-row hops, which are never stamped).
   jq -e --arg b "$branch" '
-    [., inputs]
-    | map(select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0)))
-    | length == 0
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed") | .ts] | min) as $first
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0))] | length) as $stamped
+    | ([$all[] | select(.kind == "dispatch" and .branch == $b and .ts > $first)] | length) as $later
+    | $stamped == 0 and $later == 0
   ' "$events" >/dev/null 2>&1 || return 1
   return 0
 }
 
 # Pre-compute the branch and crew_dir for escalation checks (normally
 # computed after this gate). At this point $* is the title.
-if [ -n "$gh_issue" ]; then
+# A Linear id overrides the issue-derived branch at the identity step below, so
+# it has no failed history under the issue's branch name — no escalation.
+if [ -n "$gh_issue" ] && [ -z "$linear_id" ]; then
   _escalation_slug="$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')"
   _escalation_branch="feat/$gh_issue-$_escalation_slug"
   _escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
@@ -1177,14 +1200,14 @@ if [ -z "$ignore_map" ]; then
     # Escalation: if the model is not in the tier's row but IS the one-rung-up
     # target from the failed model, AND a prior worker ended failed, allow it.
     if [ -n "${_escalation_branch:-}" ]; then
-      failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir")"
+      failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
       if [ -n "$failed_model" ]; then
         escalation_info="$(_escalation_target "$agent" "$tier" "$failed_model")"
         if [ -n "$escalation_info" ]; then
           escalation_baseline="${escalation_info%% *}"
           escalation_target="${escalation_info#* }"
           if [ "$escalation_target" != "RECORD_ONLY" ]; then
-            if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
+            if _escalation_model_matches "$escalation_target" "$model"; then
               if _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
                 tier_ok=1
                 escalated_from="$escalation_baseline"
@@ -1204,7 +1227,7 @@ fi
 # Record-only escalation: model already in tier's row but one rung up from failed.
 # Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
 if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
-  failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir")"
+  failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
   if [ -n "$failed_model" ]; then
     case "$agent:$tier:$failed_model:$model" in
     claude:trivial:haiku:sonnet|claude:trivial:haiku:claude-sonnet-*|\

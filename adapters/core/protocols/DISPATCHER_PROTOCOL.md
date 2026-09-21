@@ -21,7 +21,9 @@ accepts the next rung of the same engine's execute ladder on a retry — without
 `--ignore-map`. The tier stays unchanged, but the escalated model may be from
 outside the tier's normal row (e.g. `standard opus` after a failed `standard
 sonnet`). Only one rung: a two-rung jump or a third attempt still needs
-`--ignore-map`. The pace-rule gate still applies — a premium rung near the 7d
+`--ignore-map` — any retry or in-row hop after the first failure counts as an
+attempt, and the branch's latest terminal status must still be `failed` at the
+same tier (a failure that was later resumed and finished no longer escalates). The pace-rule gate still applies — a premium rung near the 7d
 wall is refused regardless. `dispatch` records `escalated_from` in the dispatch
 event and on the task doc, so ratings can surface it. `dispatch resume --model
 <M>` gets the same rule. On the fence about **tier**, pick the **higher** one and say why — an unneeded critic is cheap, but a missing one lets an error ship unreviewed. A task whose **decomposition** is the hard part (many interacting components, subtle split) is a `deep` signal too — the deep worker decides in its worktree whether to bring a top-tier consultant in to decompose it, and which one (see `WORKER_PROTOCOL.md` → "Orchestration consult"); you do not make that call.

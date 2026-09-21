@@ -799,8 +799,8 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
   grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
 }
 
-@test "resume escalation: --model opus succeeds after prior failed with matching dispatch" {
-  setup_worker_wt
+_resume_esc_seed() { # [failed-session] [failed-ts]
+  local fs="${1:-s1-99}" fts="${2:-200}"
   crew_dir="$TEST_REPO/.git/crew"
   mkdir -p "$crew_dir"
   jq -nc --arg b "feat/7-a-thing" '
@@ -808,15 +808,108 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
      engine:"claude", model:"sonnet", tier:"standard", effort:"medium",
      shape:"", task_kind:"implement", title:"a thing", plan:"required", resume:false}
   ' >>"$crew_dir/events.jsonl"
-  jq -nc --arg b "feat/7-a-thing" '
-    {ts: 200, kind:"status",
-     from:("worker:"+$b+"#s1-99"),
+  jq -nc --arg b "feat/7-a-thing" --arg s "$fs" --argjson ts "$fts" '
+    {ts: $ts, kind:"status",
+     from:("worker:"+$b+"#"+$s),
      body:{state:"failed", detail:"test failure"}}
   ' >>"$crew_dir/events.jsonl"
+}
+
+# The dispatch stub accepts everything, so a refused escalation shows up as a
+# precheck that was NOT handed --ignore-map (the real gate would exit 1).
+_precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ignore-map'; }
+
+@test "resume escalation: --model opus succeeds after prior failed with matching dispatch" {
+  setup_worker_wt
+  _resume_esc_seed
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
+  _precheck_ignores_map
+  run jq -r 'select(.kind == "resume") | .escalated_from' "$crew_dir/events.jsonl"
+  [ "$output" = "sonnet" ]
+  grep -qx 'model: opus' "$WT/WORKER_TASK.md"
+  grep -qx 'escalated_from: sonnet' "$WT/WORKER_TASK.md"
+  # The header now records the escalated model, so a later plain resume
+  # relaunches on it rather than silently falling back to sonnet.
+  ! grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
+}
+
+@test "resume escalation: a failure posted only by the resumed session still escalates" {
+  setup_worker_wt
+  _resume_esc_seed s2-99 200
+  # s1 never failed; s2 exists only in a resume row.
+  jq -c 'select(.kind == "status") | .from = "worker:feat/7-a-thing#s2-99"' "$crew_dir/events.jsonl" >"$crew_dir/x"
+  jq -c 'select(.kind == "dispatch")' "$crew_dir/events.jsonl" >"$crew_dir/y"
+  jq -nc '{ts:150, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"claude", model:"sonnet"}' >>"$crew_dir/y"
+  cat "$crew_dir/x" >>"$crew_dir/y"
+  mv "$crew_dir/y" "$crew_dir/events.jsonl"
+  rm -f "$crew_dir/x"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  _precheck_ignores_map
+  run jq -r 'select(.kind == "resume" and .session != null) | .escalated_from // "none"' "$crew_dir/events.jsonl"
+  [[ "$output" == *"sonnet"* ]]
+}
+
+@test "resume escalation: a spoofed failed status does not unlock --model opus" {
+  setup_worker_wt
+  _resume_esc_seed s-nonexistent
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
+  grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
+}
+
+@test "resume escalation: an already-escalated branch refuses a second --model opus" {
+  setup_worker_wt
+  _resume_esc_seed
+  jq -nc '{ts:250, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"claude", model:"opus", escalated_from:"sonnet"}' >>"$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
+}
+
+@test "resume escalation: a branch that failed and later finished does not escalate" {
+  setup_worker_wt
+  _resume_esc_seed
+  jq -nc '{ts:300, kind:"status", from:"worker:feat/7-a-thing#s1-99", body:{state:"done"}}' >>"$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
+}
+
+@test "resume escalation: a trivial-tier worker cannot reach opus" {
+  setup_worker_wt
+  sed -i 's/^tier: standard/tier: trivial/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed
+  sed -i 's/"tier":"standard"/"tier":"trivial"/' "$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
+}
+
+@test "resume escalation: an opus id that only shares the target as a prefix is refused" {
+  setup_worker_wt
+  sed -i 's/^engine: claude/engine: cursor/; s/^model: sonnet/model: cursor-grok-4.6-medium/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed
+  sed -i 's/"engine":"claude"/"engine":"cursor"/; s/"model":"sonnet"/"model":"cursor-grok-4.6-medium"/' "$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model cursor-grok-4.6-highfoo
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
 }
 
 @test "re-arms the stall watchdog on the resumed pane" {

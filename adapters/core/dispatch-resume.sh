@@ -309,27 +309,50 @@ _escalation_target() {
   esac
 }
 
+# _escalation_model_matches <target> <model> — true when <model> names the
+# escalation <target> exactly (claude's target is the alias `opus`, which the
+# claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
+_escalation_model_matches() {
+  local target="$1" m="$2"
+  case "$target" in
+  opus) [[ $m =~ ^(opus|claude-opus-.*)$ ]] ;;
+  cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
+  *) [ "$m" = "$target" ] ;;
+  esac
+}
+
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
-# 1. A worker on this branch posted status "failed" AND that worker's session
-#    has a matching dispatch event on the same branch (anti-spoofing), AND
-# 2. No dispatch or resume event on this branch already carries escalated_from.
+# 1. The branch's latest terminal worker status (failed/done/pr_open) is
+#    `failed`, AND that worker's session has a matching dispatch or resume
+#    event on the same branch (anti-spoofing), AND
+# 2. No dispatch or resume event on this branch carries escalated_from, AND no
+#    dispatch followed the first failure (an unstamped record-only hop or a
+#    same-model retry is an attempt too).
 _prior_failed_escalation_available() {
   local branch="$1" dir="$2" events
   events="$dir/events.jsonl"
   [ -f "$events" ] || return 1
+  # Check 1: the latest terminal status is a failure posted by a session that
+  # was really dispatched (or resumed) on this branch.
   jq -e --arg b "$branch" '
     [., inputs] | . as $all
-    | ([$all[] | select(.kind == "dispatch" and .branch == $b) | .session]) as $sessions
-    | [.[] | select(.kind == "status" and .from != null
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .session]) as $sessions
+    | [$all[] | select(.kind == "status" and .from != null
         and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and .body.state == "failed")]
-    | [.[] | . as $item | ($sessions | index($item.from | sub("^worker:[^#]*#"; ""))) as $idx | select($idx != null)]
-    | length > 0
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+    | sort_by(.ts) | last as $last
+    | $last != null and $last.body.state == "failed"
+      and ($sessions | index($last.from | sub("^worker:[^#]*#"; ""))) != null
   ' "$events" >/dev/null 2>&1 || return 1
+  # Check 2: one-shot. No escalation stamp yet, and no dispatch after the
+  # first failure (dispatch rows cover in-row hops, which are never stamped).
   jq -e --arg b "$branch" '
-    [., inputs]
-    | map(select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0)))
-    | length == 0
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed") | .ts] | min) as $first
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0))] | length) as $stamped
+    | ([$all[] | select(.kind == "dispatch" and .branch == $b and .ts > $first)] | length) as $later
+    | $stamped == 0 and $later == 0
   ' "$events" >/dev/null 2>&1 || return 1
   return 0
 }
@@ -351,7 +374,7 @@ else
     if [ -n "$escalation_info" ]; then
       escalation_target="${escalation_info#* }"
       if [ "$escalation_target" != "RECORD_ONLY" ]; then
-        if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
+        if _escalation_model_matches "$escalation_target" "$model"; then
           if _prior_failed_escalation_available "$branch" "$_escalation_crew_dir"; then
             precheck+=(--ignore-map)
             escalated_from="${escalation_info%% *}"
@@ -527,6 +550,12 @@ _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
+fi
+# An escalation is the worker's new launch tuple: without the model line a later
+# plain resume would read the old header and relaunch on the failed rung.
+if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
+  _hdr_set model "$model"
+  _hdr_set escalated_from "$escalated_from"
 fi
 
 # The resume row. New kind: without it a worker resumed four times reports as
