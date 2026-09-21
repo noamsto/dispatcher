@@ -3962,3 +3962,31 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$status" -eq 0 ]
   stop_stream
 }
+
+@test "identity: a recorded name another live worker now holds is not reused" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/1-a","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
+  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/1-a#s1-1" working
+  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
+  CREW_ID=c1 run_crew status "worker:feat/1-a#s1-1" done
+  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" = "nova" ]
+}
+
+@test "identity: an unrecorded branch resolves with no tmux available" {
+  printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/tmux"
+  chmod +x "$BATS_TEST_TMPDIR/tmux"
+  PATH="$BATS_TEST_TMPDIR:$PATH" run run_crew identity feat/9-new c1
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e 'has("name")'
+}
+
+@test "identity: of two live branches sharing a recorded name the earlier keeps it" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/1-a","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
+  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
+  [ "$(run_crew identity feat/1-a c1 | jq -r .name)" = "nova" ]
+  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
+}

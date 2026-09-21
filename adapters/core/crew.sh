@@ -50,37 +50,50 @@ _identity_recorded() {
     | last // empty | {name, color, tmux}' "$log" 2>/dev/null || true
 }
 
+# _identity_bus_occ <branch> <crew> — " name " for every OTHER branch dispatched
+# into the crew, dispatched no later than this one, whose latest status is not
+# terminal (legacy events count by hash). Earliest dispatch keeps a duplicated name.
+_identity_bus_occ() {
+  local br name occ=""
+  [ -f "$log" ] || return 0
+  while IFS=$'\t' read -r br name; do
+    [ -n "$br" ] || continue
+    if [ -z "$name" ]; then
+      name=$(_identity "$br" | jq -r .name)
+    fi
+    occ="$occ $name "
+  done < <(jq -r -s --arg crew "$2" --arg self "$1" '
+    def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+    (map(select(.crew_id == $crew and .kind == "status" and ((.from // "") | startswith("worker:"))))
+      | group_by(.from | wid_branch)
+      | map({key: (.[0].from | wid_branch), value: (max_by(.ts) | .body.state)}) | from_entries) as $st
+    | . as $all
+    | (($all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch == $self) | .ts) | max) // 1e18) as $selfts
+    | $all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch != $self))
+    | group_by(.branch) | map(last)
+    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited") | not)
+    | [.branch, (.name // "")] | @tsv' "$log" 2>/dev/null || true)
+  printf '%s' "$occ"
+}
+
 # _identity_assign <branch> <crew> — the identity a dispatch should stamp: the
-# branch's recorded one, else its hash slot stepped forward to the first codename
-# no live worker holds. Live = the crew's dispatched branches whose latest status
-# is not terminal, plus every tmux window already carrying @crew_name. The caller
-# serialises concurrent dispatches (see dispatch.sh), so the pick is race-free.
+# branch's recorded one unless another live worker now holds that name, else its
+# hash slot stepped forward to the first codename no live worker holds. Live =
+# the crew's other non-terminal dispatched branches plus every tmux window
+# already carrying @crew_name. The caller serialises concurrent dispatches (see
+# dispatch.sh), so the pick is race-free.
 _identity_assign() {
-  local rec occ br name i slot base
+  local rec occ i slot base
+  occ=$(_identity_bus_occ "$1" "$2")
   rec=$(_identity_recorded "$1")
   if [ -n "$rec" ]; then
-    printf '%s\n' "$rec"
-    return 0
+    case "$occ" in *" $(printf '%s' "$rec" | jq -r .name) "*) ;; *)
+      printf '%s\n' "$rec"
+      return 0
+      ;;
+    esac
   fi
-  occ=""
-  if [ -f "$log" ]; then
-    while IFS=$'\t' read -r br name; do
-      [ -n "$br" ] || continue
-      if [ -z "$name" ]; then
-        name=$(_identity "$br" | jq -r .name)
-      fi
-      occ="$occ $name "
-    done < <(jq -r -s --arg crew "$2" '
-      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      (map(select(.crew_id == $crew and .kind == "status" and ((.from // "") | startswith("worker:"))))
-        | group_by(.from | wid_branch)
-        | map({key: (.[0].from | wid_branch), value: (max_by(.ts) | .body.state)}) | from_entries) as $st
-      | map(select(.crew_id == $crew and .kind == "dispatch"))
-      | group_by(.branch) | map(last)
-      | .[] | select(($st[.branch] // "") | IN("done", "failed", "exited") | not)
-      | [.branch, (.name // "")] | @tsv' "$log")
-  fi
-  occ="$occ $(tmux list-windows -a -F '#{@crew_name}' 2>/dev/null | tr '\n' ' ') "
+  occ="$occ $(tmux list-windows -a -F '#{@crew_name}' 2>/dev/null | tr '\n' ' ' || true) "
   base=$(_identity_slot "$1")
   slot=$base
   for ((i = 0; i < ${#_names[@]}; i++)); do
