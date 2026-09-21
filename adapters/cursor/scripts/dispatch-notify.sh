@@ -31,6 +31,12 @@ cwd="$(jq -r 'if (.cwd // "") != "" then .cwd else (.workspace_roots[0] // empty
 # on its own hooks.
 [[ -n ${CREW_WORKER_ID:-} ]] || exit 0
 
+# A grid role pane inherits the lead's CREW_WORKER_ID (so its engine wrapper loads
+# the worker config), but a role session ending is not the lead ending: posting
+# `exited` under the lead's id would strand or reclaim a live worker. The pane's
+# own `dispatch --role-exited` reports a dead role under its role id instead.
+[[ -z ${CREW_ROLE_ID:-} ]] || exit 0
+
 # crew backstop. `crew` is a PATH CLI now, but this hook stays self-contained
 # (inline append) to avoid depending on PATH at SessionEnd; envelope matches
 # crew's status event.

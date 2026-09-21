@@ -11,7 +11,7 @@ setup() {
   # and fails on a personal one. HOME points at the throwaway repo so the codex
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
-  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
+  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
   stub_bin tmux
   stub_bin crew
   # pi-agent-dir delegates to the real crew.sh so pi launch tests exercise a
@@ -617,6 +617,55 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- 'GRID_PROTOCOL.md' "$DISPATCH"
   [ "$status" -eq 0 ]
+}
+
+# _grid_tmux_stub — stub_launch_bins' tmux, but split-window returns a pane id.
+_grid_tmux_stub() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new-window) printf '%s %s\n' '%1' '%1' ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# _env_of <name> <line> — the value of `-e <name>=…` on a logged tmux command.
+_env_of() {
+  local rest="${2#*-e $1=}"
+  printf '%s' "${rest%% -*}"
+}
+
+@test "grid: every eager role pane gets the lead's CREW_WORKER_ID and CREW_ID" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles "reviewer,plan-critic" --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+
+  lead="$(grep '^new-window' "$STUB_LOG")"
+  [ "$(_env_of CREW_WORKER_ID "$lead")" = "worker:feat/42-do-a-thing#s7-7" ]
+  splits="$(grep '^split-window' "$STUB_LOG")"
+  [ "$(printf '%s\n' "$splits" | wc -l)" -eq 2 ]
+  while IFS= read -r line; do
+    [ "$(_env_of CREW_WORKER_ID "$line")" = "$(_env_of CREW_WORKER_ID "$lead")" ]
+    [ "$(_env_of CREW_ID "$line")" = c1 ]
+    [ "$(_env_of CREW_ID "$line")" = "$(_env_of CREW_ID "$lead")" ]
+  done <<<"$splits"
+  [[ "$splits" == *"-e CREW_ROLE_ID=role:feat/42-do-a-thing:reviewer "* ]]
+  [[ "$splits" == *"-e CREW_ROLE_ID=role:feat/42-do-a-thing:plan-critic "* ]]
+}
+
+@test "grid: the --status pane gets the lead's identity too" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --status --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^split-window.* -e CREW_WORKER_ID=worker:feat/42-do-a-thing#s7-7 -e CREW_ID=c1 ' "$STUB_LOG")" -eq 2 ]
 }
 
 @test "a grid lead's window border carries the lead marker" {
@@ -3447,7 +3496,7 @@ EOF
 _spawn_role_fixture() {
   git switch -q -c feat/9-x
   git commit -q --allow-empty -m init
-  printf 'agent_name: iris\neffort: high\n' >WORKER_TASK.md
+  printf 'agent_name: iris\neffort: high\nworker_id: worker:feat/9-x#s1-1\ncrew_id: c1\n' >WORKER_TASK.md
   export TMUX_PANE=%5
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   roles_dir="$common/crew/artifacts/feat/9-x"
@@ -3475,6 +3524,173 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- '--no-approve' "$STUB_LOG"
   [ "$status" -eq 0 ]
+}
+
+@test "grid: --spawn-role gives the role pane the lead's CREW_WORKER_ID and CREW_ID" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  line="$(grep '^split-window' "$STUB_LOG")"
+  [ "$(_env_of CREW_WORKER_ID "$line")" = "worker:feat/9-x#s1-1" ]
+  [ "$(_env_of CREW_ID "$line")" = c1 ]
+  [ "$(_env_of CREW_ROLE_ID "$line")" = "role:feat/9-x:reviewer" ]
+}
+
+@test "grid: --spawn-role prefers the lead's own environment over the task doc" {
+  _spawn_role_fixture
+  CREW_WORKER_ID='worker:feat/9-x#s2-2' CREW_ID=c2 run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  line="$(grep '^split-window' "$STUB_LOG")"
+  [ "$(_env_of CREW_WORKER_ID "$line")" = "worker:feat/9-x#s2-2" ]
+  [ "$(_env_of CREW_ID "$line")" = c2 ]
+}
+
+@test "grid: --spawn-role refuses to split a pane that would have no worker identity" {
+  _spawn_role_fixture
+  printf 'agent_name: iris\neffort: high\n' >WORKER_TASK.md
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker_id/crew_id"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "grid: --spawn-role respawns a role whose pane exited, but not a live one" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '@1' ;;
+list-panes) printf '%s\n' "%5||live" "%4|reviewer|${STUB_PANE_STATE}" ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  STUB_PANE_STATE=idle run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already running in pane %4"* ]]
+  run ! grep -q '^split-window' "$STUB_LOG"
+
+  STUB_PANE_STATE=exited run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spawned role reviewer"* ]]
+  grep -q '^split-window' "$STUB_LOG"
+}
+
+# _exit_hook_fixture — run an eager reviewer role launch, then take the line
+# typed into its pane and make it runnable: dispatch gets the shebang the Nix
+# build prepends (the typed continuation execs it directly), and the engine
+# stub exits at once.
+_exit_hook_fixture() {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  { printf '#!/usr/bin/env bash\nset -euo pipefail\n'; cat "$DISPATCH"; } >"$BATS_TEST_TMPDIR/dispatch-exec"
+  chmod +x "$BATS_TEST_TMPDIR/dispatch-exec"
+  role_line="$(grep '^send-keys -t %6 claude' "$STUB_LOG")"
+  [ -n "$role_line" ]
+  cmd="${role_line#send-keys -t %6 }"
+  cmd="${cmd% Enter}"
+  cmd="${cmd//"$(realpath "$DISPATCH")"/$BATS_TEST_TMPDIR/dispatch-exec}"
+  : >"$STUB_LOG"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$STUB_DIR/claude"
+  chmod +x "$STUB_DIR/claude"
+}
+
+@test "grid: a role pane whose engine exits immediately posts a blocked status naming the role" {
+  _exit_hook_fixture
+  cd "$wt_path"
+  run bash -c "$cmd"
+  [ "$status" -eq 0 ]
+  grep -qxF 'status role:feat/42-do-a-thing:reviewer blocked role reviewer engine exited (pane %6)' "$STUB_LOG"
+  grep -qF 'msg role:feat/42-do-a-thing:reviewer worker:feat/42-do-a-thing#s7-7' "$STUB_LOG"
+  grep -qF 'set-option -p -t %6 @crew_exited 1' "$STUB_LOG"
+}
+
+@test "grid: --role-exited stays silent after the lead's final release" {
+  _exit_hook_fixture
+  cd "$wt_path"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:9999999999999,crew_id:"c1",from:"worker:feat/42-do-a-thing#s7-7",to:"role:feat/42-do-a-thing:reviewer",kind:"msg",body:"{\"final\":true}"}' >>"$log"
+  jq -nc '{ts:9999999999999,crew_id:"c1",from:"x",to:"role:feat/42-do-a-thing:reviewer",kind:"msg",body:"[1]"}' >>"$log"
+  run bash -c "$cmd"
+  [ "$status" -eq 0 ]
+  run ! grep -qE '^(status|msg) ' "$STUB_LOG"
+  grep -qF '@crew_exited 1' "$STUB_LOG"
+}
+
+@test "grid: --role-exited is not silenced by a final sent to an earlier incarnation of the role" {
+  _exit_hook_fixture
+  cd "$wt_path"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1,crew_id:"c1",from:"worker:feat/42-do-a-thing#s7-7",to:"role:feat/42-do-a-thing:reviewer",kind:"msg",body:"{\"final\":true}"}' >>"$log"
+  run bash -c "$cmd"
+  [ "$status" -eq 0 ]
+  grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
+}
+
+@test "grid: --role-exited still posts when WORKER_TASK.md is gone" {
+  _exit_hook_fixture
+  cd "$wt_path"
+  rm WORKER_TASK.md
+  run bash -c "$cmd"
+  [ "$status" -eq 0 ]
+  grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
+  run ! grep -qF 'msg role:' "$STUB_LOG"
+}
+
+@test "grid: --reap-roles itself kills role panes and posts nothing" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '@1' ;;
+list-panes) printf '%s\n' '%5 ' '%6 reviewer' ;;
+esac
+exit 0
+EOF
+  run run_dispatch --reap-roles
+  [ "$status" -eq 0 ]
+  grep -qF 'kill-pane -t %6' "$STUB_LOG"
+  run ! grep -qE 'role-exited|^(status|msg) ' "$STUB_LOG"
+}
+
+@test "grid: a real reap kills the pane before the typed continuation can run" {
+  command -v tmux >/dev/null || skip "tmux not installed"
+  sock="rp$$"
+  marker="$BATS_TEST_TMPDIR/hook-ran"
+  tmux -L "$sock" -f /dev/null new-session -d -s t -x 80 -y 24 "bash -c 'sleep 30 ; touch $marker'"
+  pane="$(tmux -L "$sock" list-panes -t t -F '#{pane_id}')"
+  tmux -L "$sock" kill-pane -t "$pane" || true
+  sleep 1
+  tmux -L "$sock" kill-server 2>/dev/null || true
+  [ ! -e "$marker" ]
+}
+
+@test "grid: --role-watch stops once its pane is marked exited and types nothing" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 1 ;;
+  *) printf '%s\n' '%6' ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
+  [ "$status" -eq 0 ]
+  run ! grep -qE 'send-keys|set-option -p -t %6 @crew_state (idle|working)' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {

@@ -144,6 +144,13 @@ without a manual `tmux kill-window`:
   detail `no assignment` never changes a run's outcome classification — a
   role that succeeded is never recorded as a failed run.
 
+A role whose engine exits before your `{"final":true}` release tells you: its pane
+posts a `role_exited` msg to you (the same `crew await` that waits for verdicts
+returns it — it carries `event`, not `verdict`) and a `blocked` status under
+`role:<branch>:<role>` for the dispatcher. Treat it exactly like a died role:
+respawn it once with `dispatch --spawn-role <role>` (an exited pane is not
+"already running"), or fall back below.
+
 If a role has died (pane gone),
 fall back to the normal path for that phase when the engine can spawn a fresh
 context. Pi cannot; on pi, follow the existing unavailable-gate block instead

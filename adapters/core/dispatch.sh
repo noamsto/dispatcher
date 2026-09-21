@@ -125,6 +125,8 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
 PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+# Absolute: role panes run it minutes later from the worktree, not from this cwd.
+dispatch_self="$(realpath -- "$0")"
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 
 # Harness skill directory, handed to pi workers via --skill. Same env-override
@@ -294,11 +296,16 @@ seed_pi_agent_dir() {
   exit 1
 }
 
-# split_role_pane <window> <worktree> <role> — create a role pane, decorate it,
-# and echo its pane id.
+# split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
+# role pane, decorate it, and echo its pane id. `tmux new-window -e` scopes to
+# that window's first pane only, so every pane split off it must repeat the lead's
+# identity — the engine wrappers key their config on CREW_WORKER_ID, and a role
+# pane without it runs as a personal session. CREW_ROLE_ID marks the pane as a
+# role so dispatch-notify does not speak for the lead from it. Reads $branch from
+# the caller scope.
 split_role_pane() {
-  local win="$1" wt="$2" role="$3" pane
-  pane="$(tmux split-window -t "$win" -c "$wt" -P -F '#{pane_id}')"
+  local win="$1" wt="$2" role="$3" worker_id="$4" crew_id="$5" pane
+  pane="$(tmux split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -P -F '#{pane_id}')"
   decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
@@ -344,10 +351,16 @@ pi_skill_args() {
 
 # launch_role <pane> <worktree> <role> <agent> <model> <effort> — launch the role's engine
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
-# otherwise). Reads $agent_name from the caller scope.
+# otherwise). Reads $agent_name and $branch from the caller scope.
+#
+# The launch line ends in a `; dispatch --role-exited …` continuation: it runs
+# only when the engine returns to the pane's shell, so an engine that crashes at
+# startup is reported, while a reap (which kills the pane and its shell) is silent.
+# `;` is valid in both fish (the pane shell) and bash.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first exit_hook
   printf -v quoted_model '%q' "$r_model"
+  printf -v exit_hook " ; %q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
   shell_quote quoted_prompt "$prompt"
@@ -359,11 +372,11 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt" Enter
+    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
     ;;
-  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter ;;
-  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" Enter ;;
-  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" Enter ;;
+  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
+  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
+  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
   esac
 }
 
@@ -409,9 +422,21 @@ if [ "${1:-}" = "--role-watch" ]; then
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   role_id="role:$watch_branch:$role"
   since="$(jq -nc 'now*1000|floor')"
-  tmux set-option -p -t "$watch_pane" @crew_state idle 2>/dev/null || true
-  # Exits when the pane is gone (role reaped, or the window closed).
+  # --role-exited marks a dead role with @crew_exited, an option this watcher
+  # never writes: the state border may flicker, but a dead role can never read as
+  # live to --spawn-role, and no assignment is typed into its shell prompt.
+  watch_exited() {
+    [ "$(tmux display-message -p -t "$watch_pane" '#{@crew_exited}' 2>/dev/null || true)" = 1 ]
+  }
+  watch_set_state() {
+    watch_exited && return 0
+    tmux set-option -p -t "$watch_pane" @crew_state "$1" 2>/dev/null || true
+  }
+  watch_set_state idle
+  # Exits when the pane is gone (role reaped, or the window closed) or its
+  # engine has exited.
   while tmux display-message -p -t "$watch_pane" '#{pane_id}' >/dev/null 2>&1; do
+    watch_exited && break
     if [ -f "$log" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
         'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
@@ -420,12 +445,13 @@ if [ "${1:-}" = "--role-watch" ]; then
           if [ "$(printf '%s' "$ev" | jq -r '.to // ""')" = "$role_id" ]; then
             body="$(printf '%s' "$ev" | jq -r '.body // ""')"
             [ -n "$body" ] || continue
-            tmux set-option -p -t "$watch_pane" @crew_state working 2>/dev/null || true
+            watch_exited && continue
+            watch_set_state working
             tmux send-keys -t "$watch_pane" -l "Assignment: $body" 2>/dev/null || true
             tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           else
             # A verdict from the role — it is idle again.
-            tmux set-option -p -t "$watch_pane" @crew_state idle 2>/dev/null || true
+            watch_set_state idle
           fi
         done
         next="$(printf '%s\n' "$batch" | jq -s 'map(.ts) | max // empty')"
@@ -513,14 +539,20 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
-  existing="$(tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | awk -v r="$role" '$2 == r {print $1; exit}')"
+  existing="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{?@crew_exited,exited,live}' | awk -F'|' -v r="$role" '$2 == r && $3 != "exited" {print $1; exit}')"
   if [ -n "$existing" ]; then
     echo "role $role is already running in pane $existing"
     exit 0
   fi
+  spawn_worker_id="${CREW_WORKER_ID:-$(sed -n 's/^worker_id: //p' WORKER_TASK.md)}"
+  spawn_crew_id="${CREW_ID:-$(sed -n 's/^crew_id: //p' WORKER_TASK.md)}"
+  if [ -z "$spawn_worker_id" ] || [ -z "$spawn_crew_id" ]; then
+    echo "dispatch: --spawn-role: no worker_id/crew_id in the environment or WORKER_TASK.md — a role pane without them runs as a personal session" >&2
+    exit 1
+  fi
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
-  role_pane="$(split_role_pane "$win" "$PWD" "$role")"
+  role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
@@ -540,6 +572,56 @@ if [ "${1:-}" = "--reap-roles" ]; then
     tmux kill-pane -t "$p" 2>/dev/null || true
   done
   echo "reaped role panes"
+  exit 0
+fi
+
+# `dispatch --role-exited <role> --branch <b> --pane <p>` — the continuation typed
+# after a role's engine command (see launch_role); it runs only once that engine
+# is back at the pane's shell. @crew_exited is a pane-local marker, unrelated to
+# the bus `exited` state. A lead's `{"final":true}` release is the graceful exit and
+# stays silent; --since is the launch time, so a `final` sent to an earlier
+# incarnation of the role does not hide this crash. Anything else is a role that
+# died before its verdict: tell the dispatcher (`blocked` wakes `crew watch`;
+# `exited` would not) and the lead, whose `crew await` would otherwise wait forever.
+if [ "${1:-}" = "--role-exited" ]; then
+  role="${2:-}"
+  [ -n "$role" ] || {
+    echo "dispatch: --role-exited needs a role name" >&2
+    exit 1
+  }
+  shift 2
+  exited_branch=""
+  exited_pane=""
+  exited_since=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --branch) exited_branch="${2:-}"; shift 2 ;;
+    --pane) exited_pane="${2:-}"; shift 2 ;;
+    --since) exited_since="${2:-0}"; shift 2 ;;
+    *)
+      echo "dispatch: --role-exited: unexpected argument '$1'" >&2
+      exit 1
+      ;;
+    esac
+  done
+  [ -n "$exited_pane" ] || {
+    echo "dispatch: --role-exited needs --pane <id>" >&2
+    exit 1
+  }
+  exited_branch="${exited_branch:-$(git branch --show-current)}"
+  role_id="role:$exited_branch:$role"
+  tmux set-option -p -t "$exited_pane" @crew_exited 1 2>/dev/null || true
+  tmux set-option -p -t "$exited_pane" @crew_state exited 2>/dev/null || true
+  log="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)/crew/events.jsonl"
+  if [ -f "$log" ] && jq -e --arg me "$role_id" --argjson since "$exited_since" \
+    'select(.kind=="msg" and .to==$me and .ts>=$since and ((.body | fromjson? // {} | objects | .final) == true))' "$log" >/dev/null 2>&1; then
+    exit 0
+  fi
+  crew status "$role_id" blocked "role $role engine exited (pane $exited_pane)" || true
+  lead_id="${CREW_WORKER_ID:-$(sed -n 's/^worker_id: //p' WORKER_TASK.md 2>/dev/null | head -1 || true)}"
+  if [ -n "$lead_id" ]; then
+    crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$exited_pane" '{role:$r,event:"role_exited",pane:$p,detail:"engine exited before a verdict"}')" || true
+  fi
   exit 0
 fi
 
@@ -1960,7 +2042,7 @@ fi
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     role="${role_names[$i]}"
-    role_pane="$(split_role_pane "$win" "$wt_path" "$role")"
+    role_pane="$(split_role_pane "$win" "$wt_path" "$role" "$worker_id" "$crew_id")"
     launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     watch_role "$role" "$role_pane"
   done
@@ -1969,8 +2051,7 @@ fi
 
 # Optional live status pane (--status): a bounded roster loop over the crew bus.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
-  status_pane="$(tmux split-window -t "$win" -c "$wt_path" -P -F '#{pane_id}')"
-  decorate_pane "$status_pane" status
+  status_pane="$(split_role_pane "$win" "$wt_path" status "$worker_id" "$crew_id")"
   tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
   layout_grid "$win"
 fi

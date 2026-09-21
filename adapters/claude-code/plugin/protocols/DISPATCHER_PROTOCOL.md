@@ -334,6 +334,12 @@ is back.
   for pi standard/deep, and a usage error together with `--grid` or
   `--roles`. Role panes share the worktree, communicate through the bus, and
   never own the PR.
+- **Role panes inherit the lead's identity.** Every role pane (eager, `--status`,
+  and `--spawn-role`) is split with the lead's `CREW_WORKER_ID` and `CREW_ID`, plus
+  `CREW_ROLE_ID` so `dispatch-notify` never posts the lead's `exited` from a role
+  session. A role whose engine exits before the lead's `final` release posts a
+  `blocked` status under `role:<branch>:<role>` (which wakes `crew watch`) and
+  messages the lead; a reap is silent.
 - **Lazy grid.** `--lazy` records the topology to `roles.json` in the crew
   dir and stamps `lazy: 1` into `WORKER_TASK.md`, but creates **no** panes up
   front — the lead materializes each role on demand with
