@@ -75,6 +75,20 @@ stub_tmux() {
   ! grep -q display-message "$STUB_LOG"
 }
 
+@test "notify: a grid role pane carrying the lead's CREW_WORKER_ID writes nothing and pings nothing" {
+  stub_tmux
+  task_doc %9
+  seed_status working
+  before="$BATS_TEST_TMPDIR/events.before"
+  cp "$LOG" "$before"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_ROLE_ID=role:feat/x:reviewer run run_notify
+  [ "$status" -eq 0 ]
+
+  cmp -s "$LOG" "$before"
+  ! grep -q display-message "$STUB_LOG"
+}
+
 @test "notify: roster still reports the live session after a session-less SessionEnd" {
   stub_tmux
   task_doc %9

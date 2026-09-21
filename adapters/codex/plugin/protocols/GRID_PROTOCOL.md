@@ -21,6 +21,11 @@ Read `WORKER_TASK.md` for `tier:`, `crew_id:`, and the task body. Use `$id` as
 your agent id for every bus call. Read `worker_id:` as `lead_id`; replies must
 target that exact session id, not the branch-only legacy identity.
 
+Your pane is created with the lead's `CREW_WORKER_ID` and `CREW_ID` in its
+environment (so your engine loads the same worker config as the lead). That
+`CREW_WORKER_ID` is the **lead's** id: never use it as your own bus id — always
+post as `$id`.
+
 ## First action
 
 Announce yourself, then **end your turn**:
@@ -82,6 +87,11 @@ status ages past reap's idle threshold and reap kills the window (see
 may post a `status failed` with detail `no assignment` first; that row is
 `role:`-prefixed, so it never folds into `crew rate`/`crew retro` outcome
 classification and is never recorded as a worker failure (#194).
+If your engine exits before the lead sent `final`, the pane's exit hook posts
+`crew status role:<branch>:<role> blocked "role <role> engine exited (pane <id>)"`
+and a `{"role":"<role>","event":"role_exited","pane":"<id>",…}` msg to the lead,
+so a dead role is visible rather than an idle shell. A reap kills the pane
+without running the hook, and a `final` release exits silently.
 Re-read `worker_id:` immediately before every reply because a resumed lead has a
 new session id while your role pane may survive:
 
