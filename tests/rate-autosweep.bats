@@ -414,7 +414,6 @@ await_log() {
     sleep 0.1
   done
   [ "$(wc -l <"$XDG_DATA_HOME/crew/autosweep.log")" -eq 200 ]
-  # Newest lines survive, oldest are gone.
   grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
   ! grep -qx '1' "$XDG_DATA_HOME/crew/autosweep.log"
 }
