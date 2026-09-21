@@ -1856,7 +1856,10 @@ $hits"
       '`#N — short title`' \
       'follow-ups (untracked):' \
       'A task doc with no `Closes` line (a `pr:`-stamped `--pr N` implement worker) leaves the tracker unknown' \
-      'A `kind: review` worker files nothing'; do
+      'A `kind: review` worker files nothing' \
+      'crew status "$CREW_WORKER_ID" done "follow-ups: #N, #M"' \
+      'File them before posting `pr_open`' \
+      'it adds no round and needs no re-review'; do
       run grep -F "$statement" "$ROOT/$doc"
       [ "$status" -eq 0 ]
     done
