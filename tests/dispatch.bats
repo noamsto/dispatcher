@@ -730,16 +730,14 @@ EOF
   [[ "${argv[15]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
 }
 
-# #216/#217: the POSIX single-quote-escape idiom (escaped=${prompt//\'/\'\\\'\'};
-# quoted_prompt="'$escaped'") is now the one thing standing between six call
-# sites (the four main launch branches plus launch_role's prompt and first)
-# and shell injection. Neither $prompt nor $first carries an apostrophe today,
-# so this proves the MECHANISM itself is sound rather than replaying today's
-# inputs: it runs the exact two-line formula against a string hostile enough
-# to have broken naive escaping — an embedded quote, a semicolon, a backtick
-# command substitution, and a $(...) command substitution — and checks what a
-# real shell does with the result.
-@test "the single-quote-escape idiom neutralizes a hostile prompt string" {
+# #216/#217/#230: dispatch.sh's shell_quote helper is the one thing standing
+# between six call sites (the four main launch branches plus launch_role's
+# prompt and first) and shell injection. This proves the MECHANISM itself is
+# sound: it runs the real helper against a string hostile enough to have broken
+# naive escaping — quotes, a semicolon, a backtick command substitution, a
+# $(...) command substitution, a variable, an em dash — and checks what a real
+# shell does with the result.
+@test "shell_quote neutralizes a hostile prompt string" {
   marker1="$BATS_TEST_TMPDIR/pwned_marker"
   marker2="$BATS_TEST_TMPDIR/pwned_marker2"
   rm -f "$marker1" "$marker2"
@@ -755,34 +753,113 @@ exit 0
 EOF
   chmod +x "$stub"
 
-  prompt="it's over; \`touch $marker1\`; \$(touch $marker2)"
-  escaped=${prompt//\'/\'\\\'\'}
-  quoted_prompt="'$escaped'"
+  # Backslashes are the fish trap: fish reads \\ and \' as escapes inside
+  # single quotes, bash does not, so they must be quoted out.
+  prompt="it's \"over\"; \`touch $marker1\`; \$(touch $marker2) — \$HOME a\\\\b x\\'y end\\"
+  eval "$(sed -n '/^shell_quote() {/,/^}/p' "$DISPATCH")"
+  shell_quote quoted_prompt "$prompt"
 
-  bash -c "$stub $quoted_prompt"
+  # bash is the CI shell; fish is the real pane shell, so replay through it too
+  # wherever it is installed.
+  shells=(bash)
+  command -v fish >/dev/null && shells+=(fish)
+  for sh in "${shells[@]}"; do
+    rm -f "$argv_file"
+    "$sh" -c "$stub $quoted_prompt"
 
+    argv=()
+    while IFS= read -r -d '' arg; do
+      argv+=("$arg")
+    done <"$argv_file"
+
+    # Exactly one argument reached the stub — no word-splitting on the
+    # semicolon or the quote — and the text made it through byte-for-byte.
+    [ "${#argv[@]}" -eq 1 ]
+    [ "${argv[0]}" = "$prompt" ]
+    # Neither command substitution ran.
+    [ ! -e "$marker1" ]
+    [ ! -e "$marker2" ]
+  done
+}
+
+@test "shell_quote is applied at every prompt-quoting call site" {
+  # Six call sites build their tmux send-keys prompt this way: the four main
+  # launch branches (codex, cursor, pi, claude) plus launch_role's $prompt and
+  # $first. A change to this count means a call site was added, removed, or
+  # reverted to hand-rolled quoting — worth a second look either way.
+  [ "$(grep -cF -- 'shell_quote quoted_' "$DISPATCH")" -eq 6 ]
+  [ "$(grep -cF -- 'escaped=${' "$DISPATCH")" -eq 0 ]
+}
+
+# Replays the lead's send-keys command through bash with a stub engine binary
+# first on PATH, leaving the argv the stub received in the global `argv`.
+# $1 is the engine binary, $2 a fixed substring selecting the lead's line
+# (role panes launch the same binary).
+_replay_lead_launch() {
+  local bin="$1" marker="$2" launch cmd arg
+  cat >"$STUB_DIR/$bin" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >"$STUB_DIR/engine_argv"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/$bin"
+  launch="$(grep 'send-keys' "$STUB_LOG" | grep -F -- "$marker")"
+  [ -n "$launch" ]
+  [ "$(printf '%s\n' "$launch" | wc -l)" -eq 1 ]
+  cmd="${launch#send-keys -t %1 }"
+  cmd="${cmd% Enter}"
+  bash -c "$cmd"
   argv=()
   while IFS= read -r -d '' arg; do
     argv+=("$arg")
-  done <"$argv_file"
-
-  # Exactly one argument reached the stub — no word-splitting on the
-  # semicolon or the quote.
-  [ "${#argv[@]}" -eq 1 ]
-  # The text made it through byte-for-byte: quote, semicolon, backtick and
-  # $(...) all literal.
-  [ "${argv[0]}" = "$prompt" ]
-  # Neither command substitution ran.
-  [ ! -e "$marker1" ]
-  [ ! -e "$marker2" ]
+  done <"$STUB_DIR/engine_argv"
 }
 
-@test "the escape idiom is applied at every prompt-quoting call site" {
-  # Six call sites now build their tmux send-keys prompt this way: the four
-  # main launch branches (codex, cursor, pi, claude) plus launch_role's
-  # $prompt and $first. A change to this count means a call site was added,
-  # removed, or reverted to manual quoting — worth a second look either way.
-  [ "$(grep -cF -- 'escaped=${' "$DISPATCH")" -eq 6 ]
+# #230: every engine's lead launch must hand the engine the whole prompt —
+# apostrophes from grid_note included — as exactly one trailing argument.
+@test "grid_note's apostrophes survive into the claude lead's argv as one prompt argument" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "claude grid apostrophe repro"
+  [ "$status" -eq 0 ]
+
+  _replay_lead_launch claude "claude --name iris --model"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
+  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[last]}" == *"(a reviewer pane is additive, except on pi where it is the gate)." ]]
+  # No fragment of the prompt leaked into an earlier argument.
+  for ((i = 0; i < last; i++)); do
+    [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
+  done
+}
+
+@test "grid_note's apostrophes survive into the cursor lead's argv as one prompt argument" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "cursor grid apostrophe repro"
+  [ "$status" -eq 0 ]
+
+  _replay_lead_launch cursor-agent "--model 'kimi-k3-high' 'Read"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end."* ]]
+  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  for ((i = 0; i < last; i++)); do
+    [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
+  done
+}
+
+@test "grid_note's apostrophes survive into the pi lead's argv as one prompt argument" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi grid apostrophe repro"
+  [ "$status" -eq 0 ]
+
+  # The lead is the one pi launch without a role suffix on --name.
+  _replay_lead_launch pi "pi --name iris --model"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
+  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  for ((i = 0; i < last; i++)); do
+    [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
+  done
 }
 
 @test "--grid derives the role topology from the tier" {
