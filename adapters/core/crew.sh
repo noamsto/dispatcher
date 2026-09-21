@@ -5,8 +5,9 @@
 # shebang + `set -euo pipefail` are prepended by writeShellApplication, so this
 # source omits them (the shell= directive above keeps standalone shellcheck happy).
 
-# Index-aligned codename pool (FleetView-style). identity is deterministic over
-# the branch, so any caller recomputes the same name/color — never stored.
+# Index-aligned codename pool (FleetView-style). `dispatch` picks a free slot
+# (hash of the branch, stepped forward past live workers) and records it on the
+# dispatch event; the pure hash is only the fallback for a branch with no record.
 # _tmuxc are mid-tone 256-palette codes chosen for legibility on BOTH Catppuccin
 # Latte (light) and Mocha (dark): each clears ~2.5:1 contrast (most >3:1) on
 # either base, so the badge lazytmux tints doesn't wash out when the theme flips.
@@ -15,7 +16,7 @@
 # 32 slots, not 16: identity is `cksum % pool`, so collisions follow the birthday
 # bound — at 16 a 4-worker crew collided about half the time (one run put #158,
 # #164 and #221 all on "sage"). 32 roughly halves it; `roster` still disambiguates
-# whatever slips through, because no stateless hash can guarantee uniqueness.
+# whatever slips through for legacy events with no recorded name.
 # The 16 added codes were picked by measured WCAG contrast against both bases
 # (worst added: 2.86 mocha / 2.88 latte — above the 2.54 floor of the original 16).
 _names=(sage atlas nova ember reef iris amber coral moss slate rust plum lime rose sky onyx
@@ -25,12 +26,70 @@ _colors=(green blue magenta orange teal purple yellow salmon olive steel rust pl
 _tmuxc=(colour28 colour32 colour127 colour130 colour30 colour98 colour136 colour167 colour100 colour67 colour166 colour96 colour64 colour162 colour25 colour244
   colour29 colour31 colour61 colour65 colour94 colour97 colour101 colour102 colour131 colour132 colour137 colour160 colour163 colour168 colour169 colour68)
 
-_identity() { # $1=branch -> {name,color,tmux}; cksum is POSIX (portable to macOS)
-  local n i
-  n=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
-  i=$((n % ${#_names[@]}))
-  jq -nc --arg name "${_names[$i]}" --arg color "${_colors[$i]}" --arg tmux "${_tmuxc[$i]}" \
+_identity_at() { # $1=slot -> {name,color,tmux}
+  jq -nc --arg name "${_names[$1]}" --arg color "${_colors[$1]}" --arg tmux "${_tmuxc[$1]}" \
     '{name:$name, color:$color, tmux:$tmux}'
+}
+
+_identity_slot() { # $1=branch -> hash slot; cksum is POSIX (portable to macOS)
+  local n
+  n=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
+  echo $((n % ${#_names[@]}))
+}
+
+_identity() { # $1=branch -> {name,color,tmux}
+  _identity_at "$(_identity_slot "$1")"
+}
+
+# _identity_recorded <branch> — the identity `dispatch` recorded for this branch
+# (latest dispatch event that carries one), or nothing for a legacy branch.
+_identity_recorded() {
+  [ -f "$log" ] || return 0
+  jq -c -s --arg b "$1" '
+    map(select(.kind == "dispatch" and .branch == $b and .name != null))
+    | last // empty | {name, color, tmux}' "$log" 2>/dev/null || true
+}
+
+# _identity_assign <branch> <crew> — the identity a dispatch should stamp: the
+# branch's recorded one, else its hash slot stepped forward to the first codename
+# no live worker holds. Live = the crew's dispatched branches whose latest status
+# is not terminal, plus every tmux window already carrying @crew_name. The caller
+# serialises concurrent dispatches (see dispatch.sh), so the pick is race-free.
+_identity_assign() {
+  local rec occ br name i slot base
+  rec=$(_identity_recorded "$1")
+  if [ -n "$rec" ]; then
+    printf '%s\n' "$rec"
+    return 0
+  fi
+  occ=""
+  if [ -f "$log" ]; then
+    while IFS=$'\t' read -r br name; do
+      [ -n "$br" ] || continue
+      if [ -z "$name" ]; then
+        name=$(_identity "$br" | jq -r .name)
+      fi
+      occ="$occ $name "
+    done < <(jq -r -s --arg crew "$2" '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+      (map(select(.crew_id == $crew and .kind == "status" and ((.from // "") | startswith("worker:"))))
+        | group_by(.from | wid_branch)
+        | map({key: (.[0].from | wid_branch), value: (max_by(.ts) | .body.state)}) | from_entries) as $st
+      | map(select(.crew_id == $crew and .kind == "dispatch"))
+      | group_by(.branch) | map(last)
+      | .[] | select(($st[.branch] // "") | IN("done", "failed", "exited") | not)
+      | [.branch, (.name // "")] | @tsv' "$log")
+  fi
+  occ="$occ $(tmux list-windows -a -F '#{@crew_name}' 2>/dev/null | tr '\n' ' ') "
+  base=$(_identity_slot "$1")
+  slot=$base
+  for ((i = 0; i < ${#_names[@]}; i++)); do
+    slot=$(((base + i) % ${#_names[@]}))
+    case "$occ" in *" ${_names[$slot]} "*) ;; *) break ;; esac
+  done
+  # Every codename taken: fall back to the hash slot rather than refuse.
+  case "$occ" in *" ${_names[$slot]} "*) slot=$base ;; esac
+  _identity_at "$slot"
 }
 
 # _is_engine_cmd <pane_current_command> — is this pane running an agent engine?
@@ -518,14 +577,6 @@ if [ "$sub" = new ]; then
   printf '%s\n' "$(date +%s)-$$"
   exit 0
 fi
-if [ "$sub" = identity ]; then
-  [ -n "${1:-}" ] || {
-    echo "crew: identity <branch>" >&2
-    exit 1
-  }
-  _identity "$1"
-  exit 0
-fi
 if [ "$sub" = occupants ]; then
   [ -n "${1:-}" ] || {
     echo "crew: occupants <worktree-path>" >&2
@@ -564,6 +615,19 @@ if [ -z "$common" ]; then
 fi
 dir="$common/crew"
 log="$dir/events.jsonl"
+
+if [ "$sub" = identity ]; then
+  [ -n "${1:-}" ] || {
+    echo "crew: identity <branch> [crew]" >&2
+    exit 1
+  }
+  if [ "$1" = --hash ]; then
+    _identity "${2:?crew: identity --hash <name>}"
+    exit 0
+  fi
+  _identity_assign "$1" "${2:-$(_crew_id)}"
+  exit 0
+fi
 
 case "$sub" in
 status | msg)
@@ -1643,11 +1707,12 @@ $(printf '%s' "$base" | jq -c '.[]')
 EOF
   idmap='{}'
   for br in $(printf '%s' "$resolved" | jq -r '.[].branch'); do
-    id=$(_identity "$br")
+    id=$(_identity_recorded "$br")
+    [ -n "$id" ] || id=$(_identity "$br")
     idmap=$(printf '%s' "$idmap" | jq -c --arg k "$br" --argjson v "$id" '. + {($k): $v}')
   done
-  # Disambiguate colliding codenames. identity is a stateless hash, so two live
-  # workers can legitimately land on the same name; suffix the issue/ticket token
+  # Disambiguate colliding codenames. Legacy events carry no recorded name, so two
+  # live workers can still land on the same hash slot; suffix the issue/ticket token
   # from the branch (feat/207-… -> sage·207, eng-6789-… -> sage·eng-6789) so
   # "coral is blocked" stays a unique referent. Only collisions are suffixed.
   # prev_state is internal to the resolve step above — drop it unless it explains
