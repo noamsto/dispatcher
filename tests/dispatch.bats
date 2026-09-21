@@ -875,7 +875,7 @@ EOF
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
   [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
-  [[ "${argv[last]}" == *"(a reviewer pane is additive, except on pi where it is the gate)." ]]
+  [[ "${argv[last]}" == *"(a reviewer pane is additive, except on pi where it is the gate)."* ]]
   # No fragment of the prompt leaked into an earlier argument.
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
@@ -909,6 +909,24 @@ EOF
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
   done
+}
+
+@test "claude lead: protocol_dir is stamped in the task doc and named in the prompt" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "claude protocol dir"
+  [ "$status" -eq 0 ]
+  grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$TEST_REPO/.dispatch-wt/feat-42-claude-protocol-dir/WORKER_TASK.md"
+  _replay_lead_launch claude "claude --name iris --model"
+  [[ "${argv[$((${#argv[@]} - 1))]}" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
+}
+
+@test "pi lead: protocol_dir is stamped in the task doc and named in the prompt" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi protocol dir"
+  [ "$status" -eq 0 ]
+  grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$TEST_REPO/.dispatch-wt/feat-42-pi-protocol-dir/WORKER_TASK.md"
+  _replay_lead_launch pi "pi --name iris --model"
+  [[ "${argv[$((${#argv[@]} - 1))]}" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
 }
 
 @test "--grid derives the role topology from the tier" {

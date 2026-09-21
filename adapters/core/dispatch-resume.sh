@@ -452,6 +452,7 @@ _hdr_set() { # $1=field  $2=value
 }
 _hdr_set worker_id "$worker_id"
 _hdr_set resume true
+_hdr_set protocol_dir "$PROTOCOL_DIR"
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
@@ -535,6 +536,8 @@ medium) codex_subagent_effort=low ;;
 low) codex_subagent_effort=low ;;
 esac
 
+protocol_note=" Protocol files (EVIDENCE_REVIEW.md, GRID_PROTOCOL.md, ...) live in $PROTOCOL_DIR — also stamped as protocol_dir: in WORKER_TASK.md."
+
 # Printed so the dispatcher can address this session in the gap before the worker
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
 echo "worker_id: $worker_id"
@@ -543,17 +546,17 @@ if [ "$agent" = codex ]; then
   cont="resume --last"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
 elif [ "$agent" = cursor ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
 elif [ "$agent" = pi ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""
@@ -561,7 +564,7 @@ else
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
   tmux send-keys -t "$pane" \
-    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}'" Enter
+    "CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'" Enter
 fi
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
