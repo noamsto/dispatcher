@@ -121,10 +121,7 @@ if [ -n "${TMUX:-}" ]; then
   fi
 fi
 
-# A bare `dispatcher` is the usual launch (issues get pasted afterwards), so the
-# name must tell sessions apart in tmux and in the engine's resume picker on its
-# own: repo of the main checkout + launch minute. Only claude and pi have a name
-# flag; codex and cursor sessions stay unnamed.
+# Only claude and pi have a name flag; codex and cursor sessions stay unnamed.
 if [ -n "$task" ]; then
   session_name="dispatcher: $task"
 else
