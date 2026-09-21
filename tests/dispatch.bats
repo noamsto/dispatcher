@@ -753,26 +753,33 @@ exit 0
 EOF
   chmod +x "$stub"
 
-  prompt="it's \"over\"; \`touch $marker1\`; \$(touch $marker2) — \$HOME"
+  # Backslashes are the fish trap: fish reads \\ and \' as escapes inside
+  # single quotes, bash does not, so they must be quoted out.
+  prompt="it's \"over\"; \`touch $marker1\`; \$(touch $marker2) — \$HOME a\\\\b x\\'y end\\"
   eval "$(sed -n '/^shell_quote() {/,/^}/p' "$DISPATCH")"
   shell_quote quoted_prompt "$prompt"
 
-  bash -c "$stub $quoted_prompt"
+  # bash is the CI shell; fish is the real pane shell, so replay through it too
+  # wherever it is installed.
+  shells=(bash)
+  command -v fish >/dev/null && shells+=(fish)
+  for sh in "${shells[@]}"; do
+    rm -f "$argv_file"
+    "$sh" -c "$stub $quoted_prompt"
 
-  argv=()
-  while IFS= read -r -d '' arg; do
-    argv+=("$arg")
-  done <"$argv_file"
+    argv=()
+    while IFS= read -r -d '' arg; do
+      argv+=("$arg")
+    done <"$argv_file"
 
-  # Exactly one argument reached the stub — no word-splitting on the
-  # semicolon or the quote.
-  [ "${#argv[@]}" -eq 1 ]
-  # The text made it through byte-for-byte: quote, semicolon, backtick and
-  # $(...) all literal.
-  [ "${argv[0]}" = "$prompt" ]
-  # Neither command substitution ran.
-  [ ! -e "$marker1" ]
-  [ ! -e "$marker2" ]
+    # Exactly one argument reached the stub — no word-splitting on the
+    # semicolon or the quote — and the text made it through byte-for-byte.
+    [ "${#argv[@]}" -eq 1 ]
+    [ "${argv[0]}" = "$prompt" ]
+    # Neither command substitution ran.
+    [ ! -e "$marker1" ]
+    [ ! -e "$marker2" ]
+  done
 }
 
 @test "shell_quote is applied at every prompt-quoting call site" {

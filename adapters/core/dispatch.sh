@@ -305,14 +305,22 @@ split_role_pane() {
 
 # shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
 # for splicing into a tmux send-keys command line the pane's own shell re-parses.
-# Embedded ' is closed, escaped, and reopened, so no character in the text
-# (quotes, $, backticks, em dashes) can split the argument or be expanded. Not
-# printf %q: that emits $'…' for non-printables or under a C locale, which
-# fish — the pane shell — cannot parse.
+# ' and \ are closed out of the quotes and escaped outside them, the one form
+# bash and fish agree on: fish (the pane shell) reads \\ and \' as escapes even
+# inside single quotes. Not printf %q: that emits $'…' for non-printables or
+# under a C locale, which fish cannot parse.
 shell_quote() {
   local -n _out="$1"
-  local _text="$2"
-  _out="'${_text//\'/\'\\\'\'}'"
+  local _text="$2" _res="" _c _i
+  for ((_i = 0; _i < ${#_text}; _i++)); do
+    _c="${_text:_i:1}"
+    case "$_c" in
+    "'") _res+="'\\''" ;;
+    "\\") _res+="'\\\\'" ;;
+    *) _res+="$_c" ;;
+    esac
+  done
+  _out="'$_res'"
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
