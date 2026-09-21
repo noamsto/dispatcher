@@ -663,6 +663,16 @@ Two reads remain for detail:
   by typing).
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
 
+## Retitle your window after triage
+
+The launcher names a bare session `dispatcher · <repo> · <MM-DD HH:MM>`; that is all the engine's session history will ever show, because no engine offers a supported way to rename a running session (claude's `/rename` is user-typed only, pi has no rename API, and transcript files are never edited). The tmux window title is different — you can set it. After the first triage, and again when the crew's batch changes materially, retitle to the batch, e.g. `dispatch: #240 #241 #245`. Optional tools, guarded — never fail if absent:
+
+```bash
+command -v claude-status-update >/dev/null && claude-status-update name set "dispatch: #240 #241 #245"
+```
+
+Keep the title short (40 cells) and start it with a letter or digit — a leading `#` is stripped. Without `claude-status-update`, inside tmux use `tmux rename-window "dispatch: #240 #241 #245"`; outside tmux skip it. Leave the `@crew_name` badge alone.
+
 ## Roster diagram
 
 Keep a live picture of the crew in the aeye carousel. Whenever the roster changes

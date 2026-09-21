@@ -87,6 +87,38 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "a bare launch names the session by repo and launch minute" {
+  CREW_ID=c1 run_launcher
+  run grep -E -- "--name dispatcher · $(basename "$TEST_REPO") · [0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}( |$)" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "the repo in the name is the main checkout, not a worktree dir" {
+  git commit -q --allow-empty -m init
+  git worktree add -q "$BATS_TEST_TMPDIR/wt-elsewhere"
+  cd "$BATS_TEST_TMPDIR/wt-elsewhere"
+  CREW_ID=c1 run_launcher
+  run grep -F -- "--name dispatcher · $(basename "$TEST_REPO") · " "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "a bare launch outside a git repo still names the session" {
+  cd "$BATS_TEST_TMPDIR"
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  run grep -E -- "--name dispatcher · $(basename "$BATS_TEST_TMPDIR") · [0-9]{2}-" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "pi gets the same unique name" {
+  CREW_ID=c1 run_launcher --agent pi
+  run grep -E -- "--name dispatcher · $(basename "$TEST_REPO") · [0-9]{2}-" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run_launcher --agent pi fix it
+  run grep -F -- '--name dispatcher: fix it' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "injects the protocol as a first prompt for codex" {
   DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
   run grep -F -- 'Read /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
