@@ -900,6 +900,17 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   ! _precheck_ignores_map
 }
 
+@test "resume escalation: a header claiming sonnet/standard cannot borrow a trivial-tier failure" {
+  setup_worker_wt
+  _resume_esc_seed
+  sed -i 's/"model":"sonnet","tier":"standard"/"model":"haiku","tier":"trivial"/' "$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+  ! _precheck_ignores_map
+}
+
 @test "resume escalation: an opus id that only shares the target as a prefix is refused" {
   setup_worker_wt
   sed -i 's/^engine: claude/engine: cursor/; s/^model: sonnet/model: cursor-grok-4.6-medium/' "$WT/WORKER_TASK.md"

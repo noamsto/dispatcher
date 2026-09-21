@@ -1005,8 +1005,9 @@ _escalation_target() {
 
 # _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
 # dispatch that the branch's latest terminal worker status (failed/done/pr_open)
-# ended, provided that status is `failed` and the dispatch ran at <tier>.
-# Prints nothing when the branch is not currently failed at that tier.
+# ended, provided that status is `failed` and that dispatch ran at <tier>. The
+# dispatch is the failing worker's own session; a resume-only session falls back
+# to the latest dispatch before the failure. Prints nothing otherwise.
 _prior_failed_model() {
   local branch="$1" dir="$2" tier="$3" events
   events="$dir/events.jsonl"
@@ -1018,11 +1019,11 @@ _prior_failed_model() {
         and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
         | sort_by(.ts) | last) as $last
     | if $last == null or $last.body.state != "failed" then empty
-      else $all
-      | map(select(.kind == "dispatch" and .branch == $b and .tier == $t
-          and .ts < $last.ts))
-      | sort_by(-.ts)
-      | .[0].model // empty
+      else ($last.from | sub("^worker:[^#]*#"; "")) as $sess
+      | ($all | map(select(.kind == "dispatch" and .branch == $b and .ts < $last.ts))) as $ds
+      | ((($ds | map(select(.session == $sess)) | last)
+          // ($ds | sort_by(.ts) | last))) as $d
+      | if $d != null and $d.tier == $t then $d.model // empty else empty end
       end
   ' "$events" 2>/dev/null || true
 }

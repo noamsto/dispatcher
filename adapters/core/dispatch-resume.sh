@@ -309,6 +309,31 @@ _escalation_target() {
   esac
 }
 
+# _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
+# dispatch that the branch's latest terminal worker status (failed/done/pr_open)
+# ended, provided that status is `failed` and that dispatch ran at <tier>. The
+# dispatch is the failing worker's own session; a resume-only session falls back
+# to the latest dispatch before the failure. Prints nothing otherwise.
+_prior_failed_model() {
+  local branch="$1" dir="$2" tier="$3" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 0
+  jq -r --arg b "$branch" --arg t "$tier" '
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "status" and
+        ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+        | sort_by(.ts) | last) as $last
+    | if $last == null or $last.body.state != "failed" then empty
+      else ($last.from | sub("^worker:[^#]*#"; "")) as $sess
+      | ($all | map(select(.kind == "dispatch" and .branch == $b and .ts < $last.ts))) as $ds
+      | ((($ds | map(select(.session == $sess)) | last)
+          // ($ds | sort_by(.ts) | last))) as $d
+      | if $d != null and $d.tier == $t then $d.model // empty else empty end
+      end
+  ' "$events" 2>/dev/null || true
+}
+
 # _escalation_model_matches <target> <model> — true when <model> names the
 # escalation <target> exactly (claude's target is the alias `opus`, which the
 # claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
@@ -370,7 +395,10 @@ if [ -z "$model_flag" ] || [ -n "$ignore_map" ]; then
 else
   orig_model="$(sed -n 's/^model: //p' "$wt_path/WORKER_TASK.md" | head -1)"
   if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
-    escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
+    # The header is worker-writable, so the bus must agree it is what failed.
+    bus_failed_model="$(_prior_failed_model "$branch" "$_escalation_crew_dir" "$tier")"
+    escalation_info=""
+    [ "$bus_failed_model" = "$orig_model" ] && escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
     if [ -n "$escalation_info" ]; then
       escalation_target="${escalation_info#* }"
       if [ "$escalation_target" != "RECORD_ONLY" ]; then
@@ -553,7 +581,7 @@ if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
 fi
 # An escalation is the worker's new launch tuple: without the model line a later
 # plain resume would read the old header and relaunch on the failed rung.
-if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
+if [ -n "${escalated_from:-}" ]; then
   _hdr_set model "$model"
   _hdr_set escalated_from "$escalated_from"
 fi
@@ -561,11 +589,7 @@ fi
 # The resume row. New kind: without it a worker resumed four times reports as
 # one run, and the ratings rollup attributes the whole cost and latency to a
 # single session. prev_worker_id is what chains the sessions back together.
-# escalated_from: stamped only for genuine escalations (not record-only).
-escalated_from_event=""
-if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
-  escalated_from_event="$escalated_from"
-fi
+escalated_from_event="${escalated_from:-}"
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \

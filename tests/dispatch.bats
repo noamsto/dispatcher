@@ -4068,3 +4068,14 @@ _escalation_seed_spoof() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
+
+@test "escalation: a trivial-tier failure after a finished standard run does not unlock standard opus" {
+  stub_launch_bins
+  _esc_dispatch "feat/42-do-a-thing" s1 sonnet standard 100
+  _esc_status "feat/42-do-a-thing" s1 pr_open 150
+  _esc_dispatch "feat/42-do-a-thing" s2 haiku trivial 300
+  _esc_status "feat/42-do-a-thing" s2 failed 400
+  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
