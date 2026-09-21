@@ -322,8 +322,8 @@ _prior_failed_escalation_available() {
     | ([$all[] | select(.kind == "dispatch" and .branch == $b) | .session]) as $sessions
     | [.[] | select(.kind == "status" and .from != null
         and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and .body.state == "failed"
-        and ($sessions | index((.from | sub("^worker:[^#]*#"; ""))) != null))]
+        and .body.state == "failed")]
+    | [.[] | . as $item | ($sessions | index($item.from | sub("^worker:[^#]*#"; ""))) as $idx | select($idx != null)]
     | length > 0
   ' "$events" >/dev/null 2>&1 || return 1
   jq -e --arg b "$branch" '

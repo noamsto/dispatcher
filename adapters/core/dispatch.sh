@@ -1041,8 +1041,8 @@ _prior_failed_escalation_available() {
     | ([$all[] | select(.kind == "dispatch" and .branch == $b) | .session]) as $sessions
     | [.[] | select(.kind == "status" and .from != null
         and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and .body.state == "failed"
-        and ($sessions | index((.from | sub("^worker:[^#]*#"; ""))) != null))]
+        and .body.state == "failed")]
+    | [.[] | . as $item | ($sessions | index($item.from | sub("^worker:[^#]*#"; ""))) as $idx | select($idx != null)]
     | length > 0
   ' "$events" >/dev/null 2>&1 || return 1
   # Check 2: no prior dispatch or resume event on this branch already carries escalated_from?
@@ -1053,6 +1053,17 @@ _prior_failed_escalation_available() {
   ' "$events" >/dev/null 2>&1 || return 1
   return 0
 }
+
+# Pre-compute the branch and crew_dir for escalation checks (normally
+# computed after this gate). At this point $* is the title.
+if [ -n "$gh_issue" ]; then
+  _escalation_slug="$(printf '%s' "$*" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')"
+  _escalation_branch="feat/$gh_issue-$_escalation_slug"
+  _escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+else
+  _escalation_branch=""
+  _escalation_crew_dir=""
+fi
 
 # Tier↔model gate (#89). Enforces tier-appropriateness on top of
 # the dispatchability gate above — see dispatch-orchestration.md
@@ -1165,8 +1176,8 @@ if [ -z "$ignore_map" ]; then
   if [ "$tier_ok" = 0 ]; then
     # Escalation: if the model is not in the tier's row but IS the one-rung-up
     # target from the failed model, AND a prior worker ended failed, allow it.
-    if [ -n "${branch:-}" ]; then
-      failed_model="$(_prior_failed_model "$branch" "$crew_dir")"
+    if [ -n "${_escalation_branch:-}" ]; then
+      failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir")"
       if [ -n "$failed_model" ]; then
         escalation_info="$(_escalation_target "$agent" "$tier" "$failed_model")"
         if [ -n "$escalation_info" ]; then
@@ -1174,7 +1185,7 @@ if [ -z "$ignore_map" ]; then
           escalation_target="${escalation_info#* }"
           if [ "$escalation_target" != "RECORD_ONLY" ]; then
             if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
-              if _prior_failed_escalation_available "$branch" "$crew_dir"; then
+              if _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
                 tier_ok=1
                 escalated_from="$escalation_baseline"
               fi
@@ -1192,8 +1203,8 @@ fi
 
 # Record-only escalation: model already in tier's row but one rung up from failed.
 # Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
-if [ "${escalated_from:-}" = "" ] && [ "$tier_ok" = 1 ] && [ -n "${branch:-}" ]; then
-  failed_model="$(_prior_failed_model "$branch" "$crew_dir")"
+if [ "${escalated_from:-}" = "" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
+  failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir")"
   if [ -n "$failed_model" ]; then
     case "$agent:$tier:$failed_model:$model" in
     claude:trivial:haiku:sonnet|claude:trivial:haiku:claude-sonnet-*|\

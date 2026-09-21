@@ -3885,3 +3885,83 @@ EOF2
   [ "$status" -eq 0 ]
   grep -q 'set-window-option -t %1 @crew_name cobalt' "$STUB_LOG"
 }
+
+# ── Escalation tests ────────────────────────────────────────────────
+
+_escalation_seed() {
+  local branch="$1" model="$2" tier="$3" session="${4:-s-test}"
+  local crew_dir="$TEST_REPO/.git/crew"
+  mkdir -p "$crew_dir"
+  jq -nc --arg b "$branch" --arg s "$session" --arg m "$model" --arg t "$tier" '
+    {ts: 100, kind:"dispatch", branch:$b, session:$s,
+     engine:"claude", model:$m, tier:$t, effort:"high",
+     shape:"", task_kind:"implement", title:"test", plan:"required", resume:false}
+  ' >>"$crew_dir/events.jsonl"
+  jq -nc --arg b "$branch" --arg s "$session" '
+    {ts: 200, kind:"status",
+     from:("worker:"+$b+"#"+$s),
+     body:{state:"failed", detail:"test failure"}}
+  ' >>"$crew_dir/events.jsonl"
+}
+
+_escalation_seed_spoof() {
+  local branch="$1"
+  local crew_dir="$TEST_REPO/.git/crew"
+  mkdir -p "$crew_dir"
+  jq -nc --arg b "$branch" '
+    {ts: 200, kind:"status",
+     from:("worker:"+$b+"#s-nonexistent"),
+     body:{state:"failed", detail:"fake failure"}}
+  ' >>"$crew_dir/events.jsonl"
+}
+
+@test "escalation: second dispatch after failed accepts standard opus and records escalated_from" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  events="$TEST_REPO/.git/crew/events.jsonl"
+  run jq -r --arg b "feat/42-do-a-thing" '
+    [., inputs] | map(select(.kind == "dispatch" and .branch == $b and .escalated_from == "sonnet")) | length
+  ' "$events"
+  [ "$output" -gt 0 ]
+}
+
+@test "escalation: failed status with no matching dispatch row does NOT unlock escalation" {
+  stub_launch_bins
+  _escalation_seed_spoof "feat/42-do-a-thing"
+  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
+
+@test "escalation: trivial→opus refuses" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" sonnet trivial
+  run run_dispatch trivial opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not trivial's row"* ]]
+}
+
+@test "escalation: two-rung jump refuses" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" haiku trivial
+  run run_dispatch trivial opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not trivial's row"* ]]
+}
+
+@test "escalation: third attempt refuses (already escalated)" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  local crew_dir="$TEST_REPO/.git/crew"
+  jq -nc --arg b "feat/42-do-a-thing" '
+    {ts: 150, kind:"dispatch", branch:$b, session:"s-escalated",
+     engine:"claude", model:"opus", tier:"standard", effort:"high",
+     shape:"", task_kind:"implement", title:"test", plan:"required", resume:false,
+     escalated_from:"sonnet"}
+  ' >>"$crew_dir/events.jsonl"
+  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
