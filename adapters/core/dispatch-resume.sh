@@ -333,6 +333,10 @@ _prior_failed_escalation_available() {
   ' "$events" >/dev/null 2>&1 || return 1
   return 0
 }
+
+# Pre-compute crew_dir for escalation checks (normally set later at line 477).
+_escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
 # The tier↔model pair was adjudicated when this worker was first dispatched;
@@ -348,7 +352,7 @@ else
       escalation_target="${escalation_info#* }"
       if [ "$escalation_target" != "RECORD_ONLY" ]; then
         if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
-          if _prior_failed_escalation_available "$branch" "$crew_dir"; then
+          if _prior_failed_escalation_available "$branch" "$_escalation_crew_dir"; then
             precheck+=(--ignore-map)
             escalated_from="${escalation_info%% *}"
           fi

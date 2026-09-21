@@ -799,6 +799,26 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
   grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
 }
 
+@test "resume escalation: --model opus succeeds after prior failed with matching dispatch" {
+  setup_worker_wt
+  crew_dir="$TEST_REPO/.git/crew"
+  mkdir -p "$crew_dir"
+  jq -nc --arg b "feat/7-a-thing" '
+    {ts: 100, kind:"dispatch", branch:$b, session:"s1-99",
+     engine:"claude", model:"sonnet", tier:"standard", effort:"medium",
+     shape:"", task_kind:"implement", title:"a thing", plan:"required", resume:false}
+  ' >>"$crew_dir/events.jsonl"
+  jq -nc --arg b "feat/7-a-thing" '
+    {ts: 200, kind:"status",
+     from:("worker:"+$b+"#s1-99"),
+     body:{state:"failed", detail:"test failure"}}
+  ' >>"$crew_dir/events.jsonl"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model opus
+  [ "$status" -eq 0 ]
+}
+
 @test "re-arms the stall watchdog on the resumed pane" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
