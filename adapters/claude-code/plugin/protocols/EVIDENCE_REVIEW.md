@@ -97,7 +97,7 @@ before handling feedback. Persist these fields:
 
 | invariant/family | finding or thread IDs | observed head | fix commit | proof | disposition | rounds used |
 | --- | --- | --- | --- | --- | --- | --- |
-| stable contract, not wording | bot/human IDs, deduplicated | SHA | SHA or pending | test/re-review result | open, fixed, refuted, deferred | 0–2 |
+| stable contract, not wording | bot/human IDs, deduplicated | SHA | SHA or pending | test/re-review result | open, fixed, refuted, deferred (#issue) | 0–2 |
 
 Also persist `recurrence_escalation: unused|used` for the PR/task and, when used,
 the model, affected families, and replacement approach. Thread timestamps,
@@ -134,9 +134,12 @@ resolved correctness findings against the current head as well. When API access
 or pagination is incomplete, report incomplete review state, not comments-clean.
 
 Batch verified in-scope fixes, test, then push and reply with commit and proof.
-Honor the user's approval rules before creating follow-up tickets or issues.
+Workers' follow-up issues under `WORKER_PROTOCOL.md` "Deferred findings" carry
+standing approval; other callers (direct commands, PR shepherds) still honor the
+user's approval rules before creating follow-up tickets or issues.
 Unanswered questions and unapproved correctness deferrals stay pending; a
-non-blocking deferral needs an explicit scope decision and tracking reference.
+non-blocking deferral needs an explicit scope decision and tracking reference,
+which is that follow-up issue.
 
 Before reporting clean, refresh the head SHA, checks, and feedback: checks and
 required targeted reviews must cover the current head, all findings must have

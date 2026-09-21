@@ -641,6 +641,8 @@ is the event JSON — `changed[]` names which signals moved. Handle it like any
 other question `msg`: read it, decide, and if the PR needs another pass dispatch
 a `trivial` review worker at it (`--pr N`) rather than doing the work yourself.
 
+A worker `msg` whose body opens with `follow-ups (untracked):` is not a question — nobody is in `crew await`. Mint one Linear ticket per item, linking the parent ticket, then continue. A worker `done` whose detail reads `follow-ups: #N…` lists issues it already filed — nothing to do. Which tracker applies follows `WORKER_PROTOCOL.md` "Deferred findings" (Linear = `Closes <TEAM>-<N>`).
+
 Two reads remain for detail:
 
 - `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), the same event's `engine`/`model`/`tier`, a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
