@@ -186,6 +186,7 @@ EOF
 
   branch="feat/42-context-comment-test"
   wt_path="$(wt_path_for "$branch")"
+  host="${HOSTNAME:-$(uname -n)}"
   worker_id="$(printf '%s' "$output" | grep '^worker_id: ' | cut -d' ' -f2)"
   [ -n "$worker_id" ]
   [ -f "$wt_path/WORKER_TASK.md" ]
@@ -200,6 +201,7 @@ EOF
   [[ "$body" == *"effort: medium"* ]]
   [[ "$body" == *"$branch"* ]]
   [[ "$body" == *"$wt_path"* ]]
+  [[ "$body" == *"| **Host** | \`$host\` |"* ]]
   [[ "$body" == *"$worker_id"* ]]
   [[ "$body" == *"$crew_id_stamp"* ]]
   [ "$(tail -1 "$STUB_DIR/comment_body.txt")" = "<!-- dispatched -->" ]
