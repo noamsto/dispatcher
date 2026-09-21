@@ -282,12 +282,79 @@ command -v dispatch >/dev/null 2>&1 || {
   echo "dispatch resume: dispatch is not on PATH — both are installed together by the home-manager module" >&2
   exit 1
 }
+
+# Escalation helpers (duplicated from dispatch.sh — this is a separate binary).
+# _escalation_target <engine> <tier> <failed_model> — prints "<baseline> <escalated>"
+# if the failed_model is exactly one rung below a valid escalation target.
+_escalation_target() {
+  local eng="$1" tier="$2" failed="$3"
+  case "$eng:$tier:$failed" in
+  claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet opus' ;;
+  claude:trivial:haiku|claude:trivial:claude-haiku-*)             printf 'haiku RECORD_ONLY' ;;
+  claude:trivial:sonnet|claude:trivial:claude-sonnet-*)           printf 'sonnet opus' ;;
+  claude:deep:sonnet|claude:deep:claude-sonnet-*)                 printf 'sonnet RECORD_ONLY' ;;
+  claude:deep:opus|claude:deep:claude-opus-*)                     printf 'opus RECORD_ONLY' ;;
+  codex:standard:gpt-5.6-luna)                                     printf 'luna RECORD_ONLY' ;;
+  codex:standard:gpt-5.6-terra)                                    printf 'terra gpt-5.6-sol' ;;
+  codex:deep:gpt-5.6-terra)                                        printf 'terra RECORD_ONLY' ;;
+  codex:trivial:gpt-5.6-luna)                                      printf 'luna gpt-5.6-terra' ;;
+  cursor:standard:cursor-grok-4.6-low*)                            printf 'low RECORD_ONLY' ;;
+  cursor:standard:cursor-grok-4.6-medium*)                         printf 'medium cursor-grok-4.6-high' ;;
+  cursor:deep:cursor-grok-4.6-medium*)                             printf 'medium RECORD_ONLY' ;;
+  cursor:trivial:cursor-grok-4.6-low*)                             printf 'low cursor-grok-4.6-medium' ;;
+  pi:standard:openrouter/deepseek/deepseek-v4-flash)               printf 'v4-flash RECORD_ONLY' ;;
+  pi:standard:openrouter/deepseek/deepseek-v4.1-flash)             printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
+  pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash RECORD_ONLY' ;;
+  pi:trivial:openrouter/deepseek/deepseek-v4-flash)                printf 'v4-flash openrouter/deepseek/deepseek-v4.1-flash' ;;
+  esac
+}
+
+# _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
+# 1. A worker on this branch posted status "failed", AND
+# 2. No dispatch or resume event on this branch already carries escalated_from.
+_prior_failed_escalation_available() {
+  local branch="$1" dir="$2" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 1
+  jq -e --arg b "$branch" '
+    [., inputs]
+    | map(select(.kind == "status" and .from != null))
+    | map(select(
+        (.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed"
+      ))
+    | length > 0
+  ' "$events" >/dev/null 2>&1 || return 1
+  jq -e --arg b "$branch" '
+    [., inputs]
+    | map(select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0)))
+    | length == 0
+  ' "$events" >/dev/null 2>&1 || return 1
+  return 0
+}
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
 # The tier↔model pair was adjudicated when this worker was first dispatched;
 # only an explicit --model is a fresh choice that deserves re-gating.
+# Escalation: if a prior session failed and --model is one rung up, allow it.
 if [ -z "$model_flag" ] || [ -n "$ignore_map" ]; then
   precheck+=(--ignore-map)
+else
+  orig_model="$(sed -n 's/^model: //p' "$wt_path/WORKER_TASK.md" | head -1)"
+  if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
+    escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
+    if [ -n "$escalation_info" ]; then
+      escalation_target="${escalation_info#* }"
+      if [ "$escalation_target" != "RECORD_ONLY" ]; then
+        if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
+          if _prior_failed_escalation_available "$branch" "$crew_dir"; then
+            precheck+=(--ignore-map)
+            escalated_from="${escalation_info%% *}"
+          fi
+        fi
+      fi
+    fi
+  fi
 fi
 DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 
@@ -460,13 +527,20 @@ fi
 # The resume row. New kind: without it a worker resumed four times reports as
 # one run, and the ratings rollup attributes the whole cost and latency to a
 # single session. prev_worker_id is what chains the sessions back together.
+# escalated_from: stamped only for genuine escalations (not record-only).
+escalated_from_event=""
+if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
+  escalated_from_event="$escalated_from"
+fi
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
+  --arg escalated_from "$escalated_from_event" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
-     session:$session, continued:$continued}')
+     session:$session, continued:$continued}
+   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # Clears a stale exited/failed/done roster row so the crew reads as live again.

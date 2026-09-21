@@ -970,6 +970,87 @@ else
   esac
 fi
 
+# Escalation helpers — query the bus for prior failed workers and compute
+# the one-rung-up escalation target per engine×tier×failed_model.
+# _escalation_target <engine> <tier> <failed_model> — prints "<baseline> <escalated>"
+# if the failed_model is exactly one rung below a valid escalation target.
+# The second word may be "RECORD_ONLY" if the escalated model is already in the row.
+# Keep in sync with dispatch-orchestration.md "Model map" execute ladder.
+_escalation_target() {
+  local eng="$1" tier="$2" failed="$3"
+  case "$eng:$tier:$failed" in
+  # claude: haiku → sonnet → opus → fable
+  claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet opus' ;;
+  claude:trivial:haiku|claude:trivial:claude-haiku-*)             printf 'haiku RECORD_ONLY' ;;
+  claude:trivial:sonnet|claude:trivial:claude-sonnet-*)           printf 'sonnet opus' ;;
+  claude:deep:sonnet|claude:deep:claude-sonnet-*)                 printf 'sonnet RECORD_ONLY' ;;
+  claude:deep:opus|claude:deep:claude-opus-*)                     printf 'opus RECORD_ONLY' ;;
+  # codex: luna → terra → sol
+  codex:standard:gpt-5.6-luna)                                     printf 'luna RECORD_ONLY' ;;
+  codex:standard:gpt-5.6-terra)                                    printf 'terra gpt-5.6-sol' ;;
+  codex:deep:gpt-5.6-terra)                                        printf 'terra RECORD_ONLY' ;;
+  codex:trivial:gpt-5.6-luna)                                      printf 'luna gpt-5.6-terra' ;;
+  # cursor: low → medium → high
+  cursor:standard:cursor-grok-4.6-low*)                            printf 'low RECORD_ONLY' ;;
+  cursor:standard:cursor-grok-4.6-medium*)                         printf 'medium cursor-grok-4.6-high' ;;
+  cursor:deep:cursor-grok-4.6-medium*)                             printf 'medium RECORD_ONLY' ;;
+  cursor:trivial:cursor-grok-4.6-low*)                             printf 'low cursor-grok-4.6-medium' ;;
+  # pi: flash → v4.1-flash → v4-pro
+  pi:standard:openrouter/deepseek/deepseek-v4-flash)               printf 'v4-flash RECORD_ONLY' ;;
+  pi:standard:openrouter/deepseek/deepseek-v4.1-flash)             printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
+  pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash RECORD_ONLY' ;;
+  pi:trivial:openrouter/deepseek/deepseek-v4-flash)                printf 'v4-flash openrouter/deepseek/deepseek-v4.1-flash' ;;
+  esac
+}
+
+# _prior_failed_model <branch> <crew_dir> — prints the model of the most recent
+# failed worker on this branch. Prints nothing if no prior failed exists.
+_prior_failed_model() {
+  local branch="$1" dir="$2" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 0
+  jq -r --arg b "$branch" '
+    [., inputs]
+    | . as $all
+    | ([$all[] | select(.kind == "status" and
+        ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed") | .ts]) as $failed_ts
+    | if ($failed_ts | length) == 0 then empty
+      else $all
+      | map(select(.kind == "dispatch" and .branch == $b
+          and .ts < ($failed_ts | max)))
+      | sort_by(-.ts)
+      | .[0].model // empty
+      end
+  ' "$events" 2>/dev/null || true
+}
+
+# _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
+# 1. A worker on this branch posted status "failed", AND
+# 2. No dispatch or resume event on this branch already carries escalated_from.
+_prior_failed_escalation_available() {
+  local branch="$1" dir="$2" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 1
+  # Check 1: any failed status event on this branch?
+  jq -e --arg b "$branch" '
+    [., inputs]
+    | map(select(.kind == "status" and .from != null))
+    | map(select(
+        (.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed"
+      ))
+    | length > 0
+  ' "$events" >/dev/null 2>&1 || return 1
+  # Check 2: no prior dispatch or resume event on this branch already carries escalated_from?
+  jq -e --arg b "$branch" '
+    [., inputs]
+    | map(select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0)))
+    | length == 0
+  ' "$events" >/dev/null 2>&1 || return 1
+  return 0
+}
+
 # Tier↔model gate (#89). Enforces tier-appropriateness on top of
 # the dispatchability gate above — see dispatch-orchestration.md
 # "Tier map". DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
@@ -1079,8 +1160,63 @@ if [ -z "$ignore_map" ]; then
     ;;
   esac
   if [ "$tier_ok" = 0 ]; then
-    echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
-    exit 1
+    # Escalation: if the model is not in the tier's row but IS the one-rung-up
+    # target from the failed model, AND a prior worker ended failed, allow it.
+    if [ -n "${branch:-}" ]; then
+      failed_model="$(_prior_failed_model "$branch" "$crew_dir")"
+      if [ -n "$failed_model" ]; then
+        escalation_info="$(_escalation_target "$agent" "$tier" "$failed_model")"
+        if [ -n "$escalation_info" ]; then
+          escalation_baseline="${escalation_info%% *}"
+          escalation_target="${escalation_info#* }"
+          if [ "$escalation_target" != "RECORD_ONLY" ]; then
+            if [ "$model" = "$escalation_target" ] || [[ $model =~ ^${escalation_target//./\\.} ]]; then
+              if _prior_failed_escalation_available "$branch" "$crew_dir"; then
+                tier_ok=1
+                escalated_from="$escalation_baseline"
+              fi
+            fi
+          fi
+        fi
+      fi
+    fi
+    if [ "$tier_ok" = 0 ]; then
+      echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+      exit 1
+    fi
+  fi
+fi
+
+# Record-only escalation: model already in tier's row but one rung up from failed.
+# Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
+if [ "${escalated_from:-}" = "" ] && [ "$tier_ok" = 1 ] && [ -n "${branch:-}" ]; then
+  failed_model="$(_prior_failed_model "$branch" "$crew_dir")"
+  if [ -n "$failed_model" ]; then
+    case "$agent:$tier:$failed_model:$model" in
+    claude:trivial:haiku:sonnet|claude:trivial:haiku:claude-sonnet-*|\
+    claude:trivial:claude-haiku-*:sonnet|claude:trivial:claude-haiku-*:claude-sonnet-*)
+      escalated_from="haiku (record only)" ;;
+    claude:deep:sonnet:opus|claude:deep:sonnet:claude-opus-*|\
+    claude:deep:claude-sonnet-*:opus|claude:deep:claude-sonnet-*:claude-opus-*)
+      escalated_from="sonnet (record only)" ;;
+    claude:deep:opus:fable|claude:deep:opus:claude-fable-*|\
+    claude:deep:claude-opus-*:fable|claude:deep:claude-opus-*:claude-fable-*)
+      escalated_from="opus (record only)" ;;
+    codex:standard:gpt-5.6-luna:gpt-5.6-terra)
+      escalated_from="luna (record only)" ;;
+    codex:deep:gpt-5.6-terra:gpt-5.6-sol)
+      escalated_from="terra (record only)" ;;
+    cursor:standard:cursor-grok-4.6-low:cursor-grok-4.6-medium*|\
+    cursor:standard:cursor-grok-4.6-low*:cursor-grok-4.6-medium*)
+      escalated_from="low (record only)" ;;
+    cursor:deep:cursor-grok-4.6-medium:cursor-grok-4.6-high*|\
+    cursor:deep:cursor-grok-4.6-medium*:cursor-grok-4.6-high*)
+      escalated_from="medium (record only)" ;;
+    pi:standard:openrouter/deepseek/deepseek-v4-flash:openrouter/deepseek/deepseek-v4.1-flash)
+      escalated_from="v4-flash (record only)" ;;
+    pi:deep:openrouter/deepseek/deepseek-v4.1-flash:openrouter/deepseek/deepseek-v4-pro)
+      escalated_from="v4.1-flash (record only)" ;;
+    esac
   fi
 fi
 
@@ -1364,11 +1500,17 @@ if [ -n "$gh_issue" ]; then
   # resolves to a name that does not exist and is still refused. Who is live on
   # that branch stays the occupancy gate's call, as for every other dispatch.
   if printf '%s\n' "$issue_labels" | grep -qx dispatched; then
-    git show-ref --verify --quiet "refs/heads/$branch" || {
-      echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      echo "dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume." >&2
+    else
+      existing_branch="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$gh_issue-*" 2>/dev/null | head -1)"
+      if [ -n "$existing_branch" ] && [ "$existing_branch" != "$branch" ]; then
+        echo "dispatch: issue #$gh_issue is already claimed — the title resolves to branch '$branch', but '$existing_branch' already exists (title mismatch?). Use the exact original title, or pass a different issue number." >&2
+      else
+        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+      fi
       exit 1
-    }
-    echo "dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume." >&2
+    fi
   fi
   # The exemption skips the refusal only. --add-label is idempotent and runs on
   # both paths, which is what makes a reap-driven resume->create downgrade below
@@ -1810,12 +1952,19 @@ dispatch_shape="${DISPATCH_SHAPE:-}"
 # task_kind rides along because only `dispatch` knows it: a `--review` worker is
 # told not to push or open a PR, so a run with no PR is its success case, not a
 # failure. Without this the ratings store cannot tell the two apart.
+# escalated_from: stamped on the event only for genuine escalations (not record-only).
+escalated_from_event=""
+if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
+  escalated_from_event="$escalated_from"
+fi
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume} + $ident')
+  --arg escalated_from "$escalated_from_event" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume} + $ident
+   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
@@ -1847,8 +1996,11 @@ fi
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
 {
-  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
-    "$tier" "$kind" "$draft" "$agent" "$model" "$effort" "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
+  printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
+    "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
+  [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
+  printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
+    "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
   if [ -n "$pr_number" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
