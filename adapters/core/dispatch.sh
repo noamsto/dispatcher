@@ -92,7 +92,7 @@ _ensure_dispatched_label() {
 _post_dispatch_comment() {
   local issue="$1" name="$2" engine="$3" model="$4" tier="$5" effort="$6" \
     branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}"
-  local verb="dispatched"
+  local verb="dispatched" host="${HOSTNAME:-$(uname -n)}"
   [ "$resume" = true ] && verb="(resumed) dispatched"
   local body
   body="$(cat <<EOF
@@ -102,6 +102,7 @@ _post_dispatch_comment() {
 |---|---|
 | **Branch** | \`$branch\` |
 | **Worktree** | \`$wt_path\` |
+| **Host** | \`$host\` |
 | **Agent** | $engine · $model · $tier (effort: $effort) |
 | **Session** | \`$session\` |
 | **Worker** | \`$worker_id\` |
