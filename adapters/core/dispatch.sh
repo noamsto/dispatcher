@@ -1203,7 +1203,7 @@ fi
 
 # Record-only escalation: model already in tier's row but one rung up from failed.
 # Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
-if [ "${escalated_from:-}" = "" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
+if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
   failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir")"
   if [ -n "$failed_model" ]; then
     case "$agent:$tier:$failed_model:$model" in
