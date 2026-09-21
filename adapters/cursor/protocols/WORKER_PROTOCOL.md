@@ -188,7 +188,7 @@ Do **not** re-run the spec or plan phases. Continue from the first unfinished st
 
 If the artifacts are absent or contradicted by the tree (a named file doesn't exist, the approach doesn't fit the code), fall back to the tier's normal phases — the same re-entry rule **Plan of record** states for its own skip paths.
 
-**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`). A resume can land on a branch that already reached `pr_open`, which the terminal step below ("open a PR, and stop") and the launch prompt's push mandate otherwise treat as unconditional — an unguarded resumed worker runs a full pipeline and then hard-fails on `gh pr create`. When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url — a missing or wrong url there mis-drives `crew reap`. The pre-done completion peek's re-entry (**Checkpoint-peek**) uses this same existing-PR path.
+**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`). A resume can land on a branch that already reached `pr_open`, which the terminal step below ("open a PR, and stop") and the launch prompt's push mandate otherwise treat as unconditional — an unguarded resumed worker runs a full pipeline and then hard-fails on `gh pr create`. When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url (and the acceptance ledger as the detail) — a missing or wrong url there mis-drives `crew reap`. The pre-done completion peek's re-entry (**Checkpoint-peek**) uses this same existing-PR path.
 
 **Session identity never carries forward across a resume.** A resume mints a new `worker_id` for this session. If your restored transcript contains bus calls made under a previous session's id, those literals are retired — read `$CREW_WORKER_ID` fresh from your environment for every bus call in this session, never copy an id forward from an earlier call in the transcript.
 
@@ -314,6 +314,7 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
 - **Reconcile once.** Merge findings across the batch (both / language-only / codex-only / security), de-duplicated and checked against the test-runner's deterministic result. Ingest with **receiving-code-review** discipline: verify each finding before acting, don't perform agreement. Fix the real ones (delegate per rule 1), then re-run the **fast deterministic gate**.
 - **Scale the re-review by changed behavior:** follow `EVIDENCE_REVIEW.md` for targeted re-review after substantive correctness fixes, including MEDIUM findings on standard and in gauntlet repos. Otherwise one pass is enough.
 - **Cap the review→fix loop at 2.** Persist unresolved findings under "## Review notes" per `EVIDENCE_REVIEW.md`; its recurrence assessment does not grant additional fix rounds. Pending correctness evidence or review blocks completion rather than allowing an unreviewed last-round fix through. Non-blocking leftovers follow "Deferred findings" below.
+- **Record the review seam.** When the gate has run (after the last reconcile), post one marker so `crew status … pr_open` finds it: `crew msg "$CREW_WORKER_ID" "review:$(crew id)" '{"seam":"review","review_mode":"<full|downgraded>"}'`. Grid mode's review assignment already carries `"seam":"review"`, so it counts. `pr_open` on a standard/deep session with no seam warns on stderr — treat the warning as a stop: you skipped the gate. It warns rather than refuses because a resumed run may have reviewed in an earlier session on the branch (those seams count).
 
 ## Deferred findings (standard/deep)
 
@@ -327,6 +328,14 @@ Non-blocking findings never ride only in the PR body: fix them in place or file 
 - **Where issues cannot be filed.** Linear-tracked means the task's closes line matches `Closes <TEAM>-<N>` (`[A-Z]{2,}-<digits>`); GitHub means `Closes #<N>`. A task doc with no `Closes` line (a `pr:`-stamped `--pr N` implement worker) leaves the tracker unknown: take the GitHub path and fall back to the untracked path if `gh issue create` fails (e.g. issues disabled). The untracked path: send **one** `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id>` whose body opens with the fixed token `follow-ups (untracked):` followed by the items (each self-contained: what, evidence, why deferred), and list the items in the PR body under `## Follow-ups (untracked)`. The dispatcher mints the tickets.
 - **PR body.** `## Follow-ups` lists one line per issue — `#N — short title` — never the finding text. The `## Review notes` ledger row keeps disposition `deferred (#N)`: the ledger holds the finding's record, the PR section holds only the ref line.
 - **Report.** Refs ride in the detail of the final `done` status, refs only, no titles: `crew status "$CREW_WORKER_ID" done "follow-ups: #N, #M"`; untracked is `done "follow-ups: untracked"`; nothing filed is plain `done`. The roster clips detail at 120 chars: if the list would overflow, give a count plus the first refs (the PR's `## Follow-ups` is authoritative).
+
+## Acceptance ledger (all tiers)
+
+Before `pr_open`, list every item under the task doc's `## Acceptance` (or equivalent acceptance list) with evidence: the command you ran and its result. An item is **done** only with that evidence; `covered by unit tests` does not stand in for a live/manual/build step the spec names.
+
+- **Cannot run an item** (no browser, no network, no credentials, a command that will not run): post `blocked "acceptance: <item> — <why>"` and run the block→await path. Do not open the PR while an item is unrun and not waived.
+- **Only the dispatcher waives**, by `crew reply` naming the item. A PR-body disclosure ("Not done", "Assumptions") is **not** a waiver, and neither is your own judgement that the item is low-risk — this holds on every tier, `trivial` included, and overrides the low-risk safe-default allowance in "Report to the bus". A waiver covers only the item it names.
+- **Ledger in `pr_open`.** The status detail carries the compact ledger: `crew status "$CREW_WORKER_ID" pr_open "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)" <url>`. States are `pass(<evidence>)` or `waived(dispatcher)` — nothing else may reach `pr_open`. Keep it short; the bus clips long lines. The PR body repeats the full ledger under `## Acceptance`.
 
 ## Retro notes (all tiers)
 
@@ -368,7 +377,7 @@ Append your lifecycle to the crew bus — this is the contract, not optional:
 Immediately before every stopping path, emit one complete latest-state metrics snapshot. This includes a startup-drain dispatcher stop; spec, plan, or consult terminal failure; done; terminal gate failure; dispatcher-requested stop; permission stop; and the budget-exhausted `failed "blocked, no dispatcher reply"` stop after the wait budget is exhausted. Do not emit for a temporary blocked state that continues awaiting — the per-cycle `blocked` re-stamps inside the wait budget (below) are exactly that, and the budget's exhaustion is the single stopping path it produces. A resumed run emits a newer snapshot, and `crew rate` selects the latest timestamp. Every pre-execute snapshot has `replanned: false`.
 
 - on start: `crew status "$CREW_WORKER_ID" working`
-- on PR open: `crew status "$CREW_WORKER_ID" pr_open "" <pr_url>`
+- on PR open: `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <pr_url>` — ledger per "Acceptance ledger"
 - on finish: `crew status "$CREW_WORKER_ID" done` — with the optional `"follow-ups: …"` detail per "Deferred findings"
 - if blocked on a question only the dispatcher can answer: post the block, then **await the reply in-band** — don't stop dead:
   ```
@@ -454,7 +463,7 @@ Reproducing a timing flake that needs CPU contention is allowed, but it is a cre
 
 ## When done
 
-Pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. On the fresh-PR path, file follow-up issues between `gh pr create` and `pr_open`, and carry their refs in the final `done`, per "Deferred findings". As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+Pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. On the fresh-PR path, file follow-up issues between `gh pr create` and `pr_open`, and carry their refs in the final `done`, per "Deferred findings". As a human-visible nicety, also ping the dispatcher pane once: read `dispatcher_pane:` and `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - **Every worker — emit outcome metrics before you stop.** On **all** tiers, append a metrics record to the bus so this run can be rated:
   ```

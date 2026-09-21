@@ -3990,3 +3990,50 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$(run_crew identity feat/1-a c1 | jq -r .name)" = "nova" ]
   [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
 }
+
+# --- pr_open review-seam warning (#241) ---
+
+_task_doc() { printf 'tier: %s\nkind: %s\ncrew_id: c1\n' "$1" "${2:-implement}" >WORKER_TASK.md; }
+
+@test "pr_open: standard with no review seam warns on stderr but still posts" {
+  _task_doc standard
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no review seam"* ]]
+  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+}
+
+@test "pr_open: standard with a review seam is silent" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"review","review_mode":"full"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 ok" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+}
+
+@test "pr_open: a resumed session inherits the branch's earlier review seam" {
+  _task_doc deep
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review"}'
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  [ -z "$stderr" ]
+}
+
+@test "pr_open: trivial with no review seam is silent" {
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+}
+
+@test "pr_open: the acceptance ledger rides in the status detail" {
+  _task_doc trivial
+  run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats) AC2 waived(dispatcher)" https://example.com/pr/1
+  [ "$(jq -r 'select(.kind=="status") | .body.detail' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = "AC1 pass(bats) AC2 waived(dispatcher)" ]
+}
+
+@test "pr_open: a review seam from another branch does not count" {
+  _task_doc standard
+  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"review"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  [[ "$stderr" == *"no review seam"* ]]
+}
