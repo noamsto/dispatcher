@@ -982,24 +982,24 @@ _escalation_target() {
   # claude: haiku → sonnet → opus → fable
   claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet opus' ;;
   claude:trivial:haiku|claude:trivial:claude-haiku-*)             printf 'haiku RECORD_ONLY' ;;
-  claude:trivial:sonnet|claude:trivial:claude-sonnet-*)           printf 'sonnet opus' ;;
+  # claude:trivial:sonnet→opus removed — trivial tier must not reach above its row (#249 acceptance)
   claude:deep:sonnet|claude:deep:claude-sonnet-*)                 printf 'sonnet RECORD_ONLY' ;;
   claude:deep:opus|claude:deep:claude-opus-*)                     printf 'opus RECORD_ONLY' ;;
   # codex: luna → terra → sol
   codex:standard:gpt-5.6-luna)                                     printf 'luna RECORD_ONLY' ;;
   codex:standard:gpt-5.6-terra)                                    printf 'terra gpt-5.6-sol' ;;
   codex:deep:gpt-5.6-terra)                                        printf 'terra RECORD_ONLY' ;;
-  codex:trivial:gpt-5.6-luna)                                      printf 'luna gpt-5.6-terra' ;;
+  # codex:trivial:luna→terra removed — trivial tier must not reach above its row
   # cursor: low → medium → high
   cursor:standard:cursor-grok-4.6-low*)                            printf 'low RECORD_ONLY' ;;
   cursor:standard:cursor-grok-4.6-medium*)                         printf 'medium cursor-grok-4.6-high' ;;
   cursor:deep:cursor-grok-4.6-medium*)                             printf 'medium RECORD_ONLY' ;;
-  cursor:trivial:cursor-grok-4.6-low*)                             printf 'low cursor-grok-4.6-medium' ;;
+  # cursor:trivial:low→medium removed — trivial tier must not reach above its row
   # pi: flash → v4.1-flash → v4-pro
   pi:standard:openrouter/deepseek/deepseek-v4-flash)               printf 'v4-flash RECORD_ONLY' ;;
   pi:standard:openrouter/deepseek/deepseek-v4.1-flash)             printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
   pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash RECORD_ONLY' ;;
-  pi:trivial:openrouter/deepseek/deepseek-v4-flash)                printf 'v4-flash openrouter/deepseek/deepseek-v4.1-flash' ;;
+  # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
   esac
 }
 
@@ -1026,20 +1026,23 @@ _prior_failed_model() {
 }
 
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
-# 1. A worker on this branch posted status "failed", AND
+# 1. A worker on this branch posted status "failed" AND that worker's session
+#    has a matching dispatch event on the same branch (anti-spoofing), AND
 # 2. No dispatch or resume event on this branch already carries escalated_from.
 _prior_failed_escalation_available() {
   local branch="$1" dir="$2" events
   events="$dir/events.jsonl"
   [ -f "$events" ] || return 1
-  # Check 1: any failed status event on this branch?
+  # Check 1: any failed status event on this branch whose session has a
+  # matching dispatch row? This prevents fabricated failed status events —
+  # the worker must have been actually dispatched on this branch.
   jq -e --arg b "$branch" '
-    [., inputs]
-    | map(select(.kind == "status" and .from != null))
-    | map(select(
-        (.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "dispatch" and .branch == $b) | .session]) as $sessions
+    | [.[] | select(.kind == "status" and .from != null
+        and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
         and .body.state == "failed"
-      ))
+        and ($sessions | index((.from | sub("^worker:[^#]*#"; ""))) != null))]
     | length > 0
   ' "$events" >/dev/null 2>&1 || return 1
   # Check 2: no prior dispatch or resume event on this branch already carries escalated_from?
