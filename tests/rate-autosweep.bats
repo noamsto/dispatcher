@@ -418,3 +418,28 @@ await_log() {
   grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
   ! grep -qx '1' "$XDG_DATA_HOME/crew/autosweep.log"
 }
+
+@test "autosweep: trimming the log keeps a concurrent sweep's later lines" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  log="$XDG_DATA_HOME/crew/autosweep.log"
+  sleep 100 &
+  live_pid=$!
+  mkdir "$XDG_DATA_HOME/crew/ratings.sweep.lock.d"
+  printf '%s\n' "$live_pid" >"$XDG_DATA_HOME/crew/ratings.sweep.lock.d/pid"
+  # The lock holder's own handle on the log: opened O_APPEND before the
+  # skipped sweep trims, writing its `done` line after.
+  (
+    exec >>"$log"
+    sleep 2
+    echo "HOLDER-LATE-LINE"
+  ) &
+  writer=$!
+  seed_dispatch feat/x 1000
+  seed_status worker:feat/x 1500 pr_open "https://github.com/acme/widgets/pull/1"
+  CREW_RATE_AUTOSWEEP=1 run run_crew reap
+  [ "$status" -eq 0 ]
+  await_log 'already running — skipped'
+  wait "$writer"
+  kill "$live_pid" 2>/dev/null || true
+  grep -q 'HOLDER-LATE-LINE' "$log"
+}

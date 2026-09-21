@@ -551,10 +551,17 @@ fi
 # repo-keyed bus dir; --path-format=absolute so main-checkout and worktrees
 # resolve to a byte-identical path (load-bearing — see #29).
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-[ -n "$common" ] || {
-  echo "crew: not in a git repo" >&2
-  exit 1
-}
+if [ -z "$common" ]; then
+  # `rate --sweep-all` walks every repo, so it is the one command that has no
+  # use for the caller's own (a cron job or a shell in $HOME has none).
+  case "$sub $*" in
+  "rate "*--sweep-all*) ;;
+  *)
+    echo "crew: not in a git repo" >&2
+    exit 1
+    ;;
+  esac
+fi
 dir="$common/crew"
 log="$dir/events.jsonl"
 
@@ -1778,10 +1785,9 @@ rate)
   fi
 
   if [ "$sweep_all" = true ]; then
-    # Sweeps every repo that has a crew bus, from any repo (or none of them,
-    # once past the git-repo guard above). Each repo is swept by a child
-    # `crew rate`, so the per-repo lock, reconcile and gh-credential gate stay
-    # exactly what a hand-run sweep uses.
+    # Sweeps every repo that has a crew bus, from any repo or none. Each repo
+    # is swept by a child `crew rate`, so the per-repo lock, reconcile and
+    # gh-credential gate stay exactly what a hand-run sweep uses.
     store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
     registry="$store_dir/repos"
     self=$(readlink -f "$0")
@@ -1792,14 +1798,19 @@ rate)
       {
         cat "$registry" 2>/dev/null || true
         printf '%s\n' "$roots" | while IFS= read -r root; do
-          [ -d "$root" ] || continue
-          find "$root" -mindepth 1 -maxdepth 6 \
+          [ -d "$root" ] || {
+            echo "crew: rate --sweep-all: $root is not a directory" >&2
+            continue
+          }
+          # find exits 1 on any unreadable directory; that must not abort the walk.
+          { find "$root" -mindepth 1 -maxdepth 6 \
             \( -name '.*' ! -name .git ! -name .worktrees -prune \) -o \
-            -path '*/.git/crew/events.jsonl' -print 2>/dev/null |
+            -path '*/.git/crew/events.jsonl' -print 2>/dev/null || true; } |
             sed 's#/crew/events\.jsonl$##'
         done
       } | sort -u
     )
+    [ -n "$repos" ] || echo "crew: rate --sweep-all: no repo with a crew bus found (roots: $(printf '%s' "$roots" | tr '\n' ' '))" >&2
     failed=0
     while IFS= read -r repo_common; do
       [ -n "$repo_common" ] || continue
@@ -3859,7 +3870,7 @@ reap)
   # Async mode is the detached hook: its stdout/stderr are the autosweep log,
   # so a skipped or failed sweep leaves a trace instead of vanishing.
   _rate_autosweep() {
-    local mode="${1:-}" store_dir lockd sweeplog rc=0
+    local mode="${1:-}" store_dir lockd sweeplog trimtmp rc=0
     store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
     lockd="$store_dir/ratings.sweep.lock.d"
     sweeplog="$store_dir/autosweep.log"
@@ -3889,7 +3900,11 @@ reap)
       note "a ratings sweep is already running — skipped"
     fi
     if [ "$mode" = async ]; then
-      tail -n 200 "$sweeplog" >"$sweeplog.tmp" && mv "$sweeplog.tmp" "$sweeplog"
+      # In place, never mv: a concurrent sweep holds this file open with
+      # O_APPEND, and replacing the inode would strand its `done rc=` line.
+      trimtmp="$sweeplog.$BASHPID"
+      tail -n 200 "$sweeplog" >"$trimtmp" && cat "$trimtmp" >"$sweeplog"
+      rm -f "$trimtmp"
     fi
   }
   # An unrecognised value defaults to ON, loudly: reading a typo as "off"

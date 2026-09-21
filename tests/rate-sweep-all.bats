@@ -4,8 +4,7 @@ setup() {
   load helpers
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
-  # The host repo the sweep is launched from: no bus, no origin. --sweep-all
-  # must not care which repo (if any) it runs in.
+  # The host repo the sweep is launched from: no bus, no origin.
   setup_repo
   export HOME="$BATS_TEST_TMPDIR/home"
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
@@ -125,10 +124,38 @@ store_repos() { jq -s -r 'map(.repo) | unique | join(",")' "$XDG_DATA_HOME/crew/
   [ "$(store_repos)" = "acme/alpha" ]
 }
 
-@test "sweep-all: no repos found is a clean exit 0" {
-  run run_crew rate --sweep-all --root "$ROOT"
+@test "sweep-all: no repos found is exit 0 but says so" {
+  run --separate-stderr run_crew rate --sweep-all --root "$ROOT"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+  [[ "$stderr" == *"no repo with a crew bus found"* ]]
+}
+
+@test "sweep-all: a root that is not a directory is reported" {
+  run --separate-stderr run_crew rate --sweep-all --root "$ROOT/typo"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"$ROOT/typo is not a directory"* ]]
+}
+
+@test "sweep-all: an unreadable directory under the root does not abort the walk" {
+  mk_repo "$ROOT/alpha" acme/alpha
+  mkdir "$ROOT/locked"
+  chmod 000 "$ROOT/locked"
+  run run_crew rate --sweep-all --root "$ROOT"
+  chmod 755 "$ROOT/locked"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"acme/alpha: swept"* ]]
+}
+
+@test "sweep-all: runs outside any git repo" {
+  mk_repo "$ROOT/alpha" acme/alpha
+  cd "$BATS_TEST_TMPDIR"
+  run run_crew rate --sweep-all --root "$ROOT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"acme/alpha: swept"* ]]
+  run run_crew rate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not in a git repo"* ]]
 }
 
 @test "sweep-all: conflicting or malformed flags are errors" {
