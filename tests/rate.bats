@@ -443,13 +443,13 @@ EOF
 @test "--json without --report is an error" {
   run run_crew rate --json
   [ "$status" -eq 1 ]
-  [[ "$output" == *"rate takes --report, --json, and --pooled"* ]]
+  [[ "$output" == *"rate takes --report, --json, --pooled, and --sweep-all/--root"* ]]
 }
 
 @test "--pooled without --report is an error" {
   run run_crew rate --pooled
   [ "$status" -eq 1 ]
-  [[ "$output" == *"rate takes --report, --json, and --pooled"* ]]
+  [[ "$output" == *"rate takes --report, --json, --pooled, and --sweep-all/--root"* ]]
 }
 
 # ---------------------------------------------------------------------------

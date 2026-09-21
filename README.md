@@ -98,7 +98,10 @@ Three design notes worth knowing. `reap` gates on **the PR having landed**, neve
 on elapsed time — a worker sits in `done` for as long as review takes, and a
 time-based sweep would delete live work. Reaping a finished run also files its
 outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with
-`crew rate --report`); `CREW_RATE_AUTOSWEEP=0` disables it. And `stall-watch`
+`crew rate --report`); `CREW_RATE_AUTOSWEEP=0` disables it. That sweep runs
+detached, so its outcome (started, skipped because another sweep held the lock,
+failed) goes to `~/.local/share/crew/autosweep.log`; `crew rate --sweep-all
+[--root DIR]...` sweeps every repo with a crew bus in one go. And `stall-watch`
 exists because a wedged worker never reports anything at all: it watches pane
 output and posts `failed` so the dispatcher wakes up instead of waiting
 forever.

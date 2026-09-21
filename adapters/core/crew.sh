@@ -1726,7 +1726,10 @@ rate)
   report=false
   json=false
   pooled=false
+  sweep_all=false
+  sweep_roots=""
   current_repo=""
+  rate_usage="crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
   while [ $# -gt 0 ]; do
     case "$1" in
     --report)
@@ -1741,15 +1744,93 @@ rate)
       pooled=true
       shift
       ;;
+    --sweep-all)
+      sweep_all=true
+      shift
+      ;;
+    --root)
+      [ $# -ge 2 ] && [ -n "$2" ] || {
+        echo "crew: rate --root needs a directory" >&2
+        exit 1
+      }
+      sweep_roots="${sweep_roots:+$sweep_roots
+}$2"
+      shift 2
+      ;;
     *)
-      echo "crew: rate takes --report, --json, and --pooled" >&2
+      echo "$rate_usage" >&2
       exit 1
       ;;
     esac
   done
-  if { [ "$json" = true ] || [ "$pooled" = true ]; } && [ "$report" = false ]; then
-    echo "crew: rate takes --report, --json, and --pooled" >&2
+  if [ -n "$sweep_roots" ] && [ "$sweep_all" = false ]; then
+    echo "crew: rate --root needs --sweep-all" >&2
     exit 1
+  fi
+  if [ "$sweep_all" = true ]; then
+    if [ "$report" = true ] || [ "$json" = true ] || [ "$pooled" = true ]; then
+      echo "$rate_usage" >&2
+      exit 1
+    fi
+  elif { [ "$json" = true ] || [ "$pooled" = true ]; } && [ "$report" = false ]; then
+    echo "$rate_usage" >&2
+    exit 1
+  fi
+
+  if [ "$sweep_all" = true ]; then
+    # Sweeps every repo that has a crew bus, from any repo (or none of them,
+    # once past the git-repo guard above). Each repo is swept by a child
+    # `crew rate`, so the per-repo lock, reconcile and gh-credential gate stay
+    # exactly what a hand-run sweep uses.
+    store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
+    registry="$store_dir/repos"
+    self=$(readlink -f "$0")
+    roots="${sweep_roots:-${CREW_SWEEP_ROOTS:-}}"
+    roots="${roots:-$HOME}"
+    roots=$(printf '%s' "$roots" | tr ':' '\n')
+    repos=$(
+      {
+        cat "$registry" 2>/dev/null || true
+        printf '%s\n' "$roots" | while IFS= read -r root; do
+          [ -d "$root" ] || continue
+          find "$root" -mindepth 1 -maxdepth 6 \
+            \( -name '.*' ! -name .git ! -name .worktrees -prune \) -o \
+            -path '*/.git/crew/events.jsonl' -print 2>/dev/null |
+            sed 's#/crew/events\.jsonl$##'
+        done
+      } | sort -u
+    )
+    failed=0
+    while IFS= read -r repo_common; do
+      [ -n "$repo_common" ] || continue
+      if [ ! -d "$repo_common" ]; then
+        echo "$repo_common: skipped (gone)"
+        continue
+      fi
+      if [ ! -f "$repo_common/crew/events.jsonl" ]; then
+        echo "$repo_common: skipped (no bus)"
+        continue
+      fi
+      workdir=$(dirname "$repo_common")
+      origin=$(git -C "$workdir" config --get remote.origin.url 2>/dev/null || true)
+      if [ -z "$origin" ]; then
+        echo "$workdir: skipped (no origin remote)"
+        continue
+      fi
+      slug=$(printf '%s' "$origin" | sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##')
+      rc=0
+      (cd "$workdir" && bash -euo pipefail "$self" rate) || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        echo "$slug: failed (rc=$rc)"
+        failed=$((failed + 1))
+        continue
+      fi
+      n=$(jq -s --arg r "$slug" '[.[] | select(.repo == $r) | .run_id] | unique | length' "$store_dir/ratings.jsonl" 2>/dev/null || echo 0)
+      echo "$slug: swept, $n runs in store"
+    done <<EOF_REPOS
+$repos
+EOF_REPOS
+    exit $((failed > 0))
   fi
 
   if [ "$report" = true ]; then
@@ -2150,6 +2231,10 @@ rate)
   store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
   store="$store_dir/ratings.jsonl"
   mkdir -p "$store_dir"
+  # `crew rate --sweep-all` also discovers repos from here, so a repo swept
+  # once stays found wherever it lives on disk.
+  registry="$store_dir/repos"
+  grep -qxF "$common" "$registry" 2>/dev/null || printf '%s\n' "$common" >>"$registry"
   lockd="$store_dir/ratings.lock.d"
   # The `crew roster` idiom: last row wins per run_id. A missing store folds
   # to [], not an error.
@@ -3771,26 +3856,41 @@ reap)
   # foreground, for an operator watching a sweep or diagnosing a skipped one;
   # 0 = no sweep at all, which exists for test isolation and is NOT a
   # supported production switch.
+  # Async mode is the detached hook: its stdout/stderr are the autosweep log,
+  # so a skipped or failed sweep leaves a trace instead of vanishing.
   _rate_autosweep() {
-    local store_dir lockd
+    local mode="${1:-}" store_dir lockd sweeplog rc=0
     store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
     lockd="$store_dir/ratings.sweep.lock.d"
+    sweeplog="$store_dir/autosweep.log"
     # _lock_acquire cannot mkdir into a missing parent, so without this the
     # hook returns 1 and never sweeps — silently — on exactly the machines
     # that have never run `crew rate` by hand.
     mkdir -p "$store_dir"
+    if [ "$mode" = async ]; then
+      exec >>"$sweeplog" 2>&1
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) start pid=$BASHPID repo=$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    fi
     # The store is machine-global, so this lock is too: the skip below is
     # cross-repo, not same-repo, even though two repos' sweeps never contend
     # on `ratings.lock.d` itself. Self-healing — the bus is append-only, so
     # the next reap for the skipped repo backfills it in full.
-    _lock_acquire "$lockd" "$BASHPID" || {
+    if _lock_acquire "$lockd" "$BASHPID"; then
+      trap '_lock_release "$lockd"' EXIT
+      bash -euo pipefail "$0" rate || rc=$?
+      _lock_release "$lockd"
+      trap - EXIT
+      if [ "$mode" = async ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) done rc=$rc"
+      fi
+    elif [ "$mode" = async ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) a ratings sweep is already running — skipped"
+    else
       note "a ratings sweep is already running — skipped"
-      return 0
-    }
-    trap '_lock_release "$lockd"' EXIT
-    bash -euo pipefail "$0" rate || true
-    _lock_release "$lockd"
-    trap - EXIT
+    fi
+    if [ "$mode" = async ]; then
+      tail -n 200 "$sweeplog" >"$sweeplog.tmp" && mv "$sweeplog.tmp" "$sweeplog"
+    fi
   }
   # An unrecognised value defaults to ON, loudly: reading a typo as "off"
   # would silently disable the sweep, which is the failure this hook exists
@@ -3814,8 +3914,8 @@ reap)
     else
       (
         trap '' HUP
-        _rate_autosweep
-      ) >/dev/null 2>&1 </dev/null &
+        _rate_autosweep async
+      ) </dev/null &
     fi
     ;;
   esac
@@ -4116,7 +4216,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

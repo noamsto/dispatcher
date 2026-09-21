@@ -343,3 +343,78 @@ await_sweep() {
   [ "$(jq -s 'length' "$XDG_DATA_HOME/crew/ratings.jsonl")" -eq 1 ]
   [ ! -d "$XDG_DATA_HOME/crew/ratings.sweep.lock.d" ]
 }
+
+# await_log <pattern> — poll the async sweep log for a line matching an
+# extended regex. Unlike await_sweep this does not depend on the store, so it
+# also works for a sweep that fails or is skipped before writing one.
+await_log() {
+  local i
+  for ((i = 0; i < 100; i++)); do
+    grep -Eq "$1" "$XDG_DATA_HOME/crew/autosweep.log" 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+@test "autosweep: a failing async sweep is logged with its exit code" {
+  seed_dispatch feat/x 1000
+  seed_status worker:feat/x 1500 pr_open "https://github.com/acme/widgets/pull/1"
+  mkdir -p "$XDG_DATA_HOME/crew/ratings.jsonl"
+  CREW_RATE_AUTOSWEEP=1 run run_crew reap
+  [ "$status" -eq 0 ]
+  await_log 'done rc='
+  grep -Eq ' start pid=[0-9]+ repo=' "$XDG_DATA_HOME/crew/autosweep.log"
+  ! grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
+}
+
+@test "autosweep: an async lock skip is logged even under --quiet" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  sleep 100 &
+  live_pid=$!
+  mkdir "$XDG_DATA_HOME/crew/ratings.sweep.lock.d"
+  printf '%s\n' "$live_pid" >"$XDG_DATA_HOME/crew/ratings.sweep.lock.d/pid"
+  seed_dispatch feat/x 1000
+  seed_status worker:feat/x 1500 pr_open "https://github.com/acme/widgets/pull/1"
+  CREW_RATE_AUTOSWEEP=1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  found=0
+  await_log 'already running' && found=1
+  kill "$live_pid" 2>/dev/null || true
+  [ "$found" -eq 1 ]
+  [ ! -e "$XDG_DATA_HOME/crew/ratings.jsonl" ]
+}
+
+@test "autosweep: a sync lock skip stays silent under --quiet" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  sleep 100 &
+  live_pid=$!
+  mkdir "$XDG_DATA_HOME/crew/ratings.sweep.lock.d"
+  printf '%s\n' "$live_pid" >"$XDG_DATA_HOME/crew/ratings.sweep.lock.d/pid"
+  seed_dispatch feat/x 1000
+  seed_status worker:feat/x 1500 pr_open "https://github.com/acme/widgets/pull/1"
+  CREW_RATE_AUTOSWEEP=sync run run_crew reap --quiet
+  kill "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"already running"* ]]
+  [ ! -e "$XDG_DATA_HOME/crew/autosweep.log" ]
+}
+
+@test "autosweep: the async log is trimmed to its last 200 lines" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  seq 1 500 >"$XDG_DATA_HOME/crew/autosweep.log"
+  seed_dispatch feat/x 1000
+  seed_status worker:feat/x 1500 pr_open "https://github.com/acme/widgets/pull/1"
+  CREW_RATE_AUTOSWEEP=1 run run_crew reap
+  [ "$status" -eq 0 ]
+  await_sweep
+  await_log 'done rc=0'
+  # The trim is the child's last write; give it a beat to land.
+  for _ in $(seq 1 50); do
+    [ "$(wc -l <"$XDG_DATA_HOME/crew/autosweep.log")" -le 200 ] && break
+    sleep 0.1
+  done
+  [ "$(wc -l <"$XDG_DATA_HOME/crew/autosweep.log")" -eq 200 ]
+  # Newest lines survive, oldest are gone.
+  grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
+  ! grep -qx '1' "$XDG_DATA_HOME/crew/autosweep.log"
+}
