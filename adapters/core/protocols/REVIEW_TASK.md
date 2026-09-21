@@ -8,7 +8,7 @@ Read `pr:` from `WORKER_TASK.md` — that number is the PR under review.
 
 ## Never change the tree
 
-No edits, no commits, no push, no PR, no merge, no branch or tag. Your only write to the PR is the one review event described below (`gh api …/reviews`) — never a separate `gh pr comment`, `gh pr review --approve`/`--request-changes`, or a second `reviews` call. A findings scratch file at the worktree root is fine; it must never reach the index.
+No edits, no commits, no push, no PR, no merge, no branch or tag. Your only write to the PR is the one review event described below (`gh api …/reviews`) — never a separate `gh pr comment`, `gh pr review --approve`/`--request-changes`, or a second `reviews` call. A findings scratch file at the worktree root is fine; it must never reach the index. A review worker files no issues; findings stay in the posted review.
 
 ## The worktree is the PR head
 

@@ -1840,3 +1840,54 @@ $hits"
     done
   done
 }
+
+# --- #239: workers fix small findings and file issues for the rest ---
+
+@test "worker protocol pins the deferred-findings contract" {
+  for doc in \
+    adapters/core/protocols/WORKER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/cursor/protocols/WORKER_PROTOCOL.md; do
+    for statement in \
+      '## Deferred findings (standard/deep)' \
+      'A finding is small only if **all** hold' \
+      'the repo owner pre-approved these issues, so do not ask first' \
+      '`#N — short title`' \
+      'follow-ups (untracked):' \
+      'A task doc with no `Closes` line (a `pr:`-stamped `--pr N` implement worker) leaves the tracker unknown' \
+      'A `kind: review` worker files nothing' \
+      'crew status "$CREW_WORKER_ID" done "follow-ups: #N, #M"' \
+      'File them before posting `pr_open`' \
+      'it adds no round and needs no re-review'; do
+      run grep -F "$statement" "$ROOT/$doc"
+      [ "$status" -eq 0 ]
+    done
+  done
+  for doc in \
+    adapters/core/protocols/EVIDENCE_REVIEW.md \
+    adapters/claude-code/plugin/protocols/EVIDENCE_REVIEW.md \
+    adapters/codex/plugin/protocols/EVIDENCE_REVIEW.md \
+    adapters/cursor/protocols/EVIDENCE_REVIEW.md; do
+    run grep -F '"Deferred findings" carry' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F "user's approval rules before creating follow-up tickets or issues." "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+  for doc in \
+    adapters/core/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
+    run grep -F 'opens with `follow-ups (untracked):` is not a question' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+  for doc in \
+    adapters/core/protocols/REVIEW_TASK.md \
+    adapters/claude-code/plugin/protocols/REVIEW_TASK.md \
+    adapters/codex/plugin/protocols/REVIEW_TASK.md \
+    adapters/cursor/protocols/REVIEW_TASK.md; do
+    run grep -F 'A review worker files no issues; findings stay in the posted review.' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+}
