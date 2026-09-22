@@ -300,6 +300,17 @@ setup_worker_wt() { # [extra header lines...]
   [ "$(md5sum <"$WT/WORKER_TASK.md")" = "$before" ]
 }
 
+@test "resume preserves a stacked base: through the header rewrite" {
+  # A real resume (not --print) so the _hdr_set rewrite actually runs; base: is
+  # not in its field list, and must stay that way for a stacked worker.
+  setup_worker_wt 'base: feat/parent'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx 'base: feat/parent' "$WT/WORKER_TASK.md"
+}
+
 # tmux stub that reports one pane sitting at $WT, so the reuse path fires.
 # $4 (pane_current_command) defaults to empty — a plain shell, i.e. nothing an
 # engine matcher would claim — so existing callers that omit it keep meaning

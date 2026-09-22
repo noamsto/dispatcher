@@ -286,6 +286,22 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
+# setup_stacked_base <parent> — a real `origin` carrying a `<parent>` branch
+# whose tip is distinct from the default branch, plus the -b-honoring wt stub
+# from setup_stale_default_branch. $STACKED_OID is the parent's tip, so a test
+# can assert the new worktree actually landed on it rather than on main.
+setup_stacked_base() { # <parent-branch>
+  setup_stale_default_branch
+  scratch="$(mktemp -d)"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q -b "$1" origin/main
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "parent work"
+  export STACKED_OID
+  STACKED_OID="$(git -C "$scratch" rev-parse HEAD)"
+  git -C "$scratch" push -q origin "$1"
+  rm -rf "$scratch"
+}
+
 # wait_for_log <pattern> — poll $STUB_LOG for a line written by a backgrounded
 # stub (the nohup'd stall-watch). Fails the test after ~2s.
 wait_for_log() {
@@ -2918,6 +2934,42 @@ lock_path() { # <branch>
   grep -qx 'Closes ENG-1234' "$wt_path/WORKER_TASK.md"
 }
 
+@test "--base branches from the fetched parent ref and stamps base:" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STACKED_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/feat/parent ($short)"* ]]
+  # The parent oid is pinned at fetch time and passed to -b directly, so what is
+  # branched can never drift from what the success line reports.
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
+  grep -qx 'base: feat/parent' "$wt_path/WORKER_TASK.md"
+}
+
+@test "--base refuses an unresolvable ref before scaffolding" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/nope --crew-id c1 42 "implement thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--base 'feat/nope'"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "rejects --base combined with --pr" {
+  run run_dispatch standard sonnet --effort medium --pr 12 --base feat/x "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--base cannot combine with --pr"* ]]
+}
+
+@test "rejects --base without a ref" {
+  run run_dispatch standard sonnet --effort medium --base "" "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--base needs a ref"* ]]
+}
+
 @test "aborts before scaffolding when gh cannot resolve the default branch" {
   stub_launch_bins
   # Revert stub_launch_bins' gh override back to the generic no-op stub, so
@@ -3262,6 +3314,18 @@ EOF
   [ "$status" -eq 0 ]
   run ! grep -q 'repo view' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
+}
+
+# A re-dispatch onto an existing branch (switch_mode=resume) regenerates the
+# whole header; a base: the first dispatch pinned must survive it, or a stacked
+# worker silently reverts to reviewing/gating/PR-ing against the default branch.
+@test "resume: a re-dispatch preserves a previously stamped base:" {
+  setup_resume_branch feat/42-do-a-thing
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'base: feat/parent\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'base: feat/parent' "$wt/WORKER_TASK.md"
 }
 
 # The worker has to know it is continuing rather than starting, in both places it

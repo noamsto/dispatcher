@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -677,6 +677,7 @@ linear_id=""
 gh_issue=""
 pr_number=""
 base_ref=""
+base_flag=""
 kind=implement
 mcp_profile=""
 grid_roles=""
@@ -767,6 +768,14 @@ while [ $# -gt 0 ]; do
     esac
     shift 2
     ;;
+  --base)
+    base_flag="${2:-}"
+    [ -n "$base_flag" ] || {
+      echo "dispatch: --base needs a ref" >&2
+      exit 1
+    }
+    shift 2
+    ;;
   --pr)
     pr_number="${2:-}"
     [ -n "$pr_number" ] || {
@@ -828,6 +837,14 @@ if [ -n "$pr_number" ]; then
     echo "dispatch: --pr cannot combine with a Linear id or GitHub issue token" >&2
     exit 1
   fi
+fi
+
+# --base and --pr are mutually exclusive: --pr already resolves the base from
+# the PR's baseRefName, so a second source would be ambiguous. Pure validation,
+# before the claim, the lock, or any worktree/window.
+if [ -n "$base_flag" ] && [ -n "$pr_number" ]; then
+  echo "dispatch: --base cannot combine with --pr (--pr already fixes the base from the PR)" >&2
+  exit 1
 fi
 
 # Reject before scaffolding: without a PR there is no head to attach to, and a
@@ -1640,6 +1657,25 @@ else
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
     _bus_append "$crew_dir/events.jsonl" "$line"
   fi
+  # --base <ref>: stack this worker on an unmerged branch instead of the default
+  # branch. The ref is fetched and its oid pinned here, before the dispatch lock
+  # below, so an unresolvable ref costs no worktree and no window — the same
+  # property as the default-branch resolution below and the --pr gate above.
+  # Runs on a resume too, because the stamped `base:` is what the worker's review
+  # diff, gate scope and PR target; a re-dispatch must not silently drop it.
+  if [ -n "$base_flag" ]; then
+    git fetch origin -- "$base_flag" || {
+      echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
+      exit 1
+    }
+    base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
+      echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
+      exit 1
+    }
+    base_ref="$base_flag"
+    create_base_label="origin/$base_flag"
+  fi
+
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
   # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
   # reclaim below, and -c died on it all the same. Resolved here rather than
@@ -1650,25 +1686,30 @@ else
   else
     switch_mode=create
 
-    # New branch: base it on the remote default branch's fetched tip, not the
-    # local ref of that name, which nothing here fast-forwards and can be
-    # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
-    # which is only as fresh as the last `git remote set-head`. Resolved before
-    # the dispatch lock below, so a failure here costs no worktree and no
-    # window — same as the --pr gate above.
-    default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
-    [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
-      echo "dispatch: could not resolve the default branch via gh repo view" >&2
-      exit 1
-    }
-    git fetch origin -- "$default_branch"
-    # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
-    # gate in between shells out to crew/jq, giving a concurrent fetch a window
-    # to move the floating ref — pinning keeps what's branched and what the
-    # success line reports from ever diverging.
-    default_base_oid="$(git rev-parse "origin/$default_branch")"
-    default_base_label="origin/$default_branch"
-    default_base_short="$(git rev-parse --short "$default_base_oid")"
+    if [ -n "$base_flag" ]; then
+      # Already resolved and pinned above.
+      create_base_oid="$base_oid"
+    else
+      # New branch: base it on the remote default branch's fetched tip, not the
+      # local ref of that name, which nothing here fast-forwards and can be
+      # stale (#41). The name comes from gh rather than refs/remotes/origin/HEAD,
+      # which is only as fresh as the last `git remote set-head`. Resolved before
+      # the dispatch lock below, so a failure here costs no worktree and no
+      # window — same as the --pr gate above.
+      default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
+      [ -n "$default_branch" ] && [ "$default_branch" != null ] || {
+        echo "dispatch: could not resolve the default branch via gh repo view" >&2
+        exit 1
+      }
+      git fetch origin -- "$default_branch"
+      # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
+      # gate in between shells out to crew/jq, giving a concurrent fetch a window
+      # to move the floating ref — pinning keeps what's branched and what the
+      # success line reports from ever diverging.
+      create_base_oid="$(git rev-parse "origin/$default_branch")"
+      create_base_label="origin/$default_branch"
+    fi
+    create_base_short="$(git rev-parse --short "$create_base_oid")"
   fi
 fi
 
@@ -1749,8 +1790,8 @@ fi
 
 case "$switch_mode" in
 create)
-  wt switch -c "$branch" -b "$default_base_oid" -y --config-set "$wt_post_switch"
-  echo "dispatch: created branch $branch from $default_base_label ($default_base_short)"
+  wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
+  echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
   # default branch and silently strands the earlier branch's uncommitted work
   # (#73). Warn only — a second branch may be what the operator wants. Local
@@ -2030,6 +2071,15 @@ if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/
   carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
 fi
 
+# A re-dispatch onto an existing branch (switch_mode=resume) is a resume, so
+# keep the `base:` the first dispatch pinned unless this invocation supplies its
+# own (--base; --pr never takes this mode). Read before the header write below
+# truncates the file, exactly like $carried above.
+if [ "$switch_mode" = resume ] && [ -z "$base_ref" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
+  carried_base="$(sed -nE 's/^base: //p' "$wt_path/WORKER_TASK.md" | head -1)"
+  [ -n "$carried_base" ] && base_ref="$carried_base"
+fi
+
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 # The review contract is appended so the dispatcher never re-authors it as
@@ -2040,7 +2090,7 @@ fi
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
   printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
     "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
-  if [ -n "$pr_number" ]; then
+  if [ -n "$base_ref" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
   if [ "$switch_mode" = resume ]; then
