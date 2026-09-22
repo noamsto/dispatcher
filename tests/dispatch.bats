@@ -1971,7 +1971,23 @@ assert_gate_silent() { # <engine> <model> [profile]
     '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \
     >"$XDG_DATA_HOME/crew/engine-budget.json"
   write_cursor_models_cache "$(date +%s)"
-  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "rung bare cursor"
+  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-high --agent cursor --effort high --crew-id c1 42 "rung bare cursor"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"grok-4.7-medium"* ]]
+  [[ "$output" == *"the premium rung"* ]]
+}
+
+@test "budget rung gate still matches the legacy prefixed 4.6 cursor id" {
+  # Sibling of the two tests above, same fixture — but the legacy prefixed
+  # form also has to clear the cache-membership check ahead of this gate, so
+  # the cache here lists it: proves the rung gate itself rejects it, not the
+  # cache-membership check.
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  write_cursor_models_cache "$(date +%s)"
+  DISPATCH_PROFILE=work run run_dispatch deep cursor-grok-4.6-high --agent cursor --effort high --crew-id c1 42 "rung legacy prefixed cursor"
   [ "$status" -eq 1 ]
   [[ "$output" == *"cursor-grok-4.6-medium"* ]]
   [[ "$output" == *"the premium rung"* ]]
