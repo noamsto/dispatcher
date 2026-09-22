@@ -102,6 +102,25 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "the repo in the name is foo for a bare foo.git repo" {
+  git init -q --bare "$BATS_TEST_TMPDIR/foo.git"
+  cd "$BATS_TEST_TMPDIR/foo.git"
+  CREW_ID=c1 run_launcher
+  run grep -F -- "--name dispatcher · foo · " "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "the repo in the name is the submodule's own name" {
+  git commit -q --allow-empty -m init
+  git init -q "$BATS_TEST_TMPDIR/sub-src"
+  git -C "$BATS_TEST_TMPDIR/sub-src" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+  git -c user.name=t -c user.email=t@t -c protocol.file.allow=always submodule -q add "$BATS_TEST_TMPDIR/sub-src" mysub
+  cd mysub
+  CREW_ID=c1 run_launcher
+  run grep -F -- "--name dispatcher · mysub · " "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "a bare launch outside a git repo still names the session" {
   cd "$BATS_TEST_TMPDIR"
   CREW_ID=c1 run run_launcher

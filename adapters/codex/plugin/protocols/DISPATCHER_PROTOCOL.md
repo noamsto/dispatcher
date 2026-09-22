@@ -683,7 +683,7 @@ The launcher names a bare session `dispatcher · <repo> · <MM-DD HH:MM>`; that 
 command -v claude-status-update >/dev/null && claude-status-update name set "dispatch: #240 #241 #245"
 ```
 
-Keep the title short (40 cells) and start it with a letter or digit — a leading `#` is stripped. Without `claude-status-update`, inside tmux use `tmux rename-window "dispatch: #240 #241 #245"`; outside tmux skip it. Leave the `@crew_name` badge alone.
+Keep the title short (40 cells) and start it with a letter or digit — a leading `#` is stripped. Without `claude-status-update`, skip it — never `tmux rename-window`, which disables automatic-rename. Leave the `@crew_name` badge alone.
 
 ## Roster diagram
 

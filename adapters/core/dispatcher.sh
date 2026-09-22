@@ -126,7 +126,12 @@ if [ -n "$task" ]; then
   session_name="dispatcher: $task"
 else
   if common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    repo=$(basename "$(dirname "$common_dir")")
+    repo=$(basename "$common_dir")
+    if [ "$repo" = .git ]; then
+      repo=$(basename "$(dirname "$common_dir")")
+    else
+      repo=${repo%.git}
+    fi
   else
     repo=$(basename "$PWD")
   fi
