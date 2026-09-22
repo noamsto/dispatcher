@@ -20,8 +20,8 @@ TypeSafe's first "System One model" — a non-generative decision model that
 answers typed questions (`choice`, `score`, `noul` = yes/no probability) over
 a `state` blob, in one API call, with calibrated probabilities and a
 `confidence` field
-(typesafe.ai/blog/introducing-system-one-models-and-jev, dated 2026-09-22,
-i.e. launched today; "available in early access").
+(typesafe.ai/blog/introducing-system-one-models-and-jev, dated 2026-09-15,
+one week before this note; "available in early access").
 
 Access is proprietary hosted API only — `POST https://api.typesafe.ai/v1/systemone`,
 `Authorization: Bearer <key>`. No self-host, no open weights
@@ -32,10 +32,10 @@ key comes from console.typesafe.ai, the Python SDK installs via
 also sufficient for the REST shape. The `jev-latest` alias moves on release —
 docs advise pinning if confidence thresholds are tuned. Limits: 64k
 tokens/request, 32k for state + longest question, text only, choice ≤255
-options, score 2–10 levels.
+options, score 2–10 levels. (docs.typesafe.ai/api.md)
 
 Cost is $0.042/MTok input, output free (blog, docs.typesafe.ai/models.md).
-Rate limits: 1,200 rpm / 250k tok/s, "adjusting dynamically."
+Rate limits: 1,200 rpm / 250k tok/s, "adjusting dynamically" (docs.typesafe.ai/models.md).
 
 Latency, vendor claim: 70–500 ms end-to-end (blog). **Competitor-reported**
 (Laya's README, which benchmarks against Jev to sell Laya): 236–276 ms p50
@@ -82,15 +82,17 @@ with RLCD against proper scoring rules.
 
 Runtime: Python 3.10+, `pip install laya`, PyTorch 2.14+ / transformers 5.x;
 CPU or CUDA. Measured 32.8–39.5 ms/question on a Tesla T4; **CPU ~193–464
-ms** (model card). No ROCm or Apple-silicon path is documented upstream (an
-MLX sibling exists; laya-coreml is covered separately below).
+ms** (model card). No ROCm or Apple-silicon path is documented upstream
+(laya-coreml's README references an MLX sibling project; laya-coreml itself
+is covered below).
 
 Accuracy per checkpoint (README, BENCHMARKS.md — **self-reported by Laya's
 own authors**): on Laya's own 400-case typed-decisions set, the
 `laya-typed-decisions` checkpoint scores 0.766 argmax (0.471 soft accuracy
 vs Jev's 0.580 against teacher distributions); the base checkpoints `laya` /
 `laya-multilingual` are near chance zero-shot on that same set (0.362 /
-0.352 vs 0.318 random; both below the 0.461 majority baseline). The
+0.342 in the README — BENCHMARKS.md gives 0.361 for `laya` — vs 0.318
+random; both below the 0.461 majority baseline). The
 typed-decisions checkpoint is therefore the only local candidate for
 rubric-style decisions — whether _our_ rubric (tier/engine/effort over a
 task doc) falls inside its distribution is unmeasured; its training set is
@@ -99,11 +101,13 @@ Fine-tuning: a Kaggle notebook, 2×T4, 4–5 h over 30k questions.
 
 Known limits (README, BENCHMARKS.md): weak on high-cardinality labels
 (Banking77 0.425 vs Jev's 0.870); ordinal scores weakest; "over-confident as
-shipped" (ECE 0.466 → 0.081 only after per-question-type temperature
-refit); language collapse on low-resource languages at high stated
+shipped" — `laya` ECE 0.466 → 0.081 and `laya-multilingual` 0.314 → 0.106
+only after per-question-type temperature refit; `laya-typed-decisions`
+ships at raw ECE 0.213, the highest of the three against Jev's published
+0.144; language collapse on low-resource languages at high stated
 confidence.
 
-Activity: 13.3k stars, 63 commits, 30 open issues.
+Activity (as of 2026-09-22): 13.3k stars, 63 commits, 30 open issues.
 
 ### laya-coreml (mizorewww)
 
@@ -121,7 +125,7 @@ License: Apache-2.0, NOTICE attributes Convai Innovations. Fidelity is
 scoped narrowly: "conversion-fidelity fixtures, not proof of general task
 accuracy" (189/189 argmax agreement with upstream on validation questions).
 
-Activity: 1.1k stars, 5 commits, 1 open issue.
+Activity (as of 2026-09-22): 1.1k stars, 5 commits, 1 open issue.
 
 ### How they relate
 
@@ -140,12 +144,12 @@ third-party measurement — vendor numbers are self-reported, competitor
 numbers come from a party selling against what it's measuring, and the ours
 column is empty because we have not run anything.
 
-| Metric      | Vendor                                                                                                                                                       | Competitor-reported                                                      | Ours |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | ---- |
-| Latency     | Jev: 70–500 ms end-to-end (blog). Laya: 32.8–39.5 ms/question on T4 GPU, ~193–464 ms CPU (model card). laya-coreml: 4.88–6.94 ms on M3 Max (README)          | Jev: 236–276 ms p50, per Laya's README                                   | none |
-| Accuracy    | Laya `laya-typed-decisions`: 0.766 argmax on Laya's own 400-case set; base checkpoints near chance at 0.362/0.352 (README, BENCHMARKS.md)                    | Jev: 0.727 argmax on the same set, 0.870 on Banking77, per Laya's README | none |
-| Calibration | Jev: "calibrated probabilities" + `confidence` field, claimed (blog). Laya: ECE 0.466 → 0.081 only after per-question-type temperature refit (BENCHMARKS.md) | —                                                                        | none |
-| Cost        | Jev: $0.042/MTok input, output free, 1,200 rpm / 250k tok/s dynamic (blog, models.md). Laya: free, open weights, compute cost only                           | Laya claims "7.8× faster" than Jev (Laya README)                         | none |
+| Metric      | Vendor                                                                                                                                                                                                           | Competitor-reported                                                      | Ours |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---- |
+| Latency     | Jev: 70–500 ms end-to-end (blog). Laya: 32.8–39.5 ms/question on T4 GPU, ~193–464 ms CPU (model card). laya-coreml: 4.88–6.94 ms on M3 Max (README)                                                              | Jev: 236–276 ms p50, per Laya's README                                   | none |
+| Accuracy    | Laya `laya-typed-decisions`: 0.766 argmax on Laya's own 400-case set; base checkpoints near chance at 0.362/0.342 (README, BENCHMARKS.md)                                                                        | Jev: 0.727 argmax on the same set, 0.870 on Banking77, per Laya's README | none |
+| Calibration | Jev: "calibrated probabilities" + `confidence` field, claimed (blog). Laya: `laya` ECE 0.466 → 0.081 only after temperature refit; `laya-typed-decisions` raw ECE 0.213 vs Jev's published 0.144 (BENCHMARKS.md) | —                                                                        | none |
+| Cost        | Jev: $0.042/MTok input, output free, 1,200 rpm / 250k tok/s dynamic (models.md; price also in the blog). Laya: free, open weights, compute cost only                                                             | Laya claims "7.8× faster" than Jev (Laya README)                         | none |
 
 ## Candidate seams
 
@@ -216,8 +220,8 @@ column is empty because we have not run anything.
 ### 3c. One-rung model escalation after a failed attempt
 
 - **Seam:** `adapters/core/protocols/DISPATCHER_PROTOCOL.md` → "One-rung
-  escalation" and the `escalated_from` logic in `adapters/core/dispatch.sh`
-  (~lines 974–1250).
+  escalation" and the `_escalation_target` helper plus the `escalated_from`
+  stamp in `adapters/core/dispatch.sh`.
 - **Decision:** the _whether_ is read off the bus (`failed` at the same
   tier); the _target_ is a table lookup. Choice-shaped only in the judgment
   of whether the failure was model-bound rather than task-bound — a
@@ -236,7 +240,9 @@ column is empty because we have not run anything.
   `adapters/core/protocols/dispatch-orchestration.md`.
 - **Decision:** would add Jev as a worker engine slot.
 - **Failure mode:** not applicable — disqualified outright. TypeSafe's own
-  docs say Jev "does not write code, hold a conversation, or call tools."
+  docs say Jev "does not generate text, write code, or hold a conversation,"
+  and that coding agents need a model that streams text, calls tools and
+  edits files — "Jev does none of that."
   It cannot fill an engine slot; this isn't a trade-off, it's a category
   mismatch.
 - **Disposition:** no.
@@ -287,7 +293,7 @@ to neither machine.
 **Maintenance.** The harness is bash + jq + bats under Nix (`flake.nix`,
 `tests/crew.bats`); it carries zero Python/ML dependencies today. Adding
 Laya means Python 3.10+, PyTorch 2.14+, transformers 5.x — a new dependency
-class, not a version bump. Jev is a day-zero early-access hosted API with a
+class, not a version bump. Jev is a week-old early-access hosted API with a
 `jev-latest` alias that moves on release and rate limits that adjust
 dynamically — operational risk on top of the integration itself.
 
@@ -306,8 +312,8 @@ is not a general egress rule and is not being cited as one here.
 
 **Don't**
 
-- Every seam that needs _judgment_ (routing, escalation, review ingestion,
-  bus triage) is already performed by an LLM that holds the repo context and
+- Every seam that needs _judgment_ (routing, escalation, reviewer-roster
+  `when:` triggers, bus triage) is already performed by an LLM that holds the repo context and
   must also produce text in the same turn; a System One call would be an
   extra round-trip that cannot replace that turn, only precede it. The prior
   routing-judge analysis
@@ -321,13 +327,13 @@ is not a general egress rule and is not being cited as one here.
   positives park or kill workers.
 - The only viable local option, Laya's `laya-typed-decisions` checkpoint, is
   self-reported at 0.766 on Laya's own corpus, unmeasured on our rubric,
-  ships over-confident until temperature-refit, and any refit or fine-tune
+  ships at raw ECE 0.213 (worse than Jev's published 0.144), and any refit or fine-tune
   needs labelled routing data we don't have (22 runs, none labelled as
   misrouted).
 - Running Laya adds Python + PyTorch (CPU, ~200–460 ms/decision) to a
-  dependency-free bash/Nix harness; the fast port (laya-coreml) runs on only
+  Python-free bash/Nix harness; the fast port (laya-coreml) runs on only
   one of the two fleet machines and caps state at 96 tokens.
-- Jev is hosted, launched today, early access, with a moving `jev-latest`
+- Jev is hosted, launched 2026-09-15, early access, with a moving `jev-latest`
   alias and "dynamically adjusting" rate limits. It would receive task text
   (a fifth vendor for a data class four vendors already see) or pane
   captures (a genuinely new egress class, exactly where its injection
@@ -373,5 +379,6 @@ out-of-distribution rubric result.
 - https://docs.typesafe.ai/legal.md
 - https://docs.typesafe.ai/agent-skill.md
 - https://github.com/NandhaKishorM/laya
+- https://github.com/NandhaKishorM/laya/blob/main/BENCHMARKS.md
 - https://huggingface.co/convaiinnovations/laya
 - https://github.com/mizorewww/laya-coreml
