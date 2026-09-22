@@ -111,3 +111,51 @@ path_without_real() {
   IFS=:
   printf '%s' "${kept[*]}"
 }
+
+# The runtime hash rule, mirrored from _check_protocol_rev (and flake.nix):
+# the directory's files (dotfiles included), names sorted byte-wise, each
+# hashed as `name:sha256;`, sha256 of the concatenation, first 16 hex.
+_protocol_dir_rev() { # <dir>
+  local dir="$1" entries="" names=() file
+  shopt -s dotglob nullglob
+  for file in "$dir"/*; do
+    [ -f "$file" ] || continue
+    names+=("$(basename "$file")")
+  done
+  shopt -u dotglob nullglob
+  if [ ${#names[@]} -gt 0 ]; then
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
+  fi
+  for name in "${names[@]}"; do
+    entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
+  done
+  printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
+}
+
+# Valid standard-tier launch tuples for the protocol-dir coverage tests in
+# dispatch.bats and dispatch-resume.bats. One line per engine:
+#   agent|model|effort|profile|bin|marker
+# `profile` empty means personal. `bin`/`marker` drive _replay_lead_launch in
+# the fresh happy-path test and are ignored by the resume tests. With no
+# arguments all engines are emitted; passing agent names filters to those
+# (fresh dispatch cannot use --no-grid with pi, so it asks for codex cursor).
+# Codex first on purpose: a broken-guard sensitivity run then goes red on a
+# newly-covered engine rather than an already-covered one.
+protocol_engine_specs() { # [agent...]
+  local line agent
+  while IFS= read -r line; do
+    agent="${line%%|*}"
+    if [ $# -eq 0 ]; then
+      printf '%s\n' "$line"
+    else
+      local want
+      for want in "$@"; do
+        [ "$want" = "$agent" ] && printf '%s\n' "$line"
+      done
+    fi
+  done <<'EOF'
+codex|gpt-5.6-terra|medium|work|codex|codex --profile worker
+cursor|cursor-grok-4.6-medium|medium|work|cursor-agent|cursor-agent --force
+pi|openrouter/deepseek/deepseek-v4.1-flash|high||pi|pi --name iris --model
+EOF
+}
