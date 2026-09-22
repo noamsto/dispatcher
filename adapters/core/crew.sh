@@ -753,7 +753,11 @@ reply)
   ;;
 await)
   # await <agent> [--timeout S] [--interval S] — block until a msg addressed to
-  # <agent> arrives (ts strictly after the await started), print it, exit 0.
+  # <agent> answers its outstanding question, print it, exit 0. A reply qualifies
+  # when it is newer than this session's own latest outbound msg to the reply's
+  # sender (the anchor is per conversation), so a reply that landed between the
+  # question and the await is still delivered (#240). A session that has asked
+  # nothing falls back to the await start, preserving the original contract.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -803,8 +807,23 @@ await)
   deadline=$((start + timeout * 1000))
   while :; do
     if [ -f "$log" ]; then
-      ans=$(jq -c --arg crew "$crew" --arg me "$me" --argjson since "$start" \
-        'select(.crew_id==$crew and .kind=="msg" and .to==$me and .ts>$since)' "$log" 2>/dev/null | tail -n1 || true)
+      # Anchor per counterpart: a msg from X is due when it is newer than this
+      # session's latest outbound msg to X; a conversation with no outbound from
+      # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
+      # (the hard-kill crash mode) instead of aborting the whole read, and no
+      # status row (blocked re-stamp, watchdog) can move the anchor (#240).
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" '
+        reduce (inputs | fromjson?) as $e (
+          {anchors: {}, cands: []};
+          if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
+          then .anchors[$e.to] = $e.ts
+          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me)
+          then .cands += [$e]
+          else . end
+        )
+        | . as $s
+        | ($s.cands | map(select(.ts > ($s.anchors[.from] // $since))) | last) // empty
+      ' "$log" 2>/dev/null || true)
       [ -n "$ans" ] && {
         printf '%s\n' "$ans"
         exit 0
