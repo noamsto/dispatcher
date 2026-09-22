@@ -246,7 +246,7 @@ teardown() {
     'A higher planner must be strictly above the authoritative tuple; a top or unavailable rung blocks without launching planning, and `replanned` remains false only when no earlier execute-time planning episode began.' \
     '**Claude:** Agent model override `haiku → sonnet → opus → fable`' \
     '**Codex:** on the exact model, increase `low → medium → high → xhigh → max`' \
-    '**Cursor:** Task model override `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`.' \
+    '**Cursor:** Task model override `grok-4.7-low → grok-4.7-medium → grok-4.7-high`.' \
     'Immediately before every stopping path, emit one complete latest-state metrics snapshot.'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
@@ -490,7 +490,7 @@ teardown() {
     'The exemption covers the **diverse** reviewer only: the same-engine language reviewer and test-runner still run, and having **no** reviewer at all is the terminal path below' \
     'rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |' \
     '| **cursor** | Task-tool subagent with an explicit model slug, the same resolved `brief` inline |' \
-    'slug (deep → `cursor-grok-4.6-medium`, standard → `cursor-grok-4.6-low`) |' \
+    'slug (deep → `grok-4.7-medium`, standard → `grok-4.7-low`) |' \
     'Cap the review→fix loop at 2.'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
@@ -1663,7 +1663,7 @@ $hits"
     'the roster body written into its prompt' \
     'the same roster body inline' \
     'the tier'"'"'s **escalate** rung (deep → `gpt-5.6-sol`, standard → `gpt-5.6-terra`)' \
-    'the tier'"'"'s **escalate** slug (deep → `cursor-grok-4.6-high`, standard → `cursor-grok-4.6-medium`)'; do
+    'the tier'"'"'s **escalate** slug (deep → `grok-4.7-high`, standard → `grok-4.7-medium`)'; do
     run grep -F "$statement" "$skill"
     [ "$status" -eq 0 ]
   done
