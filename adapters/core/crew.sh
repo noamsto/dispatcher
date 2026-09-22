@@ -676,6 +676,28 @@ status | msg)
       ;;
     esac
     from="${1:-}" state="${2:-}" pr="${4:-}"
+    # Warn, don't refuse: the seam is a self-reported marker (native review
+    # batches leave no other bus trace), and a resumed run or pi grid may have
+    # reviewed in an earlier session. Seams from any session on the branch count.
+    if [ "$state" = pr_open ]; then
+      top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+      if [ -n "$top" ] && [ -f "$top/WORKER_TASK.md" ]; then
+        tier=$(sed -n 's/^tier:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
+        kind=$(sed -n 's/^kind:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
+        case "$tier:${kind:-implement}" in
+        standard:implement | deep:implement)
+          seams=0
+          if [ -f "$log" ]; then
+            seams=$(jq -r --arg c "$crew" --arg b "${from%#s*}" \
+              'select(.crew_id==$c and .kind=="msg" and (((.from // "")|sub("#s[^#]*$";""))==$b)
+                      and (((.body|fromjson? // {}) | .seam?) == "review"))
+                 | 1' "$log" 2>/dev/null | wc -l || true)
+          fi
+          [ "${seams:-0}" -gt 0 ] || echo "crew: WARNING: $tier session $from reports pr_open with no review seam on the bus — the code review gate did not run or was not recorded" >&2
+          ;;
+        esac
+      fi
+    fi
     _build_status() {
       jq -nc --arg crew "$crew" --arg from "$from" --arg state "$state" \
         --arg detail "$1" --arg pr "$pr" \
