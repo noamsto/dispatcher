@@ -36,6 +36,7 @@ pace_rule_target() {
   case "$target_agent:$target_model" in
   claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*) model_downgrade="sonnet" ;;
   codex:gpt-5.6-sol) model_downgrade="gpt-5.6-terra" ;;
+  cursor:grok-4.7-high | cursor:grok-4.7-high\[* ) model_downgrade="grok-4.7-medium" ;;
   cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[* ) model_downgrade="cursor-grok-4.6-medium" ;;
   esac
   case "$target_effort" in
@@ -930,7 +931,7 @@ else
       cursor_params="${BASH_REMATCH[2]}"
     fi
     if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
-      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, cursor-grok-4.6-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, grok-4.7-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
@@ -1163,18 +1164,18 @@ if [ -z "$ignore_map" ]; then
     # default and `-fast` is the deliberate "I want this now" override.
     case "$tier" in
     deep)
-      tier_expected="kimi-k3-high, cursor-grok-4.6-medium[-fast], cursor-grok-4.6-high[-fast], composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
-      [[ $model =~ ^(kimi-k3-high|cursor-grok-4\.6-(medium|high)(-fast)?)$ ]] ||
+      tier_expected="kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
+      [[ $model =~ ^(kimi-k3-high|(grok-4\.7|cursor-grok-4\.6)-(medium|high)(-fast)?)$ ]] ||
         [ "$tiermap_is_composer" = 1 ] || [ "$tiermap_is_alt_effort" = 1 ] || tier_ok=0
       ;;
     standard)
-      tier_expected="cursor-grok-4.6-medium[-fast], cursor-grok-4.6-low[-fast], or composer-2.5[-fast]"
-      [[ $model =~ ^cursor-grok-4\.6-(medium|low)(-fast)?$ ]] ||
+      tier_expected="grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]"
+      [[ $model =~ ^(grok-4\.7|cursor-grok-4\.6)-(medium|low)(-fast)?$ ]] ||
         [ "$tiermap_is_composer" = 1 ] || tier_ok=0
       ;;
     trivial)
-      tier_expected="cursor-grok-4.6-low[-fast] or composer-2.5[-fast]"
-      [[ $model =~ ^cursor-grok-4\.6-low(-fast)?$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
+      tier_expected="grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]"
+      [[ $model =~ ^(grok-4\.7|cursor-grok-4\.6)-low(-fast)?$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
       ;;
     *) tier_ok=0 ;;
     esac

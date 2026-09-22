@@ -50,12 +50,12 @@ rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 quota burn. Pi/OpenRouter is usage-priced and is not represented in the quota
 cache; judge its spend separately. Subscription rungs group into three classes:
 **premium** — opus (fable ≈2× opus),
-`gpt-5.6-sol`, `cursor-grok-4.6-high`; **standard** — sonnet, `gpt-5.6-terra`,
-`cursor-grok-4.6-medium`; **cheap** — haiku, `gpt-5.6-luna`,
-`cursor-grok-4.6-low`, `composer-2.5*` (free). Effort multiplies burn
+`gpt-5.6-sol`, `grok-4.7-high`; **standard** — sonnet, `gpt-5.6-terra`,
+`grok-4.7-medium`; **cheap** — haiku, `gpt-5.6-luna`,
+`grok-4.7-low`, `composer-2.5*` (free). Effort multiplies burn
 within a rung (`xhigh`/`max`; codex `ultra` most). **Cursor `-fast` doubles the
 token rate on top of that** ($2/M in + $6/M out standard against $4/M + $12/M
-fast on Grok 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
+fast on Grok 4.7 and 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
 `-medium-fast` burns like premium `-high`, and `-low-fast` like standard. It is
 a deliberate "I need this turn now" override, never the cheap lane. When the budget tightens
 (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
@@ -64,9 +64,9 @@ review depth.
 
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`cursor-grok-4.6-medium`** → escalated **`cursor-grok-4.6-high`** | **`openrouter/deepseek/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`cursor-grok-4.6-medium`** → **`cursor-grok-4.6-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes |
-| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`cursor-grok-4.6-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid |
+| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4-pro`** + spec-critic, plan-critic, reviewer panes |
+| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes |
+| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid |
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
@@ -104,8 +104,10 @@ rows above name the **non-fast** slug on every tier: `-fast` is a paid speed
 tier at ~2× the token rate, not a cheaper high-throughput one, so reach for it
 only when a turn's latency actually matters and say why. cursor `deep`
 uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
-(implements) — escalate to `cursor-grok-4.6-high`, not back to Kimi. **`kimi-k3`
-has no lower-effort Cursor slug** (only `kimi-k3-high`). **Grok 4.6 remains the
+(implements) — escalate to `grok-4.7-high`, not back to Kimi. Grok 4.7 ids
+drop the `cursor-` prefix 4.6 carried (`grok-4.7-medium`, not
+`cursor-grok-4.7-medium`); the gate still accepts `cursor-grok-4.6-*` so a
+pinned 4.6 run keeps dispatching. **Grok 4.7 is the
 default cursor distinct-implementer** — a genuinely non-Claude perspective, which
 is the point of reaching for cursor. `--model` is open across cursor's whole
 multi-vendor id space (the gate checks id _shape_, not membership of this
@@ -165,7 +167,7 @@ review gate, so a lazy pi grid nobody spawns ships with no review at all.
 `--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
 "Lazy grid"), never a default.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `cursor-grok-4.6-low → cursor-grok-4.6-medium → cursor-grok-4.6-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 Pi has no fresh recovery-planner role in the current topology, so a
 plan-shaped recovery on pi is an unavailable-planning block. The dispatcher
@@ -174,7 +176,7 @@ must supply a replacement; the lead cannot count self-replanning as independent.
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
-**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **cursor-grok-4.6-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults require their engine to be in the machine-local `dispatch --engines` roster. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
+**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **fable** (default), **gpt-5.6-sol** via the read-only codex MCP, or **grok-4.7-high** via a `cursor-agent -p` one-shot — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Codex/cursor consults require their engine to be in the machine-local `dispatch --engines` roster. See `WORKER_PROTOCOL.md` → "Orchestration consult". Every deep worker emits an outcome-metrics record to the bus at finish:
 `crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
 
@@ -308,7 +310,7 @@ is premium on both dimensions needs a matching escape for each (or
 | ------ | ----------------------------------------------- | ------------------------ |
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet`                 |
 | codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
-| cursor | `cursor-grok-4.6-high`                           | `cursor-grok-4.6-medium` |
+| cursor | `grok-4.7-high`                           | `grok-4.7-medium` |
 
 ## Orchestrator engines (dispatcher session)
 
@@ -320,7 +322,7 @@ Orchestrator defaults — bump this table when a model ships:
 | ------ | ----- | ------ |
 | claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
 | codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, cursor-grok-4.6-*) |
+| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, grok-4.7-*) |
 | pi | **`openrouter/deepseek/deepseek-v4-pro`** | **high** through `--thinking` |
 
 All four rows are pinned in `dispatcher.sh`, claude included — `/model` and

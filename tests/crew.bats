@@ -3395,7 +3395,7 @@ EOF
   doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
   for token in opus sonnet haiku fable composer-2.5 \
     gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol \
-    cursor-grok-4.6-low cursor-grok-4.6-medium cursor-grok-4.6-high \
+    grok-4.7-low grok-4.7-medium grok-4.7-high \
     claude-fable-5; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
@@ -3404,8 +3404,9 @@ EOF
   done
 }
 
-# _burn_weight matches on glob families (`cursor-grok-4.[0-9]-medium`) so that
-# 4.5 and 4.6 price alike, which a token grep of the function body cannot see.
+# _burn_weight matches on glob families (`*grok-4.[0-9]-medium`) so that 4.5,
+# 4.6, and the prefix-less 4.7 ids price alike, which a token grep of the
+# function body cannot see.
 # Assert the rule by calling it.
 @test "burn map conformance: _burn_weight prices effort and -fast on separate axes" {
   weight() {
@@ -3439,6 +3440,14 @@ cursor-grok-4.6-low-fast standard 2
 cursor-grok-4.6-medium-fast premium 4
 cursor-grok-4.6-high-fast premium 8
 cursor-grok-4.6-xhigh-fast premium 12
+grok-4.7-low cheap 1
+grok-4.7-medium standard 2
+grok-4.7-high premium 4
+grok-4.7-xhigh premium 6
+grok-4.7-low-fast standard 2
+grok-4.7-medium-fast premium 4
+grok-4.7-high-fast premium 8
+grok-4.7-xhigh-fast premium 12
 EOF
   # kimi-k3-high and an unknown id stay unclassed rather than guessed.
   [ -z "$(weight kimi-k3-high)" ]
