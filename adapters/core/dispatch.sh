@@ -1070,7 +1070,7 @@ else
     ;;
   pi)
     if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4-pro). See dispatch-orchestration.md \"Model gate\"." >&2
+      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4.1-flash). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
     ;;
@@ -1102,10 +1102,9 @@ _escalation_target() {
   cursor:standard:cursor-grok-4.6-medium*)                         printf 'medium cursor-grok-4.6-high' ;;
   cursor:deep:cursor-grok-4.6-medium*)                             printf 'medium RECORD_ONLY' ;;
   # cursor:trivial:low→medium removed — trivial tier must not reach above its row
-  # pi: flash → v4.1-flash → v4-pro
+  # pi: v4-flash → v4.1-flash; kimi-k3 is the deep escalation only
   pi:standard:openrouter/deepseek/deepseek-v4-flash)               printf 'v4-flash RECORD_ONLY' ;;
-  pi:standard:openrouter/deepseek/deepseek-v4.1-flash)             printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
-  pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash RECORD_ONLY' ;;
+  pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash openrouter/moonshotai/kimi-k3' ;;
   # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
   esac
 }
@@ -1289,16 +1288,16 @@ if [ -z "$ignore_map" ]; then
   pi)
     case "$tier" in
     deep)
-      tier_expected="openrouter/deepseek/deepseek-v4-pro or openrouter/deepseek/deepseek-v4.1-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4(-pro|\.1-flash)$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/moonshotai/kimi-k3 (kimi-k3 is escalation-only)"
+      [[ $model =~ ^openrouter/(deepseek/deepseek-v4\.1-flash|moonshotai/kimi-k3)$ ]] || tier_ok=0
       ;;
     standard)
-      tier_expected="openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash"
+      [[ $model =~ ^openrouter/(deepseek/deepseek-v4(\.1)?-flash|z-ai/glm-5\.3-flash|qwen/qwen3\.8-flash)$ ]] || tier_ok=0
       ;;
     trivial)
-      tier_expected="openrouter/deepseek/deepseek-v4-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4-flash$ ]] || tier_ok=0
+      tier_expected="openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash"
+      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
       ;;
     *) tier_ok=0 ;;
     esac
@@ -1359,7 +1358,7 @@ if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] 
       escalated_from="medium (record only)" ;;
     pi:standard:openrouter/deepseek/deepseek-v4-flash:openrouter/deepseek/deepseek-v4.1-flash)
       escalated_from="v4-flash (record only)" ;;
-    pi:deep:openrouter/deepseek/deepseek-v4.1-flash:openrouter/deepseek/deepseek-v4-pro)
+    pi:deep:openrouter/deepseek/deepseek-v4.1-flash:openrouter/moonshotai/kimi-k3)
       escalated_from="v4.1-flash (record only)" ;;
     esac
   fi

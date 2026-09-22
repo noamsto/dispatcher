@@ -56,10 +56,18 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   available as an alternative. Don't front a Claude model through cursor when the
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.
-- pi leans: DeepSeek and other third-family models — **OpenRouter on every
-  profile** — when an independent non-Claude/non-OpenAI perspective is useful.
-  Standard and deep pi workers automatically receive role-grid critic/reviewer
-  panes because pi has no native subagents.
+- pi leans: the **cheap lane** — OpenRouter, usage-priced, roughly $0.5–2 per
+  Flash run against ~$18+ for a Kimi K3 deep run. **When claude's `7d` window is
+  ahead of pace** (the exact pace-aware condition the premium gate uses: ≥70%
+  used *and* >15 points ahead of elapsed — see "≥70% on the `7d` window,
+  pace-aware" under the budget lever), pi becomes the **default engine for
+  `standard` and `trivial`** work, shedding claude's subscription burn.
+  Exceptions that stay on claude: UI/frontend, security-adjacent code, and
+  genuinely underspecified work. Otherwise pi is an ordinary peer in the
+  neutral-fit rotation, reached for when an independent non-Claude/non-OpenAI
+  perspective is useful (DeepSeek, Moonshot, Z.ai, Qwen — all through
+  OpenRouter). Standard and deep pi workers automatically receive role-grid
+  critic/reviewer panes because pi has no native subagents.
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the
@@ -136,6 +144,14 @@ session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
 Pi/OpenRouter spend is usage-priced and absent from this subscription-quota
 cache; do not infer that `null` means free or unlimited.
+
+- **pi is the cheap lane when claude's `7d` window runs ahead of pace.** Nothing
+  here gates pi — it is usage-priced and absent from the cache — which is
+  exactly what makes it the default shed target. When claude trips the pace rule
+  below, route `standard` and `trivial` work to pi (see the engine lever's pi
+  bullet) rather than merely shedding a burn class: pi's Flash rungs cost
+  roughly $0.5–2 per run, so the burn it removes is real. The three claude leans
+  (UI/frontend, security-adjacent, genuinely underspecified) stay on claude.
 
 - **`5h` at ≥85%** — a short rate limit that refills inside one session. Inside
   its last 15% (~45m to reset), hold and wake past the reset rather than
@@ -383,7 +399,7 @@ is back.
   genuinely likely to go unused for a large part of the run — a `deep`
   dispatch you don't expect to survive to its plan seam, or a
   cost-sensitive/high-fan-out batch — not as a blanket default.
-- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. First choose only from `dispatch --engines`; the `<model>` slot must match the engine, and pi's ladder is `openrouter/deepseek/...` on every profile (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Each engine needs one-time provider authentication against its active provider. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
+- **Engine.** Pass `--agent claude`, `--agent codex`, `--agent cursor`, or `--agent pi` per the judgment call above — same crew-bus contract either way. First choose only from `dispatch --engines`; the `<model>` slot must match the engine, and pi's ladder spans OpenRouter's DeepSeek, Moonshot, Z.ai, and Qwen rows (model map in `dispatch-orchestration.md`). `dispatch` rejects a mismatched or unsupported model before scaffolding; `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` overrides one id at a time (see `dispatch-orchestration.md` → "Model gate"). Each engine needs one-time provider authentication against its active provider. Tier still sets pipeline depth regardless of engine; `--effort` is a real knob for claude/codex/pi and a no-op for cursor, which encodes effort in the model id.
 - **MCP.** Claude, codex, and cursor inherit the configured base MCP stack. Pi uses its own global configuration. Add `--mcp <profile>` to layer on an extra Claude-only profile: `analytics` (posthog, work only). Unknown/ungenerated profiles abort before launch; non-Claude `--mcp` is rejected.
 - **Inline the spec.** The worker has no Linear access, so it can't read the ticket. Write the full task to a file and export `DISPATCH_SPEC=<file>` before calling `dispatch` — it's appended to `WORKER_TASK.md` under `## Task`. Without it the worker only gets the title.
 
