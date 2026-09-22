@@ -1273,13 +1273,16 @@ _pi_assert_refused() {
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  # Per-cycle liveness re-stamp, then the dispatcher replies dated inside cycle
-  # 2's window (a future ts: `crew await` matches .ts > its own start, so a
-  # reply dated during the window is what a cycle delivers).
+  # `crew await` delivers a reply only when .ts > `start`, where `start` is
+  # `now*1000|floor` captured the instant cycle 2's await begins — `t` below
+  # uses that same expression, in real ms rather than `date +%s` (whole-second
+  # truncation). Delivery is checked on await's first loop iteration, before
+  # any sleep, so a margin wider than the actual write-to-snapshot gap costs
+  # nothing in test runtime.
   CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle 1 of 24)"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  t=$(($(date +%s) * 1000))
-  jq -nc --arg to "$id" --argjson ts "$((t + 1000))" \
+  t=$(jq -nc 'now*1000|floor')
+  jq -nc --arg to "$id" --argjson ts "$((t + 2000))" \
     '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
   # Cycle 2: the reply is delivered in-band and the worker resumes in place.
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5
