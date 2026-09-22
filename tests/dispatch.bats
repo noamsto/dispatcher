@@ -4531,6 +4531,14 @@ _escalation_seed_spoof() {
   [[ "$output" == *"is not deep's row"* ]]
 }
 
+@test "escalation: a failed deep v4.1-flash worker unlocks kimi-k3 and records escalated_from" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" openrouter/deepseek/deepseek-v4.1-flash deep s-test pi
+  run run_dispatch deep openrouter/moonshotai/kimi-k3 --agent pi --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'escalated_from: v4.1-flash (record only)' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
 @test "escalation: cursor target must match exactly, not as a prefix" {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" cursor-grok-4.6-medium standard s-test cursor

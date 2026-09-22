@@ -361,9 +361,9 @@ is back.
   call still overrides the saved value, falling back to the task doc's own
   `effort:` only when neither is set (`dispatch.sh:373-374`). A pi role pane
   still rides the lead's rung through `--thinking` by default (or an
-  explicit `@effort`), and DeepSeek only exposes `off`/`high`/`xhigh`, so a
-  resolved `medium` or `low` clamps to `high` (`WORKER_PROTOCOL.md` → rule
-  1, pi row).
+  explicit `@effort`); pi clamps that level per model through the model's
+  `thinkingLevelMap`, so a level the model does not expose resolves to the
+  nearest supported one (`WORKER_PROTOCOL.md` → rule 1, pi row).
   Pass `--no-grid` to opt a non-pi engine out of its default; it's refused
   for pi standard/deep, and a usage error together with `--grid` or
   `--roles`. Role panes share the worktree, communicate through the bus, and

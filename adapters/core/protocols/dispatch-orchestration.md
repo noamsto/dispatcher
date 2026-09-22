@@ -80,9 +80,9 @@ their tier-typical models anyway (V4 Flash exposes `off`/`high`/`xhigh`; V4.1
 Flash exposes `off`/`low`/`high`/`max`, so deep's `xhigh` clamps up to `max`).
 Pi clamps `--thinking` per model through that model's `thinkingLevelMap` —
 generic logic, not DeepSeek-specific — so the rotation alternatives behave the
-same way: `openrouter/moonshotai/kimi-k3` and `openrouter/z-ai/glm-5.3-flash`
-also expose `off`/`low`/`high`/`max`, while `openrouter/qwen/qwen3.8-flash`
-carries no map and supports through `high`. None of this needs new clamp
+same way: `openrouter/moonshotai/kimi-k3` exposes `off`/`low`/`high`/`max` and
+`openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
+`openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`. None of this needs new clamp
 machinery — every id launches with the standard ladder.
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
