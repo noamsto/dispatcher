@@ -1044,7 +1044,9 @@ EOF
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-worker"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
     DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "no worker $eng"
     [ "$status" -ne 0 ]
     [[ "$output" == *"WORKER_PROTOCOL.md"* ]]
@@ -1052,6 +1054,8 @@ EOF
     [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
     [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
   done < <(protocol_engine_specs codex cursor)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 2 ]
 }
 
 @test "fresh dispatch refuses a stale protocol dir for codex and cursor" {
@@ -1061,7 +1065,9 @@ EOF
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
+  n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
     DISPATCH_PROFILE="$profile" run run_subst_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "stale $eng"
     [ "$status" -ne 0 ]
     [[ "$output" == *"protocol directory version mismatch"* ]]
@@ -1071,6 +1077,8 @@ EOF
     [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
     [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
   done < <(protocol_engine_specs codex cursor)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 2 ]
 }
 
 # The other half of #253's requirement: on the happy path the launch command
@@ -1079,7 +1087,9 @@ EOF
 # --append-system-prompt), so assert that exact carrier, not a symmetric shape.
 @test "fresh dispatch names the protocol dir in the codex and cursor launch" {
   stub_launch_bins
+  n=0
   while IFS='|' read -r eng model effort profile bin marker; do
+    n=$((n + 1))
     DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "protocol prompt $eng"
     [ "$status" -eq 0 ]
     _replay_lead_launch "$bin" "$marker"
@@ -1087,6 +1097,8 @@ EOF
     [[ "${argv[last]}" == "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end."* ]]
     [[ "${argv[last]}" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
   done < <(protocol_engine_specs codex cursor)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 2 ]
 }
 
 @test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {

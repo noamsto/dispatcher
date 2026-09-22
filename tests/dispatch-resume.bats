@@ -203,7 +203,9 @@ setup_worker_wt() { # [extra header lines...]
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-incomplete"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"
+  n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
     sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
     DISPATCH_PROFILE="$profile" run run_resume
     [ "$status" -eq 1 ]
@@ -212,6 +214,8 @@ setup_worker_wt() { # [extra header lines...]
     [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
     [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
   done < <(protocol_engine_specs codex cursor pi)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
 }
 
 @test "resume refuses a stale protocol dir for codex, cursor and pi" {
@@ -222,7 +226,9 @@ setup_worker_wt() { # [extra header lines...]
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
+  n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
     sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
     DISPATCH_PROFILE="$profile" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
     [ "$status" -eq 1 ]
@@ -233,6 +239,8 @@ setup_worker_wt() { # [extra header lines...]
     [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
     [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
   done < <(protocol_engine_specs codex cursor pi)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
 }
 
 # Happy path: the resume launch prompt names the protocol dir. codex/cursor
@@ -243,7 +251,9 @@ setup_worker_wt() { # [extra header lines...]
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
+  n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
     sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
     : >"$STUB_LOG"
     DISPATCH_PROFILE="$profile" run run_resume
@@ -254,6 +264,8 @@ setup_worker_wt() { # [extra header lines...]
     esac
     grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
   done < <(protocol_engine_specs codex cursor pi)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
 }
 
 @test "--print reports the resolved launch and does not launch" {
