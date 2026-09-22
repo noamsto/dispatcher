@@ -31,8 +31,9 @@ key comes from console.typesafe.ai, the Python SDK installs via
 (docs.typesafe.ai/introduction/quickstart.md); a bash `curl` + `jq` call is
 also sufficient for the REST shape. The `jev-latest` alias moves on release —
 docs advise pinning if confidence thresholds are tuned. Limits: 64k
-tokens/request, 32k for state + longest question, text only, choice ≤255
-options, score 2–10 levels. (docs.typesafe.ai/api.md)
+tokens/request, 32k for state + longest question, text only (docs.typesafe.ai/models.md);
+choice ≤255 options, score 2–10 levels
+(docs.typesafe.ai/api.md).
 
 Cost is $0.042/MTok input, output free (blog, docs.typesafe.ai/models.md).
 Rate limits: 1,200 rpm / 250k tok/s, "adjusting dynamically" (docs.typesafe.ai/models.md).
@@ -103,8 +104,8 @@ Known limits (README, BENCHMARKS.md): weak on high-cardinality labels
 (Banking77 0.425 vs Jev's 0.870); ordinal scores weakest; "over-confident as
 shipped" — `laya` ECE 0.466 → 0.081 and `laya-multilingual` 0.314 → 0.106
 only after per-question-type temperature refit; `laya-typed-decisions`
-ships at raw ECE 0.213, the highest of the three against Jev's published
-0.144; language collapse on low-resource languages at high stated
+ships at raw ECE 0.213 against Jev's published 0.144 (BENCHMARKS.md gives no refit figure
+for it); language collapse on low-resource languages at high stated
 confidence.
 
 Activity (as of 2026-09-22): 13.3k stars, 63 commits, 30 open issues.
