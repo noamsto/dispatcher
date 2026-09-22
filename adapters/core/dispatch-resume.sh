@@ -282,12 +282,135 @@ command -v dispatch >/dev/null 2>&1 || {
   echo "dispatch resume: dispatch is not on PATH — both are installed together by the home-manager module" >&2
   exit 1
 }
+
+# Escalation helpers (duplicated from dispatch.sh — this is a separate binary).
+# _escalation_target <engine> <tier> <failed_model> — prints "<baseline> <escalated>"
+# if the failed_model is exactly one rung below a valid escalation target.
+_escalation_target() {
+  local eng="$1" tier="$2" failed="$3"
+  case "$eng:$tier:$failed" in
+  claude:standard:sonnet | claude:standard:claude-sonnet-*) printf 'sonnet opus' ;;
+  claude:trivial:haiku | claude:trivial:claude-haiku-*) printf 'haiku RECORD_ONLY' ;;
+  # claude:trivial:sonnet→opus removed — trivial tier must not reach above its row (#249 acceptance)
+  claude:deep:sonnet | claude:deep:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
+  claude:deep:opus | claude:deep:claude-opus-*) printf 'opus RECORD_ONLY' ;;
+  codex:standard:gpt-5.6-luna) printf 'luna RECORD_ONLY' ;;
+  codex:standard:gpt-5.6-terra) printf 'terra gpt-5.6-sol' ;;
+  codex:deep:gpt-5.6-terra) printf 'terra RECORD_ONLY' ;;
+  # codex:trivial:luna→terra removed — trivial tier must not reach above its row
+  cursor:standard:cursor-grok-4.6-low*) printf 'low RECORD_ONLY' ;;
+  cursor:standard:cursor-grok-4.6-medium*) printf 'medium cursor-grok-4.6-high' ;;
+  cursor:deep:cursor-grok-4.6-medium*) printf 'medium RECORD_ONLY' ;;
+  # cursor:trivial:low→medium removed — trivial tier must not reach above its row
+  pi:standard:openrouter/deepseek/deepseek-v4-flash) printf 'v4-flash RECORD_ONLY' ;;
+  pi:standard:openrouter/deepseek/deepseek-v4.1-flash) printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
+  pi:deep:openrouter/deepseek/deepseek-v4.1-flash) printf 'v4.1-flash RECORD_ONLY' ;;
+  # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
+  esac
+}
+
+# _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
+# dispatch that the branch's latest terminal worker status (failed/done/pr_open)
+# ended, provided that status is `failed` and that dispatch ran at <tier>. The
+# dispatch is the failing worker's own session; a resume-only session falls back
+# to the latest dispatch before the failure. Prints nothing otherwise.
+_prior_failed_model() {
+  local branch="$1" dir="$2" tier="$3" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 0
+  jq -r --arg b "$branch" --arg t "$tier" '
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "status" and
+        ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+        | sort_by(.ts) | last) as $last
+    | if $last == null or $last.body.state != "failed" then empty
+      else ($last.from | sub("^worker:[^#]*#"; "")) as $sess
+      | ($all | map(select(.kind == "dispatch" and .branch == $b and .ts < $last.ts))) as $ds
+      | ((($ds | map(select(.session == $sess)) | last)
+          // ($ds | sort_by(.ts) | last))) as $d
+      | if $d != null and $d.tier == $t then $d.model // empty else empty end
+      end
+  ' "$events" 2>/dev/null || true
+}
+
+# _escalation_model_matches <target> <model> — true when <model> names the
+# escalation <target> exactly (claude's target is the alias `opus`, which the
+# claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
+_escalation_model_matches() {
+  local target="$1" m="$2"
+  case "$target" in
+  opus) [[ $m =~ ^(opus|claude-opus-.*)$ ]] ;;
+  cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
+  *) [ "$m" = "$target" ] ;;
+  esac
+}
+
+# _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
+# 1. The branch's latest terminal worker status (failed/done/pr_open) is
+#    `failed`, AND that worker's session has a matching dispatch or resume
+#    event on the same branch (anti-spoofing), AND
+# 2. No dispatch or resume event on this branch carries escalated_from, AND no
+#    dispatch followed the first failure (an unstamped record-only hop or a
+#    same-model retry is an attempt too).
+_prior_failed_escalation_available() {
+  local branch="$1" dir="$2" events
+  events="$dir/events.jsonl"
+  [ -f "$events" ] || return 1
+  # Check 1: the latest terminal status is a failure posted by a session that
+  # was really dispatched (or resumed) on this branch.
+  jq -e --arg b "$branch" '
+    [., inputs] | . as $all
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .session]) as $sessions
+    | [$all[] | select(.kind == "status" and .from != null
+        and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
+        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
+    | sort_by(.ts) | last as $last
+    | $last != null and $last.body.state == "failed"
+      and ($sessions | index($last.from | sub("^worker:[^#]*#"; ""))) != null
+  ' "$events" >/dev/null 2>&1 || return 1
+  # Check 2: one-shot. No escalation stamp yet, and no dispatch after the
+  # first failure (dispatch rows cover in-row hops, which are never stamped).
+  jq -e --arg b "$branch" '
+    [., inputs] | . as $all
+    | ([$all[] | select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
+        and .body.state == "failed") | .ts] | min) as $first
+    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0))] | length) as $stamped
+    | ([$all[] | select(.kind == "dispatch" and .branch == $b and .ts > $first)] | length) as $later
+    | $stamped == 0 and $later == 0
+  ' "$events" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# Pre-compute crew_dir for escalation checks (normally set later at line 477).
+_escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
 # The tier↔model pair was adjudicated when this worker was first dispatched;
 # only an explicit --model is a fresh choice that deserves re-gating.
+# Escalation: if a prior session failed and --model is one rung up, allow it.
 if [ -z "$model_flag" ] || [ -n "$ignore_map" ]; then
   precheck+=(--ignore-map)
+else
+  orig_model="$(sed -n 's/^model: //p' "$wt_path/WORKER_TASK.md" | head -1)"
+  if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
+    # The header is worker-writable, so the bus must agree it is what failed.
+    bus_failed_model="$(_prior_failed_model "$branch" "$_escalation_crew_dir" "$tier")"
+    escalation_info=""
+    [ "$bus_failed_model" = "$orig_model" ] && escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
+    if [ -n "$escalation_info" ]; then
+      escalation_target="${escalation_info#* }"
+      if [ "$escalation_target" != "RECORD_ONLY" ]; then
+        if _escalation_model_matches "$escalation_target" "$model"; then
+          if _prior_failed_escalation_available "$branch" "$_escalation_crew_dir"; then
+            precheck+=(--ignore-map)
+            escalated_from="${escalation_info%% *}"
+          fi
+        fi
+      fi
+    fi
+  fi
 fi
 DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 
@@ -456,17 +579,26 @@ _hdr_set protocol_dir "$PROTOCOL_DIR"
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
+# An escalation is the worker's new launch tuple: without the model line a later
+# plain resume would read the old header and relaunch on the failed rung.
+if [ -n "${escalated_from:-}" ]; then
+  _hdr_set model "$model"
+  _hdr_set escalated_from "$escalated_from"
+fi
 
 # The resume row. New kind: without it a worker resumed four times reports as
 # one run, and the ratings rollup attributes the whole cost and latency to a
 # single session. prev_worker_id is what chains the sessions back together.
+escalated_from_event="${escalated_from:-}"
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
+  --arg escalated_from "$escalated_from_event" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
-     session:$session, continued:$continued}')
+     session:$session, continued:$continued}
+   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # Clears a stale exited/failed/done roster row so the crew reads as live again.
