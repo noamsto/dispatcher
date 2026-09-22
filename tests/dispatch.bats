@@ -129,26 +129,6 @@ _substituted_dispatch() { # [rev]
   run_subst_dispatch() { bash -euo pipefail "$DISPATCH_SUBST" "$@"; }
 }
 
-# The runtime hash rule, mirrored from _check_protocol_rev (and flake.nix):
-# the directory's files (dotfiles included), names sorted byte-wise, each
-# hashed as `name:sha256;`, sha256 of the concatenation, first 16 hex.
-_protocol_dir_rev() { # <dir>
-  local dir="$1" entries="" names=() file
-  shopt -s dotglob nullglob
-  for file in "$dir"/*; do
-    [ -f "$file" ] || continue
-    names+=("$(basename "$file")")
-  done
-  shopt -u dotglob nullglob
-  if [ ${#names[@]} -gt 0 ]; then
-      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
-    fi
-  for name in "${names[@]}"; do
-    entries+="${name}:$(sha256sum "$dir/$name" | cut -d' ' -f1);"$'\n'
-  done
-  printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
-}
-
 # Stubs that carry a `--pr N` attach all the way to send-keys: gh resolves the
 # PR head, wt attaches a worktree to that existing branch (no -c), crew/tmux as
 # in stub_launch_bins. $1 is the PR's head branch. headRefOid is the branch's
@@ -1051,6 +1031,62 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
   grep -q 'new-window' "$STUB_LOG"
+}
+
+# #253: the protocol-dir guard is engine-independent, but reaching it requires a
+# valid tier/model/effort tuple — a bad one aborts earlier for the wrong reason.
+# Parametrize the guard coverage over the engines the issue names as untested
+# for fresh dispatch (codex, cursor). claude is covered above; pi cannot take
+# --no-grid on standard/deep (it needs the grid for its native-subagent-free
+# critic/review phases), and pi's fresh happy path is covered above too.
+@test "fresh dispatch aborts on a missing protocol file for codex and cursor" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-worker"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "no worker $eng"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"WORKER_PROTOCOL.md"* ]]
+    [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  done < <(protocol_engine_specs codex cursor)
+}
+
+@test "fresh dispatch refuses a stale protocol dir for codex and cursor" {
+  stub_launch_bins
+  _substituted_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    DISPATCH_PROFILE="$profile" run run_subst_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "stale $eng"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"protocol directory version mismatch"* ]]
+    [[ "$output" == *"0123456789abcdef"* ]]
+    [[ "$output" == *"$rev_dir"* ]]
+    [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  done < <(protocol_engine_specs codex cursor)
+}
+
+# The other half of #253's requirement: on the happy path the launch command
+# itself carries the correct protocol path. codex and cursor pass it inside the
+# prompt string (unlike claude's --append-system-prompt-file and pi's
+# --append-system-prompt), so assert that exact carrier, not a symmetric shape.
+@test "fresh dispatch names the protocol dir in the codex and cursor launch" {
+  stub_launch_bins
+  while IFS='|' read -r eng model effort profile bin marker; do
+    DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --crew-id c1 42 "protocol prompt $eng"
+    [ "$status" -eq 0 ]
+    _replay_lead_launch "$bin" "$marker"
+    last=$((${#argv[@]} - 1))
+    [[ "${argv[last]}" == "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end."* ]]
+    [[ "${argv[last]}" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
+  done < <(protocol_engine_specs codex cursor)
 }
 
 @test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {

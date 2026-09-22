@@ -154,23 +154,7 @@ setup_worker_wt() { # [extra header lines...]
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  rev_dir="$(
-    names=()
-    shopt -s dotglob nullglob
-    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
-      [ -f "$f" ] || continue
-      names+=("$(basename "$f")")
-    done
-    shopt -u dotglob nullglob
-    if [ ${#names[@]} -gt 0 ]; then
-      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
-    fi
-    entries=""
-    for name in "${names[@]}"; do
-      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
-    done
-    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
-  )"
+  rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 1 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
@@ -188,23 +172,7 @@ setup_worker_wt() { # [extra header lines...]
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
   touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
-  rev="$(
-    names=()
-    shopt -s dotglob nullglob
-    for f in "$DISPATCHER_PROTOCOL_DIR"/*; do
-      [ -f "$f" ] || continue
-      names+=("$(basename "$f")")
-    done
-    shopt -u dotglob nullglob
-    if [ ${#names[@]} -gt 0 ]; then
-      mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
-    fi
-    entries=""
-    for name in "${names[@]}"; do
-      entries+="${name}:$(sha256sum "$DISPATCHER_PROTOCOL_DIR/$name" | cut -d' ' -f1);"$'\n'
-    done
-    printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
-  )"
+  rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   sed "s/@protocolRev@/$rev/" "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 0 ]
@@ -222,6 +190,70 @@ setup_worker_wt() { # [extra header lines...]
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+# #253: same guard, resume side. The guard runs at dispatch-resume.sh:242-243,
+# before the engine precheck at :415, so it is engine-independent; parametrize
+# over the engines the issue names as untested (codex, cursor, pi). The header
+# rewrite uses anchored wildcards so every iteration actually changes the
+# engine rather than no-opping after the first.
+@test "resume aborts on a missing protocol file for codex, cursor and pi" {
+  setup_worker_wt
+  cd "$WT"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-incomplete"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
+    DISPATCH_PROFILE="$profile" run run_resume
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"EVIDENCE_REVIEW.md"* ]]
+    [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
+  done < <(protocol_engine_specs codex cursor pi)
+}
+
+@test "resume refuses a stale protocol dir for codex, cursor and pi" {
+  setup_worker_wt
+  cd "$WT"
+  sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
+    DISPATCH_PROFILE="$profile" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"protocol directory version mismatch"* ]]
+    [[ "$output" == *"0123456789abcdef"* ]]
+    [[ "$output" == *"$rev_dir"* ]]
+    [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+    [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
+  done < <(protocol_engine_specs codex cursor pi)
+}
+
+# Happy path: the resume launch prompt names the protocol dir. codex/cursor
+# carry it in the prompt string; pi carries it in --append-system-prompt. All
+# three also carry the protocol_note in the prompt. Assert each engine's actual
+# carrier rather than assuming symmetry.
+@test "resume names the protocol dir in the codex, cursor and pi launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
+    : >"$STUB_LOG"
+    DISPATCH_PROFILE="$profile" run run_resume
+    [ "$status" -eq 0 ]
+    case "$eng" in
+    pi) grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG" ;;
+    *) grep -q -- "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md" "$STUB_LOG" ;;
+    esac
+    grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+  done < <(protocol_engine_specs codex cursor pi)
 }
 
 @test "--print reports the resolved launch and does not launch" {
