@@ -1,3 +1,7 @@
+# Review notes (local)
+
+## #268 review ledger (#270)
+
 | invariant/family                            | finding or thread IDs                                                                                                        | observed head | fix commit | proof                                                                                                                                                                     | disposition | rounds used |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------- |
 | lazy Cursor effort override                 | local shell review: explicit `--spawn-role --agent cursor --effort` was accepted although Cursor ignores the value           | uncommitted   | pending    | fresh re-review approved; `shellcheck adapters/core/dispatch.sh`; `bats tests/dispatch.bats` (243/243)                                                                    | fixed       | 2           |
@@ -11,3 +15,15 @@
 | grid hint contract v1 (publisher side) | reviewer role (pi deepseek-v4-pro; roster: agent-docs + shell + security): no findings | f5ca4fe | n/a | reviewer verdict accept; `shellcheck adapters/core/*.sh`; `bats tests/` 1055/1055; `scripts/gen-adapters.sh` idempotent | clean | 1 |
 
 recurrence_escalation: unused
+
+## Round 1 — agent-docs-reviewer + shell-reviewer (standard tier, review_mode: full)
+
+| invariant/family                                                  | finding or thread IDs         | observed head | fix commit | proof                                                    | disposition | rounds used                   |
+| ----------------------------------------------------------------- | ----------------------------- | ------------- | ---------- | -------------------------------------------------------- | ----------- | ----------------------------- |
+| retro-note cross-reference from review-gate diagnostics paragraph | agent-docs-reviewer MEDIUM #1 | 4474d0f       | b176588    | `nix develop -c bats tests/adapters.bats` green post-fix | fixed       | 0 (mechanical, small-fix bar) |
+
+shell-reviewer: no findings, Approve.
+
+## Harness diagnostics (not reviewer-facing, recorded here per the new PR body contract)
+
+None generated during this task's own review gate — `reviewer-roster --base` resolved cleanly with no `.dispatcher/reviewers` in this repo, so no overrides/rejections/ignored-`when:`/discovery-skipped diagnostics occurred.
