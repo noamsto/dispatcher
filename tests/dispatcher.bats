@@ -161,7 +161,7 @@ teardown() {
   for p in work personal; do
     DISPATCH_PROFILE=$p CREW_ID=c1 run run_launcher --agent pi
     [ "$status" -eq 0 ]
-    run grep -F -- '--model openrouter/deepseek/deepseek-v4-pro --thinking high' "$STUB_LOG"
+    run grep -F -- '--model openrouter/deepseek/deepseek-v4.1-flash --thinking high' "$STUB_LOG"
     [ "$status" -eq 0 ]
   done
 }

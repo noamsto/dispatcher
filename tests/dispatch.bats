@@ -361,7 +361,7 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 @test "rejects ultra for pi (codex-only)" {
-  run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort ultra --crew-id c1 "title"
+  run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort ultra --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"ultra is codex-only"* ]]
 }
@@ -1371,7 +1371,7 @@ EOF
 
 @test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "pi deep full grid default"
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "pi deep full grid default"
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-pi-deep-full-grid-default/WORKER_TASK.md"
   grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
@@ -1412,7 +1412,7 @@ EOF
 
 @test "pi deep with --plan provided still grids (reviewer is its review gate)" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --plan provided --effort high --crew-id c1 42 "pi plan provided still grids"
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --plan provided --effort high --crew-id c1 42 "pi plan provided still grids"
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-pi-plan-provided-still-grids/WORKER_TASK.md"
   grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
@@ -1466,7 +1466,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
 
-  run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --no-grid --effort high --crew-id c1 "no grid pi deep"
+  run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --no-grid --effort high --crew-id c1 "no grid pi deep"
   [ "$status" -eq 1 ]
   [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
 }
@@ -2147,8 +2147,9 @@ assert_gate_silent() { # <engine> <model> [profile]
     claude-opus-5-high gpt-5.6-sol-high; do
     assert_gate_silent cursor "$m"
   done
-  for m in openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
-    openrouter/deepseek/deepseek-v4-flash; do
+  for m in openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash \
+    openrouter/z-ai/glm-5.3-flash openrouter/qwen/qwen3.8-flash; do
     assert_gate_silent pi "$m" work
     assert_gate_silent pi "$m" personal
   done
@@ -2240,7 +2241,7 @@ assert_gate_silent() { # <engine> <model> [profile]
 
 @test "every profile refuses the retired opencode route on pi" {
   for p in work personal; do
-    DISPATCH_PROFILE=$p run run_dispatch deep opencode/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep opencode rejected on $p"
+    DISPATCH_PROFILE=$p run run_dispatch deep opencode/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi deep opencode rejected on $p"
     [ "$status" -eq 1 ]
     [[ "$output" == *"is not deep's row"* ]]
     [[ "$output" == *"--ignore-map"* ]]
@@ -2254,16 +2255,34 @@ assert_gate_silent() { # <engine> <model> [profile]
 @test "tier gate accepts every pi table cell on both profiles" {
   stub_launch_bins
   for p in work personal; do
-    DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4-pro --agent pi --effort high --crew-id c1 42 "tier pi deep pro $p"
-    [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi deep v41 flash $p"
     [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard v41 flash $p"
     [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard flash $p"
     [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/z-ai/glm-5.3-flash --agent pi --effort high --crew-id c1 42 "tier pi standard glm $p"
+    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/qwen/qwen3.8-flash --agent pi --effort high --crew-id c1 42 "tier pi standard qwen $p"
+    [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial flash $p"
     [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p run run_dispatch trivial openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial v41 flash $p"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "tier gate refuses the dropped pi v4-pro row, naming the new expected set" {
+  stub_launch_bins
+  # Assembled from fragments so this test does not reintroduce the dropped id
+  # that acceptance 4 greps the tree for.
+  dropped="openrouter/deepseek/deepseek-v4""-pro"
+  for p in work personal; do
+    DISPATCH_PROFILE=$p run run_dispatch deep "$dropped" --agent pi --effort high --crew-id c1 42 "tier pi deep v4 pro refused $p"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not deep's row"* ]]
+    [[ "$output" == *"openrouter/deepseek/deepseek-v4.1-flash"* ]]
+    [[ "$output" == *"--ignore-map"* ]]
   done
 }
 
@@ -2403,8 +2422,9 @@ assert_gate_silent() { # <engine> <model> [profile]
     gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
     kimi-k3-high grok-4.7-high grok-4.7-medium grok-4.7-low \
     composer-2.5 claude-fable-5-1 \
-    openrouter/deepseek/deepseek-v4-pro openrouter/deepseek/deepseek-v4.1-flash \
-    openrouter/deepseek/deepseek-v4-flash; do
+    openrouter/deepseek/deepseek-v4.1-flash \
+    openrouter/deepseek/deepseek-v4-flash \
+    openrouter/z-ai/glm-5.3-flash openrouter/qwen/qwen3.8-flash; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
@@ -4501,12 +4521,12 @@ _escalation_seed_spoof() {
   [ "$status" -eq 0 ]
 }
 
-@test "escalation: pi target must match exactly, not as a prefix" {
+@test "escalation: a failed deep pi worker no longer unlocks kimi-k3 (dropped)" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" openrouter/deepseek/deepseek-v4.1-flash standard s-test pi
-  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard openrouter/deepseek/deepseek-v4-pro-evil/x --agent pi --effort high --crew-id c1 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" openrouter/deepseek/deepseek-v4.1-flash deep s-test pi
+  run run_dispatch deep openrouter/moonshotai/kimi-k3 --agent pi --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"is not standard's row"* ]]
+  [[ "$output" == *"is not deep's row"* ]]
 }
 
 @test "escalation: cursor target must match exactly, not as a prefix" {

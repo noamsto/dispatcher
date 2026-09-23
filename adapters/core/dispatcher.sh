@@ -216,7 +216,7 @@ pi)
   # orchestrator runs in the dispatcher repo, and global ~/.pi/agent config
   # (auth, packages) still loads.
   # See dispatch-orchestration.md → "Orchestrator engines".
-  pi_default='openrouter/deepseek/deepseek-v4-pro'
+  pi_default='openrouter/deepseek/deepseek-v4.1-flash'
   set -- --name "$session_name" \
     --model "${model:-$pi_default}" \
     --thinking "${effort:-high}" \

@@ -303,7 +303,6 @@ _escalation_target() {
   cursor:deep:cursor-grok-4.6-medium*) printf 'medium RECORD_ONLY' ;;
   # cursor:trivial:low→medium removed — trivial tier must not reach above its row
   pi:standard:openrouter/deepseek/deepseek-v4-flash) printf 'v4-flash RECORD_ONLY' ;;
-  pi:standard:openrouter/deepseek/deepseek-v4.1-flash) printf 'v4.1-flash openrouter/deepseek/deepseek-v4-pro' ;;
   pi:deep:openrouter/deepseek/deepseek-v4.1-flash) printf 'v4.1-flash RECORD_ONLY' ;;
   # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
   esac
