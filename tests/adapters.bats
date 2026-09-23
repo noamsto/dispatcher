@@ -1231,6 +1231,18 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
     run grep -F 'The PR body repeats the full ledger under `## Acceptance`' "$protocol"
     [ "$status" -ne 0 ]
   done
+  # The command copies must phrase the collapsed block as holding both ledgers,
+  # and must not narrow it to a recurrence ledger alone.
+  for command in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md"; do
+    run grep -F 'holding the recurrence ledger and the acceptance ledger' "$command"
+    [ "$status" -eq 0 ]
+    run grep -F 'block only when Step 6' "$command"
+    [ "$status" -ne 0 ]
+  done
 }
 
 @test "repo when: is scoped to new entries versus overrides on every copy, never the old blanket sentence" {

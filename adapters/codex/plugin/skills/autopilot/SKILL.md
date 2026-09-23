@@ -129,7 +129,7 @@ Spawn one Agent-tool subagent per matched roster entry, its resolved `brief` as 
 1. Push the branch: `git push -u origin <branch>`
 2. Create the PR: `gh pr create --assignee @me --title "..." --body "..."`
    - Title: concise, under 70 chars
-   - Body: follows `WORKER_PROTOCOL.md`'s "PR body contract" — closes line, `## Summary`, `## Testing` (one line per command + result); a collapsed `<details><summary>Agent ledger</summary>` block only when Step 6's `EVIDENCE_REVIEW.md` follow-through produced a recurrence ledger. Harness diagnostics stay in `REVIEW_NOTES.md`, never the visible body.
+   - Body: follows `WORKER_PROTOCOL.md`'s "PR body contract" — closes line, `## Summary`, `## Testing` (one line per command + result); a collapsed `<details><summary>Agent ledger</summary>` block holding the recurrence ledger and the acceptance ledger, appended when ledger data already exists (at create time, or by the first `gh pr edit` that has it). Harness diagnostics stay in `REVIEW_NOTES.md`, never the visible body.
    - Reference the Linear ticket (e.g., "Closes PL-344")
 
 ## Step 8: Watch Loop
