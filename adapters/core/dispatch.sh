@@ -370,7 +370,7 @@ seed_pi_agent_dir() {
 # the caller scope.
 split_role_pane() {
   local win="$1" wt="$2" role="$3" worker_id="$4" crew_id="$5" pane
-  pane="$(tmux split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -P -F '#{pane_id}')"
+  pane="$(tmux split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -e "GIT_EDITOR=true" -e "GIT_SEQUENCE_EDITOR=:" -P -F '#{pane_id}')"
   decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
@@ -437,11 +437,11 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
+    tmux send-keys -t "$pane" "${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
     ;;
-  claude) tmux send-keys -t "$pane" "claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
-  codex) tmux send-keys -t "$pane" "codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
-  cursor) tmux send-keys -t "$pane" "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
+  claude) tmux send-keys -t "$pane" "${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
+  codex) tmux send-keys -t "$pane" "${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
+  cursor) tmux send-keys -t "$pane" "${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
   esac
 }
 
@@ -527,6 +527,15 @@ if [ "${1:-}" = "--role-watch" ]; then
   done
   exit 0
 fi
+
+# git_env — prefix every engine launch with a non-interactive git editor.
+# Workers inherit the user's interactive $EDITOR (nvim); any git command that
+# opens an editor (rebase --continue, commit --amend, merge without --no-edit,
+# rebase -i) then hangs forever in a TTY-less engine bash tool. GIT_EDITOR=true
+# keeps git's prepared message; GIT_SEQUENCE_EDITOR=: accepts a rebase todo
+# as-is. Prefix the send-keys commands (like the CREW_* vars) so the pane's
+# own shell exports them before the engine starts.
+git_env="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: "
 
 # `dispatch --spawn-role <role>` — create a lazy grid's role pane on demand in
 # the caller's own window/worktree, from roles.json. Idempotent.
@@ -2193,6 +2202,15 @@ fi
   fi
 } >"$wt_path/WORKER_TASK.md"
 
+# Ensure WORKER_TASK.md is excluded from tracking across every worktree of this
+# repo (info/exclude is per-repo, not per-worktree). Append only if missing;
+# idempotent; never clobber. This keeps a worker's own scaffolding doc out of
+# commits regardless of which repo dispatch targets.
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
+  printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
+fi
+
 # Record resolved role specs so a lazy grid's lead can spawn each role on demand
 # (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then
@@ -2345,7 +2363,7 @@ if [ "$agent" = codex ]; then
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
-    "codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
+    "${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -2363,7 +2381,7 @@ elif [ "$agent" = cursor ]; then
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
-    "CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
+    "${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources,
@@ -2372,12 +2390,12 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
-    "PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
+    "${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
   tmux send-keys -t "$pane" \
-    "claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
+    "${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
 fi
 
 # Role grid: split the task window into one pane per role. Each role pane parks

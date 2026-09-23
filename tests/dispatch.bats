@@ -572,6 +572,41 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "info/exclude excludes WORKER_TASK.md after dispatch; idempotent on re-dispatch" {
+  stub_launch_bins
+
+  # First dispatch stamps WORKER_TASK.md and adds info/exclude.
+  DISPATCH_PROFILE=personal run run_dispatch \
+    trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort low --crew-id c1 42 "test info/exclude"
+  [ "$status" -eq 0 ]
+
+  # info/exclude has WORKER_TASK.md exactly once.
+  exclude_file="$TEST_REPO/.git/info/exclude"
+  run grep -cxF 'WORKER_TASK.md' "$exclude_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = 1 ]
+
+  # The worktree does not list WORKER_TASK.md as untracked.
+  wt="$TEST_REPO/.dispatch-wt/feat-42-test-info-exclude"
+  run git -C "$wt" status --porcelain
+  [[ "$output" != *"WORKER_TASK.md"* ]]
+
+  # Second dispatch with a different title creates a different branch; info/exclude
+  # must still have WORKER_TASK.md exactly once (no duplicate).
+  DISPATCH_PROFILE=personal run run_dispatch \
+    trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort low --crew-id c2 43 "another task"
+  [ "$status" -eq 0 ]
+
+  run grep -cxF 'WORKER_TASK.md' "$exclude_file"
+  [ "$status" -eq 0 ]
+  [ "$output" = 1 ]
+
+  # Second worktree also clean.
+  wt2="$TEST_REPO/.dispatch-wt/feat-43-another-task"
+  run git -C "$wt2" status --porcelain
+  [[ "$output" != *"WORKER_TASK.md"* ]]
+}
+
 @test "--roles needs a value" {
   run run_dispatch standard sonnet --roles
   [ "$status" -eq 1 ]
