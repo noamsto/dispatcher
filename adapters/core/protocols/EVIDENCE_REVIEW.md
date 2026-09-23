@@ -33,13 +33,19 @@ for re-tiering before implementation; it cannot silently skip the review gate.
   empty/missing, malformed, boundary, and partial-failure cases. The map is
   complete when every discovered consumer has a disposition, not when the
   edited files have tests. Add newly discovered edges during implementation.
+  The full map belongs in the Agent ledger block (or `REVIEW_NOTES.md` before
+  a PR exists); the visible PR body gets only a compact one-line summary, not
+  the full map, since it isn't one-line-per-command material like `## Testing`
+  entries.
 - **Provided or recovered plan:** retain the plan skip; fill missing evidence or
   map entries without rerunning planning. A demonstrated contradiction takes the
   caller's bounded replan path. A missing evidence artifact alone is not one.
 
-Put this evidence in the existing plan/task notes, then the PR's `## Evidence`
-section. Keep it factual and compact. The test oracle comes from the contract,
-not a copy of the implementation's predicate or a fixture-answer exception.
+Put this evidence in the existing plan/task notes, then the PR's `## Testing`
+section, as one compact line per command and result; paste raw output only
+when CI cannot reproduce it, trimmed to the decisive lines. The test oracle
+comes from the contract, not a copy of the implementation's predicate or a
+fixture-answer exception.
 The deterministic gate includes affected consumers identified by the map, even
 when their files did not change.
 
@@ -89,10 +95,14 @@ session is not a fresh batch for an unfinished invariant.
 ## Recurrence and handoff
 
 Keep a compact finding ledger in worktree-root `REVIEW_NOTES.md` before a PR
-exists and under the PR's `## Review notes` once it does. Preserve that local
-artifact on re-dispatch even when `WORKER_TASK.md` is regenerated. Update the
+exists and under the PR's collapsed `<details><summary>Agent ledger</summary>`
+block once it does. Preserve that local artifact on re-dispatch even when
+`WORKER_TASK.md` is regenerated. Update the
 ledger before each push, stop, or handoff;
 include its location and pending work in the handoff. On resume, restore it
+from `REVIEW_NOTES.md`, or from the PR's Agent ledger block once a PR exists
+(or the legacy `## Review notes` section, on a PR opened before this contract
+existed) — never conclude an empty visible section means an empty ledger —
 before handling feedback. Persist these fields:
 
 | invariant/family | finding or thread IDs | observed head | fix commit | proof | disposition | rounds used |

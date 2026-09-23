@@ -137,7 +137,9 @@ You are a Finish-PRs teammate. Your job: take ONE already-open PR and drive it t
    `wt switch` is idempotent. The `lazytmux` post-switch hook short-circuits inside Claude so no spurious tmux window spawns.
 
 2. Read `EVIDENCE_REVIEW.md` from `$DISPATCHER_PROTOCOL_DIR` or the adapter-local
-   `protocols/` directory. Restore the PR's `## Review notes` ledger and budgets.
+   `protocols/` directory. Restore the PR's ledger — the collapsed
+   `<details><summary>Agent ledger</summary>` block, or the legacy `## Review
+   notes` section on a PR opened before this contract existed — and budgets.
    Follow its evidence, stronger review, recurrence, and completion rules. A
    targeted read-only reviewer subagent is allowed; it is not another PR teammate.
 
