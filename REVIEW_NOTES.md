@@ -4,4 +4,6 @@
 | pace-rule override documentation        | agent-docs-reviewer: stale `credits_cover` model-only escape                                                        | 20b87aa       | 10e5f6d    | targeted fresh re-review approved; four protocol copies match                                                                                                             | fixed       | 2           |
 | protocol-dir guard test parametrization | shell-reviewer (reviewer role): the engine-spec filter loop passes vacuously on a renamed engine or mistyped filter | c1d281b       | 51f977d    | `env -u DISPATCH_ENGINES bats tests/dispatch.bats tests/dispatch-resume.bats` 367/0 on 51f977d; helper with a mistyped filter yields n=0, so the added count assert fails | fixed       | 1           |
 
+| grid hint contract v1 (publisher side) | reviewer role (pi deepseek-v4-pro; roster: agent-docs + shell + security): no findings | f5ca4fe | n/a | reviewer verdict accept; `shellcheck adapters/core/*.sh`; `bats tests/` 1055/1055; `scripts/gen-adapters.sh` idempotent | clean | 1 |
+
 recurrence_escalation: unused
