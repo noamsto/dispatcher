@@ -183,6 +183,45 @@ teardown() {
   done
 }
 
+@test "a rewritten parent is rebased --onto its recorded head, plain rebase only when it is an ancestor" {
+  for doc in \
+    adapters/core/protocols/WORKER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/cursor/protocols/WORKER_PROTOCOL.md \
+    adapters/core/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
+    run grep -F 'git merge-base --is-ancestor' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+  for doc in \
+    adapters/core/protocols/WORKER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md \
+    adapters/cursor/protocols/WORKER_PROTOCOL.md; do
+    run grep -F 'git rebase --onto "origin/<parent>" <recorded old head>' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'git merge-base --is-ancestor <old head> "origin/<parent>"' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'When the parent only advanced:' "$ROOT/$doc"
+    [ "$status" -ne 0 ]
+  done
+  for doc in \
+    adapters/core/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
+    run grep -F "Before directing any layer to rebase, record that layer's \`headRefOid\`" "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'git rebase --onto origin/<parent> <recorded old head>' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'git merge-base --is-ancestor <recorded old head> origin/<parent>' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "no PROTOCOL_REV file ships in any protocol tree (#193)" {
   # #193: the revision marker is a runtime-derived hash, not a committed file —
   # one no longer exists to go stale, conflict on, or regenerate. Asserting its

@@ -69,8 +69,13 @@ refs explicitly — `git rebase origin/<base>` collides with the snippet's own
 `git fetch origin -- <new-base>`. After a squash-merge: `git rebase --onto
 "origin/<new-base>" <cut-oid>` (the directive names the parent PR; if the cut
 commit isn't local yet, fetch it from there — `git fetch origin
-pull/<parent-PR>/head`). When the parent only advanced: `git rebase
-"origin/<parent>"`. Then rewrite the header `base:` line to the new base
+pull/<parent-PR>/head`). The directive carries the parent's recorded old
+`headRefOid` (saved before that parent was told to rebase — not a fresh
+`gh pr view`, which returns the rewritten tip). When that push rewrote
+history, `git rebase --onto "origin/<parent>" <recorded old head>`. Plain
+`git rebase "origin/<parent>"` is only for a fast-forward advance — gate it
+on `git merge-base --is-ancestor <old head> "origin/<parent>"`. Then rewrite
+the header `base:` line to the new base
 portably — `sed '1,/^$/s|^base: .*|base: <new-base>|' WORKER_TASK.md >
 WORKER_TASK.md.tmp && mv WORKER_TASK.md.tmp WORKER_TASK.md` (touches the header
 line only; `sed -i` is GNU-only) — and, if your open PR still targets the old
