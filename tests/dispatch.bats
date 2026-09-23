@@ -3210,6 +3210,113 @@ lock_path() { # <branch>
   [ ! -d "$TEST_REPO/.dispatch-wt" ]
 }
 
+@test "--base <PR> resolves the PR's head branch and stacks on it" {
+  setup_stacked_base feat/parent
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+pr\ view\ 7\ *) printf '{"headRefName":"feat/parent","state":"%s","isCrossRepository":%s}\n' "${STUB_PR_STATE:-OPEN}" "${STUB_PR_CROSS:-false}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 7 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+  grep -qx 'base: feat/parent' "$wt_path/WORKER_TASK.md"
+  grep -q 'pr view 7' "$STUB_LOG"
+  [[ "$output" == *"from origin/feat/parent"* ]]
+}
+
+@test "--base <PR> refuses when the PR is not open" {
+  setup_stacked_base feat/parent
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+pr\ view\ 7\ *) printf '{"headRefName":"feat/parent","state":"%s","isCrossRepository":%s}\n' "${STUB_PR_STATE:-OPEN}" "${STUB_PR_CROSS:-false}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal STUB_PR_STATE=MERGED run run_dispatch standard sonnet --effort medium --base 7 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"PR is MERGED"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'issue edit' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--base <PR> refuses a fork PR" {
+  setup_stacked_base feat/parent
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+pr\ view\ 7\ *) printf '{"headRefName":"feat/parent","state":"%s","isCrossRepository":%s}\n' "${STUB_PR_STATE:-OPEN}" "${STUB_PR_CROSS:-false}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal STUB_PR_CROSS=true run run_dispatch standard sonnet --effort medium --base 7 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"PR head is on a fork"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'issue edit' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--base <PR> refuses before scaffolding when gh cannot resolve the PR" {
+  setup_stacked_base feat/parent
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+pr\ view\ 7\ *) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 7 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not resolve PR 7"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'issue edit' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--base <PR> refuses before scaffolding in mint mode, without minting an issue" {
+  setup_stacked_base feat/parent
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+pr\ view\ 7\ *) printf '{"headRefName":"feat/parent","state":"MERGED","isCrossRepository":false}\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 7 --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"PR is MERGED"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'issue create' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
 @test "rejects --base combined with --pr" {
   run run_dispatch standard sonnet --effort medium --pr 12 --base feat/x "review"
   [ "$status" -eq 1 ]

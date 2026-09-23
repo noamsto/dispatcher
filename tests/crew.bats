@@ -4219,3 +4219,79 @@ _task_doc() { printf 'tier: %s\nkind: %s\ncrew_id: c1\n' "$1" "${2:-implement}" 
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
   [[ "$stderr" == *"no review seam"* ]]
 }
+
+# --- reap: stacked-base compatibility (#274) ---
+
+@test "reap: keeps an open-PR parent worktree with a stacked child in place" {
+  git commit -q --allow-empty -m init
+  git branch feat/10-parent
+  parent_wt="$BATS_TEST_TMPDIR/parent-wt"
+  git worktree add -q "$parent_wt" feat/10-parent
+
+  git branch feat/11-child
+  child_wt="$BATS_TEST_TMPDIR/child-wt"
+  git worktree add -q "$child_wt" feat/11-child
+  printf 'base: feat/10-parent\n' >"$child_wt/WORKER_TASK.md"
+
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'OPEN' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_bin wt
+  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://example.com/pr/30"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/10-parent — PR OPEN"* ]]
+  [ -d "$parent_wt" ]
+  [ -d "$child_wt" ]
+  ! grep -q 'remove' "$STUB_LOG"
+}
+
+@test "reap: reaps a merged parent without touching its stacked child" {
+  git commit -q --allow-empty -m init
+  git branch feat/10-parent
+  parent_wt="$BATS_TEST_TMPDIR/parent-wt2"
+  git worktree add -q "$parent_wt" feat/10-parent
+  parent_wt=$(cd "$parent_wt" && pwd -P)
+  echo unique >"$parent_wt/work.txt"
+  git -C "$parent_wt" add work.txt
+  git -C "$parent_wt" commit -q -m "parent work"
+
+  git branch feat/11-child
+  child_wt="$BATS_TEST_TMPDIR/child-wt2"
+  git worktree add -q "$child_wt" feat/11-child
+  printf 'base: feat/10-parent\n' >"$child_wt/WORKER_TASK.md"
+  child_task_before="$(cat "$child_wt/WORKER_TASK.md")"
+
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/10-parent)" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://example.com/pr/31"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/10-parent (MERGED)"* ]]
+  [ ! -d "$parent_wt" ]
+  ! git show-ref --verify --quiet refs/heads/feat/10-parent
+
+  [ -d "$child_wt" ]
+  git show-ref --verify --quiet refs/heads/feat/11-child
+  [ "$(cat "$child_wt/WORKER_TASK.md")" = "$child_task_before" ]
+  jq -e 'select(.kind=="reap" and .branch=="feat/10-parent")' "$log" >/dev/null
+}

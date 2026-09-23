@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -1625,6 +1625,34 @@ if [ -n "$gh_issue" ]; then
   branch="feat/$gh_issue-$slug"
 fi
 
+# A numeric --base is a PR to stack on rather than a ref: resolved to its head
+# branch here, before the claim gate below (issue label + bus row) and before
+# mint mode's `gh issue create` — a refusal (merged/closed PR, fork head) must
+# not strand a claimed `dispatched` label or mint an issue nothing dispatches
+# onto. The fetch/pin of the resolved ref stays where #270 put it, unmoved.
+if [ -n "$base_flag" ] && printf '%s' "$base_flag" | grep -Eq '^[0-9]+$'; then
+  base_pr_json=$(gh pr view "$base_flag" --json headRefName,state,isCrossRepository) || {
+    echo "dispatch: --base $base_flag: could not resolve PR $base_flag" >&2
+    exit 1
+  }
+  base_pr_head=$(printf '%s' "$base_pr_json" | jq -r '.headRefName // empty')
+  base_pr_state=$(printf '%s' "$base_pr_json" | jq -r .state)
+  base_pr_cross=$(printf '%s' "$base_pr_json" | jq -r .isCrossRepository)
+  [ -n "$base_pr_head" ] || {
+    echo "dispatch: --base $base_flag: could not resolve headRefName for PR $base_flag" >&2
+    exit 1
+  }
+  [ "$base_pr_state" = OPEN ] || {
+    echo "dispatch: --base $base_flag: PR is $base_pr_state — stack on an open PR or a branch" >&2
+    exit 1
+  }
+  [ "$base_pr_cross" = false ] || {
+    echo "dispatch: --base $base_flag: PR head is on a fork — a stacked PR's base must be a branch in this repo" >&2
+    exit 1
+  }
+  base_flag="$base_pr_head"
+fi
+
 # Claim: GitHub issue only. $gh_issue is empty for both a Linear dispatch
 # (own status/assignee semantics — every issue here already has an assignee,
 # so that can't double as a claim signal) and a --pr review dispatch
@@ -1751,7 +1779,9 @@ else
   # below, so an unresolvable ref costs no worktree and no window — the same
   # property as the default-branch resolution below and the --pr gate above.
   # Runs on a resume too, because the stamped `base:` is what the worker's review
-  # diff, gate scope and PR target; a re-dispatch must not silently drop it.
+  # diff, gate scope and PR target; a re-dispatch must not silently drop it. A
+  # numeric --base was already resolved to its head branch above, ahead of the
+  # claim gate — by the time this runs, $base_flag is always a ref.
   if [ -n "$base_flag" ]; then
     git fetch origin -- "$base_flag" || {
       echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
