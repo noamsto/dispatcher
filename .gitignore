@@ -3,3 +3,7 @@ result-*
 .direnv
 .claude/settings.local.json
 .pre-commit-config.yaml
+/REVIEW_NOTES.md
+/SPEC.md
+/PLAN.md
+/WORKER_TASK.md

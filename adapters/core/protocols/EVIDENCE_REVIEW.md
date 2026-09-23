@@ -96,7 +96,9 @@ session is not a fresh batch for an unfinished invariant.
 
 Keep a compact finding ledger in worktree-root `REVIEW_NOTES.md` before a PR
 exists and under the PR's collapsed `<details><summary>Agent ledger</summary>`
-block once it does. Preserve that local artifact on re-dispatch even when
+block once it does. `REVIEW_NOTES.md` is a worker-local scratch artifact,
+never committed — the PR body's Agent ledger block is the durable copy of the
+ledger. Preserve that local artifact on re-dispatch even when
 `WORKER_TASK.md` is regenerated. Update the
 ledger before each push, stop, or handoff;
 include its location and pending work in the handoff. On resume, restore it
