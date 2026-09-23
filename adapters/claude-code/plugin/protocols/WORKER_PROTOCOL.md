@@ -46,10 +46,20 @@ fresh shell — none of these variables survive between calls, so re-run this
 snippet in the same call that uses its values:
 
 ```bash
-stacked_base=$(gh pr view --json baseRefName --jq .baseRefName 2>/dev/null || true)   # your own PR's live base, once it exists
-[ -n "$stacked_base" ] || stacked_base=$(sed -nE '/^$/q; s/^base: //p' WORKER_TASK.md)   # else the header stamp; empty when not stamped
+gh_err=$(mktemp)
+if stacked_base=$(gh pr view --json baseRefName --jq .baseRefName 2>"$gh_err"); then
+  rm -f "$gh_err"
+elif grep -q 'no pull requests found' "$gh_err"; then
+  rm -f "$gh_err"
+  stacked_base=$(sed -nE '/^$/q; s/^base: //p' WORKER_TASK.md)
+else
+  cat "$gh_err" >&2
+  rm -f "$gh_err"
+  echo "gh pr view failed — block→await the dispatcher; do not fall back to the header stamp" >&2
+  exit 1
+fi
 if [ -n "$stacked_base" ]; then
-  git fetch -q origin -- "$stacked_base"
+  git fetch -q origin -- "$stacked_base" || exit 1
   base_ref="origin/$stacked_base"
 else
   base_ref="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)"
@@ -69,9 +79,9 @@ refs explicitly — `git rebase origin/<base>` collides with the snippet's own
 `git fetch origin -- <new-base>`. After a squash-merge: `git rebase --onto
 "origin/<new-base>" <cut-oid>` (the directive names the parent PR; if the cut
 commit isn't local yet, fetch it from there — `git fetch origin
-pull/<parent-PR>/head`). The directive carries the parent's recorded old
+pull/<parent-PR>/head`). Every rebase directive carries the parent's recorded old
 `headRefOid` (saved before that parent was told to rebase — not a fresh
-`gh pr view`, which returns the rewritten tip). When that push rewrote
+`gh pr view`, which returns the rewritten tip), including a plain fast-forward rebase. When that push rewrote
 history, `git rebase --onto "origin/<parent>" <recorded old head>`. Plain
 `git rebase "origin/<parent>"` is only for a fast-forward advance — gate it
 on `git merge-base --is-ancestor <old head> "origin/<parent>"`. Then rewrite
