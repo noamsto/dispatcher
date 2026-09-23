@@ -513,7 +513,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' "$STUB_LOG"
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' "$STUB_LOG"
   grep -q -- '--model sonnet' "$STUB_LOG"
   grep -q -- '--effort medium' "$STUB_LOG"
@@ -536,7 +536,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -559,7 +559,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' "$STUB_LOG"
   run grep -c -- 'resume --last' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -581,7 +581,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -644,7 +644,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' "$STUB_LOG"
   run grep -c -- '--continue' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
