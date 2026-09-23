@@ -288,6 +288,23 @@ _ELIDED=' …[elided]'
 # this from, so each carries its own copy — keep them in sync (#61).
 _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
+# _publish_pane_state <pane> <state> <detail> [source] — mirror a bus status onto
+# the pane's border options (@crew_state/@crew_detail). Bulk of the grid-hint
+# contract: the pane border format renders these, so the writers stay plain
+# words. Best-effort and silent: no tmux, a gone pane, or a plain bash caller
+# must never fail or delay the bus write that precedes it. Detail is truncated
+# to the 40-char contract before it lands. `source` is a dispatcher-internal
+# marker (watchdog) the border format renders distinctly; it is empty for a
+# worker's own status.
+_publish_pane_state() {
+  local pane="$1" state="$2" detail="${3:-}" source="${4:-}"
+  [ -n "$pane" ] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux set-option -p -t "$pane" @crew_state "$state" 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_detail "${detail:0:40}" 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_source "$source" 2>/dev/null || true
+}
+
 # _shrink <text> <keep> — shorten <text> to roughly <keep> characters.
 # A sink body (`metrics:`, `retro:`) is itself JSON, and cutting it as a blob ends
 # the string mid-object: the enclosing bus line stays valid but the body no longer
@@ -727,6 +744,15 @@ status | msg)
     line=$(_fit_line _build_msg "${3:-}")
   fi
   _bus_append "$log" "$line"
+  # A worker's status belongs on its OWN lead pane; a role pane's does not
+  # (CREW_ROLE_ID set, and its @crew_role is the role, not `lead`). The
+  # @crew_role=lead check also keeps a dispatcher-process `crew status`
+  # (dispatch-resume) from painting the dispatcher's own pane.
+  if [ "$sub" = status ] && [ -z "${CREW_ROLE_ID:-}" ] && [ -n "${TMUX_PANE:-}" ] &&
+    command -v tmux >/dev/null 2>&1 &&
+    [ "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_role}' 2>/dev/null || true)" = lead ]; then
+    _publish_pane_state "$TMUX_PANE" "$state" "${3:-}"
+  fi
   ;;
 reply)
   # reply <to> <body> — sugar over `msg`; from is dispatcher:<crew> so the
@@ -3494,6 +3520,13 @@ BUSLINE
       '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
           kind:"status", body:{state:$state, detail:$detail, source:"watchdog"}}')
     _bus_append "$log" "$line"
+    # Only a blocked state carries the watchdog marker, so a `_post_clear`
+    # recovery (`working … cleared`) cannot render `working (watchdog)`.
+    if [ "$1" = blocked ]; then
+      _publish_pane_state "$pane" "$1" "$2" watchdog
+    else
+      _publish_pane_state "$pane" "$1" "$2"
+    fi
   }
 
   # INV-W3 — one open watchdog episode per branch PER PREFIX, checked on the bus

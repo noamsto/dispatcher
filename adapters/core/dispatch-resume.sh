@@ -511,6 +511,31 @@ if [ -z "$pane" ]; then
   exit 1
 fi
 
+# theme_colour <thm-name> <fallback> — a tmux colour expression that prefers
+# the theme's #{@thm_<name>} and falls back to <fallback> when tmux-og has not
+# set it. Byte-identical to dispatch.sh's copy — a parity test diffs the two
+# (a drifted lead label in one path only is the failure mode).
+theme_colour() { printf '#{?#{@thm_%s},#{@thm_%s},%s}' "$1" "$1" "$2"; }
+
+# state_glyph <restore> — the state→glyph+colour widget for the lead border.
+state_glyph() {
+  local restore="$1" c_work c_idle c_block c_done c_fail
+  c_work="$(theme_colour green green)"
+  c_idle="$(theme_colour overlay_1 colour240)"
+  c_block="$(theme_colour peach colour180)"
+  c_done="$(theme_colour green green)"
+  c_fail="$(theme_colour red red)"
+  printf '#{?#{==:#{@crew_state},working},#[fg=%s]●#[fg=%s],#{?#{==:#{@crew_state},idle},#[fg=%s]○#[fg=%s],#{?#{==:#{@crew_state},blocked},#[fg=%s]⚠#[fg=%s],#{?#{==:#{@crew_state},done},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},pr_open},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},failed},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},exited},#[fg=%s]✗#[fg=%s],#[fg=%s]○#[fg=%s]}}}}}}}' \
+    "$c_work" "$restore" "$c_idle" "$restore" "$c_block" "$restore" \
+    "$c_done" "$restore" "$c_done" "$restore" "$c_fail" "$restore" \
+    "$c_fail" "$restore" "$c_idle" "$restore"
+}
+
+# grid_lead_format — the lead pane's state-at-a-glance border.
+grid_lead_format() {
+  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},} ' "$(state_glyph '#{@crew_color}')"
+}
+
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
 # and a reused worker window may have been renamed since.
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
@@ -518,7 +543,14 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
-tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+# A grid lead keeps @crew_role=lead (the key crew.sh's status-publish guard
+# checks) and the state-bearing border; a non-grid worker keeps the plain label.
+if [ -n "$grid_roles" ] || [ "$(tmux show-option -wqv -t "$win" @crew_grid 2>/dev/null || true)" = 1 ]; then
+  tmux set-option -p -t "$pane" @crew_role lead 2>/dev/null || true
+  tmux set-window-option -t "$win" pane-border-format "$(grid_lead_format)"
+else
+  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+fi
 
 kind="$(_hdr kind)"
 plan_val="$(_hdr plan)"

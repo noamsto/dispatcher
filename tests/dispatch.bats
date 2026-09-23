@@ -664,17 +664,22 @@ _env_of() {
   [ "$(grep -c '^split-window.* -e CREW_WORKER_ID=worker:feat/42-do-a-thing#s7-7 -e CREW_ID=c1 ' "$STUB_LOG")" -eq 2 ]
 }
 
-@test "a grid lead's window border carries the lead marker" {
+@test "a grid lead's window border carries the lead marker and state" {
   stub_launch_bins
   # Lazy grid: role_names is populated and roles.json recorded, but no role
   # pane spawns up front, so the run stays quiet (no watch_role loops).
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
   [ "$status" -eq 0 ]
-  # Window-level border labels the lead; the pane-level role border format is
-  # untouched (it would regress role panes).
-  run grep -F -- 'set-window-option -t %1 pane-border-format  #[bold]#{@crew_name}#[nobold] lead' "$STUB_LOG"
+  # Window-level border labels the lead with its live state; the pane-level role
+  # border format is untouched (it would regress role panes).
+  run grep -F -- '#{@crew_name}#[nobold] lead · #{@crew_state}' "$STUB_LOG"
   [ "$status" -eq 0 ]
   run grep -F -- 'pane-border-format " #[bold]#{@crew_role}#[nobold] #{@crew_state} "' "$DISPATCH"
+  [ "$status" -ne 0 ]
+  run grep -F -- 'pane-border-format " $(state_glyph' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  # The lead advertises @crew_role=lead so the status-publish guard can find it.
+  run grep -F -- 'set-option -p -t %1 @crew_role lead' "$STUB_LOG"
   [ "$status" -eq 0 ]
 }
 
@@ -700,6 +705,218 @@ _env_of() {
   [ "$status" -eq 0 ]
   run grep -E -- '@crew_name[^}]* lead' "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+@test "grid: creation publishes the window and lead-pane hint options" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "grid hints"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-window-option -t %1 @crew_grid 1' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-window-option -t %1 @crew_grid_main_pct 60' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %1 @crew_role lead' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: refit uses tmux-grid-refit when present, main-vertical otherwise" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "no refit"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'select-layout -t %1 main-vertical' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+
+  : >"$STUB_LOG"
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "with refit"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'tmux-grid-refit %1' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run ! grep -q -- 'select-layout' "$STUB_LOG"
+}
+
+@test "grid: --spawn-role publishes @crew_grid and refits" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-window-option -t @1 @crew_grid 1' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %5 @crew_role lead' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'tmux-grid-refit @1' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: --reap-roles unsets @crew_grid once the last role pane is gone" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '@1' ;;
+list-panes)
+  case " $* " in
+  *'#{pane_id}'*) printf '%s\n' '%5 ' '%6 reviewer' ;;
+  *)
+    if [ -f "$STUB_LOG.killed" ]; then printf '%s\n' 'lead'; else printf '%s\n' 'lead' 'reviewer'; fi
+    ;;
+  esac
+  ;;
+kill-pane) touch "$STUB_LOG.killed" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run run_dispatch --reap-roles
+  [ "$status" -eq 0 ]
+  run grep -F -- 'kill-pane -t %6' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-window-option -t @1 -u @crew_grid' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "grid: --reap-roles never kills a lead pane row" {
+  _spawn_role_fixture
+  export TMUX_PANE=%9
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' '@1' ;;
+list-panes)
+  case " $* " in
+  *'#{pane_id}'*) printf '%s\n' '%5 lead' '%9 ' ;;
+  *) printf '%s\n' 'lead' ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run run_dispatch --reap-roles
+  [ "$status" -eq 0 ]
+  run ! grep -q 'kill-pane' "$STUB_LOG"
+}
+
+@test "grid: a real tmux server stores the hint contract, and reap unsets it" {
+  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
+  stub_launch_bins
+  sock="gh$$"
+  "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -s t -x 200 -y 50
+  win_real="$("$REAL_TMUX" -L "$sock" list-windows -t t -F '#{window_id}' | head -1)"
+  pane_real="$("$REAL_TMUX" -L "$sock" list-panes -t t -F '#{pane_id}' | head -1)"
+  [ -n "$win_real" ]
+  [ -n "$pane_real" ]
+  # A tmux shim: log everything, hand dispatch the REAL window/pane ids, and
+  # forward the option-setting calls that target them to the real server. Role
+  # panes get a canned id the shim never forwards, so decorate_pane cannot
+  # overwrite the lead's @crew_role. display-message exits 1 so the nohup'd role
+  # watcher's loop ends at once.
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+new-window) printf '%s %s\n' '$win_real' '$pane_real' ;;
+split-window) printf '%s\n' '%99' ;;
+display-message) exit 1 ;;
+set-option|set-window-option)
+  for a in "\$@"; do
+    case "\$a" in
+    '$win_real'|'$pane_real') exec "$REAL_TMUX" -L '$sock' "\$@" ;;
+    esac
+  done
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "real grid hints"
+  [ "$status" -eq 0 ]
+  [ "$("$REAL_TMUX" -L "$sock" show-options -w -v -q -t "$win_real" @crew_grid)" = 1 ]
+  [ "$("$REAL_TMUX" -L "$sock" show-options -w -v -q -t "$win_real" @crew_grid_main_pct)" = 60 ]
+  [ "$("$REAL_TMUX" -L "$sock" show-options -p -v -q -t "$pane_real" @crew_role)" = lead ]
+  [ "$("$REAL_TMUX" -L "$sock" show-options -p -v -q -t "$pane_real" @crew_state)" = working ]
+
+  # Reap against the real server: its only pane is the lead, so the last role
+  # pane is already gone and the grid hint must be unset.
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+display-message|list-panes|set-option|set-window-option) exec "$REAL_TMUX" -L '$sock' "\$@" ;;
+kill-pane) ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  TMUX_PANE="$pane_real" run run_dispatch --reap-roles
+  [ "$status" -eq 0 ]
+  [ -z "$("$REAL_TMUX" -L "$sock" show-options -w -v -q -t "$win_real" @crew_grid)" ]
+
+  "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
+}
+
+@test "grid: the border formats expand to a glyph per state (real tmux)" {
+  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "grid glyphs"
+  [ "$status" -eq 0 ]
+  lead_fmt="$(grep -F 'pane-border-format' "$STUB_LOG" | grep -F '@crew_name' | head -1)"
+  lead_fmt="${lead_fmt#*pane-border-format }"
+  role_fmt="$(grep -F 'set-option -p -t %6 pane-border-format' "$STUB_LOG" | head -1)"
+  role_fmt="${role_fmt#*pane-border-format }"
+  [ -n "$lead_fmt" ]
+  [ -n "$role_fmt" ]
+
+  sock="gl$$"
+  "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -s t -x 200 -y 50
+  pane="$("$REAL_TMUX" -L "$sock" list-panes -t t -F '#{pane_id}' | head -1)"
+  "$REAL_TMUX" -L "$sock" set-option -w -t "$pane" @crew_name test
+  "$REAL_TMUX" -L "$sock" set-option -w -t "$pane" @crew_color colour250
+  "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_role reviewer
+  "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_role_color colour250
+  for spec in 'working:●' 'idle:○' 'blocked:⚠' 'done:✓' 'pr_open:✓' 'failed:✗' 'exited:✗'; do
+    st="${spec%%:*}" g="${spec##*:}"
+    "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_state "$st"
+    out="$("$REAL_TMUX" -L "$sock" display-message -p -t "$pane" "$lead_fmt")"
+    case "$out" in *"$g"*) ;; *) echo "lead $st -> $out"; return 1 ;; esac
+    out="$("$REAL_TMUX" -L "$sock" display-message -p -t "$pane" "$role_fmt")"
+    case "$out" in *"$g"*) ;; *) echo "role $st -> $out"; return 1 ;; esac
+  done
+  # A watchdog blocked renders distinctly and carries the phase detail.
+  "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_state blocked
+  "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_source watchdog
+  "$REAL_TMUX" -L "$sock" set-option -p -t "$pane" @crew_detail "stalled: no output"
+  out="$("$REAL_TMUX" -L "$sock" display-message -p -t "$pane" "$lead_fmt")"
+  [[ "$out" == *"blocked (watchdog)"* ]]
+  [[ "$out" == *"stalled: no output"* ]]
+  "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
+}
+
+@test "grid: the lead border builders stay identical in dispatch and resume" {
+  resume="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
+  for fn in state_glyph grid_lead_format; do
+    a="$(sed -n "/^$fn()/,/^}/p" "$DISPATCH")"
+    b="$(sed -n "/^$fn()/,/^}/p" "$resume")"
+    [ -n "$a" ]
+    [ "$a" = "$b" ] || { echo "$fn drifted"; return 1; }
+  done
+  [ "$(grep -F 'theme_colour() { printf' "$DISPATCH")" = "$(grep -F 'theme_colour() { printf' "$resume")" ]
 }
 
 @test "grid mode is stamped into the task doc and the lead prompt" {

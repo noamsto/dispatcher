@@ -126,3 +126,41 @@ without evidence is not a verdict.
    verdict JSON — never a partial or streaming body. The lead awaits it and
    cannot reassemble fragments; a truncated first post is read as a malformed
    verdict.
+
+## Grid hint contract (dispatcher ⇄ tmux-og)
+
+dispatcher (`noamsto/dispatcher`) **publishes** hints on a worker's tmux window;
+tmux-og (`noamsto/tmux-og`) **owns the responsive layout**. Neither repo calls
+into the other's internals beyond this contract — it is version 1 and is shared
+by two workers, so do not change it unilaterally.
+
+| Where | Option | Value | Written by |
+|-------|--------|-------|-----------|
+| window | `@crew_grid` | `1` while the window has ≥1 role pane; unset when the last role pane is reaped | dispatcher (grid creation, `--spawn-role`, `--reap-roles`) |
+| window | `@crew_grid_main_pct` | integer, default `60` — the lead's share (width in vertical, height in horizontal) | dispatcher |
+| pane | `@crew_role` | `lead` on the lead pane; role name (`spec-critic`, `plan-critic`, `reviewer`, …) on role panes | dispatcher |
+| pane | `@crew_state` | short state word (see below) | dispatcher |
+| pane | `@crew_detail` | optional short phase text, ≤40 chars | dispatcher |
+
+`@crew_state` vocabulary — lead: the worker's latest bus state (`working`,
+`blocked`, `pr_open`, `done`, `failed`); role: `idle`, `working`, `exited`. The
+lead's own `crew status` post writes it, as does the watchdog on the worker's
+behalf; only a watchdog `blocked` also sets the dispatcher-internal
+`@crew_source=watchdog`, which the border renders as `blocked (watchdog)`
+(nobody is awaiting a reply, unlike a worker's own `blocked`).
+
+`pane-border-format` renders a glyph + colour per state (lead:
+` <glyph> <codename> lead · <state>[ · <detail>] `; role: ` <glyph> <role>
+<state> `), so the writers stay plain words.
+
+tmux-og ships an executable **`tmux-grid-refit <window_id>`** on PATH:
+
+- no-op (exit 0) unless the window has `@crew_grid=1`;
+- chooses a layout from the window's size, keeping the `@crew_role=lead` pane as
+  the main pane (swaps it to first if needed);
+- idempotent, fast, silent; safe to call on every resize.
+
+The dispatcher calls `tmux-grid-refit "$win"` after it adds or removes a role
+pane **when the command is on PATH**; otherwise it keeps the built-in
+`main-vertical` 60% fallback (`layout_grid`). tmux-og runs it from
+`window-resized`.

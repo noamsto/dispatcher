@@ -8,4 +8,6 @@
 | AC4 resume test vacuity                     | plan-critic (plan seam): the `--print` AC4 test exits before `_hdr_set`, so it never exercises the rewrite it guards         | 5056d63       | c0d03a4    | `bats tests/dispatch-resume.bats` "resume preserves a stacked base: through the header rewrite"                                                                           | fixed       | 0           |
 | code review (shell + agent-docs + security) | reviewer role (review seam): routed roster batch, no findings                                                                | c0d03a4       | n/a        | verdict accept; shellcheck clean; bats 305/69/106; gen-adapters idempotent                                                                                                | accepted    | 1           |
 
+| grid hint contract v1 (publisher side) | reviewer role (pi deepseek-v4-pro; roster: agent-docs + shell + security): no findings | f5ca4fe | n/a | reviewer verdict accept; `shellcheck adapters/core/*.sh`; `bats tests/` 1055/1055; `scripts/gen-adapters.sh` idempotent | clean | 1 |
+
 recurrence_escalation: unused
