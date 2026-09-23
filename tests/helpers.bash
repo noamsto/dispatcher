@@ -13,6 +13,11 @@ export CREW_RATE_AUTOSWEEP=0
 setup_repo() {
   TEST_REPO="$(mktemp -d)"
   cd "$TEST_REPO" || return 1
+  # The real tmux, captured before setup() prepends STUB_DIR to PATH: the
+  # tmux-backed tests drive a private server through this while the stub (or a
+  # dispatch shim) intercepts the code-under-test's own calls.
+  REAL_TMUX="${REAL_TMUX:-$(command -v tmux || true)}"
+  export REAL_TMUX
   # Every test gets a private data store; never let crew state leak in from
   # the shell running bats.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"

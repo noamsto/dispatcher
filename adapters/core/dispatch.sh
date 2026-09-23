@@ -261,6 +261,57 @@ role_color() {
   esac
 }
 
+# theme_colour <thm-name> <fallback> — a tmux colour expression that prefers
+# the theme's #{@thm_<name>} and falls back to <fallback> when tmux-og has not
+# set it (tmux expands an unset option to empty, so `fg=` would be dropped
+# silently and the glyph would inherit whatever colour preceded it).
+theme_colour() { printf '#{?#{@thm_%s},#{@thm_%s},%s}' "$1" "$1" "$2"; }
+
+# state_glyph <restore> — the state→glyph+colour widget shared by the lead's
+# window border and every role pane's border. <restore> is re-emitted after the
+# glyph so the rest of the label keeps the border's own tint. tmux evaluates
+# the #{?} branches at render time, so @crew_state can change without the
+# format being re-set. Unknown/empty state renders the idle glyph.
+state_glyph() {
+  local restore="$1" c_work c_idle c_block c_done c_fail
+  c_work="$(theme_colour green green)"
+  c_idle="$(theme_colour overlay_1 colour240)"
+  c_block="$(theme_colour peach colour180)"
+  c_done="$(theme_colour green green)"
+  c_fail="$(theme_colour red red)"
+  printf '#{?#{==:#{@crew_state},working},#[fg=%s]●#[fg=%s],#{?#{==:#{@crew_state},idle},#[fg=%s]○#[fg=%s],#{?#{==:#{@crew_state},blocked},#[fg=%s]⚠#[fg=%s],#{?#{==:#{@crew_state},done},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},pr_open},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},failed},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},exited},#[fg=%s]✗#[fg=%s],#[fg=%s]○#[fg=%s]}}}}}}}' \
+    "$c_work" "$restore" "$c_idle" "$restore" "$c_block" "$restore" \
+    "$c_done" "$restore" "$c_done" "$restore" "$c_fail" "$restore" \
+    "$c_fail" "$restore" "$c_idle" "$restore"
+}
+
+# grid_lead_format — the lead pane's border, state at a glance. @crew_name stays
+# the bare codename (it is the occupancy join key); the marker, glyph, state and
+# phase are painted only here. A watchdog `blocked` renders `blocked (watchdog)`
+# so it is distinct from a worker's own blocked (a live question).
+grid_lead_format() {
+  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},} ' "$(state_glyph '#{@crew_color}')"
+}
+
+# publish_grid_window <window> — the grid-hint contract's window half: @crew_grid
+# marks the window as a grid (tmux-og's tmux-grid-refit honours it) and
+# @crew_grid_main_pct is the lead's default share. Best-effort, so a stub or a
+# vanished window never fails a dispatch.
+publish_grid_window() {
+  local win="$1"
+  tmux set-window-option -t "$win" @crew_grid 1 2>/dev/null || true
+  tmux set-window-option -t "$win" @crew_grid_main_pct 60 2>/dev/null || true
+}
+
+# publish_grid_lead <window> <pane> — @crew_role=lead on the lead pane plus the
+# rich lead border format. Idempotent, and it deliberately does NOT touch
+# @crew_state: a lazy re-spawn must not clobber a live blocked lead.
+publish_grid_lead() {
+  local win="$1" pane="$2"
+  tmux set-option -p -t "$pane" @crew_role lead 2>/dev/null || true
+  tmux set-window-option -t "$win" pane-border-format "$(grid_lead_format)" 2>/dev/null || true
+}
+
 # decorate_pane <pane> <role> — put the role on the pane border, colour that
 # border by role, and seed @crew_state (rendered on the border). tmux keeps these
 # per pane, so a role's colour and label survive a tiled layout and a zoom.
@@ -272,18 +323,30 @@ decorate_pane() {
   tmux set-option -p -t "$pane" @crew_state idle
   tmux set-option -p -t "$pane" pane-border-style "bg=#{@thm_bg},fg=$color"
   tmux set-option -p -t "$pane" pane-active-border-style "bg=#{@thm_bg},fg=$color,bold"
-  tmux set-option -p -t "$pane" pane-border-format " #[bold]#{@crew_role}#[nobold] #{@crew_state} "
+  tmux set-option -p -t "$pane" pane-border-format " $(state_glyph '#{@crew_role_color}') #[bold]#{@crew_role}#[nobold] #{@crew_state} "
   tmux set-option -w -t "$pane" pane-border-status top
 }
 
 # layout_grid <window> — main-vertical, pinning the lead (pane 1, launched
 # before any role pane splits off it) to 60% width. Role panes only carry
 # short verdict traffic and need far less room than the lead's diff/test/tool
-# output.
+# output. The built-in fallback for a host without tmux-og's tmux-grid-refit.
 layout_grid() {
   local win="$1"
   tmux set-window-option -t "$win" main-pane-width 60%
   tmux select-layout -t "$win" main-vertical
+}
+
+# refit_grid <window> — hand the responsive layout to tmux-og when its
+# tmux-grid-refit is installed (the grid-hint contract), else keep the built-in
+# main-vertical 60% fallback. A missing or failing refit is not an error.
+refit_grid() {
+  local win="$1"
+  if command -v tmux-grid-refit >/dev/null 2>&1; then
+    tmux-grid-refit "$win" 2>/dev/null || true
+  else
+    layout_grid "$win"
+  fi
 }
 
 # An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
@@ -557,6 +620,13 @@ if [ "${1:-}" = "--spawn-role" ]; then
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
+  # The grid hints follow the pane count: this window now has >=1 role pane.
+  # Only the lead publishes the lead hint (a role pane never runs this).
+  if [ -z "${CREW_ROLE_ID:-}" ]; then
+    publish_grid_lead "$win" "$TMUX_PANE"
+  fi
+  publish_grid_window "$win"
+  refit_grid "$win"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
 fi
@@ -570,9 +640,19 @@ if [ "${1:-}" = "--reap-roles" ]; then
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | while read -r p r; do
     [ -n "$r" ] || continue
+    # `lead` is a pane value now (the contract), so a lead pane that is not the
+    # caller's own must never be reaped.
+    [ "$r" = lead ] && continue
     [ "$p" = "$TMUX_PANE" ] && continue
     tmux kill-pane -t "$p" 2>/dev/null || true
   done
+  # The last role pane's death ends the grid: unset the hint so tmux-og stops
+  # refitting this window. `lead` and empties are not role panes.
+  remaining="$(tmux list-panes -t "$win" -F '#{@crew_role}' 2>/dev/null | grep -vx 'lead' | grep -v '^$' || true)"
+  if [ -z "$remaining" ]; then
+    tmux set-window-option -t "$win" -u @crew_grid 2>/dev/null || true
+  fi
+  refit_grid "$win"
   echo "reaped role panes"
   exit 0
 fi
@@ -2121,14 +2201,17 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
-# A grid lead's window border carries a "lead" marker; role panes label
-# themselves at pane level, so this touches only the lead. @crew_name stays
-# the bare codename — it is the occupancy join key.
-lead_marker=" "
+# A grid lead's window border carries a "lead" marker plus the live state; role
+# panes label themselves at pane level, so this touches only the lead. @crew_name
+# stays the bare codename — it is the occupancy join key.
 if [ "${#role_names[@]}" -gt 0 ]; then
-  lead_marker=" lead "
+  publish_grid_lead "$win" "$pane"
+  tmux set-option -p -t "$pane" @crew_state working 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_detail "" 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_source "" 2>/dev/null || true
+else
+  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
 fi
-tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold]${lead_marker}"
 
 # Deep claude workers get the read-only codex MCP for cross-model review
 # (work profile only — mcp-codex.json is generated work-gated).
@@ -2254,20 +2337,24 @@ fi
 # on purpose: a parked role produces no output, which the pane-output watchdog
 # would misread as a wedge.
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
+  publish_grid_window "$win"
   for i in "${!role_names[@]}"; do
     role="${role_names[$i]}"
     role_pane="$(split_role_pane "$win" "$wt_path" "$role" "$worker_id" "$crew_id")"
     launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     watch_role "$role" "$role_pane"
   done
-  layout_grid "$win"
+  refit_grid "$win"
 fi
 
 # Optional live status pane (--status): a bounded roster loop over the crew bus.
+# A --lazy --status window gains a pane here even though it skipped the eager
+# loop above, so it must publish the grid hint too.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
+  publish_grid_window "$win"
   status_pane="$(split_role_pane "$win" "$wt_path" status "$worker_id" "$crew_id")"
   tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
-  layout_grid "$win"
+  refit_grid "$win"
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no

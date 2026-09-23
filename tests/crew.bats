@@ -204,6 +204,77 @@ EOF
   done
 }
 
+@test "status: a worker's status lands on its lead pane" {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' 'lead' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export TMUX_PANE=%9
+  CREW_ID=c1 run run_crew status "worker:feat/x#s1-1" blocked "waiting on #273"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %9 @crew_state blocked' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %9 @crew_detail waiting on #273' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %9 @crew_source ' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.state'"
+  [ "$output" = blocked ]
+}
+
+@test "status: the lead pane detail is truncated to 40 characters" {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' 'lead' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export TMUX_PANE=%9
+  long="$(printf 'x%.0s' {1..80})"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working "$long"
+  run grep -oF -- "set-option -p -t %9 @crew_detail $(printf 'x%.0s' {1..40})" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run ! grep -qF "$(printf 'x%.0s' {1..41})" "$STUB_LOG"
+}
+
+@test "status: a role pane's post never touches the lead pane" {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message) printf '%s\n' 'reviewer' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export TMUX_PANE=%9 CREW_ROLE_ID=role:feat/x:reviewer
+  CREW_ID=c1 run run_crew status "role:feat/x:reviewer" working
+  [ "$status" -eq 0 ]
+  run ! grep -q '@crew_state' "$STUB_LOG"
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.state'"
+  [ "$output" = working ]
+}
+
+@test "status: outside tmux the pane publish is a silent no-op" {
+  unset TMUX_PANE
+  CREW_ID=c1 run run_crew status "worker:feat/x#s1-1" working plan
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "$output" = plan ]
+}
+
 @test "status: a repeated terminal state is written once" {
   CREW_ID=c1 run_crew status worker done
   CREW_ID=c1 run_crew status worker done
@@ -2596,6 +2667,19 @@ EOF
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %9 —"* ]]
+}
+
+@test "stall-watch: a blocked post marks the pane source watchdog" {
+  stub_bin tmux
+  p=$(fx_prompt_select)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %9 @crew_state blocked' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'set-option -p -t %9 @crew_source watchdog' "$STUB_LOG"
+  [ "$status" -eq 0 ]
 }
 
 @test "stall-watch: D1 fires on the workspace-trust frame outside the startup window" {
