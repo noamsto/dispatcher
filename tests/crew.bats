@@ -4288,7 +4288,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/10-parent (MERGED)"* ]]
   [ ! -d "$parent_wt" ]
-  ! git show-ref --verify --quiet refs/heads/feat/10-parent
+  run ! git show-ref --verify --quiet refs/heads/feat/10-parent
 
   [ -d "$child_wt" ]
   git show-ref --verify --quiet refs/heads/feat/11-child

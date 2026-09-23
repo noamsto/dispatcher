@@ -1625,11 +1625,9 @@ if [ -n "$gh_issue" ]; then
   branch="feat/$gh_issue-$slug"
 fi
 
-# A numeric --base is a PR to stack on rather than a ref: resolved to its head
-# branch here, before the claim gate below (issue label + bus row) and before
-# mint mode's `gh issue create` — a refusal (merged/closed PR, fork head) must
-# not strand a claimed `dispatched` label or mint an issue nothing dispatches
-# onto. The fetch/pin of the resolved ref stays where #270 put it, unmoved.
+# A numeric --base is a PR to stack on: resolved to its head branch before the
+# claim gate and mint mode's `gh issue create`, so a refused PR (merged, closed,
+# fork head) never strands a `dispatched` label or mints an orphan issue.
 if [ -n "$base_flag" ] && printf '%s' "$base_flag" | grep -Eq '^[0-9]+$'; then
   base_pr_json=$(gh pr view "$base_flag" --json headRefName,state,isCrossRepository) || {
     echo "dispatch: --base $base_flag: could not resolve PR $base_flag" >&2
@@ -1779,9 +1777,7 @@ else
   # below, so an unresolvable ref costs no worktree and no window — the same
   # property as the default-branch resolution below and the --pr gate above.
   # Runs on a resume too, because the stamped `base:` is what the worker's review
-  # diff, gate scope and PR target; a re-dispatch must not silently drop it. A
-  # numeric --base was already resolved to its head branch above, ahead of the
-  # claim gate — by the time this runs, $base_flag is always a ref.
+  # diff, gate scope and PR target; a re-dispatch must not silently drop it.
   if [ -n "$base_flag" ]; then
     git fetch origin -- "$base_flag" || {
       echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
