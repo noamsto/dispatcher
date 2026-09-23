@@ -57,7 +57,7 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   point is an independent perspective — a cursor-fronted sonnet isn't independent
   of a claude worker; use a Grok (or Composer) model for that.
 - pi leans: the **cheap lane** — OpenRouter, usage-priced, roughly $0.5–2 per
-  Flash run against ~$18+ for a Kimi K3 deep run. **When claude's `7d` window is
+  Flash run. **When claude's `7d` window is
   ahead of pace** (the exact pace-aware condition the premium gate uses: ≥70%
   used *and* >15 points ahead of elapsed — see "≥70% on the `7d` window,
   pace-aware" under the budget lever), pi becomes the **default engine for

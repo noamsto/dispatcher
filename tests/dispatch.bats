@@ -2148,7 +2148,7 @@ assert_gate_silent() { # <engine> <model> [profile]
     assert_gate_silent cursor "$m"
   done
   for m in openrouter/deepseek/deepseek-v4.1-flash \
-    openrouter/deepseek/deepseek-v4-flash openrouter/moonshotai/kimi-k3 \
+    openrouter/deepseek/deepseek-v4-flash \
     openrouter/z-ai/glm-5.3-flash openrouter/qwen/qwen3.8-flash; do
     assert_gate_silent pi "$m" work
     assert_gate_silent pi "$m" personal
@@ -2257,8 +2257,6 @@ assert_gate_silent() { # <engine> <model> [profile]
   for p in work personal; do
     DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi deep v41 flash $p"
     [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch deep openrouter/moonshotai/kimi-k3 --agent pi --effort high --crew-id c1 42 "tier pi deep kimi k3 $p"
-    [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard v41 flash $p"
     [ "$status" -eq 0 ]
     DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard flash $p"
@@ -2283,7 +2281,7 @@ assert_gate_silent() { # <engine> <model> [profile]
     DISPATCH_PROFILE=$p run run_dispatch deep "$dropped" --agent pi --effort high --crew-id c1 42 "tier pi deep v4 pro refused $p"
     [ "$status" -eq 1 ]
     [[ "$output" == *"is not deep's row"* ]]
-    [[ "$output" == *"openrouter/moonshotai/kimi-k3"* ]]
+    [[ "$output" == *"openrouter/deepseek/deepseek-v4.1-flash"* ]]
     [[ "$output" == *"--ignore-map"* ]]
   done
 }
@@ -2425,7 +2423,7 @@ assert_gate_silent() { # <engine> <model> [profile]
     kimi-k3-high grok-4.7-high grok-4.7-medium grok-4.7-low \
     composer-2.5 claude-fable-5-1 \
     openrouter/deepseek/deepseek-v4.1-flash \
-    openrouter/deepseek/deepseek-v4-flash openrouter/moonshotai/kimi-k3 \
+    openrouter/deepseek/deepseek-v4-flash \
     openrouter/z-ai/glm-5.3-flash openrouter/qwen/qwen3.8-flash; do
     grep -qF "$token" <<<"$doc_slice" || {
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
@@ -4523,20 +4521,12 @@ _escalation_seed_spoof() {
   [ "$status" -eq 0 ]
 }
 
-@test "escalation: pi target must match exactly, not as a prefix" {
-  stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" openrouter/deepseek/deepseek-v4.1-flash deep s-test pi
-  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch deep openrouter/moonshotai/kimi-k3-evil/x --agent pi --effort high --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not deep's row"* ]]
-}
-
-@test "escalation: a failed deep v4.1-flash worker unlocks kimi-k3 and records escalated_from" {
+@test "escalation: a failed deep pi worker no longer unlocks kimi-k3 (dropped)" {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" openrouter/deepseek/deepseek-v4.1-flash deep s-test pi
   run run_dispatch deep openrouter/moonshotai/kimi-k3 --agent pi --effort high --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 0 ]
-  grep -qx 'escalated_from: v4.1-flash (record only)' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not deep's row"* ]]
 }
 
 @test "escalation: cursor target must match exactly, not as a prefix" {

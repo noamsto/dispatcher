@@ -49,7 +49,7 @@ rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 **Burn classes.** Claude, Codex, and Cursor are subscriptions, so their cost is
 quota burn. Pi/OpenRouter is usage-priced and is not represented in the quota
 cache; judge its spend separately — a pi run on the Flash rungs is roughly
-$0.5–2, against ~$18+ for a Kimi K3 deep run, which is what makes pi the cheap
+$0.5–2 per Flash run, which is what makes pi the cheap
 lane to shed claude burn onto. Subscription rungs group into three classes:
 **premium** — opus (fable ≈2× opus),
 `gpt-5.6-sol`, `grok-4.7-high`; **standard** — sonnet, `gpt-5.6-terra`,
@@ -66,23 +66,24 @@ review depth.
 
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes; **`openrouter/moonshotai/kimi-k3`** is escalation-only, after a failed v4.1-flash deep worker |
+| `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
 | `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
 | `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
-**Pi effort.** Pi's tier-typical effort is **`high` for `trivial` and `standard`
-and `xhigh` for `deep`** — the lever that separates pi `standard` from `deep`
+**Pi effort.** Pi's tier-typical effort is **`high` for `trivial`, `high` for `standard`,
+and `max` for `deep`** — the lever that separates pi `standard` from `deep`
 now that both use `deepseek-v4.1-flash`. The DeepSeek Flash maps have holes, so
 the generic `trivial`→`low` / `standard`→`medium` rungs clamp up to `high` on
 their tier-typical models anyway (V4 Flash exposes `off`/`high`/`xhigh`; V4.1
-Flash exposes `off`/`low`/`high`/`max`, so deep's `xhigh` clamps up to `max`).
+Flash exposes `off`/`low`/`high`/`max`, so deep's `max` is passed through directly).
 Pi clamps `--thinking` per model through that model's `thinkingLevelMap` —
 generic logic, not DeepSeek-specific — so the rotation alternatives behave the
-same way: `openrouter/moonshotai/kimi-k3` exposes `off`/`low`/`high`/`max` and
-`openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
-`openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`. None of this needs new clamp
+same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
+`openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`.
+Pi deep has no higher pi model rung: after a failed deep pi worker, the
+dispatcher re-dispatches on another engine by judgement. None of this needs new clamp
 machinery — every id launches with the standard ladder.
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
@@ -245,7 +246,7 @@ the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
   the dispatcher session) runs it, not out of the box.
 - **pi** — a provider-qualified id, and the ladder spans more than one
   OpenRouter family: `openrouter/deepseek/deepseek-v4.1-flash`,
-  `openrouter/deepseek/deepseek-v4-flash`, `openrouter/moonshotai/kimi-k3`,
+  `openrouter/deepseek/deepseek-v4-flash`,
   `openrouter/z-ai/glm-5.3-flash`, and `openrouter/qwen/qwen3.8-flash`. The
   shape and the concrete defaults were verified against `pi --list-models`.
 
@@ -282,9 +283,8 @@ codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
 `composer-2.5-fast` on every tier, plus an effort-suffixed or bracketed
 cross-vendor `claude-*`/`gpt-*` id (the shape the Model gate's cursor arm
 already recognizes) on `deep` only. Pi accepts its tier's Model-map worker plus
-the escalation/rotation alternatives named there, on every profile: `deep`
-takes `openrouter/deepseek/deepseek-v4.1-flash` or the escalation-only
-`openrouter/moonshotai/kimi-k3`; `standard` takes
+the rotation alternatives named there, on every profile: `deep`
+takes `openrouter/deepseek/deepseek-v4.1-flash`; `standard` takes
 `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4-flash`,
 `openrouter/z-ai/glm-5.3-flash`, or `openrouter/qwen/qwen3.8-flash`; `trivial`
 takes `openrouter/deepseek/deepseek-v4-flash` or
