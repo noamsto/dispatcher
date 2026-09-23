@@ -3992,7 +3992,7 @@ _exit_hook_fixture() {
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   { printf '#!/usr/bin/env bash\nset -euo pipefail\n'; cat "$DISPATCH"; } >"$BATS_TEST_TMPDIR/dispatch-exec"
   chmod +x "$BATS_TEST_TMPDIR/dispatch-exec"
-  role_line="$(grep '^send-keys -t %6 claude' "$STUB_LOG")"
+  role_line="$(grep '^send-keys -t %6 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: claude' "$STUB_LOG")"
   [ -n "$role_line" ]
   cmd="${role_line#send-keys -t %6 }"
   cmd="${cmd% Enter}"
