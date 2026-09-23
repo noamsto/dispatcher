@@ -437,11 +437,11 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
+    tmux send-keys -t "$pane" "${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
     ;;
-  claude) tmux send-keys -t "$pane" "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
-  codex) tmux send-keys -t "$pane" "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
-  cursor) tmux send-keys -t "$pane" "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
+  claude) tmux send-keys -t "$pane" "${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
+  codex) tmux send-keys -t "$pane" "${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
+  cursor) tmux send-keys -t "$pane" "${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
   esac
 }
 
@@ -527,6 +527,15 @@ if [ "${1:-}" = "--role-watch" ]; then
   done
   exit 0
 fi
+
+# git_env — prefix every engine launch with a non-interactive git editor.
+# Workers inherit the user's interactive $EDITOR (nvim); any git command that
+# opens an editor (rebase --continue, commit --amend, merge without --no-edit,
+# rebase -i) then hangs forever in a TTY-less engine bash tool. GIT_EDITOR=true
+# keeps git's prepared message; GIT_SEQUENCE_EDITOR=: accepts a rebase todo
+# as-is. Prefix the send-keys commands (like the CREW_* vars) so the pane's
+# own shell exports them before the engine starts.
+git_env="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: "
 
 # `dispatch --spawn-role <role>` — create a lazy grid's role pane on demand in
 # the caller's own window/worktree, from roles.json. Idempotent.
@@ -2193,6 +2202,15 @@ fi
   fi
 } >"$wt_path/WORKER_TASK.md"
 
+# Ensure WORKER_TASK.md is excluded from tracking across every worktree of this
+# repo (info/exclude is per-repo, not per-worktree). Append only if missing;
+# idempotent; never clobber. This keeps a worker's own scaffolding doc out of
+# commits regardless of which repo dispatch targets.
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
+  printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
+fi
+
 # Record resolved role specs so a lazy grid's lead can spawn each role on demand
 # (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then
@@ -2335,15 +2353,6 @@ fi
 # WORKER_PROTOCOL.md reaches pi/claude leads as a system prompt, so its
 # "sibling" protocol files have no referent unless the directory is named.
 protocol_note=" Protocol files (EVIDENCE_REVIEW.md, GRID_PROTOCOL.md, ...) live in $PROTOCOL_DIR — also stamped as protocol_dir: in WORKER_TASK.md."
-
-# git_env — prefix every engine launch with a non-interactive git editor.
-# Workers inherit the user's interactive $EDITOR (nvim); any git command that
-# opens an editor (rebase --continue, commit --amend, merge without --no-edit,
-# rebase -i) then hangs forever in a TTY-less engine bash tool. GIT_EDITOR=true
-# keeps git's prepared message; GIT_SEQUENCE_EDITOR=: accepts a rebase todo
-# as-is. Prefix the send-keys commands (like the CREW_* vars) so the pane's
-# own shell exports them before the engine starts.
-git_env="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: "
 
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would

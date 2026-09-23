@@ -608,6 +608,12 @@ _hdr_set() { # $1=field  $2=value
 _hdr_set worker_id "$worker_id"
 _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
+
+# Ensure WORKER_TASK.md is excluded from tracking across every worktree.
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
+  printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
+fi
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
