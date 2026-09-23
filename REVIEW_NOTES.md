@@ -27,3 +27,14 @@ shell-reviewer: no findings, Approve.
 ## Harness diagnostics (not reviewer-facing, recorded here per the new PR body contract)
 
 None generated during this task's own review gate — `reviewer-roster --base` resolved cleanly with no `.dispatcher/reviewers` in this repo, so no overrides/rejections/ignored-`when:`/discovery-skipped diagnostics occurred.
+
+## Rebase review over #270 (standard tier, review_mode: full)
+
+| invariant/family                                       | finding or thread IDs         | observed head | fix commit | proof                                                                                                                                          | disposition | rounds used |
+| ------------------------------------------------------ | ----------------------------- | ------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ----------- |
+| collapsed ledger narrowed to a recurrence ledger alone | agent-docs-reviewer MEDIUM #1 | 1c75fe8       | 0ac17a2    | four autopilot command copies now hold both ledgers; `bats --tap tests/adapters.bats` 107/0; gen-adapters in sync; targeted re-review accepted | fixed       | 1           |
+| thin test coverage for the collapsed-block phrasing    | agent-docs-reviewer LOW #2    | 1c75fe8       | 0ac17a2    | new both-ledgers positive + old-qualifier negative over the four command copies                                                                | fixed       | 1           |
+| PR body `## Summary` rebase-over-#270 line             | agent-docs-reviewer LOW #4    | 1c75fe8       | n/a        | push-time body edit (not a diff defect)                                                                                                        | fixed       | 0           |
+| `## Testing` evidence count (107, not 131)             | agent-docs-reviewer LOW #3    | 1c75fe8       | n/a        | corrected in the PR body at push time                                                                                                          | fixed       | 0           |
+
+recurrence_escalation: unused
