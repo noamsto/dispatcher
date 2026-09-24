@@ -1535,6 +1535,95 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
   done
 }
 
+@test "autopilot targets the stacked parent branch, not the default branch" {
+  for autopilot in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md"; do
+    for statement in \
+      'git -C "$PARENT_PATH" push -u origin <parent-branch>' \
+      'git config branch.<branch-name>.autopilotBase <parent-branch>' \
+      'adding `--base "$stacked_base"` when' \
+      'merge-base of `base` with the default branch'; do
+      run grep -cF -- "$statement" "$autopilot"
+      [ "$output" -eq 1 ]
+    done
+    run grep -F 'merge-base HEAD "$(git symbolic-ref' "$autopilot"
+    [ "$status" -ne 0 ]
+    run grep -F 'this same `base`), from git objects' "$autopilot"
+    [ "$status" -ne 0 ]
+  done
+}
+
+# Runs autopilot's Base ref snippet in a fixture: a real origin carrying a
+# `parent` branch, and a stubbed gh whose `pr view` behaviour is $GH_MODE.
+autopilot_base_ref() {
+  local fx="$BATS_TEST_TMPDIR/fx" git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q --bare -b main "$fx/origin.git"
+  git clone -q "$fx/origin.git" "$fx/work" 2>/dev/null
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  git -C "$fx/work" push -q origin HEAD:main
+  git -C "$fx/work" checkout -q -b parent
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m parent
+  git -C "$fx/work" push -q origin parent
+  git -C "$fx/work" checkout -q -b child
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m child
+  [ -z "${RECORD_PARENT:-}" ] || git -C "$fx/work" config branch.child.autopilotBase parent
+  mkdir -p "$fx/bin"
+  cat >"$fx/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+jq_filter=""
+while [ $# -gt 0 ]; do [ "$1" = --jq ] && jq_filter="$2"; shift; done
+case "$GH_MODE" in
+  open) echo '{"baseRefName":"parent","state":"OPEN"}' | jq -r "$jq_filter" ;;
+  merged) echo '{"baseRefName":"parent","state":"MERGED"}' | jq -r "$jq_filter" ;;
+  none) echo "no pull requests found for branch" >&2; exit 1 ;;
+  *) echo "boom" >&2; exit 1 ;;
+esac
+STUB
+  chmod +x "$fx/bin/gh"
+  awk '/^## Base ref/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/commands/autopilot.md" >"$fx/snippet.sh"
+  [ -s "$fx/snippet.sh" ]
+  cd "$fx/work"
+  PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/snippet.sh; echo "stacked=$stacked_base base=$(git rev-parse --short "$base") main=$(git rev-parse --short origin/main) parent=$(git rev-parse --short origin/parent)"'
+}
+
+@test "autopilot Base ref: recorded parent is the base when no PR exists" {
+  GH_MODE=none RECORD_PARENT=1 autopilot_base_ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stacked=parent "* ]]
+  [[ "$output" =~ base=([0-9a-f]+)\ main=([0-9a-f]+)\ parent=([0-9a-f]+) ]]
+  [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[3]}" ]
+}
+
+@test "autopilot Base ref: no recorded parent falls back to the default branch" {
+  GH_MODE=none autopilot_base_ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stacked= "* ]]
+  [[ "$output" =~ base=([0-9a-f]+)\ main=([0-9a-f]+)\ parent=([0-9a-f]+) ]]
+  [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[2]}" ]
+}
+
+@test "autopilot Base ref: an OPEN PR's base is used with no recorded parent" {
+  GH_MODE=open autopilot_base_ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stacked=parent "* ]]
+}
+
+@test "autopilot Base ref: a MERGED PR's stale base is ignored" {
+  GH_MODE=merged autopilot_base_ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stacked= "* ]]
+}
+
+@test "autopilot Base ref: an unexpected gh failure stops instead of falling back" {
+  GH_MODE=broken RECORD_PARENT=1 autopilot_base_ref
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"stop and ask the user"* ]]
+}
+
 @test "the critic roster ships verbatim to the engines without an agent registry" {
   for source in "$ROOT"/adapters/core/critics/*.md; do
     name="$(basename "$source")"
