@@ -816,7 +816,7 @@ status | msg)
                 {ok: false, rejected: false, pending: false};
                 (try [$line | fromjson] catch null) as $p
                 | if $p == null then
-                    if $e == "pi" and ($line | test("\\S")) and ($line | contains($c) and contains($r))
+                    if $e == "pi" and ($line | test("\\S")) and ($line | contains("\"crew_id\":" + ($c | tojson)) and contains($r | tojson | .[1:-1]))
                     then .ok = false | .rejected = true
                     else . end
                   elif ($p[0] | type) != "object" then .
@@ -831,7 +831,7 @@ status | msg)
                         elif $f == $b and $m.to == $r then .pending = true | .ok = false
                         else . end
                       elif ($o | type) != "object" then .
-                      elif $e == "pi" and $m.from == $r and ($o | has("seam") or has("verdict"))
+                      elif $e == "pi" and $f == $r and ($o | has("seam") or has("verdict"))
                            and (($o | has("tag") and (has("verdict") | not)) | not) then
                         if $o.seam == "review" and $o.verdict == "accept" then
                           if $t == $b then .pending = false | .ok = true | .rejected = false else . end
@@ -839,7 +839,7 @@ status | msg)
                           if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
                         else .ok = false | .rejected = true end
                       elif $e == "pi" and $f == $b and $m.to == $r
-                           and (($o.final == true and ($o | has("seam") | not) and ($o | has("artifact") | not)) | not) then
+                           and (($o | keys) == ["final"] and $o.final == true | not) then
                         .pending = true | .ok = false
                       elif $o.seam != "review" or ($o | has("tag")) then .
                       elif $f == $b and $m.to == ("review:" + $c)

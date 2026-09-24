@@ -5033,6 +5033,15 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "no review seam"
 }
 
+@test "pr_open: a torn-line reject is detected for a branch whose reviewer id is JSON-escaped" {
+  _task_doc standard implement pi
+  run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"accept"}'
+  printf 'torn{' >>"$(_events)"
+  run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"reject"}'
+  run --separate-stderr run_crew status 'worker:feat/a"b#s1-1' pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
 @test "pr_open: a pi accept survives an unrelated record spliced onto a torn line" {
   _task_doc standard implement pi
   _verdict accept
@@ -5071,6 +5080,14 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   run_crew msg "worker:feat/x#s1-1" "role:feat/other:reviewer" '{"question":"another branch"}'
   _gate
   _allowed
+}
+
+@test "pr_open: a pi accept then a final release that also carries a question is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true,"question":"re-review please"}'
+  _gate
+  _refused "no review seam"
 }
 
 @test "pr_open: a pi accept survives a reviewer retro-style note" {
