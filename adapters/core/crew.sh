@@ -839,8 +839,8 @@ await)
   # sender (the anchor is per conversation), so a reply that landed between the
   # question and the await is still delivered (#240), and newer than the last
   # reply this session was already handed from that sender (#290, by await or
-  # inbox), so a handled reply is never handed back by a later await. A session that has
-  # asked nothing falls back to the await start.
+  # inbox), so a handled reply is never handed back by a later await. A session
+  # that has asked nothing falls back to the await start.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
