@@ -87,6 +87,62 @@ _ensure_dispatched_label() {
     --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
 }
 
+# Print one line naming the first sign that a `dispatched` claim on <issue> is
+# still live, or nothing when it is stale (#304). Always returns 0 and signals
+# only via stdout: the caller runs it under `set -e`, and every failure to look
+# is itself evidence — an unreachable origin or unreadable bus reads as live.
+# Local branches are the caller's business, not checked here.
+_claim_evidence() {
+  local issue="$1" out rc events="$crew_dir/events.jsonl"
+  local -a lsr=(git ls-remote --heads origin "refs/heads/feat/$issue-*")
+  command -v timeout >/dev/null 2>&1 && lsr=(timeout 20 "${lsr[@]}")
+  rc=0
+  out="$(GIT_TERMINAL_PROMPT=0 "${lsr[@]}" 2>/dev/null)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "origin unreachable"
+    return 0
+  fi
+  if [ -n "$out" ]; then
+    out="${out%%$'\n'*}"
+    echo "origin branch $(_evidence_text "${out##*refs/heads/}")"
+    return 0
+  fi
+  [ -f "$events" ] || return 0
+  # `fromjson? | objects` skips torn and non-object lines instead of failing
+  # the whole read.
+  out="$(jq -nrR --arg p "feat/$issue-" 'first(inputs | fromjson? | objects | select(.kind=="dispatch" and ((.branch // "") | tostring | startswith($p))) | .branch) // empty' "$events")" || {
+    echo "events log unreadable"
+    return 0
+  }
+  if [ -n "$out" ]; then
+    echo "dispatch row for $(_evidence_text "$out")"
+    return 0
+  fi
+  # Any claim row's dispatcher may still be between claiming and writing its
+  # branch. pid reuse can false-refuse; that is the safe side.
+  local pids pid
+  pids="$(jq -nrR --arg i "$issue" 'inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i)) | .pid // empty | tostring' "$events")" || {
+    echo "events log unreadable"
+    return 0
+  }
+  while IFS= read -r pid; do
+    case "$pid" in
+    '' | *[!0-9]*) continue ;;
+    *[1-9]*) ;;
+    *) continue ;;
+    esac
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "dispatch in progress (pid $pid)"
+      return 0
+    fi
+  done <<<"$pids"
+  return 0
+}
+
+# Branch names in evidence text come from the remote or the bus: strip control
+# characters and cap the length before they reach a terminal.
+_evidence_text() { printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-120; }
+
 # Post a best-effort context comment on a dispatched GitHub issue. The
 # `dispatched` label stays the claim semaphore; this comment is history only
 # and must never abort a dispatch.
@@ -1694,25 +1750,35 @@ if [ -n "$gh_issue" ]; then
       existing_branch="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$gh_issue-*" 2>/dev/null | head -1)"
       if [ -n "$existing_branch" ] && [ "$existing_branch" != "$branch" ]; then
         echo "dispatch: issue #$gh_issue is already claimed — the title resolves to branch '$branch', but '$existing_branch' already exists (title mismatch?). Use the exact original title, or pass a different issue number." >&2
-      else
-        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+        exit 1
       fi
-      exit 1
+      # The label alone is no proof of a live crew: an interrupted dispatch
+      # strands it (#304). Refuse only on evidence, and fail closed when the
+      # evidence cannot be read. Not a lock — two heals can still race, and a
+      # crew in another clone is invisible until it pushes a feat/N-* branch.
+      claim_evidence="$(_claim_evidence "$gh_issue")"
+      if [ -n "$claim_evidence" ]; then
+        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+        exit 1
+      fi
+      echo "dispatch: issue #$gh_issue carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$gh_issue-*) — re-claiming." >&2
     fi
   fi
   # The exemption skips the refusal only. --add-label is idempotent and runs on
   # both paths, which is what makes a reap-driven resume->create downgrade below
   # harmless: whichever mode this run ends in, the issue is labelled.
+  # An explicit claim record, because `crew adopt` cannot infer one: the
+  # kind:"dispatch" row carries no issue number and is written ~300 lines later,
+  # so every failure in between would strand an unreleasable label (#73).
+  # Written before the label so a row exists whenever the label does — a racing
+  # dispatcher that sees the label must also see a claimant.
+  line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" --arg pid "$$" \
+    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+  _bus_append "$crew_dir/events.jsonl" "$line"
   gh issue edit "$gh_issue" --add-label dispatched || {
     echo "dispatch: could not claim issue #$gh_issue (adding the 'dispatched' label failed)" >&2
     exit 1
   }
-  # An explicit claim record, because `crew adopt` cannot infer one: the
-  # kind:"dispatch" row carries no issue number and is written ~300 lines later,
-  # so every failure in between would strand an unreleasable label (#73).
-  line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" \
-    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
-  _bus_append "$crew_dir/events.jsonl" "$line"
 fi
 
 # Reclaim workers whose PR already landed, before adding another one. Cheapest
@@ -1790,13 +1856,14 @@ else
     branch="feat/$num-$slug"
     closes="Closes #$num"
     _ensure_dispatched_label
+    # Row before label, as on the existing-issue path above.
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
     gh issue edit "$num" --add-label dispatched || {
       echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1
     }
-    line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
-    _bus_append "$crew_dir/events.jsonl" "$line"
   fi
 
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`

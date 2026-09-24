@@ -3415,12 +3415,14 @@ EOF
   chmod +x "$STUB_DIR/gh"
 }
 
-@test "claim: aborts when the target issue already carries dispatched, before any scaffolding" {
+@test "claim: refuses a dispatched issue when origin is unreachable, before any scaffolding" {
+  git -C "$TEST_REPO" remote add origin /nonexistent
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"#42"* ]]
   [[ "$output" == *"already claimed"* ]]
+  [[ "$output" == *"origin unreachable"* ]]
   run ! grep -q '^reap' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
   run ! grep -q 'switch' "$STUB_LOG"
@@ -3760,13 +3762,199 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "claim: an already-dispatched issue is still refused when the branch does not exist" {
+# An interrupted dispatch strands the label with nothing behind it (#304): no
+# branch anywhere, no dispatch row, no live claimant. That must not block the
+# next dispatch.
+@test "claim: a dispatched label with no branch, dispatch row or live claimant is stale and re-claimed" {
   stub_launch_bins
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+# Evidence lookups for the claim gate. Bus rows go straight into the crew log.
+seed_claim_row() { # <json-line>
+  mkdir -p "$TEST_REPO/.git/crew"
+  printf '%s\n' "$1" >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+assert_claim_refused() { # <evidence-substring>
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already claimed"* ]]
+  [[ "$output" == *"$1"* ]]
+  run ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a dispatched label is refused when the exact branch exists only on origin" {
+  stub_launch_bins
+  git -C "$TEST_REPO" push -q origin main:refs/heads/feat/42-do-a-thing
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "origin branch feat/42-do-a-thing"
+}
+
+@test "claim: a dispatched label is refused when a sibling branch exists only on origin" {
+  stub_launch_bins
+  git -C "$TEST_REPO" push -q origin main:refs/heads/feat/42-something-else
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "origin branch feat/42-something-else"
+}
+
+@test "claim: a dispatched label is refused when a dispatch row names the exact branch" {
+  stub_launch_bins
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
+@test "claim: a dispatched label is refused when a dispatch row names only a sibling branch" {
+  stub_launch_bins
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-something-else"}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row for feat/42-something-else"
+}
+
+@test "claim: a torn line in the bus does not hide a dispatch row or wedge the gate" {
+  stub_launch_bins
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"disp'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
+@test "claim: a dispatched label is refused while the claiming dispatch is still alive" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+@test "claim: a dispatched label is re-claimed when the claiming dispatch is dead" {
+  stub_launch_bins
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$dead_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a live claim row shadowed by a newer dead one still refuses" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  seed_claim_row "{\"ts\":2,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$dead_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+@test "claim: a non-object bus line does not hide a dead claim from healing" {
+  stub_launch_bins
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_claim_row '12'
+  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$dead_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim: a dispatch row with a non-string branch is no evidence" {
+  stub_launch_bins
+  seed_claim_row '{"kind":"dispatch","branch":7}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim: a claim row whose pid is all zeros is no evidence" {
+  stub_launch_bins
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":"00"}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim: an origin branch that merely contains feat/N- deeper in its path is not evidence" {
+  stub_launch_bins
+  git -C "$TEST_REPO" push -q origin main:refs/heads/x/feat/42-y
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# The claim row must already be on the bus when the label lands, so a racing
+# dispatcher that sees the label also sees a claimant. This gh stub refuses
+# `issue edit` unless that row is there.
+@test "claim: the claim-issue row is written before the dispatched label" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ view\ *) ;;
+issue\ edit\ 42\ *)
+  grep '"kind":"claim-issue"' "$STUB_EVENTS" | grep -q '"issue":"42"' || exit 1
+  ;;
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  export STUB_EVENTS="$TEST_REPO/.git/crew/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+}
+
+@test "claim: a dispatched label is refused when a worktree sits on a sibling branch" {
+  stub_launch_bins
+  git -C "$TEST_REPO" worktree add -q -b feat/42-something-else "$TEST_REPO/.dispatch-wt/feat-42-something-else" HEAD
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "claim: a dispatched label on the exact branch is still refused when a live engine occupies its worktree" {
+  setup_resume_branch feat/42-do-a-thing
+  stub_gh_claim dispatched ""
+  stub_crew_gate \
+    '[{"window":"@23","name":"sage","pane":"%33","engine":true}]' \
+    '[{"session":"s1-1","worker_id":"worker:feat/42-do-a-thing#s1-1","state":"working","ts":1,"age_s":412,"terminal":false}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -3836,6 +4024,26 @@ EOF
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="claim-issue") | "\(.crew_id) \(.issue) \(.issue|type) \(.branch)"' "$log"
   [ "$output" = "c1 42 string feat/42-do-a-thing" ]
+}
+
+@test "claim: the claim-issue row carries the dispatcher's numeric pid" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .pid | type' "$log"
+  [ "$output" = "number" ]
+}
+
+@test "claim: a minted issue's claim-issue row carries the dispatcher's numeric pid" {
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .pid | type' "$log"
+  [ "$output" = "number" ]
 }
 
 @test "claim: a Linear dispatch writes no claim-issue row" {
