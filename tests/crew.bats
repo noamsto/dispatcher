@@ -771,6 +771,37 @@ EOF
   [ -z "$(find "$WORKER" -name '.seed.*')" ]
 }
 
+@test "pi-agent-dir: seeds the ambient hookyard bridge and registers it" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  [ -f "$WORKER/bin/hookyard-bridge.ts" ]
+  cmp -s "$AMBIENT/bin/hookyard-bridge.ts" "$WORKER/bin/hookyard-bridge.ts"
+  [ "$(jq -r '.extensions[0]' "$WORKER/settings.json")" = "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
+}
+
+@test "pi-agent-dir: no ambient hookyard bridge leaves the worker unhooked" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  [ ! -e "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -c '.extensions // "absent"' "$WORKER/settings.json")" = '"absent"' ]
+}
+
+@test "pi-agent-dir: a re-seed appends the bridge once and keeps a pi-written order" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # pi (or a user) may prepend its own extension; a reseed must not reorder the
+  # list nor duplicate hookyard's entry.
+  printf '{"extensions":["/some/other.ts","%s"]}\n' "$WORKER/bin/hookyard-bridge.ts" >"$WORKER/settings.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c .extensions "$WORKER/settings.json")" = "[\"/some/other.ts\",\"$WORKER/bin/hookyard-bridge.ts\"]" ]
+  [ -z "$(find "$WORKER" -name '.seed.*')" ]
+}
+
 @test "pi-agent-dir: no ambient auth.json seeds an empty auth" {
   _pi_fixture
   rm "$AMBIENT/auth.json"

@@ -2703,7 +2703,7 @@ $hits"
   protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
   cursor_lane="$(awk '
     /\*\*cursor — background park\.\*\*/ { flag = 1 }
-    flag && /\*\*codex — blocking park\.\*\*/ { exit }
+    flag && /\*\*codex( \/ pi)? — blocking park\.\*\*/ { exit }
     flag
   ' "$protocol")"
   [ -n "$cursor_lane" ]

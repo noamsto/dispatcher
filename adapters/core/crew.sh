@@ -565,7 +565,7 @@ _copy_if_changed() { # $1=target $2=source
 # it is a cache pi rewrites on refresh, and every worker shares this dir, so a
 # link would aim N concurrent writers at the user's real catalog.
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe bridge bridge_entry
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -598,9 +598,30 @@ _pi_agent_dir() {
     esac
   fi
 
+  # pi's only subprocess hook surface is the extension API, and
+  # PI_CODING_AGENT_DIR *replaces* the ambient config dir rather than
+  # augmenting it — so a worker would otherwise run no hook at all. Seed
+  # hookyard's generated bridge from the ambient dir (byte-identical to the one
+  # hookyard installs per settings path, since it holds absolute router paths)
+  # at the same bin/hookyard-bridge.ts path hookyard itself uses, and register
+  # it below. No ambient bridge means hookyard is not installed; leave the
+  # worker unhooked rather than dangle an extensions entry (README documents
+  # the machine prerequisite).
+  bridge="$ambient/bin/hookyard-bridge.ts"
+  bridge_entry=""
+  if [ -f "$bridge" ]; then
+    mkdir -p "$dir/bin"
+    _copy_if_changed "$dir/bin/hookyard-bridge.ts" "$bridge"
+    bridge_entry="$dir/bin/hookyard-bridge.ts"
+  fi
+
   settings=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
     "$dir/settings.json" 2>/dev/null) || settings='{}'
-  settings=$(jq -n --argjson base "$settings" '$base + {defaultProjectTrust: "never"}')
+  # Append-if-absent is order-preserving: jq `unique` would sort a pi-written
+  # multi-entry extensions list on every reseed.
+  settings=$(jq -n --argjson base "$settings" --arg b "$bridge_entry" \
+    '$base + {defaultProjectTrust: "never"}
+     | if ($b != "" and ((.extensions // []) | index($b) | not)) then .extensions = ((.extensions // []) + [$b]) else . end')
   _write_if_changed "$dir/settings.json" 644 "$settings"
 
   # Only a genuinely missing file means "no keys". [ -e ] is also false for a
