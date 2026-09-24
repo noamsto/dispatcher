@@ -2621,6 +2621,17 @@ if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
   printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
 fi
 
+# Exclude rules do not apply to a file git already tracks, so once a
+# WORKER_TASK.md slips into the base being dispatched the guard above is
+# silently void — the worker's stamped doc rides its diff into every commit
+# until someone removes it (#397). Warn, naming the fix; never abort and never
+# touch the index here (removing a tracked file is the target repo's job, in
+# its own PR). The check is against the dispatched worktree, which sits at that
+# base for a create.
+if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+  echo "dispatch: warning: WORKER_TASK.md is tracked at the base being dispatched — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
+fi
+
 # Record resolved role specs so a lazy grid's lead can spawn each role on demand
 # (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then

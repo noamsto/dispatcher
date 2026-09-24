@@ -113,6 +113,25 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" == *"primary worktree"* ]]
 }
 
+@test "warns when WORKER_TASK.md is tracked on the branch" {
+  setup_worker_wt
+  git -C "$WT" add -f WORKER_TASK.md
+  git -C "$WT" commit -qm 'a worker tracked its task doc'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WORKER_TASK.md is tracked on this branch"* ]]
+  [[ "$output" == *"git rm --cached WORKER_TASK.md"* ]]
+}
+
+@test "does not warn when WORKER_TASK.md is untracked on the branch" {
+  setup_worker_wt
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
+}
+
 @test "refuses on a detached HEAD" {
   setup_worker_wt
   git -C "$WT" checkout -q --detach
