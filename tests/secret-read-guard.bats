@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 # adapters/core/secret-read-guard.sh: per-engine payload parsing (AC2) and the
 # incident-ported deny/allow logic (AC1). See spec.md / plan.md #402.
 
@@ -55,6 +57,19 @@ cursor_shell_exec() { # <command>
 cursor_read_file() { # <path>
   jq -nc --arg p "$1" \
     '{hook_event_name:"beforeReadFile",cursor_version:"2026.09.23",file_path:$p,content:"FAKE=1",attachments:[]}'
+}
+
+# cursor preToolUse Read/Grep keys: createToolInput in the cursor-agent
+# 2026.09.23 bundle.
+cursor_pre_read() { # <path>
+  jq -nc --arg p "$1" \
+    '{hook_event_name:"preToolUse",cursor_version:"2026.09.23",tool_name:"Read",tool_input:{file_path:$p},cwd:""}'
+}
+
+cursor_pre_grep() { # <path> <pattern> <mode> — empty mode is omitted
+  jq -nc --arg p "$1" --arg pat "$2" --arg mode "$3" \
+    '{hook_event_name:"preToolUse",cursor_version:"2026.09.23",tool_name:"Grep",
+      tool_input: ({pattern:$pat,file_path:$p} + (if $mode != "" then {output_mode:$mode} else {} end)),cwd:""}'
 }
 
 pi_bash() { # <command>
@@ -448,4 +463,385 @@ assert_allow() {
   payload="$(jq -nc '{hook_event_name:"PreToolUse",prompt_id:"p",session_id:"s",tool_name:"Bash",tool_input:{command:123}}')"
   run run_guard <<<"$payload"
   assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# cursor preToolUse Read/Grep (keys from the shipped bundle)
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: cursor preToolUse Grep content over .env denies in cursor shape" {
+  run run_guard <<<"$(cursor_pre_grep '/repo/.env' '.' 'content')"
+  assert_deny_cursor
+}
+
+@test "secret-read-guard: cursor preToolUse Grep over .env with no output_mode denies" {
+  run run_guard <<<"$(cursor_pre_grep '/repo/.env' '.' '')"
+  assert_deny_cursor
+}
+
+@test "secret-read-guard: cursor preToolUse Grep over src/ with an unrelated pattern allows" {
+  run run_guard <<<"$(cursor_pre_grep 'src/' 'foo' '')"
+  assert_allow
+}
+
+@test "secret-read-guard: cursor preToolUse Read of .env denies in cursor shape" {
+  run run_guard <<<"$(cursor_pre_read '/w/.env')"
+  assert_deny_cursor
+}
+
+@test "secret-read-guard: cursor preToolUse Read of a source file allows" {
+  run run_guard <<<"$(cursor_pre_read '/w/a.go')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# Large commands stay well inside hookyard's 4 s budget (a timeout is an allow)
+# ---------------------------------------------------------------------------
+
+# assert_deny_within <max-ms> <payload> — deny in claude shape, fast enough.
+assert_deny_within() {
+  local start elapsed
+  start=$(date +%s%N)
+  run run_guard <<<"$2"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  assert_deny_claude
+  echo "elapsed ${elapsed}ms" >&2
+  [ "$elapsed" -lt "$1" ]
+}
+
+@test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 2 s" {
+  local body
+  body=$(printf "a 'b' \"c\"\n%.0s" $(seq 1 10240))
+  assert_deny_within 2000 "$(claude_bash "cat > f <<'X'"$'\n'"$body"$'\n'"X"$'\n'"env")"
+}
+
+@test "secret-read-guard: a 100 KB bash -c body ending in a dump denies in under 2 s" {
+  local body
+  body=$(printf 'echo hi; %.0s' $(seq 1 10240))
+  assert_deny_within 2000 "$(claude_bash "bash -c '${body}env'")"
+}
+
+# ---------------------------------------------------------------------------
+# Unparseable payloads fail open but loud: exit 1, stderr, nothing on stdout
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: a non-JSON payload exits 1 with a stderr notice and no stdout" {
+  run --separate-stderr run_guard <<<'not json {'
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ $stderr == *secret-read-guard* ]]
+}
+
+@test "secret-read-guard: a host without jq exits 1 with a stderr notice and no stdout" {
+  local bin="$BATS_TEST_TMPDIR/bin" tool
+  mkdir -p "$bin"
+  for tool in bash cat grep sed awk mktemp rm; do
+    ln -s "$(command -v "$tool")" "$bin/$tool"
+  done
+  local bash_path
+  bash_path=$(command -v bash)
+  payload="$(claude_bash 'cat .env')"
+  run --separate-stderr env PATH="$bin" "$bash_path" "$GUARD" <<<"$payload"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ $stderr == *"jq not found"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Grep glob branch
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies Grep content with glob .env*" {
+  run run_guard <<<"$(claude_grep '' '.env*' 'KEY' 'content')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies Grep content with glob *.pem" {
+  run run_guard <<<"$(claude_grep '' '*.pem' 'BEGIN' 'content')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows Grep content with glob *.go" {
+  run run_guard <<<"$(claude_grep '' '*.go' 'foo' 'content')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows Grep files_with_matches with glob .env*" {
+  run run_guard <<<"$(claude_grep '' '.env*' 'KEY' 'files_with_matches')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# printenv NAME for a secret-shaped name
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies printenv OPENAI_API_KEY" {
+  run run_guard <<<"$(claude_bash 'printenv OPENAI_API_KEY')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies printenv GITHUB_TOKEN piped to wc" {
+  run run_guard <<<"$(claude_bash 'printenv GITHUB_TOKEN | wc -c')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies printenv of a secret name inside bash -c" {
+  run run_guard <<<"$(claude_bash "bash -c 'printenv GITHUB_TOKEN'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows printenv HOME" {
+  run run_guard <<<"$(claude_bash 'printenv HOME')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows printenv PATH" {
+  run run_guard <<<"$(claude_bash 'printenv PATH')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# Multi-suffix .env files
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies Read of /repo/.env.production.local" {
+  run run_guard <<<"$(claude_read '/repo/.env.production.local')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: cursor beforeReadFile of .env.development.local denies" {
+  run run_guard <<<"$(cursor_read_file '/repo/.env.development.local')"
+  assert_deny_cursor
+}
+
+@test "secret-read-guard: pi Read of .env.production.local denies" {
+  run run_guard <<<"$(pi_read '.env.production.local')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies Grep content over /repo/.env.production.local" {
+  run run_guard <<<"$(claude_grep '/repo/.env.production.local' '' 'X' 'content')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows Read of /repo/.env.example" {
+  run run_guard <<<"$(claude_read '/repo/.env.example')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows Read of /repo/.env.local.example (multi-suffix template)" {
+  run run_guard <<<"$(claude_read '/repo/.env.local.example')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows Read of /repo/.envrc" {
+  run run_guard <<<"$(claude_read '/repo/.envrc')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# .netrc spelled through ~ or $HOME
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies cat ~/.netrc" {
+  run run_guard <<<"$(claude_bash 'cat ~/.netrc')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat \$HOME/.netrc" {
+  run run_guard <<<"$(claude_bash 'cat $HOME/.netrc')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat .netrc" {
+  run run_guard <<<"$(claude_bash 'cat .netrc')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows ls ~/.netrc" {
+  run run_guard <<<"$(claude_bash 'ls ~/.netrc')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# Credential-file content is judged per simple command, in every -c body
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies grep over .env inside fish -c" {
+  run run_guard <<<"$(claude_bash "fish -c 'grep API .env'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies grep over .env inside bash -lc" {
+  run run_guard <<<"$(claude_bash "bash -lc 'grep KEY .env'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a printing grep after an ls -l of .env" {
+  run run_guard <<<"$(claude_bash 'ls -l .env && grep -n API .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat of a template and .env together" {
+  run run_guard <<<"$(claude_bash 'cat .env.example .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat .env after cat of a template" {
+  run run_guard <<<"$(claude_bash 'cat .env.example; cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies head of .env beside a template" {
+  run run_guard <<<"$(claude_bash 'head -50 .env .env.sample')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies head -5 .env" {
+  run run_guard <<<"$(claude_bash 'head -5 .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies sed -n 1p .env" {
+  run run_guard <<<"$(claude_bash 'sed -n 1p .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat ~/.aws/credentials" {
+  run run_guard <<<"$(claude_bash 'cat ~/.aws/credentials')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat ~/.ssh/id_ed25519" {
+  run run_guard <<<"$(claude_bash 'cat ~/.ssh/id_ed25519')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat .env piped into grep -c (cat still prints)" {
+  run run_guard <<<"$(claude_bash 'cat .env | grep -c X')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat of a quoted .env path" {
+  run run_guard <<<"$(claude_bash "cat '.env'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows a commit message that mentions cat .env" {
+  run run_guard <<<"$(claude_bash "git commit -m 'docs: never cat .env'")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows a PR body that mentions cat and grep over .env" {
+  run run_guard <<<"$(claude_bash "gh pr create --body 'Guard blocks cat .env and grep over .env'")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows a heredoc write whose body mentions source .env" {
+  run run_guard <<<"$(claude_bash "cat > docs/setup.md <<'X'"$'\n'"Run source .env before starting."$'\n'"X")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows grep -qx over .gitignore for the .env entry" {
+  run run_guard <<<"$(claude_bash "grep -qx '.env' .gitignore")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows ls of .env then sed over README" {
+  run run_guard <<<"$(claude_bash 'ls -la .env; sed -n 1,20p README.md')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows rg -l TOKEN .env" {
+  run run_guard <<<"$(claude_bash 'rg -l TOKEN .env')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows test -f .env && echo yes" {
+  run run_guard <<<"$(claude_bash 'test -f .env && echo yes')"
+  assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# Command position through keywords, wrappers, groups and assignments
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies env behind leading spaces" {
+  run run_guard <<<"$(claude_bash '  env | grep -i api')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies env after then" {
+  run run_guard <<<"$(claude_bash 'if true; then env | grep KEY; fi')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies env on its own line in a loop body" {
+  run run_guard <<<"$(claude_bash $'for x in 1; do\n  env | sort\ndone')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies env in a brace group" {
+  run run_guard <<<"$(claude_bash '{ env; }')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies sudo env" {
+  run run_guard <<<"$(claude_bash 'sudo env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies command env" {
+  run run_guard <<<"$(claude_bash 'command env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies env behind an assignment prefix" {
+  run run_guard <<<"$(claude_bash 'FOO=1 env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies fish -c 'set -xg'" {
+  run run_guard <<<"$(claude_bash "fish -c 'set -xg'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies fish -c 'set -Ux'" {
+  run run_guard <<<"$(claude_bash "fish -c 'set -Ux'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies fish -c 'set --export'" {
+  run run_guard <<<"$(claude_bash "fish -c 'set --export'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows echo do env (keyword as an argument)" {
+  run run_guard <<<"$(claude_bash 'echo do env')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows set -euo pipefail" {
+  run run_guard <<<"$(claude_bash 'set -euo pipefail')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows export FOO=bar" {
+  run run_guard <<<"$(claude_bash 'export FOO=bar')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows fish -c 'set -gx PATH /x'" {
+  run run_guard <<<"$(claude_bash "fish -c 'set -gx PATH /x'")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows env running a command" {
+  run run_guard <<<"$(claude_bash 'env FOO=1 mycmd')"
+  assert_allow
+}
+
+@test "secret-read-guard: denies set --show NAME" {
+  run run_guard <<<"$(claude_bash 'set --show NAME')"
+  assert_deny_claude
 }

@@ -24,21 +24,35 @@
 #   cursor        preToolUse Shell       tool_input.command                  permission/user_message/
 #   cursor        beforeShellExecution   command                             agent_message
 #   cursor        beforeReadFile         file_path (+ content)
-#   cursor        preToolUse Read/Grep   UNVERIFIED tool_input keys
+#   cursor        preToolUse Read/Grep   tool_input.file_path |
+#                                        .{pattern,file_path,glob,output_mode}
 #
 # claude/codex shapes: hookyard captures and the codex 0.154.0 embedded
-# pre-tool-use schema. cursor: hookyard captures and the cursor-agent
-# 2026.09.23 bundle. Allow is always no stdout, exit 0. Stdout carries exactly
-# one deny object or nothing: cursor blocks the call on any non-JSON stdout, so
-# a stray echo here would block every cursor tool call.
+# pre-tool-use schema. cursor: hookyard captures, plus createToolInput in the
+# cursor-agent 2026.09.23 bundle for the Read/Grep keys (no live capture yet).
+# Allow is always no stdout, exit 0. Stdout carries exactly one deny object or
+# nothing: cursor blocks the call on any non-JSON stdout, so a stray echo here
+# would block every cursor tool call.
+#
+# A payload the guard cannot parse fails open but loud — exit 1, message on
+# stderr — rather than closed: blocking every call on a broken host would stop
+# every worker, and a non-zero hook exit is shown by every engine while the call
+# proceeds.
 
 set -euo pipefail
 
 # GNU grep and bash both treat [A-EG-Z]-style ranges as letter ranges only
-# under a known collation.
+# under a known collation; it also makes awk count bytes, as bash does.
 export LC_ALL=C
 
+command -v jq >/dev/null || {
+  echo "secret-read-guard: jq not found; guard NOT enforcing" >&2
+  exit 1
+}
+
 input=$(cat)
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 
 # Engine data reaches bash as NUL-separated fields, never eval'd. A NUL inside
 # a value would shift every later field, so it becomes a space (which only ever
@@ -60,9 +74,11 @@ if type != "object" then empty else
    elif $ev == "beforeReadFile" and $shape == "cursor" then {kind: "read", path: (.file_path | s)}
    elif $shape == "cursor" then
      if $tool == "Shell" then {kind: "shell", command: ($ti.command | s)}
-     # Read/Grep keys below are unverified: no live cursor capture exists yet.
+     # Read/Grep keys are from the shipped bundle, not a live capture, so the
+     # older path/target_file spellings stay as fallbacks.
      elif $tool == "Read" then {kind: "read", path: (first($ti.file_path, $ti.path, $ti.target_file | select(type == "string")) // "" | s)}
-     elif $tool == "Grep" then {kind: "grep", path: ($ti.path | s), glob: ($ti.glob | s), pattern: ($ti.pattern | s),
+     elif $tool == "Grep" then {kind: "grep", path: (first($ti.file_path, $ti.path | select(type == "string")) // "" | s),
+       glob: ($ti.glob | s), pattern: ($ti.pattern | s),
        mode: ($ti.output_mode | if type == "string" then . else "content" end)}
      else {kind: "none"} end
    elif $tool == "Bash" then {kind: "shell", command: ($ti.command | s)}
@@ -76,10 +92,16 @@ if type != "object" then empty else
   end
 end'
 
+# Through a file, not a process substitution, so jq's exit status survives.
+# jq's own message is dropped: it can quote the payload.
+if ! jq -j "$normalise" <<<"$input" >"$tmp/fields" 2>/dev/null; then
+  echo "secret-read-guard: could not parse hook payload; guard NOT enforcing" >&2
+  exit 1
+fi
 fields=()
 while IFS= read -r -d '' field; do
   fields+=("$field")
-done < <(jq -j "$normalise" <<<"$input")
+done <"$tmp/fields"
 ((${#fields[@]} == 7)) || exit 0
 shape=${fields[0]}
 kind=${fields[1]}
@@ -93,22 +115,29 @@ mode=${fields[6]}
 # pattern that catches `.env.example` (a committed template of op:// refs, not
 # secrets) would train people to work around the guard. /proc/<pid>/environ is
 # a process's whole environment, so a Read of it is an env dump.
-secret_path_re='(^|/)\.env($|\.[A-Za-z0-9_-]+$)|(^|/)\.envrc\.local$|\.aws/credentials|(^|/)\.netrc$|(^|/)id_(rsa|ed25519|ecdsa)$|\.pem$|\.p12$|\.pfx$|(^|/)proc/[^/]+/environ$'
+secret_path_re='(^|/)\.env(\.[A-Za-z0-9_-]+)*$|(^|/)\.envrc\.local$|\.aws/credentials|(^|/)\.netrc$|(^|/)id_(rsa|ed25519|ecdsa)$|\.pem$|\.p12$|\.pfx$|(^|/)proc/[^/]+/environ$'
 # Grep globs spell the same files by pattern (`.env*`, `.env.*`, `*.env`), so
 # they get this looser test on top of secret_path_re.
 glob_secret_re='(^|[/*{,[])\.env($|[]*.?,}])|\.(pem|p12|pfx)($|[]*?,}])|\.netrc($|[]*?,}])|id_(rsa|ed25519|ecdsa)($|[]*?,}])|\.aws(/|$)'
-# On a command line the same path is preceded by a space, quote, = or /, and
-# followed by whitespace, a redirect or a pipe — never by a line anchor, so the
-# path-anchored pattern above would silently match nothing here.
-cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]])\.netrc([[:space:]]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
+# On a command line the same path is preceded by a space, quote, = or / (~ for
+# `~/.netrc`), and followed by whitespace, a quote, a redirect or a pipe —
+# never by a line anchor, so the path-anchored pattern above would silently
+# match nothing here.
+cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
 # Committed templates of op:// refs, not resolved values.
-template_re='\.env\.(example|template|sample|dist)'
+template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 
-# Command-position anchor: start of line, or after ; && || | ( . Dumpers are
-# matched only here, against text with quoted spans masked (mask_quotes), so
-# `rg 'env|printenv|x' file` stays allowed while a bare `env` is denied.
-cmd_start='(^|[;&|(]+[[:space:]]*)'
+# Command position: start of line, or after ; & | ( { ! — then any run of
+# keywords/wrappers that run the next word as a command (`then env`, `sudo
+# env`) or of `NAME=value` prefixes. The keywords count only there, so `echo do
+# env` is an argument, not a command. Dumpers are matched only at this anchor,
+# against text with quoted spans masked (mask_quotes), so `rg 'env|printenv|x'
+# file` stays allowed while a bare `env` is denied.
+cmd_prefix='((then|do|else|if|elif|while|until|sudo|command|exec|time|nohup)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+cmd_start='(^[[:space:]]*|[;&|({!]+[[:space:]]*)'"$cmd_prefix"
 env_dump_re="$cmd_start"'(printenv|env)[[:space:]]*($|[;&|)])'
+# `printenv NAME` prints just that value — fine for HOME, a leak for a key.
+printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
 # the LINEAR_API_KEY rotation. `-S`/`--show`/`-p` always print, name or not;
 # the rest dump only when bare: `export NAME=v` or `declare -x NAME=v` just
@@ -120,11 +149,11 @@ env_dump_re="$cmd_start"'(printenv|env)[[:space:]]*($|[;&|)])'
 # every exported variable, same as `export -p`.
 declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
 builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)]))'
-# fish's `-x`/`-gx`/`-U` are export/universal scope: bare they list that
-# scope, with a name they're the ordinary `set -gx PATH …` idiom. Checked only
-# inside a confirmed `fish -c` body — bash's `set -x` is the harmless xtrace
-# toggle, and `-gx`/`-U` aren't bash flags at all.
-fish_dump_re="$cmd_start"'set[[:space:]]+(-x|-gx|-U)[[:space:]]*($|[;&|)])'
+# fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
+# -L) list that scope when no name follows; with a name they're the ordinary
+# `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
+# bash's `set -x` is the harmless xtrace toggle.
+fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)])'
 # A `-c` argument is quoted, so mask_quotes alone would erase a dumper the
 # shell actually runs. This only locates where the argument starts (through
 # the interpreter, its flags and trailing whitespace); decode_word extracts it.
@@ -135,119 +164,167 @@ shell_c_re="(^|[[:space:]/(])(fish|bash|sh|zsh)[[:space:]]+(-[A-Za-z]+[[:space:]
 # without a printing-tool gate. Tested against the raw command, quotes and all,
 # which also catches it inside `fish -c '…'` without the -c extraction.
 proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
-bs=$'\\'
+nl=$'\n'
 
-# Replaces every character inside a '...' or "..." span (quotes included) with
-# a space, so quoted data can never look like a command. Positional, not a
-# strip. Backslash-aware like bash: outside quotes `\"` is not a quote-open;
-# inside "..." a `\"` does not close the span; '...' has no escapes.
+# Every awk pass below reads its text on stdin through printf '%s\n' and sees
+# it one character at a time through feed(c), newlines included — one linear
+# pass, where a bash character loop is quadratic and blew hookyard's 4 s budget
+# on a 90 KB command. The newline printf adds is not data, so a record's
+# newline is fed only once the next record starts. Characters come from 512-byte
+# chunks because BWK awk (macOS) rescans the whole string on every substr.
+# shellcheck disable=SC2016
+awk_chars='
+{
+  if (NR > 1) feed("\n")
+  line = $0
+  while (line != "") {
+    chunk = substr(line, 1, 512)
+    line = substr(line, 513)
+    n = length(chunk)
+    for (i = 1; i <= n; i++) feed(substr(chunk, i, 1))
+  }
+}'
+
+# mask(c) replaces every character inside a '...' or "..." span (quotes
+# included) with a space, so quoted data can never look like a command.
+# Positional, not a strip. Backslash-aware like bash: outside quotes `\"` is not
+# a quote-open; inside "..." a `\"` does not close the span; '...' has no
+# escapes.
+awk_mask='
+BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
+function mask(c) {
+  if (esc) {
+    esc = 0
+    return (q == "" ? c : " ")
+  }
+  if (q == "") {
+    if (c == BS) esc = 1
+    else if (c == SQ || c == DQ) {
+      q = c
+      return " "
+    }
+    return c
+  }
+  if (c == q) q = ""
+  else if (q == DQ && c == BS) esc = 1
+  return " "
+}'
+
 mask_quotes() {
-  local s=$1 out='' i=0 c q
-  local len=${#s}
-  while ((i < len)); do
-    c=${s:i:1}
-    if [[ $c == "$bs" ]] && ((i + 1 < len)); then
-      out+=$c
-      out+=${s:i+1:1}
-      i=$((i + 2))
-    elif [[ $c == "'" || $c == '"' ]]; then
-      q=$c
-      out+=' '
-      i=$((i + 1))
-      while ((i < len)) && [[ ${s:i:1} != "$q" ]]; do
-        if [[ $q == '"' && ${s:i:1} == "$bs" ]] && ((i + 1 < len)); then
-          out+='  '
-          i=$((i + 2))
-        else
-          out+=' '
-          i=$((i + 1))
-        fi
-      done
-      if ((i < len)); then
-        out+=' '
-        i=$((i + 1))
-      fi
-    else
-      out+=$c
-      i=$((i + 1))
-    fi
-  done
-  printf '%s' "$out"
+  printf '%s\n' "$1" | awk "$awk_mask$awk_chars"'
+function feed(c) { printf "%s", mask(c) }'
 }
 
 # Extracts one shell WORD starting at index `start` of `s`: concatenated
 # unquoted / '…' / "…" / $'…' segments with quote removal applied, stopping at
 # the first unquoted word terminator — `bash -c 'echo '\''hi'\''; env'` is ONE
 # argument. No expansion is attempted; the result is only ever re-scanned,
-# never executed.
+# never executed. The $ of $'…' is dropped, or it breaks the command-position
+# anchor.
 #
 # Sets DECODED_WORD and DECODE_WORD_END (one past the last consumed index)
 # instead of printing, so the caller can keep scanning past this word for a
 # sibling `-c` body; a `$(...)` return would lose the second value.
+awk_decode='
+BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; STOP = " \t\n;&|()" }
+function feed(c) {
+  if (esc) {
+    esc = 0
+    pos++
+    printf "%s", c
+    return
+  }
+  if (st == "q") {
+    pos++
+    if (c == SQ) st = ""
+    else printf "%s", c
+    return
+  }
+  if (st != "") {
+    pos++
+    if (c == BS) esc = 1
+    else if (c == (st == "d" ? DQ : SQ)) st = ""
+    else printf "%s", c
+    return
+  }
+  if (dollar) {
+    dollar = 0
+    if (c == SQ) {
+      pos++
+      st = "a"
+      return
+    }
+    printf "$"
+  }
+  if (index(STOP, c)) exit
+  pos++
+  if (c == BS) esc = 1
+  else if (c == "$") dollar = 1
+  else if (c == SQ) st = "q"
+  else if (c == DQ) st = "d"
+  else printf "%s", c
+}
+END {
+  if (dollar) printf "$"
+  if (esc && st != "") printf "%s", BS
+  printf "\n%d", pos
+}'
+
 decode_word() {
-  local s=$1 i=$2 out='' c
-  local len=${#s}
-  while ((i < len)); do
-    c=${s:i:1}
-    case $c in
-    ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '(' | ')')
-      break
-      ;;
-    "$bs")
-      i=$((i + 1))
-      if ((i < len)); then
-        out+=${s:i:1}
-        i=$((i + 1))
-      fi
-      ;;
-    '$')
-      # Drop the $ of $'...', or it breaks the command-position anchor.
-      if [[ ${s:i+1:1} == "'" ]]; then
-        i=$((i + 2))
-        while ((i < len)) && [[ ${s:i:1} != "'" ]]; do
-          if [[ ${s:i:1} == "$bs" ]] && ((i + 1 < len)); then
-            out+=${s:i+1:1}
-            i=$((i + 2))
-          else
-            out+=${s:i:1}
-            i=$((i + 1))
-          fi
-        done
-        ((i < len)) && i=$((i + 1))
-      else
-        out+=$c
-        i=$((i + 1))
-      fi
-      ;;
-    "'")
-      i=$((i + 1))
-      while ((i < len)) && [[ ${s:i:1} != "'" ]]; do
-        out+=${s:i:1}
-        i=$((i + 1))
-      done
-      ((i < len)) && i=$((i + 1))
-      ;;
-    '"')
-      i=$((i + 1))
-      while ((i < len)) && [[ ${s:i:1} != '"' ]]; do
-        if [[ ${s:i:1} == "$bs" ]] && ((i + 1 < len)); then
-          out+=${s:i+1:1}
-          i=$((i + 2))
-        else
-          out+=${s:i:1}
-          i=$((i + 1))
-        fi
-      done
-      ((i < len)) && i=$((i + 1))
-      ;;
-    *)
-      out+=$c
-      i=$((i + 1))
-      ;;
-    esac
-  done
-  DECODED_WORD=$out
-  DECODE_WORD_END=$i
+  local res
+  res=$(printf '%s\n' "${1:$2}" | awk "$awk_decode$awk_chars")
+  DECODED_WORD=${res%"$nl"*}
+  DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
+}
+
+# Credential-file content (rule 3), decided per simple command: split at
+# unquoted ; & | ( ) ` and newline, so `ls .env && grep -n API .env` is judged
+# on its grep alone and a quoted `cat .env` in a commit message is never a
+# command. A segment denies when a printing tool, or grep/rg without a
+# non-printing flag, sits at its command position and its raw text — template
+# names stripped — names a credential file. Prints `print`, `grep` or nothing.
+seg_start='^[[:space:]]*([{!][[:space:]]*)*'"$cmd_prefix"'([^[:space:]]*/)?'
+awk_cred='
+BEGIN { SPLIT = ";&|()`\n" }
+function feed(c, was, m) {
+  was = esc
+  m = mask(c)
+  if (!was && index(SPLIT, m)) {
+    check()
+    return
+  }
+  rb = rb c
+  mb = mb m
+  if (++nb == 512) flush()
+}
+function flush() {
+  raw = raw rb
+  masked = masked mb
+  rb = mb = ""
+  nb = 0
+}
+function check(r, m, verdict) {
+  flush()
+  r = raw
+  m = masked
+  raw = masked = ""
+  if (m ~ ENVIRON["RE_PRINT"]) verdict = "print"
+  else if (m ~ ENVIRON["RE_GREP"] && m !~ ENVIRON["RE_QUIET"]) verdict = "grep"
+  else return
+  gsub(ENVIRON["RE_TEMPLATE"], "", r)
+  if (r !~ ENVIRON["RE_SECRET"]) return
+  print verdict
+  exit
+}
+END { check() }'
+
+credential_read() {
+  printf '%s\n' "$1" |
+    RE_PRINT="$seg_start"'(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([[:space:]]|$)' \
+      RE_GREP="$seg_start"'(grep|rg|ripgrep|ag)([[:space:]]|$)' \
+      RE_QUIET='(^|[[:space:]])(-[A-Za-z]*[cqlL][A-Za-z]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)([[:space:]]|$)' \
+      RE_TEMPLATE=$template_re RE_SECRET=$cmd_secret_re \
+      awk "$awk_mask$awk_chars$awk_cred"
 }
 
 deny() {
@@ -299,6 +376,7 @@ shell)
   #    single variable: each match queues the extracted body (nesting) and the
   #    rest of the string after it (siblings: `bash -c 'true'; bash -c
   #    'declare -p NAME'`). Bounded by total matches, so it always terminates.
+  raw_spaces=("$command")
   search_spaces=("$(mask_quotes "$command")")
   fish_spaces=()
   worklist=("$command")
@@ -314,6 +392,7 @@ shell)
     decode_word "$cur" $((${#prefix} + ${#match}))
     sub=$DECODED_WORD
     masked_sub=$(mask_quotes "$sub")
+    raw_spaces+=("$sub")
     search_spaces+=("$masked_sub")
     [[ $interpreter == fish ]] && fish_spaces+=("$masked_sub")
     matches=$((matches + 1))
@@ -323,13 +402,16 @@ shell)
     if grep -qE "$env_dump_re" <<<"$space"; then
       deny "A bare env/printenv prints every secret in scope into this transcript. Name the one variable you need and test it without echoing its value."
     fi
+    if grep -qE "$printenv_secret_re" <<<"$space"; then
+      deny "printenv with a secret-named variable prints its live value into this transcript. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+    fi
     if grep -qE "$builtin_dump_re" <<<"$space"; then
       deny "This lists or shows shell variables, which prints live values into this transcript — the same leak as env/printenv, just through a different command (set -S, declare -p, show-environment, …). To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
     fi
   done
   for space in "${fish_spaces[@]}"; do
     if grep -qE "$fish_dump_re" <<<"$space"; then
-      deny "set -x/-gx/-U with no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
+      deny "set with only scope flags (-x, -g, -U, …) and no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
     fi
   done
 
@@ -339,15 +421,18 @@ shell)
 
   # 3. Reading a credential file's content. Non-printing inspection (test, [,
   #    git check-ignore, ls, stat, wc, chmod, rm, gtrash, direnv) stays allowed.
-  if grep -qE "$cmd_secret_re" <<<"$command" && ! grep -qE "$template_re" <<<"$command"; then
-    if grep -qE '\b(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)\b' <<<"$command"; then
+  #    Judged per simple command in the top level and every `-c` body.
+  for space in "${raw_spaces[@]}"; do
+    verdict=$(credential_read "$space")
+    case $verdict in
+    print)
       deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
-    fi
-    # grep/rg leak unless restricted to a non-printing mode.
-    if grep -qE '\b(grep|rg|ripgrep|ag)\b' <<<"$command" && ! grep -qE '(-[a-zA-Z]*[cqlL]|--count|--quiet|--silent|--files-with-matches|--files-without-match)\b' <<<"$command"; then
+      ;;
+    grep)
       deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) if you only need to know whether it is set."
-    fi
-  fi
+      ;;
+    esac
+  done
   ;;
 esac
 

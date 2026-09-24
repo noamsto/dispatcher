@@ -336,9 +336,10 @@ For Claude Code, pass the plugin directory to `claude`:
   }
   ```
 
-  Shell (`preToolUse`, `beforeShellExecution`) and `beforeReadFile` payloads
-  are verified against captured/shipped cursor-agent builds; `preToolUse`
-  `Read`/`Grep` input keys are not verified.
+  The Shell payloads (`preToolUse`, `beforeShellExecution`) are verified
+  against captured cursor-agent runs; the `beforeReadFile` payload and the
+  `preToolUse` `Read`/`Grep` input keys are read off the shipped cursor-agent
+  2026.09.23 bundle, not a live capture.
 
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to
