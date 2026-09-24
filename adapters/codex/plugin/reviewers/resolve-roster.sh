@@ -4,14 +4,23 @@
 # overrides and additions, printed as one JSON object.
 #
 # Trust model: the harness directory is trusted; everything in the target repo
-# is not. Repo entries are read only from git objects at the base commit
-# (ls-tree / cat-file), never from the working tree, so the diff under review
-# cannot supply its own reviewer and nothing outside the object store (symlink
-# targets, $HOME) is reachable. .dispatcher and .dispatcher/reviewers must be
-# trees and every entry a regular blob. An entry's name is validated against
-# ^[a-z0-9-]+$ before its content is read, so only validated names reach the
-# framed brief header. A repo body is inlined as delimited untrusted content,
-# followed by the harness contract and the harness grading tail.
+# is not. Repo entries are read only from git objects at the merge-base of
+# --base and the default branch (ls-tree / cat-file), never from the working
+# tree, so the diff under review cannot supply its own reviewer and nothing
+# outside the object store (symlink targets, $HOME) is reachable. The pin keeps
+# an unmerged stacked parent layer from supplying reviewers: discovery only
+# ever sees a commit already on the default branch. .dispatcher and
+# .dispatcher/reviewers must be trees and every entry a regular blob. An
+# entry's name is validated against ^[a-z0-9-]+$ before its content is read,
+# so only validated names reach the framed brief header. A repo body is
+# inlined as delimited untrusted content, followed by the harness contract and
+# the harness grading tail.
+#
+# --default is a test/override hook and must be the repo's trunk; callers omit
+# it, and passing a stacked parent defeats the pin. Otherwise the default is the
+# target of refs/remotes/origin/HEAD (which must be a refs/remotes/ ref), else
+# refs/remotes/origin/main, looked up as an exact ref (show-ref --verify), so a
+# local branch or tag named refs/remotes/origin/main cannot shadow it.
 #
 # Repo frontmatter never reaches a YAML parser (yq reads only the trusted
 # harness): _repo_fm accepts a line grammar with no anchors, aliases or nesting,
@@ -24,7 +33,7 @@ export LC_ALL=C
 default_harness="@reviewersDir@"
 
 usage() {
-  echo "usage: resolve-roster.sh --base REV [--repo DIR] [--harness DIR]" >&2
+  echo "usage: resolve-roster.sh --base REV [--repo DIR] [--harness DIR] [--default REF]" >&2
   exit 2
 }
 
@@ -33,13 +42,14 @@ die() {
   exit 1
 }
 
-base="" repo="$PWD" harness=""
+base="" repo="$PWD" harness="" default_ref=""
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case $1 in
   --base) base=$2 ;;
   --repo) repo=$2 ;;
   --harness) harness=$2 ;;
+  --default) default_ref=$2 ;;
   *) usage ;;
   esac
   shift 2
@@ -62,7 +72,18 @@ done
 [[ $(yq --version 2>&1) == *mikefarah* ]] || die "yq is not yq-go"
 repo=$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null) || die "not a git work tree: $repo"
 commit=$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}") || die "base does not resolve to a commit: $base"
-base=$commit
+if [ -z "$default_ref" ]; then
+  default_ref=$(git -C "$repo" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || default_ref=refs/remotes/origin/main
+  [[ $default_ref == refs/remotes/?*/?* ]] || die "origin/HEAD does not point at a remote-tracking ref: $default_ref"
+  default_commit=$(git -C "$repo" show-ref --verify --hash "$default_ref" 2>/dev/null) ||
+    die "default branch does not resolve to a commit: $default_ref"
+  default_commit=$(git -C "$repo" rev-parse --verify --quiet "$default_commit^{commit}") ||
+    die "default branch does not resolve to a commit: $default_ref"
+else
+  default_commit=$(git -C "$repo" rev-parse --verify --quiet "$default_ref^{commit}") ||
+    die "default branch does not resolve to a commit: $default_ref"
+fi
+base=$(git -C "$repo" merge-base "$commit" "$default_commit") || die "no merge-base with default branch $default_ref"
 shopt -s nullglob
 harness_files=("$harness"/*.md)
 [ ${#harness_files[@]} -gt 0 ] || die "no reviewer *.md in harness directory: $harness"

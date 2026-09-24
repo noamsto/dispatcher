@@ -352,7 +352,7 @@ setup() {
   git -C "$repo" add seed.txt
   git -C "$repo" commit -q -m seed
 
-  run env -u DISPATCHER_REVIEWERS_DIR "$OUT_REVIEWER_ROSTER/bin/reviewer-roster" --base HEAD --repo "$repo"
+  run env -u DISPATCHER_REVIEWERS_DIR "$OUT_REVIEWER_ROSTER/bin/reviewer-roster" --base HEAD --repo "$repo" --default HEAD
   [ "$status" -eq 0 ]
 
   want="$(find "$ROOT/adapters/core/reviewers" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"

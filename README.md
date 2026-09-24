@@ -187,8 +187,8 @@ gate always spawns the native named-agent/inline-brief mechanism, never a
 grid pane). A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo. A target repo can extend or override the reviewer
-roster with `.dispatcher/reviewers/*.md`, read from the review's base commit
-only; the `reviewer-roster` resolver matches each entry against the harness
+roster with `.dispatcher/reviewers/*.md`, read from the merge-base with
+the default branch only; the `reviewer-roster` resolver matches each entry against the harness
 roster by name or by the harness entry's `aliases:` and frames a repo-local
 body as an untrusted brief, with the harness's own grading tail kept
 underneath. An entry's frontmatter is a line grammar, not YAML: one unindented
