@@ -1601,8 +1601,9 @@ fi
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   now_ts="$(date +%s)"
-  exhausted=$(jq -r --arg e "$agent" --argjson now "$now_ts" '
-    if (.fetched_epoch + 7200) < $now then empty
+  stale_before=$((now_ts - 7200))
+  exhausted=$(jq -r --arg e "$agent" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
+    if .fetched_epoch < $stale_before then empty
     elif .engines[$e] == null then empty
     else .engines[$e].windows | to_entries[]
       | select(.value.used_pct >= 95)
@@ -1612,8 +1613,8 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
     echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
     exit 1
   fi
-  if [ "$agent" = claude ] && jq -e --argjson now "$now_ts" \
-    '(.fetched_epoch + 7200) >= $now and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
+  if [ "$agent" = claude ] && jq -e --argjson stale_before "$stale_before" --argjson now "$now_ts" \
+    '.fetched_epoch >= $stale_before and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
     echo "dispatch: budget gate blind: claude quota unknown" >&2
   fi
 fi
@@ -1626,8 +1627,8 @@ fi
 # or stale data (older cache without limit_reached) fails open, like the rest
 # of the budget gate.
 if [ -z "$ignore_budget" ] && [ "$agent" = codex ] && [ -f "$budget_file" ]; then
-  codex_abs=$(jq -r --argjson now "$now_ts" '
-    if (.fetched_epoch + 7200) < $now then empty
+  codex_abs=$(jq -r --argjson stale_before "$stale_before" --argjson now "$now_ts" '
+    if .fetched_epoch < $stale_before then empty
     elif .engines.codex == null then empty
     else (.engines.codex.limit_reached // {}) as $l
       | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
