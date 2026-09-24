@@ -3079,12 +3079,43 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$launch" != *"Push when pre-push passes"* ]]
 }
 
+@test "--review with --plan provided never claims a review gate that never runs" {
+  stub_pr_bins pr-head-review
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --plan provided --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"plan of record"* ]]
+  [[ "$launch" != *"Only planning is skipped"* ]]
+}
+
 @test "an implement dispatch stamps kind: implement and keeps the push mandate" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
   grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
+}
+
+@test "--plan provided launch prompt keeps the code review gate (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"Only planning is skipped"* ]]
+  [[ "$launch" == *"code review gate still run before you push"* ]]
+  [[ "$launch" == *"Run your code review gate"* ]]
+}
+
+@test "--plan provided on trivial skips the code review gate mentions (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch trivial sonnet --effort low --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" != *"code review gate"* ]]
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
 
@@ -3601,6 +3632,115 @@ EOF
   [ "$claim_line" -lt "$reap_line" ]
   [ "$claim_line" -lt "$switch_line" ]
   grep -q 'new-window' "$STUB_LOG"
+}
+
+# #320 — the issue argument is canonicalised once at parse time. Every derived
+# key (branch, ls-remote pattern, task doc, claim row, gh calls) must use the
+# one decimal form, or a dispatch of '042' never sees evidence recorded under
+# '42' and a second crew can fork an issue the label says is claimed.
+
+@test "claim: a leading-zero issue number is canonicalised everywhere (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 042 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+  run ! grep -q '042' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
+  [ "$output" = "42" ]
+}
+
+@test "claim: '#42' canonicalises to issue 42 (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 '#42' "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
+  [ "$output" = "42" ]
+}
+
+@test "claim: a bare '42' stays issue 42 (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+}
+
+@test "claim: a multi-line issue token is refused before any gh call or scaffolding (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 $'foo\n42' "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"newline"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "claim: a space-mangled issue token is refused before any gh call or scaffolding (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "4 2" "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a valid issue number"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "claim: a zero issue number is refused before any gh call (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 0 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"positive integer"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--pr canonicalises a leading-zero PR number (#320)" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 099 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -q 'pr view 99 ' "$STUB_LOG"
+  run ! grep -q 'pr view 099' "$STUB_LOG"
+  grep -qx 'pr: 99' "$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+}
+
+@test "--pr refuses a zero PR number (#320)" {
+  run run_dispatch standard sonnet --effort medium --pr 0 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr needs a positive integer"* ]]
+}
+
+@test "--base canonicalises a leading-zero PR number (#320)" {
+  setup_stacked_base feat/parent
+  _stub_gh_base_pr
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 07 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -q 'pr view 7 ' "$STUB_LOG"
+  run ! grep -q 'pr view 07' "$STUB_LOG"
+  grep -qx 'base: feat/parent' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+}
+
+@test "--base refuses a zero PR number (#320)" {
+  run run_dispatch standard sonnet --effort medium --base 0 --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--base PR number must be a positive integer"* ]]
 }
 
 @test "claim: a failed label write fails the dispatch instead of proceeding unclaimed" {

@@ -1574,7 +1574,10 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
     "$ROOT/adapters/cursor/commands/autopilot.md"; do
     for statement in \
       'git -C "$PARENT_PATH" push -u origin <parent-branch>' \
-      'git config branch.<branch-name>.autopilotBase <parent-branch>' \
+      'sub_base=${prev_branch:-$parent_branch}' \
+      'git config "branch.$branch.autopilotBaseOid" "$(git merge-base' \
+      'git rebase --onto "refs/remotes/origin/$new_base" "$cut"' \
+      'Never merge PRs' \
       'adding `--base "$stacked_base"` when' \
       'merge-base of `base` with the default branch'; do
       run grep -cF -- "$statement" "$autopilot"
@@ -1653,6 +1656,157 @@ STUB
   GH_MODE=broken RECORD_PARENT=1 autopilot_base_ref
   [ "$status" -ne 0 ]
   [[ "$output" == *"stop and ask the user"* ]]
+}
+
+# Runs autopilot's Stack base block in a fixture: origin carries main, parent
+# and a pushed sub1 (with its own commit); `unpushed` exists only locally.
+# $PREV is the previous sub-ticket's branch ("" for the first). wt is stubbed
+# with `git worktree add` on --create (failing if the branch exists, as real wt
+# does) and a path lookup otherwise; $WT_FAIL=1 makes it fail.
+autopilot_stack_base() {
+  fx="$BATS_TEST_TMPDIR/fx"
+  local git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q --bare -b main "$fx/origin.git"
+  git clone -q "$fx/origin.git" "$fx/work" 2>/dev/null
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  git -C "$fx/work" push -q origin HEAD:main
+  git -C "$fx/work" checkout -q -b parent
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m parent
+  git -C "$fx/work" push -q origin parent
+  git -C "$fx/work" checkout -q -b sub1
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m sub1
+  git -C "$fx/work" push -q origin sub1
+  git -C "$fx/work" checkout -q -b unpushed
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m unpushed
+  git -C "$fx/work" checkout -q parent
+  mkdir -p "$fx/bin"
+  cat >"$fx/bin/wt" <<'STUB'
+#!/usr/bin/env bash
+[ "${WT_FAIL:-}" != 1 ] || exit 1
+if [ "$2" = --create ]; then
+  name="$3"
+  while [ $# -gt 0 ]; do [ "$1" = --base ] && base="$2"; shift; done
+  git worktree add -q -b "$name" "$FX/wt-$name" "$base" >&2 || exit 1
+else
+  name="$2"
+fi
+path="$FX/wt-$name"
+printf '{"path":"%s"}\n' "$path"
+STUB
+  chmod +x "$fx/bin/wt"
+  awk '/^## Stack base/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    | sed -e "s|<parent-branch>|parent|" -e "s|<previous-sub-ticket-branch>|${PREV:-}|" \
+      -e "s|<branch-name>|${CHILD:-sub2}|" >"$fx/stack.sh"
+  [ -s "$fx/stack.sh" ]
+  cd "$fx/work"
+  FX="$fx" PATH="$fx/bin:$PATH" run bash "$fx/stack.sh"
+}
+
+@test "autopilot Stack base: the first sub-ticket is cut from the parent" {
+  PREV="" autopilot_stack_base
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBase)" = parent ]
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBaseOid)" = "$(git -C "$fx/work" rev-parse origin/parent)" ]
+  [ "$(git -C "$fx/work" rev-parse sub2)" = "$(git -C "$fx/work" rev-parse origin/parent)" ]
+}
+
+@test "autopilot Stack base: sub-ticket N+1 is cut from N and the Base ref resolves to N" {
+  PREV=sub1 autopilot_stack_base
+  [ "$status" -eq 0 ]
+  local sub1 parent
+  sub1=$(git -C "$fx/work" rev-parse origin/sub1)
+  parent=$(git -C "$fx/work" rev-parse origin/parent)
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBase)" = sub1 ]
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBaseOid)" = "$sub1" ]
+  git -C "$fx/work" merge-base --is-ancestor "$sub1" sub2
+  [ "$sub1" != "$parent" ]
+  # The real Base ref snippet, run in the new worktree, picks the stacked base.
+  printf '#!/usr/bin/env bash\necho "no pull requests found for branch" >&2\nexit 1\n' >"$fx/bin/gh"
+  chmod +x "$fx/bin/gh"
+  awk '/^## Base ref/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/commands/autopilot.md" >"$fx/snippet.sh"
+  cd "$fx/wt-sub2"
+  PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/snippet.sh; echo "stacked=$stacked_base base=$base"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "stacked=sub1 base=$sub1" ]
+}
+
+@test "autopilot Stack base: a base that is not pushed stops" {
+  PREV=unpushed autopilot_stack_base
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not pushed or was deleted"* ]]
+  run git -C "$fx/work" rev-parse -q --verify refs/heads/sub2
+  [ "$status" -ne 0 ]
+}
+
+@test "autopilot Stack base: a local base that differs from origin stops" {
+  PREV=sub1 autopilot_stack_base
+  git -C "$fx/work" -c user.email=t@example.com -c user.name=t checkout -q sub1
+  git -C "$fx/work" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m local-only
+  run bash -c 'sed "s|sub2|sub3|" '"$fx"'/stack.sh >'"$fx"'/stack3.sh; cd '"$fx"'/work; FX='"$fx"' PATH='"$fx"'/bin:$PATH bash '"$fx"'/stack3.sh'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"differs from origin"* ]]
+}
+
+@test "autopilot Stack base: an unsafe branch name stops before anything runs" {
+  CHILD='x$(touch pwned)y' PREV=sub1 autopilot_stack_base
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unsafe branch name"* ]]
+  [ ! -e "$fx/work/pwned" ]
+}
+
+@test "autopilot Stack base: a name that would break out of quoting is read literally and gated" {
+  CHILD="x'\$(touch pwned)'y" PREV=sub1 autopilot_stack_base
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unsafe branch name"* ]]
+  [ ! -e "$fx/work/pwned" ]
+}
+
+@test "autopilot Stack base: a failing wt records nothing and stops" {
+  WT_FAIL=1 PREV=sub1 autopilot_stack_base
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wt switch failed"* ]]
+  run git -C "$fx/work" config branch.sub2.autopilotBaseOid
+  [ "$status" -ne 0 ]
+}
+
+@test "autopilot Stack base: a re-run keeps the recorded cut oid" {
+  PREV=sub1 autopilot_stack_base
+  [ "$status" -eq 0 ]
+  local cut
+  cut=$(git -C "$fx/work" config branch.sub2.autopilotBaseOid)
+  git -C "$fx/work" checkout -q sub1
+  git -C "$fx/work" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m sub1-more
+  git -C "$fx/work" push -q origin sub1
+  cd "$fx/work"
+  FX="$fx" PATH="$fx/bin:$PATH" run bash "$fx/stack.sh"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBaseOid)" = "$cut" ]
+}
+
+@test "autopilot Stack maintenance: --onto replays only the layer's own commits after a squash-merge" {
+  PREV=sub1 autopilot_stack_base
+  [ "$status" -eq 0 ]
+  local git_id=(-c user.email=t@example.com -c user.name=t)
+  git -C "$fx/wt-sub2" "${git_id[@]}" commit -q --allow-empty -m sub2
+  git -C "$fx/work" checkout -q parent
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m "squash sub1"
+  git -C "$fx/work" push -q origin parent
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$fx/bin/gh"
+  chmod +x "$fx/bin/gh"
+  awk '/^\*\*Stack maintenance/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    | sed "s|<branch the lower layer merged into>|parent|" >"$fx/maintain.sh"
+  [ -s "$fx/maintain.sh" ]
+  cd "$fx/wt-sub2"
+  GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com PATH="$fx/bin:$PATH" run bash "$fx/maintain.sh"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$fx/wt-sub2" log --format=%s origin/parent..sub2)" = sub2 ]
+  git -C "$fx/wt-sub2" merge-base --is-ancestor origin/parent sub2
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBase)" = parent ]
+  [ "$(git -C "$fx/work" config branch.sub2.autopilotBaseOid)" = "$(git -C "$fx/work" rev-parse origin/parent)" ]
+  [ "$(git -C "$fx/work" rev-parse origin/sub2)" = "$(git -C "$fx/work" rev-parse sub2)" ]
 }
 
 # A local branch or tag named `origin/main` outranks refs/remotes/origin/main
