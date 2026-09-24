@@ -173,16 +173,16 @@ base=$(git merge-base HEAD "$base_ref") || exit 1
 
 ## Step 5: Quality Pass
 
-Run these skills on the branch diff against the **Base ref** `base`. `/deslop` is the harness `deslop` skill, shipped to every engine — `dispatcher:deslop` on claude, `$deslop` on codex, `deslop` on cursor and pi.
+Run these passes on the branch diff against the **Base ref** `base`. `/deslop` is the harness `deslop` skill, shipped to every engine — `dispatcher:deslop` on claude, `$deslop` on codex, `deslop` on cursor and pi.
 
-1. **Invoke `/simplify`** — review for reuse, quality, efficiency
+1. **Simplify pass** — re-read the `base..HEAD` diff for reuse of existing helpers, needless abstraction, and avoidable work, and apply the fixes (on claude, `/simplify` is an optional convenience for this)
 2. **Invoke `/deslop`** — remove AI-generated slop (unnecessary comments, defensive blocks, style inconsistencies)
 
 Commit any fixes from these passes.
 
 ## Step 6: Code Review
 
-Dispatch reviewer agents **in parallel** (single message, multiple Agent tool calls). Each reviewer sees the branch diff against the base.
+Dispatch reviewer agents **in parallel** (claude: one message, multiple Agent tool calls; other engines: your native parallel subagent mechanism). Each reviewer sees the branch diff against the base.
 
 ### Reviewer roster
 
@@ -255,7 +255,7 @@ Exit when ALL of these are true:
 
 One last pass after all CI/reviewer fixes are done:
 
-1. **Invoke `/simplify`**
+1. **Simplify pass** (as in Step 5)
 2. **Invoke `/deslop`** (with the **Base ref** `base`)
 
 If this produces changes, rerun affected checks; behavioral edits also need the

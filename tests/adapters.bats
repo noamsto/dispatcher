@@ -2988,3 +2988,29 @@ $hits"
   run grep -F 'The in-session Task tool'"'"'s subagent roster is narrower and is not probed' "$ROOT/adapters/core/refresh-models.sh"
   [ "$status" -eq 0 ]
 }
+
+@test "claude-only skill names are defined in-repo, with the superpowers name only as an optional convenience" {
+  for d in adapters/core adapters/claude-code/plugin adapters/codex/plugin adapters/cursor; do
+    wp="$ROOT/$d"
+    f="$wp/protocols/WORKER_PROTOCOL.md"
+    [ -s "$f" ]
+    run grep -cF '**Receiving-code-review discipline**' "$f"
+    [ "$output" -eq 1 ]
+    run grep -F '`superpowers:subagent-driven-development` is an optional convenience' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'defined in `WORKER_PROTOCOL.md` "Process authority"' "$wp/protocols/GRID_PROTOCOL.md"
+    [ "$status" -eq 0 ]
+  done
+  for f in $(find "$ROOT/adapters" -name SKILL.md -path '*spec-plan-critic*'); do
+    run grep -F 'Plan schema.' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'writing-plans discipline' "$f"
+    [ "$status" -ne 0 ]
+  done
+  for f in $(find "$ROOT/adapters" -name 'autopilot.md' -o -path '*autopilot/SKILL.md'); do
+    run grep -F 'Simplify pass' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'Invoke `/simplify`' "$f"
+    [ "$status" -ne 0 ]
+  done
+}
