@@ -43,12 +43,23 @@ shell_quote() {
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
+  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
+  if [ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }; then
+    echo "dispatch: $_dir is a symlink or not a directory — refusing to write a launch script" >&2
+    exit 1
+  fi
   # shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
   mkdir -p -m 700 "$_dir"
   chmod 700 "$_dir"
   find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
-  _file="$(mktemp "$_dir/launch.XXXXXX")"
-  printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  if [ "${3:-}" = exit ]; then
+    _file="$(mktemp "$_dir/exit.XXXXXX")"
+    # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
+  else
+    _file="$(mktemp "$_dir/launch.XXXXXX")"
+    printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  fi
   chmod 700 "$_file"
   shell_quote _quoted "$_file"
   _launch="bash $_quoted"

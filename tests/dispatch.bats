@@ -4173,6 +4173,8 @@ _exit_hook_fixture() {
   grep -qxF 'status role:feat/42-do-a-thing:reviewer blocked role reviewer engine exited (pane %6)' "$STUB_LOG"
   grep -qF 'msg role:feat/42-do-a-thing:reviewer worker:feat/42-do-a-thing#s7-7' "$STUB_LOG"
   grep -qF 'set-option -p -t %6 @crew_exited 1' "$STUB_LOG"
+  # #298 F1: the exit script deletes itself (`rm -f -- "$0"`) once it runs.
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited stays silent after the lead's final release" {
@@ -4186,6 +4188,7 @@ _exit_hook_fixture() {
   [ "$status" -eq 0 ]
   run ! grep -qE '^(status|msg) ' "$STUB_LOG"
   grep -qF '@crew_exited 1' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited is not silenced by a final sent to an earlier incarnation of the role" {
@@ -4197,6 +4200,7 @@ _exit_hook_fixture() {
   run bash -c "$cmd"
   [ "$status" -eq 0 ]
   grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited still posts when WORKER_TASK.md is gone" {
@@ -4207,6 +4211,7 @@ _exit_hook_fixture() {
   [ "$status" -eq 0 ]
   grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
   run ! grep -qF 'msg role:' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --reap-roles itself kills role panes and posts nothing" {
@@ -4288,7 +4293,7 @@ EOF
 # command reached the file, not just a short line).
 _assert_bound_send_keys() {
   local crew_launch_dir="$1" marker="${2:-}" pattern line n=0
-  pattern="^send-keys -t %[0-9]+ bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}'( ; bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}')? Enter\$"
+  pattern="^send-keys -t %[0-9]+ bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}'( ; bash '${crew_launch_dir}/exit\.[A-Za-z0-9]{6}')? Enter\$"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     n=$((n + 1))
@@ -4379,6 +4384,23 @@ _assert_bound_send_keys() {
   [[ "$(sed -n '2p' "$script")" == 'exec env '* ]]
 }
 
+# #298 F3: mkdir -p is a no-op on an existing symlink, chmod follows it, and
+# mktemp would write into whatever it points at — refuse instead of writing
+# through it, matching crew.sh's pi-agent-dir guard.
+@test "a symlinked crew launch dir is refused, nothing is written into its target" {
+  stub_launch_bins
+  crew_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew"
+  target="$BATS_TEST_TMPDIR/launch-target"
+  mkdir -p "$crew_dir" "$target"
+  ln -s "$target" "$crew_dir/launch"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "symlinked launch dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"symlink or not a directory — refusing to write a launch script"* ]]
+  [ -L "$crew_dir/launch" ]
+  [ "$(find "$target" -mindepth 1 | wc -l)" -eq 0 ]
+}
+
 # #298: the pane is typed only `bash '<path>'` in both shells that ever sit in
 # a fresh pane; this proves fish parses the short line identically to bash —
 # no fish-vs-shell_quote mismatch — by replaying both the lead's and the
@@ -4443,6 +4465,41 @@ EOF
   new_script="${line##*bash \'}"
   new_script="${new_script%%\'*}"
   [ -f "$new_script" ]
+}
+
+# #298 F1: a parked role pane can outlive the 7-day launch prune — its exit
+# script must survive that prune (it is named exit.*, not launch.*, and the
+# prune only matches launch.*) so `--role-exited` still fires whenever that
+# engine eventually returns.
+@test "prune: a role's exit script survives the 7-day prune that removes a stale launch script" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "prune keeps exit"
+  [ "$status" -eq 0 ]
+
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  role_line="$(grep "^send-keys -t %6 bash '" "$STUB_LOG")"
+  [ -n "$role_line" ]
+  cmd="${role_line#send-keys -t %6 }"
+  cmd="${cmd% Enter}"
+  exit_path="${cmd##*bash \'}"
+  exit_path="${exit_path%\'}"
+  [[ "$exit_path" == "$crew_launch_dir"/exit.* ]]
+  touch -t 202001010000 "$exit_path"
+
+  stale_launch="$crew_launch_dir/launch.stale0"
+  printf '#!/usr/bin/env bash\nexec env true\n' >"$stale_launch"
+  chmod 700 "$stale_launch"
+  touch -t 202001010000 "$stale_launch"
+
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --effort medium --crew-id c1 43 "a different dispatch"
+  [ "$status" -eq 0 ]
+
+  [ -e "$exit_path" ]
+  [ ! -e "$stale_launch" ]
 }
 
 @test "grid: lazy pace gate checks final effort before splitting and honors --ignore-budget" {

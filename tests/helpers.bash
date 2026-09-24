@@ -94,12 +94,15 @@ seed_hold() {
              | tostring)}' >>"$logf"
 }
 
-# launch_log — $STUB_LOG with every `bash '<crew>/launch/launch.XXXXXX'` token
-# replaced by that script's own command (its `exec env <cmdline>` line, prefix
-# stripped). Lines stay one per send-keys call, so every existing grep against
-# $STUB_LOG for launch content (engine flags, prompt text, env prefixes) keeps
-# its meaning once read through this instead (#298: the pane is now typed only
-# the short `bash <path>` line; the full command lives in the referenced file).
+# launch_log — $STUB_LOG with every `bash '<crew>/launch/{launch,exit}.XXXXXX'`
+# token replaced by that script's own command (its `exec env <cmdline>` line,
+# prefix stripped). Lines stay one per send-keys call, so every existing grep
+# against $STUB_LOG for launch content (engine flags, prompt text, env
+# prefixes) keeps its meaning once read through this instead (#298: the pane
+# is now typed only the short `bash <path>` line; the full command lives in
+# the referenced file). The `exec env ` line is found by pattern, not line
+# number, since an exit script (#298 F1) carries an extra `rm -f -- "$0"` line
+# ahead of it.
 launch_log() {
   local line before rest path after content
   while IFS= read -r line; do
@@ -108,8 +111,7 @@ launch_log() {
       rest="${line#*bash \'}"
       path="${rest%%\'*}"
       after="${rest#*\'}"
-      content="$(sed -n '2p' "$path")"
-      content="${content#exec env }"
+      content="$(sed -n 's/^exec env //p' "$path")"
       line="${before}${content}${after}"
     done
     printf '%s\n' "$line"

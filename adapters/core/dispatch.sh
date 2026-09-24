@@ -395,22 +395,38 @@ shell_quote() {
   _out="'$_res'"
 }
 
-# write_launch_script <var> <cmdline> — write <cmdline> into a fresh 0700 script
-# under $crew_dir/launch and set <var> to the short line that runs it. A new
-# pane's shell is often not reading yet when send-keys types into it, and the
-# tty's canonical buffer (1024 bytes on macOS) cuts a longer line and drops its
-# Enter (#298) — so a pane is only ever typed `bash <path>`. `exec env` makes the
-# engine the pane's foreground process itself, which every #{pane_current_command}
-# liveness check reads. Files older than a week are pruned on the way in.
+# write_launch_script <var> <cmdline> [exit] — write <cmdline> into a fresh 0700
+# script under $crew_dir/launch and set <var> to the short line that runs it. A
+# new pane's shell is often not reading yet when send-keys types into it, and
+# the tty's canonical buffer (1024 bytes on macOS) cuts a longer line and drops
+# its Enter (#298) — so a pane is only ever typed `bash <path>`. `exec env`
+# makes the engine the pane's foreground process itself, which every
+# #{pane_current_command} liveness check reads. Files older than a week are
+# pruned on the way in.
+#
+# With `exit` the script is named exit.* and deletes itself when it runs: a
+# role's exit hook runs only when its engine returns, possibly weeks later, so
+# the age prune (launch.* only) must never reach it.
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
+  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
+  if [ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }; then
+    echo "dispatch: $_dir is a symlink or not a directory — refusing to write a launch script" >&2
+    exit 1
+  fi
   # shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
   mkdir -p -m 700 "$_dir"
   chmod 700 "$_dir"
   find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
-  _file="$(mktemp "$_dir/launch.XXXXXX")"
-  printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  if [ "${3:-}" = exit ]; then
+    _file="$(mktemp "$_dir/exit.XXXXXX")"
+    # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
+  else
+    _file="$(mktemp "$_dir/launch.XXXXXX")"
+    printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  fi
   chmod 700 "$_file"
   shell_quote _quoted "$_file"
   _launch="bash $_quoted"
@@ -439,11 +455,11 @@ pi_skill_args() {
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name and $branch from the caller scope.
 #
-# The pane is typed two short script lines: the launch line, then a
-# `dispatch --role-exited …` continuation, its own script run by the pane's
-# shell only when the engine returns — so an engine that crashes at startup is
-# reported, while a reap (which kills the pane and its shell) is silent. `;` is
-# valid in fish (the pane shell), bash and zsh.
+# The pane is typed one short line that runs the launch script, then
+# `; bash <exit script>` — the `dispatch --role-exited …` continuation — which
+# the pane's shell runs only when the engine returns, so an engine that
+# crashes at startup is reported, while a reap (which kills the pane and its
+# shell) is silent. `;` is valid in fish (the pane shell), bash and zsh.
 launch_role() {
   local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
   printf -v quoted_model '%q' "$r_model"
@@ -466,7 +482,7 @@ launch_role() {
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
   write_launch_script launch_line "$cmd"
-  write_launch_script exit_line "$exit_cmd"
+  write_launch_script exit_line "$exit_cmd" exit
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
