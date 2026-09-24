@@ -67,10 +67,14 @@ in {
         # it in your shell to iterate on a checkout without rebuilding.
         # #184/#193: dispatch / dispatch-resume recompute the built-in
         # protocol revision as a content hash of the files actually in
-        # $PROTOCOL_DIR, so a stale value held by a long-lived shell or tmux
-        # server hashes differently and aborts with an actionable message
-        # rather than silently running workers against an old protocol
-        # contract. There is no committed PROTOCOL_REV file to regenerate.
+        # $PROTOCOL_DIR, so a checkout override that drifted from the build
+        # aborts with an actionable message rather than silently running
+        # workers against an old protocol contract. #303: a stale value held
+        # by a long-lived shell or tmux server after a rebuild is a store path
+        # from the previous build; dispatch / dispatch-resume / dispatcher
+        # detect that by content, ignore it with a notice and use their baked
+        # directory. The export stays because the markdown reads it. There is
+        # no committed PROTOCOL_REV file to regenerate.
         DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
         DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
         DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";

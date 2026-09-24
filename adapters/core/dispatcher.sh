@@ -4,7 +4,38 @@
 # One behaviour change is unavoidable: a script cannot export CREW_ID back into
 # the caller's interactive shell the way `set -gx` did, so the id is printed.
 
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+# Duplicated from dispatch.sh (standalone build), minus the unset.
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against this build's baked default (#303). A long-lived shell or tmux
+# server keeps the previous build's export after a rebuild, so an override
+# inside the baked path's own store root is honoured only when its content
+# equals the baked directory's: the current build's export sits at a different
+# store path than the baked projection but holds the same files. Comparing
+# content, not paths, is direction-agnostic — a newer value held by an older
+# script after a rollback is stale too. A stale value is ignored with a notice
+# (not unset here: the caller re-exports the resolved dir for the launched
+# session, which reads DISPATCHER_PROTOCOL_DIR from its markdown). An override
+# outside the store root (a checkout) always wins; so does any override when
+# the script is a raw checkout (baked is not an absolute path, nothing to
+# compare against). diff runs only as an `if` condition — its exit 1 means
+# "differs", not failure.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ "$baked" == /* && "$val" == "${baked%/*}"/* && "$val" != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
+_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatcher
+[ -z "${DISPATCHER_PROTOCOL_DIR:-}" ] || export DISPATCHER_PROTOCOL_DIR="$PROTOCOL_DIR"
 protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
 
 agent=claude

@@ -80,7 +80,10 @@ _check_protocol_rev() {
     echo "$label:   script protocol revision: $stamped_rev" >&2
     echo "$label:   \$PROTOCOL_DIR content revision: $dir_rev" >&2
     echo "$label:   \$PROTOCOL_DIR: $dir" >&2
-    [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+    if [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ]; then
+      echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+      echo "$label:   remedy: unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build" >&2
+    fi
     exit 1
   fi
 }
@@ -233,11 +236,40 @@ trivial | standard | deep) ;;
   ;;
 esac
 
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against this build's baked default (#303). A long-lived shell or tmux
+# server keeps the previous build's export after a rebuild, so an override
+# inside the baked path's own store root is honoured only when its content
+# equals the baked directory's: the current build's export sits at a different
+# store path than the baked projection but holds the same files. Comparing
+# content, not paths, is direction-agnostic — a newer value held by an older
+# script after a rollback is stale too. A stale value is ignored with a notice
+# and unset so the exec'd children re-resolve the baked default. An override
+# outside the store root (a checkout) always wins; so does any override when
+# the script is a raw checkout (baked is not an absolute path, nothing to
+# compare against). diff runs only as an `if` condition — its exit 1 means
+# "differs", not failure.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ "$baked" == /* && "$val" == "${baked%/*}"/* && "$val" != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    unset "$var"
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
+_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" "dispatch resume"
 
 # Harness skill directory for pi workers; see pi_skill_args above and the
 # matching block in dispatch.sh.
-SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
+_resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 
 _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
