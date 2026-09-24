@@ -36,7 +36,7 @@ Map the changed files to the reviewers that match them (the language reviewers, 
 | --- | --- |
 | `trivial` | no fan-out — review inline yourself, applying the matched reviewer's rubric |
 | `standard` | every matched reviewer, one agent each, one batch |
-| `deep` | the same batch plus a diverse-engine pass (work profile, claude only — the read-only codex MCP; a should, not a blocker) |
+| `deep` | the same batch plus a diverse-engine pass — any lead engine, a read-only one-shot to a different-family engine per `WORKER_PROTOCOL.md` → "Cross-engine one-shots" (a should, not a blocker) |
 
 Changed files no reviewer covers are **reviewer gaps**. Carry them into the tally; never silently drop a file.
 
