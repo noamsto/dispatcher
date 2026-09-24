@@ -4716,8 +4716,14 @@ EOF
     echo "timeout is still on PATH after sanitizing" >&2
     return 1
   fi
-  run "$real_timeout" 30 bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  # Pin the bound, not merely the verdict: bound=2 with an 8s outer cap and a
+  # 6s elapsed ceiling. A regression that ignores the configured bound (e.g. a
+  # hard-coded 20s) or drops the watchdog trips 124/elapsed, not a green pass.
+  started="$(date +%s)"
+  run "$real_timeout" 8 bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  elapsed=$(( $(date +%s) - started ))
   [ "$status" -eq 1 ]
+  [ "$elapsed" -le 6 ]
   [[ "$output" == *"origin unreachable"* ]]
   [[ "$output" == *"already claimed"* ]]
 }
