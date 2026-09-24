@@ -3333,6 +3333,21 @@ fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
+  # dispatch delegates the "is the worker's bus being streamed" question to
+  # `crew stream --status`, so route it to the real crew.sh (like
+  # pi-agent-dir) instead of the log-and-succeed stub — the tests then exercise
+  # the real liveness predicate rather than a re-implementation of it.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+stream) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
 }
 
 # _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo

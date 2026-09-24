@@ -2677,10 +2677,10 @@ echo "worker_id: $worker_id"
 # $(git rev-parse --git-common-dir)/crew of the checkout it runs in — so a lane
 # the dispatcher armed in ITS checkout never sees a worker dispatched into
 # another repo. Print the exact lane command for the worker's repo when the
-# dispatcher's pane sits elsewhere and nothing is streaming the worker's bus
-# yet. `watched` mirrors `crew stream --status`'s liveness rule exactly (a live
-# pid is not evidence notifications are flowing): a live pid AND a tick younger
-# than 2*park+60, park taken from the tick itself.
+# dispatcher's pane sits elsewhere and the worker's bus is not being streamed
+# yet. `crew stream --status` is the single source of truth for that last part
+# (rc 0 alive, 1 stale, 2 dead), so the liveness rule lives in exactly one
+# place — anything but `alive` means the dispatcher cannot see this worker here.
 if [ -n "${TMUX_PANE:-}" ]; then
   worker_common="${crew_dir%/crew}"
   dpane_path=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || true)
@@ -2689,30 +2689,12 @@ if [ -n "${TMUX_PANE:-}" ]; then
     dcommon=$(git -C "$dpane_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
   fi
   if [ -n "$dcommon" ] && [ "$dcommon" != "$worker_common" ]; then
-    watched=""
-    wpid=$(cat "$crew_dir/crews/$crew_id/stream.lock.d/pid" 2>/dev/null || true)
-    case "$wpid" in '' | *[!0-9]* | 0) wpid="" ;; esac
-    if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
-      tick=$(cat "$crew_dir/crews/$crew_id/stream.tick" 2>/dev/null || true)
-      tickts=""
-      tickpark=""
-      if [ -n "$tick" ]; then
-        tickts=$(printf '%s' "$tick" | jq -r '.ts // empty' 2>/dev/null || true)
-        tickpark=$(printf '%s' "$tick" | jq -r '.park // empty' 2>/dev/null || true)
-      fi
-      case "$tickts" in '' | *[!0-9]*) tickts="" ;; esac
-      case "$tickpark" in '' | *[!0-9]*) tickpark="" ;; esac
-      if [ -n "$tickts" ] && [ -n "$tickpark" ]; then
-        now_ms=$(jq -nc 'now*1000|floor' 2>/dev/null || true)
-        case "$now_ms" in '' | *[!0-9]*) now_ms="" ;; esac
-        if [ -n "$now_ms" ] && [ "$(((now_ms - tickts) / 1000))" -lt "$((2 * tickpark + 60))" ]; then
-          watched=1
-        fi
-      fi
-    fi
-    if [ -z "$watched" ]; then
+    if ! crew stream --status --crew "$crew_id" >/dev/null 2>&1; then
       worker_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
-      [ -n "$worker_top" ] || worker_top="$dpane_path"
+      # Inside the git common dir `--show-toplevel` fails while `crew` still
+      # resolves the same bus, so that is the correct fallback — never the
+      # dispatcher's checkout, which would name the wrong bus.
+      [ -n "$worker_top" ] || worker_top="$worker_common"
       echo "dispatch: cross-repo worker — its bus is $worker_common/crew, not the dispatcher checkout's ($dcommon)."
       echo "  arm/adjust the lane: cd $worker_top && crew stream --crew $crew_id"
     fi
