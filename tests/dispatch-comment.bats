@@ -240,7 +240,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 pr\ view\ *)
-  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE"
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false,"state":"OPEN"}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE"
   ;;
 esac
 exit 0
