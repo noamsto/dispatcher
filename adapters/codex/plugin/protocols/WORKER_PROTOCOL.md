@@ -83,9 +83,11 @@ refs explicitly — `git rebase origin/<base>` collides with the snippet's own
 `git fetch origin -- <new-base>`. After a squash-merge: `git rebase --onto
 "origin/<new-base>" <cut-oid>` (the directive names the parent PR; if the cut
 commit isn't local yet, fetch it from there — `git fetch origin
-pull/<parent-PR>/head`). Every rebase directive carries the parent's recorded old
-`headRefOid` (saved before that parent was told to rebase — not a fresh
-`gh pr view`, which returns the rewritten tip), including a plain fast-forward rebase. When that push rewrote
+pull/<parent-PR>/head`). Every rebase directive carries your cut point — the parent
+oid your branch is based on, recorded by the dispatcher when you were (re)based,
+whether or not the parent was directed to rebase; never a fresh `gh pr view`,
+which returns the rewritten tip — as the recorded old head, including a plain
+fast-forward rebase. When that push rewrote
 history, `git rebase --onto "origin/<parent>" <recorded old head>`. Plain
 `git rebase "origin/<parent>"` is only for a fast-forward advance — gate it
 on `git merge-base --is-ancestor <old head> "origin/<parent>"`. Then rewrite
@@ -103,6 +105,10 @@ On a stacked layer, run `/deslop` with `base` — the merge-base commit id the
 snippet above computes, in the same call — substituted literally as its base;
 an empty variable would silently yield an empty diff. (`/deslop` is
 claude-only, per rule 4 below.)
+
+The review diff uses this stacked `base`, but `reviewer-roster` re-pins roster
+discovery to the merge-base with the default branch — see **Repo-local
+reviewers and aliases** under the Code review gate.
 
 Workers never run `gh stack init|add|modify|sync|unstack|merge|rebase|link` —
 one worker owns exactly one branch, and gh-stack's local state lives in the
