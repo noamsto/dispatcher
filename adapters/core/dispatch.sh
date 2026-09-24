@@ -132,8 +132,9 @@ _claim_evidence() {
   # branch. A pid alone is not proof (#322): the log is never pruned, so a pid
   # the kernel later reused by an unrelated process would false-refuse forever,
   # and `kill -0` on another uid's live dispatcher fails EPERM, which the old
-  # check read as dead and healed over. Liveness is cross-uid, and the process
-  # must predate its own row.
+  # check read as dead and healed over. Liveness is cross-uid, the pid must look
+  # like the dispatch shell that wrote the row, and it must predate its own row
+  # (#351); a row older than `_CLAIM_STALE_MS` is abandoned whatever its pid.
   local pids pid row_ts
   pids="$(jq -nrR --arg i "$issue" 'inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i)) | "\(.pid) \(.ts // "")"' "$events")" || {
     echo "events log unreadable"
@@ -153,28 +154,56 @@ _claim_evidence() {
   return 0
 }
 
+# A claim row older than this with no branch, remote branch or dispatch row is
+# abandoned (#351). The claim -> dispatch-row window is seconds (reap, fetch,
+# worktree); a day is far beyond any legitimate setup, so only a truly stranded
+# or forged row reaches it.
+_CLAIM_STALE_MS=$((24 * 60 * 60 * 1000))
+
 # _claim_pid_live <pid> <row_ts_ms> — 0 when <pid> is a live process that could
 # have written a claim row at <row_ts_ms>, 1 otherwise. Fail-closed: anything it
-# cannot read counts as live. Two bounds compose it:
+# cannot read counts as live. Four bounds compose it:
 #   - cross-uid liveness: a successful `kill -0` is proof, and so is a `kill -0`
 #     that failed EPERM — the signal reached the process and was refused, so it
 #     exists; `ps -p` covers the case `kill` reports nothing at all. Both are
 #     tried before a pid is called dead, so a foreign-uid claimant stays live
 #     even where `ps` cannot see it (a `hidepid=2` mount).
+#   - claimant shape: the row's pid is the dispatch shell that wrote it, so its
+#     command line must name the harness. A live unrelated process — pid 1, a
+#     daemon — that merely predates the row is not claimant evidence; without
+#     this a stray or forged row naming one wedges the #304 self-heal (#351).
 #   - no pid reuse: the claimant was already running when it wrote the row, so a
-#     process that started after the row merely inherited the number. This does
-#     not reject a forged row naming a genuinely long-lived unrelated pid.
+#     process that started after the row merely inherited the number.
+#   - row age: a row older than _CLAIM_STALE_MS with no branch, remote branch or
+#     dispatch row behind it (the caller checked those) is abandoned whatever
+#     its pid — the bound for a forged row naming a live dispatch process.
 _claim_pid_live() {
-  local pid="$1" row_ts="$2" elapsed start_s kmsg
+  local pid="$1" row_ts="$2" elapsed start_s kmsg args
   kmsg="$(LC_ALL=C kill -0 "$pid" 2>&1)" || {
     case "$kmsg" in
     *"not permitted"* | *"not allowed"*) ;; # EPERM: the process exists
     *) ps -p "$pid" -o pid= >/dev/null 2>&1 || return 1 ;;
     esac
   }
+  # Claimant shape: only the dispatch shell that wrote the row counts. Readable
+  # args that name something else (pid 1, a daemon) are not a claimant; args we
+  # cannot read fail closed and stay plausible. -ww defeats COLUMNS truncation:
+  # the built wrapper's `dispatch` token sits past column 80 behind the bash
+  # store path, and a truncated read would call a live claimant stale.
+  args="$(ps -ww -o args= -p "$pid" 2>/dev/null)" || args=""
+  if [ -n "$args" ]; then
+    case "$args" in
+    *dispatch*) ;;
+    *) return 1 ;;
+    esac
+  fi
   case "$row_ts" in
   '' | *[!0-9]*) return 0 ;; # no usable ts: reuse can't be ruled out
   esac
+  # Age: a day-old row with nothing behind it is abandoned whatever the pid.
+  if [ "$((10#$row_ts))" -lt "$(($(date +%s) * 1000 - _CLAIM_STALE_MS))" ]; then
+    return 1
+  fi
   elapsed="$(_ps_elapsed_s "$pid")" || return 0
   # 10# forces decimal: a row ts of "08" must not trip bash's octal parse.
   start_s=$(($(date +%s) - 10#$elapsed))
