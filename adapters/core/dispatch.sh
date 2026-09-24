@@ -129,24 +129,84 @@ _claim_evidence() {
     return 0
   fi
   # Any claim row's dispatcher may still be between claiming and writing its
-  # branch. pid reuse can false-refuse; that is the safe side.
-  local pids pid
-  pids="$(jq -nrR --arg i "$issue" 'inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i)) | .pid // empty | tostring' "$events")" || {
+  # branch. A pid alone is not proof (#322): the log is never pruned, so a pid
+  # the kernel later reused by an unrelated process would false-refuse forever,
+  # and `kill -0` on another uid's live dispatcher fails EPERM, which the old
+  # check read as dead and healed over. Liveness is cross-uid, and the process
+  # must predate its own row.
+  local pids pid row_ts
+  pids="$(jq -nrR --arg i "$issue" 'inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i)) | "\(.pid) \(.ts // "")"' "$events")" || {
     echo "events log unreadable"
     return 0
   }
-  while IFS= read -r pid; do
+  while IFS=' ' read -r pid row_ts; do
     case "$pid" in
     '' | *[!0-9]*) continue ;;
     *[1-9]*) ;;
     *) continue ;;
     esac
-    if kill -0 "$pid" 2>/dev/null; then
+    if _claim_pid_live "$pid" "$row_ts"; then
       echo "dispatch in progress (pid $pid)"
       return 0
     fi
   done <<<"$pids"
   return 0
+}
+
+# _claim_pid_live <pid> <row_ts_ms> — 0 when <pid> is a live process that could
+# have written a claim row at <row_ts_ms>, 1 otherwise. Fail-closed: anything it
+# cannot read counts as live. Two bounds compose it:
+#   - cross-uid liveness: `ps -p` reads the process table, so a live foreign-uid
+#     dispatcher — where `kill -0` fails EPERM — still reads live. This assumes
+#     ps can see foreign-uid processes (not a `hidepid=2` mount); under hidepid
+#     both probes fail and a live foreign claim reads dead, the pre-#322 risk.
+#   - no pid reuse: the claimant was already running when it wrote the row, so a
+#     process that started after the row merely inherited the number. This does
+#     not reject a forged row naming a genuinely long-lived unrelated pid.
+_claim_pid_live() {
+  local pid="$1" row_ts="$2" elapsed start_s
+  if ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" -o pid= >/dev/null 2>&1; then
+    return 1
+  fi
+  case "$row_ts" in
+  '' | *[!0-9]*) return 0 ;; # no usable ts: reuse can't be ruled out
+  esac
+  elapsed="$(_ps_elapsed_s "$pid")" || return 0
+  # 10# forces decimal: a row ts of "08" must not trip bash's octal parse.
+  start_s=$(($(date +%s) - 10#$elapsed))
+  # 2s of slack absorbs ps' second granularity, so a same-second claimant isn't
+  # mistaken for a reuse.
+  if [ "$((start_s * 1000))" -gt "$((10#$row_ts + 2000))" ]; then
+    return 1
+  fi
+  return 0
+}
+
+# _ps_elapsed_s <pid> — the process's elapsed seconds, or return 1 when ps can't
+# say. `etimes` is exact where the platform has it; the `etime` fallback parses
+# the [[dd-]hh:]mm:ss macOS prints. Both are locale- and timezone-independent.
+_ps_elapsed_s() {
+  local pid="$1" out d h m s rest
+  out="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9]*) ;;
+  *) printf '%s' "$out"; return 0 ;;
+  esac
+  out="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9:-]*) return 1 ;;
+  esac
+  d=0
+  case "$out" in
+  *-*) d="${out%%-*}"; out="${out#*-}" ;;
+  esac
+  [ -n "$d" ] || d=0
+  case "$out" in
+  *:*:*) h="${out%%:*}"; rest="${out#*:}"; m="${rest%%:*}"; s="${rest#*:}" ;;
+  *:*) h=0; m="${out%%:*}"; s="${out#*:}" ;;
+  *) h=0; m=0; s="$out" ;;
+  esac
+  printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
 # Branch names in evidence text come from the remote or the bus: strip control
@@ -1856,7 +1916,10 @@ if [ -n "$gh_issue" ]; then
   # kind:"dispatch" row carries no issue number and is written ~300 lines later,
   # so every failure in between would strand an unreleasable label (#73).
   # Written before the label so a row exists whenever the label does — a racing
-  # dispatcher that sees the label must also see a claimant.
+  # dispatcher that sees the label must also see a claimant. A failed label write
+  # below therefore leaves the row behind, but it is inert: its pid exits with
+  # this dispatcher, and any later reuse of that pid belongs to a process that
+  # started after the row's ts, so it never reads as claimant evidence (#322).
   line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" --arg pid "$$" \
     '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
   _bus_append "$crew_dir/events.jsonl" "$line"
@@ -1941,7 +2004,8 @@ else
     branch="feat/$num-$slug"
     closes="Closes #$num"
     _ensure_dispatched_label
-    # Row before label, as on the existing-issue path above.
+    # Row before label, as on the existing-issue path above (and inert the same
+    # way if the label write fails; see #322).
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
     _bus_append "$crew_dir/events.jsonl" "$line"
