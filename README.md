@@ -269,6 +269,9 @@ For Claude Code, pass the plugin directory to `claude`:
   enabled = true
   ```
 
+  The plugin's hooks (session-end notify, secret-read guard) run subject to
+  codex's own hook trust, which is not verified here.
+
 - **The pi hookyard bridge.** pi's hook surface is its extension API, and
   `dispatch` runs workers under a separate `PI_CODING_AGENT_DIR`
   (`~/.pi/dispatcher-worker`), which replaces rather than augments the ambient
@@ -306,6 +309,37 @@ For Claude Code, pass the plugin directory to `claude`:
   `--turn-end` is load-bearing: cursor only reports end-of-turn, and a `blocked`
   worker also ends its turn while waiting for the dispatcher, so that mode leaves
   `blocked` alone where SessionEnd would override it.
+
+- **The Cursor secret-read guard.** Cursor has no plugin hooks and
+  `~/.cursor/hooks.json` is shared, so this stanza is hand-managed too, same as
+  the `stop` hook above:
+
+  ```json
+  {
+    "hooks": {
+      "preToolUse": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ],
+      "beforeShellExecution": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ],
+      "beforeReadFile": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ]
+    }
+  }
+  ```
+
+  The Shell payloads (`preToolUse`, `beforeShellExecution`) are verified
+  against captured cursor-agent runs; the `beforeReadFile` payload and the
+  `preToolUse` `Read`/`Grep` input keys are read off the shipped cursor-agent
+  2026.09.23 bundle, not a live capture.
 
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to
