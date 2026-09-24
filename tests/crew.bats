@@ -4157,9 +4157,10 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 }
 
 @test "identity: an unrecorded branch resolves with no tmux available" {
-  printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/tmux"
-  chmod +x "$BATS_TEST_TMPDIR/tmux"
-  PATH="$BATS_TEST_TMPDIR:$PATH" run run_crew identity feat/9-new c1
+  mkdir -p "$BATS_TEST_TMPDIR/fakebin"
+  printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/fakebin/tmux"
+  chmod +x "$BATS_TEST_TMPDIR/fakebin/tmux"
+  PATH="$BATS_TEST_TMPDIR/fakebin:$PATH" run run_crew identity feat/9-new c1
   [ "$status" -eq 0 ]
   echo "$output" | jq -e 'has("name")'
 }

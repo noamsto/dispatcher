@@ -9,6 +9,22 @@ export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 # Tests that exercise the sweep opt in explicitly.
 export CREW_RATE_AUTOSWEEP=0
 
+# Host-environment isolation: unset vars that leak from a running dispatcher or
+# tmux session when bats itself runs from inside one.  Plain `bats tests/`
+# must not inherit DISPATCH_ENGINES, the host tmux server, or other harness
+# state that individual setup() functions clear piecemeal.
+unset DISPATCH_ENGINES TMUX TMUX_PANE
+unset CREW_ID CREW_WORKER_ID
+unset DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR
+unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG
+unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR
+# Isolate tmux: point the socket dir at a private per-test directory so no
+# test ever accidentally talks to the host tmux server.  Tests that need a
+# real tmux server start one with `-L <sock>` under this dir and are
+# unaffected.
+export TMUX_TMPDIR="$BATS_TEST_TMPDIR/tmux"
+mkdir -p "$TMUX_TMPDIR"
+
 # setup_repo — a throwaway git repo as $TEST_REPO, cwd set to it.
 setup_repo() {
   TEST_REPO="$(mktemp -d)"
