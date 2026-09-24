@@ -1491,6 +1491,23 @@ _store_protocols() { # <dir> <content>
   ! grep -qF -- "h-old-source" <(launch_log)
 }
 
+@test "a relative DISPATCHER_*_DIR override is refused, not resolved inside a task worktree" {
+  stub_launch_bins
+  export DISPATCHER_REVIEWERS_DIR="reviewers"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "relative dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"DISPATCHER_REVIEWERS_DIR must be an absolute path, got: reviewers"* ]]
+  ! grep -q 'send-keys' <(launch_log)
+}
+
+@test "the launch env unsets every DISPATCHER_*_DIR it does not pin" {
+  stub_launch_bins
+  unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "unset dirs"
+  [ "$status" -eq 0 ]
+  grep -qF -- "-u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR DISPATCHER_PROTOCOL_DIR=" <(launch_log)
+}
+
 @test "a raw (unsubstituted) dispatch script leaves unresolved placeholder dirs out of the launch env" {
   stub_launch_bins
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR

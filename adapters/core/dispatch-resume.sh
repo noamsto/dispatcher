@@ -68,18 +68,20 @@ write_launch_script() {
   if [ "${3:-}" = exit ]; then
     _file="$(mktemp "$_dir/exit.XXXXXX")"
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
-    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR %s\n' "$2" >"$_file"
   else
-    local _dirs="" _n _v
+    local _dirs="" _unset="" _n _v
     for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
       _v="${_n}_DIR"
       _v="${!_v:-}"
       if [[ $_v == /* ]]; then
         printf -v _dirs '%sDISPATCHER_%s_DIR=%q ' "$_dirs" "$_n" "$_v"
+      else
+        printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
       fi
     done
     _file="$(mktemp "$_dir/launch.XXXXXX")"
-    printf '#!/usr/bin/env bash\nexec env %s%s\n' "$_dirs" "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
   fi
   chmod 700 "$_file"
   shell_quote _quoted "$_file"
@@ -305,7 +307,9 @@ esac
 # the current build's export sits at a different store path than the baked
 # projection but holds the same files. A checkout override always wins, as does
 # any override in a raw script (baked is not absolute). diff sits in an `if`
-# because its exit 1 means "differs", not failure.
+# because its exit 1 means "differs", not failure. A relative override is
+# refused: a launched session runs in a task worktree, whose files a diff
+# controls, and would resolve it there.
 # A stale value is ignored with a notice and unset, so later diagnostics do not
 # name it.
 _resolve_dir() {
@@ -313,6 +317,10 @@ _resolve_dir() {
   if [ -z "$val" ]; then
     printf -v "$out" '%s' "$baked"
     return 0
+  fi
+  if [[ $val != /* ]]; then
+    echo "$label: $var must be an absolute path, got: $val" >&2
+    exit 1
   fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then

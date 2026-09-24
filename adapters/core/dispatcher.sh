@@ -14,7 +14,9 @@
 # the current build's export sits at a different store path than the baked
 # projection but holds the same files. A checkout override always wins, as does
 # any override in a raw script (baked is not absolute). diff sits in an `if`
-# because its exit 1 means "differs", not failure.
+# because its exit 1 means "differs", not failure. A relative override is
+# refused: a launched session runs in a task worktree, whose files a diff
+# controls, and would resolve it there.
 # A stale value is ignored with a notice; the caller re-exports the resolved dir
 # for the launched session, which reads DISPATCHER_PROTOCOL_DIR from markdown.
 _resolve_dir() {
@@ -22,6 +24,10 @@ _resolve_dir() {
   if [ -z "$val" ]; then
     printf -v "$out" '%s' "$baked"
     return 0
+  fi
+  if [[ $val != /* ]]; then
+    echo "$label: $var must be an absolute path, got: $val" >&2
+    exit 1
   fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
