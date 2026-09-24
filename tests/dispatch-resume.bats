@@ -220,6 +220,16 @@ _store_protocols() { # <dir> <content>
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+@test "resume refuses a relative DISPATCHER_*_DIR override" {
+  setup_worker_wt
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_CRITICS_DIR="critics"
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"DISPATCHER_CRITICS_DIR must be an absolute path, got: critics"* ]]
+}
+
 @test "resume ignores stale reviewers/critics dirs and the launch env carries all four resolved dirs" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
@@ -649,7 +659,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -672,7 +682,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -695,7 +705,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -717,7 +727,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -780,7 +790,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
