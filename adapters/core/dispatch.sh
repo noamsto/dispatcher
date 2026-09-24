@@ -17,6 +17,16 @@ valid_effort() {
   esac
 }
 
+# _canonical_number <token> — the canonical decimal form of a tracker or PR
+# token: drop a leading '#', then every leading zero. The empty string comes
+# back for an all-zero run, which every caller refuses. Textual rather than
+# `10#` arithmetic, which overflows on a pathologically long run.
+_canonical_number() {
+  local n="${1#\#}"
+  while [[ $n == 0* ]]; do n="${n#0}"; done
+  printf '%s' "$n"
+}
+
 valid_role_model() {
   local role_agent="$1" role_model="$2"
   case "$role_agent" in
@@ -991,12 +1001,25 @@ while [ $# -gt 0 ]; do
     shift
     ;;
   *)
-    if printf '%s' "$1" | grep -Eq '^[A-Z]{2,}-[0-9]+$'; then
+    if [[ $1 =~ ^[A-Z]{2,}-[0-9]+$ ]]; then
       linear_id="$1"
       shift
-    elif printf '%s' "$1" | grep -Eq '^#?[0-9]+$'; then
-      gh_issue="${1#\#}"
+    elif [[ $1 =~ ^#?[0-9]+$ ]]; then
+      # Whole-string match, then one canonical decimal form: grep matched per
+      # line, so a multi-line value like $'foo\n42' passed and a leading-zero
+      # '042' became a branch/claim key gh resolves as #42 (#320).
+      gh_issue="$(_canonical_number "$1")"
+      [ -n "$gh_issue" ] || {
+        echo "dispatch: issue number must be a positive integer (got '$1')" >&2
+        exit 1
+      }
       shift
+    elif [[ $1 =~ ^[#0-9[:space:]]+$ ]]; then
+      # Digits, '#' and whitespace only, yet not a valid issue number: a
+      # mangled tracker token ('4 2', '# 42') is refused rather than silently
+      # treated as a title, which would mint a second issue for it.
+      echo "dispatch: '$1' is not a valid issue number — pass a single decimal integer, '#N' or 'N'" >&2
+      exit 1
     else
       break
     fi
@@ -1015,10 +1038,15 @@ fi
 }
 
 if [ -n "$pr_number" ]; then
-  if ! printf '%s' "$pr_number" | grep -Eq '^[0-9]+$'; then
+  if [[ ! $pr_number =~ ^[0-9]+$ ]]; then
     echo "dispatch: --pr needs a PR number" >&2
     exit 1
   fi
+  pr_number="$(_canonical_number "$pr_number")"
+  [ -n "$pr_number" ] || {
+    echo "dispatch: --pr needs a positive integer" >&2
+    exit 1
+  }
   if [ -n "$linear_id" ] || [ -n "$gh_issue" ]; then
     echo "dispatch: --pr cannot combine with a Linear id or GitHub issue token" >&2
     exit 1
@@ -1686,6 +1714,13 @@ title="$*"
   usage
   exit 1
 }
+# A title reaches git as a branch slug and the task doc as a header; a newline
+# in it is malformed input, not a title, and refusing it here keeps a
+# per-line-validating artifact from ever entering the pipeline (#320).
+[[ $title != *$'\n'* ]] || {
+  echo "dispatch: the title must not contain a newline" >&2
+  exit 1
+}
 
 # Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
 # are properties of now — profile, model shape, effort ceiling, quota, rung —
@@ -1728,7 +1763,12 @@ fi
 # A numeric --base is a PR to stack on: resolved to its head branch before the
 # claim gate and mint mode's `gh issue create`, so a refused PR (merged, closed,
 # fork head) never strands a `dispatched` label or mints an orphan issue.
-if [ -n "$base_flag" ] && printf '%s' "$base_flag" | grep -Eq '^[0-9]+$'; then
+if [ -n "$base_flag" ] && [[ $base_flag =~ ^[0-9]+$ ]]; then
+  base_flag="$(_canonical_number "$base_flag")"
+  [ -n "$base_flag" ] || {
+    echo "dispatch: --base PR number must be a positive integer" >&2
+    exit 1
+  }
   base_pr_json=$(gh pr view "$base_flag" --json headRefName,state,isCrossRepository) || {
     echo "dispatch: --base $base_flag: could not resolve PR $base_flag" >&2
     exit 1
