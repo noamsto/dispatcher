@@ -172,7 +172,7 @@ base=$(git merge-base HEAD "$base_ref") || exit 1
 
 ## Step 5: Quality Pass
 
-Run these skills on the branch diff against the **Base ref** `base`:
+Run these skills on the branch diff against the **Base ref** `base`. `/deslop` is the harness `deslop` skill, shipped to every engine — `dispatcher:deslop` on claude, `$deslop` on codex, `deslop` on cursor and pi.
 
 1. **Invoke `/simplify`** — review for reuse, quality, efficiency
 2. **Invoke `/deslop`** — remove AI-generated slop (unnecessary comments, defensive blocks, style inconsistencies)

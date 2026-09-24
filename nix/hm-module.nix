@@ -136,16 +136,16 @@ in {
         // lib.optionalAttrs (hasEngine "cursor") {
           # ~/.cursor/skills is a shared namespace another module also links
           # individual skills into (see the ".cursor/skills" comment above), so
-          # this links each of ours in rather than claiming the whole directory.
-          # `ln -sfn` (not `home.file`) makes it idempotent across activations and
-          # lets a store-path bump repoint an existing link. Named "spec-plan-critic",
-          # not "dispatcher-spec-plan-critic", because that's the literal name the
-          # protocol docs and skill invocations resolve it by.
+          # this links each of ours in under its own name rather than claiming
+          # the whole directory. `ln -sfn` (not `home.file`) makes it idempotent
+          # across activations and lets a store-path bump repoint an existing
+          # link. Each link keeps the skill's literal directory name, since
+          # that's the name the protocol docs and skill invocations resolve it
+          # by (e.g. "spec-plan-critic", not "dispatcher-spec-plan-critic").
           dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
             skills_dir="$HOME/.cursor/skills"
             run mkdir -p "$skills_dir"
-            run ln -sfn "${self}/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"
-          '';
+            ${lib.concatMapStrings (name: "run ln -sfn \"${self}/adapters/cursor/skills/${name}\" \"$skills_dir/${name}\"\n") (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir "${self}/adapters/cursor/skills")))}'';
         };
     };
   };

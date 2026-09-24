@@ -65,7 +65,9 @@ setup_file() {
       c2 = cursorlessApplied.config.content;
       cursorlessLine = builtins.deepSeq [c2.home.file c2.home.activation]
         \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}\";
-    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine
+
+      cursorSkillsLine = builtins.replaceStrings [\"\n\"] [\" \"] c.home.activation.dispatcherCursorSkills.data;
+    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine + \"\n\" + cursorSkillsLine
   " >"$BATS_FILE_TMPDIR/eval-expr.nix"
   nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
     >"$BATS_FILE_TMPDIR/eval-out"
@@ -91,6 +93,7 @@ setup() {
   EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CURSORLESS="$(sed -n '3p' "$BATS_FILE_TMPDIR/eval-out")"
+  EVAL_CURSOR_SKILLS="$(sed -n '4p' "$BATS_FILE_TMPDIR/eval-out")"
 }
 
 @test "every package builds" {
@@ -144,6 +147,7 @@ setup() {
   dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -- '-skills$' | head -1)"
   [ -n "$dir" ]
   [ -f "$dir/spec-plan-critic/SKILL.md" ]
+  [ -f "$dir/deslop/SKILL.md" ]
 }
 
 @test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
@@ -327,6 +331,14 @@ setup() {
   [ "$status" -eq 0 ]
   run grep -F '.cursor/skills' <<<"$skills_block"
   [ "$status" -eq 0 ]
+}
+
+@test "cursor skill links are enumerated from the adapter dir, not hard-coded" {
+  # A roster with cursor enabled should link every skill under adapters/cursor/skills,
+  # not just the one that happened to exist first -- proves the activation script
+  # walks the directory instead of naming a single skill.
+  [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"'* ]]
+  [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/deslop" "$skills_dir/deslop"'* ]]
 }
 
 @test "the reviewers placeholder is substituted in reviewer-roster" {

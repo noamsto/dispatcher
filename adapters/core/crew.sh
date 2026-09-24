@@ -764,7 +764,9 @@ status | msg)
     # with a tag and no verdict is not a verdict. Any lead -> reviewer msg
     # except the bare {"final":true} release, even an unparseable one, voids
     # every earlier verdict AND the lead's own earlier review seam until a
-    # fresh verdict lands. The assignment is never itself a seam.
+    # fresh verdict lands. The assignment is never itself a seam. The deslop
+    # seam is gated the same way (branch-keyed, earlier sessions count,
+    # presence only): the lead's own {"seam":"deslop"} msg to review:<crew>.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -861,6 +863,27 @@ status | msg)
           fi
           if [ "${seams:-0}" != 1 ]; then
             echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:$crew seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {\"final\":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives" >&2
+            exit 1
+          fi
+          deslop=0
+          if [ -f "$log" ]; then
+            deslop_rc=0
+            deslop=$(jq -Rnr --arg c "$crew" --arg b "$b" '
+              first(inputs
+                | (try fromjson catch null)
+                | select(type == "object" and .crew_id == $c and .kind == "msg"
+                         and .to == ("review:" + $c)
+                         and ((.from // "") | tostring | sub("#s[^#]*$"; "")) == $b)
+                | (.body | fromjson? // null)
+                | select(type == "object" and .seam == "deslop" and (has("tag") | not))
+                | 1) // 0' "$log" 2>/dev/null) || deslop_rc=$?
+            if [ "$deslop_rc" -ne 0 ]; then
+              echo "crew: refusing $state for $from — could not read the crew log for the deslop seam (jq exit $deslop_rc)" >&2
+              exit 1
+            fi
+          fi
+          if [ "$deslop" != 1 ]; then
+            echo "crew: refusing $state for $tier session $from — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, \$deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"deslop\"}' and retry. The seam records that the skill ran — never post it just to get past this gate" >&2
             exit 1
           fi
           ;;
