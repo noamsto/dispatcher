@@ -5391,6 +5391,89 @@ EOF
   [ ! -e "$stale_launch" ]
 }
 
+# _exit_prune_tmux_stub — stub_launch_bins' tmux, plus a `list-panes` that cats
+# $STUB_DIR/panes. STUB_LIST_RC overrides list-panes' exit status, to exercise
+# the fail-safe path.
+_exit_prune_tmux_stub() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new-window) printf '%s %s\n' '%1' '%1' ;;
+list-panes) cat "$STUB_DIR/panes" 2>/dev/null; exit "${STUB_LIST_RC:-0}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# issue #343: a reaped pane never runs its exit.* hook, so the file leaks. An
+# old exit.* naming a pane tmux no longer lists is reclaimed; a live pane's and
+# a young one's survive, and a tmux failure deletes nothing.
+@test "prune: an old exit script whose pane is gone is deleted (#343)" {
+  stub_launch_bins
+  _exit_prune_tmux_stub
+  printf '%%1\n' >"$STUB_DIR/panes"
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  mkdir -p "$crew_launch_dir"
+  dead="$crew_launch_dir/exit.dead00"
+  printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env true --pane %s --since 0\n' "'%99'" >"$dead"
+  chmod 700 "$dead"
+  touch -t 202001010000 "$dead"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "prune dead exit"
+  [ "$status" -eq 0 ]
+  [ ! -e "$dead" ]
+}
+
+@test "prune: an old exit script naming a live pane survives (#343)" {
+  stub_launch_bins
+  _exit_prune_tmux_stub
+  printf '%%99\n' >"$STUB_DIR/panes"
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  mkdir -p "$crew_launch_dir"
+  live="$crew_launch_dir/exit.live00"
+  printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env true --pane %s --since 0\n' "'%99'" >"$live"
+  chmod 700 "$live"
+  touch -t 202001010000 "$live"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "prune live exit"
+  [ "$status" -eq 0 ]
+  [ -e "$live" ]
+}
+
+@test "prune: a young exit script whose pane is gone survives the 7-day gate (#343)" {
+  stub_launch_bins
+  _exit_prune_tmux_stub
+  printf '%%1\n' >"$STUB_DIR/panes"
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  mkdir -p "$crew_launch_dir"
+  young="$crew_launch_dir/exit.young0"
+  printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env true --pane %s --since 0\n' "'%99'" >"$young"
+  chmod 700 "$young"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "prune young exit"
+  [ "$status" -eq 0 ]
+  [ -e "$young" ]
+}
+
+@test "prune: tmux list-panes failure deletes no exit script (#343)" {
+  stub_launch_bins
+  _exit_prune_tmux_stub
+  printf '%%1\n' >"$STUB_DIR/panes"
+  export STUB_LIST_RC=1
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  mkdir -p "$crew_launch_dir"
+  kept="$crew_launch_dir/exit.keep00"
+  printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env true --pane %s --since 0\n' "'%99'" >"$kept"
+  chmod 700 "$kept"
+  touch -t 202001010000 "$kept"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "prune tmux down"
+  [ "$status" -eq 0 ]
+  [ -e "$kept" ]
+}
+
 @test "grid: lazy pace gate checks final effort before splitting and honors --ignore-budget" {
   _spawn_role_fixture
   common="$(git rev-parse --path-format=absolute --git-common-dir)"

@@ -616,7 +616,9 @@ shell_quote() {
 #
 # With `exit` the script is named exit.* and deletes itself when it runs: a
 # role's exit hook runs only when its engine returns, possibly weeks later, so
-# the age prune (launch.* only) must never reach it.
+# the age prune never reaches it while its pane is alive. A reaped pane never
+# runs the hook, so an old exit.* whose pane is gone is reclaimed instead
+# (issue #343).
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -629,6 +631,19 @@ write_launch_script() {
   mkdir -p -m 700 "$_dir"
   chmod 700 "$_dir"
   find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
+  # An exit.* deletes itself when its engine returns, but a reaped pane never
+  # runs it, so the file leaks (#343). Reclaim an old exit.* only once the pane
+  # it names is gone; a reused pane id just delays deletion. tmux failing, or
+  # listing no panes, deletes nothing (fail-safe).
+  local _panes _ef _epane
+  if _panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" && [ -n "$_panes" ]; then
+    while IFS= read -r _ef; do
+      _epane="$(sed -n "s/.*--pane '\(%[0-9][0-9]*\)'.*/\1/p" "$_ef" 2>/dev/null || true)"
+      _epane="${_epane%%$'\n'*}"
+      [ -n "$_epane" ] || continue
+      printf '%s\n' "$_panes" | grep -qxF -- "$_epane" || rm -f -- "$_ef"
+    done < <(find "$_dir" -type f -name 'exit.*' -mtime +7 2>/dev/null)
+  fi
   if [ "${3:-}" = exit ]; then
     _file="$(mktemp "$_dir/exit.XXXXXX")"
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
