@@ -758,11 +758,13 @@ status | msg)
     # the gate — the pane's verdict. On pi the log is folded in order and fails
     # closed: only an exact accept/revise from the reviewer is honoured, any
     # other reviewer reply carrying a seam or verdict (a reject, an unknown or
-    # elided verdict, a body that is not a JSON object) counts as a reject that
-    # blocks the lead's own seam until the reviewer's next accept/revise. A grid
-    # assignment (lead -> role), even an unparseable one, voids every earlier
-    # verdict AND the lead's own earlier review seam until a fresh verdict
-    # lands. The assignment is never itself a seam.
+    # elided verdict, a body that is not a JSON object, an unparsable line
+    # naming this crew and the reviewer) counts as a reject that blocks the
+    # lead's own seam until the reviewer's next accept/revise; a reviewer note
+    # with a tag and no verdict is not a verdict. Any lead -> reviewer msg
+    # except the bare {"final":true} release, even an unparseable one, voids
+    # every earlier verdict AND the lead's own earlier review seam until a
+    # fresh verdict lands. The assignment is never itself a seam.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -812,30 +814,41 @@ status | msg)
           if [ -f "$log" ]; then
             fold_rc=0
             seams=$(jq -Rnr --arg c "$crew" --arg b "$b" --arg r "$r" --arg e "$engine" '
-              reduce (inputs | fromjson? | select(type == "object")) as $m (
+              reduce inputs as $line (
                 {ok: false, rejected: false, pending: false};
-                ($m.crew_id == $c and $m.kind == "msg") as $mine
-                | (if $mine then (($m.body | fromjson?) // null) else null end) as $o
-                | (($m.from // "") | tostring | sub("#s[^#]*$"; "")) as $f
-                | (($m.to // "") | tostring | sub("#s[^#]*$"; "")) as $t
-                | if $e == "pi" and $mine and ($o | type) != "object" then
-                    if $f == $r then .ok = false | .rejected = true
-                    elif $f == $b and $m.to == $r then .pending = true | .ok = false
+                (try [$line | fromjson] catch null) as $p
+                | if $p == null then
+                    if $e == "pi" and ($line | test("\\S")) and ($line | contains("\"crew_id\":" + ($c | tojson)) and contains($r | tojson | .[1:-1]))
+                    then .ok = false | .rejected = true
                     else . end
-                  elif ($o | type) != "object" then .
-                  elif $e == "pi" and $m.from == $r and ($o | has("seam") or has("verdict")) then
-                    if $o.seam == "review" and $o.verdict == "accept" then
-                      if $t == $b then .pending = false | .ok = true | .rejected = false else . end
-                    elif $o.seam == "review" and $o.verdict == "revise" then
-                      if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
-                    else .ok = false | .rejected = true end
-                  elif $e == "pi" and $f == $b and $m.to == $r and ($o | has("seam") or has("artifact")) then
-                    .pending = true | .ok = false
-                  elif $o.seam != "review" or ($o | has("tag")) then .
-                  elif $f == $b and $m.to == ("review:" + $c)
-                       and (($o | has("review_mode") | not) or ($o.review_mode | IN("full", "downgraded"))) then
-                    if .rejected or .pending then . else .ok = true end
-                  else . end
+                  elif ($p[0] | type) != "object" then .
+                  else
+                    $p[0] as $m
+                    | ($m.crew_id == $c and $m.kind == "msg") as $mine
+                    | (if $mine then (($m.body | fromjson?) // null) else null end) as $o
+                    | (($m.from // "") | tostring | sub("#s[^#]*$"; "")) as $f
+                    | (($m.to // "") | tostring | sub("#s[^#]*$"; "")) as $t
+                    | if $e == "pi" and $mine and ($o | type) != "object" then
+                        if $f == $r then .ok = false | .rejected = true
+                        elif $f == $b and $m.to == $r then .pending = true | .ok = false
+                        else . end
+                      elif ($o | type) != "object" then .
+                      elif $e == "pi" and $f == $r and ($o | has("seam") or has("verdict"))
+                           and (($o | has("tag") and (has("verdict") | not)) | not) then
+                        if $o.seam == "review" and $o.verdict == "accept" then
+                          if $t == $b then .pending = false | .ok = true | .rejected = false else . end
+                        elif $o.seam == "review" and $o.verdict == "revise" then
+                          if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
+                        else .ok = false | .rejected = true end
+                      elif $e == "pi" and $f == $b and $m.to == $r
+                           and (($o | keys) == ["final"] and $o.final == true | not) then
+                        .pending = true | .ok = false
+                      elif $o.seam != "review" or ($o | has("tag")) then .
+                      elif $f == $b and $m.to == ("review:" + $c)
+                           and (($o | has("review_mode") | not) or ($o.review_mode | IN("full", "downgraded"))) then
+                        if .rejected or .pending then . else .ok = true end
+                      else . end
+                  end
               ) | if .ok then 1 else 0 end' "$log" 2>/dev/null) || fold_rc=$?
             if [ "$fold_rc" -ne 0 ]; then
               echo "crew: refusing $state for $from — could not read the crew log for the review seam (jq exit $fold_rc)" >&2
@@ -843,7 +856,7 @@ status | msg)
             fi
           fi
           if [ "${seams:-0}" != 1 ]; then
-            echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:$crew seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a new review assignment to the reviewer cancels every earlier verdict and your own earlier seam until a new verdict arrives" >&2
+            echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:$crew seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {\"final\":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives" >&2
             exit 1
           fi
           ;;

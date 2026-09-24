@@ -5001,6 +5001,110 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _allowed
 }
 
+# A hard kill mid-append leaves a line with no newline; the next append then
+# splices onto it, so one unparsable line carries a whole valid record.
+@test "pr_open: a pi accept then a reject spliced onto a torn line is refused until a fresh verdict" {
+  _task_doc standard implement pi
+  _verdict accept
+  printf 'torn{' >>"$(_events)"
+  _verdict reject
+  [ "$(tail -1 "$(_events)" | jq -R 'fromjson? // "unparsable"')" = '"unparsable"' ]
+  _gate
+  _refused "no review seam"
+  _verdict accept
+  _gate
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a pi accept then a torn line cut inside a reviewer reply is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  printf '{"ts":1,"crew_id":"c1","from":"role:feat/x:reviewer","to":"wor' >>"$(_events)"
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a lead assignment spliced onto a torn line is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  printf 'torn{' >>"$(_events)"
+  _assign
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a torn-line reject is detected for a branch whose reviewer id is JSON-escaped" {
+  _task_doc standard implement pi
+  run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"accept"}'
+  printf 'torn{' >>"$(_events)"
+  run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"reject"}'
+  run --separate-stderr run_crew status 'worker:feat/a"b#s1-1' pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept survives an unrelated record spliced onto a torn line" {
+  _task_doc standard implement pi
+  _verdict accept
+  printf 'torn{' >>"$(_events)"
+  run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"note":"x"}'
+  printf 'torn{{"ts":1,"crew_id":"other","from":"role:feat/x:reviewer","to":"worker:feat/x","kind":"msg","body":"{}"}\n' >>"$(_events)"
+  _gate
+  [ "$status" -eq 0 ]
+}
+
+# A re-request is any lead -> reviewer msg except the release: it does not
+# have to carry seam or artifact.
+@test "pr_open: a pi accept then a lead question to the reviewer with no seam or artifact is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"question":"look again please"}'
+  _gate
+  _refused "no review seam"
+  _verdict accept
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi lead question to the reviewer cancels the lead's own review seam" {
+  _task_doc standard implement pi
+  _lead_seam
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"question":"look again please"}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept survives a lead release that carries only final" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
+  run_crew msg "worker:feat/x#s1-1" "role:feat/other:reviewer" '{"question":"another branch"}'
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi accept then a final release that also carries a question is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true,"question":"re-review please"}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept survives a reviewer retro-style note" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","tag":"other","detail":"x"}'
+  _gate
+  _allowed
+}
+
+@test "pr_open: a reviewer retro-style note is not a review seam" {
+  _task_doc standard implement pi
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","tag":"other","detail":"x"}'
+  _gate
+  _refused "no review seam"
+}
+
 @test "pr_open: off pi a pane reject or accept alone is refused" {
   _task_doc standard implement claude
   _verdict reject
