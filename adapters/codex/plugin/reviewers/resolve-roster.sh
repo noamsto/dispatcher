@@ -211,7 +211,7 @@ for f in "${harness_files[@]}"; do
   awk '/^## Findings and verdict$/{p=1} p' "$f" >"$tmp/tail"
   jq -c --arg name "$(basename "$f" .md)" --rawfile brief "$tmp/body" --rawfile tail "$tmp/tail" \
     '{name: $name, aliases: (.aliases // []), globs: (.globs // []), shebang: (.shebang // []),
-      when: (.when // null), brief: $brief, tail: ($tail | rtrimstr("\n"))}' \
+      when: (.when // null), fallback: (.fallback // false), brief: $brief, tail: ($tail | rtrimstr("\n"))}' \
     "$tmp/fm.json" >>"$tmp/harness.jsonl"
 done
 jq -s -e 'any(.[]; .tail != "")' "$tmp/harness.jsonl" >/dev/null ||
@@ -315,20 +315,21 @@ jq -n --arg base "$base" \
           | .h as $h
           | (if $h.name == "security-reviewer" then null else .claims[0] end) as $winner
           | {name: $h.name, source: "harness", repo_path: null, aliases: $h.aliases,
-             globs: $h.globs, shebang: $h.shebang, when: $h.when,
+             globs: $h.globs, shebang: $h.shebang, when: $h.when, fallback: $h.fallback,
              harness_globs: $h.globs, harness_shebang: $h.shebang,
              override: null, ignored_when: null, brief: $h.brief}
           | if $winner == null then .
             else $by_name[$winner] as $e
               | (if $winner == $h.name then "name" else "alias" end) as $via
               | .source = "repo" | .repo_path = $e.path
-              | .globs = union($h.globs; $e.globs) | .shebang = union($h.shebang; $e.shebang)
+              | .globs = (if $h.fallback then $h.globs else union($h.globs; $e.globs) end)
+              | .shebang = (if $h.fallback then $h.shebang else union($h.shebang; $e.shebang) end)
               | .override = {of: $h.name, via: $via} | .ignored_when = $e.when
               | .brief = frame($e; "override of \($h.name) via \($via)"; $h.tail)
             end ]
         + [ $repo[]
             | select(.name | IN($claimed[]) | not)
-            | {name, source: "repo", repo_path: .path, aliases: [], globs, shebang, when: null,
+            | {name, source: "repo", repo_path: .path, aliases: [], globs, shebang, when: null, fallback: false,
                harness_globs: [], harness_shebang: [], override: null, ignored_when: .when,
                brief: frame(.; "new entry"; $default_tail)} ]
         | sort_by(.name)),
