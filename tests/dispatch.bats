@@ -4133,12 +4133,175 @@ assert_claim_refused() { # <evidence-substring>
   stub_launch_bins
   sleep 300 3>&- &
   live_pid=$!
-  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   kill "$live_pid" 2>/dev/null || true
   wait "$live_pid" 2>/dev/null || true
   assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+# #322: a live pid is not proof of a live claimant. The row records the pid and
+# the moment it was written, and a claimant was already running when it wrote
+# the row. A process that started after the row (an old pid the kernel reused)
+# is not that claimant, so the heal must proceed.
+@test "claim: a live pid that started after its row is a reused pid, not a claimant (#322)" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #322: `kill -0` on another uid's live process fails EPERM, which the old
+# any-live-pid scan read as dead and healed over. The exported kill function
+# makes `kill -0` fail for a genuinely live pid while `ps` still sees it — the
+# exact asymmetry. Liveness must therefore not rest on the ability to signal.
+@test "claim: a live claimant on another uid (kill EPERM) still refuses (#322)" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then return 1; fi
+    builtin kill "$@"
+  }
+  export live_pid
+  export -f kill
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  # Unshadow before the test's own cleanup, or the override would make the
+  # teardown kill a no-op and leak the sleep.
+  unset -f kill
+  builtin kill "$live_pid" 2>/dev/null || true
+  builtin wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+# #322 review: `kill -0` returning EPERM is itself proof the process exists, and
+# must not be downgraded when `ps` cannot see it (a hidepid=2 mount). Only when
+# neither probe reports a process is the pid dead.
+@test "claim: a kill EPERM with ps blind still reads live (fail-closed) (#322)" {
+  stub_launch_bins
+  real_ps="$(command -v ps)"
+  sleep 300 3>&- &
+  live_pid=$!
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*"-p $live_pid"*) exit 1 ;;
+esac
+exec "$real_ps" "\$@"
+EOF
+  chmod +x "$STUB_DIR/ps"
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then
+      printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+      return 1
+    fi
+    builtin kill "$@"
+  }
+  export live_pid
+  export -f kill
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  unset -f kill
+  rm -f "$STUB_DIR/ps"
+  builtin kill "$live_pid" 2>/dev/null || true
+  builtin wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+# #322: macOS ps prints `etime` (formatted), not `etimes` (seconds), so the
+# elapsed-time probe has a parse fallback. Hiding `etimes` makes the fallback
+# carry the verdict: the pid is live but started an hour after its row, so it
+# is a reuse and the heal proceeds.
+@test "claim: pid start time falls back to etime where etimes is absent (#322)" {
+  stub_launch_bins
+  real_ps="$(command -v ps)"
+  sleep 300 3>&- &
+  live_pid=$!
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*etimes=*) exit 1 ;;
+esac
+exec "$real_ps" "\$@"
+EOF
+  chmod +x "$STUB_DIR/ps"
+  old_ms=$(( ( $(date +%s) - 3600 ) * 1000 ))
+  seed_claim_row "{\"ts\":$old_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  rm -f "$STUB_DIR/ps"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #322: the row's ts is what bounds reuse; without a usable one the helper can
+# not tell a claimant from a reused pid, so it must fail closed (live).
+@test "claim: a claim row with a non-numeric ts fails closed as live (#322)" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  seed_claim_row "{\"ts\":\"nope\",\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+@test "claim: a claim row with a missing ts fails closed as live (#322)" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  seed_claim_row "{\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+# #322: the claim row is written before the label, so a failed `gh issue edit`
+# leaves a row whose dispatcher has exited. The next dispatch of the issue must
+# not read that orphan as a live claimant.
+@test "claim: an orphan claim row from a failed label write does not wedge a later heal (#322)" {
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ edit\ *) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  orphan_pid="$(jq -r 'select(.kind=="claim-issue") | .pid' "$log" | head -1)"
+  [ -n "$orphan_pid" ]
+  run ! kill -0 "$orphan_pid" 2>/dev/null
+  # The label now exists (stub), no branch was created, and the leftover row's
+  # pid is dead — a stale claim to re-claim, not a live claimant.
+  stub_launch_bins
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "claim: a dispatched label is re-claimed when the claiming dispatch is dead" {
@@ -4161,7 +4324,7 @@ assert_claim_refused() { # <evidence-substring>
   true &
   dead_pid=$!
   wait "$dead_pid"
-  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  seed_claim_row "{\"ts\":$(( $(date +%s) * 1000 )),\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   seed_claim_row "{\"ts\":2,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$dead_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
