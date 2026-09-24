@@ -103,11 +103,39 @@ _ensure_dispatched_label() {
 # is itself evidence — an unreachable origin or unreadable bus reads as live.
 # Local branches are the caller's business, not checked here.
 _claim_evidence() {
-  local issue="$1" out rc events="$crew_dir/events.jsonl"
-  local -a lsr=(git ls-remote --heads origin "refs/heads/feat/$issue-*")
-  command -v timeout >/dev/null 2>&1 && lsr=(timeout 20 "${lsr[@]}")
+  local issue="$1" out rc events="$crew_dir/events.jsonl" pid waited bound outf
+  # Bound the remote probe by wall clock (#321). Stock macOS ships no coreutils
+  # `timeout`, so the old `timeout 20` guard simply vanished there and a stalled
+  # origin could hang the dispatch forever. git's own `http.lowSpeed*` fails the
+  # https transport that stalls, and a background watchdog (no coreutils needed)
+  # is the transport-agnostic backstop the others cannot outlast. A killed probe
+  # is non-zero, read as "origin unreachable" below — the same fail-closed
+  # verdict `timeout` gave. Overridable so a test can shrink the window.
+  bound="${DISPATCH_CLAIM_LS_REMOTE_TIMEOUT_S:-20}"
+  outf="$(mktemp "${TMPDIR:-/tmp}/dispatch-lsr.XXXXXX")" || {
+    echo "origin unreachable"
+    return 0
+  }
+  GIT_TERMINAL_PROMPT=0 \
+    git -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
+    ls-remote --heads origin "refs/heads/feat/$issue-*" >"$outf" 2>/dev/null &
+  pid=$!
+  waited=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$bound" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
   rc=0
-  out="$(GIT_TERMINAL_PROMPT=0 "${lsr[@]}" 2>/dev/null)" || rc=$?
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    rc=1
+  else
+    wait "$pid" || rc=$?
+  fi
+  out="$(cat "$outf")"
+  rm -f "$outf"
   if [ "$rc" -ne 0 ]; then
     echo "origin unreachable"
     return 0

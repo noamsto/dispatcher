@@ -4641,6 +4641,87 @@ EOF
   grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
 }
 
+# The minted path writes the row before the label too (#321). Same gh stub as
+# above, but the issue number is only known once `issue create` mints it — so
+# the refusal is keyed on that number, not on an existing-issue `view`.
+@test "claim: the minted issue's claim-issue row is written before the dispatched label" {
+  stub_launch_bins
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+issue\ create\ *) printf 'https://github.com/o/r/issues/77\n' ;;
+issue\ edit\ 77\ *)
+  grep '"kind":"claim-issue"' "$STUB_EVENTS" | grep -q '"issue":"77"' || exit 1
+  ;;
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  export STUB_EVENTS="$TEST_REPO/.git/crew/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  grep -q 'issue edit 77 --add-label dispatched' "$STUB_LOG"
+}
+
+# #321 — stock macOS ships no coreutils `timeout`, so the claim probe must
+# bound itself. A git stub stalls the remote lookup; with `timeout` genuinely
+# off PATH the watchdog has to kill it and read the non-zero as "origin
+# unreachable". `run` is wrapped in the absolute real `timeout` so a
+# regression surfaces as status 124, not a hung suite.
+@test "claim: a stalled origin ls-remote is bounded without coreutils timeout" {
+  stub_launch_bins
+  stub_gh_claim dispatched ""
+  real_git="$(command -v git)"
+  real_timeout="$(command -v timeout)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [ "\$a" = ls-remote ]; then
+    sleep 60
+    exit 0
+  fi
+done
+exec "$real_git" "\$@"
+EOF
+  chmod +x "$STUB_DIR/git"
+  # Drop every PATH directory that resolves `timeout`, keeping its other
+  # binaries through a filtered symlink dir: coreutils shares its directory
+  # with sleep/cat/mktemp/rm, which the probe still needs.
+  sanitized=""
+  IFS=:
+  for dir in $PATH; do
+    if [ -x "$dir/timeout" ]; then
+      sub="$BATS_TEST_TMPDIR/no-timeout-$(printf '%s' "$dir" | cksum | cut -d' ' -f1)"
+      mkdir -p "$sub"
+      for entry in "$dir"/*; do
+        base="${entry##*/}"
+        [ "$base" = timeout ] && continue
+        if [ -f "$entry" ] && [ -x "$entry" ]; then ln -sf "$entry" "$sub/$base"; fi
+      done
+      sanitized+="$sub:"
+    else
+      sanitized+="$dir:"
+    fi
+  done
+  IFS=$' \t\n'
+  PATH="${sanitized%:}"
+  export PATH DISPATCH_CLAIM_LS_REMOTE_TIMEOUT_S=2
+  hash -r
+  # Prove the sanitizer really hid it: on a regression that reaches for
+  # `timeout`, it must find none here — that is what makes main's old code
+  # hang rather than quietly pass.
+  if command -v timeout >/dev/null 2>&1; then
+    echo "timeout is still on PATH after sanitizing" >&2
+    return 1
+  fi
+  run "$real_timeout" 30 bash -euo pipefail "$DISPATCH" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"origin unreachable"* ]]
+  [[ "$output" == *"already claimed"* ]]
+}
+
 @test "claim: a dispatched label is refused when a worktree sits on a sibling branch" {
   stub_launch_bins
   git -C "$TEST_REPO" worktree add -q -b feat/42-something-else "$TEST_REPO/.dispatch-wt/feat-42-something-else" HEAD
@@ -4660,6 +4741,11 @@ EOF
     '[{"session":"s1-1","worker_id":"worker:feat/42-do-a-thing#s1-1","state":"working","ts":1,"age_s":412,"terminal":false}]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
+  # The refusal is the occupancy gate's (the claim gate healed a stale label),
+  # so name the live session, window and remediation — not just the exit code.
+  [[ "$output" == *"sage (worker:feat/42-do-a-thing#s1-1) is working in that worktree (window @23)"* ]]
+  [[ "$output" == *"git allows one worktree per branch"* ]]
+  [[ "$output" == *"crew reply worker:feat/42-do-a-thing"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
