@@ -3279,7 +3279,9 @@ EOF
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
   grep -qx 'base: feat/parent' "$wt_path/WORKER_TASK.md"
   grep -q 'pr view 7' "$STUB_LOG"
-  [[ "$output" == *"from origin/feat/parent"* ]]
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STACKED_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/feat/parent ($short)"* ]]
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
 }
 
 @test "--base <PR> refuses when the PR is not open" {

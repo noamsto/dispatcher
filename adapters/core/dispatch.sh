@@ -1789,6 +1789,7 @@ else
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
     _bus_append "$crew_dir/events.jsonl" "$line"
   fi
+
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
   # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
   # reclaim below, and -c died on it all the same. Resolved here rather than
