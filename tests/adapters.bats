@@ -548,6 +548,21 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+# The review contract's own base snippet is header-only: a `base:` line in the
+# inlined task body, after the first blank line, is text to review, not the base.
+@test "review task's base snippet reads only the header" {
+  fx="$BATS_TEST_TMPDIR/fx"
+  mkdir -p "$fx"
+  printf 'tier: review\nbase: feat/header\n\n## Task\n\nbase: evil\n' >"$fx/WORKER_TASK.md"
+  awk '/^## The worktree is the PR head/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/protocols/REVIEW_TASK.md" | grep -m1 '^base=' >"$fx/snippet.sh"
+  [ -s "$fx/snippet.sh" ]
+  cd "$fx"
+  run bash -c '. snippet.sh; printf "%s" "$base"'
+  [ "$status" -eq 0 ]
+  [ "$output" = 'feat/header' ]
+}
+
 @test "grid roles reply to the current worker session after resume" {
   protocol="$ROOT/adapters/core/protocols/GRID_PROTOCOL.md"
   run grep -F "lead_id=\$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)" "$protocol"

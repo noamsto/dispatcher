@@ -4027,6 +4027,35 @@ EOF
   grep -qx 'base: feat/parent' "$wt/WORKER_TASK.md"
 }
 
+# A `base:` line below the first blank line is task text, not the header, so it
+# must never be re-stamped as the carried base (#291). Only the header — which
+# ends at the first blank line — is the dispatch base.
+@test "resume: a body-only base: line is not carried" {
+  setup_resume_branch feat/42-do-a-thing
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'tier: standard\n\n## Task\n\nbase: evil\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  # The header must carry no base: at all — the reader stops at the first blank line.
+  [ -z "$(sed -nE '/^$/q; s/^base: //p' "$wt/WORKER_TASK.md")" ]
+  # ...and the body line survives verbatim, so the fix scopes the read, not the text.
+  grep -qx 'base: evil' "$wt/WORKER_TASK.md"
+}
+
+# Header precedence: when both the header and the carried body carry a base:
+# line, the header's value wins. Both reader forms agree on this fixture (head -1
+# hits the header line first), so this is not the #291 guard — the sibling
+# body-only test is the one that is red on the old body-wide reader.
+@test "resume: a header base: wins over a body base: line" {
+  setup_resume_branch feat/42-do-a-thing
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'tier: standard\nbase: feat/parent\n\n## Task\n\nbase: evil\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'base: feat/parent' "$wt/WORKER_TASK.md"
+  [ "$(sed -nE '/^$/q; s/^base: //p' "$wt/WORKER_TASK.md")" = 'feat/parent' ]
+}
+
 # The worker has to know it is continuing rather than starting, in both places it
 # reads instructions from: the stamped header and the launch prompt.
 @test "resume: stamps resume: true and carries the resume note into the launch string" {
