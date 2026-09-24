@@ -4378,38 +4378,139 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
 }
 
-# --- pr_open review-seam warning (#241) ---
+# --- terminal status gate: review seam (#241, #306) ---
 
 _task_doc() { printf 'tier: %s\nkind: %s\ncrew_id: c1\n' "$1" "${2:-implement}" >WORKER_TASK.md; }
-
-@test "pr_open: standard with no review seam warns on stderr but still posts" {
-  _task_doc standard
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  [ "$status" -eq 0 ]
-  [[ "$stderr" == *"no review seam"* ]]
-  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+_status_rows() { jq -c 'select(.kind=="status")' "$(git rev-parse --git-common-dir)/crew/events.jsonl" 2>/dev/null | wc -l; }
+_refused() {
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$1"* ]]
+  [ "$(_status_rows)" -eq 0 ]
 }
 
-@test "pr_open: standard with a review seam is silent" {
+@test "pr_open: standard with no review seam is refused and not written" {
   _task_doc standard
-  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"review","review_mode":"full"}'
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 ok" https://example.com/pr/1
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "done: standard with no review seam is refused and not written" {
+  _task_doc standard
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: deep with no review seam is refused and not written" {
+  _task_doc deep
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: standard with a review seam posts silently" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
+  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
 }
 
 @test "pr_open: a resumed session inherits the branch's earlier review seam" {
   _task_doc deep
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review"}'
   run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
   [ -z "$stderr" ]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" done "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl" | tr '\n' ' ')" = "pr_open done " ]
 }
 
-@test "pr_open: trivial with no review seam is silent" {
+@test "pr_open: the grid reviewer assignment counts as a review seam" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"seam":"review","artifact":"/a/review.diff","roster":"/a/roster.json","question":"Review this diff."}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "pr_open: a tagged retro note is not a review seam" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "retro:c1" '{"seam":"review","tag":"other","detail":"x"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: a review seam with review_mode none or unavailable does not count" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"none"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"unavailable"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: a review seam sent to metrics does not count" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"review","review_mode":"full"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: a review seam from another branch does not count" {
+  _task_doc standard
+  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"review"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open: a downgraded review seam counts like a full one" {
+  _task_doc standard
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"downgraded"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+}
+
+@test "pr_open: a review seam posted under a different crew does not count" {
+  # Written before WORKER_TASK.md exists so CREW_ID=c2 wins, and sent to the
+  # grid recipient, which carries no crew — only the crew_id filter excludes it.
+  CREW_ID=c2 run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"seam":"review","review_mode":"full"}'
+  seam_crew=$(jq -r 'select(.kind=="msg" and .to=="role:feat/x:reviewer") | .crew_id' "$(git rev-parse --git-common-dir)/crew/events.jsonl")
+  [ "$seam_crew" = c2 ]
+  _task_doc standard
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "no review seam"
+}
+
+@test "pr_open/done: trivial with no review seam posts silently" {
   _task_doc trivial
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 2 ]
+}
+
+@test "done: a kind review session needs no review seam" {
+  _task_doc standard review
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" done "reviewed PR 9 — https://x"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "done/failed: a role caller and a failed worker are not gated" {
+  _task_doc standard
+  run --separate-stderr run_crew status "role:feat/x:reviewer" done ""
+  [ "$status" -eq 0 ]
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" failed "tests red"
+  [ "$status" -eq 0 ]
+  [ "$(_status_rows)" -eq 2 ]
 }
 
 @test "pr_open: the acceptance ledger rides in the status detail" {
@@ -4418,11 +4519,10 @@ _task_doc() { printf 'tier: %s\nkind: %s\ncrew_id: c1\n' "$1" "${2:-implement}" 
   [ "$(jq -r 'select(.kind=="status") | .body.detail' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = "AC1 pass(bats) AC2 waived(dispatcher)" ]
 }
 
-@test "pr_open: a review seam from another branch does not count" {
-  _task_doc standard
-  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"review"}'
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  [[ "$stderr" == *"no review seam"* ]]
+@test "pr_open: no WORKER_TASK.md applies no gate" {
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pending(sim)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ "$(_status_rows)" -eq 1 ]
 }
 
 # --- reap: stacked-base compatibility (#274) ---

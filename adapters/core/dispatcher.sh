@@ -4,7 +4,36 @@
 # One behaviour change is unavoidable: a script cannot export CREW_ID back into
 # the caller's interactive shell the way `set -gx` did, so the id is printed.
 
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+# Duplicated from dispatch.sh (standalone build); tests/dispatch.bats pins the
+# copies together.
+#
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against the baked default (#303). A shell or tmux server that
+# outlives a rebuild keeps the previous build's export, so an override under the
+# baked path's store root is kept only when its content equals the baked dir's:
+# the current build's export sits at a different store path than the baked
+# projection but holds the same files. A checkout override always wins, as does
+# any override in a raw script (baked is not absolute). diff sits in an `if`
+# because its exit 1 means "differs", not failure.
+# A stale value is ignored with a notice; the caller re-exports the resolved dir
+# for the launched session, which reads DISPATCHER_PROTOCOL_DIR from markdown.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
+_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatcher
+[ -z "${DISPATCHER_PROTOCOL_DIR:-}" ] || export DISPATCHER_PROTOCOL_DIR="$PROTOCOL_DIR"
 protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
 
 agent=claude

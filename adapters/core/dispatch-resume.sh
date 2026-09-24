@@ -121,7 +121,10 @@ _check_protocol_rev() {
     echo "$label:   script protocol revision: $stamped_rev" >&2
     echo "$label:   \$PROTOCOL_DIR content revision: $dir_rev" >&2
     echo "$label:   \$PROTOCOL_DIR: $dir" >&2
-    [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+    if [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ]; then
+      echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+      echo "$label:   remedy: unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build" >&2
+    fi
     exit 1
   fi
 }
@@ -274,11 +277,37 @@ trivial | standard | deep) ;;
   ;;
 esac
 
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against the baked default (#303). A shell or tmux server that
+# outlives a rebuild keeps the previous build's export, so an override under the
+# baked path's store root is kept only when its content equals the baked dir's:
+# the current build's export sits at a different store path than the baked
+# projection but holds the same files. A checkout override always wins, as does
+# any override in a raw script (baked is not absolute). diff sits in an `if`
+# because its exit 1 means "differs", not failure.
+# A stale value is ignored with a notice and unset, so later diagnostics do not
+# name it.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    unset "$var"
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
+_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" "dispatch resume"
 
 # Harness skill directory for pi workers; see pi_skill_args above and the
 # matching block in dispatch.sh.
-SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
+_resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 
 _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
@@ -710,10 +739,16 @@ reorient="${reorient//\'/}"
 
 plan_note=""
 if [ "$plan_val" = provided ]; then
-  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique the plan."
+  if [ "$tier" != trivial ] && [ "$kind" != review ]; then
+    plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
+  fi
 fi
 
 push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" != review ] && [ "$tier" != trivial ]; then
+  push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
+fi
 if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi

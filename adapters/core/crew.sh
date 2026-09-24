@@ -751,28 +751,37 @@ status | msg)
       ;;
     esac
     from="${1:-}" state="${2:-}" pr="${4:-}"
-    # Warn, don't refuse: the seam is a self-reported marker (native review
-    # batches leave no other bus trace), and a resumed run or pi grid may have
-    # reviewed in an earlier session. Seams from any session on the branch count.
-    if [ "$state" = pr_open ]; then
+    # Seams from any earlier session on this branch in this crew count (the
+    # resume case), and a worker that cannot review stops on an ungated state
+    # (blocked/failed), so refusing here never strands one.
+    case "$state:$from" in
+    pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
       if [ -n "$top" ] && [ -f "$top/WORKER_TASK.md" ]; then
         tier=$(sed -n 's/^tier:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
         kind=$(sed -n 's/^kind:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
         case "$tier:${kind:-implement}" in
         standard:implement | deep:implement)
+          b="${from%#s*}"
+          r="role:${b#worker:}:reviewer"
           seams=0
           if [ -f "$log" ]; then
-            seams=$(jq -r --arg c "$crew" --arg b "${from%#s*}" \
-              'select(.crew_id==$c and .kind=="msg" and (((.from // "")|sub("#s[^#]*$";""))==$b)
-                      and (((.body|fromjson? // {}) | .seam?) == "review"))
+            seams=$(jq -r --arg c "$crew" --arg b "$b" --arg r "$r" \
+              'select(.crew_id==$c and .kind=="msg" and ((.from // "")|sub("#s[^#]*$";""))==$b
+                      and (.to==("review:"+$c) or .to==$r)
+                      and ((.body|fromjson? // null) as $o | ($o|type)=="object" and $o.seam=="review"
+                           and ($o|has("tag")|not) and (($o.review_mode // "full")|IN("full","downgraded"))))
                  | 1' "$log" 2>/dev/null | wc -l || true)
           fi
-          [ "${seams:-0}" -gt 0 ] || echo "crew: WARNING: $tier session $from reports pr_open with no review seam on the bus — the code review gate did not run or was not recorded" >&2
+          if [ "${seams:-0}" -eq 0 ]; then
+            echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review that cannot run goes blocked/failed, never pr_open/done" >&2
+            exit 1
+          fi
           ;;
         esac
       fi
-    fi
+      ;;
+    esac
     _build_status() {
       jq -nc --arg crew "$crew" --arg from "$from" --arg state "$state" \
         --arg detail "$1" --arg pr "$pr" \

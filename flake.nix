@@ -93,8 +93,11 @@
           # @protocolRev@ (#184, #193) is a content hash of the same directory
           # baked into dispatch.sh / dispatch-resume.sh; their runtime guard
           # recomputes that hash from the files actually in $PROTOCOL_DIR and
-          # refuses a mismatch, so a stale DISPATCHER_PROTOCOL_DIR export can
-          # no longer launch workers against an old protocol contract. There is
+          # refuses a mismatch, so a checkout override that drifted from this
+          # build cannot launch workers against an old protocol contract. A
+          # stale store-path DISPATCHER_PROTOCOL_DIR export (a long-lived shell
+          # after a rebuild) never reaches that check: _resolve_dir ignores it
+          # with a notice and uses @protocolDir@ (#303). There is
           # no committed PROTOCOL_REV file to read or regenerate — the guard is
           # definitionally fresh, which is what lets two PRs editing different
           # protocol files merge in either order without conflict. readDir/
@@ -140,7 +143,7 @@
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils tmux direnv]) ++ [crew dispatch-resume];
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils diffutils tmux direnv]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
@@ -152,13 +155,13 @@
           # itself uses for `wt`.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
-            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils tmux]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils diffutils tmux]) ++ [crew];
             text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
           };
 
           dispatcher = pkgs.writeShellApplication {
             name = "dispatcher";
-            runtimeInputs = (with pkgs; [git jq coreutils tmux]) ++ [crew];
+            runtimeInputs = (with pkgs; [git jq coreutils diffutils tmux]) ++ [crew];
             text = sub (builtins.readFile ./adapters/core/dispatcher.sh);
           };
 

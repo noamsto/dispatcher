@@ -253,10 +253,36 @@ EOF
 # can splice a large line with another process's append (#55, #61).
 _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against the baked default (#303). A shell or tmux server that
+# outlives a rebuild keeps the previous build's export, so an override under the
+# baked path's store root is kept only when its content equals the baked dir's:
+# the current build's export sits at a different store path than the baked
+# projection but holds the same files. A checkout override always wins, as does
+# any override in a raw script (baked is not absolute). diff sits in an `if`
+# because its exit 1 means "differs", not failure.
+# A stale value is ignored with a notice and unset, so later diagnostics do not
+# name it.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    unset "$var"
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
 # Protocol directory. The env override is the dev loop: point it at a checkout
 # and protocol edits take effect on the next dispatch with no rebuild. The
 # default is substituted to a store path at build time.
-PROTOCOL_DIR="${DISPATCHER_PROTOCOL_DIR:-@protocolDir@}"
+_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
 # Absolute: role panes run it minutes later from the worktree, not from this cwd.
 dispatch_self="$(realpath -- "$0")"
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
@@ -264,7 +290,7 @@ budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 # Harness skill directory, handed to pi workers via --skill. Same env-override
 # dev loop as PROTOCOL_DIR, same build-time store-path default. Unsubstituted
 # (a non-Nix install) it is not a directory, and pi_skill_args' probe drops it.
-SKILLS_DIR="${DISPATCHER_SKILLS_DIR:-@skillsDir@}"
+_resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
 
 # Engine roster helpers must precede every early command, including lazy role
 # spawning, so every launch path rejects a disabled engine before scaffolding.
@@ -324,13 +350,14 @@ _require_protocol_files() {
 # `name:sha256;` entries, sha256 of the concatenation, first 16 hex chars. It
 # is pinned against the Nix implementation by tests/module.bats, including an
 # edge-case dir (dotfile, prefix-named pair) where a naive line-sort or a
-# non-dotglob glob would diverge. A stale dir — an old store path held by a
-# long-lived DISPATCHER_PROTOCOL_DIR export, or a checkout whose content
-# drifted from the script's build — hashes differently and is refused; there
-# is no committed PROTOCOL_REV file left to go stale, so two PRs editing
-# different protocol files can merge in either order. Six small files hash in
-# a few milliseconds. A raw checkout script (marker unsubstituted) cannot bind
-# a revision and skips with a one-line warning.
+# non-dotglob glob would diverge. A stale store path held by a long-lived
+# DISPATCHER_PROTOCOL_DIR export is ignored by _resolve_dir before this check;
+# what is refused here is a checkout whose content drifted from the script's
+# build — it hashes differently. There is no committed PROTOCOL_REV file left
+# to go stale, so two PRs editing different protocol files can merge in either
+# order. Six small files hash in a few milliseconds. A raw checkout script
+# (marker unsubstituted) cannot bind a revision and skips with a one-line
+# warning.
 _check_protocol_rev() {
   local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries=""
   local names=() file name sig
@@ -370,7 +397,10 @@ _check_protocol_rev() {
     echo "$label:   script protocol revision: $stamped_rev" >&2
     echo "$label:   \$PROTOCOL_DIR content revision: $dir_rev" >&2
     echo "$label:   \$PROTOCOL_DIR: $dir" >&2
-    [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+    if [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ]; then
+      echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
+      echo "$label:   remedy: unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build" >&2
+    fi
     exit 1
   fi
 }
@@ -2544,11 +2574,14 @@ fi
 
 # When the dispatcher already wrote the plan into the task doc, say so in the
 # launch prompt. A launch-prompt (user-turn) instruction is a "direct request",
-# which satisfies using-superpowers' own escape hatch — so the worker skips the
-# plan phase instead of re-deriving it.
+# which satisfies using-superpowers' own escape hatch — so only the plan phase
+# is skipped, not the gates that still run before push.
 plan_note=""
 if [ "$plan_val" = provided ]; then
-  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique the plan."
+  if [ "$tier" != trivial ] && [ "$kind" != review ]; then
+    plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
+  fi
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan
@@ -2568,6 +2601,9 @@ fi
 # someone else's PR head. Swap the mandate instead of relying on the contract to
 # talk the worker out of it.
 push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" != review ] && [ "$tier" != trivial ]; then
+  push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
+fi
 if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi

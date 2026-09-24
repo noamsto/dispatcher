@@ -228,3 +228,53 @@ EOF
   run grep -c '^reflow ' "$STUB_LOG"
   [ "$output" = "1" ]
 }
+
+# #303: a fake Nix store under $TEST_REPO/store; the scratch copy bakes the
+# "new" build's projected protocol dir the way flake.nix's replaceStrings does.
+_store_launcher() {
+  STORE="$TEST_REPO/store"
+  BAKED_PROTOCOLS="$STORE/h-new-protocols"
+  mkdir -p "$BAKED_PROTOCOLS"
+  printf 'new\n' >"$BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md"
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|" "$LAUNCHER" >"$BATS_TEST_TMPDIR/launcher-store.sh"
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'claude env DISPATCHER_PROTOCOL_DIR=%s\n' "${DISPATCHER_PROTOCOL_DIR-UNSET}" >>"$STUB_LOG"
+printf '%s\n' "$*" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/claude"
+}
+
+@test "a stale store-path DISPATCHER_PROTOCOL_DIR is ignored and the launched session sees the baked dir" {
+  _store_launcher
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  printf 'old\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatcher: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
+  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS" "$STUB_LOG"
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
+}
+
+@test "a store-path DISPATCHER_PROTOCOL_DIR with the baked content is kept silently" {
+  _store_launcher
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-cur-source/adapters/core/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  printf 'new\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+}
+
+@test "a checkout override outside the store wins over the baked dir" {
+  _store_launcher
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/checkout/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  printf 'dev\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+}

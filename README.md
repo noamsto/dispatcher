@@ -371,18 +371,35 @@ directory** — sorted `name:sha256;` entries, sha256 of the concatenation, firs
   and rebuild before dispatching against the checkout; CI's drift gate and the
   module tests enforce this. There is no committed revision file to forget —
   the marker is derived, not stored;
-- **a stale directory** — an old store path held by a shell/tmux server started
-  before a Home Manager switch (the #177 incident), or an old checkout, hashes
-  differently and is **refused** before any scaffolding, naming both revisions,
-  the resolved `$PROTOCOL_DIR`, and the override.
-  `unset DISPATCHER_PROTOCOL_DIR` (or start a fresh shell) to fall back to the
-  matching built-in default;
+- **a stale store path** (#303) — an export left in a shell/tmux server started
+  before a Home Manager switch (the #177 incident) points at the previous
+  build's store path. `dispatch`, `dispatch resume` and `dispatcher` ignore it
+  with a one-line stderr notice (`ignoring stale DISPATCHER_PROTOCOL_DIR ...`)
+  and use their baked directory. The test is content, not path: the current
+  build's own export lives at a different store path than the baked projection
+  but has the same files, so it is accepted silently, while a rollback's newer
+  value held by an older script counts as stale too. `DISPATCHER_SKILLS_DIR` is
+  treated the same way. Overrides must therefore point at a checkout, not at a
+  different build's store path;
+- **a stale or drifted checkout** — an override outside the store whose content
+  differs from the build is still **refused** before any scaffolding, naming
+  both revisions, the resolved `$PROTOCOL_DIR` and the override, plus the
+  remedy: `unset DISPATCHER_PROTOCOL_DIR`, or point it at a checkout matching
+  this build;
 - **a raw checkout script** (run straight from the repo, marker unsubstituted)
   skips the comparison with a one-line warning — it cannot bind a revision.
 
 Because the revision is derived from the directory's own contents rather than
 read from a committed file, two PRs that edit different protocol files merge in
 either order with no regeneration step and no conflict on a revision line.
+
+Known limits of the stale-export handling: `DISPATCHER_REVIEWERS_DIR` and
+`DISPATCHER_CRITICS_DIR` are not covered (they are consumed by
+`reviewers/resolve-roster.sh` and by markdown, outside these launchers), and
+worker/role tmux panes inherit the tmux server's environment, so a stale
+exported value there is still seen by worker-side markdown even though the
+prompt and the `protocol_dir:` stamp point at the baked directory. Restart the
+tmux server (or start a fresh shell) after a rebuild.
 
 Reviewers and critics are not guarded this way: they are content consumed at
 review time, not a contract the launch scripts depend on, so a stale roster

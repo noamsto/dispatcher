@@ -1309,6 +1309,126 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
+# #303: a fake Nix store under $TEST_REPO/store. _store_dispatch bakes the
+# "new" build's projected dirs into a scratch copy of the script, the way
+# flake.nix's replaceStrings does, and clears the setup() overrides so the baked
+# default is what an un-overridden run resolves. _resolve_dir derives the store
+# root from the baked path's parent, so the fixture needs no env hook.
+_store_dispatch() {
+  STORE="$TEST_REPO/store"
+  BAKED_PROTOCOLS="$STORE/h-new-protocols"
+  BAKED_SKILLS="$STORE/h-new-skills"
+  _store_protocols "$BAKED_PROTOCOLS" new
+  mkdir -p "$BAKED_SKILLS/spec-plan-critic"
+  printf -- '---\nname: spec-plan-critic\ndescription: baked\n---\n' >"$BAKED_SKILLS/spec-plan-critic/SKILL.md"
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR
+  run_store_dispatch() { bash -euo pipefail "$BATS_TEST_TMPDIR/dispatch-store.sh" "$@"; }
+}
+
+_store_protocols() { # <dir> <content>
+  local f
+  mkdir -p "$1"
+  for f in WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
+    printf '%s %s\n' "$2" "$f" >"$1/$f"
+  done
+}
+
+@test "a stale store-path DISPATCHER_PROTOCOL_DIR is ignored with a notice and the baked dir is used" {
+  stub_launch_bins
+  _store_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" old
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale store export"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  grep -q 'new-window' "$STUB_LOG"
+  grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$TEST_REPO/.dispatch-wt/feat-42-stale-store-export/WORKER_TASK.md"
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
+  ! grep -qF -- "h-old-source" <(launch_log)
+}
+
+@test "a store-path DISPATCHER_PROTOCOL_DIR with the baked content is the current build's export and is kept silently" {
+  stub_launch_bins
+  _store_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-cur-source/adapters/core/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" new
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "current store export"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$TEST_REPO/.dispatch-wt/feat-42-current-store-export/WORKER_TASK.md"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "a store-path DISPATCHER_PROTOCOL_DIR that no longer exists (garbage-collected) is stale" {
+  stub_launch_bins
+  _store_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-gone-source/adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "gone store export"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
+  grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$TEST_REPO/.dispatch-wt/feat-42-gone-store-export/WORKER_TASK.md"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "a non-store override with drifted content is still refused and the message names the remedy" {
+  stub_launch_bins
+  _store_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/checkout/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" drifted
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "drifted checkout"
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
+  [[ "$output" == *"unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The three standalone builds each carry their own _resolve_dir; only the
+# stale-branch `unset` differs (dispatcher.sh re-exports instead).
+@test "the three _resolve_dir copies stay in sync" {
+  local core="$BATS_TEST_DIRNAME/../adapters/core" f
+  for f in dispatch dispatch-resume dispatcher; do
+    sed -n '/^_resolve_dir() {/,/^}/p' "$core/$f.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-$f"
+    [ -s "$BATS_TEST_TMPDIR/resolve-$f" ]
+  done
+  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatch-resume"
+  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatcher"
+}
+
+@test "a stale store-path DISPATCHER_SKILLS_DIR is ignored and pi gets the baked skills dir" {
+  stub_launch_bins
+  _store_dispatch
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
+  export DISPATCHER_SKILLS_DIR="$STORE/h-old-source/adapters/core/skills"
+  mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
+  printf -- '---\nname: spec-plan-critic\ndescription: old\n---\n' >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
+  DISPATCH_PROFILE=personal run run_store_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "stale skills export"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring stale DISPATCHER_SKILLS_DIR"* ]]
+  lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log))
+  [[ "$lead_line" == *"--no-approve --skill $BAKED_SKILLS "* ]]
+  [[ "$lead_line" != *"h-old-source"* ]]
+}
+
+@test "dispatch resume with a stale store export notices once and hands dispatch-resume the baked default" {
+  _store_dispatch
+  cat >"$STUB_DIR/dispatch-resume" <<'EOF'
+#!/usr/bin/env bash
+printf 'resume DISPATCHER_PROTOCOL_DIR=%s\n' "${DISPATCHER_PROTOCOL_DIR-UNSET}" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/dispatch-resume"
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" old
+  run run_store_dispatch resume --print
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'ignoring stale DISPATCHER_PROTOCOL_DIR' <<<"$output")" -eq 1 ]
+  grep -qx 'resume DISPATCHER_PROTOCOL_DIR=UNSET' "$STUB_LOG"
+}
+
 # #253: the protocol-dir guard is engine-independent, but reaching it requires a
 # valid tier/model/effort tuple — a bad one aborts earlier for the wrong reason.
 # Parametrize the guard coverage over the engines the issue names as untested
@@ -1766,7 +1886,7 @@ EOF
 }
 
 @test "DISPATCHER_PROTOCOL_DIR overrides the baked default" {
-  run grep -c 'DISPATCHER_PROTOCOL_DIR:-@protocolDir@' "$DISPATCH"
+  run grep -cF '_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@"' "$DISPATCH"
   [ "$output" = "1" ]
 }
 
@@ -2959,12 +3079,43 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$launch" != *"Push when pre-push passes"* ]]
 }
 
+@test "--review with --plan provided never claims a review gate that never runs" {
+  stub_pr_bins pr-head-review
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --plan provided --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"plan of record"* ]]
+  [[ "$launch" != *"Only planning is skipped"* ]]
+}
+
 @test "an implement dispatch stamps kind: implement and keeps the push mandate" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
   grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
+}
+
+@test "--plan provided launch prompt keeps the code review gate (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"Only planning is skipped"* ]]
+  [[ "$launch" == *"code review gate still run before you push"* ]]
+  [[ "$launch" == *"Run your code review gate"* ]]
+}
+
+@test "--plan provided on trivial skips the code review gate mentions (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch trivial sonnet --effort low --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" != *"code review gate"* ]]
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
 
