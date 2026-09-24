@@ -1115,6 +1115,40 @@ _pi_assert_refused() {
   [[ "$output" == *"re-dispatch"* ]]
 }
 
+@test "reply: CREW_ID unset resolves the single crew with a live session (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | "\(.crew_id) \(.to)"' "$log"
+  [ "$output" = "c1 worker:feat/x#s1-1" ]
+}
+
+@test "reply: --crew works with CREW_ID unset (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go" --crew c2
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "worker:feat/x#s2-2" ]
+}
+
+@test "reply: CREW_ID unset with live sessions in two crews refuses naming both (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
+}
+
+@test "reply: CREW_ID unset with only a terminal session names the unset crew (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CREW_ID not set"* ]]
+}
+
 @test "reply: refuses a branch with no sessions" {
   CREW_ID=c1 run run_crew reply "worker:feat/nope" "go"
   [ "$status" -eq 1 ]
@@ -1348,6 +1382,59 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"va"'* ]]
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"vb"'* ]]
+}
+
+# #300: a lead waiting on one role's verdict must not be released by another
+# sender's reply. --from restricts the candidates to one exact sender; the other
+# sender's msg is left undelivered for a later plain await.
+@test "await --from: another sender's newer-so-far reply neither returns nor is consumed" {
+  id="worker:feat/x#s1-1"
+  plan="role:feat/x:plan-critic"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
+  (
+    sleep 2
+    CREW_ID=c1 bash -euo pipefail "$CREW" msg "$rev" "$id" "review verdict"
+  ) >/dev/null 2>&1 &
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 5 --interval 1
+  wait
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"review verdict"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [[ "$output" == *'"body":"plan verdict"'* ]]
+}
+
+@test "await --from: a timeout names the sender and exits 0 with empty stdout" {
+  id="worker:feat/x#s1-1"
+  plan="role:feat/x:plan-critic"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"$rev"* ]]
+}
+
+@test "await --from: a reply older than this session's question to that sender is not returned" {
+  id="worker:feat/x#s1-1"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$rev" "$id" "stale verdict"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "await --from: requires a value" {
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s1-1" --from
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"--from needs a value"* ]]
 }
 
 # The straggler fold (`crew inbox --since`) is how a reply that missed a timed-out

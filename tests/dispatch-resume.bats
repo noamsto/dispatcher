@@ -322,13 +322,63 @@ _store_protocols() { # <dir> <content>
     DISPATCH_PROFILE="$profile" run run_resume
     [ "$status" -eq 0 ]
     case "$eng" in
-    pi) grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG" ;;
-    *) grep -q -- "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md" "$STUB_LOG" ;;
+    pi) grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log) ;;
+    *) grep -q -- "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md" <(launch_log) ;;
     esac
-    grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+    grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" <(launch_log)
   done < <(protocol_engine_specs codex cursor pi)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 3 ]
+}
+
+# _assert_resume_bound <marker> — the resumed lead's send-keys line is only
+# `bash '<launch script>'` (#298), under 512 bytes, and the script carries
+# <marker> (the engine's continue/resume flag).
+_assert_resume_bound() {
+  local marker="$1" crew_launch_dir pattern line
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  pattern="^send-keys -t %8 bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}' Enter\$"
+  line="$(grep '^send-keys' "$STUB_LOG")"
+  [[ "$line" =~ $pattern ]]
+  [ "${#line}" -lt 512 ]
+  grep -q -F -- "$marker" <(launch_log)
+}
+
+# #298: a fresh pane's tty truncates typed-ahead input at 1024 bytes on macOS,
+# so resume must type a short line for every engine, however long the prompt.
+@test "bound: resume's send-keys line stays short and shaped for every engine" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  _assert_resume_bound 'claude --continue'
+
+  n=0
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    n=$((n + 1))
+    sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
+    : >"$STUB_LOG"
+    DISPATCH_PROFILE="$profile" run run_resume
+    [ "$status" -eq 0 ]
+    case "$eng" in
+    codex) _assert_resume_bound 'codex resume --last' ;;
+    cursor) _assert_resume_bound 'cursor-agent --continue' ;;
+    pi) _assert_resume_bound 'pi --continue' ;;
+    esac
+  done < <(protocol_engine_specs codex cursor pi)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
+}
+
+# dispatch-resume.sh is a standalone build, so it carries its own copies.
+@test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
+  for fn in shell_quote write_launch_script; do
+    a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
+    b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
+    [ -n "$a" ]
+    [ "$a" = "$b" ]
+  done
 }
 
 @test "--print reports the resolved launch and does not launch" {
@@ -576,11 +626,11 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' "$STUB_LOG"
-  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' "$STUB_LOG"
-  grep -q -- '--model sonnet' "$STUB_LOG"
-  grep -q -- '--effort medium' "$STUB_LOG"
-  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
+  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' <(launch_log)
+  grep -q -- '--model sonnet' <(launch_log)
+  grep -q -- '--effort medium' <(launch_log)
+  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
 }
 
 @test "restamps protocol_dir into an older task doc and names it in the claude prompt" {
@@ -590,7 +640,7 @@ EOF
   run run_resume
   [ "$status" -eq 0 ]
   grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$WT/WORKER_TASK.md"
-  grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+  grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" <(launch_log)
 }
 
 @test "--fresh drops the continue flag" {
@@ -599,8 +649,8 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' "$STUB_LOG"
-  run grep -c -- '--continue' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
+  run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
 
@@ -611,8 +661,8 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'codex resume --last' "$STUB_LOG"
-  grep -q -- '--profile worker' "$STUB_LOG"
+  grep -q 'codex resume --last' <(launch_log)
+  grep -q -- '--profile worker' <(launch_log)
 }
 
 @test "codex --fresh drops the resume flag" {
@@ -622,8 +672,8 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' "$STUB_LOG"
-  run grep -c -- 'resume --last' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
 }
 
@@ -634,7 +684,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'cursor-agent --continue' "$STUB_LOG"
+  grep -q 'cursor-agent --continue' <(launch_log)
 }
 
 @test "cursor --fresh drops the continue flag" {
@@ -644,8 +694,8 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' "$STUB_LOG"
-  run grep -c -- '--continue' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
 
@@ -656,10 +706,10 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --continue" "$STUB_LOG"
-  grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG"
-  grep -q -- '--no-approve' "$STUB_LOG"
-  grep -q 'role panes (plan-critic,reviewer) may still be parked' "$STUB_LOG"
+  grep -q "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --continue" <(launch_log)
+  grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+  grep -q -- '--no-approve' <(launch_log)
+  grep -q 'role panes (plan-critic,reviewer) may still be parked' <(launch_log)
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
 }
 
@@ -672,7 +722,7 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- "--no-approve --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " "$STUB_LOG"
+  grep -q -- "--no-approve --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
 }
 
 @test "pi resume passes only the harness skills when the worktree has none" {
@@ -682,8 +732,8 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- "--no-approve --skill $DISPATCHER_SKILLS_DIR " "$STUB_LOG"
-  [ "$(grep -cF -- '--skill' "$STUB_LOG")" -eq 1 ]
+  grep -q -- "--no-approve --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
+  [ "$(grep -cF -- '--skill' <(launch_log))" -eq 1 ]
 }
 
 # A non-Nix install leaves @skillsDir@ unsubstituted, so the path is not a
@@ -696,7 +746,7 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  run grep -F -- '--skill' "$STUB_LOG"
+  run grep -F -- '--skill' <(launch_log)
   [ "$status" -ne 0 ]
 }
 
@@ -707,8 +757,8 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' "$STUB_LOG"
-  run grep -c -- '--continue' "$STUB_LOG"
+  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
 
@@ -773,7 +823,7 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'do not trust the last plan in your transcript' "$STUB_LOG"
+  grep -q 'do not trust the last plan in your transcript' <(launch_log)
 }
 
 @test "trailing arguments are appended to the prompt" {
@@ -782,17 +832,21 @@ EOF
   cd "$WT"
   run run_resume the review comments are the priority
   [ "$status" -eq 0 ]
-  grep -q 'the review comments are the priority' "$STUB_LOG"
+  grep -q 'the review comments are the priority' <(launch_log)
 }
 
+# The prompt lives in the launch script; the typed line carries only the
+# script's one quoted path.
 @test "no launch string contains an apostrophe" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  run grep -c "send-keys.*'.*'.*'" "$STUB_LOG"
+  run grep -c "send-keys.*'.*'.*'" <(launch_log)
   [ "$status" -ne 0 ]
+  raw="$(grep 'send-keys' "$STUB_LOG")"
+  [ "$(grep -o "'" <<<"$raw" | wc -l)" -eq 2 ]
 }
 
 bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }

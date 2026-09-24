@@ -128,6 +128,31 @@ _is_engine_cmd() {
   return 1
 }
 
+# _owner_pid — the pid `adopt`/`register` record when none is given. A bare
+# $PPID is the calling shell, and from an agent's Bash tool that is a throwaway
+# subshell that exits at once, so the crew reads as dead (#301). Walk up past
+# shells to the first non-shell ancestor (the engine). Bounded; if the chain is
+# all shells or ps fails, fall back to $PPID — the pre-#301 behaviour.
+_owner_pid() {
+  local p="$PPID" c depth=0
+  while [ "$depth" -lt 32 ]; do
+    depth=$((depth + 1))
+    c=$(ps -o comm= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$c" ] || break
+    c="${c##*/}"
+    case "${c#-}" in
+    bash | sh | zsh | fish | dash | ksh) ;;
+    *)
+      printf '%s\n' "$p"
+      return
+      ;;
+    esac
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$p" in '' | *[!0-9]* | 0 | 1) break ;; esac
+  done
+  printf '%s\n' "$PPID"
+}
+
 # _pane_is_engine_at <pane_row> <worktree_path> — <pane_row> is one
 # `#{pane_current_command} #{pane_current_path}` row. The path is the strong
 # signal and must match exactly, never by prefix — /wt/foo would otherwise claim
@@ -788,13 +813,28 @@ status | msg)
   fi
   ;;
 reply)
-  # reply <to> <body> — sugar over `msg`; from is dispatcher:<crew> so the
-  # dispatcher needn't reconstruct its own id.
-  crew=$(_crew_id)
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
-    exit 1
-  }
+  # reply <to> <body> [--crew ID] — sugar over `msg`; from is dispatcher:<crew>
+  # so the dispatcher needn't reconstruct its own id.
+  rcrew=""
+  rargs=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 1
+      }
+      rcrew="$2"
+      shift 2
+      ;;
+    *)
+      rargs+=("$1")
+      shift
+      ;;
+    esac
+  done
+  set -- "${rargs[@]+"${rargs[@]}"}"
+  crew="${rcrew:-$(_crew_id)}"
   mkdir -p "$dir"
   # A branch-only worker target resolves to the newest session on that branch, so
   # the dispatcher keeps writing `worker:<branch>` while the message lands on a
@@ -808,7 +848,31 @@ reply)
       : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
     else
       br="${to#worker:}"
-      newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      if [ -n "$crew" ]; then
+        newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      else
+        # No crew named: a dispatcher whose shell never exported CREW_ID. Look
+        # across crews and take the single one with a live session on the branch.
+        live=""
+        crews=""
+        [ ! -f "$log" ] || crews=$(jq -r 'select(.crew_id != null) | .crew_id' "$log" | sort -u)
+        while IFS= read -r c; do
+          [ -n "$c" ] || continue
+          n=$(_sessions "$br" "$c" | jq -c --arg c "$c" 'last // empty | select(.terminal | not) | . + {crew:$c}')
+          [ -z "$n" ] || live+="$n"$'\n'
+        done <<<"$crews"
+        nlive=$(printf '%s' "$live" | grep -c . || true)
+        if [ "$nlive" -gt 1 ]; then
+          echo "crew: CREW_ID not set and $br has live sessions in crews: $(printf '%s' "$live" | jq -r .crew | paste -sd, - | sed 's/,/, /g') — pass --crew <id>" >&2
+          exit 1
+        elif [ "$nlive" -eq 1 ]; then
+          newest=$(printf '%s' "$live" | jq -c .)
+          crew=$(printf '%s' "$newest" | jq -r .crew)
+        else
+          echo "crew: CREW_ID not set and no live session on $br in any crew — pass --crew <id> (or dispatch a worker before replying to one)" >&2
+          exit 1
+        fi
+      fi
       [ -n "$newest" ] && [ "$newest" != null ] || {
         echo "crew: no session on $br — dispatch a worker before replying to one" >&2
         exit 1
@@ -825,6 +889,10 @@ reply)
     fi
     ;;
   esac
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>" >&2
+    exit 1
+  }
   _build_reply() {
     jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
@@ -833,14 +901,16 @@ reply)
   _bus_append "$log" "$line"
   ;;
 await)
-  # await <agent> [--timeout S] [--interval S] — block until a msg addressed to
-  # <agent> answers its outstanding question, print it, exit 0. A reply qualifies
-  # when it is newer than this session's own latest outbound msg to the reply's
-  # sender (the anchor is per conversation), so a reply that landed between the
-  # question and the await is still delivered (#240), and newer than the last
-  # reply this session was already handed from that sender (#290, by await or
-  # inbox), so a handled reply is never handed back by a later await. A session
-  # that has asked nothing falls back to the await start.
+  # await <agent> [--from SENDER] [--timeout S] [--interval S] — block until a msg
+  # addressed to <agent> answers its outstanding question, print it, exit 0.
+  # --from restricts that to one exact sender id (a lead waiting on one role's
+  # verdict); other senders' msgs are neither returned nor marked delivered.
+  # A reply qualifies when it is newer than this session's own latest outbound
+  # msg to the reply's sender (the anchor is per conversation), so a reply that
+  # landed between the question and the await is still delivered (#240), and
+  # newer than the last reply this session was already handed from that sender
+  # (#290, by await or inbox), so a handled reply is never handed back by a later
+  # await. A session that has asked nothing falls back to the await start.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -852,7 +922,7 @@ await)
   }
   me="${1:-}"
   [ -n "$me" ] || {
-    echo "crew: await <agent> [--timeout S] [--interval S]" >&2
+    echo "crew: await <agent> [--from SENDER] [--timeout S] [--interval S]" >&2
     exit 1
   }
   case "$me" in worker:*) _is_session_id "$me" || {
@@ -862,6 +932,7 @@ await)
   shift || true
   timeout=300
   interval=2
+  from=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --timeout)
@@ -880,6 +951,14 @@ await)
       interval="$2"
       shift 2
       ;;
+    --from)
+      [ -n "${2:-}" ] || {
+        echo "crew: --from needs a value" >&2
+        exit 1
+      }
+      from="$2"
+      shift 2
+      ;;
     *)
       echo "crew: await: unknown arg '$1'" >&2
       exit 1
@@ -896,12 +975,12 @@ await)
       # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
       # (the hard-kill crash mode) instead of aborting the whole read, and no
       # status row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" --argjson got "$delivered" '
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson since "$start" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {anchors: {}, cands: []};
           if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
           then .anchors[$e.to] = $e.ts
-          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me)
+          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me and ($from == "" or $e.from == $from))
           then .cands += [$e]
           else . end
         )
@@ -915,7 +994,7 @@ await)
       }
     fi
     [ "$(jq -nc 'now*1000|floor')" -ge "$deadline" ] && {
-      echo "crew: await ended after ${timeout}s — no reply to $me yet" >&2
+      echo "crew: await ended after ${timeout}s — no reply to $me${from:+ from $from} yet" >&2
       exit 0
     }
     sleep "$interval"
@@ -925,7 +1004,7 @@ register | deregister)
   # Per-crew registration (was an exclusive per-repo role lock). N crews may
   # share a repo: each is identified by its crew_id, so there is no
   # cross-crew contention and registration never refuses. The crew dir records
-  # the dispatcher's long-lived PID (default $PPID), recorded for a future
+  # the dispatcher's long-lived PID (default: nearest non-shell ancestor), recorded for a future
   # stale-cleanup command (nothing reclaims automatically today), and holds
   # that crew's watch cursor + watch lock. Crew ids are unique by construction
   # (timestamp-pid), so re-registering a live crew is idempotent (re-mkdir -p,
@@ -938,7 +1017,7 @@ register | deregister)
   cdir="$dir/crews/$crew"
   if [ "$sub" = register ]; then
     mkdir -p "$cdir"
-    printf '%s\n' "${1:-$PPID}" >"$cdir/pid"
+    printf '%s\n' "${1:-$(_owner_pid)}" >"$cdir/pid"
     # The pane, not just the pid: a worker reattaching to a live dispatcher has
     # to retarget its `dispatcher_pane:` ping, and the pid alone cannot name a
     # pane. Absent outside tmux, which readers must tolerate.
@@ -1052,7 +1131,7 @@ adopt)
     exit 1
     ;;
   esac
-  pid="${2:-$PPID}"
+  pid="${2:-$(_owner_pid)}"
   cdir="$dir/crews/$id"
   known=""
   [ -d "$cdir" ] && known=1
@@ -4426,7 +4505,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
