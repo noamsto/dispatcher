@@ -50,8 +50,14 @@ Read the ticket description and explore the relevant codebase areas.
    - **Independent PRs off main** (default): when sub-tasks don't touch the same files
    - **Parent branch**: when sub-tasks have file/dependency overlap — sub-PRs are **stacked**, and the final PR merges parent → main. The first sub-ticket branches from the parent and its PR targets the parent; each later sub-ticket branches from the *previous* sub-ticket's pushed branch and its PR targets that branch, so it contains the work it depends on even though nothing is merged yet (autopilot never merges). Before the first sub-ticket, create the parent branch from the default branch and push it, so sub-ticket branches and PRs have a base on origin:
      ```bash
-     PARENT_PATH=$(wt switch --create <parent-branch> --no-cd --format json -y | jq -r '.path')
-     git -C "$PARENT_PATH" push -u origin <parent-branch>
+     parent_branch=<parent-branch>
+     if git show-ref --verify --quiet "refs/heads/$parent_branch"; then
+       PARENT_PATH=$(wt switch "$parent_branch" --no-cd --format json -y | jq -r '.path')
+     else
+       PARENT_PATH=$(wt switch --create "$parent_branch" --no-cd --format json -y | jq -r '.path')
+     fi
+     [ -n "$PARENT_PATH" ] || { echo "wt switch failed — stop and ask the user" >&2; exit 1; }
+     git -C "$PARENT_PATH" push -u origin "$parent_branch"
      ```
 4. Process each sub-ticket through Steps 3-9 below — `issue add` each sub-ticket as you start it, `issue done` when its PR is green
 5. Present the breakdown plan before starting. Don't ask for approval — just announce what you're doing and proceed.
