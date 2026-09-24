@@ -5385,6 +5385,48 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "acceptance list"
 }
 
+@test "pr_open: a bold **Acceptance:** list keeps the ledger hint (not the empty-detail steer)" {
+  # #386: bold spellings are equivalent acceptance lists, so a free-text
+  # detail keeps the ledger grammar and an empty detail is refused.
+  _task_doc trivial
+  printf '\n**Acceptance:**\n- AC1\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  _refused "acceptance list"
+}
+
+@test "pr_open: a bold **Acceptance criteria** list keeps the ledger hint" {
+  _task_doc trivial
+  printf '\n**Acceptance criteria**\n- AC1\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+}
+
+@test "pr_open: a line-start Acceptance: is detected case-insensitively" {
+  _task_doc trivial
+  printf '\nacceptance: AC1 pass(x)\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+}
+
+@test "pr_open: an acceptance word mid-sentence is not read as a list" {
+  # The match stays anchored to a heading/marker/colon, so prose that merely
+  # mentions the word does not force a ledger onto a doc that has none.
+  _task_doc trivial
+  printf '\nSee the acceptance list in the issue for the details.\n' >>WORKER_TASK.md
+  printf 'acceptance is mentioned here in passing.\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "no acceptance list"
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
 @test "pr_open: a jq failure on the ledger check refuses (fail closed)" {
   _task_doc trivial
   mkdir -p "$BATS_TEST_TMPDIR/jqstub"

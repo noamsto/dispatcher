@@ -788,20 +788,24 @@ status | msg)
             exit 1
           fi
           hint='every acceptance ledger item must read <id> pass(<evidence>) or <id> waived(dispatcher), e.g. "AC1 pass(bats 12/12); AC2 waived(dispatcher)", with any note inside those parentheses; pending, not run, skipped, n/a, partial, or a note after the parentheses is refused. An item you cannot run is not a pass: post blocked "acceptance: <item> — <why>" and await the dispatcher, who alone waives it.'
-          # A task doc with no acceptance list must not carry a ledger at all, so
-          # steer that worker at the empty detail instead of at the grammar. The
-          # heading match is deliberately broad (`##`, `###`, …): a narrow `^##`
-          # would miss `### Acceptance criteria` and steer a doc that does have
-          # items to an empty detail, letting an unrun item reach pr_open.
+          # A task doc has an acceptance list when a line is a `##`/`###` (or
+          # deeper) heading, a bold/underscore-wrapped run at line start
+          # (`**Acceptance:**`, `**Acceptance criteria**`), or a line-start
+          # `Acceptance:` — all case-insensitive. The match stays anchored to
+          # one of those, so a word merely mentioned mid-sentence, or a wrapped
+          # prose line that only starts with the word, is not read as a list.
+          # A task doc with no such list must not carry a ledger at all, so
+          # steer that worker at the empty detail instead of at the grammar.
+          acceptance_re='^[[:space:]]*(#{2,}[[:space:]]+acceptance|[*_]{1,2}acceptance|acceptance:)'
           if [ "$ledger_rc" -eq 0 ]; then
-            if grep -Eq '^#{2,}[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
+            if grep -Eqi "$acceptance_re" "$top/WORKER_TASK.md"; then
               echo "crew: refusing pr_open for $from — $hint" >&2
             else
-              echo "crew: refusing pr_open for $from — this task doc has no acceptance list (no heading matching ## Acceptance), so an empty detail is the correct pr_open: crew status \"\$CREW_WORKER_ID\" pr_open \"\" <url>. Do not invent a pass(...) item. ($hint)" >&2
+              echo "crew: refusing pr_open for $from — this task doc has no acceptance list (no heading, bold, or line-start spelling of Acceptance), so an empty detail is the correct pr_open: crew status \"\$CREW_WORKER_ID\" pr_open \"\" <url>. Do not invent a pass(...) item. ($hint)" >&2
             fi
             exit 1
           fi
-          if [ -z "${d//[[:space:]]/}" ] && grep -Eq '^#{2,}[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
+          if [ -z "${d//[[:space:]]/}" ] && grep -Eqi "$acceptance_re" "$top/WORKER_TASK.md"; then
             echo "crew: refusing pr_open for $from — the task doc has an acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
             exit 1
           fi
