@@ -213,8 +213,12 @@ teardown() {
     adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
     adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
     adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
-    run grep -F "Before directing any layer to rebase, record that layer's \`headRefOid\`" "$ROOT/$doc"
+    run grep -F 'recorded when the child is based on it, not when a rebase is directed' "$ROOT/$doc"
     [ "$status" -eq 0 ]
+    run grep -F "Before directing any layer to rebase, record that layer's" "$ROOT/$doc"
+    [ "$status" -ne 0 ]
+    run grep -F 'is the squash-merge cut when the child was already rebased' "$ROOT/$doc"
+    [ "$status" -ne 0 ]
     run grep -F 'git rebase --onto origin/<parent> <recorded old head>' "$ROOT/$doc"
     [ "$status" -eq 0 ]
     run grep -F 'git merge-base --is-ancestor <recorded old head> origin/<parent>' "$ROOT/$doc"
