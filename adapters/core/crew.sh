@@ -758,11 +758,13 @@ status | msg)
     # the gate — the pane's verdict. On pi the log is folded in order and fails
     # closed: only an exact accept/revise from the reviewer is honoured, any
     # other reviewer reply carrying a seam or verdict (a reject, an unknown or
-    # elided verdict, a body that is not a JSON object) counts as a reject that
-    # blocks the lead's own seam until the reviewer's next accept/revise. A grid
-    # assignment (lead -> role), even an unparseable one, voids every earlier
-    # verdict AND the lead's own earlier review seam until a fresh verdict
-    # lands. The assignment is never itself a seam.
+    # elided verdict, a body that is not a JSON object, an unparsable line
+    # naming this crew and the reviewer) counts as a reject that blocks the
+    # lead's own seam until the reviewer's next accept/revise; a reviewer note
+    # with a tag and no verdict is not a verdict. Any lead -> reviewer msg
+    # except the bare {"final":true} release, even an unparseable one, voids
+    # every earlier verdict AND the lead's own earlier review seam until a
+    # fresh verdict lands. The assignment is never itself a seam.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
