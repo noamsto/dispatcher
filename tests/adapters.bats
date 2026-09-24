@@ -1655,6 +1655,36 @@ STUB
   [[ "$output" == *"stop and ask the user"* ]]
 }
 
+# A local branch or tag named `origin/main` outranks refs/remotes/origin/main
+# under bare-name resolution, so the snippets must resolve by full ref.
+@test "Base ref snippets: a shadowing origin/main branch or tag cannot redirect the default base" {
+  local fx="$BATS_TEST_TMPDIR/fx" git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q --bare -b main "$fx/origin.git"
+  git clone -q "$fx/origin.git" "$fx/work" 2>/dev/null
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  git -C "$fx/work" push -q origin HEAD:main
+  git -C "$fx/work" remote set-head origin main
+  git -C "$fx/work" checkout -q -b child
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m child
+  git -C "$fx/work" branch origin/main child
+  git -C "$fx/work" update-ref refs/tags/origin/main child
+  mkdir -p "$fx/bin"
+  printf '#!/usr/bin/env bash\necho "no pull requests found for branch" >&2\nexit 1\n' >"$fx/bin/gh"
+  chmod +x "$fx/bin/gh"
+  : >"$fx/work/WORKER_TASK.md"
+  local want doc
+  want=$(git -C "$fx/work" rev-parse refs/remotes/origin/main)
+  for doc in protocols/WORKER_PROTOCOL.md commands/autopilot.md; do
+    awk '/^## Base ref/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+      "$ROOT/adapters/core/$doc" >"$fx/snippet.sh"
+    [ -s "$fx/snippet.sh" ]
+    cd "$fx/work"
+    PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/snippet.sh; echo "base=$base ref=$base_ref"'
+    [ "$status" -eq 0 ]
+    [ "$output" = "base=$want ref=refs/remotes/origin/main" ]
+  done
+}
+
 @test "the critic roster ships verbatim to the engines without an agent registry" {
   for source in "$ROOT"/adapters/core/critics/*.md; do
     name="$(basename "$source")"
