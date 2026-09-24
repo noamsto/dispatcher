@@ -323,8 +323,8 @@ is back.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
 - **Task-specific dirs.** When the task body names a path outside the worktree that the
   worker must read, pass `--add-dir <DIR>` (repeatable) with the **narrowest** dir that
-  covers it — e.g. `~/nix-config/home/ai/claude-code/skills/deslop`, not
-  `~/nix-config`. Never grant a secrets dir. `dispatch` refuses a value that isn't an
+  covers it — e.g. `~/other-repo/docs/specs`, not
+  `~/other-repo`. Never grant a secrets dir. `dispatch` refuses a value that isn't an
   absolute, existing directory, or that resolves (via `realpath`) to `/`, `$HOME` or an
   ancestor of it, inside `$crew_dir`, or under `~/.ssh`, `~/.gnupg`, `~/.aws` or
   `~/.config/gh` (or an ancestor of any of those) — this is defence in depth, G3's
@@ -794,8 +794,8 @@ Two reads remain for detail:
   worker must be reached this way (for example a stopped session that was already
   re-dispatched, or a coded reply a human must hand-deliver), the only fallback is a
   human running `tmux send-keys` directly: capture the pane **before** typing and
-  **after** submitting, verify the prompt was accepted, and never do it while the pane
-  shows unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a
+  **after** submitting, verify the prompt was accepted, and
+  never do it while the pane shows unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a
   quota wait is answered by waiting for the reset window or a human-run
   `/low-priority`, not by typing).
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
