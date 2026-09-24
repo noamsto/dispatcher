@@ -466,6 +466,30 @@ teardown() {
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
 }
 
+@test "the deslop skill ships to every engine" {
+  [ -f "$ROOT/adapters/core/skills/deslop/SKILL.md" ]
+  run grep -F 'DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";' "$ROOT/nix/hm-module.nix"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/claude-code/plugin/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/codex/plugin/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/cursor/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "every engine runs /deslop and posts the deslop seam" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F 'crew msg "$CREW_WORKER_ID" "review:$(crew id)" '"'"'{"seam":"deslop"}'"'"'' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'dispatcher:deslop' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'skip `/deslop`' "$protocol"
+  [ "$status" -ne 0 ]
+  run grep -F 'claude-only, per rule 4' "$protocol"
+  [ "$status" -ne 0 ]
+}
+
 @test "worker protocol defines the retro-note vocabulary" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
