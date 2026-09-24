@@ -487,6 +487,9 @@ dispatcher whose stream is auto-stopped runs no turn, so it never polls `--statu
 notice. Process death stays covered — the next turn's poll finds `dead`.
 
 **No `Monitor` tool** → follow the cursor lane's background park, below.
+**pi is the exception:** it has no `Monitor` and no background-completion
+notification to bind a turn to, so it takes the codex/pi blocking park below
+instead.
 
 **cursor — background park.** INV-1 below applies to you.
 
@@ -523,15 +526,15 @@ notice. Process death stays covered — the next turn's poll finds `dead`.
   supervisor is needed (G4 self-heal).
 
 **Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn;
-codex: at each park call — see the codex lane's override, below).**
+codex/pi: at each park call — see the codex/pi lane's override, below).**
 Partition the roster: `working`+`blocked` = **ACTIVE**; `pr_open`+`done`+`failed` =
 **TERMINAL / budget-freeing**. At re-arm:
 
 - **ACTIVE** roster → `--timeout 270`: a sub-TTL cache-warm heartbeat (270, not 300 —
   the prompt-cache TTL margin is load-bearing).
 - **DRAINED** roster (nothing active) → `--timeout 3300`: bounds dark time, accepts
-  cache-cold since nothing is in flight. **codex: never this branch** — the codex
-  lane below always parks 270, drained or not.
+  cache-cold since nothing is in flight. **codex/pi: never this branch** — the
+  codex/pi lane below always parks 270, drained or not.
   A DRAINED→ACTIVE transition from a human adding a task happens in a human turn, so it
   does **not** wake the outstanding 3300s park — deliberate: the new worker first posts
   `working` (which `watch` does not match), so nothing needs the park woken until that
@@ -554,11 +557,14 @@ overshoot is ≤4.5 minutes.** Named rather than closed: closing it would mean
 killing the outstanding watch from a human turn, which is more fragile than the
 overshoot it would fix.
 
-**codex — blocking park.** There is no background-notify primitive, but also no
+**codex / pi — blocking park.** There is no background-notify primitive, but also no
 short foreground tool timeout: call `crew watch --timeout 270` in the
 **foreground**, let the turn block until a worker event wakes it or the park
 expires, handle whatever it returns, then park again — this **is** your loop; re-park
-after every batch. Always 270 — **never** the cursor lane's 3300s drained park above:
+after every batch. pi shares this lane: it has no `Monitor` and no
+background-completion notification a turn can be bound to — the cursor lane's
+arm-token completion is exactly what pi lacks — so a pi dispatcher parks in the
+foreground the same way. Always 270 — **never** the cursor lane's 3300s drained park above:
 the park *is* your turn, so a drained 3300 would leave the human queued behind a
 foreground call for ~55 minutes, exactly when their input is the only thing that can
 arrive (short parks cost cache-warmth; that is the acceptable price). **Never pass
@@ -571,7 +577,7 @@ changes nothing here: the always-270s park already covers it, checked on every
 wake the lane already makes regardless.
 
 **Retro synthesis — claude: any batch that leaves the roster DRAINED, heartbeat as
-backstop; cursor/codex: at a DRAINED roster, before the re-arm.** Read the crew's
+backstop; cursor/codex/pi: at a DRAINED roster, before the re-arm.** Read the crew's
 notes and roster, then write:
 
 1. For each terminal worker, compare its outcome against your `{tier, engine, model,

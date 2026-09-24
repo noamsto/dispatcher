@@ -2703,7 +2703,7 @@ $hits"
   protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
   cursor_lane="$(awk '
     /\*\*cursor — background park\.\*\*/ { flag = 1 }
-    flag && /\*\*codex — blocking park\.\*\*/ { exit }
+    flag && /\*\*codex( \/ pi)? — blocking park\.\*\*/ { exit }
     flag
   ' "$protocol")"
   [ -n "$cursor_lane" ]
@@ -2712,6 +2712,22 @@ $hits"
     'woken up to one' \
     'min(branch default, crew hold park'; do
     run grep -F "$statement" <<<"$cursor_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the pi lane carries its blocking-park contract" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    '**No `Monitor` tool** → follow the cursor lane' \
+    '**pi is the exception:**' \
+    '**codex / pi — blocking park.**' \
+    'pi shares this lane: it has no `Monitor` and no' \
+    'arm-token completion is exactly what pi lacks' \
+    'codex/pi: at each park call' \
+    'codex/pi: never this branch' \
+    'cursor/codex/pi: at a DRAINED roster, before the re-arm.**'; do
+    run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
 }

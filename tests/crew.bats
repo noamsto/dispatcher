@@ -771,6 +771,55 @@ EOF
   [ -z "$(find "$WORKER" -name '.seed.*')" ]
 }
 
+@test "pi-agent-dir: seeds the ambient hookyard bridge and registers it" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  [ -f "$WORKER/bin/hookyard-bridge.ts" ]
+  cmp -s "$AMBIENT/bin/hookyard-bridge.ts" "$WORKER/bin/hookyard-bridge.ts"
+  [ "$(jq -r '.extensions[0]' "$WORKER/settings.json")" = "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
+}
+
+@test "pi-agent-dir: no ambient hookyard bridge leaves the worker unhooked" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  [ ! -e "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -c '.extensions // "absent"' "$WORKER/settings.json")" = '"absent"' ]
+}
+
+@test "pi-agent-dir: a re-seed appends the bridge once and keeps a pi-written order" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # pi (or a user) may prepend its own extension; a reseed must not reorder the
+  # list nor duplicate hookyard's entry.
+  printf '{"extensions":["/some/other.ts","%s"]}\n' "$WORKER/bin/hookyard-bridge.ts" >"$WORKER/settings.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c .extensions "$WORKER/settings.json")" = "[\"/some/other.ts\",\"$WORKER/bin/hookyard-bridge.ts\"]" ]
+  [ -z "$(find "$WORKER" -name '.seed.*')" ]
+}
+
+@test "pi-agent-dir: a non-array extensions value is refused, not a jq crash" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # A hand-edited/future-schema settings.json must refuse legibly, not die on an
+  # opaque jq `cannot be added` and take dispatch/dispatch-resume down with it.
+  # `false` is included: jq's `//` would fold it into null and slip the guard.
+  for bad in '{"not":"an array"}' 'false' '"a string"' '3'; do
+    printf '{"extensions":%s}\n' "$bad" >"$WORKER/settings.json"
+    run --separate-stderr run_crew pi-agent-dir
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"non-array extensions value"* ]]
+    [ "$(jq -c .extensions "$WORKER/settings.json")" = "$bad" ]
+  done
+}
+
 @test "pi-agent-dir: no ambient auth.json seeds an empty auth" {
   _pi_fixture
   rm "$AMBIENT/auth.json"
