@@ -11,6 +11,8 @@
 # dispatchable slug and a trailing `Tip: ...` line — none of those contain
 # the ` - ` separator a real model line does, so filtering on it discards
 # all three without special-casing each one.
+# The in-session Task tool's subagent roster is narrower and is not probed
+# here (dispatch-orchestration.md -> "Cursor Task-spawn slugs").
 set -euo pipefail
 
 OUT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/crew"

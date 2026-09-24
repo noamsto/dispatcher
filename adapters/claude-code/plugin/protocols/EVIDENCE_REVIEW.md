@@ -57,7 +57,10 @@ Other reviewers keep their normal rung. This promotion applies even in a repo
 with PR review bots; record `review_mode: full`. It is a scoped model promotion,
 not a deep-tier spec rewrite or a premium implementation pass. If that model is
 unavailable, use the caller's review-unavailable path; report the required model
-and failure, never silently substitute a lighter review. In a direct command,
+and failure, never silently substitute a lighter review. On cursor, unavailable
+means the Task-slug substitution list in `dispatch-orchestration.md` → "Cursor
+Task-spawn slugs" was exhausted; a same-or-higher logged substitution is neither
+lighter nor silent. In a direct command,
 report blocked to the user/team lead instead of inventing a crew identity.
 
 Commit in-scope implementation and test changes before review so the reviewed
@@ -128,7 +131,9 @@ additional assessment, not permission for more fix rounds: if the two-round
 budget is exhausted, hand off its proposal without implementing it. If budget
 remains, implement the scoped replacement and obtain the pending targeted
 re-review within that budget. If recurrence continues after escalation, its
-output is not actionable, or the model is unavailable, block with the ledger
+output is not actionable, or the model is unavailable (on cursor: the Task-slug
+substitution list was exhausted; substitution is same-or-higher, logged, never
+lighter), block with the ledger
 and concrete decision needed. A worker uses block→await; a direct command or PR
 shepherd reports to its user/team lead. Green CI does not waive this stop.
 

@@ -2209,3 +2209,152 @@ $hits"
     [ "$status" -eq 0 ]
   done
 }
+
+@test "cursor Task-spawn slugs are distinguished from launch slugs, with a substitution rule" {
+  for base in \
+    adapters/core \
+    adapters/claude-code/plugin \
+    adapters/codex/plugin \
+    adapters/cursor; do
+    doc="$ROOT/$base/protocols/dispatch-orchestration.md"
+    for statement in \
+      '### Cursor Task-spawn slugs' \
+      '**Launch slugs** are what' \
+      '**Task-spawn slugs** are the in-session Task tool'"'"'s subagent' \
+      'list is narrower and is **not** probed by `refresh-models`' \
+      'Task-spawnable.' \
+      'Recorded Task roster, 2026-09-23, cursor-agent 2026.09.18-9a7762b:' \
+      '`claude-fable-5-1-thinking-high`, `claude-opus-5-5-medium`,' \
+      '`claude-opus-5-thinking-high`, `composer-2.5`, `composer-2.5-fast`,' \
+      '`cursor-grok-4.6-high`, `gemini-3.8-flash-high`, `gpt-5.6-sol-medium`,' \
+      '`grok-4.7-medium`, `muse-spark-1.3-high`. `grok-4.7-medium` is the only' \
+      'or "could not be resolved to a valid subagent model" is not retried on the same' \
+      'slug. Walk the named slug'"'"'s candidate list in order and spawn the first the' \
+      'probing. Candidates are the same burn class or higher, never lower. Classes:' \
+      '`grok-4.7-low` cheap; `grok-4.7-medium` standard; `grok-4.7-high`,' \
+      '`cursor-grok-4.6-high`, `claude-opus-5-thinking-high` premium;' \
+      '`claude-fable-5-1-thinking-high` above premium.' \
+      '| `grok-4.7-low` | `grok-4.7-medium`, `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |' \
+      '| `grok-4.7-medium` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |' \
+      'Walking the list is the retry: the same slug is never respawned. A named slug' \
+      'without a row uses the row of its base slug: drop a `-fast` suffix (speed, not' \
+      'strength — the base slug is tried first, then its row, always non-fast) and' \
+      'read `cursor-grok-4.6-<effort>` like `grok-4.7-<effort>`, with `-xhigh` taking' \
+      'the `grok-4.7-high` row.' \
+      'the same rung, not a skipped one.' \
+      'may precede any ledger): `task-slug substituted: <named> → <used>' \
+      'a metrics field),' \
+      'finish-prs) have no bus: they log only in `REVIEW_NOTES.md` and their report.' \
+      '| `grok-4.7-high` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |' \
+      'In plan-shaped recovery the candidates are limited to Grok-family' \
+      'authoritative tuple.' \
+      'one free line below the ledger table in' \
+      '`REVIEW_NOTES.md` (not a table row; create the file if absent — spec/plan seams' \
+      '`{"seam":"<spec|plan|execute|review>","tag":"other","detail":"task_slug_substituted: <named> → <used>"}`,' \
+      '`review_mode`.' \
+      '| review gate; `EVIDENCE_REVIEW.md` promoted reviewer | the review-unavailable block path (`review_mode: unavailable`, `review_unavailable` note) |' \
+      '| recurrence escalation assessor | `EVIDENCE_REVIEW.md`'"'"'s recurrence handoff: block with the ledger and the concrete decision needed (a worker uses block→await; `review_mode` unchanged) |' \
+      '| spec-/plan-critic (`spec-plan-critic`) | the degraded same-context critic fallback, only after the list is exhausted |' \
+      '| plan-shaped recovery planner | the existing `rung_blocked` block |' \
+      '| execute default/escalated rung | block→await `blocked "task slug unavailable: <named>"` with an `other` retro note — not `review_mode: unavailable` |' \
+      'so `EVIDENCE_REVIEW.md`'"'"'s "never silently substitute a lighter review" still'; do
+      run grep -F -- "$statement" "$doc"
+      [ "$status" -eq 0 ]
+  done
+  # The subsection sits after "### Tier map" so the dispatch/crew model-map slice is unchanged.
+  tier="$(grep -n '^### Tier map' "$doc" | head -1 | cut -d: -f1)"
+  sub="$(grep -n '^### Cursor Task-spawn slugs' "$doc" | head -1 | cut -d: -f1)"
+  orch="$(grep -n '^## Orchestrator engines' "$doc" | head -1 | cut -d: -f1)"
+  [ "$tier" -lt "$sub" ]
+  [ "$sub" -lt "$orch" ]
+  done
+}
+
+@test "every Task-spawn substitution candidate is on the recorded roster and never burns lighter" {
+  doc="$ROOT/adapters/core/protocols/dispatch-orchestration.md"
+  section="$(sed -n '/^### Cursor Task-spawn slugs/,/^## Orchestrator engines/p' "$doc")"
+  roster="$(printf '%s\n' "$section" | sed -n '/^Recorded Task roster/,/^$/p')"
+  weight() {
+    case "$1" in
+      grok-4.7-low) echo 1 ;;
+      grok-4.7-medium) echo 2 ;;
+      grok-4.7-high | cursor-grok-4.6-high | claude-opus-5-thinking-high) echo 4 ;;
+      claude-fable-5-1-thinking-high) echo 8 ;;
+      *) echo 0 ;;
+    esac
+  }
+  rows=0
+  while IFS= read -r row; do
+    named="$(printf '%s' "$row" | cut -d'|' -f2 | grep -o '`[^`]*`' | head -1 | tr -d '`')"
+    [ "$(weight "$named")" -gt 0 ]
+    for cand in $(printf '%s' "$row" | cut -d'|' -f3 | grep -o '`[^`]*`' | tr -d '`'); do
+      run grep -F "\`$cand\`" <<<"$roster"
+      [ "$status" -eq 0 ]
+      [ "$(weight "$cand")" -ge "$(weight "$named")" ]
+      [ "$(weight "$cand")" -gt 0 ]
+    done
+    rows=$((rows + 1))
+  done < <(printf '%s\n' "$section" | grep -E '^\| `grok-4\.7-(low|medium|high)` \|')
+  [ "$rows" -eq 3 ]
+}
+
+@test "the cursor Task-spawn slug pointers reach every seam and every generated copy" {
+  for base in \
+    adapters/core \
+    adapters/claude-code/plugin \
+    adapters/codex/plugin \
+    adapters/cursor; do
+    orch="$ROOT/$base/protocols/dispatch-orchestration.md"
+    worker="$ROOT/$base/protocols/WORKER_PROTOCOL.md"
+    evidence="$ROOT/$base/protocols/EVIDENCE_REVIEW.md"
+    critic="$ROOT/$base/skills/spec-plan-critic/SKILL.md"
+    run grep -F '### Cursor Task-spawn slugs' "$orch"
+    [ "$status" -eq 0 ]
+    run grep -F 'a launch id; in-session Task spawns resolve through "Cursor Task-spawn slugs"' "$orch"
+    [ "$status" -eq 0 ]
+    run grep -F 'A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first.' "$orch"
+    [ "$status" -eq 0 ]
+    run grep -F 'It does not probe the' "$orch"
+    [ "$status" -eq 0 ]
+    run grep -F 'A Task-slug refusal takes the substitution rule in `dispatch-orchestration.md` → "Cursor Task-spawn slugs" first, limited to Grok-family slugs strictly above the authoritative tuple; an exhausted list blocks as `rung_blocked`.' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'The cursor reviewer slug is a Task-spawn slug: a refusal takes the substitution rule' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'These are Task-spawn slugs: a refused slug takes the substitution rule in' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'blocked "task slug unavailable: <named>"` with an `other` retro note.' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'On cursor, a Task-slug refusal is not unavailability until the candidate list' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'a Task-spawn slug — a refusal takes the substitution rule in `dispatch-orchestration.md` → "Cursor Task-spawn slugs" |' "$critic"
+    [ "$status" -eq 0 ]
+    run grep -F 'means the Task-slug substitution list in `dispatch-orchestration.md` → "Cursor' "$evidence"
+    [ "$status" -eq 0 ]
+    run grep -F 'lighter nor silent.' "$evidence"
+    [ "$status" -eq 0 ]
+    run grep -F '(on cursor: the Task-slug' "$evidence"
+    [ "$status" -eq 0 ]
+    run grep -F 'lighter), block with the ledger' "$evidence"
+    [ "$status" -eq 0 ]
+    run grep -F 'never silently substitute a lighter review' "$evidence"
+    [ "$status" -eq 0 ]
+    run grep -F 'walking the candidate list is the retry: the same slug is never respawned' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'a cursor Task-slug refusal blocks only after its substitution list is exhausted' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'A same-or-higher Grok substitute for the refused next rung is not a skipped rung.' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'a same-or-higher Grok substitute for a refused next rung is not a skipped rung.' "$orch"
+    [ "$status" -eq 0 ]
+    run grep -F 'the block message names the slugs tried.' "$worker"
+    [ "$status" -eq 0 ]
+    run grep -F 'taken only when the spawn is refused (on cursor, only after the Task-spawn substitution list in `dispatch-orchestration.md` → "Cursor Task-spawn slugs" is exhausted)' "$critic"
+    [ "$status" -eq 0 ]
+    run grep -F 'not a per-engine default.' "$critic"
+    [ "$status" -eq 0 ]
+    run grep -F 'a same-context pass is the degraded fallback for a refused spawn (on cursor, only after the Task-spawn substitution list' "$critic"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'The in-session Task tool'"'"'s subagent roster is narrower and is not probed' "$ROOT/adapters/core/refresh-models.sh"
+  [ "$status" -eq 0 ]
+}
