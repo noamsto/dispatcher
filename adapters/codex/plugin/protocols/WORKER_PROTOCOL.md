@@ -195,11 +195,41 @@ the unavailable-gate block on pi.
      '{"seam":"review","artifact":"<abs path to review.diff>","roster":"<abs path to roster.json>","question":"Review this diff."}'
    ```
 3. **Await the verdict** — from your bash tool, with a tool timeout above the
-   await timeout (e.g. 360000ms):
+   await timeout: 360s (360000 only if your bash tool takes milliseconds):
    ```
-   crew await "$CREW_WORKER_ID" --timeout 300
+   crew await "$CREW_WORKER_ID" --from "role:$(git branch --show-current):<role>" --timeout 300
    ```
    The reply is the role's verdict JSON (`verdict` / `findings` / `evidence`).
+   `--from` restricts the wait to that one role, so another role's reply (or a
+   stale one) can neither release the wait early nor be consumed by it; the
+   role's `role_exited` msg is posted from the same id, so it returns from
+   `--from` too. This is **the** way to wait on a role verdict: never hand-roll
+   a poll loop over `events.jsonl` or the bus log, and never set a tool timeout
+   above 600s.
+
+   **Bound the wait.** One `--timeout 300` await is one cycle and never holds a
+   bash call longer than 600s. On an empty return, read the role's pane state
+   first, scoped to your own window:
+   `tmux list-panes -t "$TMUX_PANE" -F '#{pane_id} #{@crew_role} #{@crew_state}'`,
+   rows for `<role>` only. A respawn leaves the dead pane's `exited` row beside
+   the live one, so judge the live pane and treat `exited` or missing only when
+   no live pane exists. Then fold stragglers (step 5); if the fold returns the
+   verdict, go to step 4 and skip the rest. This budget is separate from, and far
+   shorter than, the 24-cycle wait on a dispatcher reply in "Report to the bus":
+   a role verdict normally lands in minutes, so a pane still silent after ~15
+   minutes is stalled, not slow.
+   - `working` → another cycle, at most 3 `working` cycles (~15 min) counted
+     from the assignment the role is on. Still no verdict after the third:
+     `tmux kill-pane -t <pane>`, then the died-role path below.
+   - `idle` with no verdict (the assignment was never picked up, or the verdict
+     went astray) → re-send the step 2 assignment once and run one more cycle;
+     `idle` again → `tmux kill-pane -t <pane>`, then the died-role path below.
+   - `exited`, or no such pane → the died-role path below (respawn once, else
+     fall back / the pi unavailable gate). `dispatch --spawn-role` does nothing
+     while a live pane for the role exists, which is why a stalled pane is
+     killed first. After a successful respawn, re-send the step 2 assignment to
+     the new pane (it never sees the old one); that re-send starts a fresh
+     budget (3 `working` cycles, one `idle` re-send).
 4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.

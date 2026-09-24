@@ -1384,6 +1384,59 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"vb"'* ]]
 }
 
+# #300: a lead waiting on one role's verdict must not be released by another
+# sender's reply. --from restricts the candidates to one exact sender; the other
+# sender's msg is left undelivered for a later plain await.
+@test "await --from: another sender's newer-so-far reply neither returns nor is consumed" {
+  id="worker:feat/x#s1-1"
+  plan="role:feat/x:plan-critic"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
+  (
+    sleep 2
+    CREW_ID=c1 bash -euo pipefail "$CREW" msg "$rev" "$id" "review verdict"
+  ) >/dev/null 2>&1 &
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 5 --interval 1
+  wait
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"review verdict"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [[ "$output" == *'"body":"plan verdict"'* ]]
+}
+
+@test "await --from: a timeout names the sender and exits 0 with empty stdout" {
+  id="worker:feat/x#s1-1"
+  plan="role:feat/x:plan-critic"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"$rev"* ]]
+}
+
+@test "await --from: a reply older than this session's question to that sender is not returned" {
+  id="worker:feat/x#s1-1"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$rev" "$id" "stale verdict"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "await --from: requires a value" {
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s1-1" --from
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"--from needs a value"* ]]
+}
+
 # The straggler fold (`crew inbox --since`) is how a reply that missed a timed-out
 # await is taken; it must count as delivered too, or the next await hands it back.
 @test "await: a reply taken through the inbox fold is not re-delivered by the next await" {

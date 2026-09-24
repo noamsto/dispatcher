@@ -876,14 +876,16 @@ reply)
   _bus_append "$log" "$line"
   ;;
 await)
-  # await <agent> [--timeout S] [--interval S] — block until a msg addressed to
-  # <agent> answers its outstanding question, print it, exit 0. A reply qualifies
-  # when it is newer than this session's own latest outbound msg to the reply's
-  # sender (the anchor is per conversation), so a reply that landed between the
-  # question and the await is still delivered (#240), and newer than the last
-  # reply this session was already handed from that sender (#290, by await or
-  # inbox), so a handled reply is never handed back by a later await. A session
-  # that has asked nothing falls back to the await start.
+  # await <agent> [--from SENDER] [--timeout S] [--interval S] — block until a msg
+  # addressed to <agent> answers its outstanding question, print it, exit 0.
+  # --from restricts that to one exact sender id (a lead waiting on one role's
+  # verdict); other senders' msgs are neither returned nor marked delivered.
+  # A reply qualifies when it is newer than this session's own latest outbound
+  # msg to the reply's sender (the anchor is per conversation), so a reply that
+  # landed between the question and the await is still delivered (#240), and
+  # newer than the last reply this session was already handed from that sender
+  # (#290, by await or inbox), so a handled reply is never handed back by a later
+  # await. A session that has asked nothing falls back to the await start.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -895,7 +897,7 @@ await)
   }
   me="${1:-}"
   [ -n "$me" ] || {
-    echo "crew: await <agent> [--timeout S] [--interval S]" >&2
+    echo "crew: await <agent> [--from SENDER] [--timeout S] [--interval S]" >&2
     exit 1
   }
   case "$me" in worker:*) _is_session_id "$me" || {
@@ -905,6 +907,7 @@ await)
   shift || true
   timeout=300
   interval=2
+  from=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --timeout)
@@ -923,6 +926,14 @@ await)
       interval="$2"
       shift 2
       ;;
+    --from)
+      [ -n "${2:-}" ] || {
+        echo "crew: --from needs a value" >&2
+        exit 1
+      }
+      from="$2"
+      shift 2
+      ;;
     *)
       echo "crew: await: unknown arg '$1'" >&2
       exit 1
@@ -939,12 +950,12 @@ await)
       # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
       # (the hard-kill crash mode) instead of aborting the whole read, and no
       # status row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" --argjson got "$delivered" '
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson since "$start" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {anchors: {}, cands: []};
           if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
           then .anchors[$e.to] = $e.ts
-          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me)
+          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me and ($from == "" or $e.from == $from))
           then .cands += [$e]
           else . end
         )
@@ -958,7 +969,7 @@ await)
       }
     fi
     [ "$(jq -nc 'now*1000|floor')" -ge "$deadline" ] && {
-      echo "crew: await ended after ${timeout}s — no reply to $me yet" >&2
+      echo "crew: await ended after ${timeout}s — no reply to $me${from:+ from $from} yet" >&2
       exit 0
     }
     sleep "$interval"
@@ -4469,7 +4480,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
