@@ -354,6 +354,54 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" != *"usage: dispatch"* ]]
 }
 
+# #349: the resume subcommand is selected by the FIRST argument only. A title
+# that merely contains the word `resume` must dispatch as a normal title and
+# never reach dispatch-resume at all.
+@test "a title word 'resume' is title text, not the resume subcommand (#349)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  cat >"$STUB_DIR/dispatch-resume" <<'EOF'
+#!/usr/bin/env bash
+printf 'DISPATCH-RESUME-CALLED\n' >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/dispatch-resume"
+  # The exact repro from #349: an unquoted title, so `resume` arrives as its
+  # own argv word (a quoted title would hide the bug behind the word-equality
+  # test the old scan used).
+  # shellcheck disable=SC2086
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 dispatch resume carry reads base from the task body
+  [ "$status" -eq 0 ]
+  run ! grep -q 'DISPATCH-RESUME-CALLED' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-dispatch-resume-carry-reads-base-from-th"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'title: dispatch resume carry reads base from the task body' "$wt_path/WORKER_TASK.md"
+}
+
+# The other half of #349: `resume` as the first argument still selects the
+# subcommand, and the token itself is stripped before exec.
+@test "resume is still the subcommand when it is the first argument (#349)" {
+  stub_bin dispatch-resume
+  run run_dispatch resume --print --fresh
+  [ "$status" -eq 0 ]
+  grep -Fq -- '--print --fresh' "$STUB_LOG"
+  run ! grep -Fq 'resume --print' "$STUB_LOG"
+  [[ "$output" != *"usage: dispatch"* ]]
+}
+
+# `--` ends option parsing: a title containing a flag-shaped word passes
+# verbatim and is never parsed as a flag (#349).
+@test "-- ends option parsing so a --base title word is not a flag (#349)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 -- "title with --base in it"
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title-with-base-in-it"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'title: title with --base in it' "$wt_path/WORKER_TASK.md"
+  run ! grep -q '^base:' "$wt_path/WORKER_TASK.md"
+}
+
 @test "rejects an unknown agent" {
   run run_dispatch standard sonnet --agent bogus --effort medium "title"
   [ "$status" -eq 1 ]
