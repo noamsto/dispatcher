@@ -186,10 +186,15 @@ _store_resume() {
   STORE="$TEST_REPO/store"
   BAKED_PROTOCOLS="$STORE/h-new-protocols"
   BAKED_SKILLS="$STORE/h-new-skills"
+  BAKED_REVIEWERS="$STORE/h-new-reviewers"
+  BAKED_CRITICS="$STORE/h-new-critics"
+  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  printf 'new\n' >"$BAKED_REVIEWERS/r.md"
+  printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
 }
 
 _store_protocols() { # <dir> <content>
@@ -213,6 +218,24 @@ _store_protocols() { # <dir> <content>
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$WT/WORKER_TASK.md"
   grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "resume ignores stale reviewers/critics dirs and the launch env carries all four resolved dirs" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_REVIEWERS_DIR="$STORE/h-old-source/adapters/core/reviewers"
+  export DISPATCHER_CRITICS_DIR="$STORE/h-old-source/adapters/core/critics"
+  mkdir -p "$DISPATCHER_REVIEWERS_DIR" "$DISPATCHER_CRITICS_DIR"
+  printf 'old\n' >"$DISPATCHER_REVIEWERS_DIR/r.md"
+  printf 'old\n' >"$DISPATCHER_CRITICS_DIR/c.md"
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
+  [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_CRITICS_DIR"* ]]
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS GIT_EDITOR=true" <(launch_log)
+  ! grep -qF -- "h-old-source" <(launch_log)
 }
 
 @test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {
@@ -626,7 +649,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -649,7 +672,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -672,7 +695,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -694,7 +717,7 @@ EOF
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -757,7 +780,7 @@ EOF
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  grep -qE 'send-keys -t %8 (DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }

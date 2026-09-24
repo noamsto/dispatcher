@@ -1387,11 +1387,16 @@ _store_dispatch() {
   STORE="$TEST_REPO/store"
   BAKED_PROTOCOLS="$STORE/h-new-protocols"
   BAKED_SKILLS="$STORE/h-new-skills"
+  BAKED_REVIEWERS="$STORE/h-new-reviewers"
+  BAKED_CRITICS="$STORE/h-new-critics"
+  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  printf 'new\n' >"$BAKED_REVIEWERS/r.md"
+  printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: baked\n---\n' >"$BAKED_SKILLS/spec-plan-critic/SKILL.md"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   run_store_dispatch() { bash -euo pipefail "$BATS_TEST_TMPDIR/dispatch-store.sh" "$@"; }
 }
 
@@ -1455,16 +1460,53 @@ _store_protocols() { # <dir> <content>
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
-# The three standalone builds each carry their own _resolve_dir; only the
+# The four standalone builds each carry their own _resolve_dir; only the
 # stale-branch `unset` differs (dispatcher.sh re-exports instead).
-@test "the three _resolve_dir copies stay in sync" {
+@test "the four _resolve_dir copies stay in sync" {
   local core="$BATS_TEST_DIRNAME/../adapters/core" f
-  for f in dispatch dispatch-resume dispatcher; do
-    sed -n '/^_resolve_dir() {/,/^}/p' "$core/$f.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-$f"
-    [ -s "$BATS_TEST_TMPDIR/resolve-$f" ]
+  for f in dispatch dispatch-resume dispatcher reviewers/resolve-roster; do
+    sed -n '/^_resolve_dir() {/,/^}/p' "$core/$f.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-${f##*/}"
+    [ -s "$BATS_TEST_TMPDIR/resolve-${f##*/}" ]
   done
   cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatch-resume"
   cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatcher"
+  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-resolve-roster"
+}
+
+@test "stale store-path reviewers/critics dirs are ignored and the launch env carries all four resolved dirs" {
+  stub_launch_bins
+  _store_dispatch
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
+  export DISPATCHER_REVIEWERS_DIR="$STORE/h-old-source/adapters/core/reviewers"
+  export DISPATCHER_CRITICS_DIR="$STORE/h-old-source/adapters/core/critics"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" old
+  mkdir -p "$DISPATCHER_REVIEWERS_DIR" "$DISPATCHER_CRITICS_DIR"
+  printf 'old\n' >"$DISPATCHER_REVIEWERS_DIR/r.md"
+  printf 'old\n' >"$DISPATCHER_CRITICS_DIR/c.md"
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale env dirs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
+  [[ "$output" == *"ignoring stale DISPATCHER_CRITICS_DIR"* ]]
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS GIT_EDITOR=true" <(launch_log)
+  ! grep -qF -- "h-old-source" <(launch_log)
+}
+
+@test "a raw (unsubstituted) dispatch script leaves unresolved placeholder dirs out of the launch env" {
+  stub_launch_bins
+  unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "raw dirs"
+  [ "$status" -eq 0 ]
+  ! grep -qF -- "DISPATCHER_REVIEWERS_DIR=" <(launch_log)
+  ! grep -qF -- "DISPATCHER_CRITICS_DIR=" <(launch_log)
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" <(launch_log)
+}
+
+@test "--spawn-role gives the role pane the resolved dirs in its launch env" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" <(launch_log)
+  grep -qF -- "GIT_EDITOR=true" <(launch_log)
 }
 
 @test "a stale store-path DISPATCHER_SKILLS_DIR is ignored and pi gets the baked skills dir" {

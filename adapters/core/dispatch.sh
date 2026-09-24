@@ -321,6 +321,12 @@ budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 # (a non-Nix install) it is not a directory, and pi_skill_args' probe drops it.
 _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
 
+# Reviewer and critic markdown directories, handed to the launched session
+# explicitly (write_launch_script) so it never reads a stale export left in the
+# tmux server's environment.
+_resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
+_resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
+
 # Engine roster helpers must precede every early command, including lazy role
 # spawning, so every launch path rejects a disabled engine before scaffolding.
 ENGINES_ALL="claude codex cursor pi"
@@ -613,8 +619,16 @@ write_launch_script() {
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
     printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
   else
+    local _dirs="" _n _v
+    for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
+      _v="${_n}_DIR"
+      _v="${!_v:-}"
+      if [[ $_v == /* ]]; then
+        printf -v _dirs '%sDISPATCHER_%s_DIR=%q ' "$_dirs" "$_n" "$_v"
+      fi
+    done
     _file="$(mktemp "$_dir/launch.XXXXXX")"
-    printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nexec env %s%s\n' "$_dirs" "$2" >"$_file"
   fi
   chmod 700 "$_file"
   shell_quote _quoted "$_file"

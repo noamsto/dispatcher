@@ -32,6 +32,35 @@ export LC_ALL=C
 
 default_harness="@reviewersDir@"
 
+# Duplicated from dispatch.sh (standalone build); tests/dispatch.bats pins the
+# copies together.
+#
+# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
+# override against the baked default (#303). A shell or tmux server that
+# outlives a rebuild keeps the previous build's export, so an override under the
+# baked path's store root is kept only when its content equals the baked dir's:
+# the current build's export sits at a different store path than the baked
+# projection but holds the same files. A checkout override always wins, as does
+# any override in a raw script (baked is not absolute). diff sits in an `if`
+# because its exit 1 means "differs", not failure.
+# A stale value is ignored with a notice and unset, so later diagnostics do not
+# name it.
+_resolve_dir() {
+  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
+  if [ -z "$val" ]; then
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
+    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
+    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
+    unset "$var"
+    printf -v "$out" '%s' "$baked"
+    return 0
+  fi
+  printf -v "$out" '%s' "$val"
+}
+
 usage() {
   echo "usage: resolve-roster.sh --base REV [--repo DIR] [--harness DIR] [--default REF]" >&2
   exit 2
@@ -56,13 +85,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$harness" ]; then
-  if [ -n "${DISPATCHER_REVIEWERS_DIR:-}" ]; then
-    harness=$DISPATCHER_REVIEWERS_DIR
-  elif [[ $default_harness != @* ]]; then
-    harness=$default_harness
-  else
-    harness=$(dirname "${BASH_SOURCE[0]}")
-  fi
+  _resolve_dir harness DISPATCHER_REVIEWERS_DIR "$default_harness" resolve-roster
+  [[ $harness != @* ]] || harness=$(dirname "${BASH_SOURCE[0]}")
 fi
 
 [ -n "$base" ] || die "--base is required"

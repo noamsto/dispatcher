@@ -117,8 +117,8 @@
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@"]
-            ["${protocols}" "${protocolRev}" "${skills}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
@@ -189,7 +189,7 @@
           # to be ambient on a caller's PATH.
           reviewer-roster = pkgs.writeShellApplication {
             name = "reviewer-roster";
-            runtimeInputs = with pkgs; [git jq yq-go coreutils gawk];
+            runtimeInputs = with pkgs; [git jq yq-go coreutils gawk diffutils];
             text = builtins.replaceStrings ["@reviewersDir@"] ["${./adapters/core/reviewers}"] (builtins.readFile ./adapters/core/reviewers/resolve-roster.sh);
           };
 

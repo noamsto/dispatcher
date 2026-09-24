@@ -1386,6 +1386,39 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
   [ "$status" -eq 2 ]
 }
 
+@test "resolver: a stale store-path DISPATCHER_REVIEWERS_DIR is ignored with a notice and the baked dir is used" {
+  _roster_repo
+  local store="$BATS_TEST_TMPDIR/store" baked stale
+  baked="$store/h-new-reviewers"
+  stale="$store/h-old-source/reviewers"
+  mkdir -p "$baked" "$stale"
+  cp "$ROOT"/adapters/core/reviewers/*.md "$baked/"
+  cp "$ROOT"/adapters/core/reviewers/*.md "$stale/"
+  sed 's/^name: shell-reviewer$/name: old-only/' "$ROOT/adapters/core/reviewers/shell-reviewer.md" >"$stale/old-only.md"
+  sed "s|@reviewersDir@|$baked|" "$ROOT/adapters/core/reviewers/resolve-roster.sh" >"$BATS_TEST_TMPDIR/resolver.sh"
+  ROSTER="$BATS_TEST_TMPDIR/roster.json"
+  DISPATCHER_REVIEWERS_DIR="$stale" run bash "$BATS_TEST_TMPDIR/resolver.sh" --base HEAD --repo "$TEST_REPO" --default HEAD
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resolve-roster: ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
+  DISPATCHER_REVIEWERS_DIR="$stale" bash "$BATS_TEST_TMPDIR/resolver.sh" --base HEAD --repo "$TEST_REPO" --default HEAD >"$ROSTER" 2>/dev/null
+  [ "$(jq '[.reviewers[] | select(.name == "old-only")] | length' "$ROSTER")" -eq 0 ]
+  [ "$(jq '[.reviewers[] | select(.name == "shell-reviewer")] | length' "$ROSTER")" -eq 1 ]
+}
+
+@test "resolver: a store-path DISPATCHER_REVIEWERS_DIR with the baked content is kept silently" {
+  _roster_repo
+  local store="$BATS_TEST_TMPDIR/store" baked cur
+  baked="$store/h-new-reviewers"
+  cur="$store/h-cur-source/reviewers"
+  mkdir -p "$baked" "$cur"
+  cp "$ROOT"/adapters/core/reviewers/*.md "$baked/"
+  cp "$ROOT"/adapters/core/reviewers/*.md "$cur/"
+  sed "s|@reviewersDir@|$baked|" "$ROOT/adapters/core/reviewers/resolve-roster.sh" >"$BATS_TEST_TMPDIR/resolver.sh"
+  DISPATCHER_REVIEWERS_DIR="$cur" run bash "$BATS_TEST_TMPDIR/resolver.sh" --base HEAD --repo "$TEST_REPO" --default HEAD
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+}
+
 @test "resolver: ships byte-identical into every adapter reviewers tree" {
   for tree in claude-code/plugin codex/plugin cursor; do
     run cmp -s "$ROOT/adapters/core/reviewers/resolve-roster.sh" "$ROOT/adapters/$tree/reviewers/resolve-roster.sh"
