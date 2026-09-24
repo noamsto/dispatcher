@@ -763,6 +763,28 @@ EOF
   grep -q 'do not trust the last plan in your transcript' <(launch_log)
 }
 
+@test "plan provided resume prompt keeps the code review gate (#306)" {
+  setup_worker_wt
+  sed -i 's/^plan: required/plan: provided/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'Only planning is skipped' <(launch_log)
+  grep -q 'Run your code review gate' <(launch_log)
+}
+
+@test "plan provided resume prompt for a kind: review worker has no code review gate to keep (#306)" {
+  setup_worker_wt
+  sed -i -e 's/^plan: required/plan: provided/' -e 's/^kind: implement/kind: review/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'plan of record' <(launch_log)
+  run ! grep -q 'Only planning is skipped' <(launch_log)
+}
+
 @test "trailing arguments are appended to the prompt" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
