@@ -95,14 +95,9 @@ seed_hold() {
 }
 
 # launch_log — $STUB_LOG with every `bash '<crew>/launch/{launch,exit}.XXXXXX'`
-# token replaced by that script's own command (its `exec env <cmdline>` line,
-# prefix stripped). Lines stay one per send-keys call, so every existing grep
-# against $STUB_LOG for launch content (engine flags, prompt text, env
-# prefixes) keeps its meaning once read through this instead (#298: the pane
-# is now typed only the short `bash <path>` line; the full command lives in
-# the referenced file). The `exec env ` line is found by pattern, not line
-# number, since an exit script (#298 F1) carries an extra `rm -f -- "$0"` line
-# ahead of it.
+# token replaced by the command that script execs, one line per send-keys
+# call. Panes are typed only the short script path (#298), so launch content
+# (engine flags, prompt text, env prefixes) is asserted through this.
 launch_log() {
   local line before rest path after content
   while IFS= read -r line; do

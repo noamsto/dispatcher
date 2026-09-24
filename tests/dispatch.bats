@@ -1001,11 +1001,9 @@ EOF
 
   # The same grid also spawns two role-pane codex launches via launch_role;
   # those have no agents.* flags (verified by reading launch_role's codex
-  # branch), so this marker isolates the lead's line alone. The marker lives
-  # in the launch script now (#298: the pane is typed only a short `bash
-  # '<path>'` line), so it's located via launch_log and the matching line
-  # NUMBER is used to pull the still-short line that was actually typed out
-  # of $STUB_LOG for the replay.
+  # branch), so this marker isolates the lead's line alone. The marker is in
+  # the launch script, so find its line number via launch_log and replay the
+  # short line actually typed (same line of $STUB_LOG).
   hit="$(grep -n 'send-keys' <(launch_log) | grep -F 'agents.enabled=true')"
   [ -n "$hit" ]
   [ "$(printf '%s\n' "$hit" | wc -l)" -eq 1 ]
@@ -1097,11 +1095,9 @@ EOF
 # Replays the lead's send-keys command through bash with a stub engine binary
 # first on PATH, leaving the argv the stub received in the global `argv`.
 # $1 is the engine binary, $2 a fixed substring selecting the lead's line
-# (role panes launch the same binary). #298: the pane is typed only a short
-# `bash '<launch path>'` line now, so the marker is located in launch_log's
-# expansion (which reads the script contents) and then the matching line
-# NUMBER is used to pick the raw, still-short line out of $STUB_LOG — that's
-# what actually gets typed into the pane and replayed here.
+# (role panes launch the same binary). The marker is in the launch script, so
+# its line number comes from launch_log; the replay runs the short line
+# actually typed (same line of $STUB_LOG).
 _replay_lead_launch() {
   local bin="$1" marker="$2" hit lineno launch cmd arg
   cat >"$STUB_DIR/$bin" <<'EOF'
@@ -4140,10 +4136,8 @@ EOF
 # _exit_hook_fixture — run an eager reviewer role launch, then take the line
 # typed into its pane and make it runnable: dispatch gets the shebang the Nix
 # build prepends (the typed continuation execs it directly), and the engine
-# stub exits at once. #298: the pane is typed only `bash '<a>' ; bash '<b>'`
-# now — $cmd stays exactly that short typed line; the dispatch path being
-# rewritten lives inside script <b> (the `--role-exited` exit script), which
-# is edited in place instead.
+# stub exits at once. $cmd is the typed `bash '<a>' ; bash '<b>'` line; the
+# dispatch path is rewritten inside <b>, the `--role-exited` exit script.
 _exit_hook_fixture() {
   stub_launch_bins
   _grid_tmux_stub
@@ -4173,7 +4167,7 @@ _exit_hook_fixture() {
   grep -qxF 'status role:feat/42-do-a-thing:reviewer blocked role reviewer engine exited (pane %6)' "$STUB_LOG"
   grep -qF 'msg role:feat/42-do-a-thing:reviewer worker:feat/42-do-a-thing#s7-7' "$STUB_LOG"
   grep -qF 'set-option -p -t %6 @crew_exited 1' "$STUB_LOG"
-  # #298 F1: the exit script deletes itself (`rm -f -- "$0"`) once it runs.
+  # The exit script deletes itself once it runs.
   [ ! -e "$exit_path" ]
 }
 
@@ -4285,12 +4279,10 @@ EOF
 }
 
 # _assert_bound_send_keys <crew launch dir> [marker] — every send-keys line
-# logged so far must be the short, length-independent shape (#298): one or two
-# quoted launch-script paths under the crew dir, nothing else, under 512 bytes
-# (half of macOS's 1024-byte MAX_CANON — a role pane carries two absolute
-# paths, and a macOS bats tmpdir makes 256 flaky, per SPEC). If a marker is
-# given, the referenced script(s) must actually hold it (proving the full
-# command reached the file, not just a short line).
+# logged so far is one or two quoted script paths under the crew dir and
+# nothing else, under 512 bytes: half of macOS's 1024-byte MAX_CANON, with room
+# for a role's two absolute paths under a long macOS bats tmpdir. With a
+# marker, the referenced script(s) must hold it.
 _assert_bound_send_keys() {
   local crew_launch_dir="$1" marker="${2:-}" pattern line n=0
   pattern="^send-keys -t %[0-9]+ bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}'( ; bash '${crew_launch_dir}/exit\.[A-Za-z0-9]{6}')? Enter\$"
@@ -4304,12 +4296,9 @@ _assert_bound_send_keys() {
   [ -z "$marker" ] || grep -q -F -- "$marker" <(launch_log)
 }
 
-# #298 (bound, red on old code): send-keys text must stay short and shaped no
-# matter how long the protocol dir is — the old code typed the whole prompt
-# (which stamps $DISPATCHER_PROTOCOL_DIR into it) straight into the pane, so a
-# long enough dir alone used to blow past MAX_CANON. This dir excludes the
-# `--status` pane loop, which types a fixed ~110-byte literal independent of
-# any input and is not exercised by these dispatch calls anyway.
+# #298: a fresh pane's tty truncates typed-ahead input at 1024 bytes on macOS.
+# The prompt embeds $DISPATCHER_PROTOCOL_DIR, so a long dir alone would push a
+# typed launch line past that; the typed text must stay short regardless.
 @test "bound: send-keys stays short and shaped for every engine lead and role pane under a very long protocol dir" {
   stub_launch_bins
   _grid_tmux_stub
@@ -4384,9 +4373,8 @@ _assert_bound_send_keys() {
   [[ "$(sed -n '2p' "$script")" == 'exec env '* ]]
 }
 
-# #298 F3: mkdir -p is a no-op on an existing symlink, chmod follows it, and
-# mktemp would write into whatever it points at — refuse instead of writing
-# through it, matching crew.sh's pi-agent-dir guard.
+# mkdir -p is a no-op on an existing symlink, chmod follows it, and mktemp
+# would write into whatever it points at.
 @test "a symlinked crew launch dir is refused, nothing is written into its target" {
   stub_launch_bins
   crew_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew"
@@ -4401,10 +4389,8 @@ _assert_bound_send_keys() {
   [ "$(find "$target" -mindepth 1 | wc -l)" -eq 0 ]
 }
 
-# #298: the pane is typed only `bash '<path>'` in both shells that ever sit in
-# a fresh pane; this proves fish parses the short line identically to bash —
-# no fish-vs-shell_quote mismatch — by replaying both the lead's and the
-# role's line through each and comparing the stub engine's argv byte-for-byte.
+# fish is the real pane shell; bash is the CI shell. Both must hand the engine
+# the same argv from the typed short line.
 @test "fish replay: the lead and role short lines behave identically under fish and bash" {
   command -v fish >/dev/null || skip "fish is not installed"
 
@@ -4467,10 +4453,8 @@ EOF
   [ -f "$new_script" ]
 }
 
-# #298 F1: a parked role pane can outlive the 7-day launch prune — its exit
-# script must survive that prune (it is named exit.*, not launch.*, and the
-# prune only matches launch.*) so `--role-exited` still fires whenever that
-# engine eventually returns.
+# A parked role pane can outlive the 7-day launch prune; its exit script must
+# survive it so `--role-exited` still fires when that engine returns.
 @test "prune: a role's exit script survives the 7-day prune that removes a stale launch script" {
   stub_launch_bins
   _grid_tmux_stub

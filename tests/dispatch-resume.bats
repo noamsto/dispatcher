@@ -268,11 +268,9 @@ setup_worker_wt() { # [extra header lines...]
   [ "$n" -eq 3 ]
 }
 
-# _assert_resume_bound <marker> — the resumed lead's send-keys line is short
-# and shaped (#298: at most a fixed launcher prefix plus the launch script's
-# path, independent of prompt/model/flags), under 512 bytes, and its launch
-# script actually carries <marker> (the engine-specific continue/resume
-# flag) — proving the full command reached the file, not just a short line.
+# _assert_resume_bound <marker> — the resumed lead's send-keys line is only
+# `bash '<launch script>'` (#298), under 512 bytes, and the script carries
+# <marker> (the engine's continue/resume flag).
 _assert_resume_bound() {
   local marker="$1" crew_launch_dir pattern line
   crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
@@ -283,10 +281,8 @@ _assert_resume_bound() {
   grep -q -F -- "$marker" <(launch_log)
 }
 
-# #298 (bound, red on old code): resume's send-keys text must stay short and
-# shaped for every engine, no matter how long the recorded prompt/protocol
-# dir/branch is — the old code typed the whole resume command straight into
-# the pane.
+# #298: a fresh pane's tty truncates typed-ahead input at 1024 bytes on macOS,
+# so resume must type a short line for every engine, however long the prompt.
 @test "bound: resume's send-keys line stays short and shaped for every engine" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
@@ -312,9 +308,7 @@ _assert_resume_bound() {
   [ "$n" -eq 3 ]
 }
 
-# #298: shell_quote and write_launch_script are duplicated byte-identically in
-# dispatch-resume.sh (a standalone build, like pi_skill_args) — this is that
-# parity test.
+# dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
   for fn in shell_quote write_launch_script; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
@@ -778,11 +772,8 @@ EOF
   grep -q 'the review comments are the priority' <(launch_log)
 }
 
-# #298: the prompt (which can carry apostrophes, e.g. from trailing args or
-# WORKER_TASK.md content) now lives in the launch script, not the typed
-# line — assert the real invariant against launch_log's expansion, and that
-# the line actually typed into the pane carries exactly one quoted path (the
-# script), not a hand-quoted prompt fragment.
+# The prompt lives in the launch script; the typed line carries only the
+# script's one quoted path.
 @test "no launch string contains an apostrophe" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
