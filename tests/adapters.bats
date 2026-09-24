@@ -307,7 +307,7 @@ teardown() {
     '**except under `resume: true`** (see **Resuming a killed run**): a recovered `SPEC.md` is the _output_ of a spec-critic gate in the interrupted run of this same task, not a task doc that never faced one.' \
     'Do **not** re-run the spec or plan phases. Continue from the first unfinished step.' \
     '**Before pushing, check whether this branch already has an open PR** (`gh pr view --json url,state`).' \
-    'When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "" <existing url>` with that url' \
+    'When a PR is already open, push to it, skip `gh pr create`, and report `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <existing url>` with that url' \
     'Consult **Resuming a killed run** (above) first; unless resuming, before the plan phase decide **once** whether to bring a top-tier consultant in to decompose the task' \
     '`Plan: recovered (resume)` when you resumed under `resume: true`'; do
     run grep -F "$statement" "$protocol"
