@@ -3230,6 +3230,26 @@ lock_path() { # <branch>
   [ ! -d "$TEST_REPO/.dispatch-wt" ]
 }
 
+@test "--base refuses an unfetchable ref before the claim gate, leaving no claim" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base nope --crew-id c1 42 "implement thing"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--base 'nope'"* ]]
+  run ! grep -q 'issue edit' "$STUB_LOG"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run ! grep -q 'claim-issue' "$log"
+}
+
+@test "--base refuses an unfetchable ref in mint mode, without minting an issue" {
+  stub_launch_bins
+  _stub_gh_base_pr
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base nope --crew-id c1 "mint me"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--base 'nope'"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+}
+
 # gh for the --base <PR> tests: PR 7's head is feat/parent. STUB_PR_STATE and
 # STUB_PR_CROSS override its state and fork flag; STUB_PR_FAIL fails the lookup.
 _stub_gh_base_pr() {
@@ -3259,7 +3279,9 @@ EOF
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
   grep -qx 'base: feat/parent' "$wt_path/WORKER_TASK.md"
   grep -q 'pr view 7' "$STUB_LOG"
-  [[ "$output" == *"from origin/feat/parent"* ]]
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STACKED_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/feat/parent ($short)"* ]]
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
 }
 
 @test "--base <PR> refuses when the PR is not open" {

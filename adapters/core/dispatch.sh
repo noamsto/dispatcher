@@ -1650,6 +1650,24 @@ if [ -n "$base_flag" ] && printf '%s' "$base_flag" | grep -Eq '^[0-9]+$'; then
   base_flag="$base_pr_head"
 fi
 
+# --base <ref>: stack this worker on an unmerged branch instead of the default
+# branch. The ref is fetched and its oid pinned here — before the claim gate and
+# mint mode's `gh issue create` — so an unresolvable ref leaves no claim side
+# effects. Runs on a resume too, because the stamped `base:` is what the worker's
+# review diff, gate scope and PR target; a re-dispatch must not silently drop it.
+if [ -n "$base_flag" ]; then
+  git fetch origin -- "$base_flag" || {
+    echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
+    exit 1
+  }
+  base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
+    echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
+    exit 1
+  }
+  base_ref="$base_flag"
+  create_base_label="origin/$base_flag"
+fi
+
 # Claim: GitHub issue only. $gh_issue is empty for both a Linear dispatch
 # (own status/assignee semantics — every issue here already has an assignee,
 # so that can't double as a claim signal) and a --pr review dispatch
@@ -1770,24 +1788,6 @@ else
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch}')
     _bus_append "$crew_dir/events.jsonl" "$line"
-  fi
-  # --base <ref>: stack this worker on an unmerged branch instead of the default
-  # branch. The ref is fetched and its oid pinned here, before the dispatch lock
-  # below, so an unresolvable ref costs no worktree and no window — the same
-  # property as the default-branch resolution below and the --pr gate above.
-  # Runs on a resume too, because the stamped `base:` is what the worker's review
-  # diff, gate scope and PR target; a re-dispatch must not silently drop it.
-  if [ -n "$base_flag" ]; then
-    git fetch origin -- "$base_flag" || {
-      echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
-      exit 1
-    }
-    base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
-      echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
-      exit 1
-    }
-    base_ref="$base_flag"
-    create_base_label="origin/$base_flag"
   fi
 
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
