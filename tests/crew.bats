@@ -802,6 +802,21 @@ EOF
   [ -z "$(find "$WORKER" -name '.seed.*')" ]
 }
 
+@test "pi-agent-dir: a non-array extensions value is refused, not a jq crash" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # A hand-edited/future-schema settings.json must refuse legibly, not die on an
+  # opaque jq `cannot be added` and take dispatch/dispatch-resume down with it.
+  printf '{"extensions":{"not":"an array"}}\n' >"$WORKER/settings.json"
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"non-array extensions value"* ]]
+  [ "$(jq -c .extensions "$WORKER/settings.json")" = '{"not":"an array"}' ]
+}
+
 @test "pi-agent-dir: no ambient auth.json seeds an empty auth" {
   _pi_fixture
   rm "$AMBIENT/auth.json"

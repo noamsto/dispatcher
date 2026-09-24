@@ -276,9 +276,12 @@ For Claude Code, pass the plugin directory to `claude`:
   be installed with the dispatcher's manifest wired as an absolute `exec`
   (`pi:session_shutdown` → `adapters/core/dispatch-notify.sh` — hookyard stats
   every `exec` at install, so a consumer renders the repo's `hookyard.json`
-  template through its own store path) and the worker `settings.json` named in
-  `programs.hookyard.piSettings`. `crew pi-agent-dir` copies the bridge from
-  the ambient dir when it exists; with no ambient bridge the worker launches
+  template through its own store path) and an ambient `~/.pi/agent` bridge
+  present, so `crew pi-agent-dir` can copy it into the worker dir at dispatch.
+  Naming `~/.pi/dispatcher-worker/settings.json` in `programs.hookyard.piSettings`
+  is an equivalent alternative — hookyard then installs the bridge into the
+  worker dir itself — not a requirement, since the seeder already covers the
+  ambient-then-copy path. With no ambient bridge at all the worker launches
   with no hooks, and a pi worker that dies is invisible to the bus until the
   dispatcher notices the pane.
 

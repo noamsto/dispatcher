@@ -617,6 +617,14 @@ _pi_agent_dir() {
 
   settings=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
     "$dir/settings.json" 2>/dev/null) || settings='{}'
+  # A non-array extensions value is hand-edited or future-schema; appending to
+  # it would make jq die with an opaque `cannot be added` and take dispatch down
+  # with it. Refuse legibly, like the auth.json checks below.
+  if [ -n "$bridge_entry" ] &&
+    ! jq -e '(.extensions // null) == null or (.extensions | type) == "array"' <<<"$settings" >/dev/null 2>&1; then
+    echo "crew: $dir/settings.json has a non-array extensions value — refusing to seed pi worker dir" >&2
+    exit 1
+  fi
   # Append-if-absent is order-preserving: jq `unique` would sort a pi-written
   # multi-entry extensions list on every reseed.
   settings=$(jq -n --argjson base "$settings" --arg b "$bridge_entry" \

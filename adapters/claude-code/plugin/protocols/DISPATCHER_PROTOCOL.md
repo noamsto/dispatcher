@@ -486,9 +486,10 @@ this lane is weaker than the cursor lane's never-zero guarantee: an **idle, unat
 dispatcher whose stream is auto-stopped runs no turn, so it never polls `--status` to
 notice. Process death stays covered — the next turn's poll finds `dead`.
 
-**No `Monitor` tool** → follow the cursor lane's background park, below. **pi is
-the exception:** it has no `Monitor` and no background-completion notification to
-bind a turn to, so it takes the codex/pi blocking park below instead.
+**No `Monitor` tool** → follow the cursor lane's background park, below.
+**pi is the exception:** it has no `Monitor` and no background-completion
+notification to bind a turn to, so it takes the codex/pi blocking park below
+instead.
 
 **cursor — background park.** INV-1 below applies to you.
 
