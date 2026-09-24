@@ -540,6 +540,14 @@ teardown() {
   done
 }
 
+@test "review workers follow one base rule: the stamped header base:" {
+  core="$ROOT/adapters/core/protocols"
+  run grep -F '**`kind: review` does not use this section.**' "$core/WORKER_PROTOCOL.md"
+  [ "$status" -eq 0 ]
+  run grep -F 'this is the only base rule for you' "$core/REVIEW_TASK.md"
+  [ "$status" -eq 0 ]
+}
+
 @test "grid roles reply to the current worker session after resume" {
   protocol="$ROOT/adapters/core/protocols/GRID_PROTOCOL.md"
   run grep -F "lead_id=\$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)" "$protocol"
