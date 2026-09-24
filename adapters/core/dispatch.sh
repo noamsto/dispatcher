@@ -444,11 +444,48 @@ shell_quote() {
     _c="${_text:_i:1}"
     case "$_c" in
     "'") _res+="'\\''" ;;
-    "\\") _res+="'\\\\'" ;;
+    \\) _res+="'\\\\'" ;;
     *) _res+="$_c" ;;
     esac
   done
   _out="'$_res'"
+}
+
+# write_launch_script <var> <cmdline> [exit] — write <cmdline> into a fresh 0700
+# script under $crew_dir/launch and set <var> to the short line that runs it. A
+# new pane's shell is often not reading yet when send-keys types into it, and
+# the tty's canonical buffer (1024 bytes on macOS) cuts a longer line and drops
+# its Enter (#298) — so a pane is only ever typed `bash <path>`. `exec env`
+# makes the engine the pane's foreground process itself, which every
+# #{pane_current_command} liveness check reads. Files older than a week are
+# pruned on the way in.
+#
+# With `exit` the script is named exit.* and deletes itself when it runs: a
+# role's exit hook runs only when its engine returns, possibly weeks later, so
+# the age prune (launch.* only) must never reach it.
+write_launch_script() {
+  local -n _launch="$1"
+  local _dir="$crew_dir/launch" _file _quoted
+  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
+  if [ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }; then
+    echo "dispatch: $_dir is a symlink or not a directory — refusing to write a launch script" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
+  mkdir -p -m 700 "$_dir"
+  chmod 700 "$_dir"
+  find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
+  if [ "${3:-}" = exit ]; then
+    _file="$(mktemp "$_dir/exit.XXXXXX")"
+    # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
+  else
+    _file="$(mktemp "$_dir/launch.XXXXXX")"
+    printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  fi
+  chmod 700 "$_file"
+  shell_quote _quoted "$_file"
+  _launch="bash $_quoted"
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
@@ -474,14 +511,15 @@ pi_skill_args() {
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name and $branch from the caller scope.
 #
-# The launch line ends in a `; dispatch --role-exited …` continuation: it runs
-# only when the engine returns to the pane's shell, so an engine that crashes at
-# startup is reported, while a reap (which kills the pane and its shell) is silent.
-# `;` is valid in both fish (the pane shell) and bash.
+# The pane is typed one short line that runs the launch script, then
+# `; bash <exit script>` — the `dispatch --role-exited …` continuation — which
+# the pane's shell runs only when the engine returns, so an engine that
+# crashes at startup is reported, while a reap (which kills the pane and its
+# shell) is silent. `;` is valid in fish (the pane shell), bash and zsh.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first exit_hook
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
   printf -v quoted_model '%q' "$r_model"
-  printf -v exit_hook " ; %q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
+  printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
   shell_quote quoted_prompt "$prompt"
@@ -493,12 +531,15 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    tmux send-keys -t "$pane" "${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt$exit_hook" Enter
+    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) tmux send-keys -t "$pane" "${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt$exit_hook" Enter ;;
-  codex) tmux send-keys -t "$pane" "${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first$exit_hook" Enter ;;
-  cursor) tmux send-keys -t "$pane" "${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first$exit_hook" Enter ;;
+  claude) cmd="${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
+  cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
+  write_launch_script launch_line "$cmd"
+  write_launch_script exit_line "$exit_cmd" exit
+  tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
 # watch_role <role> <pane> — spawn the detached, engine-agnostic bus watcher for
@@ -2467,8 +2508,7 @@ if [ "$agent" = codex ]; then
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  tmux send-keys -t "$pane" \
-    "${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt" Enter
+  launch_cmd="${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -2485,8 +2525,7 @@ elif [ "$agent" = cursor ]; then
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  tmux send-keys -t "$pane" \
-    "${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt" Enter
+  launch_cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources,
@@ -2494,14 +2533,14 @@ elif [ "$agent" = pi ]; then
   printf -v quoted_dir '%q' "$pi_agent_dir"
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  tmux send-keys -t "$pane" \
-    "${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt" Enter
+  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  tmux send-keys -t "$pane" \
-    "${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt" Enter
+  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
+write_launch_script launch_line "$launch_cmd"
+tmux send-keys -t "$pane" "$launch_line" Enter
 
 # Role grid: split the task window into one pane per role. Each role pane parks
 # on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
