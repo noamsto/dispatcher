@@ -68,10 +68,23 @@ _body() {
 rm -rf "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
 mkdir -p "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
 
+# Commands that drive Claude Code agent teams (TaskCreate/SendMessage/
+# subagent_type/teammateMode, plus /loop and /schedule) and have no codex/cursor
+# equivalent yet. They ship to claude-code only; the body states claude-only at
+# the top. Porting them onto the crew bus is tracked in README's roadmap.
+claude_only=" project-autopilot finish-prs "
+is_claude_only() { case "$claude_only" in *" $1 "*) return 0 ;; *) return 1 ;; esac }
+
 for f in "$src"/*.md; do
   name="$(basename "$f" .md)"
 
   cp "$f" "$cc/$name.md"
+
+  # Claude-only commands are not projected to codex or cursor.
+  if is_claude_only "$name"; then
+    continue
+  fi
+
   cp "$f" "$cu/$name.md"
 
   mkdir -p "$cx/$name"
