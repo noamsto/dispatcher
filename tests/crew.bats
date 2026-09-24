@@ -3070,6 +3070,50 @@ EOF
   [[ "${lines[0]}" == "blocked|quiet: pane unchanged for "* ]]
 }
 
+@test "stall-watch: D5 flags a pane still a shell past --launch as launch-not-started" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD='printf fish'
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --launch 2 --window 60 --stall 999 --idle 999 --dead 999 --max-life 6
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|stalled: launch-not-started"* ]]
+}
+
+@test "stall-watch: D5 clears itself when the engine appears late" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD="[ -f $BATS_TEST_TMPDIR/up ] && printf claude || printf fish"
+  (sleep 4 && touch "$BATS_TEST_TMPDIR/up") &
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --launch 1 --window 60 --stall 999 --idle 999 --dead 999 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "blocked|stalled: launch-not-started"* ]]
+  [ "${lines[1]}" = "working|stalled: launch-not-started cleared" ]
+}
+
+@test "stall-watch: D5 is silent when the engine is the pane's command" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD='printf .claude-wrapped'
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --launch 1 --window 60 --stall 999 --idle 999 --dead 999 --max-life 5
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D5 is silent while a shell pane is inside --launch" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD='printf fish'
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --launch 999 --window 60 --stall 999 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
 @test "stall-watch: a finished turn waiting on a background shell posts nothing" {
   a=$(fx_bgwait_crunched)
   b=$(fx_bgwait_churned)
