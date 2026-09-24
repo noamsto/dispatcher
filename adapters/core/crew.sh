@@ -184,6 +184,39 @@ _is_session_id() {
   [[ "${1##*#}" =~ ^s[0-9]+-[0-9]+$ ]]
 }
 
+# Delivered marks (#290): {sender: ts of the last msg from that sender this
+# session has been handed}, one file per crew+session under $dir/await. `await`
+# and `inbox` both record into it, so a reply taken through the straggler fold is
+# not handed back by the next `await`. Not a bus row: it never reaches `roster`,
+# `watch` or another session's reads.
+_await_state() { # <crew> <agent> -> path
+  local key="$1-$2"
+  printf '%s/await/%s.%s' "$dir" "$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$key" | cksum | cut -d' ' -f1)"
+}
+
+# _await_marks <crew> <agent> -> one JSON object; a torn or unreadable file reads
+# as {} (redeliver rather than go blind).
+_await_marks() {
+  local st
+  st=$(_await_state "$1" "$2")
+  [ -f "$st" ] && jq -cs 'map(objects) | add // {}' "$st" 2>/dev/null && return 0
+  printf '{}'
+}
+
+# _await_record <crew> <agent> <msg-lines> — raise each sender's mark to the
+# newest of the given msgs. Best effort: a failed write only means redelivery.
+_await_record() {
+  local st tmp
+  st=$(_await_state "$1" "$2")
+  mkdir -p "$dir/await" 2>/dev/null || return 0
+  tmp=$(mktemp "$dir/await/.st.XXXXXX") || return 0
+  if printf '%s\n' "$3" | jq -sc --argjson old "$(_await_marks "$1" "$2")" \
+    'reduce .[] as $m ($old; .[$m.from] = ([(.[$m.from] // 0), $m.ts] | max))' >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$st" 2>/dev/null
+  fi
+  rm -f "$tmp"
+}
+
 # _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
 # oldest -> newest. Every fold is per SESSION: aggregating across a branch is how
 # three workers came to read as one flip-flopping identity (#17). A session with a
@@ -804,8 +837,10 @@ await)
   # <agent> answers its outstanding question, print it, exit 0. A reply qualifies
   # when it is newer than this session's own latest outbound msg to the reply's
   # sender (the anchor is per conversation), so a reply that landed between the
-  # question and the await is still delivered (#240). A session that has asked
-  # nothing falls back to the await start, preserving the original contract.
+  # question and the await is still delivered (#240), and newer than the last
+  # reply this session was already handed from that sender (#290, by await or
+  # inbox), so a handled reply is never handed back by a later await. A session
+  # that has asked nothing falls back to the await start.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -853,6 +888,7 @@ await)
   done
   start=$(jq -nc 'now*1000|floor')
   deadline=$((start + timeout * 1000))
+  delivered=$(_await_marks "$crew" "$me")
   while :; do
     if [ -f "$log" ]; then
       # Anchor per counterpart: a msg from X is due when it is newer than this
@@ -860,7 +896,7 @@ await)
       # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
       # (the hard-kill crash mode) instead of aborting the whole read, and no
       # status row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" '
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {anchors: {}, cands: []};
           if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
@@ -870,9 +906,10 @@ await)
           else . end
         )
         | . as $s
-        | ($s.cands | map(select(.ts > ($s.anchors[.from] // $since))) | last) // empty
+        | ($s.cands | map(select(.ts > ([($s.anchors[.from] // $since), ($got[.from] // 0)] | max))) | last) // empty
       ' "$log" 2>/dev/null || true)
       [ -n "$ans" ] && {
+        _await_record "$crew" "$me" "$ans"
         printf '%s\n' "$ans"
         exit 0
       }
@@ -1836,18 +1873,24 @@ inbox)
   done
   crew="${crew:-$(_crew_id)}"
   [ -f "$log" ] || exit 0
+  rc=0
   if [ -n "$since" ]; then
     case "$since" in '' | *[!0-9]*)
       echo "crew: --since must be an integer ms timestamp" >&2
       exit 1
       ;;
     esac
-    jq -c --arg crew "$crew" --arg me "$me" --argjson since "$since" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*") and .ts>$since)' "$log"
+    out=$(jq -c --arg crew "$crew" --arg me "$me" --argjson since "$since" \
+      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*") and .ts>$since)' "$log") || rc=$?
   else
-    jq -c --arg crew "$crew" --arg me "$me" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*"))' "$log"
+    out=$(jq -c --arg crew "$crew" --arg me "$me" \
+      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*"))' "$log") || rc=$?
   fi
+  [ -z "$out" ] || printf '%s\n' "$out"
+  # A session that reads its inbox has been handed these msgs, so a later await
+  # must not return them again (#290).
+  case "$me" in worker:*) [ -z "$out" ] || _await_record "$crew" "$me" "$out" ;; esac
+  exit "${rc:-0}"
   ;;
 log)
   crew="${1:-$(_crew_id)}"

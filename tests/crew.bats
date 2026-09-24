@@ -1284,18 +1284,124 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"A2"'* ]]
 }
 
-# At-least-once: the log holds no consumed-state, so with no new outbound to the
-# counterpart a repeat await returns the same reply again. This is intended, and
-# pinned so a future change to it is deliberate.
-@test "await: a second await with no new question re-delivers the reply" {
+# #290: a reply await has already handed this session is not handed back by a
+# later await. The delivered mark lives per session and per sender, so a fresh
+# question to the same counterpart (or a reply from anyone else) still delivers.
+@test "await: a second await with no new question does not re-deliver the reply" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
   sleep 1
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "await: a delivered critic verdict is not re-delivered while awaiting the next critic" {
+  id="worker:feat/x#s1-1"
+  spec="role:feat/x:spec-critic"
+  plan="role:feat/x:plan-critic"
+  CREW_ID=c1 run_crew msg "$id" "$spec" "review spec"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$spec" "$id" "spec verdict"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"spec verdict"'* ]]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"plan verdict"'* ]]
+}
+
+@test "await: a delivered dispatcher reply is not re-delivered after critic traffic" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "role:feat/x:plan-critic" "review plan"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# The mark is per sender: delivering A's reply must not swallow B's reply that
+# landed earlier and is still undelivered (parallel assignments, #240).
+@test "await: delivering one sender's reply leaves another sender's earlier reply deliverable" {
+  id="worker:feat/x#s1-1"
+  a="role:feat/x:spec-critic"
+  b="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$id" "$a" "qa"
+  CREW_ID=c1 run_crew msg "$id" "$b" "qb"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$b" "$id" "vb"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$a" "$id" "va"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"va"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"vb"'* ]]
+}
+
+# The straggler fold (`crew inbox --since`) is how a reply that missed a timed-out
+# await is taken; it must count as delivered too, or the next await hands it back.
+@test "await: a reply taken through the inbox fold is not re-delivered by the next await" {
+  id="worker:feat/x#s1-1"
+  spec="role:feat/x:spec-critic"
+  plan="role:feat/x:plan-critic"
+  CREW_ID=c1 run_crew msg "$id" "$spec" "review spec"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$spec" "$id" "spec verdict"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [[ "$output" == *'"body":"spec verdict"'* ]]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# A torn or garbage delivered-marks file must not blind await: it reads as empty
+# and the reply is still delivered.
+@test "await: an unreadable delivered-marks file does not hide a reply" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer"'* ]]
+  state=$(git rev-parse --path-format=absolute --git-common-dir)/crew/await
+  for f in "$state"/*; do printf '{"dispatcher:c1":5}"x":6}' >"$f"; done
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why2?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer2"'* ]]
+}
+
+# Delivered state is per session: a resumed session (new id) starts clean.
+@test "await: delivered state does not carry to another session" {
+  CREW_ID=c1 run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "worker:feat/x#s1-1" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s1-1" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s2-2" --timeout 0
+  [ -z "$output" ]
+  CREW_ID=c1 run_crew msg "worker:feat/x#s2-2" "dispatcher:c1" "why2?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "worker:feat/x#s2-2" "answer2"
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s2-2" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer2"'* ]]
 }
 
 # Sensitive by design: this fails if any status row (watchdog or plain blocked)
@@ -1414,6 +1520,17 @@ _pi_assert_refused() {
   [ "$output" = "1" ]
   run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")][0].body.detail' "$log"
   [ "$output" = "blocked, no dispatcher reply" ]
+}
+
+# A torn trailing line (hard-kill crash mode) must not blind the straggler fold:
+# inbox still prints the msgs it could parse, as it did before it recorded marks.
+@test "inbox: a torn log line does not hide the msgs above it" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [[ "$output" == *'"body":"answer"'* ]]
 }
 
 @test "inbox: a branch-only worker id exits non-zero" {
