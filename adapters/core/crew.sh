@@ -1873,6 +1873,7 @@ inbox)
   done
   crew="${crew:-$(_crew_id)}"
   [ -f "$log" ] || exit 0
+  rc=0
   if [ -n "$since" ]; then
     case "$since" in '' | *[!0-9]*)
       echo "crew: --since must be an integer ms timestamp" >&2
@@ -1880,16 +1881,16 @@ inbox)
       ;;
     esac
     out=$(jq -c --arg crew "$crew" --arg me "$me" --argjson since "$since" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*") and .ts>$since)' "$log")
+      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*") and .ts>$since)' "$log") || rc=$?
   else
     out=$(jq -c --arg crew "$crew" --arg me "$me" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*"))' "$log")
+      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*"))' "$log") || rc=$?
   fi
-  [ -n "$out" ] || exit 0
-  printf '%s\n' "$out"
+  [ -z "$out" ] || printf '%s\n' "$out"
   # A session that reads its inbox has been handed these msgs, so a later await
   # must not return them again (#290).
-  case "$me" in worker:*) _await_record "$crew" "$me" "$out" ;; esac
+  case "$me" in worker:*) [ -z "$out" ] || _await_record "$crew" "$me" "$out" ;; esac
+  exit "${rc:-0}"
   ;;
 log)
   crew="${1:-$(_crew_id)}"

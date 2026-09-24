@@ -1522,6 +1522,17 @@ _pi_assert_refused() {
   [ "$output" = "blocked, no dispatcher reply" ]
 }
 
+# A torn trailing line (hard-kill crash mode) must not blind the straggler fold:
+# inbox still prints the msgs it could parse, as it did before it recorded marks.
+@test "inbox: a torn log line does not hide the msgs above it" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
 @test "inbox: a branch-only worker id exits non-zero" {
   run run_crew inbox "worker:feat/x" c1
   [ "$status" -eq 1 ]
