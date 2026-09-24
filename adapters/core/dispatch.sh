@@ -1392,6 +1392,10 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
     echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
     exit 1
   fi
+  if [ "$agent" = claude ] && jq -e --argjson now "$(date +%s)" \
+    '(.fetched_epoch + 7200) >= $now and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
+    echo "dispatch: budget gate blind: claude quota unknown" >&2
+  fi
 fi
 
 # Codex absolute-limit gate (#201): a codex response can be authoritative-
