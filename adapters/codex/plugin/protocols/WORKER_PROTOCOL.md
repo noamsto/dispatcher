@@ -33,6 +33,8 @@ captured. Every later read is `--since $seen` per **Checkpoint-peek**.
 
 ## Base ref (stacked work)
 
+**`kind: review` does not use this section.** Its worktree is the target PR's head, so the snippet below would resolve the reviewed PR's live base; a review worker instead reads the header `base:` once, as `REVIEW_TASK.md` directs, so the diff it reviews stays fixed to the base stamped at dispatch. Everything below applies to `kind: implement`.
+
 `WORKER_TASK.md` may stamp `base: <ref>` — the parent branch this worker is
 stacked on (`dispatch --base`, or `--pr`, which takes the base from the PR).
 Your own OPEN PR, once it exists, is authoritative: GitHub retargets a child
