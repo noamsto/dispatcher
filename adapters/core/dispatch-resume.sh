@@ -723,7 +723,7 @@ fi
 # committed on this branch escapes the guard above and rides the diff into
 # commits (#397). Warn, naming the fix; never abort and never touch the index
 # here — removing a tracked file is the target repo's job, in its own PR.
-if git ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
   echo "dispatch resume: warning: WORKER_TASK.md is tracked on this branch — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
 fi
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
