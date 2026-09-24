@@ -221,7 +221,9 @@ the unavailable-gate block on pi.
    - `exited`, or no such pane → the died-role path below (respawn once, else
      fall back / the pi unavailable gate). `dispatch --spawn-role` does nothing
      while a live pane for the role exists, which is why a stalled pane is
-     killed first.
+     killed first. After a successful respawn, re-send the step 2 assignment to
+     the new pane (it never sees the old one); that re-send starts a fresh
+     budget (3 `working` cycles, one `idle` re-send).
 4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.

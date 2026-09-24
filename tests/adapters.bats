@@ -1506,6 +1506,7 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
       'never set a tool timeout' \
       'at most 3 `working` cycles (~15 min)' \
       'tmux kill-pane -t <pane>' \
+      'After a successful respawn, re-send the step 2 assignment' \
       "tmux list-panes -t \"\$TMUX_PANE\" -F '#{pane_id} #{@crew_role} #{@crew_state}'"; do
       run grep -F "$statement" "$ROOT/$dir/WORKER_PROTOCOL.md"
       [ "$status" -eq 0 ]
