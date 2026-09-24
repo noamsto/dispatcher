@@ -2673,6 +2673,52 @@ fi
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
 echo "worker_id: $worker_id"
 
+# Cross-repo dispatch (#398): the crew bus is per repo — `crew stream` reads
+# $(git rev-parse --git-common-dir)/crew of the checkout it runs in — so a lane
+# the dispatcher armed in ITS checkout never sees a worker dispatched into
+# another repo. Print the exact lane command for the worker's repo when the
+# dispatcher's pane sits elsewhere and nothing is streaming the worker's bus
+# yet. `watched` mirrors `crew stream --status`'s liveness rule exactly (a live
+# pid is not evidence notifications are flowing): a live pid AND a tick younger
+# than 2*park+60, park taken from the tick itself.
+if [ -n "${TMUX_PANE:-}" ]; then
+  worker_common="${crew_dir%/crew}"
+  dpane_path=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || true)
+  dcommon=""
+  if [ -n "$dpane_path" ] && [ -d "$dpane_path" ]; then
+    dcommon=$(git -C "$dpane_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  fi
+  if [ -n "$dcommon" ] && [ "$dcommon" != "$worker_common" ]; then
+    watched=""
+    wpid=$(cat "$crew_dir/crews/$crew_id/stream.lock.d/pid" 2>/dev/null || true)
+    case "$wpid" in '' | *[!0-9]* | 0) wpid="" ;; esac
+    if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+      tick=$(cat "$crew_dir/crews/$crew_id/stream.tick" 2>/dev/null || true)
+      tickts=""
+      tickpark=""
+      if [ -n "$tick" ]; then
+        tickts=$(printf '%s' "$tick" | jq -r '.ts // empty' 2>/dev/null || true)
+        tickpark=$(printf '%s' "$tick" | jq -r '.park // empty' 2>/dev/null || true)
+      fi
+      case "$tickts" in '' | *[!0-9]*) tickts="" ;; esac
+      case "$tickpark" in '' | *[!0-9]*) tickpark="" ;; esac
+      if [ -n "$tickts" ] && [ -n "$tickpark" ]; then
+        now_ms=$(jq -nc 'now*1000|floor' 2>/dev/null || true)
+        case "$now_ms" in '' | *[!0-9]*) now_ms="" ;; esac
+        if [ -n "$now_ms" ] && [ "$(((now_ms - tickts) / 1000))" -lt "$((2 * tickpark + 60))" ]; then
+          watched=1
+        fi
+      fi
+    fi
+    if [ -z "$watched" ]; then
+      worker_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+      [ -n "$worker_top" ] || worker_top="$dpane_path"
+      echo "dispatch: cross-repo worker — its bus is $worker_common/crew, not the dispatcher checkout's ($dcommon)."
+      echo "  arm/adjust the lane: cd $worker_top && crew stream --crew $crew_id"
+    fi
+  fi
+fi
+
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
 tmux set-window-option -t "$win" @crew_name "$agent_name"
