@@ -143,7 +143,11 @@ else
   exit 1
 fi
 if [ -n "$stacked_base" ]; then
-  git fetch -q origin -- "$stacked_base" || exit 1
+  [[ $stacked_base != *:* && $stacked_base != +* ]] && git check-ref-format --branch "$stacked_base" >/dev/null &&
+    git fetch -q origin "+refs/heads/$stacked_base:refs/remotes/origin/$stacked_base" || {
+    echo "base '$stacked_base' is not a plain branch name or cannot be fetched" >&2
+    exit 1
+  }
   base_ref="refs/remotes/origin/$stacked_base"
 else
   base_ref=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)

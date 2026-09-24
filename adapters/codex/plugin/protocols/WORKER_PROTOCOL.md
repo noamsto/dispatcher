@@ -63,7 +63,11 @@ else
   exit 1
 fi
 if [ -n "$stacked_base" ]; then
-  git fetch -q origin -- "$stacked_base" || exit 1
+  [[ $stacked_base != *:* && $stacked_base != +* ]] && git check-ref-format --branch "$stacked_base" >/dev/null &&
+    git fetch -q origin "+refs/heads/$stacked_base:refs/remotes/origin/$stacked_base" || {
+    echo "base '$stacked_base' is not a plain branch name or cannot be fetched" >&2
+    exit 1
+  }
   base_ref="refs/remotes/origin/$stacked_base"
 else
   base_ref=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null)
@@ -82,7 +86,7 @@ parent's commits would otherwise ride into the diff.
 Rebase only your own branch, and only when the dispatcher directs it, and name
 refs explicitly — `git rebase origin/<base>` collides with the snippet's own
 `$base` (a merge-base commit id), not a branch. Fetch the new base first:
-`git fetch origin -- <new-base>`. After a squash-merge: `git rebase --onto
+`git fetch origin "+refs/heads/<new-base>:refs/remotes/origin/<new-base>"`. After a squash-merge: `git rebase --onto
 "origin/<new-base>" <cut-oid>` (the directive names the parent PR; if the cut
 commit isn't local yet, fetch it from there — `git fetch origin
 pull/<parent-PR>/head`). Every rebase directive carries your cut point — the parent

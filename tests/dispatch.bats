@@ -3482,6 +3482,16 @@ EOF
   chmod +x "$STUB_DIR/gh"
 }
 
+@test "--base <refspec> is refused and origin/main is unchanged" {
+  setup_stacked_base feat/parent
+  before="$(git -C "$TEST_REPO" rev-parse origin/main)"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base '+refs/heads/feat/parent:refs/remotes/origin/main' --crew-id c1 42 "implement thing"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+  [ "$(git -C "$TEST_REPO" rev-parse origin/main)" = "$before" ]
+}
+
 @test "--base <PR> resolves the PR's head branch and stacks on it" {
   setup_stacked_base feat/parent
   _stub_gh_base_pr
