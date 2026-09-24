@@ -1735,7 +1735,16 @@ wt_post_switch='post-switch.tmux=""'
 # --pr resolves the head ref; the switch itself happens after the gate below, so
 # a refusal costs no worktree and no window.
 if [ -n "$pr_number" ]; then
-  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository)
+  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository,state,mergeCommit) || {
+    echo "dispatch: --pr $pr_number: could not resolve PR $pr_number" >&2
+    exit 1
+  }
+  pr_state=$(printf '%s' "$pr_json" | jq -r .state)
+  [ "$pr_state" = OPEN ] || {
+    pr_merge_oid=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // empty')
+    echo "dispatch: --pr $pr_number: PR is $pr_state${pr_merge_oid:+ (merge commit $pr_merge_oid)} — a worker attaches only to an open PR" >&2
+    exit 1
+  }
   head=$(printf '%s' "$pr_json" | jq -r .headRefName)
   head_oid=$(printf '%s' "$pr_json" | jq -r .headRefOid)
   base_ref=$(printf '%s' "$pr_json" | jq -r .baseRefName)

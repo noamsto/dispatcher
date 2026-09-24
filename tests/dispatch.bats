@@ -147,7 +147,7 @@ stub_pr_bins() { # <head-branch> [base-branch]
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 pr\ view\ *)
-  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE"
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false,"state":"%s","mergeCommit":{"oid":"%s"}}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE" "${PR_STATE:-OPEN}" "${PR_MERGE_OID:-}"
   ;;
 esac
 exit 0
@@ -220,7 +220,7 @@ setup_stale_pr_worktree() { # <branch>
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 pr\ view\ *)
-  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false}\n' "$STALE_HEAD" "$STALE_NEW_OID"
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false,"state":"OPEN"}\n' "$STALE_HEAD" "$STALE_NEW_OID"
   ;;
 esac
 exit 0
@@ -2771,6 +2771,30 @@ assert_gate_silent() { # <engine> <model> [profile]
   run ! grep -q 'Closes #' "$wt_path/WORKER_TASK.md"
 }
 
+@test "--pr refuses a MERGED PR before any scaffolding, naming the merge oid" {
+  stub_pr_bins eng-7691-foo
+  export PR_STATE=MERGED PR_MERGE_OID=abc1234def
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"MERGED"* ]]
+  [[ "$output" == *"abc1234def"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.worktrees/eng-7691-foo" ]
+}
+
+@test "--pr refuses a CLOSED PR, with or without --review" {
+  stub_pr_bins eng-7691-foo
+  export PR_STATE=CLOSED
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CLOSED"* ]]
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --crew-id c1 "Review it"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CLOSED"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.worktrees/eng-7691-foo" ]
+}
+
 @test "--pr stamps base: from baseRefName" {
   stub_pr_bins eng-7691-foo stacked-base
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
@@ -3005,7 +3029,7 @@ setup_occupied_branch() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
-pr\ view\ *) printf '{"headRefName":"eng-7691-foo","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false}\n' "$OCCUPIED_HEAD_OID" ;;
+pr\ view\ *) printf '{"headRefName":"eng-7691-foo","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false,"state":"OPEN"}\n' "$OCCUPIED_HEAD_OID" ;;
 esac
 exit 0
 EOF
