@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -701,6 +701,80 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
+# _add_dir_ok <path> — print <path>'s canonical form if it may be granted to a
+# worker as an extra directory, else fail without a word (the dispatch-time
+# caller words its own refusal). Refused: anything not an existing absolute
+# directory, /, $HOME or an ancestor of it, anything inside or above $crew_dir
+# (the grant records, bus log and launch scripts would become writable), and
+# the secrets dirs or an ancestor of one.
+_add_dir_ok() {
+  local p h c s
+  [[ $1 == /* && $1 != *$'\n'* ]] || return 1
+  [ -d "$1" ] || return 1
+  p="$(realpath -e -- "$1")" || return 1
+  h="$(realpath -e -- "$HOME")" || return 1
+  [ "$p" != / ] || return 1
+  [[ "$h/" != "$p/"* ]] || return 1
+  if [ -n "${crew_dir:-}" ]; then
+    c="$(realpath -m -- "$crew_dir")"
+    [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
+  fi
+  for s in .ssh .gnupg .aws .config/gh; do
+    [[ "$p/" != "$h/$s/"* && "$h/$s/" != "$p/"* ]] || return 1
+  done
+  printf '%s\n' "$p"
+}
+
+# launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
+# launch needs so its tool calls never stop on a permission dialog nobody
+# watches: the protocol, skills, reviewers and critics dirs, the branch's own
+# artifacts dir, and the dispatch-time grants in $crew_dir/grants/<branch>.
+#
+# --add-dir makes a working directory: reads are prompt-free and edits follow
+# the permission mode, which auto allows, so every grant is read-write in
+# effect. Hence the narrow artifacts dir rather than $crew_dir, and grants
+# re-validated on every launch. The record is the only authority: the worker
+# edits WORKER_TASK.md, so its add_dir: header lines are a mirror, never read.
+#
+# claude's --add-dir is variadic and would swallow the positional prompt, so
+# callers splice this in right before --append-system-prompt-file.
+#
+# Other engines get nothing: codex runs with
+# --dangerously-bypass-approvals-and-sandbox and cursor with --force, so neither
+# gates paths, and pi has no tool-permission layer at all.
+launch_dir_args() {
+  [ "$1" = claude ] || return 0
+  local a d line dirs=()
+  local -A seen=()
+  for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
+    if [[ $d == /* ]] && [ -d "$d" ]; then
+      dirs+=("$d")
+    fi
+  done
+  a="$crew_dir/artifacts/$2"
+  if [ -L "$a" ]; then
+    echo "dispatch: $a is a symlink — not granting it to $2" >&2
+  else
+    mkdir -p -- "$a"
+    dirs+=("$a")
+  fi
+  if [ -f "$crew_dir/grants/$2" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      if d="$(_add_dir_ok "$line")"; then
+        dirs+=("$d")
+      else
+        echo "dispatch: dropping invalid grant '$line' for $2" >&2
+      fi
+    done <"$crew_dir/grants/$2"
+  fi
+  for d in "${dirs[@]}"; do
+    [ -z "${seen[$d]:-}" ] || continue
+    seen[$d]=1
+    printf ' --add-dir %q' "$d"
+  done
+}
+
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
 # skill dirs (pi's project skill locations) and for the harness's own skills.
 # The pi launches below pass --no-approve, which disables project discovery
@@ -746,7 +820,7 @@ launch_role() {
     printf -v quoted_dir '%q' "$pi_agent_dir"
     cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
   codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -760,6 +834,14 @@ launch_role() {
 # fresh, so the role never holds a repainting `crew await`.
 watch_role() {
   nohup "$0" --role-watch "$1" --pane "$2" --branch "$branch" >/dev/null 2>&1 &
+}
+
+# watch_role_prompts <role> <pane> <agent> <crew> — a parked claude role can
+# still sit on a permission dialog, so it gets a stall-watch under its role: id,
+# which runs only the prompt detectors. Other engines have no prompt to detect.
+watch_role_prompts() {
+  [ "$3" = claude ] || return 0
+  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine claude >/dev/null 2>&1 &
 }
 
 # `dispatch --role-watch <role> --pane <pane> [--branch <b>] [--interval S]` —
@@ -939,6 +1021,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
+  watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the
   # role (a died or stalled pane) must come back at the same rung, not silently
   # at the dispatch-time one.
@@ -1083,6 +1166,8 @@ gh_issue=""
 pr_number=""
 base_ref=""
 base_flag=""
+add_dir_flags=()
+add_dirs=()
 kind=implement
 mcp_profile=""
 grid_roles=""
@@ -1185,6 +1270,14 @@ while [ $# -gt 0 ]; do
       echo "dispatch: --base needs a ref" >&2
       exit 1
     }
+    shift 2
+    ;;
+  --add-dir)
+    [ -n "${2:-}" ] || {
+      echo "dispatch: --add-dir needs a directory" >&2
+      exit 1
+    }
+    add_dir_flags+=("$2")
     shift 2
     ;;
   --pr)
@@ -1976,6 +2069,14 @@ slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/
 crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
 mkdir -p "$crew_dir"
 
+for add_dir in "${add_dir_flags[@]}"; do
+  canonical_dir="$(_add_dir_ok "$add_dir")" || {
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory, not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets dir" >&2
+    exit 1
+  }
+  add_dirs+=("$canonical_dir")
+done
+
 # Hoisted above the claim gate (#73): the gate keys its resume exemption on the
 # resolved branch and records the claim to the bus under $crew_dir. All three are
 # pure — string work, one `git rev-parse`, one `mkdir -p` — so the gate keeps its
@@ -2593,6 +2694,33 @@ if [ "$switch_mode" = resume ] && [ -z "$base_ref" ] && [ -f "$wt_path/WORKER_TA
   [ -n "$carried_base" ] && base_ref="$carried_base"
 fi
 
+# The grant record, not the header's add_dir: mirror, is what every claude
+# launch reads (launch_dir_args): the worker edits WORKER_TASK.md, so the doc
+# cannot be the authority. Same precedence as base: above — a re-dispatch with
+# no --add-dir keeps the recorded set; anything else rewrites it, and an empty
+# set truncates it so a stale record of an old same-named branch cannot leak.
+grants_dir="$crew_dir/grants"
+grant_record="$grants_dir/$branch"
+if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
+  mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
+fi
+if [ -L "$grants_dir" ] || { [ -e "$grants_dir" ] && [ ! -d "$grants_dir" ]; }; then
+  echo "dispatch: $grants_dir is a symlink or not a directory — refusing to write a grant record" >&2
+  exit 1
+fi
+# shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
+mkdir -p -m 700 "$grants_dir"
+chmod 700 "$grants_dir"
+mkdir -p "$(dirname "$grant_record")"
+(
+  umask 077
+  if [ "${#add_dirs[@]}" -gt 0 ]; then
+    printf '%s\n' "${add_dirs[@]}" >"$grant_record"
+  else
+    : >"$grant_record"
+  fi
+)
+
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 # The review contract is appended so the dispatcher never re-authors it as
@@ -2606,6 +2734,9 @@ fi
   if [ -n "$base_ref" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
+  for add_dir in "${add_dirs[@]}"; do
+    printf 'add_dir: %s\n' "$add_dir"
+  done
   if [ "$switch_mode" = resume ]; then
     printf 'resume: true\n'
   fi
@@ -2846,7 +2977,7 @@ elif [ "$agent" = pi ]; then
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 tmux send-keys -t "$pane" "$launch_line" Enter
@@ -2854,9 +2985,9 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 # Role grid: split the task window into one pane per role. Each role pane parks
 # on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
 # prompt. A role may run a different engine from the lead (cross-engine review).
-# Split AFTER the lead launch so the lead keeps the first pane. NOT stall-watched
-# on purpose: a parked role produces no output, which the pane-output watchdog
-# would misread as a wedge.
+# Split AFTER the lead launch so the lead keeps the first pane. A role pane gets
+# only the prompt watch, never the liveness detectors: a parked role produces no
+# output, which the pane-output watchdog would misread as a wedge.
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   publish_grid_window "$win"
   for i in "${!role_names[@]}"; do
@@ -2864,6 +2995,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
     role_pane="$(split_role_pane "$win" "$wt_path" "$role" "$worker_id" "$crew_id")"
     launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     watch_role "$role" "$role_pane"
+    watch_role_prompts "$role" "$role_pane" "${role_agents[$i]}" "$crew_id"
   done
   refit_grid "$win"
 fi

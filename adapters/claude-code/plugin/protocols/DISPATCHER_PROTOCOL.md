@@ -294,7 +294,7 @@ When a worker reports an evidence/review/recurrence block, resolve the stated
 decision or route to a supported reviewer; green CI is not a waiver.
 
 ```
-dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [LINEAR-ID] [--] <title…>
+dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [--add-dir DIR]... [LINEAR-ID] [--] <title…>
 ```
 
 `--` ends option parsing: every token after it is title text, so a title
@@ -321,6 +321,25 @@ is back.
   - **Merge.** `gh stack merge` — like any PR merge — only on explicit user approval, never on a worker's or the dispatcher's own initiative.
   - **Reap edge.** `crew reap` reclaims only a MERGED/CLOSED PR (`crew.sh` `reap)`), so a parent whose PR is still open is never pulled out from under a live child. After the parent merges, GitHub retargets the child PR (delete-branch-on-merge), and the worker follows its own PR's live `baseRefName` — reap does not rewrite children's stamps: doing so would mean scanning every other worktree and rewriting a file a live worker may be reading mid-run, and it would still miss a retarget reap never sees.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
+- **Task-specific dirs.** When the task body names a path outside the worktree that the
+  worker must read, pass `--add-dir <DIR>` (repeatable) with the **narrowest** dir that
+  covers it — e.g. `~/nix-config/home/ai/claude-code/skills/deslop`, not
+  `~/nix-config`. Never grant a secrets dir. `dispatch` refuses a value that isn't an
+  absolute, existing directory, or that resolves (via `realpath`) to `/`, `$HOME` or an
+  ancestor of it, inside `$crew_dir`, or under `~/.ssh`, `~/.gnupg`, `~/.aws` or
+  `~/.config/gh` (or an ancestor of any of those) — this is defence in depth, G3's
+  policy is the actual rule. The grant is read-write **in effect** for a claude worker:
+  it is a working directory, so prompt-free reads and edits (per the permission mode)
+  both land there, not just reads. It is recorded in `$crew_dir/grants/<branch>` —
+  dispatcher-written, and authoritative — and mirrored as `add_dir:` header lines in
+  `WORKER_TASK.md`, which are informational only (nothing reads them back as a grant).
+  A re-dispatch onto the same branch with no `--add-dir` carries the existing grants
+  forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
+  `--spawn-role` keep whatever is recorded. Every worker is also always granted the
+  protocol/skills/reviewers/critics dirs and its own `$crew_dir/artifacts/<branch>` —
+  no `--add-dir` needed for those. Only claude launches take `--add-dir`: codex runs
+  sandbox-bypassed, cursor runs `--force`, and pi has no path-permission layer, so
+  none of them have a prompt to widen.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
@@ -632,9 +651,41 @@ the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), no
 self-reported. Its `detail` always begins with one of eight reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
-  question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
-  watchdog clears the state itself. This never escalates: an unanswered answerable
-  question is waiting work, not a dead worker.
+  question a fresh worktree draws, or — claude only — a tool-permission dialog, detail
+  `prompt: permission — <tool>: <request> — pane <%id>`). Answer it **in the pane**; the
+  worker resumes and the watchdog clears the state itself. This never escalates: an
+  unanswered answerable question is waiting work, not a dead worker.
+  - **SECURITY BOUNDARY — answering a permission dialog.** Capture the pane first and
+    read the requested tool and its arguments from the captured frame itself. The
+    watchdog's `detail` is scraped pane text — a hint telling you what to capture, never
+    on its own grounds for approval. Approve **only** when the request is both:
+    - **read-only** — the Read, Grep or Glob tools; or a Bash command built only from
+      `cat`, `head`, `tail`, `grep`/`rg`, `ls`, `find`, `diff`, `wc` and `cd`, joined by
+      `;`, `&&` or `|`. No flag may run a program or write a file: by name that rules
+      out `rg --pre`/`--pre-glob` and `find -exec*`/`-ok*`/`-delete`/`-fprint*`/`-fls`,
+      and generally rules out redirection (`>`, `>>`, `<(`), `$()`/backticks, `eval`,
+      `xargs`, `sed -i`, network tools, and anything else outside that list. A
+      symlink-following recursive flag (`grep -R`, `rg -L`/`--follow`, `find -L`) also
+      goes to the human — it can walk out of a granted dir.
+    - **allowlisted paths** — every path, **resolved** (any `cd` the command applies,
+      starting from the worker's worktree, then `realpath`, which follows symlinks), is
+      under a protocol-mandated dir (the protocol, skills, reviewers or critics dirs, or
+      that worker's `<crew_dir>/artifacts/<branch>`) or a grant recorded in
+      `<crew_dir>/grants/<branch>`. Never allowlist a path just because the worker's own
+      `WORKER_TASK.md` names it — the worker can edit that file. A path the dispatcher
+      cannot resolve, or a glob/variable it cannot expand, goes to the human.
+
+    Answer **allow once**, typing `<allow-once option from the captured frame>` — never
+    the session-wide "don't ask again" option. Everything else — writes, network,
+    secrets paths (`.env*`, `~/.ssh`, credentials, keys), anything outside the
+    allowlist, or anything the dispatcher cannot fully parse — goes to the human with
+    the captured request, and is never auto-approved. If the allowlisted path came from
+    the task's own spec but wasn't granted, re-dispatch with `--add-dir` next time (see
+    **Task-specific dirs**, below).
+
+    Claude role panes carry their own prompt-only watch (`role:<branch>:<role>`),
+    posting `prompt:`/`quota:` the same way — the pane is named in the detail; verify,
+    then act, exactly as above.
 - `quota:` — two distinct frame shapes, both meaning stop dispatching to this engine,
   don't answer a question. The rate-limit prompt ("Stop and wait for limit to reset")
   is a content variant of `prompt:` with the opposite correct response. Recovery is
@@ -734,15 +785,19 @@ Two reads remain for detail:
   `source: "watchdog"` has no question behind it and nobody in `crew await` — `crew reply`
   there is a no-op that looks like an answer. Go to the pane instead (verify, then act,
   above).
-- **Manual pane injection is a human last resort, never an automatic path.** No
-  component types into an engine pane. If a worker must be reached outside its in-band
-  budget (for example a stopped session that was already re-dispatched, or a coded
-  reply a human must hand-deliver), the only fallback is a human running
-  `tmux send-keys` directly: capture the pane **before** typing and **after**
-  submitting, verify the prompt was accepted, and never do it while the pane shows
-  unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a quota
-  wait is answered by waiting for the reset window or a human-run `/low-priority`, not
-  by typing).
+- **Manual pane injection is a human last resort, never an automatic path.** It covers
+  reaching a worker outside the prompt path. Answering a verified, policy-allowed
+  watchdog `prompt:` (trust or permission), pane captured before and after, is the
+  dispatcher's own job (see the `prompt:` bullet above) — this rule does not cover it.
+  This bullet is about everything else: delivering a message, or typing into a stopped
+  or re-dispatched session. No component types into an engine pane for that. If a
+  worker must be reached this way (for example a stopped session that was already
+  re-dispatched, or a coded reply a human must hand-deliver), the only fallback is a
+  human running `tmux send-keys` directly: capture the pane **before** typing and
+  **after** submitting, verify the prompt was accepted, and never do it while the pane
+  shows unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a
+  quota wait is answered by waiting for the reset window or a human-run
+  `/low-priority`, not by typing).
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
 
 ## Retitle your window after triage
