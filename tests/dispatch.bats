@@ -443,21 +443,21 @@ write_cursor_models_cache() { # <fetched_epoch>
   [ "$status" -eq 0 ]
 
   worker_dir="$HOME/.pi/dispatcher-worker"
-  lead_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris --model" "$STUB_LOG")
+  lead_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris --model" <(launch_log))
   [[ "$lead_line" == *"--no-approve"* ]]
   [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"* ]]
   [[ "$lead_line" == *"--thinking high"* ]]
   # No project skills in this worktree, so the harness dir is the only --skill.
   [[ "$lead_line" == *"--no-approve --skill $DISPATCHER_SKILLS_DIR "* ]]
 
-  plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" "$STUB_LOG")
-  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-reviewer" "$STUB_LOG")
+  plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" <(launch_log))
+  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-reviewer" <(launch_log))
   [[ "$plan_critic_line" == *"--no-approve"* ]]
   [[ "$reviewer_line" == *"--no-approve"* ]]
 
   # No pi send-keys line escaped the worker-dir prefix.
-  total_pi_lines=$(grep -cF -- ' pi --name' "$STUB_LOG" || true)
-  prefixed_pi_lines=$(grep -cF -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" "$STUB_LOG" || true)
+  total_pi_lines=$(grep -cF -- ' pi --name' <(launch_log) || true)
+  prefixed_pi_lines=$(grep -cF -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" <(launch_log) || true)
   [ "$total_pi_lines" = "$prefixed_pi_lines" ]
   [ "$total_pi_lines" -eq 3 ]
 
@@ -505,12 +505,12 @@ EOF
 
   # The lead carries WORKER_PROTOCOL.md; each grid role pane gets its own
   # --skill too, but this asserts the worker launch specifically.
-  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$STUB_LOG")
+  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log))
   [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   # The role pane goes through launch_role, whose worktree arrives as an
   # argument — assert the grid path passes it through.
-  role_line=$(grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-plan-critic" "$STUB_LOG")
+  role_line=$(grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-plan-critic" <(launch_log))
   [[ "$role_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 }
 
@@ -544,7 +544,7 @@ EOF
   [ "$status" -eq 0 ]
 
   worker_dir="$HOME/.pi/dispatcher-worker"
-  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" "$STUB_LOG")
+  reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name" <(launch_log))
   [[ "$reviewer_line" == *"-reviewer"* ]]
   [[ "$reviewer_line" == *"--no-approve"* ]]
 }
@@ -1001,10 +1001,14 @@ EOF
 
   # The same grid also spawns two role-pane codex launches via launch_role;
   # those have no agents.* flags (verified by reading launch_role's codex
-  # branch), so this marker isolates the lead's line alone.
-  launch="$(grep 'send-keys' "$STUB_LOG" | grep -F 'agents.enabled=true')"
-  [ -n "$launch" ]
-  [ "$(printf '%s\n' "$launch" | wc -l)" -eq 1 ]
+  # branch), so this marker isolates the lead's line alone. The marker is in
+  # the launch script, so find its line number via launch_log and replay the
+  # short line actually typed (same line of $STUB_LOG).
+  hit="$(grep -n 'send-keys' <(launch_log) | grep -F 'agents.enabled=true')"
+  [ -n "$hit" ]
+  [ "$(printf '%s\n' "$hit" | wc -l)" -eq 1 ]
+  lineno="${hit%%:*}"
+  launch="$(sed -n "${lineno}p" "$STUB_LOG")"
 
   cmd="${launch#send-keys -t %1 }"
   cmd="${cmd% Enter}"
@@ -1091,18 +1095,22 @@ EOF
 # Replays the lead's send-keys command through bash with a stub engine binary
 # first on PATH, leaving the argv the stub received in the global `argv`.
 # $1 is the engine binary, $2 a fixed substring selecting the lead's line
-# (role panes launch the same binary).
+# (role panes launch the same binary). The marker is in the launch script, so
+# its line number comes from launch_log; the replay runs the short line
+# actually typed (same line of $STUB_LOG).
 _replay_lead_launch() {
-  local bin="$1" marker="$2" launch cmd arg
+  local bin="$1" marker="$2" hit lineno launch cmd arg
   cat >"$STUB_DIR/$bin" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\0' "$@" >"$STUB_DIR/engine_argv"
 exit 0
 EOF
   chmod +x "$STUB_DIR/$bin"
-  launch="$(grep 'send-keys' "$STUB_LOG" | grep -F -- "$marker")"
-  [ -n "$launch" ]
-  [ "$(printf '%s\n' "$launch" | wc -l)" -eq 1 ]
+  hit="$(grep -n 'send-keys' <(launch_log) | grep -F -- "$marker")"
+  [ -n "$hit" ]
+  [ "$(printf '%s\n' "$hit" | wc -l)" -eq 1 ]
+  lineno="${hit%%:*}"
+  launch="$(sed -n "${lineno}p" "$STUB_LOG")"
   cmd="${launch#send-keys -t %1 }"
   cmd="${cmd% Enter}"
   bash -c "$cmd"
@@ -1512,9 +1520,9 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:sonnet@low,critic@ultra" --effort high --crew-id c1 42 "per-role effort"
   [ "$status" -eq 0 ]
-  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort low' "$STUB_LOG"
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort low' <(launch_log)
   [ "$status" -eq 0 ]
-  run grep -F -- 'codex --profile worker -m gpt-5.6-sol -c model_reasoning_effort=ultra' "$STUB_LOG"
+  run grep -F -- 'codex --profile worker -m gpt-5.6-sol -c model_reasoning_effort=ultra' <(launch_log)
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-per-role-effort/WORKER_TASK.md"
   roles="$(sed -n 's/^crew_dir: //p' "$task")/artifacts/feat/42-per-role-effort/roles.json"
@@ -1549,7 +1557,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles 'reviewer=claude:sonnet' --effort max --crew-id c1 42 "inherited role effort"
   [ "$status" -eq 0 ]
-  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' "$STUB_LOG"
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' <(launch_log)
   [ "$status" -eq 0 ]
 }
 
@@ -1557,9 +1565,9 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:sonnet@max,critic=pi:openrouter/deepseek/deepseek-v4-flash@high" --effort ultra --crew-id c1 42 "ultra lead roles"
   [ "$status" -eq 0 ]
-  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' "$STUB_LOG"
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' <(launch_log)
   [ "$status" -eq 0 ]
-  run grep -F -- '--thinking high' "$STUB_LOG"
+  run grep -F -- '--thinking high' <(launch_log)
   [ "$status" -eq 0 ]
 }
 
@@ -1766,7 +1774,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *'agents.enabled=true'* ]]
   [[ "$launch" == *'agents.max_concurrent_threads_per_session=3'* ]]
   # session high → subagent medium (one rung down)
@@ -1780,7 +1788,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort ultra --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *'model_reasoning_effort=ultra'* ]]
   [[ "$launch" == *'agents.default_subagent_reasoning_effort=max'* ]]
   [[ "$launch" == *'do not add a second harness'* ]]
@@ -1790,7 +1798,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *'cursor-agent'* ]]
   [[ "$launch" == *"--model 'kimi-k3-high'"* ]]
   [[ "$launch" == *'Process authority:'* ]]
@@ -2129,7 +2137,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *"--model 'composer-2.5'"* ]]
 }
 
@@ -2137,7 +2145,7 @@ EOF
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   # Single-quoted, so the glob-active brackets never reach the worker's shell.
   [[ "$launch" == *"--model 'claude-opus-5[context=1m,effort=high,fast=false]'"* ]]
 }
@@ -2946,7 +2954,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   grep -q 'The worktree is the PR head' "$task"
   grep -q 'Never `REQUEST_CHANGES`' "$task"
 
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *"do not edit, commit, push, or open a PR"* ]]
   [[ "$launch" != *"Push when pre-push passes"* ]]
 }
@@ -2956,7 +2964,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
   grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
 
@@ -3475,6 +3483,115 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
+# #320 — the issue argument is canonicalised once at parse time. Every derived
+# key (branch, ls-remote pattern, task doc, claim row, gh calls) must use the
+# one decimal form, or a dispatch of '042' never sees evidence recorded under
+# '42' and a second crew can fork an issue the label says is claimed.
+
+@test "claim: a leading-zero issue number is canonicalised everywhere (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 042 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+  run ! grep -q '042' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
+  [ "$output" = "42" ]
+}
+
+@test "claim: '#42' canonicalises to issue 42 (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 '#42' "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="claim-issue") | .issue' "$log"
+  [ "$output" = "42" ]
+}
+
+@test "claim: a bare '42' stays issue 42 (#320)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  grep -q 'issue view 42 ' "$STUB_LOG"
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
+  grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
+}
+
+@test "claim: a multi-line issue token is refused before any gh call or scaffolding (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 $'foo\n42' "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"newline"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "claim: a space-mangled issue token is refused before any gh call or scaffolding (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "4 2" "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a valid issue number"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "claim: a zero issue number is refused before any gh call (#320)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 0 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"positive integer"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "--pr canonicalises a leading-zero PR number (#320)" {
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 099 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -q 'pr view 99 ' "$STUB_LOG"
+  run ! grep -q 'pr view 099' "$STUB_LOG"
+  grep -qx 'pr: 99' "$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+}
+
+@test "--pr refuses a zero PR number (#320)" {
+  run run_dispatch standard sonnet --effort medium --pr 0 "review"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--pr needs a positive integer"* ]]
+}
+
+@test "--base canonicalises a leading-zero PR number (#320)" {
+  setup_stacked_base feat/parent
+  _stub_gh_base_pr
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 07 --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -q 'pr view 7 ' "$STUB_LOG"
+  run ! grep -q 'pr view 07' "$STUB_LOG"
+  grep -qx 'base: feat/parent' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+}
+
+@test "--base refuses a zero PR number (#320)" {
+  run run_dispatch standard sonnet --effort medium --base 0 --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--base PR number must be a positive integer"* ]]
+}
+
 @test "claim: a failed label write fails the dispatch instead of proceeding unclaimed" {
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -3766,7 +3883,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   grep -Fx 'resume: true' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
-  keys="$(grep 'send-keys' "$STUB_LOG")"
+  keys="$(grep 'send-keys' <(launch_log))"
   [[ "$keys" == *"You are resuming an interrupted run on this branch"* ]]
   [[ "$keys" == *"do not re-run the spec or plan phases"* ]]
   [[ "$keys" == *"open PR before you push"* ]]
@@ -4307,9 +4424,9 @@ EOF
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 0 ]
-  run grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-reviewer" "$STUB_LOG"
+  run grep -F -- "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --name iris-reviewer" <(launch_log)
   [ "$status" -eq 0 ]
-  run grep -F -- '--no-approve' "$STUB_LOG"
+  run grep -F -- '--no-approve' <(launch_log)
   [ "$status" -eq 0 ]
 }
 
@@ -4367,7 +4484,8 @@ EOF
 # _exit_hook_fixture — run an eager reviewer role launch, then take the line
 # typed into its pane and make it runnable: dispatch gets the shebang the Nix
 # build prepends (the typed continuation execs it directly), and the engine
-# stub exits at once.
+# stub exits at once. $cmd is the typed `bash '<a>' ; bash '<b>'` line; the
+# dispatch path is rewritten inside <b>, the `--role-exited` exit script.
 _exit_hook_fixture() {
   stub_launch_bins
   _grid_tmux_stub
@@ -4377,11 +4495,13 @@ _exit_hook_fixture() {
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   { printf '#!/usr/bin/env bash\nset -euo pipefail\n'; cat "$DISPATCH"; } >"$BATS_TEST_TMPDIR/dispatch-exec"
   chmod +x "$BATS_TEST_TMPDIR/dispatch-exec"
-  role_line="$(grep '^send-keys -t %6 GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: claude' "$STUB_LOG")"
+  role_line="$(grep "^send-keys -t %6 bash '" "$STUB_LOG")"
   [ -n "$role_line" ]
   cmd="${role_line#send-keys -t %6 }"
   cmd="${cmd% Enter}"
-  cmd="${cmd//"$(realpath "$DISPATCH")"/$BATS_TEST_TMPDIR/dispatch-exec}"
+  exit_path="${cmd##*bash \'}"
+  exit_path="${exit_path%\'}"
+  sed -i "s#$(realpath "$DISPATCH")#$BATS_TEST_TMPDIR/dispatch-exec#" "$exit_path"
   : >"$STUB_LOG"
   printf '#!/usr/bin/env bash\nexit 1\n' >"$STUB_DIR/claude"
   chmod +x "$STUB_DIR/claude"
@@ -4395,6 +4515,8 @@ _exit_hook_fixture() {
   grep -qxF 'status role:feat/42-do-a-thing:reviewer blocked role reviewer engine exited (pane %6)' "$STUB_LOG"
   grep -qF 'msg role:feat/42-do-a-thing:reviewer worker:feat/42-do-a-thing#s7-7' "$STUB_LOG"
   grep -qF 'set-option -p -t %6 @crew_exited 1' "$STUB_LOG"
+  # The exit script deletes itself once it runs.
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited stays silent after the lead's final release" {
@@ -4408,6 +4530,7 @@ _exit_hook_fixture() {
   [ "$status" -eq 0 ]
   run ! grep -qE '^(status|msg) ' "$STUB_LOG"
   grep -qF '@crew_exited 1' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited is not silenced by a final sent to an earlier incarnation of the role" {
@@ -4419,6 +4542,7 @@ _exit_hook_fixture() {
   run bash -c "$cmd"
   [ "$status" -eq 0 ]
   grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --role-exited still posts when WORKER_TASK.md is gone" {
@@ -4429,6 +4553,7 @@ _exit_hook_fixture() {
   [ "$status" -eq 0 ]
   grep -qF 'status role:feat/42-do-a-thing:reviewer blocked' "$STUB_LOG"
   run ! grep -qF 'msg role:' "$STUB_LOG"
+  [ ! -e "$exit_path" ]
 }
 
 @test "grid: --reap-roles itself kills role panes and posts nothing" {
@@ -4487,18 +4612,226 @@ EOF
   printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash","effort":"low"},"critic":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash","effort":"low"},"legacy":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles"
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 0 ]
-  run grep -F -- '--thinking low' "$STUB_LOG"
+  run grep -F -- '--thinking low' <(launch_log)
   [ "$status" -eq 0 ]
 
   run run_dispatch --spawn-role critic --effort max
   [ "$status" -eq 0 ]
-  run grep -F -- '--thinking max' "$STUB_LOG"
+  run grep -F -- '--thinking max' <(launch_log)
   [ "$status" -eq 0 ]
 
   run run_dispatch --spawn-role legacy
   [ "$status" -eq 0 ]
-  run grep -F -- '--thinking high' "$STUB_LOG"
+  run grep -F -- '--thinking high' <(launch_log)
   [ "$status" -eq 0 ]
+}
+
+# _assert_bound_send_keys <crew launch dir> [marker] — every send-keys line
+# logged so far is one or two quoted script paths under the crew dir and
+# nothing else, under 512 bytes: half of macOS's 1024-byte MAX_CANON, with room
+# for a role's two absolute paths under a long macOS bats tmpdir. With a
+# marker, the referenced script(s) must hold it.
+_assert_bound_send_keys() {
+  local crew_launch_dir="$1" marker="${2:-}" pattern line n=0
+  pattern="^send-keys -t %[0-9]+ bash '${crew_launch_dir}/launch\.[A-Za-z0-9]{6}'( ; bash '${crew_launch_dir}/exit\.[A-Za-z0-9]{6}')? Enter\$"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    n=$((n + 1))
+    [[ "$line" =~ $pattern ]]
+    [ "${#line}" -lt 512 ]
+  done < <(grep '^send-keys' "$STUB_LOG")
+  [ "$n" -gt 0 ]
+  [ -z "$marker" ] || grep -q -F -- "$marker" <(launch_log)
+}
+
+# #298: a fresh pane's tty truncates typed-ahead input at 1024 bytes on macOS.
+# The prompt embeds $DISPATCHER_PROTOCOL_DIR, so a long dir alone would push a
+# typed launch line past that; the typed text must stay short regardless.
+@test "bound: send-keys stays short and shaped for every engine lead and role pane under a very long protocol dir" {
+  stub_launch_bins
+  _grid_tmux_stub
+
+  # >=1100 bytes deep, each path component well under the 255-byte cap.
+  seg="$(printf 'p%.0s' $(seq 1 200))"
+  long_dir="$TEST_REPO/deep-protocols"
+  while [ "${#long_dir}" -lt 1100 ]; do
+    long_dir="$long_dir/$seg"
+  done
+  export DISPATCHER_PROTOCOL_DIR="$long_dir"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  n=0
+
+  # claude deep: the default critics-only grid, covering both the lead (%1)
+  # and its role panes (%6, stubbed) in one dispatch.
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 100 "claude deep bound"
+  [ "$status" -eq 0 ]
+  _assert_bound_send_keys "$crew_launch_dir" WORKER_PROTOCOL.md
+  n=$((n + 1))
+
+  while IFS='|' read -r eng model effort profile _bin _marker; do
+    : >"$STUB_LOG"
+    # pi refuses --no-grid outright, so only codex/cursor take it; pi grids
+    # by default instead, which still exercises the role-pane shape.
+    no_grid=()
+    [ "$eng" = pi ] || no_grid=(--no-grid)
+    DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" "${no_grid[@]}" --crew-id c1 "1$n" "$eng bound"
+    [ "$status" -eq 0 ]
+    _assert_bound_send_keys "$crew_launch_dir" WORKER_PROTOCOL.md
+    n=$((n + 1))
+  done < <(protocol_engine_specs codex cursor pi)
+
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 4 ]
+}
+
+@test "--spawn-role: the role's typed send-keys line has the short bash shape" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  crew_launch_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  _assert_bound_send_keys "$crew_launch_dir" GRID_PROTOCOL.md
+  line="$(grep '^send-keys' "$STUB_LOG")"
+  [[ "$line" == 'send-keys -t %6 bash '* ]]
+  [[ "$line" == *" ; bash "* ]]
+}
+
+@test "the launch script file lives under the crew dir, mode 0700, with the expected header" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "script file shape"
+  [ "$status" -eq 0 ]
+
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  line="$(grep '^send-keys' "$STUB_LOG")"
+  script="${line##*bash \'}"
+  script="${script%%\'*}"
+  [[ "$script" == "$crew_launch_dir"/launch.* ]]
+
+  # ls -ld's mode prefix, not an exact match: macOS may append a trailing
+  # `@`/`+` for xattrs/ACLs.
+  dir_ls="$(ls -ld "$crew_launch_dir")"
+  [[ "$dir_ls" == drwx------* ]]
+  file_ls="$(ls -ld "$script")"
+  [[ "$file_ls" == -rwx------* ]]
+
+  [ "$(sed -n '1p' "$script")" = '#!/usr/bin/env bash' ]
+  [[ "$(sed -n '2p' "$script")" == 'exec env '* ]]
+}
+
+# mkdir -p is a no-op on an existing symlink, chmod follows it, and mktemp
+# would write into whatever it points at.
+@test "a symlinked crew launch dir is refused, nothing is written into its target" {
+  stub_launch_bins
+  crew_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew"
+  target="$BATS_TEST_TMPDIR/launch-target"
+  mkdir -p "$crew_dir" "$target"
+  ln -s "$target" "$crew_dir/launch"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "symlinked launch dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"symlink or not a directory — refusing to write a launch script"* ]]
+  [ -L "$crew_dir/launch" ]
+  [ "$(find "$target" -mindepth 1 | wc -l)" -eq 0 ]
+}
+
+# fish is the real pane shell; bash is the CI shell. Both must hand the engine
+# the same argv from the typed short line.
+@test "fish replay: the lead and role short lines behave identically under fish and bash" {
+  command -v fish >/dev/null || skip "fish is not installed"
+
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "fish replay"
+  [ "$status" -eq 0 ]
+
+  lead_line="$(grep '^send-keys -t %1 ' "$STUB_LOG")"
+  role_line="$(grep '^send-keys -t %6 ' "$STUB_LOG")"
+  [ -n "$lead_line" ]
+  [ -n "$role_line" ]
+  lead_cmd="${lead_line#send-keys -t %1 }"
+  lead_cmd="${lead_cmd% Enter}"
+  role_cmd="${role_line#send-keys -t %6 }"
+  role_cmd="${role_cmd% Enter}"
+
+  # The role's second script execs `dispatch --role-exited …`, which would
+  # otherwise run the real dispatch machinery; replace it with a stub-safe
+  # no-op that still proves it ran.
+  exit_path="${role_cmd##*bash \'}"
+  exit_path="${exit_path%\'}"
+  printf '#!/usr/bin/env bash\ntouch "%s/role_exited_ran"\n' "$STUB_DIR" >"$exit_path"
+
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\0' "$@" >>"$ARGV_FILE"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/claude"
+
+  for sh in bash fish; do
+    rm -f "$STUB_DIR/argv_$sh" "$STUB_DIR/role_exited_ran"
+    ARGV_FILE="$STUB_DIR/argv_$sh" "$sh" -c "$lead_cmd"
+    ARGV_FILE="$STUB_DIR/argv_$sh" "$sh" -c "$role_cmd"
+    [ -f "$STUB_DIR/role_exited_ran" ]
+  done
+
+  [ -s "$STUB_DIR/argv_bash" ]
+  cmp -s "$STUB_DIR/argv_bash" "$STUB_DIR/argv_fish"
+}
+
+@test "prune: launch files older than 7 days are pruned on the next dispatch, a fresh one survives" {
+  stub_launch_bins
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  mkdir -p "$crew_launch_dir"
+  old_file="$crew_launch_dir/launch.old000"
+  printf '#!/usr/bin/env bash\nexec env true\n' >"$old_file"
+  chmod 700 "$old_file"
+  touch -t 202001010000 "$old_file"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "prune test"
+  [ "$status" -eq 0 ]
+
+  [ ! -e "$old_file" ]
+  line="$(grep '^send-keys' "$STUB_LOG")"
+  new_script="${line##*bash \'}"
+  new_script="${new_script%%\'*}"
+  [ -f "$new_script" ]
+}
+
+# A parked role pane can outlive the 7-day launch prune; its exit script must
+# survive it so `--role-exited` still fires when that engine returns.
+@test "prune: a role's exit script survives the 7-day prune that removes a stale launch script" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "prune keeps exit"
+  [ "$status" -eq 0 ]
+
+  crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
+  role_line="$(grep "^send-keys -t %6 bash '" "$STUB_LOG")"
+  [ -n "$role_line" ]
+  cmd="${role_line#send-keys -t %6 }"
+  cmd="${cmd% Enter}"
+  exit_path="${cmd##*bash \'}"
+  exit_path="${exit_path%\'}"
+  [[ "$exit_path" == "$crew_launch_dir"/exit.* ]]
+  touch -t 202001010000 "$exit_path"
+
+  stale_launch="$crew_launch_dir/launch.stale0"
+  printf '#!/usr/bin/env bash\nexec env true\n' >"$stale_launch"
+  chmod 700 "$stale_launch"
+  touch -t 202001010000 "$stale_launch"
+
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --agent claude --effort medium --crew-id c1 43 "a different dispatch"
+  [ "$status" -eq 0 ]
+
+  [ -e "$exit_path" ]
+  [ ! -e "$stale_launch" ]
 }
 
 @test "grid: lazy pace gate checks final effort before splitting and honors --ignore-budget" {

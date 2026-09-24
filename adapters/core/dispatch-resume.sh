@@ -24,6 +24,47 @@ pi_skill_args() {
   return 0
 }
 
+# shell_quote and write_launch_script: duplicated from dispatch.sh (standalone
+# build); parity-tested against dispatch.sh's copies.
+shell_quote() {
+  local -n _out="$1"
+  local _text="$2" _res="" _c _i
+  for ((_i = 0; _i < ${#_text}; _i++)); do
+    _c="${_text:_i:1}"
+    case "$_c" in
+    "'") _res+="'\\''" ;;
+    \\) _res+="'\\\\'" ;;
+    *) _res+="$_c" ;;
+    esac
+  done
+  _out="'$_res'"
+}
+
+write_launch_script() {
+  local -n _launch="$1"
+  local _dir="$crew_dir/launch" _file _quoted
+  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
+  if [ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }; then
+    echo "dispatch: $_dir is a symlink or not a directory — refusing to write a launch script" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
+  mkdir -p -m 700 "$_dir"
+  chmod 700 "$_dir"
+  find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
+  if [ "${3:-}" = exit ]; then
+    _file="$(mktemp "$_dir/exit.XXXXXX")"
+    # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env %s\n' "$2" >"$_file"
+  else
+    _file="$(mktemp "$_dir/launch.XXXXXX")"
+    printf '#!/usr/bin/env bash\nexec env %s\n' "$2" >"$_file"
+  fi
+  chmod 700 "$_file"
+  shell_quote _quoted "$_file"
+  _launch="bash $_quoted"
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -714,27 +755,26 @@ echo "worker_id: $worker_id"
 if [ "$agent" = codex ]; then
   cont="resume --last"
   [ -n "$fresh" ] && cont=""
-  tmux send-keys -t "$pane" \
-    "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = cursor ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
-  tmux send-keys -t "$pane" \
-    "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = pi ]; then
   cont="--continue"
   [ -n "$fresh" ] && cont=""
-  tmux send-keys -t "$pane" \
-    "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'" Enter
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="--continue"
   [ -n "$fresh" ] && cont=""
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  tmux send-keys -t "$pane" \
-    "GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'" Enter
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
+write_launch_script launch_line "$launch_cmd"
+# shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
+tmux send-keys -t "$pane" "$launch_line" Enter
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
 # state, and a resumed worker can wedge exactly the same way.
