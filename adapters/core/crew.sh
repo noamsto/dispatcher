@@ -128,6 +128,31 @@ _is_engine_cmd() {
   return 1
 }
 
+# _owner_pid — the pid `adopt`/`register` record when none is given. A bare
+# $PPID is the calling shell, and from an agent's Bash tool that is a throwaway
+# subshell that exits at once, so the crew reads as dead (#301). Walk up past
+# shells to the first non-shell ancestor (the engine). Bounded; if the chain is
+# all shells or ps fails, fall back to $PPID — the pre-#301 behaviour.
+_owner_pid() {
+  local p="$PPID" c depth=0
+  while [ "$depth" -lt 32 ]; do
+    depth=$((depth + 1))
+    c=$(ps -o comm= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    [ -n "$c" ] || break
+    c="${c##*/}"
+    case "${c#-}" in
+    bash | sh | zsh | fish | dash | ksh) ;;
+    *)
+      printf '%s\n' "$p"
+      return
+      ;;
+    esac
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$p" in '' | *[!0-9]* | 0 | 1) break ;; esac
+  done
+  printf '%s\n' "$PPID"
+}
+
 # _pane_is_engine_at <pane_row> <worktree_path> — <pane_row> is one
 # `#{pane_current_command} #{pane_current_path}` row. The path is the strong
 # signal and must match exactly, never by prefix — /wt/foo would otherwise claim
@@ -979,7 +1004,7 @@ register | deregister)
   # Per-crew registration (was an exclusive per-repo role lock). N crews may
   # share a repo: each is identified by its crew_id, so there is no
   # cross-crew contention and registration never refuses. The crew dir records
-  # the dispatcher's long-lived PID (default $PPID), recorded for a future
+  # the dispatcher's long-lived PID (default: nearest non-shell ancestor), recorded for a future
   # stale-cleanup command (nothing reclaims automatically today), and holds
   # that crew's watch cursor + watch lock. Crew ids are unique by construction
   # (timestamp-pid), so re-registering a live crew is idempotent (re-mkdir -p,
@@ -992,7 +1017,7 @@ register | deregister)
   cdir="$dir/crews/$crew"
   if [ "$sub" = register ]; then
     mkdir -p "$cdir"
-    printf '%s\n' "${1:-$PPID}" >"$cdir/pid"
+    printf '%s\n' "${1:-$(_owner_pid)}" >"$cdir/pid"
     # The pane, not just the pid: a worker reattaching to a live dispatcher has
     # to retarget its `dispatcher_pane:` ping, and the pid alone cannot name a
     # pane. Absent outside tmux, which readers must tolerate.
@@ -1106,7 +1131,7 @@ adopt)
     exit 1
     ;;
   esac
-  pid="${2:-$PPID}"
+  pid="${2:-$(_owner_pid)}"
   cdir="$dir/crews/$id"
   known=""
   [ -d "$cdir" ] && known=1
