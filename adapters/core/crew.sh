@@ -755,8 +755,10 @@ status | msg)
     # resume case), and a worker that cannot review stops on an ungated state
     # (blocked/failed), so refusing here never strands one. A seam is the lead's
     # own post-verdict `review:<crew>` msg, or — on pi, whose reviewer pane IS
-    # the gate — the pane's verdict. The grid assignment (lead -> role) is only
-    # a request and never counts.
+    # the gate — the pane's verdict. On pi the log is folded in order: the latest
+    # verdict decides, a reject blocks the lead's own seam until the reviewer's
+    # next verdict, and a grid assignment (lead -> role) voids every earlier
+    # verdict until a new one lands. The assignment is never itself a seam.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -804,15 +806,27 @@ status | msg)
           r="role:${b#worker:}:reviewer"
           seams=0
           if [ -f "$log" ]; then
-            seams=$(jq -r --arg c "$crew" --arg b "$b" --arg r "$r" --arg e "$engine" \
-              'select(.crew_id==$c and .kind=="msg"
-                      and ((.body|fromjson? // null) as $o | ($o|type)=="object" and $o.seam=="review" and ($o|has("tag")|not)
-                           and (((.from // "")|sub("#s[^#]*$";""))==$b and .to==("review:"+$c)
-                                  and (($o.review_mode // "full")|IN("full","downgraded"))
-                                or ($e=="pi" and .from==$r and ($o.verdict|IN("accept","revise","reject")))))) | 1' "$log" 2>/dev/null | wc -l || true)
+            seams=$(jq -Rnr --arg c "$crew" --arg b "$b" --arg r "$r" --arg e "$engine" '
+              reduce (inputs | fromjson? | select(type == "object")) as $m (
+                {ok: false, rejected: false, pending: false};
+                (if $m.crew_id == $c and $m.kind == "msg" then (($m.body | fromjson?) // null) else null end) as $o
+                | (($m.from // "") | sub("#s[^#]*$"; "")) as $f
+                | (($m.to // "") | sub("#s[^#]*$"; "")) as $t
+                | if ($o | type) != "object" or $o.seam != "review" or ($o | has("tag")) then .
+                  elif $e == "pi" and $f == $b and $m.to == $r then .pending = true | .ok = false
+                  elif $e == "pi" and $m.from == $r and $t == $b and ($o.verdict | IN("accept", "revise", "reject")) then
+                    .pending = false
+                    | if $o.verdict == "accept" then .ok = true | .rejected = false
+                      elif $o.verdict == "revise" then .ok = false | .rejected = false
+                      else .ok = false | .rejected = true end
+                  elif $f == $b and $m.to == ("review:" + $c)
+                       and (($o | has("review_mode") | not) or ($o.review_mode | IN("full", "downgraded"))) then
+                    if .rejected or .pending then . else .ok = true end
+                  else . end
+              ) | if .ok then 1 else 0 end' "$log" 2>/dev/null || true)
           fi
-          if [ "${seams:-0}" -eq 0 ]; then
-            echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done" >&2
+          if [ "${seams:-0}" != 1 ]; then
+            echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:$crew seam after you fix it, a reject blocks until the reviewer's next verdict, and a new review assignment to the reviewer cancels every earlier verdict until a new one arrives" >&2
             exit 1
           fi
           ;;
