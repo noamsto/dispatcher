@@ -602,7 +602,7 @@ fan-out budget, so the same wakeup tells you when to dispatch the next queued ta
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of seven reserved prefixes:
+self-reported. Its `detail` always begins with one of eight reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and the
@@ -638,6 +638,14 @@ self-reported. Its `detail` always begins with one of seven reserved prefixes:
   `--launch` seconds (default 150, past a slow devshell load) after the watchdog started
   and no engine was ever seen there — the binary is missing or the launch script failed.
   It clears itself if the engine appears late; otherwise re-dispatch.
+- `unread:` — a lead that is `working` has had a `role:<branch>:<role>` msg (a critic or
+  reviewer verdict) addressed to its session sitting undelivered for `--unread` (default
+  10 min, the bounded-wait ceiling), with no reply from it to that role. The lead's pane
+  keeps repainting, so no pane detector fires — the #300 hand-rolled-poll deadlock shape.
+  Own prefix, not a `stalled:` sub-case, because the recovery differs. **Verify, then
+  nudge**: `crew inbox <lead session id>` shows the waiting verdict; if it is there,
+  tell the lead in its pane to read it (`crew await --from role:<branch>:<role>`). It clears itself once the
+  msg is delivered. Never escalates and is never `failed`: a lead slow to read is not dead.
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
   count, and the top CPU consumers with their `cwd`s, `comm`, and `pid`s.

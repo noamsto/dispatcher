@@ -2631,6 +2631,15 @@ seed_raw() {
             + (if $src!="" then {source:$src} else {} end))}' >>"$logf"
 }
 
+# seed_msg <from> <to> <age_s> — append a msg event dated <age_s> seconds ago.
+seed_msg() {
+  local logf
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg f "$1" --arg t "$2" --argjson ts "$((($(date +%s) - $3) * 1000))" \
+    '{ts:$ts, crew_id:"c1", from:$f, to:$t, kind:"msg", body:"{\"verdict\":\"accept\"}"}' >>"$logf"
+}
+
 # seed_start <dispatch|resume> <session> <ts_ms> — a session-start row on feat/x,
 # shaped like dispatch.sh's and dispatch-resume.sh's, which `crew` cannot write.
 seed_start() {
@@ -3111,6 +3120,90 @@ EOF
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
     --grace 0 --interval 1 --launch 999 --window 60 --stall 999 --idle 999 --dead 999 --max-life 4
   run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D6 flags a working lead with an undelivered role verdict" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: "* ]]
+}
+
+@test "stall-watch: D6 is silent once the verdict is delivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  run run_crew inbox worker:feat/x#s1-1 c1
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\")' | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D6 is silent while the verdict is younger than --unread" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 1
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 999 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\")' | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D6 is silent when the lead is not working" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 pr_open "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\")' | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D6 ignores a verdict the lead already answered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  seed_msg worker:feat/x#s1-1 role:feat/x:reviewer 20
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\")' | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D6 clears itself once the verdict is delivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  (sleep 2 && run_crew inbox worker:feat/x#s1-1 c1 >/dev/null) &
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "blocked|unread: "* ]]
+  [ "${lines[1]}" = "working|unread: cleared" ]
+}
+
+@test "stall-watch: D6 is silent for a branch-keyed watchdog" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\")' | grep -c . || true"
   [ "$output" = "0" ]
 }
 

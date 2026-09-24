@@ -3401,7 +3401,7 @@ stall-watch)
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
   # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Six detectors read one pane capture per tick:
+  # working (#31). Six pane detectors read one capture per tick (D6 reads the bus instead):
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
@@ -3415,6 +3415,10 @@ stall-watch)
   #   D5 stalled:    pane still a bare shell --launch seconds in and no engine
   #                  ever seen there (`stalled: launch-not-started`, #342);
   #                  clears when the engine appears
+  #   D6 unread:     lead `working` while a role:<branch>:* msg to its session
+  #                  sits past the delivered mark for --unread (#330); clears
+  #                  once delivered. Repainting panes never trip D2/D3, so this
+  #                  reads the bus (bounded tail, 4-tick cadence). Never escalates.
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
@@ -3432,7 +3436,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S]" >&2
+    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -3475,6 +3479,7 @@ stall-watch)
   load_win=300
   bg_wait=7200
   launch=150
+  unread=600
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -3524,6 +3529,10 @@ stall-watch)
       ;;
     --launch)
       launch="${2:-}"
+      shift 2
+      ;;
+    --unread)
+      unread="${2:-}"
       shift 2
       ;;
     *)
@@ -3836,6 +3845,29 @@ BUSLINE
       ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
       [ -z "$(_meter_line "$1")" ]
   }
+  # _unread_oldest — ts (ms) of the oldest role:<branch>:* msg to this lead that
+  # is past the delivered mark and not answered by a later msg from the lead to
+  # that role; empty when none. A sessioned watchdog matches its session id only,
+  # which scopes it to this run; a branch-keyed one has no marks to read and
+  # returns nothing. A msg scrolled out of the 2000-line tail reads as gone.
+  _unread_oldest() {
+    # A branch-keyed watchdog cannot name the lead's session, so it cannot read
+    # that session's delivered marks; stay silent rather than misreport.
+    [ "$from_id" != "$me" ] || return 0
+    [ -f "$log" ] || return 0
+    tail -n 2000 "$log" 2>/dev/null | jq -Rnr --arg c "$crew" --arg b "role:$branch:" \
+      --arg me "$me" --arg f "$from_id" --argjson t0 "$run_start_ms" \
+      --argjson marks "$(_await_marks "$crew" "$from_id")" '
+        def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
+                      else $x == $f end;
+        [inputs | fromjson? | select(.crew_id == $c and .kind == "msg" and (.ts >= $t0 or $f != $me))] as $m
+        | [$m[] | select(lead(.from))] as $sent
+        | [$m[] | select((.from | strings | startswith($b)) and lead(.to) and .ts > ($marks[.from] // 0))
+           | . as $r
+           | select(any($sent[]; .to == $r.from and .ts > $r.ts) | not)
+           | .ts] | min // empty' 2>/dev/null || true
+  }
+
   _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
@@ -3860,6 +3892,7 @@ BUSLINE
   d4_at=0
   d4_since=0
   d5_at=0
+  d6_at=0
   engine_seen=0
   _bus_refresh
   while :; do
@@ -4118,6 +4151,42 @@ BUSLINE
           : # D1 owns this frame
         elif _post_blocked "stalled:" "stalled: no output for ${stall}s"; then
           d0_at="$now"
+        fi
+        ;;
+      esac
+    fi
+
+    # ---- D6: unread role verdict --------------------------------------------
+    # A lead that is `working` while a role's msg to its session sits past the
+    # delivered mark (`_await_marks`) for --unread is a #300-shaped deadlock: its
+    # pane repaints, so D2/D3 stay silent. Own prefix rather than a `stalled:`
+    # sub-case because the recovery differs — nudge the lead to `crew await`/
+    # `inbox`, don't unblock a pane. Only the newest 2000 bus lines are read and
+    # only every 4th tick, so the cost stays flat as the log grows. A msg the
+    # lead answered (a later msg from it to that role) is handled, not unread.
+    # Never escalates: a lead slow to read is not dead.
+    if [ "$suppressed" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
+      case "$bus_state" in
+      "" | working)
+        [ "$bus_source" = watchdog ] || d6_at=0
+        oldest=$(_unread_oldest)
+        if [[ "$oldest" =~ ^[0-9]+$ ]] && [ $((now * 1000 - oldest)) -ge $((unread * 1000)) ]; then
+          if [ "$d6_at" = 0 ] && _post_blocked "unread:" "unread: role verdict undelivered for $(((now * 1000 - oldest) / 1000))s — lead is working but has not read it; nudge it to run \`crew await\`"; then
+            d6_at="$now"
+          fi
+        elif [ "$d6_at" != 0 ]; then
+          _post_clear "unread:"
+          d6_at=0
+        fi
+        ;;
+      blocked)
+        # Our own open episode: still clear it once the msg is delivered.
+        if [ "$d6_at" != 0 ] && [ "$bus_source" = watchdog ]; then
+          oldest=$(_unread_oldest)
+          if ! [[ "$oldest" =~ ^[0-9]+$ ]] || [ $((now * 1000 - oldest)) -lt $((unread * 1000)) ]; then
+            _post_clear "unread:"
+            d6_at=0
+          fi
         fi
         ;;
       esac
