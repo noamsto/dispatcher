@@ -809,12 +809,15 @@ EOF
   run_crew pi-agent-dir >/dev/null
   # A hand-edited/future-schema settings.json must refuse legibly, not die on an
   # opaque jq `cannot be added` and take dispatch/dispatch-resume down with it.
-  printf '{"extensions":{"not":"an array"}}\n' >"$WORKER/settings.json"
-  run --separate-stderr run_crew pi-agent-dir
-  [ "$status" -ne 0 ]
-  [ -z "$output" ]
-  [[ "$stderr" == *"non-array extensions value"* ]]
-  [ "$(jq -c .extensions "$WORKER/settings.json")" = '{"not":"an array"}' ]
+  # `false` is included: jq's `//` would fold it into null and slip the guard.
+  for bad in '{"not":"an array"}' 'false' '"a string"' '3'; do
+    printf '{"extensions":%s}\n' "$bad" >"$WORKER/settings.json"
+    run --separate-stderr run_crew pi-agent-dir
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"non-array extensions value"* ]]
+    [ "$(jq -c .extensions "$WORKER/settings.json")" = "$bad" ]
+  done
 }
 
 @test "pi-agent-dir: no ambient auth.json seeds an empty auth" {

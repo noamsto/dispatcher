@@ -621,7 +621,7 @@ _pi_agent_dir() {
   # it would make jq die with an opaque `cannot be added` and take dispatch down
   # with it. Refuse legibly, like the auth.json checks below.
   if [ -n "$bridge_entry" ] &&
-    ! jq -e '(.extensions // null) == null or (.extensions | type) == "array"' <<<"$settings" >/dev/null 2>&1; then
+    ! jq -e '(.extensions == null) or (.extensions | type) == "array"' <<<"$settings" >/dev/null 2>&1; then
     echo "crew: $dir/settings.json has a non-array extensions value — refusing to seed pi worker dir" >&2
     exit 1
   fi

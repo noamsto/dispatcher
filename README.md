@@ -281,9 +281,10 @@ For Claude Code, pass the plugin directory to `claude`:
   Naming `~/.pi/dispatcher-worker/settings.json` in `programs.hookyard.piSettings`
   is an equivalent alternative — hookyard then installs the bridge into the
   worker dir itself — not a requirement, since the seeder already covers the
-  ambient-then-copy path. With no ambient bridge at all the worker launches
-  with no hooks, and a pi worker that dies is invisible to the bus until the
-  dispatcher notices the pane.
+  ambient-then-copy path. With no ambient bridge and the worker path not named
+  in `programs.hookyard.piSettings`, the worker launches with no hooks, and a
+  pi worker that dies is invisible to the bus until the dispatcher notices the
+  pane.
 
 - **The Cursor `stop` hook.** `~/.cursor/hooks.json` is a single shared file
   several tools write, so this module does not own it. Without the stanza below
