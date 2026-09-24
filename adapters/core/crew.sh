@@ -804,8 +804,10 @@ await)
   # <agent> answers its outstanding question, print it, exit 0. A reply qualifies
   # when it is newer than this session's own latest outbound msg to the reply's
   # sender (the anchor is per conversation), so a reply that landed between the
-  # question and the await is still delivered (#240). A session that has asked
-  # nothing falls back to the await start, preserving the original contract.
+  # question and the await is still delivered (#240), and newer than the last
+  # reply this session already had delivered from that sender (#290), so a
+  # handled reply is never handed back by a later await. A session that has
+  # asked nothing falls back to the await start.
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -853,6 +855,13 @@ await)
   done
   start=$(jq -nc 'now*1000|floor')
   deadline=$((start + timeout * 1000))
+  # Delivered marks: {sender: ts of the last reply await handed this session}.
+  # Kept outside events.jsonl (not a bus row) and per session, so it never leaks
+  # between sessions or hides anything from `inbox`. A missing or unreadable
+  # file means nothing was delivered yet.
+  await_state="$dir/await/$(printf '%s' "$crew-$me" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$crew-$me" | cksum | cut -d' ' -f1)"
+  delivered=$(jq -c 'if type == "object" then . else {} end' "$await_state" 2>/dev/null || true)
+  [ -n "$delivered" ] || delivered='{}'
   while :; do
     if [ -f "$log" ]; then
       # Anchor per counterpart: a msg from X is due when it is newer than this
@@ -860,7 +869,7 @@ await)
       # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
       # (the hard-kill crash mode) instead of aborting the whole read, and no
       # status row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" '
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --argjson since "$start" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {anchors: {}, cands: []};
           if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
@@ -870,9 +879,12 @@ await)
           else . end
         )
         | . as $s
-        | ($s.cands | map(select(.ts > ($s.anchors[.from] // $since))) | last) // empty
+        | ($s.cands | map(select(.ts > ([($s.anchors[.from] // $since), ($got[.from] // 0)] | max))) | last) // empty
       ' "$log" 2>/dev/null || true)
       [ -n "$ans" ] && {
+        mkdir -p "$dir/await" 2>/dev/null &&
+          printf '%s\n' "$delivered" | jq -c --argjson a "$ans" '.[$a.from] = $a.ts' >"$await_state.tmp" 2>/dev/null &&
+          mv "$await_state.tmp" "$await_state" 2>/dev/null || true
         printf '%s\n' "$ans"
         exit 0
       }
@@ -1274,6 +1286,13 @@ watch)
   me="dispatcher:$crew"
   start=$(jq -nc 'now*1000|floor')
   deadline=$((start + timeout * 1000))
+  # Delivered marks: {sender: ts of the last reply await handed this session}.
+  # Kept outside events.jsonl (not a bus row) and per session, so it never leaks
+  # between sessions or hides anything from `inbox`. A missing or unreadable
+  # file means nothing was delivered yet.
+  await_state="$dir/await/$(printf '%s' "$crew-$me" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$crew-$me" | cksum | cut -d' ' -f1)"
+  delivered=$(jq -c 'if type == "object" then . else {} end' "$await_state" 2>/dev/null || true)
+  [ -n "$delivered" ] || delivered='{}'
   while :; do
     if [ -f "$log" ]; then
       batch=$(jq -c -s --arg crew "$crew" --arg me "$me" --argjson since "$since" --argjson states "$statesjson" '
