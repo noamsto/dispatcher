@@ -60,7 +60,7 @@ write_launch_script() {
     local _dirs="" _n _v
     for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
       _v="${_n}_DIR"
-      _v="${!_v}"
+      _v="${!_v:-}"
       if [[ $_v == /* ]]; then
         printf -v _dirs '%sDISPATCHER_%s_DIR=%q ' "$_dirs" "$_n" "$_v"
       fi
