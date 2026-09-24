@@ -3230,6 +3230,26 @@ lock_path() { # <branch>
   [ ! -d "$TEST_REPO/.dispatch-wt" ]
 }
 
+@test "--base refuses an unfetchable ref before the claim gate, leaving no claim" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base nope --crew-id c1 42 "implement thing"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--base 'nope'"* ]]
+  run ! grep -q 'issue edit' "$STUB_LOG"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run ! grep -q 'claim-issue' "$log"
+}
+
+@test "--base refuses an unfetchable ref in mint mode, without minting an issue" {
+  stub_launch_bins
+  _stub_gh_base_pr
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base nope --crew-id c1 "mint me"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--base 'nope'"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+}
+
 # gh for the --base <PR> tests: PR 7's head is feat/parent. STUB_PR_STATE and
 # STUB_PR_CROSS override its state and fork flag; STUB_PR_FAIL fails the lookup.
 _stub_gh_base_pr() {
