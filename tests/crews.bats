@@ -683,3 +683,28 @@ EOF
   run grep -cx crews "$STUB_LOG"
   [ "$output" = "0" ]
 }
+
+# ---- adopt/register: the no-pid default (#301) -----------------------------
+
+# _under_engine <cmd> — run <cmd> in a throwaway subshell beneath a long-lived
+# non-shell ancestor named `claude`; the ancestor's pid lands in $BATS_TEST_TMPDIR/engine.pid.
+# The `; true`s stop bash exec-ing its last command, which would replace the
+# `claude` ancestor (and the subshell) with the next bash.
+_under_engine() {
+  ln -sf "$(command -v bash)" "$BATS_TEST_TMPDIR/claude"
+  "$BATS_TEST_TMPDIR/claude" -c "echo \$\$ >'$BATS_TEST_TMPDIR/engine.pid'; bash -c '$1; true'; true"
+}
+
+@test "adopt: with no pid records the non-shell ancestor, not the calling subshell" {
+  CREW_ID=c-np run_crew register 0
+  _under_engine "bash -euo pipefail '$CREW' adopt c-np >/dev/null"
+  cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-np"
+  [ "$(cat "$cdir/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
+}
+
+@test "register: with no pid records the non-shell ancestor, not the calling subshell" {
+  export CREW_ID=c-rg
+  _under_engine "bash -euo pipefail '$CREW' register"
+  cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-rg"
+  [ "$(cat "$cdir/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
+}
