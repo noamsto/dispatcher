@@ -60,7 +60,8 @@ unavailable, use the caller's review-unavailable path; report the required model
 and failure, never silently substitute a lighter review. On cursor, unavailable
 means the Task-slug substitution list in `dispatch-orchestration.md` → "Cursor
 Task-spawn slugs" was exhausted; a same-or-higher logged substitution is neither
-lighter nor silent.
+lighter nor silent. In a direct command,
+report blocked to the user/team lead instead of inventing a crew identity.
 
 **Pi.** A pi worker has no spawn, and pi has no higher pi model rung
 (`dispatch-orchestration.md`), so the promotion is a property of the `reviewer`
@@ -76,9 +77,9 @@ promoted rung. A pane below it: `tmux kill-pane` it, `dispatch --spawn-role
 reviewer --agent <a> --model <m> --effort <e>` (the override is persisted to
 `roles.json`, so a later bare respawn keeps the rung), and re-assign. That is a
 promotion, not a died-role respawn, and does not spend that budget. Deciding at
-dispatch is cheaper: `--roles reviewer=<agent>:<model>@<effort>`. A rung that
-cannot launch takes the review-unavailable path above, naming it. In a direct command,
-report blocked to the user/team lead instead of inventing a crew identity.
+dispatch is cheaper: `--roles reviewer=<agent>:<model>@<effort>`. cursor has no
+`--effort`: omit it there (`--effort`/`@<effort>`) — the rung is in the model id.
+A rung that cannot launch takes the review-unavailable path above, naming it.
 
 Commit in-scope implementation and test changes before review so the reviewed
 base-to-head diff includes them; verify no task edits remain outside that diff.
@@ -154,10 +155,16 @@ lighter), block with the ledger
 and concrete decision needed. A worker uses block→await; a direct command or PR
 shepherd reports to its user/team lead. Green CI does not waive this stop.
 
-On pi the fresh assessment is a freshly respawned `reviewer` pane at the
-promoted spec above (`tmux kill-pane`, then `dispatch --spawn-role reviewer` —
-the persisted spec keeps the rung), assigned `{"seam":"assess",…}` per
-`GRID_PROTOCOL.md` and awaited with `crew await --from`. It replies with a
+On pi the fresh assessment is a freshly respawned `reviewer` pane, and the
+recurrence can follow any confirmed finding, so the pane is not necessarily
+promoted yet: read the `reviewer` entry of `roles.json` against the rung test in
+**Pi** above. At or above it, `tmux kill-pane` and a bare `dispatch --spawn-role
+reviewer` keep it; below it, respawn with the promotion flags instead. A rung
+that cannot launch takes the review-unavailable path. Write the contract,
+consumer map, ledger, and regression evidence to
+`<crew_dir>/artifacts/<branch>/assess.md`, assign `{"seam":"assess","artifact":
+"<abs path>","question":"<the bounded-replacement question>"}` per
+`GRID_PROTOCOL.md`, and await with `crew await --from`. It replies with a
 tagged note, never a verdict, so it cannot pass or fail the review gate; the
 assignment voids the reviewer's earlier verdict like any lead → reviewer
 message, and the targeted re-review after the fix restores it.

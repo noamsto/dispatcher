@@ -939,12 +939,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
-  # Persist the spec this pane actually launched with: a bare respawn of the
-  # role (a died or stalled pane) must come back at the same rung, not silently
-  # at the dispatch-time one.
-  jq --arg r "$role" --arg a "$spawn_agent" --arg m "$spawn_model" --arg e "$effort" \
-    '.[$r] = {agent: $a, model: $m, effort: $e}' "$roles_file" >"$roles_file.tmp"
-  mv "$roles_file.tmp" "$roles_file"
   # The grid hints follow the pane count: this window now has >=1 role pane.
   # Only the lead publishes the lead hint (a role pane never runs this).
   if [ -z "${CREW_ROLE_ID:-}" ]; then
@@ -952,6 +946,13 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   publish_grid_window "$win"
   refit_grid "$win"
+  # Persist the spec this pane actually launched with: a bare respawn of the
+  # role (a died or stalled pane) must come back at the same rung, not silently
+  # at the dispatch-time one.
+  roles_tmp="$(mktemp "$roles_file.XXXXXX")"
+  jq --arg r "$role" --arg a "$spawn_agent" --arg m "$spawn_model" --arg e "$effort" \
+    '.[$r] = {agent: $a, model: $m, effort: $e}' "$roles_file" >"$roles_tmp"
+  mv "$roles_tmp" "$roles_file"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
 fi
@@ -1799,7 +1800,9 @@ grid_default_non_pi=""
 if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
   if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
     grid_flag=1
-  elif [ "$kind" != review ] && [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
+  elif [ "$kind" = review ]; then
+    : # no spec/plan phase, so no critic grid
+  elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
     grid_flag=1
     grid_default_non_pi=1
   fi

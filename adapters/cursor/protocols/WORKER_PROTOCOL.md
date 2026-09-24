@@ -127,7 +127,7 @@ yourself: raise it — block→await — never self-stack.
 `kind:` picks the pipeline; `tier:` only ever sizes it.
 
 - **`kind: implement`** (or the field absent, on a legacy doc) — the rest of this document.
-- **`kind: review`** — `dispatch --review` appended a **Review Task** contract to the end of your task doc. Follow it in place of everything below that presupposes a code change: no spec, plan, execute, fast deterministic gate, code `/deslop`, push, or PR. You terminate at `done` carrying the review you posted — a review worker never reaches `pr_open`, because it opens nothing — and you emit that contract's tally instead of the outcome-metrics record in **When done**. If the task doc stamps `roles:` (a pi review worker above trivial gets `reviewer,refuter` by default), that contract's **Role-grid path** replaces the reviewer batch and the refuter agents; the review-gate grid mechanics of this document's "Grid mode" section are for `kind: implement`. Everything kind-neutral still binds: the startup drain, checkpoint-peek at each seam, block→await, and the bus contract.
+- **`kind: review`** — `dispatch --review` appended a **Review Task** contract to the end of your task doc. Follow it in place of everything below that presupposes a code change: no spec, plan, execute, fast deterministic gate, code `/deslop`, push, or PR. You terminate at `done` carrying the review you posted — a review worker never reaches `pr_open`, because it opens nothing — and you emit that contract's tally instead of the outcome-metrics record in **When done**. If the task doc stamps `roles:` (a pi review worker above trivial gets `reviewer,refuter` by default), that contract's **Role-grid path** replaces the reviewer batch and the refuter agents; only the review-seam and `pr_open` gate fold of this document's "Grid mode" section is `kind: implement`-specific — its assignment, await, died-pane, lazy-spawn, and release mechanics apply to that path too. Everything kind-neutral still binds: the startup drain, checkpoint-peek at each seam, block→await, and the bus contract.
 
 ## Pipeline by tier
 
@@ -177,8 +177,8 @@ the unavailable-gate block on pi.
 
 1. **Write the artifact** into the crew dir (from `WORKER_TASK.md`):
    `<crew_dir>/artifacts/<branch>/<seam>.md` — `<seam>` is `spec`, `plan`, or
-   `review` (`refute` and `assess` assignments — `GRID_PROTOCOL.md` — carry their
-   payload inline). Create the dir. For review write the diff:
+   `review` (a `refute` assignment — `GRID_PROTOCOL.md` — carries its finding inline; an
+   `assess` one uses `assess.md`). Create the dir. For review write the diff:
    `git diff "$base_ref"...HEAD > <crew_dir>/artifacts/<branch>/review.diff`, and the
    resolved roster beside it. First clear any earlier round's roster:
    `rm -f <crew_dir>/artifacts/<branch>/roster.json <crew_dir>/artifacts/<branch>/roster.json.tmp`.
