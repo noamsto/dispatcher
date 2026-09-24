@@ -5738,3 +5738,47 @@ _escalation_seed_spoof() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
+
+# #358: gh-derived names that reach `git fetch` must be plain branch names, or a
+# `+src:dst` value force-updates origin/main through the refspec.
+@test "create: a hostile default branch name is refused and origin/main is unchanged" {
+  stub_launch_bins
+  before="$(git -C "$TEST_REPO" rev-parse origin/main)"
+  STUB_DEFAULT_BRANCH='+refs/heads/main:refs/remotes/origin/main' DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+  [ "$(git -C "$TEST_REPO" rev-parse origin/main)" = "$before" ]
+}
+
+@test "--pr: a hostile head branch name is refused and origin/main is unchanged" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  export PR_HEAD='+refs/heads/main:refs/remotes/origin/main'
+  before="$(git -C "$TEST_REPO" rev-parse origin/main)"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+  [ "$(git -C "$TEST_REPO" rev-parse origin/main)" = "$before" ]
+}
+
+@test "--pr: a normal head branch is fetched with an explicit refspec" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  git -C "$TEST_REPO" rev-parse --verify -q refs/remotes/origin/feat/pr-head
+}
+
+@test "--pr: a head branch that parses as a fetch option is refused" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  export PR_HEAD='--upload-pack=touch-pwned'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+}

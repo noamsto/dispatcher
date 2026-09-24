@@ -282,6 +282,21 @@ EOF
 # can splice a large line with another process's append (#55, #61).
 _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
+# _fetch_origin_branch <name> [dir] — fetch an untrusted (gh/stamp-derived)
+# branch name into refs/remotes/origin/<name> only. A bare positional would parse
+# the name as a refspec (`+refs/heads/x:refs/remotes/origin/main` force-updates
+# origin/main) or a fetch option (`--upload-pack=...`), so it must be a plain
+# branch name and is spelled as an explicit refspec (#339, #358).
+_plain_branch_name() {
+  [[ $1 == *:* || $1 == +* ]] && return 1
+  git check-ref-format --branch "$1" >/dev/null
+}
+_fetch_origin_branch() {
+  local name=$1 dir=${2:-.}
+  _plain_branch_name "$name" || return 1
+  git -C "$dir" fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
+}
+
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
 # override against the baked default (#303). A shell or tmux server that
 # outlives a rebuild keeps the previous build's export, so an override under the
@@ -1941,8 +1956,7 @@ fi
 # effects. Runs on a resume too, because the stamped `base:` is what the worker's
 # review diff, gate scope and PR target; a re-dispatch must not silently drop it.
 if [ -n "$base_flag" ]; then
-  if [[ $base_flag == *:* || $base_flag == +* ]] || ! git check-ref-format --branch "$base_flag" >/dev/null ||
-    ! git fetch origin "+refs/heads/$base_flag:refs/remotes/origin/$base_flag"; then
+  if ! _fetch_origin_branch "$base_flag"; then
     echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   fi
@@ -2056,6 +2070,10 @@ if [ -n "$pr_number" ]; then
     echo "dispatch: could not resolve headRefOid/baseRefName for PR $pr_number" >&2
     exit 1
   }
+  _plain_branch_name "$head" || {
+    echo "dispatch: PR $pr_number head '$head' is not a plain branch name" >&2
+    exit 1
+  }
   branch="$head"
   closes="pr: $pr_number"
   if git show-ref --verify --quiet "refs/heads/$head" ||
@@ -2125,7 +2143,10 @@ else
         echo "dispatch: could not resolve the default branch via gh repo view" >&2
         exit 1
       }
-      git fetch origin -- "$default_branch"
+      _fetch_origin_branch "$default_branch" || {
+        echo "dispatch: default branch '$default_branch' is not a plain branch name or could not be fetched from origin" >&2
+        exit 1
+      }
       # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
       # gate in between shells out to crew/jq, giving a concurrent fetch a window
       # to move the floating ref — pinning keeps what's branched and what the
@@ -2292,10 +2313,11 @@ WINDOWS
   ;;
 name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
 fetch-name)
-  # `--` before the ref: a PR head branch is attacker-named (up to git's ref
-  # rules, which permit a leading `-`), and a bare positional would let a
-  # branch named e.g. `--upload-pack=...` be parsed as a fetch option.
-  git fetch origin -- "$branch"
+  # A PR head branch is attacker-named; see _fetch_origin_branch.
+  _fetch_origin_branch "$branch" || {
+    echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
+    exit 1
+  }
   wt switch "$branch" -y --config-set "$wt_post_switch"
   ;;
 pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
@@ -2425,8 +2447,10 @@ if [ -n "$pr_number" ]; then
     dirt="$(git -C "$wt_path" status --porcelain | grep -v '^?? WORKER_TASK\.md$' || true)"
     if [ -z "$dirt" ]; then
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid — fetching and hard-resetting" >&2
-      # `--` before the ref: see the fetch-name comment above, same reasoning.
-      git -C "$wt_path" fetch origin -- "$head"
+      _fetch_origin_branch "$head" "$wt_path" || {
+        echo "dispatch: PR head '$head' is not a plain branch name or could not be fetched from origin" >&2
+        exit 1
+      }
       git -C "$wt_path" reset --hard "$head_oid"
     else
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
