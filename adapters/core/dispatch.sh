@@ -1897,10 +1897,11 @@ fi
 # effects. Runs on a resume too, because the stamped `base:` is what the worker's
 # review diff, gate scope and PR target; a re-dispatch must not silently drop it.
 if [ -n "$base_flag" ]; then
-  git fetch origin -- "$base_flag" || {
-    echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
+  if [[ $base_flag == *:* || $base_flag == +* ]] || ! git check-ref-format --branch "$base_flag" >/dev/null ||
+    ! git fetch origin "+refs/heads/$base_flag:refs/remotes/origin/$base_flag"; then
+    echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
-  }
+  fi
   base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
     echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
     exit 1
