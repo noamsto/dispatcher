@@ -179,6 +179,69 @@ setup_worker_wt() { # [extra header lines...]
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+# #303: a fake Nix store under $TEST_REPO/store; the scratch copy of the script
+# bakes the "new" build's projected dirs the way flake.nix's replaceStrings
+# does, and the setup() overrides are cleared so the baked default is in play.
+_store_resume() {
+  STORE="$TEST_REPO/store"
+  BAKED_PROTOCOLS="$STORE/h-new-protocols"
+  BAKED_SKILLS="$STORE/h-new-skills"
+  _store_protocols "$BAKED_PROTOCOLS" new
+  mkdir -p "$BAKED_SKILLS"
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR
+}
+
+_store_protocols() { # <dir> <content>
+  local f
+  mkdir -p "$1"
+  for f in WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
+    printf '%s %s\n' "$2" "$f" >"$1/$f"
+  done
+}
+
+@test "resume ignores a stale store-path DISPATCHER_PROTOCOL_DIR with a notice and stamps the baked dir" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" old
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
+  grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$WT/WORKER_TASK.md"
+  grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_PROTOCOL_DIR="$STORE/h-cur-source/adapters/core/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" new
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  grep -qx "protocol_dir: $DISPATCHER_PROTOCOL_DIR" "$WT/WORKER_TASK.md"
+}
+
+@test "resume still refuses a drifted non-store override and names the remedy" {
+  setup_worker_wt
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/checkout/protocols"
+  _store_protocols "$DISPATCHER_PROTOCOL_DIR" drifted
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  [[ "$output" == *"protocol directory version mismatch"* ]]
+  [[ "$output" == *"unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+}
+
 @test "a raw (unsubstituted) resume script skips the revision check with a one-line warning" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' '' fish
