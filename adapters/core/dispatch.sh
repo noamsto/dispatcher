@@ -388,7 +388,7 @@ shell_quote() {
     _c="${_text:_i:1}"
     case "$_c" in
     "'") _res+="'\\''" ;;
-    "\\") _res+="'\\\\'" ;;
+    \\) _res+="'\\\\'" ;;
     *) _res+="$_c" ;;
     esac
   done

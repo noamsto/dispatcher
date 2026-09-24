@@ -101,7 +101,7 @@ seed_hold() {
 launch_log() {
   local line before rest path after content
   while IFS= read -r line; do
-    while [[ "$line" == *"bash '"* ]]; do
+    while [[ $line == *"bash '"* ]]; do
       before="${line%%bash \'*}"
       rest="${line#*bash \'}"
       path="${rest%%\'*}"
