@@ -334,9 +334,6 @@ setup() {
 }
 
 @test "cursor skill links are enumerated from the adapter dir, not hard-coded" {
-  # A roster with cursor enabled should link every skill under adapters/cursor/skills,
-  # not just the one that happened to exist first -- proves the activation script
-  # walks the directory instead of naming a single skill.
   [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"'* ]]
   [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/deslop" "$skills_dir/deslop"'* ]]
 }
