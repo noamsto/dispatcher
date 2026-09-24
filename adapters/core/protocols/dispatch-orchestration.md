@@ -120,7 +120,7 @@ rows above name the **non-fast** slug on every tier: `-fast` is a paid speed
 tier at ~2× the token rate, not a cheaper high-throughput one, so reach for it
 only when a turn's latency actually matters and say why. cursor `deep`
 uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
-(implements) — escalate to `grok-4.7-high`, not back to Kimi. Grok 4.7 ids
+(implements) — escalate to `grok-4.7-high`, not back to Kimi (a launch id; in-session Task spawns resolve through "Cursor Task-spawn slugs"). Grok 4.7 ids
 drop the `cursor-` prefix 4.6 carried (`grok-4.7-medium`, not
 `cursor-grok-4.7-medium`); the gate still accepts `cursor-grok-4.6-*` so a
 pinned 4.6 run keeps dispatching. **Grok 4.7 is the
@@ -183,7 +183,7 @@ review gate, so a lazy pi grid nobody spawns ships with no review at all.
 `--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
 "Lazy grid"), never a default.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 Pi has no fresh recovery-planner role in the current topology, so a
 plan-shaped recovery on pi is an unavailable-planning block. The dispatcher
@@ -243,7 +243,8 @@ the same table and *does* need a `dispatch.sh` edit on a ladder bump (see
   auto-populates the cache, so on a machine that has never run
   `refresh-models` this check is always degraded and only the shape floor
   applies — "fail fast on a dead id" starts working the first time a human (or
-  the dispatcher session) runs it, not out of the box.
+  the dispatcher session) runs it, not out of the box. It does not probe the
+  in-session Task roster — see "Cursor Task-spawn slugs".
 - **pi** — a provider-qualified id, and the ladder spans more than one
   OpenRouter family: `openrouter/deepseek/deepseek-v4.1-flash`,
   `openrouter/deepseek/deepseek-v4-flash`,
@@ -334,6 +335,63 @@ is premium on both dimensions needs a matching escape for each (or
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet`                 |
 | codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
 | cursor | `grok-4.7-high`                           | `grok-4.7-medium` |
+
+### Cursor Task-spawn slugs
+
+Two slug namespaces exist on cursor. **Launch slugs** are what
+`cursor-agent --model` accepts: the `cursor-agent --list-models` list, cached by
+`refresh-models` and checked by the `dispatch` model gate — the worker column of
+the model map. **Task-spawn slugs** are the in-session Task tool's subagent
+allowlist — execute, escalate, reviewer, critic, and planner spawns. The Task
+list is narrower and is **not** probed by `refresh-models`, so the cursor
+execute/escalate slugs in the model map are launch-list names, not guaranteed
+Task-spawnable.
+
+Recorded Task roster, 2026-09-23, cursor-agent 2026.09.18-9a7762b:
+`claude-fable-5-1-thinking-high`, `claude-opus-5-5-medium`,
+`claude-opus-5-thinking-high`, `composer-2.5`, `composer-2.5-fast`,
+`cursor-grok-4.6-high`, `gemini-3.8-flash-high`, `gpt-5.6-sol-medium`,
+`grok-4.7-medium`, `muse-spark-1.3-high`. `grok-4.7-medium` is the only
+grok-4.7 slug on it.
+
+**Substitution rule.** A Task spawn refused with "not in the allowed slug list"
+or "could not be resolved to a valid subagent model" is not retried on the same
+slug. Walk the named slug's candidate list in order and spawn the first the
+roster accepts — the refusal error quotes the live roster, so read it instead of
+probing. Candidates are the same burn class or higher, never lower. Classes:
+`grok-4.7-low` cheap; `grok-4.7-medium` standard; `grok-4.7-high`,
+`cursor-grok-4.6-high`, `claude-opus-5-thinking-high` premium;
+`claude-fable-5-1-thinking-high` above premium.
+
+| named | candidates, in order |
+| ----- | -------------------- |
+| `grok-4.7-low` | `grok-4.7-medium`, `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
+| `grok-4.7-medium` | itself, else `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
+| `grok-4.7-high` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |
+
+In plan-shaped recovery the candidates are limited to Grok-family
+(non-cross-vendor) slugs, and the substitute must be strictly above the
+authoritative tuple.
+
+**Logging.** Each substitution is one free line below the ledger table in
+`REVIEW_NOTES.md` (not a table row): `task-slug substituted: <named> → <used>
+(<refusal text>)`. Also send one retro note (not a metrics field),
+`{"seam":"<spec|plan|execute|review>","tag":"other","detail":"task_slug_substituted: <named> → <used>"}`,
+per `WORKER_PROTOCOL.md` → "Retro notes" (mid-execute → the `retro:` sink;
+otherwise the metrics snapshot's `notes` array). Substitution never changes
+`review_mode`.
+
+**When the list is exhausted**, each seam takes its existing path — never a
+lower rung. A same-or-higher logged substitution is neither lighter nor silent,
+so `EVIDENCE_REVIEW.md`'s "never silently substitute a lighter review" still
+holds.
+
+| seam | outcome |
+| ---- | ------- |
+| review gate; `EVIDENCE_REVIEW.md` promoted reviewer; recurrence escalation assessor | the review-unavailable block path (`review_mode: unavailable`, `review_unavailable` note) |
+| spec-/plan-critic (`spec-plan-critic`) | the degraded same-context critic fallback, only after the list is exhausted |
+| plan-shaped recovery planner | the existing `rung_blocked` block |
+| execute default/escalated rung | block→await `blocked "task slug unavailable: <named>"` with an `other` retro note — not `review_mode: unavailable` |
 
 ## Orchestrator engines (dispatcher session)
 
