@@ -746,6 +746,18 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
 }
 
+@test "resuming a review lead with a grid points it at REVIEW_TASK's role-grid path" {
+  setup_worker_wt 'roles: reviewer,refuter'
+  sed -i -e 's/^kind: implement/kind: review/' -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4.1-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'REVIEW_TASK.md Role-grid path' <(launch_log)
+  run grep -c 'WORKER_PROTOCOL.md Grid mode' <(launch_log)
+  [ "$output" = 0 ]
+}
+
 @test "pi resume passes the worktree's project skills and the harness skills with --skill" {
   setup_worker_wt
   mkdir -p "$WT/.agents/skills/preview"
