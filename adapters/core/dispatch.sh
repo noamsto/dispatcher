@@ -286,7 +286,7 @@ _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >
 # branch name into refs/remotes/origin/<name> only. A bare positional would parse
 # the name as a refspec (`+refs/heads/x:refs/remotes/origin/main` force-updates
 # origin/main) or a fetch option (`--upload-pack=...`), so it must be a plain
-# branch name and is spelled as an explicit refspec (#339, #358).
+# branch name and is spelled as an explicit refspec.
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
