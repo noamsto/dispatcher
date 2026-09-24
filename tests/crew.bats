@@ -2723,6 +2723,41 @@ Enter to select · Tab/Arrow keys to navigate · Esc to cancel
 EOF
 }
 
+# fx_bgwait_* — finished claude turns parked on a background shell, captured
+# from healthy workers (claude Code v2.1.280, #353). The `❯` line is a prompt
+# SUGGESTION, not unsent input.
+fx_bgwait_crunched() {
+  frame_file bgwait_crunched <<'EOF'
+✻ Crunched for 1m 12s · done 11:16 AM · 1 shell still running
+────────────────── reef ─
+❯ push it and re-post pr_open once CI is green
+──────────────────
+  🤖 Opus 5.5 🧠 high | 📊 350k/1M | ⚡ 29% (1h53m → 13:10)
+  -- INSERT -- ⏵⏵ auto mode on · PR #331 · 1 shell · ← for agents
+EOF
+}
+
+fx_bgwait_churned() {
+  frame_file bgwait_churned <<'EOF'
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+}
+
+# The same finished turn with the shell gone: nothing is being waited on.
+fx_bgwait_noshell() {
+  frame_file bgwait_noshell <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
 # A3 — a finished/idle pane: no meter, no prompt, ends on the input box.
 fx_idle_box() {
   frame_file idle_box <<'EOF'
@@ -2983,6 +3018,53 @@ EOF
   stall_sampler "$p" "$p" "$p" "$p" "$p"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
     --grace 0 --interval 1 --window 0 --idle 2 --dead 999 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|quiet: pane unchanged for "* ]]
+}
+
+@test "stall-watch: a finished turn waiting on a background shell posts nothing" {
+  a=$(fx_bgwait_crunched)
+  b=$(fx_bgwait_churned)
+  stall_sampler "$a" "$a" "$a" "$b" "$b" "$b" "$b" GONE
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 2 --dead 2 --max-life 15
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a finished turn with no background shell still posts stalled:" {
+  p=$(fx_bgwait_noshell)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
+}
+
+@test "stall-watch: a live spinner under a stale done line is not a background-shell wait" {
+  p=$(frame_file bgwait_spinner <<'EOF'
+✻ Crunched for 1m 12s · done 11:16 AM · 1 shell still running
+✻ Pondering… (3s)
+──────────────────
+❯
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
+}
+
+@test "stall-watch: a background-shell wait past --bg-wait still reaches quiet:" {
+  p=$(fx_bgwait_crunched)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 2 --bg-wait 3 --dead 999 --max-life 8
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == "blocked|quiet: pane unchanged for "* ]]

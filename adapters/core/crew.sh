@@ -3402,10 +3402,12 @@ stall-watch)
   # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
   # pane liveness) and CREW_STALL_PROC_CMD overrides the engine-liveness check
   # (see _pane_engine_alive), so the loop is testable without tmux.
+  # D0/D3 stay silent (claude only) while a finished turn waits on a background
+  # shell, for at most --bg-wait (default 2h) of unchanged frame.
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S]" >&2
+    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -3446,6 +3448,7 @@ stall-watch)
   dead=1800
   max_life=43200
   load_win=300
+  bg_wait=7200
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -3489,6 +3492,10 @@ stall-watch)
       load_win="${2:-}"
       shift 2
       ;;
+    --bg-wait)
+      bg_wait="${2:-}"
+      shift 2
+      ;;
     *)
       echo "crew: stall-watch: unknown arg '$1'" >&2
       exit 1
@@ -3510,16 +3517,19 @@ stall-watch)
     sig_prompt=1
     sig_meter=1
     sig_session_limit=1
+    sig_bgwait=1
     ;;
   codex)
     sig_prompt=1
     sig_meter=0
     sig_session_limit=0
+    sig_bgwait=0
     ;;
   *)
     sig_prompt=0
     sig_meter=0
     sig_session_limit=0
+    sig_bgwait=0
     ;;
   esac
   # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
@@ -3767,6 +3777,22 @@ BUSLINE
       printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
       printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
   }
+  # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
+  # Claude Code re-invokes the session when the shell completes (#353). Both
+  # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
+  # finished-turn marker and a non-zero `N shell(s)` count (`1 shell still
+  # running` on the turn line, `· 1 shell ·` in the mode line), and no live
+  # spinner/meter (a new turn started under a stale `done` line).
+  # The prompt-suggestion line in the input box is neither anchor, and
+  # _is_prompt needs an `Enter to select` footer, so it never reads as input.
+  _is_bg_wait() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -8 || true)
+    printf '%s\n' "$tail_n" | grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' &&
+      printf '%s\n' "$tail_n" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)' &&
+      ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
+      [ -z "$(_meter_line "$1")" ]
+  }
   _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
@@ -3829,6 +3855,12 @@ BUSLINE
       suppressed=1
     fi
     quiet_for=$((now - last_change))
+    # Waiting on a background shell silences D0/D3 — but only up to --bg-wait of
+    # byte-identical frame, so a shell that never returns still reaches quiet:.
+    bgwait=0
+    if [ "$sig_bgwait" = 1 ] && [ "$quiet_for" -lt "$bg_wait" ] && _is_bg_wait "$text"; then
+      bgwait=1
+    fi
 
     # ---- D4: host load --------------------------------------------------
     # Engine-independent: reads the HOST, not the pane, so claude/codex/cursor/pi
@@ -3988,7 +4020,7 @@ BUSLINE
     # every second, so a working worker can never satisfy D3 even if every
     # claude signature rots to garbage. This is the failsafe for signature rot
     # and the only steady-state coverage codex and cursor get.
-    if [ "$suppressed" = 0 ] && [ "$d3_at" = 0 ] && [ "$quiet_for" -ge "$idle" ]; then
+    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d3_at" = 0 ] && [ "$quiet_for" -ge "$idle" ]; then
       if [ "$bus_source" = watchdog ] || [ "$bus_ts" -lt $((last_change * 1000)) ]; then
         if _post_blocked "quiet:" "quiet: pane unchanged for ${quiet_for}s"; then
           d3_at="$now"
@@ -4006,7 +4038,7 @@ BUSLINE
     # The detail carries no diagnosis: the old `(suspected startup/indexing
     # hang)` was wrong on 3/3 measured workers, and an invented cause reads to
     # the dispatcher as corroboration.
-    if [ "$suppressed" = 0 ] && [ "$d0_at" = 0 ] &&
+    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d0_at" = 0 ] &&
       [ $((now - start)) -lt "$window" ] && [ "$quiet_for" -ge "$stall" ]; then
       case "$bus_state" in
       "" | working)
