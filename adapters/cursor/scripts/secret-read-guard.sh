@@ -166,12 +166,15 @@ shell_c_re="(^|[[:space:]/(])(fish|bash|sh|zsh)[[:space:]]+(-[A-Za-z]+[[:space:]
 proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
 nl=$'\n'
 
-# Every awk pass below reads its text on stdin through printf '%s\n' and sees
-# it one character at a time through feed(c), newlines included — one linear
-# pass, where a bash character loop is quadratic and blew hookyard's 4 s budget
-# on a 90 KB command. The newline printf adds is not data, so a record's
-# newline is fed only once the next record starts. Characters come from 512-byte
-# chunks because BWK awk (macOS) rescans the whole string on every substr.
+# Every awk pass below reads its text from a here-string and sees it one
+# character at a time through feed(c), newlines included — one linear pass,
+# where a bash character loop is quadratic and blew hookyard's 4 s budget on a
+# 90 KB command. A here-string, not a pipe: there is no writer process, so an
+# awk that exits early cannot SIGPIPE a pipefail'd writer and end the guard with
+# no output — a silent allow. The newline the here-string adds is not data, so
+# a record's newline is fed only once the next record starts. Characters come
+# from 512-byte chunks because BWK awk (macOS) rescans the whole string on
+# every substr.
 # shellcheck disable=SC2016
 awk_chars='
 {
@@ -211,8 +214,8 @@ function mask(c) {
 }'
 
 mask_quotes() {
-  printf '%s\n' "$1" | awk "$awk_mask$awk_chars"'
-function feed(c) { printf "%s", mask(c) }'
+  awk "$awk_mask$awk_chars"'
+function feed(c) { printf "%s", mask(c) }' <<<"$1"
 }
 
 # Extracts one shell WORD starting at index `start` of `s`: concatenated
@@ -272,59 +275,9 @@ END {
 
 decode_word() {
   local res
-  res=$(printf '%s\n' "${1:$2}" | awk "$awk_decode$awk_chars")
+  res=$(awk "$awk_decode$awk_chars" <<<"${1:$2}")
   DECODED_WORD=${res%"$nl"*}
   DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
-}
-
-# Credential-file content (rule 3), decided per simple command: split at
-# unquoted ; & | ( ) ` and newline, so `ls .env && grep -n API .env` is judged
-# on its grep alone and a quoted `cat .env` in a commit message is never a
-# command. A segment denies when a printing tool, or grep/rg without a
-# non-printing flag, sits at its command position and its raw text — template
-# names stripped — names a credential file. Prints `print`, `grep` or nothing.
-seg_start='^[[:space:]]*([{!][[:space:]]*)*'"$cmd_prefix"'([^[:space:]]*/)?'
-awk_cred='
-BEGIN { SPLIT = ";&|()`\n" }
-function feed(c, was, m) {
-  was = esc
-  m = mask(c)
-  if (!was && index(SPLIT, m)) {
-    check()
-    return
-  }
-  rb = rb c
-  mb = mb m
-  if (++nb == 512) flush()
-}
-function flush() {
-  raw = raw rb
-  masked = masked mb
-  rb = mb = ""
-  nb = 0
-}
-function check(r, m, verdict) {
-  flush()
-  r = raw
-  m = masked
-  raw = masked = ""
-  if (m ~ ENVIRON["RE_PRINT"]) verdict = "print"
-  else if (m ~ ENVIRON["RE_GREP"] && m !~ ENVIRON["RE_QUIET"]) verdict = "grep"
-  else return
-  gsub(ENVIRON["RE_TEMPLATE"], "", r)
-  if (r !~ ENVIRON["RE_SECRET"]) return
-  print verdict
-  exit
-}
-END { check() }'
-
-credential_read() {
-  printf '%s\n' "$1" |
-    RE_PRINT="$seg_start"'(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([[:space:]]|$)' \
-      RE_GREP="$seg_start"'(grep|rg|ripgrep|ag)([[:space:]]|$)' \
-      RE_QUIET='(^|[[:space:]])(-[A-Za-z]*[cqlL][A-Za-z]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)([[:space:]]|$)' \
-      RE_TEMPLATE=$template_re RE_SECRET=$cmd_secret_re \
-      awk "$awk_mask$awk_chars$awk_cred"
 }
 
 deny() {
@@ -421,17 +374,25 @@ shell)
 
   # 3. Reading a credential file's content. Non-printing inspection (test, [,
   #    git check-ignore, ls, stat, wc, chmod, rm, gtrash, direnv) stays allowed.
-  #    Judged per simple command in the top level and every `-c` body.
+  #    Judged on the whole command, and again on every `-c` body, on purpose: a
+  #    per-segment, command-position rule missed reads behind wrappers (sudo
+  #    -u, timeout, ssh, docker/kubectl exec, xargs, find -exec, eval) and
+  #    behind a stray apostrophe in a heredoc or comment. Denying prose that
+  #    merely mentions a credential read is the accepted cost for a secret
+  #    guard. Template names are stripped rather than exempting the command, so
+  #    `cat .env.example .env` still trips on its `.env`.
   for space in "${raw_spaces[@]}"; do
-    verdict=$(credential_read "$space")
-    case $verdict in
-    print)
+    left=$(sed -E "s/$template_re//g" <<<"$space")
+    grep -qE "$cmd_secret_re" <<<"$left" || continue
+    if grep -qE '\b(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)\b' <<<"$space"; then
       deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
-      ;;
-    grep)
+    fi
+    # grep/rg leak unless restricted to a non-printing mode. The flag must follow
+    # the grep word in the same pipeline stage, or `ls -l` / `stdbuf -oL` would
+    # pass for grep's own -l / -L.
+    if grep -qE '\b(grep|rg|ripgrep|ag)\b' <<<"$space" && ! grep -qE '\b(grep|rg|ripgrep|ag)\b[^;&|]*[[:space:]](-[a-zA-Z]*[cqlL]|--count|--quiet|--silent|--files-with-matches|--files-without-match)\b' <<<"$space"; then
       deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) if you only need to know whether it is set."
-      ;;
-    esac
+    fi
   done
   ;;
 esac

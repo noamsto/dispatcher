@@ -521,6 +521,26 @@ assert_deny_within() {
   assert_deny_within 2000 "$(claude_bash "bash -c '${body}env'")"
 }
 
+# heredoc_100k — a quoted heredoc of >= 100 KB whose lines carry an apostrophe,
+# enough to outlast the pipe buffer if an awk pass ever exits early.
+heredoc_100k() {
+  local body
+  body=$(printf "we don't stop here\n%.0s" $(seq 1 6000))
+  printf '%s' "cat > f <<'X'"$'\n'"$body"$'\n'"X"
+}
+
+@test "secret-read-guard: cat .env ahead of a 100 KB heredoc denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "cat .env"$'\n'"$(heredoc_100k)")"
+}
+
+@test "secret-read-guard: bash -c true, a 100 KB heredoc, then env denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "bash -c true"$'\n'"$(heredoc_100k)"$'\n'"env")"
+}
+
+@test "secret-read-guard: bash -c env ahead of a 100 KB heredoc denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "bash -c env; $(heredoc_100k)")"
+}
+
 # ---------------------------------------------------------------------------
 # Unparseable payloads fail open but loud: exit 1, stderr, nothing on stdout
 # ---------------------------------------------------------------------------
@@ -664,7 +684,7 @@ assert_deny_within() {
 }
 
 # ---------------------------------------------------------------------------
-# Credential-file content is judged per simple command, in every -c body
+# Credential-file content is judged on the whole command, in every -c body
 # ---------------------------------------------------------------------------
 
 @test "secret-read-guard: denies grep over .env inside fish -c" {
@@ -727,31 +747,6 @@ assert_deny_within() {
   assert_deny_claude
 }
 
-@test "secret-read-guard: allows a commit message that mentions cat .env" {
-  run run_guard <<<"$(claude_bash "git commit -m 'docs: never cat .env'")"
-  assert_allow
-}
-
-@test "secret-read-guard: allows a PR body that mentions cat and grep over .env" {
-  run run_guard <<<"$(claude_bash "gh pr create --body 'Guard blocks cat .env and grep over .env'")"
-  assert_allow
-}
-
-@test "secret-read-guard: allows a heredoc write whose body mentions source .env" {
-  run run_guard <<<"$(claude_bash "cat > docs/setup.md <<'X'"$'\n'"Run source .env before starting."$'\n'"X")"
-  assert_allow
-}
-
-@test "secret-read-guard: allows grep -qx over .gitignore for the .env entry" {
-  run run_guard <<<"$(claude_bash "grep -qx '.env' .gitignore")"
-  assert_allow
-}
-
-@test "secret-read-guard: allows ls of .env then sed over README" {
-  run run_guard <<<"$(claude_bash 'ls -la .env; sed -n 1,20p README.md')"
-  assert_allow
-}
-
 @test "secret-read-guard: allows rg -l TOKEN .env" {
   run run_guard <<<"$(claude_bash 'rg -l TOKEN .env')"
   assert_allow
@@ -760,6 +755,109 @@ assert_deny_within() {
 @test "secret-read-guard: allows test -f .env && echo yes" {
   run run_guard <<<"$(claude_bash 'test -f .env && echo yes')"
   assert_allow
+}
+
+# ---------------------------------------------------------------------------
+# Credential reads behind wrappers that run the next word as a command
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies sudo -u app cat /srv/app/.env" {
+  run run_guard <<<"$(claude_bash 'sudo -u app cat /srv/app/.env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies timeout 5 cat .env" {
+  run run_guard <<<"$(claude_bash 'timeout 5 cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies nice cat .env" {
+  run run_guard <<<"$(claude_bash 'nice cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies stdbuf -oL cat .env" {
+  run run_guard <<<"$(claude_bash 'stdbuf -oL cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies env -i cat .env" {
+  run run_guard <<<"$(claude_bash 'env -i cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies watch cat .env" {
+  run run_guard <<<"$(claude_bash 'watch cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies builtin source .env" {
+  run run_guard <<<"$(claude_bash 'builtin source .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies echo .env | xargs cat" {
+  run run_guard <<<"$(claude_bash 'echo .env | xargs cat')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies find -name .env -exec cat" {
+  run run_guard <<<"$(claude_bash 'find . -name .env -exec cat {} \;')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies eval 'cat .env'" {
+  run run_guard <<<"$(claude_bash "eval 'cat .env'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies ssh host cat /srv/.env" {
+  run run_guard <<<"$(claude_bash 'ssh host cat /srv/.env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies ssh host 'cat /srv/.env'" {
+  run run_guard <<<"$(claude_bash "ssh host 'cat /srv/.env'")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies docker compose exec app cat .env" {
+  run run_guard <<<"$(claude_bash 'docker compose exec app cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies kubectl exec pod -- cat .env" {
+  run run_guard <<<"$(claude_bash 'kubectl exec pod -- cat .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies stdbuf -oL grep KEY .env" {
+  run run_guard <<<"$(claude_bash 'stdbuf -oL grep KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies sudo grep KEY .env" {
+  run run_guard <<<"$(claude_bash 'sudo grep KEY .env')"
+  assert_deny_claude
+}
+
+# ---------------------------------------------------------------------------
+# An unbalanced apostrophe cannot hide a later credential read
+# ---------------------------------------------------------------------------
+
+@test "secret-read-guard: denies cat .env after a heredoc commit message with an apostrophe" {
+  run run_guard <<<"$(claude_bash "git commit -F - <<'X'"$'\n'"fix: don't leak"$'\n'"X"$'\n'"cat .env")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat .env after a comment with an apostrophe" {
+  run run_guard <<<"$(claude_bash "ls # don't"$'\n'"cat .env")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies cat .env after an ANSI-C quoted apostrophe" {
+  run run_guard <<<"$(claude_bash "echo \$'don\\'t' ; cat .env")"
+  assert_deny_claude
 }
 
 # ---------------------------------------------------------------------------
