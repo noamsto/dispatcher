@@ -4034,6 +4034,42 @@ assert_claim_refused() { # <evidence-substring>
   assert_claim_refused "dispatch in progress (pid $live_pid)"
 }
 
+# #322 review: `kill -0` returning EPERM is itself proof the process exists, and
+# must not be downgraded when `ps` cannot see it (a hidepid=2 mount). Only when
+# neither probe reports a process is the pid dead.
+@test "claim: a kill EPERM with ps blind still reads live (fail-closed) (#322)" {
+  stub_launch_bins
+  real_ps="$(command -v ps)"
+  sleep 300 3>&- &
+  live_pid=$!
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*"-p $live_pid"*) exit 1 ;;
+esac
+exec "$real_ps" "\$@"
+EOF
+  chmod +x "$STUB_DIR/ps"
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then
+      printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+      return 1
+    fi
+    builtin kill "$@"
+  }
+  export live_pid
+  export -f kill
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  unset -f kill
+  rm -f "$STUB_DIR/ps"
+  builtin kill "$live_pid" 2>/dev/null || true
+  builtin wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
 # #322: macOS ps prints `etime` (formatted), not `etimes` (seconds), so the
 # elapsed-time probe has a parse fallback. Hiding `etimes` makes the fallback
 # carry the verdict: the pid is live but started an hour after its row, so it

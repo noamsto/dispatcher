@@ -156,18 +156,22 @@ _claim_evidence() {
 # _claim_pid_live <pid> <row_ts_ms> — 0 when <pid> is a live process that could
 # have written a claim row at <row_ts_ms>, 1 otherwise. Fail-closed: anything it
 # cannot read counts as live. Two bounds compose it:
-#   - cross-uid liveness: `ps -p` reads the process table, so a live foreign-uid
-#     dispatcher — where `kill -0` fails EPERM — still reads live. This assumes
-#     ps can see foreign-uid processes (not a `hidepid=2` mount); under hidepid
-#     both probes fail and a live foreign claim reads dead, the pre-#322 risk.
+#   - cross-uid liveness: a successful `kill -0` is proof, and so is a `kill -0`
+#     that failed EPERM — the signal reached the process and was refused, so it
+#     exists; `ps -p` covers the case `kill` reports nothing at all. Both are
+#     tried before a pid is called dead, so a foreign-uid claimant stays live
+#     even where `ps` cannot see it (a `hidepid=2` mount).
 #   - no pid reuse: the claimant was already running when it wrote the row, so a
 #     process that started after the row merely inherited the number. This does
 #     not reject a forged row naming a genuinely long-lived unrelated pid.
 _claim_pid_live() {
-  local pid="$1" row_ts="$2" elapsed start_s
-  if ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" -o pid= >/dev/null 2>&1; then
-    return 1
-  fi
+  local pid="$1" row_ts="$2" elapsed start_s kmsg
+  kmsg="$(LC_ALL=C kill -0 "$pid" 2>&1)" || {
+    case "$kmsg" in
+    *"not permitted"* | *"not allowed"*) ;; # EPERM: the process exists
+    *) ps -p "$pid" -o pid= >/dev/null 2>&1 || return 1 ;;
+    esac
+  }
   case "$row_ts" in
   '' | *[!0-9]*) return 0 ;; # no usable ts: reuse can't be ruled out
   esac
