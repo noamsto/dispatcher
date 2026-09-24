@@ -338,7 +338,12 @@ dispatch resume the review comments are the priority
 ```
 
 Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
-`/project-autopilot` (namespaced `/dispatcher:*` on Claude Code and Codex).
+`/project-autopilot`. Claude Code gets all four (namespaced `/dispatcher:*`).
+Codex and cursor get only `/dispatcher` and `/autopilot`: `/finish-prs` and
+`/project-autopilot` are **Claude Code only**, since they drive Claude Code
+agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
+users get the same fan-out from the engine-neutral `dispatcher` launcher —
+`dispatch` once per ticket or PR.
 
 ---
 
