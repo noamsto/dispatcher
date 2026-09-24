@@ -180,18 +180,15 @@ EOF
 _bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
 
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
-# override against this build's baked default (#303). A long-lived shell or tmux
-# server keeps the previous build's export after a rebuild, so an override
-# inside the baked path's own store root is honoured only when its content
-# equals the baked directory's: the current build's export sits at a different
-# store path than the baked projection but holds the same files. Comparing
-# content, not paths, is direction-agnostic — a newer value held by an older
-# script after a rollback is stale too. A stale value is ignored with a notice
-# and unset so the exec'd children re-resolve the baked default. An override
-# outside the store root (a checkout) always wins; so does any override when
-# the script is a raw checkout (baked is not an absolute path, nothing to
-# compare against). diff runs only as an `if` condition — its exit 1 means
-# "differs", not failure.
+# override against the baked default (#303). A shell or tmux server that
+# outlives a rebuild keeps the previous build's export, so an override under the
+# baked path's store root is kept only when its content equals the baked dir's:
+# the current build's export sits at a different store path than the baked
+# projection but holds the same files. A checkout override always wins, as does
+# any override in a raw script (baked is not absolute). diff sits in an `if`
+# because its exit 1 means "differs", not failure.
+# A stale value is ignored with a notice and unset, so later diagnostics do not
+# name it.
 _resolve_dir() {
   local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
   if [ -z "$val" ]; then
