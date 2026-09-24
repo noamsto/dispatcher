@@ -130,7 +130,8 @@ without evidence is not a verdict.
 1. **One artifact per wake.** Do not roam; do not review anything not assigned.
 2. **Never review your own work** — you are a different process from the author.
 3. **Verify before agreeing** — ingest artifacts with receiving-code-review
-   discipline; do not perform agreement.
+   discipline (defined in `WORKER_PROTOCOL.md` "Process authority"); do not
+   perform agreement.
 4. **Never open a PR and never edit implementation files.** Verdicts only.
 5. **Bounded.** If no verdict is reachable, say so explicitly (a `revise` with
    evidence naming the gap) rather than stalling. Never fail the lead silently.
