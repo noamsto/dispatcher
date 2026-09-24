@@ -540,6 +540,41 @@ teardown() {
   done
 }
 
+@test "worker protocol gives every engine a runnable consult and diverse-reviewer one-shot" {
+  protocols="$ROOT/adapters/core/protocols"
+  for statement in \
+    '## Cross-engine one-shots (consult and diverse reviewer)' \
+    '`dispatch --engines | grep -qx <engine>`' \
+    'env -u CREW_WORKER_ID -u CREW_ID timeout 540' \
+    'claude -p --model <fable\|opus> --tools "Read,Grep,Glob" --no-session-persistence' \
+    'codex exec -m gpt-5.6-sol -s read-only --ephemeral' \
+    'cursor-agent -p --mode ask --trust --model grok-4.7-high' \
+    'a claude lead → codex (`gpt-5.6-sol`), else cursor (`grok-4.7-high`); a codex lead → claude (`--model opus`), else cursor; a cursor or pi lead → claude (`--model opus`), else codex.' \
+    '| **gpt-5.6-sol** (needs `codex` in `dispatch --engines`) |' \
+    '| **grok-4.7-high** (needs `cursor` in `dispatch --engines`) | the cursor one-shot (any lead)' \
+    '**diverse-engine reviewer (deep tier, any implementer)**' \
+    'per the diverse-engine reviewer bullet above' \
+    'Merge findings across the batch (both / language-only / diverse-only / security)' \
+    'by any mechanism: Agent tool, codex MCP, or one-shot' \
+    'pick only among consultants whose engine passes the `dispatch --engines` gate' \
+    'A reply that cites no changed file is a failed one-shot: drop it, as above.' \
+    'coreutils (`gtimeout` on macOS; with neither on PATH the one-shot is unavailable)'; do
+    run grep -F "$statement" "$protocols/WORKER_PROTOCOL.md"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'the same batch plus a diverse-engine pass — any lead engine, a read-only one-shot to a different-family engine per `WORKER_PROTOCOL.md` → "Cross-engine one-shots" (a should, not a blocker)' "$protocols/REVIEW_TASK.md"
+  [ "$status" -eq 0 ]
+  run grep -F 'Every consultant is reachable from any lead engine as a read-only shell one-shot gated on the machine-local `dispatch --engines` roster' "$protocols/dispatch-orchestration.md"
+  [ "$status" -eq 0 ]
+  for stale in \
+    'claude implementers only' \
+    'work profile, claude only' \
+    'per the codex-diverse bullet'; do
+    run grep -rF "$stale" "$protocols"
+    [ "$status" -ne 0 ]
+  done
+}
+
 @test "review workers follow one base rule: the stamped header base:" {
   core="$ROOT/adapters/core/protocols"
   run grep -F '**`kind: review` does not use this section.**' "$core/WORKER_PROTOCOL.md"
