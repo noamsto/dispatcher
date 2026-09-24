@@ -74,8 +74,8 @@ if type != "object" then empty else
    elif $ev == "beforeReadFile" and $shape == "cursor" then {kind: "read", path: (.file_path | s)}
    elif $shape == "cursor" then
      if $tool == "Shell" then {kind: "shell", command: ($ti.command | s)}
-     # Read/Grep keys are from the shipped bundle, not a live capture, so the
-     # older path/target_file spellings stay as fallbacks.
+     # Read/Grep keys are from the shipped bundle, not a live capture, so
+     # path/target_file stay as fallbacks for a build that spells them otherwise.
      elif $tool == "Read" then {kind: "read", path: (first($ti.file_path, $ti.path, $ti.target_file | select(type == "string")) // "" | s)}
      elif $tool == "Grep" then {kind: "grep", path: (first($ti.file_path, $ti.path | select(type == "string")) // "" | s),
        glob: ($ti.glob | s), pattern: ($ti.pattern | s),
