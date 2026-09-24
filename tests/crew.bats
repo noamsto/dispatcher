@@ -4920,13 +4920,40 @@ _refused() {
 }
 
 @test "pr_open: an empty ledger is refused when the task doc has an ## Acceptance list" {
-  # The heading check is `^##[[:space:]]+Acceptance` only (not `###`/bold/other
-  # spellings), so it is not exhaustive.
   _acceptance_doc trivial
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "## Acceptance"
+  _refused "acceptance list"
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "   " https://example.com/pr/1
-  _refused "## Acceptance"
+  _refused "acceptance list"
+}
+
+@test "pr_open: the refusal hint points a no-acceptance-list worker at an empty detail" {
+  # No acceptance list: a free-text detail is refused, but the hint must name
+  # the empty-detail post, not steer the worker to invent `AC1 pass(n/a)`.
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "no acceptance list"
+  [[ "$stderr" == *'pr_open ""'* ]]
+  [[ "$stderr" == *'an empty detail is the correct pr_open'* ]]
+}
+
+@test "pr_open: the refusal hint keeps the ledger grammar when an acceptance list exists" {
+  _acceptance_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+}
+
+@test "pr_open: a ### Acceptance criteria list keeps the ledger hint (not the empty-detail steer)" {
+  # Widened detection: a `###` heading is an acceptance list, so a free-text
+  # detail keeps the ledger grammar and an empty detail is refused.
+  _task_doc trivial
+  printf '\n### Acceptance criteria\n- AC1\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  _refused "acceptance list"
 }
 
 @test "pr_open: a jq failure on the ledger check refuses (fail closed)" {
@@ -4999,7 +5026,7 @@ EOF
   # case must run before any accepted write in this test.
   _acceptance_doc trivial
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open
-  _refused "## Acceptance"
+  _refused "acceptance list"
   _task_doc trivial
   run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open
   [ "$status" -eq 0 ]

@@ -780,12 +780,21 @@ status | msg)
             exit 1
           fi
           hint='every acceptance ledger item must read <id> pass(<evidence>) or <id> waived(dispatcher), e.g. "AC1 pass(bats 12/12); AC2 waived(dispatcher)", with any note inside those parentheses; pending, not run, skipped, n/a, partial, or a note after the parentheses is refused. An item you cannot run is not a pass: post blocked "acceptance: <item> — <why>" and await the dispatcher, who alone waives it.'
+          # A task doc with no acceptance list must not carry a ledger at all, so
+          # steer that worker at the empty detail instead of at the grammar. The
+          # heading match is deliberately broad (`##`, `###`, …): a narrow `^##`
+          # would miss `### Acceptance criteria` and steer a doc that does have
+          # items to an empty detail, letting an unrun item reach pr_open.
           if [ "$ledger_rc" -eq 0 ]; then
-            echo "crew: refusing pr_open for $from — $hint" >&2
+            if grep -Eq '^#{2,}[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
+              echo "crew: refusing pr_open for $from — $hint" >&2
+            else
+              echo "crew: refusing pr_open for $from — this task doc has no acceptance list (no heading matching ## Acceptance), so an empty detail is the correct pr_open: crew status \"\$CREW_WORKER_ID\" pr_open \"\" <url>. Do not invent a pass(...) item. ($hint)" >&2
+            fi
             exit 1
           fi
-          if [ -z "${d//[[:space:]]/}" ] && grep -Eq '^##[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
-            echo "crew: refusing pr_open for $from — the task doc has a ## Acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
+          if [ -z "${d//[[:space:]]/}" ] && grep -Eq '^#{2,}[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
+            echo "crew: refusing pr_open for $from — the task doc has an acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
             exit 1
           fi
         fi
