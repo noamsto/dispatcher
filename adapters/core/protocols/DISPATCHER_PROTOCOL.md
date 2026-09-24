@@ -294,8 +294,13 @@ When a worker reports an evidence/review/recurrence block, resolve the stated
 decision or route to a supported reviewer; green CI is not a waiver.
 
 ```
-dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [LINEAR-ID] <title…>
+dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [LINEAR-ID] [--] <title…>
 ```
+
+`--` ends option parsing: every token after it is title text, so a title
+containing a flag-shaped word (e.g. `--base`) passes verbatim. Only the first
+argument selects a subcommand — `dispatch resume …` — so a title that merely
+mentions `resume` is never read as one.
 
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line, task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
 
