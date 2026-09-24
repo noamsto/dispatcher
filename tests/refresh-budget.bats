@@ -331,6 +331,79 @@ EOF
   [ "$output" = "null" ]
 }
 
+# Fixtures below are trimmed from live claude worker panes
+# (`tmux capture-pane -p -t <pane>`, 2026-09-24): subagent rows render BELOW
+# the statusline and mode line.
+@test "pane-scrape finds the statusline above a mode line with subagent rows below" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  ⎿  Done (3 tool uses)\n\n  🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 2% (4h44m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · PR #308 · ← for agents\n\n  ● main\n  ◯ shell-reviewer  Review dispatch.sh diff        13s · ↓ 25.3k tokens' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq -r '.engines.claude.source' "$cache"
+  [ "$output" = "pane_scrape" ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "2" ]
+  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
+  [ "$output" -ge $((now + 16940)) ]
+  [ "$output" -le $((now + 17140)) ]
+  run jq '.engines.claude.windows | has("7d")' "$cache"
+  [ "$output" = "false" ]
+}
+
+@test "pane-scrape parses the 7d day-form countdown with subagent rows below" {
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 13% (2h4m → 23:20) 7d 95% (3d14h)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents\n\n  ● main\n  ◯ go-reviewer  Review diff        9s · ↓ 4k tokens' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "13" ]
+  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
+  [ "$output" = "95" ]
+  # 3d14h = 3*86400 + 14*3600 = 309600s
+  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
+  [ "$output" -ge $((now + 309500)) ]
+  [ "$output" -le $((now + 309700)) ]
+}
+
+@test "pane-scrape reads the statusline of a pane with no subagent rows and no 7d" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 31% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "31" ]
+}
+
+@test "pane-scrape reads the bottom block, not a pasted statusline higher in the scrollback" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 | ⚡ 97% (2h53m → 00:20) 7d 99% (1d1h)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n  ⎿  Done (3 tool uses)\n  🤖 Sonnet 5 | ⚡ 13% (2h4m → 23:20)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n\n  ● main\n  ◯ go-reviewer  Review diff        9s' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
+  [ "$output" = "13" ]
+  run jq '.engines.claude.windows | has("7d")' "$cache"
+  [ "$output" = "false" ]
+}
+
+@test "pane-scrape is not moved by a mode glyph inside a subagent row" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 | ⚡ 44% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n\n  ● main\n  ◯ go-reviewer  saw ⏵⏵ in output        9s' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "44" ]
+}
+
 @test "pane-scrape degrades to unknown with no error when no worker windows exist" {
   SHIM_CLAUDE_429=1 run bash "$SCRIPT"
   [ "$status" -eq 0 ]

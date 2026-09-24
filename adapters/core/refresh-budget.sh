@@ -107,11 +107,16 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # roster, and an unanchored one could pick up a stray "⚡ NN%" sitting in a
 # worker's visible scrollback (e.g. example statusline text in a doc or task
 # file a worker has open).
-# Anchored to the last 2 non-empty lines of each capture — the statusline
-# sits one line above the input-box indicator by construction (verified
-# live, pane %228, 2026-08-11):
-#   🤖 Sonnet 5 🧠 high | 📊 170k/1M | ⚡ 69% (3h9m → 05:20) 7d 56% (9h49m)
-#   -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+# Anchored to the bottom block of each capture: the statusline is the line
+# directly above the LAST mode/input-box line (see _pane_statusline). Rows
+# below the mode line (subagent list, blank lines) don't move the anchor, and
+# a statusline-looking line further up the scrollback is never read (verified
+# live, 2026-09-24):
+#   🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 13% (2h4m → 23:20) 7d 95% (3d14h)
+#   -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · PR #308 · ← for agents
+#
+#   ● main
+#   ◯ shell-reviewer  Review dispatch.sh diff        13s · ↓ 25.3k tokens
 # No pane_current_command filter: this host's nix-wrapped claude binary
 # reports as `.claude-wrapped`, not `claude`, so a literal-command filter
 # would silently scrape nothing here — the regex itself is the filter.
@@ -132,9 +137,8 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # A derived clock is best-effort: capture-pane returns the pane's last
 # render, so "now + remaining" inherits however stale that is. It errs
 # toward refusing, since an overstated remaining understates elapsed_pct.
-# The day-form (NNd) branch is UNOBSERVED — a live capture of every crew
-# pane on this host showed no 7d segment at all, so NNhNNm is the only
-# sampled form.
+# The day-form (NNdNNh, no arrow) countdown is observed live on the 7d
+# segment; the 7d segment itself only renders when that window is notable.
 _pane_countdown() {
   local m="$1" nominal="$2" pct paren inner re d h mnt remaining=-1
   # Bash treats a leading-zero numeral ("08") as octal, so a captured digit
@@ -166,6 +170,24 @@ _pane_countdown() {
   printf '%s\t%s\n' "$pct" "$remaining"
 }
 
+# _pane_statusline <capture> — print the statusline of a pane capture: the
+# non-empty line directly above the last mode/input-box line, or the last
+# non-empty line when no mode line renders. Prints nothing for an empty pane.
+_pane_statusline() {
+  local -a lines
+  local i last=-1 mode='^[[:space:]]*(⏵|⏸|-- [A-Z ]+ --|\? for shortcuts)'
+  mapfile -t lines < <(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')
+  ((${#lines[@]} > 0)) || return 0
+  for i in "${!lines[@]}"; do
+    [[ ${lines[i]} =~ $mode ]] && last=$i
+  done
+  if ((last < 0)); then
+    printf '%s\n' "${lines[-1]}"
+  elif ((last > 0)); then
+    printf '%s\n' "${lines[last - 1]}"
+  fi
+}
+
 probe_claude_pane_scrape() {
   local wins panes wid nm pw pid text tail m v rem max5=-1 max7=-1 rem5=-1 rem7=-1
   command -v tmux >/dev/null 2>&1 || return 1
@@ -177,7 +199,7 @@ probe_claude_pane_scrape() {
     while IFS=$'\t' read -r pw pid; do
       [[ $pw == "$wid" ]] || continue
       text=$(tmux capture-pane -p -t "$pid" 2>/dev/null) || continue
-      tail=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -2)
+      tail=$(_pane_statusline "$text")
       # {1,3}: a huge digit run must fail the match, not reach 10# — see
       # _pane_countdown.
       m=$(printf '%s\n' "$tail" | grep -oE '⚡[[:space:]]*[0-9]{1,3}%([[:space:]]*\([^)]*\))?' | tail -1)
