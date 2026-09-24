@@ -1493,6 +1493,27 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
   done
 }
 
+# #300: the lead waits on one role's verdict with `--from`, bounded, never a hand-rolled poll.
+@test "grid protocols pin the sender-filtered, bounded verdict wait on every copy" {
+  for dir in \
+    adapters/core/protocols \
+    adapters/claude-code/plugin/protocols \
+    adapters/codex/plugin/protocols \
+    adapters/cursor/protocols; do
+    for statement in \
+      'crew await "$CREW_WORKER_ID" --from "role:$(git branch --show-current):<role>" --timeout 300' \
+      'never hand-roll' \
+      'never set a tool timeout' \
+      'at most 3 cycles (~15 min) in total' \
+      "tmux list-panes -F '#{pane_id} #{@crew_role} #{@crew_state}'"; do
+      run grep -F "$statement" "$ROOT/$dir/WORKER_PROTOCOL.md"
+      [ "$status" -eq 0 ]
+    done
+    run grep -F 'The lead waits with `crew await --from <your id>`' "$ROOT/$dir/GRID_PROTOCOL.md"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "spec-plan-critic pins a synchronous critic spawn on every copy" {
   for doc in \
     adapters/core/skills/spec-plan-critic/SKILL.md \

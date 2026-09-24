@@ -92,6 +92,9 @@ If your engine exits before the lead sent `final`, the pane's exit hook posts
 and a `{"role":"<role>","event":"role_exited","pane":"<id>",…}` msg to the lead,
 so a dead role is visible rather than an idle shell. A reap kills the pane
 without running the hook, and a `final` release exits silently.
+The lead waits with `crew await --from <your id>`, so post the verdict as **one**
+msg from `$id` to `lead_id`, and nowhere else — a verdict sent under another
+sender id or to another recipient is never seen.
 Re-read `worker_id:` immediately before every reply because a resumed lead has a
 new session id while your role pane may survive:
 

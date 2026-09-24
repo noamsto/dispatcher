@@ -191,9 +191,24 @@ the unavailable-gate block on pi.
 3. **Await the verdict** — from your bash tool, with a tool timeout above the
    await timeout (e.g. 360000ms):
    ```
-   crew await "$CREW_WORKER_ID" --timeout 300
+   crew await "$CREW_WORKER_ID" --from "role:$(git branch --show-current):<role>" --timeout 300
    ```
    The reply is the role's verdict JSON (`verdict` / `findings` / `evidence`).
+   `--from` restricts the wait to that one role, so another role's reply (or a
+   stale one) can neither release the wait early nor be consumed by it; the
+   role's `role_exited` msg is posted from the same id, so it returns from
+   `--from` too. This is **the** way to wait on a role verdict: never hand-roll
+   a poll loop over `events.jsonl` or the bus log, and never set a tool timeout
+   above 600s.
+
+   **Bound the wait.** One `--timeout 300` await is one cycle and never holds a
+   bash call longer than 600s. On an empty return, fold stragglers (step 5),
+   then read the role's pane state:
+   `tmux list-panes -F '#{pane_id} #{@crew_role} #{@crew_state}'`, filtered on
+   `<role>`. `working` → one more cycle, at most 3 cycles (~15 min) in total;
+   still no verdict after the third, treat it like `idle`. `idle`, `exited`, or
+   the pane missing with no verdict → the died-role path below (respawn once,
+   else fall back / the pi unavailable gate).
 4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.
