@@ -1573,8 +1573,11 @@ autopilot_base_ref() {
   mkdir -p "$fx/bin"
   cat >"$fx/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+jq_filter=""
+while [ $# -gt 0 ]; do [ "$1" = --jq ] && jq_filter="$2"; shift; done
 case "$GH_MODE" in
-  open) echo "parent" ;;
+  open) echo '{"baseRefName":"parent","state":"OPEN"}' | jq -r "$jq_filter" ;;
+  merged) echo '{"baseRefName":"parent","state":"MERGED"}' | jq -r "$jq_filter" ;;
   none) echo "no pull requests found for branch" >&2; exit 1 ;;
   *) echo "boom" >&2; exit 1 ;;
 esac
@@ -1607,6 +1610,12 @@ STUB
   GH_MODE=open autopilot_base_ref
   [ "$status" -eq 0 ]
   [[ "$output" == *"stacked=parent "* ]]
+}
+
+@test "autopilot Base ref: a MERGED PR's stale base is ignored" {
+  GH_MODE=merged autopilot_base_ref
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stacked= "* ]]
 }
 
 @test "autopilot Base ref: an unexpected gh failure stops instead of falling back" {

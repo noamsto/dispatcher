@@ -93,7 +93,7 @@ proof, review-risk, recurrence, and completion rules through Steps 3–10.
 
 ## Base ref (stacked work)
 
-Under the parent-branch strategy the sub-ticket branch is stacked on the parent branch, so the review diff, `/deslop`, and the PR must target the parent, not the default branch. Otherwise the default branch is the base. The parent comes from your own OPEN PR's `baseRefName` (authoritative once a PR exists — GitHub retargets it if the parent merges), else the `autopilotBase` recorded in Step 4. A MERGED or CLOSED PR is stale, so the snippet filters on `state`. Each tool call is a fresh shell — no variable survives between calls, so re-run this snippet in the same call that uses `base`, `base_ref`, or `stacked_base`:
+Under the parent-branch strategy the sub-ticket branch is stacked on the parent branch, so the review diff, `/deslop`, and the PR must target the parent, not the default branch. Otherwise the default branch is the base. The parent comes from your own OPEN PR's `baseRefName` (authoritative once a PR exists — GitHub retargets it if the parent merges), else the `autopilotBase` recorded in Step 4. A MERGED or CLOSED PR is stale, so the snippet filters on `state`. This mirrors the worker protocol's stacked-base resolution, minus its `WORKER_TASK.md` fallback (autopilot has none). Each tool call is a fresh shell — no variable survives between calls, so re-run this snippet in the same call that uses `base`, `base_ref`, or `stacked_base`:
 
 ```bash
 branch=$(git branch --show-current)
