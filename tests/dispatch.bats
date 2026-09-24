@@ -175,6 +175,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -1655,6 +1656,59 @@ EOF
   task="$TEST_REPO/.worktrees/review-target/WORKER_TASK.md"
   run grep -q '^roles:' "$task"
   [ "$status" -ne 0 ]
+}
+
+@test "pi review workers above trivial default to a reviewer,refuter grid" {
+  stub_pr_bins review-pi-std
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --crew-id c1 "pi review grid"
+  [ "$status" -eq 0 ]
+  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-pi-std/WORKER_TASK.md"
+  run grep -F -- 'Role-grid path' <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
+@test "pi deep review workers get the same reviewer,refuter grid" {
+  stub_pr_bins review-pi-deep
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --pr 99 --review --crew-id c1 "pi deep review grid"
+  [ "$status" -eq 0 ]
+  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-pi-deep/WORKER_TASK.md"
+}
+
+@test "pi trivial review workers stay ungridded (REVIEW_TASK reviews trivial inline)" {
+  stub_pr_bins review-pi-triv
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --pr 99 --review --crew-id c1 "pi trivial review"
+  [ "$status" -eq 0 ]
+  run grep -q '^roles:' "$TEST_REPO/.worktrees/review-pi-triv/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "--no-grid stays refused for a pi review worker above trivial" {
+  stub_pr_bins review-pi-nogrid
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --no-grid --crew-id c1 "pi review no grid"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+}
+
+@test "explicit --roles wins over the pi review default grid" {
+  stub_pr_bins review-pi-roles
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --roles reviewer@max,refuter --crew-id c1 "pi review roles"
+  [ "$status" -eq 0 ]
+  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-pi-roles/WORKER_TASK.md"
+  run jq -r '.reviewer.effort + ":" + .refuter.effort' "$TEST_REPO/.git/crew/artifacts/review-pi-roles/roles.json"
+  [ "$output" = "max:high" ]
+}
+
+@test "--grid on a review worker derives reviewer,refuter, not the implement topology" {
+  stub_pr_bins review-claude-grid
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort high --pr 99 --review --grid --crew-id c1 "claude review grid"
+  [ "$status" -eq 0 ]
+  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-claude-grid/WORKER_TASK.md"
 }
 
 @test "non-pi deep with --plan provided gets no default grid" {
@@ -5094,6 +5148,14 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- '--no-approve' <(launch_log)
   [ "$status" -eq 0 ]
+}
+
+@test "grid: --spawn-role overrides persist so a bare respawn keeps the promoted rung" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent pi --model openrouter/deepseek/deepseek-v4.1-flash --effort max
+  [ "$status" -eq 0 ]
+  run jq -r '.reviewer | .agent + ":" + .model + ":" + .effort' "$roles_dir/roles.json"
+  [ "$output" = "pi:openrouter/deepseek/deepseek-v4.1-flash:max" ]
 }
 
 @test "grid: --spawn-role gives the role pane the lead's CREW_WORKER_ID and CREW_ID" {

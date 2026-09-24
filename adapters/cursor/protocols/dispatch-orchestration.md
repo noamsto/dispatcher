@@ -83,7 +83,10 @@ generic logic, not DeepSeek-specific — so the rotation alternatives behave the
 same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
 `openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`.
 Pi deep has no higher pi model rung: after a failed deep pi worker, the
-dispatcher re-dispatches on another engine by judgement. None of this needs new clamp
+dispatcher re-dispatches on another engine by judgement. The same holds for
+`EVIDENCE_REVIEW.md`'s reviewer promotion, which on pi is a `reviewer` pane at
+`max` effort on a model whose thinking map exposes `max`, or on another
+engine's escalate rung (`--roles reviewer=<agent>:<model>@<effort>`). None of this needs new clamp
 machinery — every id launches with the standard ladder.
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
@@ -155,16 +158,20 @@ gate, so pi's default is unchanged: `standard` → `plan-critic,reviewer`,
 role pane inherits the lead's own agent and model (the **single-engine
 fallback**): a claude-only host still gets its critic panes, all on claude,
 and dispatch never refuses or reaches for an engine the caller didn't ask
-for. Two cases get no default grid at all: a `--review` worker (no spec/plan
-phase to critique) and a non-pi `deep` dispatch under `--plan provided`
-(nothing left for spec/plan critics to check). `--roles` opts into deliberate
+for. A `--review` worker has no spec/plan phase to critique, so it gets no
+critic grid: non-pi review workers get none at all (native batch and refuters),
+while a pi review worker above `trivial` defaults to `reviewer,refuter` panes —
+pi cannot fan out the reviewer batch and per-finding refuters
+`REVIEW_TASK.md` requires, and its `--no-grid` refusal covers it too. A non-pi
+`deep` dispatch under `--plan provided` also gets no default grid (nothing left
+for spec/plan critics to check). `--roles` opts into deliberate
 cross-engine review, including adding a `reviewer` pane on a non-pi lead —
 that pane is **additive**, a second opinion alongside the native batch, never
 a replacement (`reviewer=codex:gpt-5.6-sol`). `--grid`, passed explicitly,
 keeps its original meaning regardless of engine or `--plan`: the full
 tier-derived topology (`standard` → `plan-critic,reviewer`, `deep` →
-`spec-critic,plan-critic,reviewer`) — only the *default* trigger is
-critics-only for non-pi. `--no-grid` opts back out of the default on any
+`spec-critic,plan-critic,reviewer`; on a `--review` worker `reviewer,refuter`
+for both) — only the *default* trigger is critics-only for non-pi. `--no-grid` opts back out of the default on any
 non-pi engine, and is refused for pi standard/deep — pi has no other way to
 get a fresh critic/reviewer context. `--no-grid` combined with `--grid` or
 `--roles` is a usage error.

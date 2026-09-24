@@ -127,7 +127,7 @@ yourself: raise it — block→await — never self-stack.
 `kind:` picks the pipeline; `tier:` only ever sizes it.
 
 - **`kind: implement`** (or the field absent, on a legacy doc) — the rest of this document.
-- **`kind: review`** — `dispatch --review` appended a **Review Task** contract to the end of your task doc. Follow it in place of everything below that presupposes a code change: no spec, plan, execute, fast deterministic gate, code `/deslop`, push, or PR. You terminate at `done` carrying the review you posted — a review worker never reaches `pr_open`, because it opens nothing — and you emit that contract's tally instead of the outcome-metrics record in **When done**. Everything kind-neutral still binds: the startup drain, checkpoint-peek at each seam, block→await, and the bus contract.
+- **`kind: review`** — `dispatch --review` appended a **Review Task** contract to the end of your task doc. Follow it in place of everything below that presupposes a code change: no spec, plan, execute, fast deterministic gate, code `/deslop`, push, or PR. You terminate at `done` carrying the review you posted — a review worker never reaches `pr_open`, because it opens nothing — and you emit that contract's tally instead of the outcome-metrics record in **When done**. If the task doc stamps `roles:` (a pi review worker above trivial gets `reviewer,refuter` by default), that contract's **Role-grid path** replaces the reviewer batch and the refuter agents; the review-gate grid mechanics of this document's "Grid mode" section are for `kind: implement`. Everything kind-neutral still binds: the startup drain, checkpoint-peek at each seam, block→await, and the bus contract.
 
 ## Pipeline by tier
 
@@ -165,9 +165,11 @@ For each critic/review phase you have a pane for, the seam is:
 **Under a lazy grid** (`lazy: 1`), a role's pane may not exist yet — before
 step 1, if the role isn't already running, call
 `dispatch --spawn-role <role>` (idempotent: a no-op if the pane already
-exists). `--agent`/`--model` override the recorded `roles.json` spec for that
-one spawn; `--effort` overrides the task doc's `effort:` for it — so you never
-need to re-dispatch just to change a lazily-spawned role's model. A spawn that
+exists). `--agent`/`--model` override the recorded `roles.json` spec, and the
+override is written back so a later bare respawn of the role keeps it;
+`--effort` overrides the task doc's `effort:` the same way — so you never
+need to re-dispatch just to change a role's model or effort. On pi this is also
+how the review promotion in `EVIDENCE_REVIEW.md` is launched. A spawn that
 fails (missing `roles.json`, the role isn't part of this grid, or you're not
 in tmux) gets the same handling as a died pane below — fall back to the
 normal in-process path when your engine can spawn a fresh context, or follow
@@ -175,7 +177,8 @@ the unavailable-gate block on pi.
 
 1. **Write the artifact** into the crew dir (from `WORKER_TASK.md`):
    `<crew_dir>/artifacts/<branch>/<seam>.md` — `<seam>` is `spec`, `plan`, or
-   `review`. Create the dir. For review write the diff:
+   `review` (`refute` and `assess` assignments — `GRID_PROTOCOL.md` — carry their
+   payload inline). Create the dir. For review write the diff:
    `git diff "$base_ref"...HEAD > <crew_dir>/artifacts/<branch>/review.diff`, and the
    resolved roster beside it. First clear any earlier round's roster:
    `rm -f <crew_dir>/artifacts/<branch>/roster.json <crew_dir>/artifacts/<branch>/roster.json.tmp`.
@@ -415,7 +418,7 @@ After the fast deterministic gate is green and **before** `/deslop` + push, get 
   | **claude** | Agent tool, one subagent per matched roster entry, its resolved `brief` as the prompt; a native agent is preferred only for a harness identity — the entry's `name` when `source` is `harness`, or `override.of` when set — matched by that name or one of that harness entry's `aliases:`, and it is spawned with the resolved brief; a repo-local new entry (`source: repo`, `override: null`) always runs as a general subagent with its brief | unchanged — each agent definition owns its model |
   | **codex** | native subagent (`agents.enabled`, cap 3) with the matched entry's resolved `brief` written into its prompt — codex has no named-agent registry, so the roster entry **is** the prompt. Rule 1's `ultra` anti-double-orchestration clause covers **execute** subagents only — the review batch always spawns, at every session effort | the tier's **execute** rung (deep → terra, standard → luna); effort is whatever `dispatch` pinned, since codex has no per-spawn override |
   | **cursor** | Task-tool subagent with an explicit model slug, the same resolved `brief` inline | the tier's **execute** slug (deep → `grok-4.7-medium`, standard → `grok-4.7-low`) |
-  | **pi** | the task's reviewer role-grid pane, with the resolved roster (`roster.json`) beside the review artifact — pi has no native batch mechanism, so this pane **is** the review gate | the role model stamped by `dispatch` |
+  | **pi** | the task's reviewer role-grid pane, with the resolved roster (`roster.json`) beside the review artifact — pi has no native batch mechanism, so this pane **is** the review gate | the role model stamped by `dispatch`; the risk promotion is a pane at the promoted rung (`EVIDENCE_REVIEW.md` "Pi") |
 
   The cursor reviewer slug is a Task-spawn slug: a refusal takes the substitution rule in `dispatch-orchestration.md` → "Cursor Task-spawn slugs" (same-or-higher burn class, logged, never lighter) before this gate counts as unavailable.
 

@@ -51,7 +51,7 @@ The lead assigns work with a `crew msg` to `$id` naming:
 - the **artifact** to read — an absolute path the lead gives you, by convention
   under the crew dir (`<crew_dir>/artifacts/<branch>/<seam>.md`),
 - the **question** (which verdict it wants),
-- the **seam** (`spec`, `plan`, `execute`, `review`),
+- the **seam** (`spec`, `plan`, `execute`, `review`, `refute`, `assess`),
 - for `seam: review`, either the **roster** — the absolute path of the resolved roster JSON — or **roster_skipped** — the lead's `repo-local discovery skipped: <reason>`; with neither, discovery is skipped.
 
 On wake, read the artifact and do your role's job. **Do not edit implementation
@@ -77,6 +77,12 @@ review rubric:
   When no entry matches by `globs:`/`shebang:` (or a `when:` line emptied the set), apply the entry marked `fallback: true` (`general-reviewer`; on the `roster_skipped` path, the harness `reviewers/` file carrying that frontmatter line) — this is the scoped general review the next sentence permits. The fallback entry is never routed by its own globs.
   You are one fresh context applying the routed batch; do not
   delegate or replace it with an unscoped general review.
+
+## Assignments beyond the critic and review seams
+
+- **`review` in a `kind: review` grid.** When `WORKER_TASK.md` stamps `kind: review`, the lead is reviewing an existing PR (its `REVIEW_TASK.md` contract is appended to that file and addresses the lead, not you). Apply the roster to the artifact diff exactly as above, and return `findings` (`severity` `CRITICAL`/`HIGH`/`MEDIUM`, `where`, `what`, `why`) plus `gaps` (changed files no roster entry covers) in your one reply. `verdict` is `accept` with no findings, `revise` otherwise. You post nothing to GitHub or the dispatcher: no `gh` write, no review, no tally.
+- **`refute` — the `refuter` role.** The assignment carries **one** finding (`where`, `what`, `why`). Your job is to prove it **wrong**: the bug cannot occur, the symbol it names does not exist or behaves differently, the misread is not real, or the fix is already in place. Read the code the finding names in this worktree and nothing else; you never saw the reviewer's reasoning. **Default to `refuted` when the claim cannot be confirmed from that code.** Reply with `{"role":"refuter","seam":"refute","verdict":"confirmed|refuted","evidence":"<what you read>"}`. The lead spawns a fresh pane per finding, so you have no earlier finding to carry over. Same authority limits as any role: no edits, no `gh` writes.
+- **`assess` — the recurrence assessment.** The assignment (`EVIDENCE_REVIEW.md` "Recurrence and handoff") names the contract, consumer map, and ledger to inspect. Reply with a **tagged note**, not a verdict — `{"role":"reviewer","tag":"assess","approach":"<bounded replacement approach>","evidence":"…"}` — so it can never be read as a review-gate verdict. The assignment itself, like any lead → reviewer message, cancels your earlier `review` verdict until you post a fresh one; the lead's targeted re-review after the fix supplies it.
 
 ## Verdict
 

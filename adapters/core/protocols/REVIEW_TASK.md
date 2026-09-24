@@ -32,9 +32,11 @@ Map the changed files to the reviewers that match them (the language reviewers, 
 
 **Never route the review through a meta-agent** — a coordinator agent asked to "review this PR" falls back to weak inline review and misses real findings. You are the coordinator.
 
+**No native subagents (pi)?** You cannot spawn this batch, and reviewing above `trivial` in your own context is forbidden (`WORKER_PROTOCOL.md` rule 2). `dispatch` therefore gives a pi review worker above `trivial` a `reviewer,refuter` role grid (`roles:` in `WORKER_TASK.md`): follow **Role-grid path** below in place of the parallel batch and per-finding refuter agents.
+
 | tier | fan-out |
 | --- | --- |
-| `trivial` | no fan-out — review inline yourself, applying the matched reviewer's rubric |
+| `trivial` | no fan-out — review inline yourself, applying the matched reviewer's rubric (on every engine, pi included) |
 | `standard` | every matched reviewer, one agent each, one batch |
 | `deep` | the same batch plus a diverse-engine pass (work profile, claude only — the read-only codex MCP; a should, not a blocker) |
 
@@ -45,6 +47,21 @@ Changed files no reviewer covers are **reviewer gaps**. Carry them into the tall
 Every surviving finding gets **one refuter agent**, all dispatched in one parallel batch, each scoped to the finding's file and prompted to prove the finding **wrong** — the bug cannot occur, the symbol it names does not exist or behaves differently, the misread is not real, or the fix is already in place. **Default to `refuted` when the claim cannot be confirmed from the code in front of it.** Drop every refuted finding.
 
 Nothing gates this review before it lands, so the refuter pass is the only thing standing between a hallucinated finding and a human's PR.
+
+## Role-grid path
+
+Applies when `WORKER_TASK.md` stamps `roles:` naming `reviewer` and `refuter`. The panes share this worktree and follow `GRID_PROTOCOL.md`; you are the lead and the only one who posts the review. Their briefs forbid any GitHub write, tally, or dispatcher message.
+
+- **pi** (the default grid above `trivial`): the panes **are** your reviewer batch and your refuters. A pi `trivial` review has no grid and stays inline, as in the fan-out table. A pi review worker above `trivial` that lacks either pane (an explicit `--roles` left one out, or a pane cannot be spawned even after one `dispatch --spawn-role` respawn) does **not** review inline: `crew status "$CREW_WORKER_ID" blocked "review gate unavailable: <what>"`, `crew msg` the dispatcher, and run block→await per `WORKER_PROTOCOL.md` "Report to the bus". Its replies are *re-dispatch on an engine with native subagents* or *re-dispatch with the missing role*.
+- **any other engine** with panes (an explicit `--grid`/`--roles`): the panes are an **additive** second opinion next to your native batch and native refuters, never a substitute. Fold their findings into the same verify pass.
+
+Pi's degrade of "one agent per reviewer" and "one refuter per finding": the `reviewer` pane is **one** fresh context applying every routed roster entry; the refuter contract is kept by giving each finding its **own** fresh `refuter` pane, one after another.
+
+1. **Reviewer.** Write `<crew_dir>/artifacts/<branch>/review.diff` from `git diff "origin/$base...HEAD"` (the validated `base:` above, never a re-derived one) and the resolved roster beside it, exactly as `WORKER_PROTOCOL.md` "Grid mode" step 1 describes. Assign `{"seam":"review","artifact":"<abs review.diff>","roster":"<abs roster.json>","question":"Review this PR diff; return findings."}` to `role:<branch>:reviewer` and `crew await "$CREW_WORKER_ID" --from "role:<branch>:reviewer" --timeout 300`, bounded exactly as in "Grid mode" step 3. Its reply lists `findings` (`CRITICAL`/`HIGH`/`MEDIUM`, `where`, `what`, `why`) and `gaps` — the changed files no reviewer covers. Its `verdict` here is `accept` (no findings) or `revise`; it gates nothing.
+2. **Refuters.** For each finding, in turn: `tmux kill-pane` the previous `refuter` pane, `dispatch --spawn-role refuter` for a fresh one, assign `{"seam":"refute","finding":{"where":"…","what":"…","why":"…"},"question":"Prove this finding wrong."}`, and await it with `--from "role:<branch>:refuter"`. The reply carries `verdict: "confirmed"|"refuted"` and `evidence`; drop every `refuted` finding. A refuter pane that returns nothing after its one respawn is the block→await path above, never a silent `refuted`.
+3. **Release.** Once the review is posted, release both roles — `crew msg "$CREW_WORKER_ID" "role:<branch>:<role>" '{"final":true}'` — before the tally. The tally reports `lane: "fan-out"`, `reviewers` naming the roster entries the `reviewer` pane applied, and the `reviewer` pane's `gaps`.
+
+A P1 re-run (below) repeats steps 1–2 from scratch.
 
 ## Deslop, then post exactly one review
 

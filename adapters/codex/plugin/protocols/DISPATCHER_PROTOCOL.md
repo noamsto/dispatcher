@@ -322,9 +322,10 @@ is back.
   - **Reap edge.** `crew reap` reclaims only a MERGED/CLOSED PR (`crew.sh` `reap)`), so a parent whose PR is still open is never pulled out from under a live child. After the parent merges, GitHub retargets the child PR (delete-branch-on-merge), and the worker follows its own PR's live `baseRefName` — reap does not rewrite children's stamps: doing so would mean scanning every other worktree and rewriting a file a live worker may be reading mid-run, and it would still miss a retarget reap never sees.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
-- **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out.
+- **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
-  for standard and adds `spec-critic` for deep, on any engine. **The default**
+  for standard and adds `spec-critic` for deep, on any engine (`reviewer,refuter`
+  on a `--review` worker). **The default**
   (no `--grid`/`--roles`/`--no-grid` given) differs on `deep`: pi still
   defaults to the full `spec-critic,plan-critic,reviewer` topology — its
   `reviewer` pane *is* its review gate, having no native reviewer batch of its
@@ -335,7 +336,9 @@ is back.
   context, the same reason pi's grid exists at all. A `--roles reviewer=...`
   on a non-pi lead is additive — a deliberate cross-engine second opinion
   alongside the native batch, never a substitute. Two cases get no default
-  grid: a `--review` worker (no spec/plan phase) and a non-pi `deep` dispatch
+  critic grid: a `--review` worker (no spec/plan phase — but a pi one above
+  `trivial` defaults to `reviewer,refuter`, since pi cannot spawn the reviewer
+  batch and refuters `REVIEW_TASK.md` requires) and a non-pi `deep` dispatch
   under `--plan provided` (no critic role left once planning is settled).
   With no `--roles`, every role pane runs on the lead's own engine, model,
   and effort (never a second engine the caller didn't ask for, and never
@@ -386,8 +389,8 @@ is back.
   pane in the caller's own window/worktree) and may `dispatch --reap-roles`
   to kill every role pane in its window when done. It rides *whichever*
   topology resolves — an explicit `--grid`/`--roles`, or a topology that
-  resolves by default (pi standard/deep; non-pi `deep` unless `--review` or
-  `--plan provided`) — so a default-grid `deep` dispatch takes `--lazy` on
+  resolves by default (pi standard/deep, including pi `--review`; non-pi `deep` unless
+  `--review` or `--plan provided`) — so a default-grid `deep` dispatch takes `--lazy` on
   its own. **Do not add `--grid` "to satisfy" `--lazy`** on such a dispatch:
   `--grid` changes the topology itself, switching a non-pi `deep`'s default
   `spec-critic,plan-critic` to `spec-critic,plan-critic,reviewer` (this same

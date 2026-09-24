@@ -789,7 +789,9 @@ if [ "$kind" = review ]; then
 fi
 
 grid_note=""
-if [ -n "$grid_roles" ]; then
+if [ -n "$grid_roles" ] && [ "$kind" = review ]; then
+  grid_note=" You lead a review role grid: role panes ($grid_roles) may still be parked in this window. Follow REVIEW_TASK.md Role-grid path and address them through the crew bus."
+elif [ -n "$grid_roles" ]; then
   grid_note=" You lead a role grid: role panes ($grid_roles) may still be parked in this window. Follow WORKER_PROTOCOL.md Grid mode and address them through the crew bus."
 fi
 
