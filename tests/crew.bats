@@ -1149,6 +1149,53 @@ _pi_assert_refused() {
   [[ "$output" == *"CREW_ID not set"* ]]
 }
 
+@test "reply: CREW_ID unset ignores a crashed session in an old crew (#327)" {
+  # old crew: a registered dead pid with a non-terminal session that only
+  # lingers because the crew crashed before posting a terminal status.
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-old run_crew register "$dead_pid"
+  CREW_ID=c-old run_crew status "worker:feat/x#s1-1" working
+  # current crew: a live registered pid and a newer live session on the branch.
+  CREW_ID=c-cur run_crew register "$$"
+  CREW_ID=c-cur run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | "\(.crew_id) \(.to)"' "$log"
+  [ "$output" = "c-cur worker:feat/x#s2-2" ]
+}
+
+@test "reply: CREW_ID unset still refuses two genuinely live crews (#327)" {
+  sleep 30 & live_a=$!
+  sleep 30 & live_b=$!
+  CREW_ID=c1 run_crew register "$live_a"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew register "$live_b"
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
+  kill "$live_a" "$live_b" 2>/dev/null || true
+  wait "$live_a" "$live_b" 2>/dev/null || true
+}
+
+@test "reply: CREW_ID unset with only crashed crews still refuses naming both (#327)" {
+  # Every candidate's crew is dead: with no live crew to prefer, the fail-safe
+  # is to keep both and refuse, never to guess one.
+  (exit 0) & dead_a=$!
+  wait "$dead_a" 2>/dev/null || true
+  (exit 0) & dead_b=$!
+  wait "$dead_b" 2>/dev/null || true
+  CREW_ID=c1 run_crew register "$dead_a"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew register "$dead_b"
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
+}
+
 @test "reply: refuses a branch with no sessions" {
   CREW_ID=c1 run run_crew reply "worker:feat/nope" "go"
   [ "$status" -eq 1 ]

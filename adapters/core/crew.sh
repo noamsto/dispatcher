@@ -866,14 +866,36 @@ reply)
       else
         # No crew named: a dispatcher whose shell never exported CREW_ID. Look
         # across crews and take the single one with a live session on the branch.
+        # "Live" is the crew's registered pid (see `crews`): a crew that crashed
+        # before posting a terminal status leaves a non-terminal session that is
+        # not listening, and must not force --crew while a real crew is live
+        # (#327).
         live=""
         crews=""
         [ ! -f "$log" ] || crews=$(jq -r 'select(.crew_id != null) | .crew_id' "$log" | sort -u)
         while IFS= read -r c; do
           [ -n "$c" ] || continue
           n=$(_sessions "$br" "$c" | jq -c --arg c "$c" 'last // empty | select(.terminal | not) | . + {crew:$c}')
-          [ -z "$n" ] || live+="$n"$'\n'
+          [ -z "$n" ] || {
+            # A present pid that is dead (or `0`/non-numeric, which `crews` also
+            # reads as not alive) is a crashed crew. No pid at all is unknown,
+            # not dead: an unregistered crew or a `--crew-id`-only caller stays
+            # live, so this never narrows the pre-#327 resolver.
+            cpid=$(cat "$dir/crews/$c/pid" 2>/dev/null || true)
+            case "$cpid" in
+            '') calive=null ;;
+            *[!0-9]* | 0) calive=false ;;
+            *) if kill -0 "$cpid" 2>/dev/null; then calive=true; else calive=false; fi ;;
+            esac
+            live+=$(printf '%s' "$n" | jq -c --argjson a "$calive" '. + {crew_alive:$a}')$'\n'
+          }
         done <<<"$crews"
+        # Drop known-dead crews only while a not-known-dead candidate remains. If
+        # every candidate's crew is dead, keep them all — one still delivers,
+        # several still refuse naming both, exactly as before this change.
+        if printf '%s' "$live" | jq -e -s 'any(.[]; .crew_alive != false)' >/dev/null 2>&1; then
+          live=$(printf '%s' "$live" | jq -c -s '.[] | select(.crew_alive != false)')
+        fi
         nlive=$(printf '%s' "$live" | grep -c . || true)
         if [ "$nlive" -gt 1 ]; then
           echo "crew: CREW_ID not set and $br has live sessions in crews: $(printf '%s' "$live" | jq -r .crew | paste -sd, - | sed 's/,/, /g') — pass --crew <id>" >&2
