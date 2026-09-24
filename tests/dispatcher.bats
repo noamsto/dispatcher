@@ -278,3 +278,75 @@ EOF
   [[ "$output" != *"ignoring stale"* ]]
   grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
 }
+
+# #375: the launcher resolves all four DISPATCHER_*_DIR and pins the resolved
+# values into the launched session. Same fake-store trick as _store_launcher,
+# but every placeholder is substituted and the stub logs all four env vars.
+_log_dir_env_stub() {
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'claude env %s %s %s %s\n' \
+  "${DISPATCHER_PROTOCOL_DIR-UNSET}" "${DISPATCHER_SKILLS_DIR-UNSET}" \
+  "${DISPATCHER_REVIEWERS_DIR-UNSET}" "${DISPATCHER_CRITICS_DIR-UNSET}" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/claude"
+}
+
+_store_launcher_dirs() {
+  STORE="$TEST_REPO/store"
+  BAKED_PROTOCOLS="$STORE/h-new-protocols"
+  BAKED_SKILLS="$STORE/h-new-skills"
+  BAKED_REVIEWERS="$STORE/h-new-reviewers"
+  BAKED_CRITICS="$STORE/h-new-critics"
+  mkdir -p "$BAKED_PROTOCOLS" "$BAKED_SKILLS" "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  printf 'new\n' >"$BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md"
+  sed -e "s|@protocolDir@|$BAKED_PROTOCOLS|" \
+    -e "s|@skillsDir@|$BAKED_SKILLS|" \
+    -e "s|@reviewersDir@|$BAKED_REVIEWERS|" \
+    -e "s|@criticsDir@|$BAKED_CRITICS|" \
+    "$LAUNCHER" >"$BATS_TEST_TMPDIR/launcher-dirs.sh"
+  _log_dir_env_stub
+}
+
+@test "a relative DISPATCHER_*_DIR override is refused before the orchestrator launches" {
+  local var
+  for var in DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR; do
+    run env "$var=relative/dir" CREW_ID=c1 bash -euo pipefail "$LAUNCHER"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatcher: $var must be an absolute path, got: relative/dir"* ]]
+    ! grep -q -- '--name' "$STUB_LOG" 2>/dev/null
+  done
+}
+
+@test "the launcher pins every resolved DISPATCHER_*_DIR into the launched session" {
+  _store_launcher_dirs
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-dirs.sh"
+  [ "$status" -eq 0 ]
+  grep -qx "claude env $BAKED_PROTOCOLS $BAKED_SKILLS $BAKED_REVIEWERS $BAKED_CRITICS" "$STUB_LOG"
+}
+
+@test "a stale store-path DISPATCHER_REVIEWERS_DIR is ignored and the launched session sees the baked dir" {
+  _store_launcher_dirs
+  unset DISPATCHER_PROTOCOL_DIR
+  export DISPATCHER_REVIEWERS_DIR="$STORE/h-old-source/reviewers"
+  mkdir -p "$DISPATCHER_REVIEWERS_DIR" "$BAKED_REVIEWERS"
+  printf 'old\n' >"$DISPATCHER_REVIEWERS_DIR/old.md"
+  printf 'new\n' >"$BAKED_REVIEWERS/go-reviewer.md"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-dirs.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatcher: ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
+  grep -qx "claude env $BAKED_PROTOCOLS $BAKED_SKILLS $BAKED_REVIEWERS $BAKED_CRITICS" "$STUB_LOG"
+}
+
+@test "a raw launcher leaves an unsubstituted resolved dir out of the launched session" {
+  # The non-Nix dev loop runs the raw script, where @skillsDir@ is not a
+  # directory; the launcher must drop the placeholder rather than export a
+  # relative path the launched session would resolve in its own worktree.
+  _log_dir_env_stub
+  unset DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  CREW_ID=c1 run bash -euo pipefail "$LAUNCHER"
+  [ "$status" -eq 0 ]
+  grep -qx 'claude env /opt/protocols UNSET UNSET UNSET' "$STUB_LOG"
+}

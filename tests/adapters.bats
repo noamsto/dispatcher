@@ -1386,6 +1386,18 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
   [ "$status" -eq 2 ]
 }
 
+@test "resolver: a relative --harness is refused, not resolved against the caller's cwd" {
+  _roster_repo
+  resolver="$ROOT/adapters/core/reviewers/resolve-roster.sh"
+  # A relative harness that really does resolve from cwd (a diff-controlled
+  # task worktree) must still be refused, not silently used.
+  mkdir -p reviewers
+  cp "$ROOT"/adapters/core/reviewers/*.md reviewers/
+  run bash "$resolver" --base HEAD --repo "$TEST_REPO" --harness reviewers --default HEAD
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'resolve-roster: --harness must be an absolute path, got: reviewers'* ]]
+}
+
 @test "resolver: a stale store-path DISPATCHER_REVIEWERS_DIR is ignored with a notice and the baked dir is used" {
   _roster_repo
   local store="$BATS_TEST_TMPDIR/store" baked stale

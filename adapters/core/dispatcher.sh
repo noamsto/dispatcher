@@ -39,7 +39,26 @@ _resolve_dir() {
 }
 
 _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatcher
-[ -z "${DISPATCHER_PROTOCOL_DIR:-}" ] || export DISPATCHER_PROTOCOL_DIR="$PROTOCOL_DIR"
+# Harness skill, reviewer and critic dirs. #377 guarded these in dispatch.sh and
+# dispatch-resume.sh; this launcher left all three inherited, so a stale or
+# relative export in the tmux server reached the launched orchestrator session
+# unchecked. Same _resolve_dir treatment here, then pin the resolved dirs into
+# the launched session's environment: a relative value (an unsubstituted raw
+# checkout) is dropped rather than exported, since the launched session runs in
+# the operator's worktree and would resolve it against that cwd.
+_resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatcher
+_resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatcher
+_resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatcher
+for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
+  _v="${_n}_DIR"
+  _v="${!_v:-}"
+  if [[ $_v == /* ]]; then
+    printf -v "DISPATCHER_${_n}_DIR" '%s' "$_v"
+    export "DISPATCHER_${_n}_DIR"
+  else
+    unset "DISPATCHER_${_n}_DIR"
+  fi
+done
 protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
 
 agent=claude

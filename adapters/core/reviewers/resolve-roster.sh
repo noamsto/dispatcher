@@ -90,6 +90,12 @@ while [ $# -gt 0 ]; do
   shift 2
 done
 
+# The explicit --harness flag skips _resolve_dir, so a relative value would
+# resolve against the caller's cwd — for a worker, a diff-controlled task
+# worktree. Refuse it with _resolve_dir's wording (#376).
+if [ -n "$harness" ] && [[ $harness != /* ]]; then
+  die "--harness must be an absolute path, got: $harness"
+fi
 if [ -z "$harness" ]; then
   _resolve_dir harness DISPATCHER_REVIEWERS_DIR "$default_harness" resolve-roster
   [[ $harness != @* ]] || harness=$(dirname "${BASH_SOURCE[0]}")
