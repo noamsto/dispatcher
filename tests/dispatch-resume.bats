@@ -770,8 +770,8 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'Only planning is skipped' "$STUB_LOG"
-  grep -q 'Run your code review gate' "$STUB_LOG"
+  grep -q 'Only planning is skipped' <(launch_log)
+  grep -q 'Run your code review gate' <(launch_log)
 }
 
 @test "plan provided resume prompt for a kind: review worker has no code review gate to keep (#306)" {
@@ -781,7 +781,8 @@ EOF
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  ! grep -q 'Only planning is skipped' "$STUB_LOG"
+  grep -q 'plan of record' <(launch_log)
+  run ! grep -q 'Only planning is skipped' <(launch_log)
 }
 
 @test "trailing arguments are appended to the prompt" {

@@ -2966,7 +2966,8 @@ assert_gate_silent() { # <engine> <model> [profile]
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --plan provided --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
 
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
+  [[ "$launch" == *"plan of record"* ]]
   [[ "$launch" != *"Only planning is skipped"* ]]
 }
 
@@ -2983,7 +2984,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" == *"Only planning is skipped"* ]]
   [[ "$launch" == *"code review gate still run before you push"* ]]
   [[ "$launch" == *"Run your code review gate"* ]]
@@ -2993,7 +2994,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch trivial sonnet --effort low --plan provided --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
-  launch="$(grep 'send-keys' "$STUB_LOG")"
+  launch="$(grep 'send-keys' <(launch_log))"
   [[ "$launch" != *"code review gate"* ]]
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
