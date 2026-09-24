@@ -23,7 +23,7 @@ _resolve_dir() {
     printf -v "$out" '%s' "$baked"
     return 0
   fi
-  if [[ "$baked" == /* && "$val" == "${baked%/*}"/* && "$val" != "$baked" ]] &&
+  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
     echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
     printf -v "$out" '%s' "$baked"
