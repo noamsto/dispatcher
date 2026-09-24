@@ -4647,6 +4647,10 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 # --- terminal status gate: review seam (#241, #306) ---
 
 _task_doc() { printf 'tier: %s\nkind: %s\nengine: %s\ncrew_id: c1\n' "$1" "${2:-implement}" "${3:-claude}" >WORKER_TASK.md; }
+_acceptance_doc() {
+  _task_doc "$@"
+  printf '\n## Acceptance\n- AC1\n' >>WORKER_TASK.md
+}
 _status_rows() { jq -c 'select(.kind=="status")' "$(git rev-parse --git-common-dir)/crew/events.jsonl" 2>/dev/null | wc -l; }
 _refused() {
   [ "$status" -eq 1 ]
@@ -4839,6 +4843,167 @@ _refused() {
 @test "pr_open: no WORKER_TASK.md applies no gate" {
   CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pending(sim)" https://example.com/pr/1
   [ "$status" -eq 0 ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+# --- terminal status gate: acceptance ledger grammar (#332) ---
+
+@test "pr_open: every truth-table ledger the grammar refuses is refused on every tier" {
+  _task_doc trivial
+  local -a details=(
+    'AC1 pass(bats); AC2 skipped (not run: no simulator)'
+    'AC2 (pending on device)'
+    'AC3 deferred (not done yet)'
+    '(AC2 pending)'
+    'AC2 pending(sim)'
+    'AC1 pass(bats); AC2 pending(sim)'
+    'AC3 NOT DONE'
+    'AC4 not run'
+    'AC1 pending(sim); AC2 waived(dispatcher)'
+    'AC1 pass(x) AC2 pending'
+    'AC1 pass(x AC2 pending(sim)'
+    'AC2 waived(dispatcher) not run on CI'
+    'AC1 pass(x) AC2 pending AC3 pass(y)'
+    'AC1 pass(x); AC2 pending; AC3 pass(y)'
+    'AC2 pass()'
+    'AC2 waived(self)'
+    'AC2 waived(low risk)'
+    'AC2 n/a(no ui)'
+    'A7b partial(flag yes, viewer unit-only)'
+    'acceptance ledger: all pass, see PR body/comment'
+    'AC1 pass(x)) AC2 pending'
+    'AC1 pass(x); AC2'
+    'AC1 passed (no pending migrations)'
+    'AC2 waived(dispatcher) (not run on CI)'
+  )
+  for d in "${details[@]}"; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    _refused "every acceptance ledger item"
+  done
+}
+
+@test "pr_open: every truth-table ledger the grammar accepts is written" {
+  _task_doc trivial
+  local -a details=(
+    'AC1 pass(bats) AC2 waived(dispatcher)'
+    'AC5 pass(bats: pending ledger refused)'
+    'PASS(ci pending)'
+    'AC1 pass(nix build (x86) not run twice)'
+    'AC1 pass(bats: 3 pending sub-tests skipped (see log (details))); AC2 pass(nix build)'
+    'AC2 waived(dispatcher: not run on CI)'
+    ''
+    '   '
+    'AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)'
+    'AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher);'
+    'AC1-3 pass(vitest), AC4 pass(test+emu log)'
+    'AC1: pass(bats)'
+    'AC2 WAIVED(Dispatcher)'
+  )
+  local n=0
+  for d in "${details[@]}"; do
+    n=$((n + 1))
+    run --separate-stderr run_crew status "worker:feat/x#s1-$n" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 0 ]
+    [ -z "$stderr" ]
+  done
+  [ "$(_status_rows)" -eq "$n" ]
+}
+
+@test "pr_open: a lone state word before a valid item reads as its id (known gap)" {
+  # Known accepted gap: a single-token state word with no parens reads as the id
+  # of the next item. A drifting agent is unlikely to write it.
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(x) pending pass(y)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "pr_open: an empty ledger is refused when the task doc has an ## Acceptance list" {
+  # The heading check is `^##[[:space:]]+Acceptance` only (not `###`/bold/other
+  # spellings), so it is not exhaustive.
+  _acceptance_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "## Acceptance"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "   " https://example.com/pr/1
+  _refused "## Acceptance"
+}
+
+@test "pr_open: a jq failure on the ledger check refuses (fail closed)" {
+  _task_doc trivial
+  mkdir -p "$BATS_TEST_TMPDIR/jqstub"
+  export REAL_JQ
+  REAL_JQ=$(command -v jq)
+  cat >"$BATS_TEST_TMPDIR/jqstub/jq" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in *'?<b>'*) exit 3 ;; esac; exec "$REAL_JQ" "$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/jqstub/jq"
+  PATH="$BATS_TEST_TMPDIR/jqstub:$PATH" run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
+  _refused "could not check the acceptance ledger (jq exit 3)"
+}
+
+@test "pr_open: the ledger is checked before the review seam" {
+  _task_doc deep
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2 pending(sim)" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "pr_open: the protocol's example ledgers pass the gate" {
+  local -a examples=()
+  while IFS= read -r line; do
+    examples+=("$line")
+  done < <(grep -oE 'pr_open "[^"<][^"]*"' "$BATS_TEST_DIRNAME/../adapters/core/protocols/WORKER_PROTOCOL.md")
+  [ "${#examples[@]}" -ge 1 ]
+  _acceptance_doc trivial
+  local n=0
+  for ex in "${examples[@]}"; do
+    n=$((n + 1))
+    d="${ex#pr_open \"}"
+    d="${d%\"}"
+    run --separate-stderr run_crew status "worker:feat/x#s1-$n" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 0 ]
+    [ -z "$stderr" ]
+  done
+  run ! grep -F 'pr_open "" ' "$BATS_TEST_DIRNAME/../adapters/core/protocols/WORKER_PROTOCOL.md"
+}
+
+@test "done/pr_open: done, kind review and role callers are not ledger-checked" {
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" done "AC2 pending(sim)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" done "follow-ups: #312 (upstream fix pending)"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  run --separate-stderr run_crew status "role:feat/x:reviewer" pr_open "AC2 pending" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  _task_doc trivial review
+  run --separate-stderr run_crew status "worker:feat/x#s3-3" pr_open "2 findings pending" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  run --separate-stderr run_crew status "worker:feat/x#s3-3" done "2 findings pending author reply" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 5 ]
+}
+
+@test "pr_open: no detail argument at all" {
+  # _acceptance_doc first: _refused asserts zero total rows, so the refusal
+  # case must run before any accepted write in this test.
+  _acceptance_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open
+  _refused "## Acceptance"
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
   [ "$(_status_rows)" -eq 1 ]
 }
 
