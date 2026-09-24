@@ -211,7 +211,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$WT/WORKER_TASK.md"
-  grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" "$STUB_LOG"
+  grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
   grep -q 'send-keys' "$STUB_LOG"
 }
 

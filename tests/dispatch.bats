@@ -1345,8 +1345,8 @@ _store_protocols() { # <dir> <content>
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   grep -q 'new-window' "$STUB_LOG"
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$TEST_REPO/.dispatch-wt/feat-42-stale-store-export/WORKER_TASK.md"
-  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" "$STUB_LOG"
-  ! grep -qF -- "h-old-source" "$STUB_LOG"
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
+  ! grep -qF -- "h-old-source" <(launch_log)
 }
 
 @test "a store-path DISPATCHER_PROTOCOL_DIR with the baked content is the current build's export and is kept silently" {
@@ -1409,7 +1409,7 @@ _store_protocols() { # <dir> <content>
   DISPATCH_PROFILE=personal run run_store_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "stale skills export"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_SKILLS_DIR"* ]]
-  lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" "$STUB_LOG")
+  lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log))
   [[ "$lead_line" == *"--no-approve --skill $BAKED_SKILLS "* ]]
   [[ "$lead_line" != *"h-old-source"* ]]
 }
