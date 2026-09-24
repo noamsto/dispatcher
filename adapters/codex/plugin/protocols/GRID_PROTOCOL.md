@@ -112,7 +112,7 @@ crew msg "$id" "$lead_id" '{
 }'
 ```
 
-On the `review` seam the `seam` and `verdict` fields are what `crew status` reads on pi, where the latest verdict decides (a `reject` blocks until your next verdict; a new assignment to you cancels every earlier verdict until you reply), so both must be present; keep the whole reply small — an oversized line is elided leaf by leaf, and a shortened `verdict` no longer counts.
+On the `review` seam the `seam` and `verdict` fields are what `crew status` reads on pi, where the latest verdict decides (a `reject` blocks until your next verdict; a new assignment to you cancels every earlier verdict and the lead's own seam until you reply), so both must be present; keep the whole reply small — an oversized line is elided leaf by leaf, and a shortened `verdict` (or `seam`) counts as a reject, exactly like an unrecognised verdict.
 
 `accept` lets the artifact proceed; `revise` demands the findings be fixed
 first; `reject` says the approach is wrong. Findings are the product — a verdict

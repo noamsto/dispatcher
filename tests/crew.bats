@@ -4847,6 +4847,110 @@ _allowed() {
   _refused "no review seam"
 }
 
+_events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
+
+@test "pr_open: a pi accept then an oversized reviewer reply whose seam and verdict got elided is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  local big
+  big=$(jq -nc '{role:"reviewer",seam:"review",verdict:"accept",findings:[range(0;400)|"finding number \(.) with some text"]}')
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" "$big"
+  [ "$(tail -1 "$(_events)" | jq -r '.body | fromjson | .verdict')" != accept ]
+  [ "$(tail -1 "$(_events)" | jq -r '.body | fromjson | .seam')" != review ]
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a reject addressed to the dispatcher is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  _verdict reject dispatcher:c1
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a wrong-case Reject verdict is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  _verdict Reject
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a reject carrying a tag key is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"role":"reviewer","seam":"review","verdict":"reject","tag":"x"}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept addressed to another worker as the only verdict is refused" {
+  _task_doc standard implement pi
+  _verdict accept dispatcher:c1
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a mis-addressed accept still stands" {
+  _task_doc standard implement pi
+  _verdict accept
+  _verdict accept dispatcher:c1
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi accept survives a numeric-from object line from another crew" {
+  _task_doc standard implement pi
+  _verdict accept
+  printf '%s\n' '{"ts":1,"crew_id":"other","from":7,"to":8,"kind":"msg","body":"{}"}' >>"$(_events)"
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi reject then a new assignment then the lead's own seam is refused" {
+  _task_doc standard implement pi
+  _verdict reject
+  _assign
+  _lead_seam
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi lead seam with review_mode false or null is refused" {
+  _task_doc standard implement pi
+  _lead_seam '{"seam":"review","review_mode":false}'
+  _gate
+  _refused "no review seam"
+  _lead_seam '{"seam":"review","review_mode":null}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: off pi a re-assignment does not cancel the lead's own seam" {
+  _task_doc standard implement claude
+  _assign
+  _lead_seam
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi assignment with an elided artifact still cancels the lead's seam" {
+  _task_doc standard implement pi
+  _lead_seam
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"artifact":"…[elided]"}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a lead final release to the reviewer does not cancel an accept" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
+  _gate
+  _allowed
+}
+
 @test "pr_open: a scalar JSON line in the log is tolerated" {
   _task_doc standard implement pi
   _verdict accept
