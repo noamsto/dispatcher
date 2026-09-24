@@ -764,6 +764,31 @@ status | msg)
         tier=$(sed -n 's/^tier:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
         kind=$(sed -n 's/^kind:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
         engine=$(sed -n 's/^engine:[[:space:]]*//p' "$top/WORKER_TASK.md" | head -1 | tr -d '[:space:]' || true)
+        if [ "$state:${kind:-implement}" = pr_open:implement ]; then
+          # Every item must be <id> pass(<evidence>) or <id> waived(dispatcher[<sep><note>]);
+          # evidence nests via Oniguruma \g<b>. The id is one token so `AC2 pending AC3 pass(y)`
+          # cannot parse as one item. rc 1 = conforming; any rc but 0/1 means the check itself
+          # failed, so refuse rather than let it through.
+          ledger_rc=0
+          d=${3:-}
+          jq -en --arg d "$d" '
+            "(?:[^\\s;,()]+\\s+)?(?:pass(?=\\(\\s*[^\\s)])(?<b>\\((?:[^()]|\\g<b>)*\\))|waived\\(dispatcher(?:[:;,\\s](?:[^()]|\\g<b>)*)?\\))" as $item
+            | $d | test("^\\s*(?:\($item)(?:\\s*[;,]\\s*|\\s+|\\s*[;.]?\\s*$))*$"; "i") | not' \
+            >/dev/null 2>&1 || ledger_rc=$?
+          if [ "$ledger_rc" -ne 0 ] && [ "$ledger_rc" -ne 1 ]; then
+            echo "crew: refusing pr_open for $from — could not check the acceptance ledger (jq exit $ledger_rc)" >&2
+            exit 1
+          fi
+          hint='every acceptance ledger item must read <id> pass(<evidence>) or <id> waived(dispatcher), e.g. "AC1 pass(bats 12/12); AC2 waived(dispatcher)", with any note inside those parentheses; pending, not run, skipped, n/a, partial, or a note after the parentheses is refused. An item you cannot run is not a pass: post blocked "acceptance: <item> — <why>" and await the dispatcher, who alone waives it.'
+          if [ "$ledger_rc" -eq 0 ]; then
+            echo "crew: refusing pr_open for $from — $hint" >&2
+            exit 1
+          fi
+          if [ -z "${d//[[:space:]]/}" ] && grep -Eq '^##[[:space:]]+Acceptance' "$top/WORKER_TASK.md"; then
+            echo "crew: refusing pr_open for $from — the task doc has a ## Acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
+            exit 1
+          fi
+        fi
         case "$tier:${kind:-implement}" in
         standard:implement | deep:implement)
           b="${from%#s*}"
