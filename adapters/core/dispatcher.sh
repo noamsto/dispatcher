@@ -4,7 +4,9 @@
 # One behaviour change is unavoidable: a script cannot export CREW_ID back into
 # the caller's interactive shell the way `set -gx` did, so the id is printed.
 
-# Duplicated from dispatch.sh (standalone build), minus the unset.
+# Duplicated from dispatch.sh (standalone build); tests/dispatch.bats pins the
+# copies together.
+#
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
 # override against this build's baked default (#303). A long-lived shell or tmux
 # server keeps the previous build's export after a rebuild, so an override

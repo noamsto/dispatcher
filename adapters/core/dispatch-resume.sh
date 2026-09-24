@@ -244,7 +244,7 @@ esac
 # store path than the baked projection but holds the same files. Comparing
 # content, not paths, is direction-agnostic — a newer value held by an older
 # script after a rollback is stale too. A stale value is ignored with a notice
-# and unset so the exec'd children re-resolve the baked default. An override
+# and unset so later override diagnostics do not name it. An override
 # outside the store root (a checkout) always wins; so does any override when
 # the script is a raw checkout (baked is not an absolute path, nothing to
 # compare against). diff runs only as an `if` condition — its exit 1 means

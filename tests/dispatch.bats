@@ -1374,8 +1374,20 @@ _store_protocols() { # <dir> <content>
   [[ "$output" != *"ignoring stale"* ]]
   [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+# The three standalone builds each carry their own _resolve_dir; only the
+# stale-branch `unset` differs (dispatcher.sh re-exports instead).
+@test "the three _resolve_dir copies stay in sync" {
+  local core="$BATS_TEST_DIRNAME/../adapters/core" f
+  for f in dispatch dispatch-resume dispatcher; do
+    sed -n '/^_resolve_dir() {/,/^}/p' "$core/$f.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-$f"
+    [ -s "$BATS_TEST_TMPDIR/resolve-$f" ]
+  done
+  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatch-resume"
+  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatcher"
 }
 
 @test "a stale store-path DISPATCHER_SKILLS_DIR is ignored and pi gets the baked skills dir" {

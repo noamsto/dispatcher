@@ -284,8 +284,9 @@ _require_protocol_files() {
 # what is refused here is a checkout whose content drifted from the script's
 # build — it hashes differently. There is no committed PROTOCOL_REV file left
 # to go stale, so two PRs editing different protocol files can merge in either
-# order. Six small files hash in a few milliseconds. A raw checkout script (marker unsubstituted) cannot bind
-# a revision and skips with a one-line warning.
+# order. Six small files hash in a few milliseconds. A raw checkout script
+# (marker unsubstituted) cannot bind a revision and skips with a one-line
+# warning.
 _check_protocol_rev() {
   local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries=""
   local names=() file name sig
