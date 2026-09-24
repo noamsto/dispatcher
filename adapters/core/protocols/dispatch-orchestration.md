@@ -183,7 +183,7 @@ review gate, so a lazy pi grid nobody spawns ships with no review at all.
 `--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
 "Lazy grid"), never a default.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
 
 Pi has no fresh recovery-planner role in the current topology, so a
 plan-shaped recovery on pi is an unavailable-planning block. The dispatcher
@@ -366,19 +366,30 @@ probing. Candidates are the same burn class or higher, never lower. Classes:
 | named | candidates, in order |
 | ----- | -------------------- |
 | `grok-4.7-low` | `grok-4.7-medium`, `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
-| `grok-4.7-medium` | itself, else `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
+| `grok-4.7-medium` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
 | `grok-4.7-high` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |
+
+Walking the list is the retry: the same slug is never respawned. A named slug
+without a row uses the row of its burn class (Burn classes, above): `-low-fast`
+and `grok-4.7-medium`-class slugs → the `grok-4.7-medium` row; `-medium-fast`,
+`-high*`, `-xhigh*` and premium `cursor-grok-4.6-*` → the `grok-4.7-high` row;
+cheap 4.6 `-low` → the `grok-4.7-low` row.
 
 In plan-shaped recovery the candidates are limited to Grok-family
 (non-cross-vendor) slugs, and the substitute must be strictly above the
-authoritative tuple.
+authoritative tuple. A same-or-higher Grok substitute for a refused next rung is
+the same rung, not a skipped one.
 
 **Logging.** Each substitution is one free line below the ledger table in
-`REVIEW_NOTES.md` (not a table row): `task-slug substituted: <named> → <used>
-(<refusal text>)`. Also send one retro note (not a metrics field),
+`REVIEW_NOTES.md` (not a table row; create the file if absent — spec/plan seams
+may precede any ledger): `task-slug substituted: <named> → <used>
+(<refusal text>)`. When the caller has a crew bus, also send one retro note (not
+a metrics field),
 `{"seam":"<spec|plan|execute|review>","tag":"other","detail":"task_slug_substituted: <named> → <used>"}`,
 per `WORKER_PROTOCOL.md` → "Retro notes" (mid-execute → the `retro:` sink;
-otherwise the metrics snapshot's `notes` array). Substitution never changes
+otherwise the metrics snapshot's `notes` array). Direct commands (autopilot,
+finish-prs) have no bus: they log only in `REVIEW_NOTES.md` and their report.
+Substitution never changes
 `review_mode`.
 
 **When the list is exhausted**, each seam takes its existing path — never a
@@ -388,7 +399,8 @@ holds.
 
 | seam | outcome |
 | ---- | ------- |
-| review gate; `EVIDENCE_REVIEW.md` promoted reviewer; recurrence escalation assessor | the review-unavailable block path (`review_mode: unavailable`, `review_unavailable` note) |
+| review gate; `EVIDENCE_REVIEW.md` promoted reviewer | the review-unavailable block path (`review_mode: unavailable`, `review_unavailable` note) |
+| recurrence escalation assessor | `EVIDENCE_REVIEW.md`'s recurrence handoff: block with the ledger and the concrete decision needed (a worker uses block→await; `review_mode` unchanged) |
 | spec-/plan-critic (`spec-plan-critic`) | the degraded same-context critic fallback, only after the list is exhausted |
 | plan-shaped recovery planner | the existing `rung_blocked` block |
 | execute default/escalated rung | block→await `blocked "task slug unavailable: <named>"` with an `other` retro note — not `review_mode: unavailable` |
