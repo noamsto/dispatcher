@@ -81,12 +81,18 @@ proof, review-risk, recurrence, and completion rules through Steps 3–10.
 
 1. Create a worktree with [worktrunk](https://worktrunk.dev):
    ```bash
-   WTPATH=$(wt switch --create <branch-name> --no-cd --format json -y | jq -r '.path')
+   branch=<branch-name>
+   if git show-ref --verify --quiet "refs/heads/$branch"; then
+     WTPATH=$(wt switch "$branch" --no-cd --format json -y | jq -r '.path')
+   else
+     WTPATH=$(wt switch --create "$branch" --no-cd --format json -y | jq -r '.path')
+   fi
+   [ -n "$WTPATH" ] || { echo "wt switch failed — stop and ask the user" >&2; exit 1; }
    cd "$WTPATH"
    ```
    - Use the Linear branch name (copy from ticket with `Cmd+Shift+.`)
    - **Parent-branch strategy:** don't run the command above — run the **Stack base** block below instead. It creates the worktree from the previous sub-ticket's branch (the parent for the first) and records that base, which is what the **Base ref** reads back.
-   - `wt switch` is idempotent: if the worktree already exists it just returns the path
+   - `wt switch --create` is **not** idempotent: on a branch that already exists it prints `Branch … already exists` to stderr and nothing to stdout, so `WTPATH` comes back empty. The branch-exists split above takes the plain `wt switch "$branch"` path, which is the idempotent one.
    - lazytmux's post-switch hook short-circuits when `$CLAUDECODE` is set, so no spurious tmux window is spawned from inside Claude
 2. Implement the plan
 3. Commit incrementally as you go (small, logical commits)

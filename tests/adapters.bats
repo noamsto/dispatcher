@@ -1743,6 +1743,78 @@ STUB
   [[ "$output" == *"stop and ask the user"* ]]
 }
 
+@test "autopilot Step 4: the branch-exists split replaces the false idempotency claim" {
+  for autopilot in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md"; do
+    run grep -cF -- 'wt switch --create` is **not** idempotent' "$autopilot"
+    [ "$output" -eq 1 ]
+    run grep -F -- 'git show-ref --verify --quiet "refs/heads/$branch"' "$autopilot"
+    [ "$status" -eq 0 ]
+    run grep -F -- '- `wt switch` is idempotent' "$autopilot"
+    [ "$status" -ne 0 ]
+  done
+}
+
+# Runs autopilot's Step 4 worktree block in a fixture. wt is stubbed the way
+# real wt behaves: `--create` on a branch that already exists prints to stderr
+# and leaves stdout empty, and a plain `wt switch <branch>` returns the path.
+# $BRANCH_EXISTS=1 pre-creates the branch (a re-run); $WT_FAIL=1 fails every
+# invocation. Prints `WTPATH-ok` when the block ended with a non-empty path.
+# Override $AUTOPILOT_DOC to point the fixture at another copy of the command
+# body (used to check the old behaviour is red).
+autopilot_step4() {
+  fx="$BATS_TEST_TMPDIR/s4"
+  local git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q -b main "$fx/work"
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  [ "${BRANCH_EXISTS:-}" != 1 ] || git -C "$fx/work" branch feat/x
+  mkdir -p "$fx/bin"
+  cat >"$fx/bin/wt" <<'STUB'
+#!/usr/bin/env bash
+[ "${WT_FAIL:-}" != 1 ] || { echo "wt: unable to switch" >&2; exit 1; }
+if [ "$2" = --create ]; then
+  name="$3"
+  if git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name"; then
+    echo "Branch '$name' already exists" >&2
+    exit 1
+  fi
+  git -C "$FX/work" branch "$name" || exit 1
+else
+  name="$2"
+  git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name" || { echo "wt: no such branch '$name'" >&2; exit 1; }
+fi
+mkdir -p "$FX/wt-$name"
+printf '{"path":"%s"}\n' "$FX/wt-$name"
+STUB
+  chmod +x "$fx/bin/wt"
+  awk '/^## Step 4: Implement/{f=1} f&&/^[[:space:]]*```bash/{g=1;next} g&&/^[[:space:]]*```/{exit} g' \
+    "${AUTOPILOT_DOC:-$ROOT/adapters/core/commands/autopilot.md}" \
+    | sed "s|<branch-name>|feat/x|" >"$fx/step4.sh"
+  [ -s "$fx/step4.sh" ]
+  cd "$fx/work"
+  FX="$fx" PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/step4.sh; [ -n "${WTPATH:-}" ] && echo WTPATH-ok || echo WTPATH-empty'
+}
+
+@test "autopilot Step 4: re-running on an existing branch yields a non-empty WTPATH" {
+  BRANCH_EXISTS=1 autopilot_step4
+  [[ "$output" == *"WTPATH-ok"* ]]
+}
+
+@test "autopilot Step 4: a first run still creates the branch" {
+  autopilot_step4
+  [[ "$output" == *"WTPATH-ok"* ]]
+  git -C "$fx/work" show-ref --verify --quiet refs/heads/feat/x
+}
+
+@test "autopilot Step 4: a failed wt switch stops instead of cd-ing nowhere" {
+  WT_FAIL=1 autopilot_step4
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wt switch failed"* ]]
+}
+
 # Runs autopilot's Stack base block in a fixture: origin carries main, parent
 # and a pushed sub1 (with its own commit); `unpushed` exists only locally.
 # $PREV is the previous sub-ticket's branch ("" for the first). wt is stubbed
