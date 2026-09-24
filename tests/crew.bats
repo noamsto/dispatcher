@@ -4869,6 +4869,48 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "no review seam"
 }
 
+@test "pr_open: a pi reject then a revise addressed to the dispatcher stays refused" {
+  _task_doc standard implement pi
+  _verdict reject
+  _verdict revise dispatcher:c1
+  _lead_seam
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then an unparseable lead assignment to the reviewer is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" 'not json'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a markdown-fenced reviewer reject is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '```json {"seam":"review","verdict":"reject"} ```'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept then a reviewer msg whose body is a JSON array is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '[{"seam":"review","verdict":"reject"}]'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept survives role_exited and final objects on the bus" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"event":"role_exited"}'
+  run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"final":true}'
+  _gate
+  _allowed
+}
+
 @test "pr_open: a pi accept then a wrong-case Reject verdict is refused" {
   _task_doc standard implement pi
   _verdict accept

@@ -758,10 +758,11 @@ status | msg)
     # the gate — the pane's verdict. On pi the log is folded in order and fails
     # closed: only an exact accept/revise from the reviewer is honoured, any
     # other reviewer reply carrying a seam or verdict (a reject, an unknown or
-    # elided verdict) counts as a reject that blocks the lead's own seam until
-    # the reviewer's next accept/revise. A grid assignment (lead -> role) voids
-    # every earlier verdict AND the lead's own earlier review seam until a
-    # fresh verdict lands. The assignment is never itself a seam.
+    # elided verdict, a body that is not a JSON object) counts as a reject that
+    # blocks the lead's own seam until the reviewer's next accept/revise. A grid
+    # assignment (lead -> role), even an unparseable one, voids every earlier
+    # verdict AND the lead's own earlier review seam until a fresh verdict
+    # lands. The assignment is never itself a seam.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -813,15 +814,20 @@ status | msg)
             seams=$(jq -Rnr --arg c "$crew" --arg b "$b" --arg r "$r" --arg e "$engine" '
               reduce (inputs | fromjson? | select(type == "object")) as $m (
                 {ok: false, rejected: false, pending: false};
-                (if $m.crew_id == $c and $m.kind == "msg" then (($m.body | fromjson?) // null) else null end) as $o
+                ($m.crew_id == $c and $m.kind == "msg") as $mine
+                | (if $mine then (($m.body | fromjson?) // null) else null end) as $o
                 | (($m.from // "") | tostring | sub("#s[^#]*$"; "")) as $f
                 | (($m.to // "") | tostring | sub("#s[^#]*$"; "")) as $t
-                | if ($o | type) != "object" then .
+                | if $e == "pi" and $mine and ($o | type) != "object" then
+                    if $f == $r then .ok = false | .rejected = true
+                    elif $f == $b and $m.to == $r then .pending = true | .ok = false
+                    else . end
+                  elif ($o | type) != "object" then .
                   elif $e == "pi" and $m.from == $r and ($o | has("seam") or has("verdict")) then
                     if $o.seam == "review" and $o.verdict == "accept" then
                       if $t == $b then .pending = false | .ok = true | .rejected = false else . end
                     elif $o.seam == "review" and $o.verdict == "revise" then
-                      .pending = false | .ok = false | .rejected = false
+                      if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
                     else .ok = false | .rejected = true end
                   elif $e == "pi" and $f == $b and $m.to == $r and ($o | has("seam") or has("artifact")) then
                     .pending = true | .ok = false
