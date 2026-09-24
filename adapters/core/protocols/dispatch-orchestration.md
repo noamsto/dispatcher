@@ -370,10 +370,10 @@ probing. Candidates are the same burn class or higher, never lower. Classes:
 | `grok-4.7-high` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |
 
 Walking the list is the retry: the same slug is never respawned. A named slug
-without a row uses the row of its burn class (Burn classes, above): `-low-fast`
-and `grok-4.7-medium`-class slugs → the `grok-4.7-medium` row; `-medium-fast`,
-`-high*`, `-xhigh*` and premium `cursor-grok-4.6-*` → the `grok-4.7-high` row;
-cheap 4.6 `-low` → the `grok-4.7-low` row.
+without a row uses the row of its base slug: drop a `-fast` suffix (speed, not
+strength — the base slug is tried first, then its row, always non-fast) and
+read `cursor-grok-4.6-<effort>` like `grok-4.7-<effort>`, with `-xhigh` taking
+the `grok-4.7-high` row.
 
 In plan-shaped recovery the candidates are limited to Grok-family
 (non-cross-vendor) slugs, and the substitute must be strictly above the
