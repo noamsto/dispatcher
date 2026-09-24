@@ -939,13 +939,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
-  # The grid hints follow the pane count: this window now has >=1 role pane.
-  # Only the lead publishes the lead hint (a role pane never runs this).
-  if [ -z "${CREW_ROLE_ID:-}" ]; then
-    publish_grid_lead "$win" "$TMUX_PANE"
-  fi
-  publish_grid_window "$win"
-  refit_grid "$win"
   # Persist the spec this pane actually launched with: a bare respawn of the
   # role (a died or stalled pane) must come back at the same rung, not silently
   # at the dispatch-time one.
@@ -953,6 +946,13 @@ if [ "${1:-}" = "--spawn-role" ]; then
   jq --arg r "$role" --arg a "$spawn_agent" --arg m "$spawn_model" --arg e "$effort" \
     '.[$r] = {agent: $a, model: $m, effort: $e}' "$roles_file" >"$roles_tmp"
   mv "$roles_tmp" "$roles_file"
+  # The grid hints follow the pane count: this window now has >=1 role pane.
+  # Only the lead publishes the lead hint (a role pane never runs this).
+  if [ -z "${CREW_ROLE_ID:-}" ]; then
+    publish_grid_lead "$win" "$TMUX_PANE"
+  fi
+  publish_grid_window "$win"
+  refit_grid "$win"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
 fi
