@@ -408,7 +408,7 @@ _seed_claim_issue_num() {
   [ "$status" -eq 0 ]
   [ "$output" = "c-dead" ]
   grep -qF 'issue edit 50 --remove-label dispatched' "$STUB_LOG"
-  ! grep -q '99' "$STUB_LOG"
+  run ! grep -q '99' "$STUB_LOG"
 }
 
 # The most important case: a claim record outlives its own release, so if
@@ -426,7 +426,7 @@ _seed_claim_issue_num() {
   run --separate-stderr run_crew adopt c-dead "$$"
   [ "$status" -eq 0 ]
   [ "$output" = "c-dead" ]
-  ! grep -q 'issue edit 77' "$STUB_LOG"
+  run ! grep -q 'issue edit 77' "$STUB_LOG"
 }
 
 # An open PR means the work landed far enough to still hold the issue;
@@ -454,7 +454,7 @@ EOF
   [ "$output" = "c-dead" ]
   [[ "$stderr" == *"keeping #61"* ]]
   [[ "$stderr" == *"heads an open PR"* ]]
-  ! grep -q 'issue edit 61' "$STUB_LOG"
+  run ! grep -q 'issue edit 61' "$STUB_LOG"
 }
 
 # A branch a worker still occupies is not adopt's to touch — killing the
@@ -485,7 +485,7 @@ EOF
   [ "$output" = "c-dead" ]
   [[ "$stderr" == *"keeping #72"* ]]
   [[ "$stderr" == *"still occupies feat/72-y"* ]]
-  ! grep -q 'issue edit 72' "$STUB_LOG"
+  run ! grep -q 'issue edit 72' "$STUB_LOG"
 }
 
 # The liveness guard sits outside `--force`'s bypass by design: --force lets
@@ -545,7 +545,7 @@ EOF
   [ "$output" = "c-dead" ]
   [[ "$stderr" == *"keeping #83"* ]]
   [[ "$stderr" == *"feat/83-b heads an open PR"* ]]
-  ! grep -q 'issue edit 83' "$STUB_LOG"
+  run ! grep -q 'issue edit 83' "$STUB_LOG"
 }
 
 # Same widening for the occupancy gate (#73): the live worker sits on the other
@@ -576,7 +576,7 @@ EOF
   [ "$output" = "c-dead" ]
   [[ "$stderr" == *"keeping #84"* ]]
   [[ "$stderr" == *"still occupies feat/84-b"* ]]
-  ! grep -q 'issue edit 84' "$STUB_LOG"
+  run ! grep -q 'issue edit 84' "$STUB_LOG"
 }
 
 # jq's group_by compares raw JSON, so a numeric 73 and a string "73" would form
@@ -595,7 +595,7 @@ EOF
   run --separate-stderr run_crew adopt c-dead "$$"
   [ "$status" -eq 0 ]
   [ "$output" = "c-dead" ]
-  ! grep -q 'issue edit 73' "$STUB_LOG"
+  run ! grep -q 'issue edit 73' "$STUB_LOG"
 }
 
 # The bus log is caller-writable and `cissue` is interpolated straight into a

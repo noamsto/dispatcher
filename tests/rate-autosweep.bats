@@ -364,7 +364,7 @@ await_log() {
   [ "$status" -eq 0 ]
   await_log 'done rc='
   grep -Eq ' start pid=[0-9]+ repo=' "$XDG_DATA_HOME/crew/autosweep.log"
-  ! grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
+  run ! grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
 }
 
 @test "autosweep: an async lock skip is logged even under --quiet" {
@@ -415,7 +415,7 @@ await_log() {
   done
   [ "$(wc -l <"$XDG_DATA_HOME/crew/autosweep.log")" -eq 200 ]
   grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
-  ! grep -qx '1' "$XDG_DATA_HOME/crew/autosweep.log"
+  run ! grep -qx '1' "$XDG_DATA_HOME/crew/autosweep.log"
 }
 
 @test "autosweep: trimming the log keeps a concurrent sweep's later lines" {

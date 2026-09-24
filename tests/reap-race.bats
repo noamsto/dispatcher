@@ -125,7 +125,7 @@ canon_wt_path() {
   CREW_ID=c1 run run_crew reap --idle 0
   [ "$status" -eq 0 ]
   # shellcheck disable=SC2314  # intentional; bats <1.5 has no `run !`
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: a superseded claim does not block reaping a later terminal status" {

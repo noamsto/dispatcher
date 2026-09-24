@@ -58,7 +58,7 @@ stub_tmux() {
   [ "$status" -eq 0 ]
 
   cmp -s "$LOG" "$before"
-  ! grep -q display-message "$STUB_LOG"
+  run ! grep -q display-message "$STUB_LOG"
 }
 
 @test "notify: an empty CREW_WORKER_ID is treated as absent" {
@@ -72,7 +72,7 @@ stub_tmux() {
   [ "$status" -eq 0 ]
 
   cmp -s "$LOG" "$before"
-  ! grep -q display-message "$STUB_LOG"
+  run ! grep -q display-message "$STUB_LOG"
 }
 
 @test "notify: a grid role pane carrying the lead's CREW_WORKER_ID writes nothing and pings nothing" {
@@ -86,7 +86,7 @@ stub_tmux() {
   [ "$status" -eq 0 ]
 
   cmp -s "$LOG" "$before"
-  ! grep -q display-message "$STUB_LOG"
+  run ! grep -q display-message "$STUB_LOG"
 }
 
 @test "notify: roster still reports the live session after a session-less SessionEnd" {
@@ -137,7 +137,7 @@ stub_tmux() {
   # The ping pins that the hook ran past the guard, so an absent `exited` is the
   # done-check suppressing the write rather than an early exit.
   grep -q 'display-message -t %9' "$STUB_LOG"
-  ! grep -q '"state":"exited"' "$LOG"
+  run ! grep -q '"state":"exited"' "$LOG"
 }
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ run_notify_cursor() {
   [ "$status" -eq 0 ]
 
   run ! grep -q '"state":"exited"' "$LOG"
-  ! grep -q display-message "$STUB_LOG"
+  run ! grep -q display-message "$STUB_LOG"
 }
 
 @test "notify: SessionEnd still overrides blocked — that session is really gone" {
@@ -192,5 +192,5 @@ run_notify_cursor() {
   [ "$status" -eq 0 ]
 
   run ! grep -q '"state":"exited"' "$LOG"
-  ! grep -q display-message "$STUB_LOG"
+  run ! grep -q display-message "$STUB_LOG"
 }

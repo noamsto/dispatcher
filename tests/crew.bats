@@ -1651,7 +1651,7 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/reap-live#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"an engine is still running there"* ]]
-  ! grep -q remove "$STUB_LOG"
+  run ! grep -q remove "$STUB_LOG"
 }
 
 # Same exact-path requirement as the roster sibling-path test above, exercised
@@ -1728,7 +1728,7 @@ EOF
   CREW_ID=c1 run run_crew reap --idle 0
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/idle-exited-live — exited but an engine is still running there"* ]]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: leaves a terminal session inside --idle alone" {
@@ -1742,7 +1742,7 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/idle-me#s1-1" failed
   CREW_ID=c1 run run_crew reap --idle 3600
   [ "$status" -eq 0 ]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: never releases a non-terminal session" {
@@ -1755,7 +1755,7 @@ EOF
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tclaude\n')"
   CREW_ID=c1 run_crew status "worker:feat/busy#s1-1" working
   CREW_ID=c1 run run_crew reap --idle 0
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 # One worktree hosts at most one live window, so idle release must collapse the
@@ -1775,7 +1775,7 @@ EOF
   jq -nc '{ts:2000, crew_id:"c1", from:"worker:feat/two-sess#s2-2", to:"dispatcher:c1", kind:"status", body:{state:"working"}}' >>"$log"
   CREW_ID=c1 run run_crew reap --idle 0
   [ "$status" -eq 0 ]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: --dry-run only reports the release" {
@@ -1790,7 +1790,7 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/idle-me#s1-1" done
   CREW_ID=c1 run run_crew reap --idle 0 --dry-run
   [[ "$output" == *"would release @23"* ]]
-  ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: rejects a non-numeric --idle" {
@@ -1826,7 +1826,7 @@ EOF
   # A merged PR's squash-merged branch is not an ancestor of main — reap
   # deletes it deliberately once gh confirms the merge (#194). The stub's
   # headRefOid answers the local tip so the delete guard passes.
-  ! git show-ref --verify --quiet refs/heads/feat/42-reap-me
+  run ! git show-ref --verify --quiet refs/heads/feat/42-reap-me
 }
 
 @test "reap: a dispatched label-removal failure does not abort the sweep" {
@@ -1879,7 +1879,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/45-reap-me"* ]]
   [[ "$output" == *"could not resolve closing issues for PR https://example.com/pr/11 (feat/45-reap-me)"* ]]
-  ! grep -q 'issue edit' "$STUB_LOG"
+  run ! grep -q 'issue edit' "$STUB_LOG"
 }
 
 @test "reap: a PR with no closing issue reaps without attempting a label removal" {
@@ -1903,7 +1903,7 @@ EOF
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/44-reap-me"* ]]
-  ! grep -q 'issue edit' "$STUB_LOG"
+  run ! grep -q 'issue edit' "$STUB_LOG"
 }
 
 @test "reap: a squash-merged PR is reaped by outcome — reap row, label, branch deletion" {
@@ -1945,7 +1945,7 @@ EOF
   grep -q 'issue edit 99 --remove-label dispatched' "$STUB_LOG"
   jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
   [ ! -d "$wt_path" ]
-  ! git show-ref --verify --quiet refs/heads/feat/squash-me
+  run ! git show-ref --verify --quiet refs/heads/feat/squash-me
 }
 
 @test "reap: a merged branch whose local tip diverges from the PR head is kept" {
@@ -2014,10 +2014,10 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/stuck — wt remove failed"* ]]
-  ! grep -q 'remove-label' "$STUB_LOG"
+  run ! grep -q 'remove-label' "$STUB_LOG"
   [ -d "$wt_path" ]
   git show-ref --verify --quiet refs/heads/feat/stuck
-  ! grep -q '"kind":"reap"' "$log"
+  run ! grep -q '"kind":"reap"' "$log"
 }
 
 @test "reap: REVIEW_NOTES.md and round plans are scaffold — trashed, not deleted, worktree reaped" {
@@ -2127,7 +2127,7 @@ EOF
   grep -q 'kill-window -t @23' "$STUB_LOG"
   [ -f "$STUB_DIR/trash/REVIEW_NOTES.md" ]
   [ ! -d "$wt_path" ]
-  ! git show-ref --verify --quiet refs/heads/feat/grid-me
+  run ! git show-ref --verify --quiet refs/heads/feat/grid-me
   # A later pass is a clean no-op — the worktree is already gone.
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   [ "$status" -eq 0 ]
@@ -2181,7 +2181,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/failed-open — PR OPEN"* ]]
-  ! grep -q 'remove' "$STUB_LOG"
+  run ! grep -q 'remove' "$STUB_LOG"
 }
 
 @test "reap: a worktree dirty only with pipeline scaffold is reclaimed" {
@@ -2292,7 +2292,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/live-engine-me — an engine is still running there"* ]]
-  ! grep -q 'remove' "$STUB_LOG"
+  run ! grep -q 'remove' "$STUB_LOG"
 }
 
 @test "reap: an exited worker with no PR is kept" {
@@ -2308,7 +2308,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/exited-no-pr — exited but no PR on the bus"* ]]
-  ! grep -q 'remove' "$STUB_LOG"
+  run ! grep -q 'remove' "$STUB_LOG"
 }
 
 @test "msg: an oversized JSON body stays parseable JSON" {
@@ -4250,7 +4250,7 @@ EOF
   [[ "$output" == *"keeping feat/10-parent — PR OPEN"* ]]
   [ -d "$parent_wt" ]
   [ -d "$child_wt" ]
-  ! grep -q 'remove' "$STUB_LOG"
+  run ! grep -q 'remove' "$STUB_LOG"
 }
 
 @test "reap: reaps a merged parent without touching its stacked child" {
