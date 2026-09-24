@@ -189,7 +189,7 @@ the unavailable-gate block on pi.
      '{"seam":"review","artifact":"<abs path to review.diff>","roster":"<abs path to roster.json>","question":"Review this diff."}'
    ```
 3. **Await the verdict** — from your bash tool, with a tool timeout above the
-   await timeout (e.g. 360000ms):
+   await timeout: 360s (360000 only if your bash tool takes milliseconds):
    ```
    crew await "$CREW_WORKER_ID" --from "role:$(git branch --show-current):<role>" --timeout 300
    ```
@@ -202,13 +202,19 @@ the unavailable-gate block on pi.
    above 600s.
 
    **Bound the wait.** One `--timeout 300` await is one cycle and never holds a
-   bash call longer than 600s. On an empty return, fold stragglers (step 5),
-   then read the role's pane state:
-   `tmux list-panes -F '#{pane_id} #{@crew_role} #{@crew_state}'`, filtered on
-   `<role>`. `working` → one more cycle, at most 3 cycles (~15 min) in total;
-   still no verdict after the third, treat it like `idle`. `idle`, `exited`, or
-   the pane missing with no verdict → the died-role path below (respawn once,
-   else fall back / the pi unavailable gate).
+   bash call longer than 600s. On an empty return, read the role's pane state
+   first: `tmux list-panes -F '#{pane_id} #{@crew_role} #{@crew_state}'`, rows
+   for `<role>` only. A respawn leaves the dead pane's `exited` row beside the
+   live one, so judge the live pane and treat `exited` or missing only when no
+   live pane exists. Then fold stragglers (step 5); if the fold returns the
+   verdict, go to step 4 and skip the rest.
+   - `working` → another cycle, at most 3 in total (~15 min). Still no verdict
+     after the third: `tmux kill-pane -t <pane>`, then the died-role path below.
+   - `idle` with no verdict (the assignment was never picked up, or the verdict
+     went astray) → re-send the step 2 assignment once and run one more cycle;
+     `idle` again → the died-role path below.
+   - `exited`, or no such pane → the died-role path below (respawn once, else
+     fall back / the pi unavailable gate).
 4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.
