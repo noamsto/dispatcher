@@ -43,6 +43,11 @@ EOF
 }
 
 teardown() {
+  # Reap a fake claimant a test left alive: spawn_claimant backgrounds a bash
+  # blocked on a fifo, so a test that aborts before its own kill would leak it.
+  if [ -n "${live_pid:-}" ]; then
+    kill "$live_pid" 2>/dev/null || true
+  fi
   teardown_repo
 }
 
@@ -4191,6 +4196,18 @@ assert_claim_refused() { # <evidence-substring>
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
+# Spawn a process that looks like the dispatch shell that writes a claim row:
+# its command line names the harness, so the shape bound reads it as a possible
+# claimant. `exec -a` sets argv[0] while bash blocks on a fifo held open by its
+# own fd — no child process, and killing the pid reaps it cleanly. Sets live_pid.
+# A caller may pass a longer argv0 (the COLUMNS regression does).
+spawn_claimant() {
+  local argv0="${1:-bash dispatch.sh}" fifo="$BATS_TEST_TMPDIR/claimant.fifo"
+  mkfifo "$fifo"
+  bash -c 'exec -a "$1" bash' _ "$argv0" 0<>"$fifo" >/dev/null 2>&1 3>&- &
+  live_pid=$!
+}
+
 @test "claim: a dispatched label is refused when the exact branch exists only on origin" {
   stub_launch_bins
   git -C "$TEST_REPO" push -q origin main:refs/heads/feat/42-do-a-thing
@@ -4234,8 +4251,7 @@ assert_claim_refused() { # <evidence-substring>
 
 @test "claim: a dispatched label is refused while the claiming dispatch is still alive" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   now_ms=$(( $(date +%s) * 1000 ))
   seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   stub_gh_claim dispatched ""
@@ -4251,9 +4267,11 @@ assert_claim_refused() { # <evidence-substring>
 # is not that claimant, so the heal must proceed.
 @test "claim: a live pid that started after its row is a reused pid, not a claimant (#322)" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
-  seed_claim_row "{\"ts\":1,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  spawn_claimant
+  # The row is an hour old and the claimant started now, so the reuse bound is
+  # what fires — not the 24 h age bound.
+  old_ms=$(( ( $(date +%s) - 3600 ) * 1000 ))
+  seed_claim_row "{\"ts\":$old_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   kill "$live_pid" 2>/dev/null || true
@@ -4268,8 +4286,7 @@ assert_claim_refused() { # <evidence-substring>
 # exact asymmetry. Liveness must therefore not rest on the ability to signal.
 @test "claim: a live claimant on another uid (kill EPERM) still refuses (#322)" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   kill() {
     if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then return 1; fi
     builtin kill "$@"
@@ -4331,8 +4348,7 @@ EOF
 @test "claim: pid start time falls back to etime where etimes is absent (#322)" {
   stub_launch_bins
   real_ps="$(command -v ps)"
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   cat >"$STUB_DIR/ps" <<EOF
 #!/usr/bin/env bash
 case "\$*" in
@@ -4356,8 +4372,7 @@ EOF
 # not tell a claimant from a reused pid, so it must fail closed (live).
 @test "claim: a claim row with a non-numeric ts fails closed as live (#322)" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   seed_claim_row "{\"ts\":\"nope\",\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
@@ -4368,8 +4383,7 @@ EOF
 
 @test "claim: a claim row with a missing ts fails closed as live (#322)" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   seed_claim_row "{\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
@@ -4422,8 +4436,7 @@ EOF
 
 @test "claim: a live claim row shadowed by a newer dead one still refuses" {
   stub_launch_bins
-  sleep 300 3>&- &
-  live_pid=$!
+  spawn_claimant
   true &
   dead_pid=$!
   wait "$dead_pid"
@@ -4431,6 +4444,91 @@ EOF
   seed_claim_row "{\"ts\":2,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$dead_pid}"
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+# #351: a live pid is not claimant evidence when the process is not the dispatch
+# session that wrote the row. pid 1 predates every row, so the old one-sided
+# reuse bound read it as live and wedged the #304 self-heal forever.
+@test "claim: a claim row naming pid 1 with no other evidence heals (#351)" {
+  stub_launch_bins
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":1}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #351: the same shape bound on a process whose args ps can always read — the
+# portable AC1, since pid 1's args may be unreadable under a hidepid=2 mount,
+# where the shape bound correctly fails closed and keeps it live.
+@test "claim: a claim row naming a live non-claimant process heals (#351)" {
+  stub_launch_bins
+  sleep 300 3>&- &
+  live_pid=$!
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #351: shape precedes the ts bound — a non-claimant pid is not evidence even
+# when the row carries no usable ts (which alone would fail closed as live).
+@test "claim: a claim row naming a non-claimant with no ts still heals (#351)" {
+  stub_launch_bins
+  seed_claim_row '{"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #351: the age backstop. A dispatch-shaped process that predates its row passes
+# liveness, shape and reuse, so only the age bound can heal it — a row older
+# than _CLAIM_STALE_MS with no branch/dispatch row behind it is abandoned. The
+# elapsed probe is stubbed to report 25 h so the (fresh) process predates the
+# 24.5 h row; on base that composes to LIVE and refuses, so this is red there.
+@test "claim: a claim row older than the staleness cap heals even for a live dispatch-shaped pid (#351)" {
+  stub_launch_bins
+  real_ps="$(command -v ps)"
+  spawn_claimant
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+*etimes=*) printf '%s\n' 90000 ;;
+esac
+exec "$real_ps" "\$@"
+EOF
+  chmod +x "$STUB_DIR/ps"
+  old_ms=$(( ( $(date +%s) - 88200 ) * 1000 ))
+  seed_claim_row "{\"ts\":$old_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  rm -f "$STUB_DIR/ps"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+# #351 review: `ps -o args=` truncates to COLUMNS, and the built wrapper's
+# `dispatch` token sits past column 80 behind the bash store path — without
+# `-ww` a live claimant would read as stale. The long argv0 puts the token past
+# column 80; COLUMNS=80 must not hide it.
+@test "claim: the shape probe reads a dispatch token past COLUMNS (#351)" {
+  stub_launch_bins
+  spawn_claimant "bash /nix/store/$(printf 'x%.0s' {1..90})-dispatch/bin/dispatch"
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+  stub_gh_claim dispatched ""
+  COLUMNS=80 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   kill "$live_pid" 2>/dev/null || true
   wait "$live_pid" 2>/dev/null || true
   assert_claim_refused "dispatch in progress (pid $live_pid)"
