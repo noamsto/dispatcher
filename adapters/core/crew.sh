@@ -788,13 +788,28 @@ status | msg)
   fi
   ;;
 reply)
-  # reply <to> <body> — sugar over `msg`; from is dispatcher:<crew> so the
-  # dispatcher needn't reconstruct its own id.
-  crew=$(_crew_id)
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
-    exit 1
-  }
+  # reply <to> <body> [--crew ID] — sugar over `msg`; from is dispatcher:<crew>
+  # so the dispatcher needn't reconstruct its own id.
+  rcrew=""
+  rargs=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: --crew needs a value" >&2
+        exit 1
+      }
+      rcrew="$2"
+      shift 2
+      ;;
+    *)
+      rargs+=("$1")
+      shift
+      ;;
+    esac
+  done
+  set -- "${rargs[@]+"${rargs[@]}"}"
+  crew="${rcrew:-$(_crew_id)}"
   mkdir -p "$dir"
   # A branch-only worker target resolves to the newest session on that branch, so
   # the dispatcher keeps writing `worker:<branch>` while the message lands on a
@@ -808,7 +823,31 @@ reply)
       : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
     else
       br="${to#worker:}"
-      newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      if [ -n "$crew" ]; then
+        newest=$(_sessions "$br" "$crew" | jq -c 'last')
+      else
+        # No crew named: a dispatcher whose shell never exported CREW_ID. Look
+        # across crews and take the single one with a live session on the branch.
+        live=""
+        crews=""
+        [ ! -f "$log" ] || crews=$(jq -r 'select(.crew_id != null) | .crew_id' "$log" | sort -u)
+        while IFS= read -r c; do
+          [ -n "$c" ] || continue
+          n=$(_sessions "$br" "$c" | jq -c --arg c "$c" 'last // empty | select(.terminal | not) | . + {crew:$c}')
+          [ -z "$n" ] || live+="$n"$'\n'
+        done <<<"$crews"
+        nlive=$(printf '%s' "$live" | grep -c . || true)
+        if [ "$nlive" -gt 1 ]; then
+          echo "crew: CREW_ID not set and $br has live sessions in crews: $(printf '%s' "$live" | jq -r .crew | paste -sd, - | sed 's/,/, /g') — pass --crew <id>" >&2
+          exit 1
+        elif [ "$nlive" -eq 1 ]; then
+          newest=$(printf '%s' "$live" | jq -c .)
+          crew=$(printf '%s' "$newest" | jq -r .crew)
+        else
+          echo "crew: CREW_ID not set and no live session on $br in any crew — pass --crew <id> (or dispatch a worker before replying to one)" >&2
+          exit 1
+        fi
+      fi
       [ -n "$newest" ] && [ "$newest" != null ] || {
         echo "crew: no session on $br — dispatch a worker before replying to one" >&2
         exit 1
@@ -825,6 +864,10 @@ reply)
     fi
     ;;
   esac
+  [ -n "$crew" ] || {
+    echo "crew: CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>" >&2
+    exit 1
+  }
   _build_reply() {
     jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
       '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
@@ -4426,7 +4469,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

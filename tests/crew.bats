@@ -1115,6 +1115,40 @@ _pi_assert_refused() {
   [[ "$output" == *"re-dispatch"* ]]
 }
 
+@test "reply: CREW_ID unset resolves the single crew with a live session (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | "\(.crew_id) \(.to)"' "$log"
+  [ "$output" = "c1 worker:feat/x#s1-1" ]
+}
+
+@test "reply: --crew works with CREW_ID unset (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go" --crew c2
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="msg") | .to' "$log"
+  [ "$output" = "worker:feat/x#s2-2" ]
+}
+
+@test "reply: CREW_ID unset with live sessions in two crews refuses naming both (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
+}
+
+@test "reply: CREW_ID unset with only a terminal session names the unset crew (#302)" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CREW_ID not set"* ]]
+}
+
 @test "reply: refuses a branch with no sessions" {
   CREW_ID=c1 run run_crew reply "worker:feat/nope" "go"
   [ "$status" -eq 1 ]
