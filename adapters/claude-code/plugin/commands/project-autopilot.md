@@ -6,10 +6,10 @@ argument-hint: "[PROJECT-ID-OR-NAME] [--limit N] [--concurrency N] [--filter <st
 # Project Autopilot: Multi-Ticket Fan-Out
 
 > **Claude Code only.** This command drives Claude Code agent teams
-> (`TaskCreate`, `SendMessage`, `subagent_type`, `teammateMode`) and the
-> `/loop` / `/schedule` skills, which no other engine provides. It ships only to
-> Claude Code. Codex and Cursor users get the same fan-out from the
-> engine-neutral `dispatcher` launcher — `dispatch` once per ticket.
+> (`TaskCreate`, `SendMessage`, `subagent_type`, `teammateMode`), which no other
+> engine provides. It ships only to Claude Code. Codex and Cursor users get the
+> same fan-out from the engine-neutral `dispatcher` launcher — `dispatch` once
+> per ticket.
 
 You are the **team lead**. You select a batch of Linear tickets from a project, spawn one teammate per ticket, and each teammate runs `/dispatcher:autopilot TICKET-ID` end-to-end in its own worktree. You coordinate; you do not implement.
 
