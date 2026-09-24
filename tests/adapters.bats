@@ -1621,7 +1621,7 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
     "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
     "$ROOT/adapters/cursor/commands/autopilot.md"; do
     for statement in \
-      'git -C "$PARENT_PATH" push -u origin <parent-branch>' \
+      'git -C "$PARENT_PATH" push -u origin "$parent_branch"' \
       'sub_base=${prev_branch:-$parent_branch}' \
       'git config "branch.$branch.autopilotBaseOid" "$(git merge-base' \
       'git rebase --onto "refs/remotes/origin/$new_base" "$cut"' \
@@ -1811,6 +1811,153 @@ STUB
 
 @test "autopilot Step 4: a failed wt switch stops instead of cd-ing nowhere" {
   WT_FAIL=1 autopilot_step4
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wt switch failed"* ]]
+}
+
+@test "autopilot parent branch: the branch-exists split replaces the unguarded --create" {
+  for autopilot in \
+    "$ROOT/adapters/core/commands/autopilot.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/autopilot.md" \
+    "$ROOT/adapters/codex/plugin/skills/autopilot/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/autopilot.md"; do
+    run grep -F -- 'git show-ref --verify --quiet "refs/heads/$parent_branch"' "$autopilot"
+    [ "$status" -eq 0 ]
+    run grep -F -- 'PARENT_PATH=$(wt switch --create <parent-branch>' "$autopilot"
+    [ "$status" -ne 0 ]
+  done
+}
+
+# Runs the autopilot parent-branch block in a fixture. wt is stubbed the way
+# real wt behaves: `--create` on a branch that already exists prints to stderr
+# and leaves stdout empty, and a plain `wt switch <branch>` returns the path.
+# $BRANCH_EXISTS=1 pre-creates the parent branch (a re-run). Prints
+# `PARENT_PATH-ok` when the block ended with a non-empty path. Override
+# $AUTOPILOT_DOC to point the fixture at another copy of the command body
+# (used to check the old behaviour is red).
+autopilot_parent_branch() {
+  fx="$BATS_TEST_TMPDIR/pb"
+  local git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q -b main "$fx/work"
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  [ "${BRANCH_EXISTS:-}" != 1 ] || git -C "$fx/work" branch parent
+  mkdir -p "$fx/bin"
+  cat >"$fx/bin/wt" <<'STUB'
+#!/usr/bin/env bash
+[ "${WT_FAIL:-}" != 1 ] || { echo "wt: unable to switch" >&2; exit 1; }
+if [ "$2" = --create ]; then
+  name="$3"
+  if git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name"; then
+    echo "Branch '$name' already exists" >&2
+    exit 1
+  fi
+  git -C "$FX/work" branch "$name" || exit 1
+else
+  name="$2"
+  git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name" || { echo "wt: no such branch '$name'" >&2; exit 1; }
+fi
+mkdir -p "$FX/wt-$name"
+printf '{"path":"%s"}\n' "$FX/wt-$name"
+STUB
+  chmod +x "$fx/bin/wt"
+  awk '/^3\. \*\*PR strategy decision/{f=1} f&&/^[[:space:]]*```bash/{g=1;next} g&&/^[[:space:]]*```/{exit} g' \
+    "${AUTOPILOT_DOC:-$ROOT/adapters/core/commands/autopilot.md}" \
+    | sed 's|<parent-branch>|parent|' >"$fx/parent.sh"
+  [ -s "$fx/parent.sh" ]
+  cd "$fx/work"
+  FX="$fx" PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/parent.sh; [ -n "${PARENT_PATH:-}" ] && echo PARENT_PATH-ok || echo PARENT_PATH-empty'
+}
+
+@test "autopilot parent branch: re-running on an existing branch yields a non-empty PARENT_PATH" {
+  BRANCH_EXISTS=1 autopilot_parent_branch
+  [[ "$output" == *"PARENT_PATH-ok"* ]]
+}
+
+@test "autopilot parent branch: a first run still creates the branch" {
+  autopilot_parent_branch
+  [[ "$output" == *"PARENT_PATH-ok"* ]]
+  git -C "$fx/work" show-ref --verify --quiet refs/heads/parent
+}
+
+@test "autopilot parent branch: a failed wt switch stops instead of cd-ing nowhere" {
+  WT_FAIL=1 autopilot_parent_branch
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"wt switch failed"* ]]
+}
+
+@test "finish-prs Setup: the branch-exists split replaces the false idempotency claim" {
+  for doc in \
+    "$ROOT/adapters/core/commands/finish-prs.md" \
+    "$ROOT/adapters/claude-code/plugin/commands/finish-prs.md" \
+    "$ROOT/adapters/codex/plugin/skills/finish-prs/SKILL.md" \
+    "$ROOT/adapters/cursor/commands/finish-prs.md"; do
+    run grep -cF -- 'wt switch --create` is **not** idempotent' "$doc"
+    [ "$output" -eq 1 ]
+    run grep -F -- 'git show-ref --verify --quiet "refs/heads/$branch"' "$doc"
+    [ "$status" -eq 0 ]
+    run grep -F -- '`wt switch` is idempotent' "$doc"
+    [ "$status" -ne 0 ]
+  done
+}
+
+# Runs finish-prs' teammate Setup worktree block in a fixture. wt is stubbed the
+# way real wt behaves: `--create` on a branch that already exists prints to stderr
+# and leaves stdout empty, and a plain `wt switch <branch>` returns the path.
+# $BRANCH_EXISTS=1 pre-creates the branch (a re-run); $WT_FAIL=1 fails every
+# invocation; gh is stubbed to a no-op. Prints `WTPATH-ok` when the block ended
+# with a non-empty path. Override $FINISH_PRS_DOC to point the fixture at another
+# copy of the command body (used to check the old behaviour is red).
+finish_prs_setup() {
+  fx="$BATS_TEST_TMPDIR/fs"
+  local git_id=(-c user.email=t@example.com -c user.name=t)
+  git init -q -b main "$fx/work"
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  [ "${BRANCH_EXISTS:-}" != 1 ] || git -C "$fx/work" branch feat/x
+  mkdir -p "$fx/bin"
+  cat >"$fx/bin/wt" <<'STUB'
+#!/usr/bin/env bash
+[ "${WT_FAIL:-}" != 1 ] || { echo "wt: unable to switch" >&2; exit 1; }
+if [ "$2" = --create ]; then
+  name="$3"
+  if git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name"; then
+    echo "Branch '$name' already exists" >&2
+    exit 1
+  fi
+  git -C "$FX/work" branch "$name" || exit 1
+else
+  name="$2"
+  git -C "$FX/work" show-ref --verify --quiet "refs/heads/$name" || { echo "wt: no such branch '$name'" >&2; exit 1; }
+fi
+mkdir -p "$FX/wt-$name"
+printf '{"path":"%s"}\n' "$FX/wt-$name"
+STUB
+  chmod +x "$fx/bin/wt"
+  cat >"$fx/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+  chmod +x "$fx/bin/gh"
+  awk '/^## Setup/{f=1} f&&/^[[:space:]]*```bash/{g=1;next} g&&/^[[:space:]]*```/{exit} g' \
+    "${FINISH_PRS_DOC:-$ROOT/adapters/core/commands/finish-prs.md}" \
+    | sed 's|<branch-name>|feat/x|; s|<N>|42|; s|<OWNER/REPO>|o/r|' >"$fx/setup.sh"
+  [ -s "$fx/setup.sh" ]
+  cd "$fx/work"
+  FX="$fx" PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/setup.sh; [ -n "${WTPATH:-}" ] && echo WTPATH-ok || echo WTPATH-empty'
+}
+
+@test "finish-prs Setup: re-running on an existing branch yields a non-empty WTPATH" {
+  BRANCH_EXISTS=1 finish_prs_setup
+  [[ "$output" == *"WTPATH-ok"* ]]
+}
+
+@test "finish-prs Setup: a first run still creates the branch" {
+  finish_prs_setup
+  [[ "$output" == *"WTPATH-ok"* ]]
+  git -C "$fx/work" show-ref --verify --quiet refs/heads/feat/x
+}
+
+@test "finish-prs Setup: a failed wt switch stops instead of cd-ing nowhere" {
+  WT_FAIL=1 finish_prs_setup
   [ "$status" -ne 0 ]
   [[ "$output" == *"wt switch failed"* ]]
 }

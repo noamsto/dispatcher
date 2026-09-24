@@ -128,12 +128,18 @@ You are a Finish-PRs teammate. Your job: take ONE already-open PR and drive it t
 
 1. Worktree on the PR branch with worktrunk:
    ```bash
-   WTPATH=$(wt switch --create <branch-name> --no-cd --format json -y | jq -r '.path')
+   branch=<branch-name>
+   if git show-ref --verify --quiet "refs/heads/$branch"; then
+     WTPATH=$(wt switch "$branch" --no-cd --format json -y | jq -r '.path')
+   else
+     WTPATH=$(wt switch --create "$branch" --no-cd --format json -y | jq -r '.path')
+   fi
+   [ -n "$WTPATH" ] || { echo "wt switch failed — stop and ask the user" >&2; exit 1; }
    cd "$WTPATH"
    gh pr checkout <N> --repo <OWNER/REPO>
    git pull --ff-only
    ```
-   `wt switch` is idempotent. The `lazytmux` post-switch hook short-circuits inside Claude so no spurious tmux window spawns.
+   `wt switch --create` is **not** idempotent: on a branch that already exists it prints `Branch … already exists` to stderr and nothing to stdout, so `WTPATH` comes back empty. The branch-exists split above takes the plain `wt switch "$branch"` path, which is the idempotent one. The `lazytmux` post-switch hook short-circuits inside Claude so no spurious tmux window spawns.
 
 2. Read `EVIDENCE_REVIEW.md` from `$DISPATCHER_PROTOCOL_DIR` or the adapter-local
    `protocols/` directory. Restore the PR's ledger — the collapsed
