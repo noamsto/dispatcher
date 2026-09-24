@@ -669,10 +669,16 @@ reorient="${reorient//\'/}"
 
 plan_note=""
 if [ "$plan_val" = provided ]; then
-  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique the plan."
+  if [ "$tier" != trivial ] && [ "$kind" != review ]; then
+    plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
+  fi
 fi
 
 push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" != review ] && [ "$tier" != trivial ]; then
+  push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
+fi
 if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi

@@ -2395,11 +2395,14 @@ fi
 
 # When the dispatcher already wrote the plan into the task doc, say so in the
 # launch prompt. A launch-prompt (user-turn) instruction is a "direct request",
-# which satisfies using-superpowers' own escape hatch — so the worker skips the
-# plan phase instead of re-deriving it.
+# which satisfies using-superpowers' own escape hatch — so only the plan phase
+# is skipped, not the gates that still run before push.
 plan_note=""
 if [ "$plan_val" = provided ]; then
-  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique it."
+  plan_note=" The task doc is your plan of record — extract the steps and implement; do not re-plan or re-critique the plan."
+  if [ "$tier" != trivial ] && [ "$kind" != review ]; then
+    plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
+  fi
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan
@@ -2419,6 +2422,9 @@ fi
 # someone else's PR head. Swap the mandate instead of relying on the contract to
 # talk the worker out of it.
 push_mandate=" Push when pre-push passes; open a PR."
+if [ "$kind" != review ] && [ "$tier" != trivial ]; then
+  push_mandate=" Run your code review gate and record its review seam before you push.$push_mandate"
+fi
 if [ "$kind" = review ]; then
   push_mandate=" Review only — do not edit, commit, push, or open a PR; post one COMMENT review and report to the bus."
 fi

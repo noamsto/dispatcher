@@ -2951,12 +2951,42 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$launch" != *"Push when pre-push passes"* ]]
 }
 
+@test "--review with --plan provided never claims a review gate that never runs" {
+  stub_pr_bins pr-head-review
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --review --plan provided --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" != *"Only planning is skipped"* ]]
+}
+
 @test "an implement dispatch stamps kind: implement and keeps the push mandate" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
   grep -qx 'kind: implement' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
+}
+
+@test "--plan provided launch prompt keeps the code review gate (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" == *"Only planning is skipped"* ]]
+  [[ "$launch" == *"code review gate still run before you push"* ]]
+  [[ "$launch" == *"Run your code review gate"* ]]
+}
+
+@test "--plan provided on trivial skips the code review gate mentions (#306)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch trivial sonnet --effort low --plan provided --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' "$STUB_LOG")"
+  [[ "$launch" != *"code review gate"* ]]
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
 
