@@ -1618,7 +1618,7 @@ autopilot_base_ref() {
   git -C "$fx/work" push -q origin parent
   git -C "$fx/work" checkout -q -b child
   git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m child
-  [ -z "${RECORD_PARENT:-}" ] || git -C "$fx/work" config branch.child.autopilotBase parent
+  [ -z "${RECORD_PARENT:-}" ] || git -C "$fx/work" config branch.child.autopilotBase "${RECORD_BASE:-parent}"
   mkdir -p "$fx/bin"
   cat >"$fx/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -1645,6 +1645,43 @@ STUB
   [[ "$output" == *"stacked=parent "* ]]
   [[ "$output" =~ base=([0-9a-f]+)\ main=([0-9a-f]+)\ parent=([0-9a-f]+) ]]
   [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[3]}" ]
+}
+
+@test "autopilot Base ref: a base that is a refspec is refused and no ref is overwritten" {
+  GH_MODE=none RECORD_PARENT=1 RECORD_BASE='+refs/heads/parent:refs/remotes/origin/main' autopilot_base_ref
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+  [ "$(git -C "$fx/work" rev-parse origin/main)" = "$(git -C "$fx/work" rev-parse main)" ]
+}
+
+@test "worker Base ref: a header base that is a refspec is refused and origin/main is unchanged" {
+  local fx="$BATS_TEST_TMPDIR/wfx" git_id=(-c user.email=t@example.com -c user.name=t -c commit.gpgsign=false)
+  git init -q --bare -b main "$fx/origin.git"
+  git clone -q "$fx/origin.git" "$fx/work" 2>/dev/null
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m main
+  git -C "$fx/work" push -q origin HEAD:main
+  git -C "$fx/work" checkout -q -b parent
+  git -C "$fx/work" "${git_id[@]}" commit -q --allow-empty -m parent
+  git -C "$fx/work" push -q origin parent
+  git -C "$fx/work" checkout -q -b child
+  mkdir -p "$fx/bin"
+  printf '#!/usr/bin/env bash\necho "no pull requests found for branch" >&2\nexit 1\n' >"$fx/bin/gh"
+  chmod +x "$fx/bin/gh"
+  awk '/^Your own OPEN PR/{f=1} f&&/^```bash/{g=1;next} g&&/^```/{exit} g' \
+    "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md" >"$fx/snippet.sh"
+  [ -s "$fx/snippet.sh" ]
+  cd "$fx/work"
+  local main_before
+  main_before=$(git rev-parse origin/main)
+  printf 'base: +refs/heads/parent:refs/remotes/origin/main\n\n## Task\n' >WORKER_TASK.md
+  PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/snippet.sh'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not a plain branch name"* ]]
+  [ "$(git rev-parse origin/main)" = "$main_before" ]
+  printf 'base: parent\n\n## Task\n' >WORKER_TASK.md
+  PATH="$fx/bin:$PATH" run bash -c '. '"$fx"'/snippet.sh; echo "stacked=$stacked_base base=$(git rev-parse --short "$base")"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "stacked=parent base=$(git rev-parse --short origin/parent)" ]]
 }
 
 @test "autopilot Base ref: no recorded parent falls back to the default branch" {

@@ -294,8 +294,13 @@ When a worker reports an evidence/review/recurrence block, resolve the stated
 decision or route to a supported reviewer; green CI is not a waiver.
 
 ```
-dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [LINEAR-ID] <title…>
+dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [LINEAR-ID] [--] <title…>
 ```
+
+`--` ends option parsing: every token after it is title text, so a title
+containing a flag-shaped word (e.g. `--base`) passes verbatim. Only the first
+argument selects a subcommand — `dispatch resume …` — so a title that merely
+mentions `resume` is never read as one.
 
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line, task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
 
@@ -622,7 +627,10 @@ self-reported. Its `detail` always begins with one of seven reserved prefixes:
   no live subagent row. A dead turn.
 - `quiet:` — the pane has been byte-identical for 30 min. Escalation to `dead:` also
   requires the pane's engine process to be gone — a static frame alone is no longer
-  sufficient evidence.
+  sufficient evidence. A claude pane showing a finished turn (`· done HH:MM`) with a
+  non-zero background-shell count (`N shell still running`) is **waiting**, not quiet:
+  `quiet:` and `stalled:` (below) stay silent for it until the frame has been unchanged for
+  `--bg-wait` (default 2h), so a shell that never returns still surfaces.
 - `stalled:` — a static pane inside the startup window whose frame the watchdog could
   **not** classify. Deliberately its weakest claim: an unrecognised prompt family, a
   shell waiting on `direnv allow`, and a dead process all arrive under this prefix.

@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -933,15 +933,14 @@ fi
 # creation, task-document rewrite and new-window paths this file is built
 # around. Intercepted here so the subcommand reads as part of dispatch, and
 # before the positional tier parse below, which would reject it as a tier.
-# Scan all arguments so leading flags (e.g. --agent pi) don't mask resume;
-# strip the resume token itself — dispatch-resume does not parse it.
-for _arg in "$@"; do
-  if [ "$_arg" = resume ]; then
-    _resume_args=()
-    for _a in "$@"; do [ "$_a" != resume ] && _resume_args+=("$_a"); done
-    exec dispatch-resume "${_resume_args[@]}"
-  fi
-done
+# ONLY the first argument selects the subcommand: scanning every argument
+# would read the word `resume` out of a title and exec dispatch-resume with
+# the rest of the title as its flags (#349). Subcommand flags belong after
+# the subcommand — `dispatch resume --agent pi` — as the usage line shows.
+if [ "${1:-}" = resume ]; then
+  shift
+  exec dispatch-resume "$@"
+fi
 
 tier="${1:-}"
 model="${2:-}"
@@ -985,6 +984,12 @@ if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
 fi
 while [ $# -gt 0 ]; do
   case "$1" in
+  --)
+    # End-of-options separator: every token after it is title text, so a title
+    # containing a flag-shaped word (e.g. --base) passes verbatim (#349).
+    shift
+    break
+    ;;
   --agent)
     agent="${2:-}"
     case "$agent" in
@@ -1893,10 +1898,11 @@ fi
 # effects. Runs on a resume too, because the stamped `base:` is what the worker's
 # review diff, gate scope and PR target; a re-dispatch must not silently drop it.
 if [ -n "$base_flag" ]; then
-  git fetch origin -- "$base_flag" || {
-    echo "dispatch: --base '$base_flag' could not be fetched from origin" >&2
+  if [[ $base_flag == *:* || $base_flag == +* ]] || ! git check-ref-format --branch "$base_flag" >/dev/null ||
+    ! git fetch origin "+refs/heads/$base_flag:refs/remotes/origin/$base_flag"; then
+    echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
-  }
+  fi
   base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
     echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
     exit 1
