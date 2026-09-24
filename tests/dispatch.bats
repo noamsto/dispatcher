@@ -1693,18 +1693,28 @@ codex_limit_json() { # <limit_reached jq object literal>
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-@test "budget gate does not warn when claude quota is known, stale, or ignored" {
+@test "budget gate does not warn when claude quota is known" {
   stub_launch_bins
   budget_json 50 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   [[ "$output" != *"budget gate blind"* ]]
+}
+
+@test "budget gate does not warn about an unknown claude quota in a stale cache" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$(($(date +%s) - 10000))" \
     '{fetched_epoch: $epoch, engines: {claude: null}}' \
     >"$XDG_DATA_HOME/crew/engine-budget.json"
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
   [[ "$output" != *"budget gate blind"* ]]
+}
+
+@test "--ignore-budget skips the blind-gate warning" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$(date +%s)" \
     '{fetched_epoch: $epoch, engines: {claude: null}}' \
     >"$XDG_DATA_HOME/crew/engine-budget.json"

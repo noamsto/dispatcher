@@ -347,8 +347,8 @@ EOF
   run jq '.engines.claude.windows["5h"].used_pct' "$cache"
   [ "$output" = "2" ]
   run jq '.engines.claude.windows["5h"].resets_at' "$cache"
-  [ "$output" -ge $((now + 16000)) ]
-  [ "$output" -le $((now + 16100)) ]
+  [ "$output" -ge $((now + 16940)) ]
+  [ "$output" -le $((now + 17140)) ]
   run jq '.engines.claude.windows | has("7d")' "$cache"
   [ "$output" = "false" ]
 }
@@ -392,6 +392,16 @@ EOF
   [ "$output" = "13" ]
   run jq '.engines.claude.windows | has("7d")' "$cache"
   [ "$output" = "false" ]
+}
+
+@test "pane-scrape is not moved by a mode glyph inside a subagent row" {
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 | ⚡ 44% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n\n  ● main\n  ◯ go-reviewer  saw ⏵⏵ in output        9s' \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "44" ]
 }
 
 @test "pane-scrape degrades to unknown with no error when no worker windows exist" {

@@ -175,7 +175,7 @@ _pane_countdown() {
 # non-empty line when no mode line renders. Prints nothing for an empty pane.
 _pane_statusline() {
   local -a lines
-  local i last=-1 mode='⏵|⏸|^[[:space:]]*-- [A-Z ]+ --|\? for shortcuts'
+  local i last=-1 mode='^[[:space:]]*(⏵|⏸|-- [A-Z ]+ --|\? for shortcuts)'
   mapfile -t lines < <(printf '%s\n' "$1" | grep -v '^[[:space:]]*$')
   ((${#lines[@]} > 0)) || return 0
   for i in "${!lines[@]}"; do
