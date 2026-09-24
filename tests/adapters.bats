@@ -1800,7 +1800,7 @@ STUB
     | sed "s|<branch the lower layer merged into>|parent|" >"$fx/maintain.sh"
   [ -s "$fx/maintain.sh" ]
   cd "$fx/wt-sub2"
-  PATH="$fx/bin:$PATH" run bash "$fx/maintain.sh"
+  GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com PATH="$fx/bin:$PATH" run bash "$fx/maintain.sh"
   [ "$status" -eq 0 ]
   [ "$(git -C "$fx/wt-sub2" log --format=%s origin/parent..sub2)" = sub2 ]
   git -C "$fx/wt-sub2" merge-base --is-ancestor origin/parent sub2
