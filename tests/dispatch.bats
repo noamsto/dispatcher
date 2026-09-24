@@ -402,6 +402,22 @@ EOF
   run ! grep -q '^base:' "$wt_path/WORKER_TASK.md"
 }
 
+# The separator's real job: stop option parsing before a flag-shaped FIRST
+# title word. The quoted-title test above would stay green if the `--` arm
+# kept `shift` but dropped `break` — it only proves the literal `--` token is
+# consumed. Here `--base` is the first title token, so a broken separator
+# parses it as the base flag and the test goes red (#349 review finding).
+@test "-- stops flag parsing before a flag-shaped first title word (#349)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 -- --base foo bar
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-base-foo-bar"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'title: --base foo bar' "$wt_path/WORKER_TASK.md"
+  run ! grep -q '^base:' "$wt_path/WORKER_TASK.md"
+}
+
 @test "rejects an unknown agent" {
   run run_dispatch standard sonnet --agent bogus --effort medium "title"
   [ "$status" -eq 1 ]
