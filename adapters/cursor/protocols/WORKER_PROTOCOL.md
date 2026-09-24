@@ -35,10 +35,10 @@ captured. Every later read is `--since $seen` per **Checkpoint-peek**.
 
 `WORKER_TASK.md` may stamp `base: <ref>` — the parent branch this worker is
 stacked on (`dispatch --base`, or `--pr`, which takes the base from the PR).
-Your own OPEN PR, once it exists, is authoritative (a MERGED or CLOSED one is
-stale — `gh pr view` falls back to it, so the snippet filters on `state`): GitHub retargets a child PR's
-`baseRefName` when its parent merges with delete-branch-on-merge, so no local
-tracking is needed. Before an open PR exists, fall back to the header `base:`
+Your own OPEN PR, once it exists, is authoritative: GitHub retargets a child
+PR's `baseRefName` when its parent merges with delete-branch-on-merge, so no
+local tracking is needed. A MERGED or CLOSED PR is stale — `gh pr view` falls
+back to it, so the snippet filters on `state`. Before an open PR exists, fall back to the header `base:`
 stamp — header only, the header ends at the first blank line, before `## Task`;
 first match. When neither is present, the default branch is. Resolve it near
 the top of the run, again before the fast deterministic gate and before push
