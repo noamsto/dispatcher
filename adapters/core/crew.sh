@@ -3412,6 +3412,9 @@ stall-watch)
   #   D3 quiet:      byte-identical pane for --idle
   #   D4 load:       host 1m load above the core count for --load seconds —
   #                  engine-independent, and it never escalates
+  #   D5 stalled:    pane still a bare shell --launch seconds in and no engine
+  #                  ever seen there (`stalled: launch-not-started`, #342);
+  #                  clears when the engine appears
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
@@ -3429,7 +3432,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S]" >&2
+    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -3471,6 +3474,7 @@ stall-watch)
   max_life=43200
   load_win=300
   bg_wait=7200
+  launch=150
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -3516,6 +3520,10 @@ stall-watch)
       ;;
     --bg-wait)
       bg_wait="${2:-}"
+      shift 2
+      ;;
+    --launch)
+      launch="${2:-}"
       shift 2
       ;;
     *)
@@ -3579,7 +3587,7 @@ stall-watch)
   # dead: via quiet: — only a vanished process does.
   # CREW_STALL_PROC_CMD overrides this the same way CREW_STALL_SAMPLE_CMD
   # overrides _sample, so the loop stays testable without tmux.
-  _pane_engine_alive() {
+  _pane_cmd() {
     local cmd panes pid pcmd
     if [ -n "${CREW_STALL_PROC_CMD:-}" ]; then
       cmd=$(eval "$CREW_STALL_PROC_CMD" 2>/dev/null || true)
@@ -3594,7 +3602,20 @@ stall-watch)
 $panes
 PANES
     fi
+    printf '%s' "$cmd"
+  }
+  _pane_engine_alive() {
+    local cmd
+    cmd=$(_pane_cmd)
     [ -n "$cmd" ] && _is_engine_cmd "$cmd"
+  }
+  # Only a bare interactive shell counts as "launch not started": an empty or
+  # unknown command (tmux hiccup, exotic wrapper) must never raise D5.
+  _is_shell_cmd() {
+    case "${1#-}" in
+    bash | sh | zsh | fish | dash | ksh) return 0 ;;
+    esac
+    return 1
   }
 
   # _load_read — emit ONE line "load1 nproc" (the D4 parse contract). The
@@ -3838,6 +3859,8 @@ BUSLINE
   d3_at=0
   d4_at=0
   d4_since=0
+  d5_at=0
+  engine_seen=0
   _bus_refresh
   while :; do
     now=$(date +%s)
@@ -3913,6 +3936,33 @@ BUSLINE
           d4_at=0
           d4_since=0
         fi
+      fi
+    fi
+
+    # ---- D5: launch not started ---------------------------------------------
+    # dispatch posts `working` when it types the launch line, before the engine
+    # runs, and the launch script `exec`s the engine, so a started engine is the
+    # pane's foreground process. A pane still a shell --launch seconds in (from
+    # this watchdog's start, which dispatch spawns right after that post) means
+    # the binary is missing or the script failed. --launch must outlast a slow
+    # direnv/devshell load. Once an engine has been seen this never fires again:
+    # an engine that exits later is quiet:/dead: territory.
+    if [ "$engine_seen" = 0 ] && [ "$suppressed" = 0 ]; then
+      pcmd=$(_pane_cmd)
+      if [ -n "$pcmd" ] && _is_engine_cmd "$pcmd"; then
+        engine_seen=1
+        if [ "$d5_at" != 0 ]; then
+          _post_clear "stalled: launch-not-started"
+          d5_at=0
+        fi
+      elif [ "$d5_at" = 0 ] && [ $((now - start)) -ge "$launch" ] && _is_shell_cmd "$pcmd"; then
+        case "$bus_state" in
+        "" | working)
+          if _post_blocked "stalled: launch-not-started" "stalled: launch-not-started — pane $pane still a shell (${pcmd#-}) ${launch}s after launch; the engine is not running"; then
+            d5_at="$now"
+          fi
+          ;;
+        esac
       fi
     fi
 

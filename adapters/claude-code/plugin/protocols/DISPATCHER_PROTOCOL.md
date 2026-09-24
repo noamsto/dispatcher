@@ -634,6 +634,10 @@ self-reported. Its `detail` always begins with one of seven reserved prefixes:
 - `stalled:` — a static pane inside the startup window whose frame the watchdog could
   **not** classify. Deliberately its weakest claim: an unrecognised prompt family, a
   shell waiting on `direnv allow`, and a dead process all arrive under this prefix.
+  `stalled: launch-not-started` is its sharpest sub-case: the pane is still a bare shell
+  `--launch` seconds (default 150, past a slow devshell load) after the watchdog started
+  and no engine was ever seen there — the binary is missing or the launch script failed.
+  It clears itself if the engine appears late; otherwise re-dispatch.
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
   count, and the top CPU consumers with their `cwd`s, `comm`, and `pid`s.
