@@ -1350,6 +1350,44 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"vb"'* ]]
 }
 
+# The straggler fold (`crew inbox --since`) is how a reply that missed a timed-out
+# await is taken; it must count as delivered too, or the next await hands it back.
+@test "await: a reply taken through the inbox fold is not re-delivered by the next await" {
+  id="worker:feat/x#s1-1"
+  spec="role:feat/x:spec-critic"
+  plan="role:feat/x:plan-critic"
+  CREW_ID=c1 run_crew msg "$id" "$spec" "review spec"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$spec" "$id" "spec verdict"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [[ "$output" == *'"body":"spec verdict"'* ]]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# A torn or garbage delivered-marks file must not blind await: it reads as empty
+# and the reply is still delivered.
+@test "await: an unreadable delivered-marks file does not hide a reply" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer"'* ]]
+  state=$(git rev-parse --path-format=absolute --git-common-dir)/crew/await
+  for f in "$state"/*; do printf '{"dispatcher:c1":5}"x":6}' >"$f"; done
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why2?"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"answer2"'* ]]
+}
+
 # Delivered state is per session: a resumed session (new id) starts clean.
 @test "await: delivered state does not carry to another session" {
   CREW_ID=c1 run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" "why?"
