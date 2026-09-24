@@ -94,6 +94,28 @@ seed_hold() {
              | tostring)}' >>"$logf"
 }
 
+# launch_log — $STUB_LOG with every `bash '<crew>/launch/launch.XXXXXX'` token
+# replaced by that script's own command (its `exec env <cmdline>` line, prefix
+# stripped). Lines stay one per send-keys call, so every existing grep against
+# $STUB_LOG for launch content (engine flags, prompt text, env prefixes) keeps
+# its meaning once read through this instead (#298: the pane is now typed only
+# the short `bash <path>` line; the full command lives in the referenced file).
+launch_log() {
+  local line before rest path after content
+  while IFS= read -r line; do
+    while [[ "$line" == *"bash '"* ]]; do
+      before="${line%%bash \'*}"
+      rest="${line#*bash \'}"
+      path="${rest%%\'*}"
+      after="${rest#*\'}"
+      content="$(sed -n '2p' "$path")"
+      content="${content#exec env }"
+      line="${before}${content}${after}"
+    done
+    printf '%s\n' "$line"
+  done <"$STUB_LOG"
+}
+
 # stub_bin <name> — put a logging stub for <name> first on PATH.
 # The stub appends its argv (NUL-free, one invocation per line) to
 # $STUB_LOG and exits 0.
