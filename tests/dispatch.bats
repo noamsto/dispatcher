@@ -2782,7 +2782,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
-  ! grep -q '^base:' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  run ! grep -q '^base:' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
 }
 
 # --pr HEAD verification (#19): `wt switch` attaches to an existing worktree
@@ -2845,7 +2845,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" == *"uncommitted"* ]]
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_OLD_OID" ]
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "--review without --pr aborts before scaffolding" {
@@ -3035,7 +3035,7 @@ EOF
   run ! grep -q 'new-window' "$STUB_LOG"
   run ! grep -q 'send-keys' "$STUB_LOG"
   run ! grep -q 'kill-window' "$STUB_LOG"
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
 }
 
 @test "gate: refuses a booting session that has posted no status yet" {
@@ -3045,7 +3045,7 @@ EOF
     '[{"session":"s1-1","worker_id":"worker:eng-7691-foo#s1-1","state":null,"ts":1,"age_s":3,"terminal":false}]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 1 ]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "gate: reclaims a finished session and proceeds" {
@@ -3078,7 +3078,7 @@ EOF
   [[ "$output" == *"exited"* ]]
   [[ "$output" == *"crew reply worker:eng-7691-foo"* ]]
   run ! grep -q 'kill-window' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # An engine-less occupant is not grounds to reclaim (#71): that reading goes false
@@ -3110,7 +3110,7 @@ EOF
   stub_crew_gate '[]' '[]'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
-  ! grep -q '^occupants' "$STUB_LOG"
+  run ! grep -q '^occupants' "$STUB_LOG"
 }
 
 # The gate must fire on the create-mode re-dispatch too (same issue/id again),
@@ -3126,7 +3126,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"worker:feat/42-do-a-thing#s1-1"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
 }
 
 # lock_path <branch> — the per-branch dispatch lock symlink, keyed exactly as
@@ -3148,7 +3148,7 @@ lock_path() { # <branch>
   [ "$status" -eq 1 ]
   [[ "$output" == *"already scaffolding feat/42-do-a-thing"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
 }
 
 @test "lock: a stale lock refuses with a remediation hint, never auto-reclaims" {
@@ -3163,7 +3163,7 @@ lock_path() { # <branch>
   [ "$status" -eq 1 ]
   [[ "$output" == *"stale dispatch lock"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q '^switch' "$STUB_LOG"
 }
 
 @test "lock: is released after a successful dispatch" {
@@ -3339,7 +3339,7 @@ EOF
   stub_pr_bins eng-7691-foo
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
-  ! grep -q 'repo view' "$STUB_LOG"
+  run ! grep -q 'repo view' "$STUB_LOG"
 }
 
 # stub_gh_claim <existing-issue-labels> <mint-issue-number> — a gh stub for the
@@ -3377,7 +3377,7 @@ EOF
   [[ "$output" == *"already claimed"* ]]
   run ! grep -q '^reap' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
 }
 
 @test "claim: adds dispatched to a free existing issue before crew reap, then proceeds" {
@@ -3410,7 +3410,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not claim issue #42"* ]]
   run ! grep -q '^reap' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "claim: a minted issue is stamped with dispatched at creation" {
@@ -3436,7 +3436,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not claim it"* ]]
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "claim: a Linear-tracked dispatch never touches gh (byte-for-byte unaffected)" {
@@ -3445,7 +3445,7 @@ EOF
   [ "$status" -eq 0 ]
   grep -qx 'Closes ENG-1234' "$TEST_REPO/.dispatch-wt/eng-1234-linear-thing/WORKER_TASK.md"
   run ! grep -q '^issue' "$STUB_LOG"
-  ! grep -q '^label' "$STUB_LOG"
+  run ! grep -q '^label' "$STUB_LOG"
 }
 
 @test "claim: a --pr dispatch never touches gh issue/label calls" {
@@ -3453,7 +3453,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 0 ]
   run ! grep -q '^issue' "$STUB_LOG"
-  ! grep -q '^label' "$STUB_LOG"
+  run ! grep -q '^label' "$STUB_LOG"
 }
 
 # trust/direnv (#40): a fresh worktree is unknown to Claude Code's per-project
@@ -3512,7 +3512,7 @@ commit_envrc() {
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not pre-trust worktree"* ]]
-  ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "direnv: allow is called with the new worktree path" {
@@ -3546,14 +3546,14 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"direnv allow failed"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
-  ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "direnv: no .envrc in the worktree skips direnv allow entirely and still launches" {
   stub_launch_bins
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
-  ! grep -q '^allow ' "$STUB_LOG"
+  run ! grep -q '^allow ' "$STUB_LOG"
   grep -q 'send-keys' "$STUB_LOG"
 }
 
@@ -3577,7 +3577,7 @@ EOF
   [[ "$output" == *"held by pid $holder_pid"* ]]
   [ -L "$HOME/.claude.json.dispatch.lock" ]
   [ "$(readlink "$HOME/.claude.json.dispatch.lock")" = "$holder_pid" ]
-  ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 # resume (#73): dispatching onto a branch that already exists continues the
@@ -3698,7 +3698,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   run ! grep -q '^resume:' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
-  ! grep -q 'You are resuming an interrupted run' "$STUB_LOG"
+  run ! grep -q 'You are resuming an interrupted run' "$STUB_LOG"
 }
 
 # The claim gate's own label is what a re-dispatch of an interrupted run trips
@@ -3721,7 +3721,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # The exemption is keyed on the EXACT resolved branch, not "a branch for this
@@ -3738,7 +3738,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # A resume is normally issued without re-passing $DISPATCH_SPEC, and the stamp
@@ -3797,7 +3797,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "linear thing"
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  ! grep -q 'claim-issue' "$log"
+  run ! grep -q 'claim-issue' "$log"
 }
 
 @test "claim: a --pr dispatch writes no claim-issue row" {
@@ -3805,7 +3805,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  ! grep -q 'claim-issue' "$log"
+  run ! grep -q 'claim-issue' "$log"
 }
 
 # `wt switch -c` was also, accidentally, the thing that refused a branch checked
@@ -3820,7 +3820,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"primary worktree"* ]]
   run ! grep -q '^switch' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "resume: refuses when the worktree is the directory dispatch runs from" {
@@ -3830,7 +3830,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"the worktree this dispatch is running from"* ]]
   run ! grep -q '^switch' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # The scan's field order is window_id / pane_current_path / @crew_name —
@@ -3857,7 +3857,7 @@ EOF
   [[ "$output" == *"window @9 is sitting in $RESUME_WT"* ]]
   [[ "$output" == *"no worker identity"* ]]
   run ! grep -q '^switch' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # The occupancy gate runs BEFORE the resume arm, so a live worker is still
@@ -3876,7 +3876,7 @@ EOF
   [[ "$output" == *"crew reply worker:feat/42-do-a-thing"* ]]
   run ! grep -q 'kill-window' "$STUB_LOG"
   run ! grep -q '^switch' "$STUB_LOG"
-  ! grep -q 'new-window' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # The slug is a lossy projection of the title, so a reworded re-dispatch of the

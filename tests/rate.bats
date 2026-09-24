@@ -470,7 +470,7 @@ EOF
   [ "$status" -eq 0 ]
   run ! grep -q '^pr view' "$STUB_LOG"
   grep -q 'actions/runs' "$STUB_LOG"
-  ! grep -q 'graphql' "$STUB_LOG"
+  run ! grep -q 'graphql' "$STUB_LOG"
 }
 
 @test "reconcile: a CLOSED PR inside 30 days is re-queried on the next sweep" {
@@ -500,7 +500,7 @@ EOF
   : >"$STUB_LOG"
   run run_crew rate
   [ "$status" -eq 0 ]
-  ! grep -q '^pr view' "$STUB_LOG"
+  run ! grep -q '^pr view' "$STUB_LOG"
 }
 
 @test "reconcile: a pr_url naming a different repo is skipped with zero gh calls; a same-repo run's pr view always carries an explicit URL" {
@@ -511,7 +511,7 @@ EOF
   run run_crew rate
   [ "$status" -eq 0 ]
   grep -q '^pr view https://github.com/acme/widgets/pull/1 ' "$STUB_LOG"
-  ! grep -q 'other-repo' "$STUB_LOG"
+  run ! grep -q 'other-repo' "$STUB_LOG"
 }
 
 @test "reconcile: branch reuse — the earlier run owns the PR and its CI window excludes the later run's" {

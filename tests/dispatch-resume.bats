@@ -888,7 +888,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   grep -qx 'escalated_from: sonnet' "$WT/WORKER_TASK.md"
   # The header now records the escalated model, so a later plain resume
   # relaunches on it rather than silently falling back to sonnet.
-  ! grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
+  run ! grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
 }
 
 @test "resume escalation: a failure posted only by the resumed session still escalates" {
@@ -917,7 +917,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
   grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
 }
 
@@ -929,7 +929,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
 }
 
 @test "resume escalation: a branch that failed and later finished does not escalate" {
@@ -940,7 +940,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
 }
 
 @test "resume escalation: a trivial-tier worker cannot reach opus" {
@@ -952,7 +952,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
 }
 
 @test "resume escalation: a header claiming sonnet/standard cannot borrow a trivial-tier failure" {
@@ -963,7 +963,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
 }
 
 @test "resume escalation: an opus id that only shares the target as a prefix is refused" {
@@ -975,7 +975,7 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   cd "$WT"
   DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model cursor-grok-4.6-highfoo
   [ "$status" -eq 0 ]
-  ! _precheck_ignores_map
+  run ! _precheck_ignores_map
 }
 
 @test "re-arms the stall watchdog on the resumed pane" {
