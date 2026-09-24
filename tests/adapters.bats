@@ -1504,9 +1504,9 @@ globs: ["*.rs"]' 'REPO-RUST-BODY'
       'crew await "$CREW_WORKER_ID" --from "role:$(git branch --show-current):<role>" --timeout 300' \
       'never hand-roll' \
       'never set a tool timeout' \
-      'at most 3 in total (~15 min)' \
+      'at most 3 `working` cycles (~15 min)' \
       'tmux kill-pane -t <pane>' \
-      "tmux list-panes -F '#{pane_id} #{@crew_role} #{@crew_state}'"; do
+      "tmux list-panes -t \"\$TMUX_PANE\" -F '#{pane_id} #{@crew_role} #{@crew_state}'"; do
       run grep -F "$statement" "$ROOT/$dir/WORKER_PROTOCOL.md"
       [ "$status" -eq 0 ]
     done
