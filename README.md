@@ -393,15 +393,18 @@ Because the revision is derived from the directory's own contents rather than
 read from a committed file, two PRs that edit different protocol files merge in
 either order with no regeneration step and no conflict on a revision line.
 
-Known limits of the stale-export handling: `DISPATCHER_REVIEWERS_DIR` and
-`DISPATCHER_CRITICS_DIR` are not covered (they are consumed by
-`reviewers/resolve-roster.sh` and by markdown, outside these launchers), and
+Known limits of the stale-export handling: the launchers resolve all four
+`DISPATCHER_*_DIR`s and pin the resolved values into the launched session's
+environment, so a stale store-path or relative `DISPATCHER_REVIEWERS_DIR` /
+`DISPATCHER_CRITICS_DIR` no longer reaches a launched worker or orchestrator.
+Only `PROTOCOL_DIR` carries a content-revision guard, though, so a
+reviewer/critic override pointing at a drifted _checkout_ is used as-is. And
 worker/role tmux panes inherit the tmux server's environment, so a stale
 exported value there is still seen by worker-side markdown even though the
 prompt and the `protocol_dir:` stamp point at the baked directory. Restart the
 tmux server (or start a fresh shell) after a rebuild.
 
-Reviewers and critics are not guarded this way: they are content consumed at
+Reviewer and critic content carries no revision guard: it is consumed at
 review time, not a contract the launch scripts depend on, so a stale roster
 yields outdated personas (caught by the review→fix loop), never a silent
 protocol skew.
