@@ -721,6 +721,8 @@ EOF
 }
 
 # _grid_tmux_stub — stub_launch_bins' tmux, but split-window returns a pane id.
+# Also filters ambient tmux-grid-refit out of PATH so the fallback branch in
+# refit_grid is deterministic when the test expects it.
 _grid_tmux_stub() {
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -732,6 +734,21 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
+
+  # Remove every directory that would resolve an ambient tmux-grid-refit,
+  # keeping STUB_DIR and every other tool on PATH intact.
+  local kept=() dir
+  local IFS=:
+  # shellcheck disable=SC2206
+  local dirs=($PATH)
+  for dir in "${dirs[@]}"; do
+    if [ "$dir" != "$STUB_DIR" ] && [ -x "$dir/tmux-grid-refit" ]; then
+      continue
+    fi
+    kept+=("$dir")
+  done
+  IFS=:
+  export PATH="${kept[*]}"
 }
 
 # _env_of <name> <line> — the value of `-e <name>=…` on a logged tmux command.
