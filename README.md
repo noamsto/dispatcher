@@ -172,9 +172,10 @@ spec/plan critics _and_ the code-review gate on all four, so
 values whoever ran. Only the spawn mechanism and the rung are per-engine.
 
 **Two rosters, spawned four ways.** What each reviewer and each critic _is_
-ships with the harness. `adapters/core/reviewers/` holds twelve engine-neutral
+ships with the harness. `adapters/core/reviewers/` holds thirteen engine-neutral
 bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
-Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` and
+Postgres, Bubble Tea, security, agent-facing prose, and a general fallback for whatever
+no other entry matches — whose `globs:` and
 `shebang:` frontmatter route a diff to the ones that apply (an extensionless
 changed file matches by its first line); `adapters/core/critics/` holds the
 spec and plan critics that gate a plan before any of it is written. A worker
