@@ -93,8 +93,9 @@ WORKER_TASK.md.tmp && mv WORKER_TASK.md.tmp WORKER_TASK.md` (touches the header
 line only; `sed -i` is GNU-only) — and, if your open PR still targets the old
 parent, `gh pr edit --base <new-base>`. Then re-run the fast deterministic
 gate — plus targeted re-review per `EVIDENCE_REVIEW.md` if conflict
-resolution changed behavior — then `git push --force-with-lease origin
-<own-branch>`. Never a cascading rebase, never touch another layer's branch.
+resolution changed behavior — then continue the pipeline; when the branch
+is already on origin, the next push (in rule 4 order) is
+`git push --force-with-lease origin <own-branch>`. Never a cascading rebase, never touch another layer's branch.
 
 On a stacked layer, run `/deslop` with `base` — the merge-base commit id the
 snippet above computes, in the same call — substituted literally as its base;
