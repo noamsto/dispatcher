@@ -2449,7 +2449,7 @@ fi
 # own (--base; --pr never takes this mode). Read before the header write below
 # truncates the file, exactly like $carried above.
 if [ "$switch_mode" = resume ] && [ -z "$base_ref" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
-  carried_base="$(sed -nE 's/^base: //p' "$wt_path/WORKER_TASK.md" | head -1)"
+  carried_base="$(sed -nE '/^$/q; s/^base: //p' "$wt_path/WORKER_TASK.md" | head -1)"
   [ -n "$carried_base" ] && base_ref="$carried_base"
 fi
 
