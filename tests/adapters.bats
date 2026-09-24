@@ -81,9 +81,27 @@ teardown() {
   [ "$before" = "$after" ]
 }
 
-@test "all four commands reach claude-code and cursor" {
+@test "all four commands reach claude-code" {
   for n in dispatcher autopilot finish-prs project-autopilot; do
     [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
+  done
+}
+
+@test "claude-only commands are not shipped to codex or cursor" {
+  # project-autopilot and finish-prs drive Claude Code agent teams
+  # (TaskCreate/SendMessage/subagent_type/teammateMode); codex and cursor
+  # cannot run them, so gen-adapters must not project them there (#406).
+  for n in project-autopilot finish-prs; do
+    [ -f "$ROOT/adapters/claude-code/plugin/commands/$n.md" ]
+    [ ! -e "$ROOT/adapters/codex/plugin/skills/$n" ]
+    [ ! -e "$ROOT/adapters/cursor/commands/$n.md" ]
+    run grep -F 'Claude Code only' "$ROOT/adapters/core/commands/$n.md"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the engine-neutral commands reach cursor" {
+  for n in dispatcher autopilot; do
     [ -f "$ROOT/adapters/cursor/commands/$n.md" ]
   done
 }
@@ -96,8 +114,8 @@ teardown() {
   done
 }
 
-@test "all four commands reach codex as skills" {
-  for n in dispatcher autopilot finish-prs project-autopilot; do
+@test "the engine-neutral commands reach codex as skills" {
+  for n in dispatcher autopilot; do
     [ -f "$ROOT/adapters/codex/plugin/skills/$n/SKILL.md" ]
   done
 }
@@ -389,12 +407,11 @@ teardown() {
 @test "project-autopilot points teammates at the namespaced autopilot" {
   # The two load-bearing ones: the lead tells each teammate what to run, so a
   # bare /autopilot here resolves to nothing and the fan-out silently stalls.
-  # Asserted on every shipped copy, not just the source.
+  # Asserted on the source and its one shipped copy (claude-code); codex and
+  # cursor do not ship it (#406).
   for f in \
     "$ROOT/adapters/core/commands/project-autopilot.md" \
-    "$ROOT/adapters/claude-code/plugin/commands/project-autopilot.md" \
-    "$ROOT/adapters/codex/plugin/skills/project-autopilot/SKILL.md" \
-    "$ROOT/adapters/cursor/commands/project-autopilot.md"; do
+    "$ROOT/adapters/claude-code/plugin/commands/project-autopilot.md"; do
     run grep -F '/dispatcher:autopilot' "$f"
     [ "$status" -eq 0 ]
     run grep -E '(^|[^:])/autopilot' "$f"
@@ -1933,9 +1950,7 @@ STUB
 @test "finish-prs Setup: the branch-exists split replaces the false idempotency claim" {
   for doc in \
     "$ROOT/adapters/core/commands/finish-prs.md" \
-    "$ROOT/adapters/claude-code/plugin/commands/finish-prs.md" \
-    "$ROOT/adapters/codex/plugin/skills/finish-prs/SKILL.md" \
-    "$ROOT/adapters/cursor/commands/finish-prs.md"; do
+    "$ROOT/adapters/claude-code/plugin/commands/finish-prs.md"; do
     run grep -cF -- 'wt switch --create` is **not** idempotent' "$doc"
     [ "$output" -eq 1 ]
     run grep -F -- 'git show-ref --verify --quiet "refs/heads/$branch"' "$doc"
