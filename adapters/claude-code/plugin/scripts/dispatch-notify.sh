@@ -44,7 +44,18 @@ cwd="$(jq -r 'if (.cwd // "") != "" then .cwd else (.workspace_roots[0] // empty
 # crew.sh's atomic-append helper, duplicated (not sourced) for the reason
 # above. A bare `printf >>` isn't one write(2), so concurrent writers to this
 # shared log can splice a large line with another process's append (#55, #61).
-_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
+_bus_append() {
+  local p='' s1='' s2='' c=''
+  if [ -s "$1" ]; then
+    s1="$(wc -c <"$1" 2>/dev/null)" || true
+    c="$(dd if="$1" bs=1 skip=$((s1 - 1)) count=1 2>/dev/null)" || true
+    if [ -n "$c" ]; then
+      s2="$(wc -c <"$1" 2>/dev/null)" || true
+      [ "$s1" != "$s2" ] || p=$'\n'
+    fi
+  fi
+  printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
+}
 
 pane="$(grep -m1 '^dispatcher_pane:' "$cwd/WORKER_TASK.md" | cut -d' ' -f2 || true)"
 branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
