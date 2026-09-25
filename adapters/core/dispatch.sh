@@ -308,7 +308,11 @@ EOF
 # as its own standalone writeShellApplication with no shared lib. A bare
 # `printf >>` isn't one write(2), so concurrent writers to this shared log
 # can splice a large line with another process's append (#55, #61).
-_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
+_bus_append() {
+  local p=''
+  [ ! -s "$1" ] || [ -z "$(tail -c 1 "$1")" ] || p=$'\n'
+  printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
+}
 
 # _fetch_origin_branch <name> [dir] — fetch an untrusted (gh/stamp-derived)
 # branch name into refs/remotes/origin/<name> only. A bare positional would parse

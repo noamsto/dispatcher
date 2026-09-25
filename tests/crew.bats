@@ -424,6 +424,24 @@ EOF
   [ "$(grep -o '{"ts"' "$log" | wc -l | tr -d ' ')" -eq 40 ]
 }
 
+# #391: a hard kill mid-append leaves a trailing line with no newline; the next
+# `_bus_append` must start on a fresh line instead of gluing a whole valid
+# record onto the torn fragment, which a reader would lose as one unparsable
+# line. The new record must be readable as its own row after the fragment.
+@test "bus: an append after a crash-torn trailing line starts on a fresh line" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew status "$id" working
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  # The crash-torn fragment, with no trailing newline.
+  printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "hello"
+  # The torn fragment stays its own line — never spliced with the new record.
+  [ "$(sed -n '2p' "$log")" = '{"ts":1785951264000,"crew_id":"c-to' ]
+  # The new record starts its own line and parses.
+  printf '%s' "$(sed -n '3p' "$log")" | jq -e '.kind=="msg" and .from=="worker:feat/x#s1-1" and .body=="hello"' >/dev/null
+  [ "$(wc -l <"$log" | tr -d ' ')" -eq 3 ]
+}
+
 @test "register: is idempotent for the same pid" {
   CREW_ID=c1 run run_crew register $$
   [ "$status" -eq 0 ]
@@ -5236,12 +5254,18 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 }
 
 # A hard kill mid-append leaves a line with no newline; the next append then
-# splices onto it, so one unparsable line carries a whole valid record.
+# splices onto it, so one unparsable line carries a whole valid record. #391
+# fixed the writer so it no longer splices, so this builds that crash-splice
+# directly: the reader's fail-closed content heuristic must still catch a valid
+# reject hidden inside an unparsable torn line.
 @test "pr_open: a pi accept then a reject spliced onto a torn line is refused until a fresh verdict" {
   _task_doc standard implement pi
   _verdict accept
-  printf 'torn{' >>"$(_events)"
-  _verdict reject
+  spliced="$(jq -nc --argjson ts "$(jq -nc 'now*1000|floor')" \
+    '{ts:$ts, crew_id:"c1", from:"role:feat/x:reviewer", to:"worker:feat/x#s1-1",
+      kind:"msg",
+      body:"{\"role\":\"reviewer\",\"seam\":\"review\",\"verdict\":\"reject\"}"}')"
+  printf 'torn{%s\n' "$spliced" >>"$(_events)"
   [ "$(tail -1 "$(_events)" | jq -R 'fromjson? // "unparsable"')" = '"unparsable"' ]
   _gate
   _refused "no review seam"
@@ -5271,8 +5295,12 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 @test "pr_open: a torn-line reject is detected for a branch whose reviewer id is JSON-escaped" {
   _task_doc standard implement pi
   run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"accept"}'
-  printf 'torn{' >>"$(_events)"
-  run_crew msg 'role:feat/a"b:reviewer' 'worker:feat/a"b#s1-1' '{"seam":"review","verdict":"reject"}'
+  # #391: build the crash-splice directly (the writer no longer glues) so the
+  # reader's content heuristic still has to unescape the reviewer id.
+  spliced="$(jq -nc --argjson ts "$(jq -nc 'now*1000|floor')" \
+    '{ts:$ts, crew_id:"c1", from:"role:feat/a\"b:reviewer", to:"worker:feat/a\"b#s1-1",
+      kind:"msg", body:"{\"seam\":\"review\",\"verdict\":\"reject\"}"}')"
+  printf 'torn{%s\n' "$spliced" >>"$(_events)"
   run --separate-stderr run_crew status 'worker:feat/a"b#s1-1' pr_open "" https://example.com/pr/1
   _refused "no review seam"
 }
