@@ -728,7 +728,18 @@ mkdir -p "$crew_dir"
 # crew.sh's atomic-append helper, duplicated for the same reason dispatch.sh
 # duplicates it: this file builds as its own writeShellApplication with no
 # shared lib, and a bare `printf >>` is not one write(2) (#55, #61).
-_bus_append() { printf '%s\n' "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"; }
+_bus_append() {
+  local p='' s1='' s2='' c=''
+  if [ -s "$1" ]; then
+    s1="$(wc -c <"$1" 2>/dev/null)" || true
+    c="$(dd if="$1" bs=1 skip=$((s1 - 1)) count=1 2>/dev/null)" || true
+    if [ -n "$c" ]; then
+      s2="$(wc -c <"$1" 2>/dev/null)" || true
+      [ "$s1" != "$s2" ] || p=$'\n'
+    fi
+  fi
+  printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
+}
 
 # Dispatcher liveness. `crew register` writes the pid, and `crew deregister`
 # removes the whole directory on a clean exit — so absent means gone, a dead
