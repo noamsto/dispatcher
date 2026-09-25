@@ -4218,6 +4218,44 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ ! -d "$cdir/watch.lock.d" ]
 }
 
+# The wake gate for `exited` (#396): a mid-run engine death (its previous state
+# was working/blocked) must wake the park, while the ordinary SessionEnd backstop
+# posted after the session's own terminal state must stay silent.
+@test "watch: a mid-run exited wakes — working then exited" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" working "" "" "$t"
+  seed_raw "worker:feat/x#s1-1" exited "" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "exited"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: an exited after the session's own done does not wake" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" working "" "" "$t"
+  seed_raw "worker:feat/x#s1-1" done "" "" "$((t + 1000))"
+  seed_raw "worker:feat/x#s1-1" exited "" "" "$((t + 2000))"
+
+  # Only the `exited` is newer than the cursor the dispatcher would hold after
+  # handling `done` — it must not re-wake for the backstop.
+  run --separate-stderr run_crew watch --crew c1 --since "$((t + 1000))" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: a mid-run exited wakes — blocked then exited" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "" "" "$t"
+  seed_raw "worker:feat/x#s1-1" exited "" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "exited"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "stream: a batch line passes through verbatim and parses as {cursor, events}" {
   start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
   CREW_ID=c1 run_crew status worker:feat/x done
@@ -4228,6 +4266,18 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$line" = "$(jq -c . <<<"$line")" ]
   run jq -e '(.events | length) == 1 and .events[0].body.state == "done"
     and .cursor == .events[0].ts' <<<"$line"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: a mid-run exited wakes the lane" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" exited
+  poll_for 100 at_least_lines 1
+
+  line="$(head -n1 "$STREAM_OUT")"
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "exited"' <<<"$line"
   [ "$status" -eq 0 ]
   stop_stream
 }

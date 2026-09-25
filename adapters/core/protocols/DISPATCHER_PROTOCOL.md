@@ -615,10 +615,17 @@ Like `metrics:`, `retro:` is a synthetic sink: `watch`/`inbox` filter on
 yourself. No new event kind, no new write subcommand. `crew retro` / `crew retro
 --report` folds these notes back out.
 
-`crew watch` wakes on any worker `status` in `blocked`/`pr_open`/`done`/`failed`
-(not `working` heartbeats) or any question `msg` to you, returning
-`{"cursor":<ts>,"events":[…]}`. The terminal states (`done`/`pr_open`/`failed`) free
-fan-out budget, so the same wakeup tells you when to dispatch the next queued task.
+`crew watch` wakes on any worker `status` in `blocked`/`pr_open`/`done`/`failed`,
+or an `exited` that is the session's **first** terminal state (its previous state
+was `working`/`blocked` — the engine died mid-run), or any question `msg` to you,
+returning `{"cursor":<ts>,"events":[…]}`. An `exited` posted after the session's
+own `done`/`failed`/`pr_open` is the ordinary SessionEnd backstop and stays silent,
+so a finished worker never double-wakes you. The terminal states
+(`done`/`pr_open`/`failed`) free fan-out budget, so the same wakeup tells you when
+to dispatch the next queued task. **A mid-run `exited` means the worker's engine
+died before it posted a terminal status: recover it with `dispatch resume` in that
+worker's worktree** (not a fresh `dispatch`), exactly as for any worker that died
+mid-task.
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
