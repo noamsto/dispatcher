@@ -113,6 +113,36 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" == *"primary worktree"* ]]
 }
 
+@test "warns when WORKER_TASK.md is tracked on the branch" {
+  setup_worker_wt
+  git -C "$WT" add -f WORKER_TASK.md
+  git -C "$WT" commit -qm 'a worker tracked its task doc'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WORKER_TASK.md is tracked on this branch"* ]]
+  [[ "$output" == *"git rm --cached WORKER_TASK.md"* ]]
+}
+
+@test "warns when WORKER_TASK.md is tracked, even from a subdirectory" {
+  setup_worker_wt
+  git -C "$WT" add -f WORKER_TASK.md
+  git -C "$WT" commit -qm 'a worker tracked its task doc'
+  mkdir -p "$WT/sub"
+  cd "$WT/sub"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WORKER_TASK.md is tracked on this branch"* ]]
+}
+
+@test "does not warn when WORKER_TASK.md is untracked on the branch" {
+  setup_worker_wt
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
+}
+
 @test "refuses on a detached HEAD" {
   setup_worker_wt
   git -C "$WT" checkout -q --detach
@@ -744,6 +774,18 @@ EOF
   grep -q -- '--no-approve' <(launch_log)
   grep -q 'role panes (plan-critic,reviewer) may still be parked' <(launch_log)
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
+}
+
+@test "resuming a review lead with a grid points it at REVIEW_TASK's role-grid path" {
+  setup_worker_wt 'roles: reviewer,refuter'
+  sed -i -e 's/^kind: implement/kind: review/' -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4.1-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'REVIEW_TASK.md Role-grid path' <(launch_log)
+  run grep -c 'WORKER_PROTOCOL.md Grid mode' <(launch_log)
+  [ "$output" = 0 ]
 }
 
 @test "pi resume passes the worktree's project skills and the harness skills with --skill" {

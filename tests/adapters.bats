@@ -175,6 +175,33 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "claude PreToolUse hook wires the secret-read guard" {
+  run jq -e '.hooks.PreToolUse[0] as $p | ($p.matcher == "Bash|Read|Grep") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/secret-read-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "codex PreToolUse hook wires the secret-read guard" {
+  run jq -e '.hooks.PreToolUse[0] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("$PLUGIN_ROOT")) and ($p.hooks[0].command | contains("scripts/secret-read-guard.sh"))' "$ROOT/adapters/codex/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "the secret-read guard ships executable and byte-identical in all three generated trees" {
+  for copy in \
+    "$ROOT/adapters/claude-code/plugin/scripts/secret-read-guard.sh" \
+    "$ROOT/adapters/codex/plugin/scripts/secret-read-guard.sh" \
+    "$ROOT/adapters/cursor/scripts/secret-read-guard.sh"; do
+    [ -x "$copy" ]
+    run cmp -s "$ROOT/adapters/core/secret-read-guard.sh" "$copy"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "hookyard.json wires the secret-read guard for pi" {
+  run jq -e '.handlers[] | select(.id == "secret-read-guard") | (.exec == "adapters/core/secret-read-guard.sh") and (.events | index("pre_tool")) and (.engines == ["pi"]) and (.match | index("Bash")) and (.match | index("Read")) and (.match | index("Grep"))' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/secret-read-guard.sh" ]
+}
+
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
   run head -3 "$ROOT/adapters/cursor/rules/dispatcher.mdc"
   [[ "$output" == *"alwaysApply: true"* ]]
@@ -464,6 +491,30 @@ teardown() {
   [ -f "$ROOT/adapters/claude-code/plugin/agents/spec-critic.md" ]
   [ -f "$ROOT/adapters/claude-code/plugin/agents/plan-critic.md" ]
   [ -f "$ROOT/adapters/claude-code/plugin/skills/spec-plan-critic/SKILL.md" ]
+}
+
+@test "the deslop skill ships to every engine" {
+  [ -f "$ROOT/adapters/core/skills/deslop/SKILL.md" ]
+  run grep -F 'DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";' "$ROOT/nix/hm-module.nix"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/claude-code/plugin/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/codex/plugin/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/cursor/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "every engine runs /deslop and posts the deslop seam" {
+  protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  run grep -F 'crew msg "$CREW_WORKER_ID" "review:$(crew id)" '"'"'{"seam":"deslop"}'"'"'' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'dispatcher:deslop' "$protocol"
+  [ "$status" -eq 0 ]
+  run grep -F 'skip `/deslop`' "$protocol"
+  [ "$status" -ne 0 ]
+  run grep -F 'claude-only, per rule 4' "$protocol"
+  [ "$status" -ne 0 ]
 }
 
 @test "worker protocol defines the retro-note vocabulary" {
@@ -2679,7 +2730,7 @@ $hits"
   protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
   cursor_lane="$(awk '
     /\*\*cursor — background park\.\*\*/ { flag = 1 }
-    flag && /\*\*codex — blocking park\.\*\*/ { exit }
+    flag && /\*\*codex( \/ pi)? — blocking park\.\*\*/ { exit }
     flag
   ' "$protocol")"
   [ -n "$cursor_lane" ]
@@ -2688,6 +2739,22 @@ $hits"
     'woken up to one' \
     'min(branch default, crew hold park'; do
     run grep -F "$statement" <<<"$cursor_lane"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the pi lane carries its blocking-park contract" {
+  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    '**No `Monitor` tool** → follow the cursor lane' \
+    '**pi is the exception:**' \
+    '**codex / pi — blocking park.**' \
+    'pi shares this lane: it has no `Monitor` and no' \
+    'arm-token completion is exactly what pi lacks' \
+    'codex/pi: at each park call' \
+    'codex/pi: never this branch' \
+    'cursor/codex/pi: at a DRAINED roster, before the re-arm.**'; do
+    run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done
 }
@@ -2963,4 +3030,30 @@ $hits"
   done
   run grep -F 'The in-session Task tool'"'"'s subagent roster is narrower and is not probed' "$ROOT/adapters/core/refresh-models.sh"
   [ "$status" -eq 0 ]
+}
+
+@test "claude-only skill names are defined in-repo, with the superpowers name only as an optional convenience" {
+  for d in adapters/core adapters/claude-code/plugin adapters/codex/plugin adapters/cursor; do
+    wp="$ROOT/$d"
+    f="$wp/protocols/WORKER_PROTOCOL.md"
+    [ -s "$f" ]
+    run grep -cF '**Receiving-code-review discipline**' "$f"
+    [ "$output" -eq 1 ]
+    run grep -F '`superpowers:subagent-driven-development` is an optional convenience' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'defined in `WORKER_PROTOCOL.md` "Process authority"' "$wp/protocols/GRID_PROTOCOL.md"
+    [ "$status" -eq 0 ]
+  done
+  for f in $(find "$ROOT/adapters" -name SKILL.md -path '*spec-plan-critic*'); do
+    run grep -F 'Plan schema.' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'writing-plans discipline' "$f"
+    [ "$status" -ne 0 ]
+  done
+  for f in $(find "$ROOT/adapters" -name 'autopilot.md' -o -path '*autopilot/SKILL.md'); do
+    run grep -F 'Simplify pass' "$f"
+    [ "$status" -eq 0 ]
+    run grep -F 'Invoke `/simplify`' "$f"
+    [ "$status" -ne 0 ]
+  done
 }
