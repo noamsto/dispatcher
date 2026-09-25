@@ -347,13 +347,24 @@ _ELIDED=' …[elided]'
 #
 # A hard kill mid-write leaves the log with no trailing newline (#391). If the
 # next append simply wrote `<line>\n`, it would glue onto the torn fragment and
-# a reader would lose the whole record. Detect a non-newline final byte and
-# prepend the missing newline into the SAME single write, so the torn fragment
-# stays isolated on its own line while the append stays atomic. The read races
-# another writer only into an extra blank line, never a splice.
+# a reader would lose the whole record. Read the final byte at the size `wc`
+# sampled (dd seeks there — a racing `tail -c 1` can read a mid-file byte under
+# concurrency) and, when it is not a newline, prepend it into the SAME single
+# write so the torn fragment stays isolated while the append stays atomic. A
+# lone non-newline read also happens when a concurrent writer's line is only
+# partly visible to the filesystem, so only a size that stays stable on a
+# second read counts as a torn line; otherwise a healthy log would occasionally
+# gain a spurious blank line.
 _bus_append() {
-  local p=''
-  [ ! -s "$1" ] || [ -z "$(tail -c 1 "$1")" ] || p=$'\n'
+  local p='' s1='' s2='' c=''
+  if [ -s "$1" ]; then
+    s1="$(wc -c <"$1" 2>/dev/null)" || true
+    c="$(dd if="$1" bs=1 skip=$((s1 - 1)) count=1 2>/dev/null)" || true
+    if [ -n "$c" ]; then
+      s2="$(wc -c <"$1" 2>/dev/null)" || true
+      [ "$s1" != "$s2" ] || p=$'\n'
+    fi
+  fi
   printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
 }
 

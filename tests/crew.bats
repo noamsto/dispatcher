@@ -5286,8 +5286,14 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 @test "pr_open: a pi accept then a lead assignment spliced onto a torn line is refused" {
   _task_doc standard implement pi
   _verdict accept
-  printf 'torn{' >>"$(_events)"
-  _assign
+  # #391: build the crash-splice directly (the writer no longer glues) so the
+  # reader's content heuristic still has to catch a re-request buried in a torn
+  # line — a re-request cancels the accept.
+  spliced="$(jq -nc --argjson ts "$(jq -nc 'now*1000|floor')" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/x#s1-1", to:"role:feat/x:reviewer",
+      kind:"msg", body:"{\"seam\":\"review\",\"artifact\":\"/a/review.diff\",\"question\":\"Review this diff.\"}"}')"
+  printf 'torn{%s\n' "$spliced" >>"$(_events)"
+  [ "$(tail -1 "$(_events)" | jq -R 'fromjson? // "unparsable"')" = '"unparsable"' ]
   _gate
   _refused "no review seam"
 }
