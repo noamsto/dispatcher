@@ -124,6 +124,12 @@ glob_secret_re='(^|[/*{,[])\.env($|[]*.?,}])|\.(pem|p12|pfx)($|[]*?,}])|\.netrc(
 # never by a line anchor, so the path-anchored pattern above would silently
 # match nothing here.
 cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
+# grep and its relatives. A cluster's quiet letter may only follow letters that
+# take no argument, or `-iesecret` (-e secret) would pass; ripgrep and ag differ
+# (-r/-T/-E take an argument, -L means --follow), so they get a stricter class.
+grep_alt='(e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag'
+quiet_flag_re='[[:space:]](-[abEFGhHiInoPrRsTUvVwxyzZ]*[cqlL][abEFGhHiInoPrRsTUvVwxyzZcqlL]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)([[:space:]]|$)'
+rg_quiet_flag_re='[[:space:]](-[abFhHiInPsSuUvwxzN]*[cql][abFhHiInPsSuUvwxzNcql]*|--count|--quiet|--files-with-matches|--files-without-match)([[:space:]]|$)'
 # Committed templates of op:// refs, not resolved values.
 template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 
@@ -216,6 +222,43 @@ function mask(c) {
 mask_quotes() {
   awk "$awk_mask$awk_chars"'
 function feed(c) { printf "%s", mask(c) }' <<<"$1"
+}
+
+# Succeeds only when every grep in $1 carries an unquoted non-printing flag: one
+# quiet grep must not excuse a printing one. A stage runs from a grep word to
+# the next separator, so the flag must follow the grep word (`ls -l` / `stdbuf
+# -oL` would pass for grep's own -l / -L), and a stage holding several grep
+# words (`find -exec grep … + -exec grep …`) is judged per grep, ending at the
+# `+` that closes an -exec, so a later `-quit` is not a grep flag. Each stage is
+# masked before its flags are read, so a flag spelled inside a pattern is not
+# one; a comment, a word after `--` (a filename) and the argument of a
+# standalone -e/-f/-m/-A/-B/-C/-d/-D are not flags either.
+grep_stages_quiet() {
+  local stage piece re w open
+  local -a words pieces
+  while IFS= read -r stage; do
+    stage=$(mask_quotes "$stage" | sed -E 's/[[:space:]]#.*$//')
+    read -ra words <<<"$stage"
+    pieces=()
+    open=0
+    for w in "${words[@]}"; do
+      if [[ $w =~ ^($grep_alt)$ ]]; then
+        pieces+=("$w")
+        open=1
+      elif [[ $w == + ]]; then
+        open=0
+      elif ((open)); then
+        pieces[${#pieces[@]} - 1]+=" $w"
+      fi
+    done
+    ((${#pieces[@]})) || return 1
+    for piece in "${pieces[@]}"; do
+      piece=$(sed -E 's/[[:space:]]--([[:space:]].*)?$//; s/[[:space:]]-(-regexp|-file|[efmABCdD])[[:space:]]+[^[:space:]]+//g' <<<"$piece")
+      re=$quiet_flag_re
+      [[ $piece =~ ^(rg|ripgrep|ag)([[:space:]]|$) ]] && re=$rg_quiet_flag_re
+      [[ $piece =~ $re ]] || return 1
+    done
+  done < <(grep -oE '\b('"$grep_alt"')\b[^;&|()`]*' <<<"$1")
 }
 
 # Extracts one shell WORD starting at index `start` of `s`: concatenated
@@ -387,11 +430,9 @@ shell)
     if grep -qE '\b(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)\b' <<<"$space"; then
       deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
     fi
-    # grep/rg leak unless restricted to a non-printing mode. The flag must follow
-    # the grep word in the same pipeline stage, or `ls -l` / `stdbuf -oL` would
-    # pass for grep's own -l / -L.
-    if grep -qE '\b(grep|rg|ripgrep|ag)\b' <<<"$space" && ! grep -qE '\b(grep|rg|ripgrep|ag)\b[^;&|]*[[:space:]](-[a-zA-Z]*[cqlL]|--count|--quiet|--silent|--files-with-matches|--files-without-match)\b' <<<"$space"; then
-      deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) if you only need to know whether it is set."
+    # grep/rg leak unless restricted to a non-printing mode, in every grep.
+    if grep -qE '\b('"$grep_alt"')\b' <<<"$space" && ! grep_stages_quiet "$space"; then
+      deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
     fi
   done
   ;;
