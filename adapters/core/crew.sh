@@ -786,11 +786,13 @@ status | msg)
     # own post-verdict `review:<crew>` msg, or — on pi, whose reviewer pane IS
     # the gate — the pane's verdict. On pi the log is folded in order and fails
     # closed: only an exact accept/revise from the reviewer is honoured, any
-    # other reviewer reply carrying a seam or verdict (a reject, an unknown or
-    # elided verdict, a body that is not a JSON object, an unparsable line
-    # naming this crew and the reviewer) counts as a reject that blocks the
-    # lead's own seam until the reviewer's next accept/revise; a reviewer note
-    # with a tag and no verdict is not a verdict. Any lead -> reviewer msg
+    # other reviewer reply — a reject, an unknown or elided verdict, a body
+    # that is not a JSON object, an unparsable line naming this crew and the
+    # reviewer, or an object carrying neither seam nor verdict — counts as a
+    # reject that blocks the lead's own seam until the reviewer's next
+    # accept/revise; a reviewer note with a tag and no verdict, and a role
+    # lifecycle event ({"event":"role_exited"}), are not verdicts and are
+    # ignored. Any lead -> reviewer msg
     # except the bare {"final":true} release, even an unparseable one, voids
     # every earlier verdict AND the lead's own earlier review seam until a
     # fresh verdict lands. The assignment is never itself a seam. The deslop
@@ -820,14 +822,16 @@ status | msg)
           fi
           hint='every acceptance ledger item must read <id> pass(<evidence>) or <id> waived(dispatcher), e.g. "AC1 pass(bats 12/12); AC2 waived(dispatcher)", with any note inside those parentheses; pending, not run, skipped, n/a, partial, or a note after the parentheses is refused. An item you cannot run is not a pass: post blocked "acceptance: <item> — <why>" and await the dispatcher, who alone waives it.'
           # A task doc has an acceptance list when a line is a `##`/`###` (or
-          # deeper) heading, a bold/underscore-wrapped run at line start
-          # (`**Acceptance:**`, `**Acceptance criteria**`), or a line-start
-          # `Acceptance:` — all case-insensitive. The match stays anchored to
-          # one of those, so a word merely mentioned mid-sentence, or a wrapped
-          # prose line that only starts with the word, is not read as a list.
-          # A task doc with no such list must not carry a ledger at all, so
-          # steer that worker at the empty detail instead of at the grammar.
-          acceptance_re='^[[:space:]]*(#{2,}[[:space:]]+acceptance|[*_]{1,2}acceptance|acceptance:)'
+          # deeper) heading — including one that wraps the word in bold or
+          # underscores on the same line, `### **Acceptance criteria**` — a
+          # bold/underscore-wrapped run at line start (`**Acceptance:**`,
+          # `**Acceptance criteria**`), or a line-start `Acceptance:` — all
+          # case-insensitive. The match stays anchored to one of those, so a
+          # word merely mentioned mid-sentence, or a wrapped prose line that
+          # only starts with the word, is not read as a list. A task doc with
+          # no such list must not carry a ledger at all, so steer that worker
+          # at the empty detail instead of at the grammar.
+          acceptance_re='^[[:space:]]*(#{2,}[[:space:]]+[*_]{0,2}acceptance|[*_]{1,2}acceptance|acceptance:)'
           if [ "$ledger_rc" -eq 0 ]; then
             if grep -Eqi "$acceptance_re" "$top/WORKER_TASK.md"; then
               echo "crew: refusing pr_open for $from — $hint" >&2
@@ -875,6 +879,10 @@ status | msg)
                         elif $o.seam == "review" and $o.verdict == "revise" then
                           if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
                         else .ok = false | .rejected = true end
+                      elif $e == "pi" and $f == $r
+                           and (($o | has("seam") or has("verdict")) | not)
+                           and (($o | has("event") or has("tag")) | not) then
+                        .ok = false | .rejected = true
                       elif $e == "pi" and $f == $b and $m.to == $r
                            and (($o | keys) == ["final"] and $o.final == true | not) then
                         .pending = true | .ok = false
