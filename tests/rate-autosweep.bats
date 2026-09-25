@@ -363,7 +363,7 @@ await_log() {
   CREW_RATE_AUTOSWEEP=1 run run_crew reap
   [ "$status" -eq 0 ]
   await_log 'done rc='
-  grep -Eq ' start pid=[0-9]+ repo=' "$XDG_DATA_HOME/crew/autosweep.log"
+  await_log 'start pid=[0-9]+ repo='
   run ! grep -q 'done rc=0' "$XDG_DATA_HOME/crew/autosweep.log"
 }
 
