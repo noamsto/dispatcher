@@ -752,6 +752,143 @@ heredoc_100k() {
   assert_allow
 }
 
+# A quiet flag must appear in EVERY grep stage, on an unquoted word: one quiet
+# grep must not excuse a printing one, and a flag spelled inside a quoted
+# pattern is not a flag.
+@test "secret-read-guard: denies grep -q KEY .env && grep KEY .env (check-then-show)" {
+  run run_guard <<<"$(claude_bash 'grep -q KEY .env && grep KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies if grep -q KEY .env; then grep KEY .env; fi" {
+  run run_guard <<<"$(claude_bash 'if grep -q KEY .env; then grep KEY .env; fi')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies grep -c KEY .env; grep -n KEY .env" {
+  run run_guard <<<"$(claude_bash 'grep -c KEY .env; grep -n KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies rg -l TOKEN . ; rg TOKEN .env" {
+  run run_guard <<<"$(claude_bash 'rg -l TOKEN . ; rg TOKEN .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies grep KEY .env | xargs grep -l x" {
+  run run_guard <<<"$(claude_bash 'grep KEY .env | xargs grep -l x')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a nested quiet grep excusing the outer one" {
+  run run_guard <<<"$(claude_bash 'grep KEY .env $(grep -q x y)')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag inside a quoted pattern (grep 'x -c' .env)" {
+  run run_guard <<<"$(claude_bash "grep 'x -c' .env")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag inside a double-quoted pattern with trailing space" {
+  run run_guard <<<"$(claude_bash 'grep "API -l " .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag behind a quoted pipe (grep -E 'x -c |KEY' .env)" {
+  run run_guard <<<"$(claude_bash "grep -E 'x -c |KEY' .env")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag hidden by mixed quotes" {
+  run run_guard <<<"$(claude_bash "grep -e KEY -e \"'\" 'x \" -c ' .env")"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies -iesecret (the c/q/l/L letter is an -e argument)" {
+  run run_guard <<<"$(claude_bash 'grep -iesecret .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag in a trailing comment (grep KEY .env # -c)" {
+  run run_guard <<<"$(claude_bash 'grep KEY .env # -c')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag that is a filename after -- (grep KEY .env -- -c)" {
+  run run_guard <<<"$(claude_bash 'grep KEY .env -- -c')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a flag that is an -e argument (grep -e -c -e KEY .env)" {
+  run run_guard <<<"$(claude_bash 'grep -e -c -e KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a quiet grep excusing a second grep in the same stage" {
+  run run_guard <<<"$(claude_bash 'find . -exec grep -l x {} + -exec grep KEY .env {} +')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies a find primary after an -exec grep ... + (-quit is not -q)" {
+  run run_guard <<<"$(claude_bash 'find . -name .env -exec grep KEY {} + -quit')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows a quiet -exec grep ... +" {
+  run run_guard <<<"$(claude_bash 'find . -name .env -exec grep -l KEY {} +')"
+  assert_allow
+}
+
+@test "secret-read-guard: denies egrep and zgrep without a quiet flag" {
+  run run_guard <<<"$(claude_bash 'egrep KEY .env')"
+  assert_deny_claude
+  run run_guard <<<"$(claude_bash 'zgrep KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: denies rg -L and rg -rl (-L follows, -r replaces)" {
+  run run_guard <<<"$(claude_bash 'rg -L KEY .env')"
+  assert_deny_claude
+  run run_guard <<<"$(claude_bash 'rg -rl KEY .env')"
+  assert_deny_claude
+}
+
+@test "secret-read-guard: allows grep -lr KEY .env" {
+  run run_guard <<<"$(claude_bash 'grep -lr KEY .env')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows grep -rl API_KEY --include=.env ." {
+  run run_guard <<<"$(claude_bash 'grep -rl API_KEY --include=.env .')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows grep -il KEY .env" {
+  run run_guard <<<"$(claude_bash 'grep -il KEY .env')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows grep --count KEY .env" {
+  run run_guard <<<"$(claude_bash 'grep --count KEY .env')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows a trailing -c (grep KEY .env -c)" {
+  run run_guard <<<"$(claude_bash 'grep KEY .env -c')"
+  assert_allow
+}
+
+@test "secret-read-guard: allows a quoted pattern next to a real -c" {
+  run run_guard <<<"$(claude_bash "grep -c 'a b' .env")"
+  assert_allow
+}
+
+@test "secret-read-guard: allows two quiet greps in one command" {
+  run run_guard <<<"$(claude_bash 'grep -c KEY .env && rg -l KEY .')"
+  assert_allow
+}
+
 @test "secret-read-guard: allows test -f .env && echo yes" {
   run run_guard <<<"$(claude_bash 'test -f .env && echo yes')"
   assert_allow
