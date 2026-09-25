@@ -133,15 +133,25 @@ rg_quiet_flag_re='[[:space:]](-[abFhHiInPsSuUvwxzN]*[cql][abFhHiInPsSuUvwxzNcql]
 # Committed templates of op:// refs, not resolved values.
 template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 
-# Command position: start of line, or after ; & | ( { ! — then any run of
-# keywords/wrappers that run the next word as a command (`then env`, `sudo
-# env`) or of `NAME=value` prefixes. The keywords count only there, so `echo do
-# env` is an argument, not a command. Dumpers are matched only at this anchor,
-# against text with quoted spans masked (mask_quotes), so `rg 'env|printenv|x'
-# file` stays allowed while a bare `env` is denied.
-cmd_prefix='((then|do|else|if|elif|while|until|sudo|command|exec|time|nohup)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-cmd_start='(^[[:space:]]*|[;&|({!]+[[:space:]]*)'"$cmd_prefix"
-env_dump_re="$cmd_start"'(printenv|env)[[:space:]]*($|[;&|)])'
+# Command position: start of line, or after ; & | ( { — then any run of
+# keywords/wrappers that run the next word as a command (`then env`, `! env`,
+# `sudo -u root env`, `direnv exec . env`) or of `NAME=value` prefixes. The
+# keywords count only there, so `echo do env` and `echo wow! env` are arguments,
+# not commands. Dumpers are matched only at this anchor, against text with
+# quoted spans masked (mask_cmd, mask_quotes), so `rg 'env|printenv|x' file`
+# stays allowed while a bare `env` is denied. A masked argument is blank, so a
+# wrapper's option argument is optional wherever the option could be argument-less;
+# the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
+# fails closed.
+wrap_word='[^[:space:];&|)]+'
+wrap_rest='[^[:space:];&|)]*'
+sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
+# env's options and NAME=value words: what remains when no command follows is a
+# dump (`env -0`, `env -u X`, `env FOO=1`).
+env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
+cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*)'"$cmd_prefix"
+env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*($|[;&|)#]|[0-9]+>)'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
@@ -153,13 +163,13 @@ printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space
 # functions, not variables), or any flag cluster carrying `p` anywhere
 # (`declare -xp NAME` and `declare -x -p NAME` both print). Bare `export` dumps
 # every exported variable, same as `export -p`.
-declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
-builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)]))'
+declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)#])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
+builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)#]))'
 # fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
 # -L) list that scope when no name follows; with a name they're the ordinary
 # `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
 # bash's `set -x` is the harmless xtrace toggle.
-fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)])'
+fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)#])'
 # A `-c` argument is quoted, so mask_quotes alone would erase a dumper the
 # shell actually runs. This only locates where the argument starts (through
 # the interpreter, its flags and trailing whitespace); decode_word extracts it.
@@ -323,6 +333,161 @@ decode_word() {
   DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
 }
 
+# Rule 2's masker: what mask_quotes does, plus the shell structure it cannot see,
+# so a quote character in prose cannot hide a later line and quoted code still
+# shows. Every deviation from mask_quotes errs toward showing text (over-scan):
+#   - `$'…'` is a quote whose `\'` does not close it.
+#   - an unquoted `#` at word start begins a comment, emitted RAW with all quote,
+#     heredoc and substitution openers suppressed to the newline — a comment
+#     mis-detected (`a\ #`, `${x%% #*}`) can only over-scan, never hide.
+#   - `$(` and backticks inside "…" open a frame whose text is code again; a
+#     backtick is emitted as `(` … `)` so the command-start anchor sees it, in
+#     double quotes and bare alike.
+#   - a heredoc body (`<<[-]WORD`, several per line queue in order) is emitted
+#     raw, quotes and `#` included, because bash treats them as literal there
+#     and a body fed to a shell runs whole. Only an unquoted delimiter rewrites
+#     backticks. The terminator line is not blanked: an arithmetic `1<<X` that
+#     merely looks like a heredoc must not be able to hide a real `X` line.
+# Length-preserving, one pass, like mask_quotes.
+# shellcheck disable=SC2016
+awk_mask_cmd='
+BEGIN {
+  SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; BT = "`"
+  HDSTOP = " \t\n;&|()<>"
+  sp = 0; pd = 0; hd_i = 0; hd_n = 0
+}
+function wordstart(p) { return p == "" || index(" \t\n;&|()", p) > 0 }
+function push(k, saved) {
+  sk[sp] = k; sv[sp] = saved; spd[sp] = pd
+  sp++
+  pd = 0
+  q = ""
+}
+function pop() {
+  sp--
+  q = sv[sp]
+  pd = spd[sp]
+}
+function code(c,    d, o) {
+  d = dl
+  dl = 0
+  o = " "
+  if (esc) {
+    esc = 0
+    if (q == "") {
+      o = c
+      if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
+      else if (c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
+    }
+  } else if (cm) {
+    o = c
+    if (c == "\n") cm = 0
+  } else if (q == SQ) {
+    if (c == SQ) q = ""
+  } else if (q == "A") {
+    if (c == BS) esc = 1
+    else if (c == SQ) q = ""
+  } else if (q == DQ) {
+    if (c == BS) esc = 1
+    else if (c == DQ) q = ""
+    else if (d && c == "(") { push("(", DQ); o = "(" }
+    else if (c == BT) { push(BT, DQ); o = "(" }
+    else if (c == "$") dl = 1
+  } else {
+    o = c
+    if (c == BS) {
+      esc = 1
+      if (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
+    } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
+    else if (c == DQ) { q = DQ; o = " " }
+    else if (c == BT) {
+      if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
+      else { push(BT, ""); o = "(" }
+    } else if (c == "(") pd++
+    else if (c == ")") {
+      if (pd > 0) pd--
+      else if (sp > 0 && sk[sp - 1] == "(") pop()
+    } else if (c == "#" && wordstart(prev)) cm = 1
+    else if (c == "$") dl = 1
+  }
+  return o
+}
+function enterbody() {
+  hd_i++
+  body = 1
+  bok = 1
+  bpos = 0
+  bbt = 0
+}
+function bodyfeed(c,    w, term) {
+  w = hd_w[hd_i]
+  if (c == "\n") {
+    printf "\n"
+    term = (bok && bpos == length(w))
+    bok = 1
+    bpos = 0
+    bbt = 0
+    if (term) {
+      body = 0
+      prev = "\n"
+      if (hd_i < hd_n) enterbody()
+    }
+    return
+  }
+  if (bok) {
+    if (hd_d[hd_i] && bpos == 0 && c == "\t") { }
+    else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
+    else bok = 0
+  }
+  if (c == BT && !hd_q[hd_i]) {
+    bbt = !bbt
+    printf "%s", (bbt ? "(" : ")")
+    return
+  }
+  printf "%s", c
+}
+function feed(c,    arm, wasesc) {
+  if (body) { bodyfeed(c); return }
+  if (hs == 3) {
+    if (hbs) { hbs = 0; hw = hw c; printf " "; return }
+    if (hq != "") {
+      if (c == hq) hq = ""
+      else hw = hw c
+      printf " "
+      return
+    }
+    if (c == BS) { hbs = 1; hquo = 1; printf " "; return }
+    if (c == SQ || c == DQ) { hq = c; hquo = 1; printf " "; return }
+    if (!index(HDSTOP, c)) { hw = hw c; printf " "; return }
+    if (hw != "" || hquo) {
+      hd_n++
+      hd_w[hd_n] = hw
+      hd_d[hd_n] = hdash
+      hd_q[hd_n] = hquo
+    }
+    hs = 0
+  } else if (hs == 2) {
+    if (c == " " || c == "\t") { printf "%s", c; return }
+    if (c == "-" && !hdash) { hdash = 1; printf " "; return }
+    if (c == "<") { hs = 0; printf "<"; prev = c; return }
+    if (index(HDSTOP, c)) hs = 0
+    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; feed(c); return }
+  }
+  arm = (q == "" && !esc && !cm)
+  wasesc = esc
+  printf "%s", code(c)
+  if (arm && c == "<") {
+    if (hs == 1) { hs = 2; hdash = 0 }
+    else hs = 1
+  } else if (hs == 1) hs = 0
+  if (c == "\n" && q == "" && !wasesc && hd_i < hd_n) enterbody()
+  prev = c
+}'
+
+mask_cmd() {
+  awk "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
 deny() {
   if [[ $shape == cursor ]]; then
     jq -cn --arg r "$1" '{permission: "deny", user_message: $r, agent_message: $r}'
@@ -373,7 +538,7 @@ shell)
   #    rest of the string after it (siblings: `bash -c 'true'; bash -c
   #    'declare -p NAME'`). Bounded by total matches, so it always terminates.
   raw_spaces=("$command")
-  search_spaces=("$(mask_quotes "$command")")
+  search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
   fish_spaces=()
   worklist=("$command")
   wi=0
@@ -387,10 +552,11 @@ shell)
     prefix=${cur%%"$match"*}
     decode_word "$cur" $((${#prefix} + ${#match}))
     sub=$DECODED_WORD
-    masked_sub=$(mask_quotes "$sub")
+    masked_sub=$(mask_cmd "$sub")
+    quoted_sub=$(mask_quotes "$sub")
     raw_spaces+=("$sub")
-    search_spaces+=("$masked_sub")
-    [[ $interpreter == fish ]] && fish_spaces+=("$masked_sub")
+    search_spaces+=("$masked_sub" "$quoted_sub")
+    [[ $interpreter == fish ]] && fish_spaces+=("$masked_sub" "$quoted_sub")
     matches=$((matches + 1))
     worklist+=("$sub" "${cur:DECODE_WORD_END}")
   done

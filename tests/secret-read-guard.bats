@@ -1080,3 +1080,171 @@ heredoc_100k() {
   run run_guard <<<"$(claude_bash 'set --show NAME')"
   assert_deny_claude
 }
+
+# ---------------------------------------------------------------------------
+# Rule 2 blind spots (#429): comments, heredocs, substitutions, wrappers
+# ---------------------------------------------------------------------------
+
+deny_cmd() { # <command>
+  run run_guard <<<"$(claude_bash "$1")"
+  assert_deny_claude
+}
+
+allow_cmd() { # <command>
+  run run_guard <<<"$(claude_bash "$1")"
+  assert_allow
+}
+
+@test "secret-read-guard: denies a dump after a comment with an apostrophe" {
+  deny_cmd $'# what\'s configured?\nenv'
+  deny_cmd $'echo hi # don\'t\nenv | sort'
+}
+
+@test "secret-read-guard: denies a dump after a heredoc body with an apostrophe" {
+  deny_cmd $'cat <<EOF\nit\'s here\nEOF\nenv'
+  deny_cmd $'git commit -F - <<\'X\'\nfix: don\'t leak\nX\nenv'
+  deny_cmd $'cat <<-EOF\n\tdon\'t\n\tEOF\nenv'
+  deny_cmd $'cat << \'EOF\'\nit\'s\nEOF\nenv'
+  deny_cmd $'cat <<A <<B\nit\'s\nA\nb\nB\nenv'
+}
+
+@test "secret-read-guard: denies a dump after an apostrophe inside a bash -c body" {
+  deny_cmd $'bash -c "echo hi # it\'s\nenv"'
+}
+
+@test "secret-read-guard: denies a dump after an ANSI-C quoted apostrophe" {
+  deny_cmd $'echo $\'don\\\'t\'; env'
+}
+
+@test "secret-read-guard: denies a dumper inside a heredoc body" {
+  deny_cmd $'cat <<EOF\n# $(env)\nEOF'
+  deny_cmd $'cat <<EOF\nit\'s $(env)\nEOF'
+  deny_cmd $'bash <<EOF\n# x\nenv\nEOF'
+  deny_cmd $'cat <<EOF\n`env`\nEOF'
+  deny_cmd $'cat <<EOF\n"$(env)"\nEOF'
+}
+
+@test "secret-read-guard: denies a dump right after a heredoc delimiter" {
+  deny_cmd $'cat <<X;env\nx\nX'
+}
+
+@test "secret-read-guard: a fake heredoc from arithmetic cannot hide a dump" {
+  deny_cmd $': $((1<<env))\nenv'
+  deny_cmd $'echo $((1<<20))\nFOO="a b" env'
+}
+
+@test "secret-read-guard: a wrongly detected comment cannot hide a dump" {
+  deny_cmd $'echo a\\ #; env'
+  deny_cmd $'echo ${x%% #*}; env'
+  deny_cmd $'echo \\#; env'
+  deny_cmd 'echo $(date)#x; env'
+  deny_cmd 'echo "a"#; env'
+}
+
+@test "secret-read-guard: allows prose and quoted heredocs that only mention a dumper" {
+  allow_cmd 'echo hi # env'
+  allow_cmd $'cat <<EOF\nrun env to see\nEOF\nls'
+  allow_cmd $'cat <<\'EOF\'\n`env`\nEOF'
+  allow_cmd $'echo \'a\nenv\''
+}
+
+@test "secret-read-guard: denies a dump inside a double-quoted command substitution" {
+  deny_cmd 'echo "$(env)"'
+  deny_cmd 'echo "$(printenv)"'
+  deny_cmd 'echo "x $(FOO=1 env | sort)"'
+  deny_cmd 'echo "a $(echo "$(env)")"'
+  deny_cmd 'echo "x$'"'"'"; env'
+}
+
+@test "secret-read-guard: denies a dump inside backticks" {
+  deny_cmd 'echo `env`'
+  deny_cmd 'echo "`env`"'
+}
+
+@test "secret-read-guard: allows quoted text that only looks like a substitution" {
+  allow_cmd 'echo "$(pwd)"'
+  allow_cmd 'echo "env"'
+  allow_cmd 'echo "\$(env)"'
+  allow_cmd "echo '\$(env)'"
+  allow_cmd 'echo "$(echo env)"'
+}
+
+@test "secret-read-guard: denies a dump behind direnv exec" {
+  deny_cmd 'direnv exec . env'
+  deny_cmd 'direnv exec . printenv'
+  deny_cmd 'direnv exec "$PWD" env'
+}
+
+@test "secret-read-guard: allows direnv without a dump" {
+  allow_cmd 'direnv exec . make test'
+  allow_cmd 'direnv allow'
+  allow_cmd 'direnv exec . env FOO=1 mycmd'
+}
+
+@test "secret-read-guard: denies env and printenv options with no command" {
+  deny_cmd 'env -0'
+  deny_cmd 'env -u X'
+  deny_cmd 'env -C /tmp'
+  deny_cmd 'env FOO=1'
+  deny_cmd 'env -i FOO=1 | sort'
+  deny_cmd 'printenv -0'
+}
+
+@test "secret-read-guard: a comment right after a closing parenthesis cannot hide a dump" {
+  deny_cmd $'(echo x)# it\'s\nenv'
+  deny_cmd $'case x in x)# it\'s\nenv\n;; esac'
+}
+
+@test "secret-read-guard: an empty heredoc delimiter cannot hide a dump" {
+  deny_cmd $'cat <<""\nit\'s\n\nenv'
+}
+
+@test "secret-read-guard: denies a dump inside escaped nested backticks" {
+  deny_cmd 'echo `echo \`env\``'
+  deny_cmd 'echo "`echo \`env\``"'
+}
+
+@test "secret-read-guard: denies printenv with a bare double dash" {
+  deny_cmd 'printenv --'
+}
+
+@test "secret-read-guard: denies a shell-variable dump followed by a comment" {
+  deny_cmd 'set # list'
+  deny_cmd 'declare -p # list'
+  deny_cmd 'export -p # list'
+}
+
+@test "secret-read-guard: denies a dump followed by a comment or a descriptor redirect" {
+  deny_cmd 'env # show vars'
+  deny_cmd 'env 2>&1'
+  deny_cmd 'printenv 2>/dev/null'
+}
+
+@test "secret-read-guard: denies a dumper behind env and sudo wrappers" {
+  deny_cmd 'env -u X env'
+  deny_cmd 'env FOO=1 printenv'
+  deny_cmd 'sudo -u root env'
+  deny_cmd 'sudo -Eu root env'
+  deny_cmd 'sudo -u root declare -p X'
+  deny_cmd 'sudo -u "root" env'
+}
+
+@test "secret-read-guard: allows env and sudo running a command" {
+  allow_cmd 'env -u X mycmd'
+  allow_cmd 'env -i mycmd'
+  allow_cmd 'env -0 mycmd'
+  allow_cmd 'sudo -n ls'
+}
+
+@test "secret-read-guard: denies a negated dump" {
+  deny_cmd '! env'
+  deny_cmd $'!\tenv'
+  deny_cmd 'if ! env; then true; fi'
+  deny_cmd 'true; ! set -S X'
+  deny_cmd '! printenv API_KEY'
+  deny_cmd $'echo wow!\nenv'
+}
+
+@test "secret-read-guard: allows a dumper word after an exclamation mark in an argument" {
+  allow_cmd 'echo wow! env'
+}
