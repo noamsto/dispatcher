@@ -3983,7 +3983,8 @@ EOF
   grep -q 'switch -c feat/42-title' "$STUB_LOG"
   grep -q 'issue view 42 ' "$STUB_LOG"
   grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
-  run ! grep -q '042' "$STUB_LOG"
+  # Whole-token only: the log also carries a random base sha and session pid.
+  run ! grep -qw '042' "$STUB_LOG"
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
   grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
