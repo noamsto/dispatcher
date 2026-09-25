@@ -153,6 +153,40 @@ _owner_pid() {
   printf '%s\n' "$PPID"
 }
 
+# _pid_alive <pid> — `kill -0 0` signals the caller's own process group and
+# `kill -0 -1` broadcasts, so both all but always succeed; only a positive
+# integer is a liveness probe.
+_pid_alive() {
+  case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
+  kill -0 "$1" 2>/dev/null
+}
+
+# _is_ancestor_pid <pid> — is <pid> one of this process's ancestors? Bounded
+# walk; `ps -o ppid= -p` is the one parent-of spelling identical on BSD and GNU.
+_is_ancestor_pid() {
+  local p=$$ depth=0
+  while [ "$depth" -lt 32 ]; do
+    depth=$((depth + 1))
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$p" in '' | *[!0-9]* | 0) return 1 ;; esac
+    if [ "$p" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
+# _pidfile_log <action> <outcome> <crew> <old> <new> — one line per crew pid
+# file mutation (or refusal) in $dir/pidfile.log, naming the caller so a crew
+# dir that vanishes or changes owner can be traced (#432). Append-only and
+# unbounded: it is diagnostic, not state, so it never fails its caller.
+_pidfile_log() {
+  {
+    local by
+    by=$(ps -o args= -p "$PPID" || true)
+    mkdir -p "$dir"
+    _bus_append "$dir/pidfile.log" "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1 $2 crew=$3 old=${4:--} new=${5:--} pid=$$ ppid=$PPID cwd=$PWD by=${by:0:120}"
+  } 2>/dev/null || true
+}
+
 # _pane_is_engine_at <pane_row> <worktree_path> — <pane_row> is one
 # `#{pane_current_command} #{pane_current_path}` row. The path is the strong
 # signal and must match exactly, never by prefix — /wt/foo would otherwise claim
@@ -1202,21 +1236,41 @@ await)
 register | deregister)
   # Per-crew registration (was an exclusive per-repo role lock). N crews may
   # share a repo: each is identified by its crew_id, so there is no
-  # cross-crew contention and registration never refuses. The crew dir records
-  # the dispatcher's long-lived PID (default: nearest non-shell ancestor), recorded for a future
-  # stale-cleanup command (nothing reclaims automatically today), and holds
-  # that crew's watch cursor + watch lock. Crew ids are unique by construction
-  # (timestamp-pid), so re-registering a live crew is idempotent (re-mkdir -p,
-  # pid rewritten).
+  # cross-crew contention. The crew dir records the dispatcher's long-lived PID
+  # (default: nearest non-shell ancestor), recorded for a future stale-cleanup
+  # command (nothing reclaims automatically today), and holds that crew's watch
+  # cursor + watch lock. Crew ids are unique by construction (timestamp-pid), so
+  # re-registering the same pid is idempotent (re-mkdir -p, pid rewritten). The
+  # id resolves from the cwd worktree's WORKER_TASK.md before $CREW_ID, so a
+  # caller in a worker worktree or a nested launcher can name a live
+  # dispatcher's crew: register refuses to swap a live pid, and deregister
+  # refuses unless the recorded pid is dead or is the caller's own parent or
+  # owner (#432). The residual gap: a subagent or child that shares the
+  # dispatcher's own pid as its parent can still deregister it.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id> \$PPID' to re-attach, or 'crew new' to start one" >&2
     exit 1
   }
+  # deregister rm -rf's "$dir/crews/$crew", so an unvalidated `..` removes the bus.
+  case "$crew" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 1
+    ;;
+  esac
   cdir="$dir/crews/$crew"
+  epid=$(cat "$cdir/pid" 2>/dev/null || true)
   if [ "$sub" = register ]; then
+    pid="${1:-$(_owner_pid)}"
+    if [ "$epid" != "$pid" ] && _pid_alive "$epid"; then
+      _pidfile_log register refused "$crew" "$epid" "$pid"
+      echo "crew: crew '$crew' still has a live dispatcher (pid $epid) — 'crew new' starts your own crew; 'crew adopt' re-attaches only a crew whose dispatcher is dead or already yours" >&2
+      exit 1
+    fi
     mkdir -p "$cdir"
-    printf '%s\n' "${1:-$(_owner_pid)}" >"$cdir/pid"
+    printf '%s\n' "$pid" >"$cdir/pid"
+    _pidfile_log register ok "$crew" "$epid" "$pid"
     # The pane, not just the pid: a worker reattaching to a live dispatcher has
     # to retarget its `dispatcher_pane:` ping, and the pid alone cannot name a
     # pane. Absent outside tmux, which readers must tolerate.
@@ -1224,6 +1278,13 @@ register | deregister)
       printf '%s\n' "$TMUX_PANE" >"$cdir/pane"
     fi
   else
+    # Exit 0 on refusal: this is cleanup, and dispatcher.sh runs it from its exit path.
+    if _pid_alive "$epid" && [ "$epid" != "$PPID" ] && [ "$epid" != "$(_owner_pid)" ]; then
+      _pidfile_log deregister refused "$crew" "$epid"
+      echo "crew: crew '$crew' still has a live dispatcher (pid $epid) that is not this caller's parent or owner — left in place" >&2
+      exit 0
+    fi
+    if [ -d "$cdir" ]; then _pidfile_log deregister removed "$crew" "$epid"; fi
     rm -rf "$cdir"
   fi
   ;;
@@ -1346,10 +1407,7 @@ adopt)
   # on it too: --force over a genuinely live dispatcher must release nothing.
   epid=$(cat "$cdir/pid" 2>/dev/null || true)
   live=""
-  case "$epid" in
-  '' | *[!0-9]* | 0) ;;
-  *) if kill -0 "$epid" 2>/dev/null; then live=1; fi ;;
-  esac
+  if _pid_alive "$epid"; then live=1; fi
   if [ -z "$force" ]; then
     # A live pid among our own ancestors is *this* session's crew, so re-adopting
     # is idempotent — the recovery path has to survive being run twice. It is a
@@ -1358,28 +1416,18 @@ adopt)
     # in the only case it can occur — a recycled pid means the original
     # dispatcher is dead, which is exactly when adopting is right — and two live
     # dispatchers on one crew is independently refused by `watch`'s per-crew
-    # lock. `ps -o ppid= -p` is the one parent-of spelling identical on BSD and GNU.
-    mine=""
-    if [ -n "$live" ]; then
-      p=$$
-      depth=0
-      while [ "$depth" -lt 32 ]; do
-        depth=$((depth + 1))
-        p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
-        case "$p" in '' | *[!0-9]* | 0) break ;; esac
-        if [ "$p" = "$epid" ]; then
-          mine=1
-          break
-        fi
-      done
-    fi
-    if [ -n "$live" ] && [ -z "$mine" ]; then
-      echo "crew: crew '$id' still has a live dispatcher — 'crew register <pid>' re-registers a crew that is already yours; 'crew new' starts your own; '--force' overrides if that process is a stale pid reuse" >&2
+    # lock.
+    if [ -n "$live" ] && ! _is_ancestor_pid "$epid"; then
+      _pidfile_log adopt refused "$id" "$epid" "$pid"
+      echo "crew: crew '$id' still has a live dispatcher — 'crew new' starts your own; '--force' overrides if that process is a stale pid reuse" >&2
       exit 1
     fi
   fi
   mkdir -p "$cdir"
   printf '%s\n' "$pid" >"$cdir/pid"
+  outcome=ok
+  if [ -n "$force" ] && [ -n "$live" ]; then outcome=forced; fi
+  _pidfile_log adopt "$outcome" "$id" "$epid" "$pid"
 
   # Release the claims this crew recorded taking (#73): a dead or absent pid is
   # exactly the state that leaves a `dispatched` label with nobody left to
