@@ -677,6 +677,32 @@ EOF
   [[ "$output" != *"WORKER_TASK.md"* ]]
 }
 
+@test "warns when WORKER_TASK.md is tracked at the base being dispatched" {
+  stub_launch_bins
+
+  # A previous worker committed its scaffolding doc; info/exclude cannot hide a
+  # tracked file, so the guard is void (#397).
+  printf 'stale\n' >"$TEST_REPO/WORKER_TASK.md"
+  git -C "$TEST_REPO" add -f WORKER_TASK.md
+  git -C "$TEST_REPO" commit -qm 'a worker tracked its task doc'
+  git -C "$TEST_REPO" push -q origin main
+
+  DISPATCH_PROFILE=personal run run_dispatch \
+    trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort low --crew-id c1 42 "test tracked warn"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WORKER_TASK.md is tracked at the base being dispatched"* ]]
+  [[ "$output" == *"git rm --cached WORKER_TASK.md"* ]]
+}
+
+@test "does not warn when WORKER_TASK.md is untracked at the base" {
+  stub_launch_bins
+
+  DISPATCH_PROFILE=personal run run_dispatch \
+    trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort low --crew-id c1 42 "test untracked silent"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
+}
+
 @test "--roles needs a value" {
   run run_dispatch standard sonnet --roles
   [ "$status" -eq 1 ]
