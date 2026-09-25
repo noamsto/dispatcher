@@ -46,6 +46,9 @@ EOF
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \
     >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
+  # The cross-repo lane hint is a sourced shared lib; raw runs point the
+  # override at the repo copy (flake.nix bakes the store path for builds).
+  export CROSS_REPO_HINT_LIB="$BATS_TEST_DIRNAME/../adapters/core/cross-repo-hint.sh"
   git commit --allow-empty -qm init
 }
 
@@ -218,13 +221,15 @@ _store_resume() {
   BAKED_SKILLS="$STORE/h-new-skills"
   BAKED_REVIEWERS="$STORE/h-new-reviewers"
   BAKED_CRITICS="$STORE/h-new-critics"
+  BAKED_HINT="$STORE/h-new-cross-repo-hint.sh"
   mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  cp "$CROSS_REPO_HINT_LIB" "$BAKED_HINT"
   printf 'new\n' >"$BAKED_REVIEWERS/r.md"
   printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@crossRepoHintLib@|$BAKED_HINT|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR CROSS_REPO_HINT_LIB
 }
 
 _store_protocols() { # <dir> <content>
@@ -1199,4 +1204,96 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   run run_resume
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+}
+
+# _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo
+# (TEST_REPO, where $WT is a linked worktree): a live pid plus a stream.tick,
+# the exact state `crew stream --status` reads from <repo>/crew/crews/c1/.
+_seed_worker_stream() {
+  local cdir="$TEST_REPO/.git/crew/crews/c1"
+  mkdir -p "$cdir/stream.lock.d"
+  printf '%s\n' "$$" >"$cdir/stream.lock.d/pid"
+  jq -nc --argjson pid "$$" --argjson ts "$1" '{pid:$pid, ts:$ts, park:300}' >"$cdir/stream.tick"
+}
+
+# _resume_cross_repo_fixture <dispatcher-pane-path> — a resume whose dispatcher
+# pane reports <dispatcher-pane-path> as its cwd. `crew stream` is routed to the
+# real crew.sh so the liveness predicate is exercised, and the tmux stub answers
+# #{pane_current_path}; setup() unsets TMUX_PANE, so it is exported here.
+_resume_cross_repo_fixture() {
+  local pane_path="${1:-$TEST_REPO}"
+  setup_worker_wt
+  cd "$WT"
+  git init -q -b main "$BATS_TEST_TMPDIR/other-repo"
+  export TMUX_PANE=%9
+  export STUB_PANE_PATH="$pane_path"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*'#{pane_current_path}'*) printf '%s\n' "$STUB_PANE_PATH" ;;
+*'#{client_width}'*) printf '%s\n' '80 24 on' ;;
+esac
+if [ "$1" = new-window ]; then
+  printf '%s %s\n' '%1' '%1'
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = pi-agent-dir ]; then exec bash -euo pipefail "$CREW_REAL" pi-agent-dir; fi
+if [ "$1" = engine-cmd ]; then
+  c="${2#.}"
+  c="${c%-wrapped}"
+  case "$c" in
+  claude | codex | cursor-agent | node | pi) exit 0 ;;
+  esac
+  exit 1
+fi
+if [ "$1" = stream ]; then exec bash -euo pipefail "$CREW_REAL" "$@"; fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+@test "cross-repo: resume prints the worker-repo stream command (#420)" {
+  _resume_cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  run run_resume
+  [ "$status" -eq 0 ]
+  worker_top="$(git -C "$WT" rev-parse --show-toplevel)"
+  [[ "$output" == *"arm/adjust the lane: cd $worker_top && crew stream --crew c1"* ]]
+}
+
+@test "cross-repo: resume omits the hint when the dispatcher checkout is the worker repo (#420)" {
+  _resume_cross_repo_fixture "$TEST_REPO"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
+@test "cross-repo: resume omits the hint when a live stream is already armed (#420)" {
+  _resume_cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  _seed_worker_stream "$(jq -nc 'now*1000|floor')"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
+@test "cross-repo: a stale stream does not suppress the resume hint (#420)" {
+  _resume_cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  _seed_worker_stream "$(jq -nc '(now-700)*1000|floor')"
+  run run_resume
+  [ "$status" -eq 0 ]
+  worker_top="$(git -C "$WT" rev-parse --show-toplevel)"
+  [[ "$output" == *"arm/adjust the lane: cd $worker_top && crew stream --crew c1"* ]]
+}
+
+@test "cross-repo: resume omits the hint outside tmux (#420)" {
+  _resume_cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  unset TMUX_PANE
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
 }

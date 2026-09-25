@@ -150,6 +150,22 @@ setup() {
   [ -f "$dir/deslop/SKILL.md" ]
 }
 
+@test "the cross-repo hint lib placeholder is substituted in dispatch and dispatch-resume" {
+  # The lane hint is a sourced shared lib (#398/#420); an unsubstituted token is
+  # not a readable path, so the guarded call site silently drops the hint.
+  run grep -c '@crossRepoHintLib@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  run grep -c '@crossRepoHintLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  [ "$output" = "0" ]
+}
+
+@test "the substituted cross-repo hint lib exists and defines the helper" {
+  lib="$(grep -o '/nix/store/[^"}]*cross-repo-hint[^"}]*' "$OUT_DISPATCH/bin/dispatch" | head -1)"
+  [ -n "$lib" ]
+  [ -f "$lib" ]
+  grep -q '^cross_repo_hint() {' "$lib"
+}
+
 @test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
   run grep -c '@protocolRev@' "$OUT_DISPATCH/bin/dispatch"
   [ "$output" = "0" ]

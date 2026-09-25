@@ -1453,7 +1453,7 @@ watch)
   mkdir -p "$dir"
   since=0
   since_explicit=0
-  states="blocked,pr_open,done,failed"
+  states="blocked,pr_open,done,failed,exited"
   timeout=3300
   interval=2
   wcrew=""
@@ -1561,10 +1561,30 @@ watch)
   deadline=$((start + timeout * 1000))
   while :; do
     if [ -f "$log" ]; then
+      # An `exited` is the SessionEnd backstop, not something a worker asserts.
+      # It wakes the park only when it is the session's FIRST terminal state —
+      # the engine died mid-run — so the gate below reuses `roster`'s prev-state
+      # rule: the newest status for the same session that was not itself
+      # `exited`. An `exited` posted after the session's own done/failed/pr_open
+      # is the ordinary backstop and must stay silent, or every finished worker
+      # double-wakes the dispatcher.
       batch=$(jq -c -s --arg crew "$crew" --arg me "$me" --argjson since "$since" --argjson states "$statesjson" '
-          map(select(.crew_id==$crew and .ts>$since
-                and ( (.kind=="status" and (.body.state as $s | $states | index($s)))
-                      or (.kind=="msg" and (.to==$me or .to=="*")) )))
+          def prev_state($all; $e):
+            ([ $all[]
+               | select(.crew_id==$e.crew_id and .kind=="status" and .from==$e.from and .ts < $e.ts)
+               | select(.body.state != "exited")
+               | {ts: .ts, state: .body.state} ]
+             | sort_by(.ts) | last | .state);
+          . as $all
+          | map(. as $e
+                | select($e.crew_id==$crew and $e.ts>$since)
+                | select(
+                    ( $e.kind=="status"
+                      and ($e.body.state as $s | $states | index($s))
+                      and ( if $e.body.state == "exited"
+                            then (prev_state($all; $e) as $p | ($p == "working" or $p == "blocked"))
+                            else true end ) )
+                    or ( $e.kind=="msg" and ($e.to==$me or $e.to=="*") ) ))
           | sort_by(.ts)
           | select(length>0)
           | {cursor:(.[-1].ts), events:.}' "$log" 2>/dev/null || true)
@@ -1597,7 +1617,7 @@ stream)
   # call that simply couldn't find its crew reads as the `dead` state it
   # never measured.
   screw=""
-  states="blocked,pr_open,done,failed"
+  states="blocked,pr_open,done,failed,exited"
   park=300
   heartbeat=3300
   coalesce=5

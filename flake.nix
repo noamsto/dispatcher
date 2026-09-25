@@ -117,8 +117,8 @@
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only

@@ -40,6 +40,9 @@ EOF
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \
     >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
+  # The cross-repo lane hint is a sourced shared lib; raw runs point the
+  # override at the repo copy (flake.nix bakes the store path for builds).
+  export CROSS_REPO_HINT_LIB="$BATS_TEST_DIRNAME/../adapters/core/cross-repo-hint.sh"
 }
 
 teardown() {
@@ -1433,14 +1436,16 @@ _store_dispatch() {
   BAKED_SKILLS="$STORE/h-new-skills"
   BAKED_REVIEWERS="$STORE/h-new-reviewers"
   BAKED_CRITICS="$STORE/h-new-critics"
+  BAKED_HINT="$STORE/h-new-cross-repo-hint.sh"
   mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  cp "$CROSS_REPO_HINT_LIB" "$BAKED_HINT"
   printf 'new\n' >"$BAKED_REVIEWERS/r.md"
   printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: baked\n---\n' >"$BAKED_SKILLS/spec-plan-critic/SKILL.md"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@crossRepoHintLib@|$BAKED_HINT|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR CROSS_REPO_HINT_LIB
   run_store_dispatch() { bash -euo pipefail "$BATS_TEST_TMPDIR/dispatch-store.sh" "$@"; }
 }
 
