@@ -753,6 +753,7 @@ _pidfile_log_path() {
 }
 
 @test "register: a live ancestor pid is not replaced by a different pid" {
+  # Relies on `run` forking a subshell, so the crew.sh caller's PPID is not bats's $$.
   CREW_ID=c-mine run_crew register "$$"
   CREW_ID=c-mine run run_crew register 4242
   [ "$status" -ne 0 ]
@@ -771,9 +772,9 @@ _pidfile_log_path() {
 }
 
 # The nested launcher runs the REAL dispatcher.sh under a live "outer" dispatcher
-# that owns c-live. Its `crew register $$` must abort it (errexit) before an
-# agent launches, and dispatcher.sh's exit-time deregister then finds the pid
-# is not its parent or owner, so the outer crew survives.
+# that owns c-live. Its `crew register $$` aborts it (errexit) before an agent
+# launches and before it ever reaches its exit-time deregister, so the outer
+# crew is untouched.
 @test "dispatcher: a nested launcher inheriting a live CREW_ID aborts and keeps the crew" {
   _stub_launcher_agents
   printf '#!/usr/bin/env bash\nexec bash -euo pipefail "$CREW" "$@"\n' >"$STUB_DIR/crew"
@@ -790,6 +791,24 @@ _pidfile_log_path() {
   [[ "$output" == *"still has a live dispatcher"* ]]
   if grep -q -- --append-system-prompt-file "$STUB_LOG"; then return 1; fi
   [ "$(cat "$(_crew_dir c-live)/pid")" = "$(cat "$BATS_TEST_TMPDIR/outer.pid")" ]
+}
+
+# The counterpart to the nested test: a launcher that mints its own crew must
+# have its exit-time `crew deregister` (PPID == the recorded launcher $$) remove
+# it. Only the launcher's `crew id:` line is trusted for the id.
+@test "dispatcher: a normal launcher exit deregisters the crew it minted" {
+  _stub_launcher_agents
+  printf '#!/usr/bin/env bash\nexec bash -euo pipefail "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  chmod +x "$STUB_DIR/crew"
+  export CREW LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
+  run bash -euo pipefail "$LAUNCHER"
+  [ "$status" -eq 0 ]
+  id="$(sed -n 's/^crew id: //p' <<<"$output")"
+  [ -n "$id" ]
+  [ ! -e "$(_crew_dir "$id")" ]
+  run cat "$(_pidfile_log_path)"
+  [[ "$output" == *"register ok crew=$id"* ]]
+  [[ "$output" == *"deregister removed crew=$id"* ]]
 }
 
 @test "reap and other crews' register/deregister/adopt leave a live pid alone" {
@@ -822,6 +841,7 @@ _pidfile_log_path() {
 }
 
 @test "deregister: a live ancestor that is not the caller's parent or owner is refused" {
+  # Relies on `run` forking a subshell, so the crew.sh caller's PPID is not bats's $$.
   CREW_ID=c-mine run_crew register "$$"
   CREW_ID=c-mine run run_crew deregister
   [ "$status" -eq 0 ]
