@@ -5022,6 +5022,45 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _allowed
 }
 
+@test "pr_open: a pi accept then a reviewer object with neither seam nor verdict is refused" {
+  # #392: a verdict-less reviewer reply on the pi path fails closed, so an
+  # earlier accept must not survive it; the next exact accept clears it.
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"decision":"reject"}'
+  _gate
+  _refused "no review seam"
+  _verdict accept
+  _deslop_seam
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi reviewer object with neither seam nor verdict alone is refused" {
+  _task_doc standard implement pi
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"decision":"accept"}'
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a pi accept survives a reviewer role_exited event with no seam or verdict" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"role":"reviewer","event":"role_exited","pane":"%3","detail":"engine exited before a verdict"}'
+  _deslop_seam
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi accept survives a reviewer tag-only note with no seam" {
+  _task_doc standard implement pi
+  _verdict accept
+  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"tag":"other","detail":"x"}'
+  _deslop_seam
+  _gate
+  _allowed
+}
+
 @test "pr_open: a pi accept then a wrong-case Reject verdict is refused" {
   _task_doc standard implement pi
   _verdict accept
@@ -5653,6 +5692,31 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
   _refused "no acceptance list"
   run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "pr_open: an inline-bold ### **Acceptance criteria** heading is detected" {
+  # #395: a heading that wraps the word in bold on the same line is an
+  # acceptance list, so a free-text detail keeps the ledger grammar and an
+  # empty detail is refused.
+  _task_doc trivial
+  printf '\n### **Acceptance criteria**\n- AC1\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+  _refused "every acceptance ledger item"
+  [[ "$stderr" != *'no acceptance list'* ]]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  _refused "acceptance list"
+}
+
+@test "pr_open: a heading whose bold word only resembles Acceptance is not a list" {
+  # The widened heading match still requires the word itself directly after the
+  # optional bold marker, so a heading that opens with a marker but a different
+  # word is not read as an acceptance list.
+  _task_doc trivial
+  printf '\n### **Accepted**\n- one\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
   [ "$(_status_rows)" -eq 1 ]
