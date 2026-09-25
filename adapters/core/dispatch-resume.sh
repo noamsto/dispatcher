@@ -88,6 +88,63 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
+# _add_dir_ok and launch_dir_args: duplicated from dispatch.sh (standalone
+# build), parity-tested like the two above. See dispatch.sh for the grant
+# rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
+# the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
+_add_dir_ok() {
+  local p h c s r
+  [[ $1 == /* && $1 != *$'\n'* ]] || return 1
+  [ -d "$1" ] || return 1
+  p="$(realpath -e -- "$1")" || return 1
+  h="$(realpath -e -- "$HOME")" || return 1
+  [ "$p" != / ] || return 1
+  [[ "$h/" != "$p/"* ]] || return 1
+  if [ -n "${crew_dir:-}" ]; then
+    c="$(realpath -m -- "$crew_dir")"
+    [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
+  fi
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+    for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done
+  done
+  printf '%s\n' "$p"
+}
+
+launch_dir_args() {
+  [ "$1" = claude ] || return 0
+  local a d line dirs=()
+  local -A seen=()
+  for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
+    if [[ $d == /* ]] && [ -d "$d" ]; then
+      dirs+=("$d")
+    fi
+  done
+  a="$crew_dir/artifacts/$2"
+  if [ -L "$a" ]; then
+    echo "dispatch: $a is a symlink — not granting it to $2" >&2
+  else
+    mkdir -p -- "$a"
+    dirs+=("$a")
+  fi
+  if [ -f "$crew_dir/grants/$2" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      if d="$(_add_dir_ok "$line")"; then
+        dirs+=("$d")
+      else
+        echo "dispatch: dropping invalid grant '$line' for $2" >&2
+      fi
+    done <"$crew_dir/grants/$2"
+  fi
+  for d in "${dirs[@]}"; do
+    [ -z "${seen[$d]:-}" ] || continue
+    seen[$d]=1
+    printf ' --add-dir %q' "$d"
+  done
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -862,7 +919,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)

@@ -113,6 +113,22 @@ launch_log() {
   done <"$STUB_LOG"
 }
 
+# assert_add_dir_terminated <launch line> — the line carries --add-dir, and the
+# token after the last one's value is an option. claude's --add-dir is
+# variadic: anything else there (the positional prompt) would be swallowed as
+# one more directory.
+assert_add_dir_terminated() {
+  local words i last=-1
+  read -r -a words <<<"$1"
+  for i in "${!words[@]}"; do
+    if [ "${words[$i]}" = --add-dir ]; then
+      last=$i
+    fi
+  done
+  [ "$last" -ge 0 ]
+  [[ ${words[$((last + 2))]:-} == --* ]]
+}
+
 # stub_bin <name> — put a logging stub for <name> first on PATH.
 # The stub appends its argv (NUL-free, one invocation per line) to
 # $STUB_LOG and exits 0.

@@ -3935,6 +3935,85 @@ EOF
   done
 }
 
+# ---------------------------------------------------------------------------
+# stall-watch: role mode
+# ---------------------------------------------------------------------------
+
+@test "stall-watch: role mode posts blocked/prompt: under the role id, never a worker row" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.from)|\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "role:feat/x:reviewer|blocked|watchdog|prompt: interactive prompt in pane %9 —"* ]]
+  run bash -c "bus | grep -c '\"from\":\"worker:feat/x\"' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: role mode posts nothing for a static pane past --idle and --window" {
+  p=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" GONE
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 1 --stall 1 --idle 1 --dead 999 --max-life 20
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: role mode clears prompt: to working under the role id" {
+  p=$(fx_prompt_trust)
+  q=$(fx_idle_box)
+  stall_sampler "$p" "$p" "$q" GONE
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 20
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.from)|\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == role:feat/x:reviewer\|blocked\|prompt:* ]]
+  [ "${lines[1]}" = "role:feat/x:reviewer|working|prompt: cleared" ]
+}
+
+@test "stall-watch: a role failed status on the bus exits the watch immediately" {
+  seed_raw role:feat/x:reviewer failed "gate red" ""
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'watchdog' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: role mode exits once the engine pane returns to a bare shell" {
+  # The pane stays sampleable forever and --max-life is far off, so only the
+  # bare-shell check can end the watch within a tick of the shell appearing.
+  # The shell is keyed to the sample count, not wall time: the count left in
+  # $SAMPLER_DIR/n says exactly which tick the watch stopped on.
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD="[ \"\$(cat '$SAMPLER_DIR/n')\" -ge 3 ] && printf fish || printf claude"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 30
+  [ "$status" -eq 0 ]
+  n="$(cat "$SAMPLER_DIR/n")"
+  [ "$n" -ge 3 ]
+  [ "$n" -le 4 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: role mode never calls tmux set-option for @crew_state" {
+  stub_bin tmux
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run ! grep -q '@crew_state' "$STUB_LOG"
+}
+
 @test "roster: carries source and truncates detail to 120 chars" {
   long=$(printf 'quiet: %0.sx' $(seq 1 200))
   seed_raw worker:feat/x blocked "$long" watchdog

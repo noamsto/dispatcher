@@ -3557,7 +3557,7 @@ hold)
   esac
   ;;
 stall-watch)
-  # stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S]
+  # stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
   #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S]
   #
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
@@ -3595,10 +3595,14 @@ stall-watch)
   # (see _pane_engine_alive), so the loop is testable without tmux.
   # D0/D3 stay silent (claude only) while a finished turn waits on a background
   # shell, for at most --bg-wait (default 2h) of unchanged frame.
+  # role:<branch>:<role> selects prompt-only mode: a parked role pane
+  # legitimately sits static, so only D1/D1b run; D0/D2-D6 and the dead:
+  # escalation are off, and a role-mode-only check exits the watch once the
+  # pane's engine returns to a bare shell.
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S]" >&2
+    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -3614,16 +3618,31 @@ stall-watch)
   # this one, and a killed engine posts no terminal state to stop it. Left
   # running it samples the successor's pane and posts under the dead session
   # id, which then reads as the branch's newest session and captures `reply`.
-  id="worker:${arg#worker:}"
-  if _is_session_id "$id"; then
-    from_id="$id"
-    branch="${id%#*}"
-    branch="${branch#worker:}"
-  else
-    branch="${id#worker:}"
-    from_id="worker:$branch"
-  fi
-  me="worker:$branch"
+  # role: selects prompt-only mode: a role pane's own stall-watch, keyed
+  # to that role's own bus id rather than the worker's, so its posts never
+  # touch the worker row or the lead's watchdog episode state.
+  case "$arg" in
+  role:*)
+    role_mode=1
+    from_id="$arg"
+    me="$arg"
+    branch="${arg#role:}"
+    branch="${branch%:*}"
+    ;;
+  *)
+    role_mode=0
+    id="worker:${arg#worker:}"
+    if _is_session_id "$id"; then
+      from_id="$id"
+      branch="${id%#*}"
+      branch="${branch#worker:}"
+    else
+      branch="${id#worker:}"
+      from_id="worker:$branch"
+    fi
+    me="worker:$branch"
+    ;;
+  esac
   crew=$(_crew_id)
   [ -n "$crew" ] || {
     echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
@@ -3881,10 +3900,13 @@ BUSLINE
     _bus_append "$log" "$line"
     # Only a blocked state carries the watchdog marker, so a `_post_clear`
     # recovery (`working … cleared`) cannot render `working (watchdog)`.
-    if [ "$1" = blocked ]; then
-      _publish_pane_state "$pane" "$1" "$2" watchdog
-    else
-      _publish_pane_state "$pane" "$1" "$2"
+    # Role mode skips this: --role-watch owns @crew_state for a role pane.
+    if [ "$role_mode" = 0 ]; then
+      if [ "$1" = blocked ]; then
+        _publish_pane_state "$pane" "$1" "$2" watchdog
+      else
+        _publish_pane_state "$pane" "$1" "$2"
+      fi
     fi
   }
 
@@ -4108,7 +4130,7 @@ BUSLINE
     # blocked episode; it clears when load drops back to/under the cores. Never
     # escalates (arms d4_at, never d2_at/d3_at). A malformed read stays silent
     # that tick rather than failing the whole watchdog.
-    if [ "$suppressed" = 0 ]; then
+    if [ "$suppressed" = 0 ] && [ "$role_mode" = 0 ]; then
       loadline=$(_load_read)
       if [[ "$loadline" =~ ^[0-9]+([.][0-9]+)?[[:space:]]+[0-9]+$ ]]; then
         read -r l1 cores <<<"$loadline"
@@ -4142,7 +4164,7 @@ BUSLINE
     # the binary is missing or the script failed. --launch must outlast a slow
     # direnv/devshell load. Once an engine has been seen this never fires again:
     # an engine that exits later is quiet:/dead: territory.
-    if [ "$engine_seen" = 0 ] && [ "$suppressed" = 0 ]; then
+    if [ "$engine_seen" = 0 ] && [ "$suppressed" = 0 ] && [ "$role_mode" = 0 ]; then
       pcmd=$(_pane_cmd)
       if [ -n "$pcmd" ] && _is_engine_cmd "$pcmd"; then
         engine_seen=1
@@ -4158,6 +4180,21 @@ BUSLINE
           fi
           ;;
         esac
+      fi
+    fi
+
+    # ---- Role-mode end-of-life ----------------------------------------------
+    # A role pane has no worker row to post a terminal status, so the watch
+    # detects the engine's own return to a bare shell (a final release, or a
+    # crash) and exits directly. Gated on having actually seen the engine once,
+    # so a role pane that is still booting is never mistaken for one that
+    # already exited.
+    if [ "$role_mode" = 1 ]; then
+      pcmd=$(_pane_cmd)
+      if [ -n "$pcmd" ] && _is_engine_cmd "$pcmd"; then
+        engine_seen=1
+      elif [ "$engine_seen" = 1 ] && _is_shell_cmd "$pcmd"; then
+        exit 0
       fi
     fi
 
@@ -4211,7 +4248,7 @@ BUSLINE
     # ---- D2: dead turn ----------------------------------------------------
     # Strings, never numbers: rounding to 0.1k and multi-unit durations make
     # arithmetic fragile and every parse failure a new branch.
-    if [ "$suppressed" = 0 ] && [ "$sig_meter" = 1 ]; then
+    if [ "$suppressed" = 0 ] && [ "$sig_meter" = 1 ] && [ "$role_mode" = 0 ]; then
       m=$(_meter_line "$text")
       if [ -z "$m" ] || _has_subrow "$text"; then
         # A live subagent row is an UNCONDITIONAL veto: a healthy deep worker in
@@ -4287,7 +4324,7 @@ BUSLINE
     # every second, so a working worker can never satisfy D3 even if every
     # claude signature rots to garbage. This is the failsafe for signature rot
     # and the only steady-state coverage codex and cursor get.
-    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d3_at" = 0 ] && [ "$quiet_for" -ge "$idle" ]; then
+    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d3_at" = 0 ] && [ "$quiet_for" -ge "$idle" ] && [ "$role_mode" = 0 ]; then
       if [ "$bus_source" = watchdog ] || [ "$bus_ts" -lt $((last_change * 1000)) ]; then
         if _post_blocked "quiet:" "quiet: pane unchanged for ${quiet_for}s"; then
           d3_at="$now"
@@ -4305,7 +4342,7 @@ BUSLINE
     # The detail carries no diagnosis: the old `(suspected startup/indexing
     # hang)` was wrong on 3/3 measured workers, and an invented cause reads to
     # the dispatcher as corroboration.
-    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d0_at" = 0 ] &&
+    if [ "$suppressed" = 0 ] && [ "$bgwait" = 0 ] && [ "$d0_at" = 0 ] && [ "$role_mode" = 0 ] &&
       [ $((now - start)) -lt "$window" ] && [ "$quiet_for" -ge "$stall" ]; then
       case "$bus_state" in
       "" | working)
@@ -4327,7 +4364,7 @@ BUSLINE
     # only every 4th tick, so the cost stays flat as the log grows. A msg the
     # lead answered (a later msg from it to that role) is handled, not unread.
     # Never escalates: a lead slow to read is not dead.
-    if [ "$suppressed" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
+    if [ "$suppressed" = 0 ] && [ "$role_mode" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
       case "$bus_state" in
       "" | working)
         [ "$bus_source" = watchdog ] || d6_at=0
@@ -4369,7 +4406,7 @@ BUSLINE
     # INV-W3 allows two live per branch, coordinating only via the bus) still
     # points at an episode that is no longer the open one, and escalating it
     # would launder a `prompt:`/`quota:` into a `failed`.
-    if [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
+    if [ "$role_mode" = 0 ] && [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
       prompt:* | quota:*) ;;
@@ -4379,7 +4416,7 @@ BUSLINE
         ;;
       esac
     fi
-    if [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
+    if [ "$role_mode" = 0 ] && [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
       prompt:* | quota:*) ;;
@@ -4853,7 +4890,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

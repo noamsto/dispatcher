@@ -12,6 +12,17 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), `worker_id:` (your bus identity), and `protocol_dir:` (the absolute directory holding this file and its siblings `EVIDENCE_REVIEW.md`, `GRID_PROTOCOL.md`, `REVIEW_TASK.md` — read those from there, never by searching the filesystem). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup.
 
+Any `add_dir:` header lines list the extra dirs the dispatcher granted you. On claude
+they are passed to your launch as `--add-dir`, and your `protocol_dir:`, the skills,
+reviewers and critics dirs, and your own `<crew_dir>/artifacts/<branch>` are always
+granted too, so reading any of them is fine. Never add or edit those lines, and never
+grant yourself access to anything. On claude, reaching any other path outside your
+worktree hits a permission prompt, which you handle per the **permission prompt**
+rule in "Report to the bus". If the task names such a path up front, say so in a
+blocked question before touching it (block→await): the dispatcher can only grant a
+dir on a fresh dispatch. Other engines don't take `--add-dir`; there the lines are
+informational only.
+
 Announce yourself:
 `crew status "$CREW_WORKER_ID" working`
 Use `$CREW_WORKER_ID` as your agent id for every bus call below — it is exported into your environment by `dispatch` and identifies **this session**, not just this branch. Never rebuild it from the branch name: several sessions can have run on this branch, and a branch-keyed id let one session drain a directive that was written for another.

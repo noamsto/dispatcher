@@ -3983,7 +3983,8 @@ EOF
   grep -q 'switch -c feat/42-title' "$STUB_LOG"
   grep -q 'issue view 42 ' "$STUB_LOG"
   grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
-  run ! grep -q '042' "$STUB_LOG"
+  # Whole-token only: the log also carries a random base sha and session pid.
+  run ! grep -qw '042' "$STUB_LOG"
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-title"
   grep -qx 'Closes #42' "$wt_path/WORKER_TASK.md"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
@@ -5351,6 +5352,202 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"spawned role reviewer"* ]]
   grep -q '^split-window' "$STUB_LOG"
+}
+
+# ── Extra working dirs for claude (--add-dir) ─────────────────
+
+@test "add-dir: a claude lead launch grants the protocol dir and its artifacts dir, terminated by an option" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "grant dirs"
+  [ "$status" -eq 0 ]
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-grant-dirs"
+  [ -d "$art" ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$line" == *"--add-dir $art "* ]]
+  assert_add_dir_terminated "$line"
+}
+
+@test "add-dir: an eager claude role launch grants the mandated dirs, terminated by an option" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=claude:sonnet" --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/42-do-a-thing "* ]]
+  assert_add_dir_terminated "$line"
+}
+
+@test "add-dir: a --spawn-role claude launch grants the mandated dirs, terminated by an option" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/9-x "* ]]
+  assert_add_dir_terminated "$line"
+}
+
+@test "add-dir: --spawn-role never grants a dir from the task doc's add_dir: header" {
+  _spawn_role_fixture
+  evil="$(realpath "$BATS_TEST_TMPDIR")/evil"
+  mkdir -p "$evil"
+  printf 'add_dir: %s\n' "$evil" >>WORKER_TASK.md
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/9-x "* ]]
+  [[ "$line" != *"$evil"* ]]
+}
+
+@test "add-dir: an eager claude role gets a prompt-only stall-watch, a codex role none" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "plan-critic=codex:gpt-5.6-terra,reviewer=claude:sonnet" --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/42-do-a-thing:reviewer --pane %6 --engine claude'
+  # The lead's own watch is spawned after the role loop, so once it is logged
+  # the codex role's would have been too.
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
+  run ! grep -q 'stall-watch role:feat/42-do-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "add-dir: a --spawn-role claude role gets a prompt-only stall-watch" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/9-x:reviewer --pane %6 --engine claude'
+}
+
+@test "add-dir: --add-dir records the canonical dir, mirrors it in the header and grants it" {
+  stub_launch_bins
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  mkdir -p "$real"
+  ln -s "$real" "$BATS_TEST_TMPDIR/link"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$BATS_TEST_TMPDIR/link" --crew-id c1 42 "extra dir"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/grants/feat/42-extra-dir"
+  [ "$(cat "$rec")" = "$real" ]
+  [ "$(stat -c %a "$rec")" = 600 ]
+  [ "$(stat -c %a "$TEST_REPO/.git/crew/grants")" = 700 ]
+  [ "$(stat -c %a "$(dirname "$rec")")" = 700 ]
+  grep -qxF "add_dir: $real" "$TEST_REPO/.dispatch-wt/feat-42-extra-dir/WORKER_TASK.md"
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $real "* ]]
+  assert_add_dir_terminated "$line"
+}
+
+@test "add-dir: a re-dispatch without --add-dir keeps the recorded grants" {
+  setup_resume_branch feat/42-do-a-thing
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  mkdir -p "$real"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --add-dir "$real" 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing")" = "$real" ]
+  grep -qxF "add_dir: $real" "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  grep -qF -- "--add-dir $real " <(launch_log)
+}
+
+@test "add-dir: --add-dir on a re-dispatch replaces the recorded set" {
+  setup_resume_branch feat/42-do-a-thing
+  old="$(realpath "$BATS_TEST_TMPDIR")/old"
+  new="$(realpath "$BATS_TEST_TMPDIR")/new"
+  mkdir -p "$old" "$new"
+  mkdir -p "$TEST_REPO/.git/crew/grants/feat"
+  printf '%s\n' "$old" >"$TEST_REPO/.git/crew/grants/feat/42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --add-dir "$new" 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing")" = "$new" ]
+  [ "$(grep '^add_dir: ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md")" = "add_dir: $new" ]
+  line="$(grep -F 'claude --name ' <(launch_log))"
+  [[ "$line" == *"--add-dir $new "* ]]
+  [[ "$line" != *"$old"* ]]
+}
+
+@test "add-dir: a fresh dispatch without --add-dir truncates a stale record of the same branch name" {
+  stub_launch_bins
+  stale="$(realpath "$BATS_TEST_TMPDIR")/stale"
+  mkdir -p "$stale" "$TEST_REPO/.git/crew/grants/feat"
+  printf '%s\n' "$stale" >"$TEST_REPO/.git/crew/grants/feat/42-fresh-branch"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "fresh branch"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/grants/feat/42-fresh-branch"
+  [ -f "$rec" ]
+  [ ! -s "$rec" ]
+  run ! grep -q '^add_dir: ' "$TEST_REPO/.dispatch-wt/feat-42-fresh-branch/WORKER_TASK.md"
+  run ! grep -qF -- "$stale" <(launch_log)
+}
+
+@test "add-dir: a symlink planted at the grant record path is refused and its target left untouched" {
+  stub_launch_bins
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$real" "$TEST_REPO/.git/crew/grants/feat"
+  printf 'keep me\n' >"$victim"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat/42-extra-dir"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/grants/feat/42-extra-dir is a symlink or not a regular file"* ]]
+  [ "$(cat "$victim")" = "keep me" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat/42-extra-dir" ]
+}
+
+@test "add-dir: a symlink planted at a grant record's parent dir is refused and its target left empty" {
+  stub_launch_bins
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$real" "$victim" "$TEST_REPO/.git/crew/grants"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/grants/feat is a symlink or not a directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat" ]
+}
+
+@test "add-dir: a resume refuses a symlinked grant record without reading or clobbering its target" {
+  setup_resume_branch feat/42-do-a-thing
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$TEST_REPO/.git/crew/grants/feat"
+  printf '%s\n' "$(realpath "$BATS_TEST_TMPDIR")" >"$victim"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a symlink or not a regular file"* ]]
+  [ "$(cat "$victim")" = "$(realpath "$BATS_TEST_TMPDIR")" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing" ]
+}
+
+@test "add-dir: --add-dir needs a directory" {
+  run run_dispatch standard sonnet --effort medium --add-dir
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir needs a directory"* ]]
+}
+
+@test "add-dir: refuses unsafe values before creating any worktree" {
+  stub_launch_bins
+  # A HOME apart from the repo, so the repo root is refused only as the crew
+  # dir's ancestor.
+  HOME="$(realpath "$BATS_TEST_TMPDIR")/home"
+  # ~/.ssh is a symlink out of $HOME, as on an impermanence setup: its target
+  # and the target's parent are secrets dirs too.
+  persist="$(realpath "$BATS_TEST_TMPDIR")/persist"
+  mkdir -p "$persist/ssh" "$HOME/.config/gh" "$HOME/.claude" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$persist/ssh" "$HOME/.ssh"
+  for v in rel/dir "$BATS_TEST_TMPDIR/missing" / "$HOME" "$(dirname "$HOME")" \
+    "$HOME/.ssh" "$HOME/.config" "$HOME/.config/gh" "$HOME/.claude" \
+    "$persist/ssh" "$persist" "$TEST_REPO/.git/crew/artifacts" "$TEST_REPO"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "unsafe dir"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
 }
 
 # _exit_hook_fixture — run an eager reviewer role launch, then take the line

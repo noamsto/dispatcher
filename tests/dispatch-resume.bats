@@ -441,7 +441,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script; do
+  for fn in shell_quote write_launch_script _add_dir_ok launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -699,6 +699,59 @@ EOF
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+}
+
+# _grant_record <line...> — write the branch's grant record, the only source a
+# resumed claude launch reads its extra dirs from.
+_grant_record() {
+  mkdir -p "$TEST_REPO/.git/crew/grants/feat"
+  printf '%s\n' "$@" >"$TEST_REPO/.git/crew/grants/feat/7-a-thing"
+}
+
+@test "claude resume grants the mandated dirs and the recorded ones, terminated by an option" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
+  mkdir -p "$extra"
+  _grant_record "$extra"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/7-a-thing "* ]]
+  [[ "$line" == *"--add-dir $extra "* ]]
+  [ -d "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing" ]
+  assert_add_dir_terminated "$line"
+}
+
+@test "claude resume never reads a grant from the task doc's add_dir: header" {
+  evil="$(realpath "$BATS_TEST_TMPDIR")/evil"
+  mkdir -p "$evil"
+  setup_worker_wt "add_dir: $evil"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/7-a-thing "* ]]
+  [[ "$line" != *"$evil"* ]]
+}
+
+@test "claude resume drops an invalid recorded grant with a warning and still launches" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
+  mkdir -p "$extra"
+  _grant_record / "$extra"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '/' for feat/7-a-thing"* ]]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *"--add-dir / "* ]]
+  [[ "$line" == *"--add-dir $extra "* ]]
 }
 
 @test "restamps protocol_dir into an older task doc and names it in the claude prompt" {
