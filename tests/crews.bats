@@ -9,6 +9,7 @@ setup() {
 }
 
 teardown() {
+  [ -z "${live_pid:-}" ] || kill "$live_pid" 2>/dev/null || true
   teardown_repo
 }
 
@@ -707,4 +708,155 @@ _under_engine() {
   _under_engine "bash -euo pipefail '$CREW' register"
   cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-rg"
   [ "$(cat "$cdir/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
+}
+
+# ---- a live dispatcher's pid file survives foreign callers (#432) ---------
+
+# _crew_dir <id> -> the crew's dir. The bats process is an ancestor of every
+# run_crew, so a `sleep` child (live_pid) is the stand-in for a live dispatcher
+# that is NOT the caller's ancestor.
+_crew_dir() {
+  echo "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$1"
+}
+
+_pidfile_log_path() {
+  echo "$(git rev-parse --path-format=absolute --git-common-dir)/crew/pidfile.log"
+}
+
+@test "deregister: a live non-ancestor pid keeps its crew dir and pid, exit 0" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  CREW_ID=c-live run --separate-stderr run_crew deregister
+  [ "$status" -eq 0 ]
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+  [[ "$stderr" == *"still has a live dispatcher"* ]]
+}
+
+@test "register: a different pid over a live one is refused and writes nothing" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  CREW_ID=c-live run --separate-stderr run_crew register
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"c-live"* ]]
+  [[ "$stderr" == *"$live_pid"* ]]
+  [[ "$stderr" == *"crew new"* ]]
+  CREW_ID=c-live run run_crew register 4242
+  [ "$status" -ne 0 ]
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+}
+
+@test "register: the same live pid again is idempotent" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  CREW_ID=c-live run_crew register "$live_pid"
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+}
+
+@test "register: a live ancestor pid is not replaced by a different pid" {
+  CREW_ID=c-mine run_crew register "$$"
+  CREW_ID=c-mine run run_crew register 4242
+  [ "$status" -ne 0 ]
+  [ "$(cat "$(_crew_dir c-mine)/pid")" = "$$" ]
+}
+
+@test "worker worktree: WORKER_TASK.md crew_id cannot deregister or re-register a live crew" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  printf 'crew_id: c-live\n' >WORKER_TASK.md
+  CREW_ID= run run_crew deregister
+  [ "$status" -eq 0 ]
+  CREW_ID= run run_crew register
+  [ "$status" -ne 0 ]
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+}
+
+# The nested launcher runs the REAL dispatcher.sh under a live "outer" dispatcher
+# that owns c-live. Its `crew register $$` must abort it (errexit) before an
+# agent launches, and dispatcher.sh's exit-time deregister then finds the pid
+# is not its parent or owner, so the outer crew survives.
+@test "dispatcher: a nested launcher inheriting a live CREW_ID aborts and keeps the crew" {
+  _stub_launcher_agents
+  printf '#!/usr/bin/env bash\nexec bash -euo pipefail "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  chmod +x "$STUB_DIR/crew"
+  export CREW LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
+  run bash -c '
+    echo $$ >"$BATS_TEST_TMPDIR/outer.pid"
+    export CREW_ID=c-live
+    crew register $$
+    bash -euo pipefail "$LAUNCHER"
+    echo $? >"$BATS_TEST_TMPDIR/rc"
+    true'
+  [ "$(cat "$BATS_TEST_TMPDIR/rc")" -ne 0 ]
+  [[ "$output" == *"still has a live dispatcher"* ]]
+  if grep -q -- --append-system-prompt-file "$STUB_LOG"; then return 1; fi
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$(cat "$BATS_TEST_TMPDIR/outer.pid")" ]
+}
+
+@test "reap and other crews' register/deregister/adopt leave a live pid alone" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  stub_bin gh
+  _seed_crew_event c-live
+  run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  run run_crew reap --idle 0
+  [ "$status" -eq 0 ]
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-other run_crew register "$dead_pid"
+  run run_crew adopt c-other "$$"
+  [ "$status" -eq 0 ]
+  CREW_ID=c-other run_crew deregister
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+}
+
+@test "deregister: removes the crew when the recorded pid is the caller's parent or dead" {
+  CREW_ID=c-ppid run bash -c "bash '$CREW' register \$\$; bash '$CREW' deregister; true"
+  [ "$status" -eq 0 ]
+  [ ! -e "$(_crew_dir c-ppid)" ]
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  CREW_ID=c-dead run_crew deregister
+  [ ! -e "$(_crew_dir c-dead)" ]
+}
+
+@test "deregister: a live ancestor that is not the caller's parent or owner is refused" {
+  CREW_ID=c-mine run_crew register "$$"
+  CREW_ID=c-mine run run_crew deregister
+  [ "$status" -eq 0 ]
+  [ "$(cat "$(_crew_dir c-mine)/pid")" = "$$" ]
+}
+
+@test "register/deregister: an invalid crew id exits 1 and touches nothing" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  CREW_ID=.. run run_crew deregister
+  [ "$status" -eq 1 ]
+  CREW_ID=a/../x run run_crew register
+  [ "$status" -eq 1 ]
+  [ -d "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews" ]
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
+}
+
+@test "pidfile.log: removal, refusal and adopt name the action, crew and caller" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-live run_crew register "$live_pid"
+  CREW_ID=c-live run run_crew register 4242
+  [ "$status" -ne 0 ]
+  CREW_ID=c-live run_crew deregister
+  run_crew adopt c-live --force "$$" >/dev/null
+  CREW_ID=c-live run_crew deregister
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-gone run_crew register "$dead_pid"
+  CREW_ID=c-gone run_crew deregister
+  run cat "$(_pidfile_log_path)"
+  [[ "$output" == *"register ok crew=c-live"* ]]
+  [[ "$output" == *"register refused crew=c-live old=$live_pid new=4242"* ]]
+  [[ "$output" == *"deregister refused crew=c-live"* ]]
+  [[ "$output" == *"adopt forced crew=c-live old=$live_pid new=$$"* ]]
+  [[ "$output" == *"deregister removed crew=c-gone old=$dead_pid"* ]]
+  [[ "$output" == *"cwd=$PWD"* ]]
+  [[ "$output" == *"by="* ]]
 }

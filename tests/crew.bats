@@ -454,7 +454,9 @@ EOF
 
 @test "deregister removes the pane file with the crew dir" {
   cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c1"
-  CREW_ID=c1 TMUX_PANE='%12' run_crew register 4242
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c1 TMUX_PANE='%12' run_crew register "$dead_pid"
   CREW_ID=c1 run_crew deregister
   [ ! -e "$cdir" ]
 }
