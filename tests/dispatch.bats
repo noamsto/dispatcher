@@ -3408,6 +3408,102 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" =~ worker_id:\ worker:feat/42-do-a-thing#s[0-9]+-[0-9]+ ]]
 }
 
+# _cross_repo_fixture <dispatcher-pane-path> — a launched dispatch whose
+# dispatcher pane reports <dispatcher-pane-path> as its cwd. Creates a second
+# git repo for the cross-repo case and a tmux stub that answers
+# #{pane_current_path}; setup() unsets TMUX_PANE, so it is exported here.
+_cross_repo_fixture() {
+  stub_launch_bins
+  pane_path="${1:-$TEST_REPO}"
+  git init -q -b main "$BATS_TEST_TMPDIR/other-repo"
+  export TMUX_PANE=%9
+  export STUB_PANE_PATH="$pane_path"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*'#{pane_current_path}'*) printf '%s\n' "$STUB_PANE_PATH" ;;
+esac
+if [ "$1" = new-window ]; then
+  printf '%s %s\n' '%1' '%1'
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  # dispatch delegates the "is the worker's bus being streamed" question to
+  # `crew stream --status`, so route it to the real crew.sh (like
+  # pi-agent-dir) instead of the log-and-succeed stub — the tests then exercise
+  # the real liveness predicate rather than a re-implementation of it.
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+stream) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+# _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo
+# (TEST_REPO): a live pid plus a stream.tick, the exact state `crew stream
+# --status` reads from <repo>/crew/crews/c1/.
+_seed_worker_stream() {
+  local cdir="$TEST_REPO/.git/crew/crews/c1"
+  mkdir -p "$cdir/stream.lock.d"
+  printf '%s\n' "$$" >"$cdir/stream.lock.d/pid"
+  jq -nc --argjson pid "$$" --argjson ts "$1" '{pid:$pid, ts:$ts, park:300}' >"$cdir/stream.tick"
+}
+
+@test "cross-repo: dispatch prints the worker-repo stream command (#398)" {
+  _cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  worker_top="$(git -C "$TEST_REPO" rev-parse --show-toplevel)"
+  [[ "$output" == *"arm/adjust the lane: cd $worker_top && crew stream --crew c1"* ]]
+}
+
+@test "cross-repo: no hint when the dispatcher checkout is the worker repo (#398)" {
+  _cross_repo_fixture "$TEST_REPO"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
+@test "cross-repo: no hint when a live stream is already armed in the worker repo (#398)" {
+  _cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  _seed_worker_stream "$(jq -nc 'now*1000|floor')"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
+@test "cross-repo: a stale stream does not suppress the hint (#398)" {
+  _cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  # Older than 2*park+60 (park 300) — `crew stream --status` calls this stale,
+  # so the worker repo is NOT being watched and the hint must still print.
+  _seed_worker_stream "$(jq -nc '(now-700)*1000|floor')"
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  worker_top="$(git -C "$TEST_REPO" rev-parse --show-toplevel)"
+  [[ "$output" == *"arm/adjust the lane: cd $worker_top && crew stream --crew c1"* ]]
+}
+
+@test "cross-repo: no hint outside tmux (#398)" {
+  _cross_repo_fixture "$BATS_TEST_TMPDIR/other-repo"
+  unset TMUX_PANE
+  DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
 # stub_crew_gate <occupants-json> <sessions-json> — a crew stub that feeds the
 # gate fixed answers while still logging every call.
 stub_crew_gate() {

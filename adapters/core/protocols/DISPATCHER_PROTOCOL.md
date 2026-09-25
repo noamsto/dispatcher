@@ -424,6 +424,17 @@ wake, not only terminal ones — a held crew stops dispatching by construction, 
 the quiet path is the normal path for exactly the state a hold exists to serve.
 **The primitive for reading it depends on your engine.**
 
+**The bus is per repo.** `crew stream` and `crew watch` read
+`$(git rev-parse --git-common-dir)/crew` of the checkout they run in, so a lane
+armed in one repo never sees another repo's bus. A dispatcher working in repo A
+that dispatches a worker into repo B (`cd B && dispatch …`) writes that worker's
+`dispatch` and `status` rows to **B**'s bus; the lane armed in A never sees its
+`pr_open`/`done`. When `dispatch` reports a worker landing outside the
+dispatcher's own checkout, it prints the exact lane command for that worker's
+repo — `cd <worker repo> && crew stream --crew <id>` — so point a lane at that
+repo before waiting on the worker. A single checkout's stream can never cover a
+dispatch that left its repo.
+
 **claude — streaming monitor.** Arm once, with the crew id substituted literally (never
 `$CREW_ID` — an in-session `/dispatcher` never exports it, so an unsubstituted reference
 resolves to nothing and the lane dies on start):
