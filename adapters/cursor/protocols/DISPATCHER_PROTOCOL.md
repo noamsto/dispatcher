@@ -651,14 +651,15 @@ the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), no
 self-reported. Its `detail` always begins with one of eight reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
-  question a fresh worktree draws, or — claude only — a tool-permission dialog, detail
-  `prompt: permission — <tool>: <request> — pane <%id>`). Answer it **in the pane**; the
-  worker resumes and the watchdog clears the state itself. This never escalates: an
-  unanswered answerable question is waiting work, not a dead worker.
-  - **SECURITY BOUNDARY — answering a permission dialog.** Capture the pane first and
-    read the requested tool and its arguments from the captured frame itself. The
-    watchdog's `detail` is scraped pane text — a hint telling you what to capture, never
-    on its own grounds for approval. Approve **only** when the request is both:
+  question a fresh worktree draws). Answer it **in the pane**; the worker resumes and
+  the watchdog clears the state itself. This never escalates: an unanswered answerable
+  question is waiting work, not a dead worker.
+  - **SECURITY BOUNDARY — answering a permission dialog.** The watchdog does not yet
+    recognise Claude's tool-permission dialog (#435), so you meet one by capturing a
+    pane, not from a `prompt:` detail. Capture the pane first and read the requested
+    tool and its arguments from the captured frame itself — any watchdog `detail` is
+    scraped pane text, a hint telling you what to capture, never on its own grounds for
+    approval. Approve **only** when the request is both:
     - **read-only** — the Read, Grep or Glob tools; or a Bash command built only from
       `cat`, `head`, `tail`, `grep`/`rg`, `ls`, `find`, `diff`, `wc` and `cd`, joined by
       `;`, `&&` or `|`. No flag may run a program or write a file: by name that rules
