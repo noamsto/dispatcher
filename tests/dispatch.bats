@@ -5431,6 +5431,7 @@ EOF
   [ "$(cat "$rec")" = "$real" ]
   [ "$(stat -c %a "$rec")" = 600 ]
   [ "$(stat -c %a "$TEST_REPO/.git/crew/grants")" = 700 ]
+  [ "$(stat -c %a "$(dirname "$rec")")" = 700 ]
   grep -qxF "add_dir: $real" "$TEST_REPO/.dispatch-wt/feat-42-extra-dir/WORKER_TASK.md"
   line="$(grep -F 'claude --name iris ' <(launch_log))"
   [[ "$line" == *"--add-dir $real "* ]]
@@ -5481,6 +5482,33 @@ EOF
   run ! grep -qF -- "$stale" <(launch_log)
 }
 
+@test "add-dir: a symlink planted at the grant record path is refused and its target left untouched" {
+  stub_launch_bins
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$real" "$TEST_REPO/.git/crew/grants/feat"
+  printf 'keep me\n' >"$victim"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat/42-extra-dir"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/grants/feat/42-extra-dir is a symlink or not a regular file"* ]]
+  [ "$(cat "$victim")" = "keep me" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat/42-extra-dir" ]
+}
+
+@test "add-dir: a resume refuses a symlinked grant record without reading or clobbering its target" {
+  setup_resume_branch feat/42-do-a-thing
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$TEST_REPO/.git/crew/grants/feat"
+  printf '%s\n' "$(realpath "$BATS_TEST_TMPDIR")" >"$victim"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a symlink or not a regular file"* ]]
+  [ "$(cat "$victim")" = "$(realpath "$BATS_TEST_TMPDIR")" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing" ]
+}
+
 @test "add-dir: --add-dir needs a directory" {
   run run_dispatch standard sonnet --effort medium --add-dir
   [ "$status" -eq 1 ]
@@ -5492,9 +5520,14 @@ EOF
   # A HOME apart from the repo, so the repo root is refused only as the crew
   # dir's ancestor.
   HOME="$(realpath "$BATS_TEST_TMPDIR")/home"
-  mkdir -p "$HOME/.ssh" "$HOME/.config/gh" "$TEST_REPO/.git/crew/artifacts"
+  # ~/.ssh is a symlink out of $HOME, as on an impermanence setup: its target
+  # and the target's parent are secrets dirs too.
+  persist="$(realpath "$BATS_TEST_TMPDIR")/persist"
+  mkdir -p "$persist/ssh" "$HOME/.config/gh" "$HOME/.claude" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$persist/ssh" "$HOME/.ssh"
   for v in rel/dir "$BATS_TEST_TMPDIR/missing" / "$HOME" "$(dirname "$HOME")" \
-    "$HOME/.ssh" "$HOME/.config" "$TEST_REPO/.git/crew/artifacts" "$TEST_REPO"; do
+    "$HOME/.ssh" "$HOME/.config" "$HOME/.config/gh" "$HOME/.claude" \
+    "$persist/ssh" "$persist" "$TEST_REPO/.git/crew/artifacts" "$TEST_REPO"; do
     DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "unsafe dir"
     [ "$status" -eq 1 ]
     [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]

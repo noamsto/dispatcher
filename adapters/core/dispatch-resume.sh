@@ -93,7 +93,7 @@ write_launch_script() {
 # rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
 # the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
 _add_dir_ok() {
-  local p h c s
+  local p h c s r
   [[ $1 == /* && $1 != *$'\n'* ]] || return 1
   [ -d "$1" ] || return 1
   p="$(realpath -e -- "$1")" || return 1
@@ -104,8 +104,10 @@ _add_dir_ok() {
     c="$(realpath -m -- "$crew_dir")"
     [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
   fi
-  for s in .ssh .gnupg .aws .config/gh; do
-    [[ "$p/" != "$h/$s/"* && "$h/$s/" != "$p/"* ]] || return 1
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+    for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done
   done
   printf '%s\n' "$p"
 }

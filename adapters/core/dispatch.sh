@@ -706,9 +706,12 @@ write_launch_script() {
 # caller words its own refusal). Refused: anything not an existing absolute
 # directory, /, $HOME or an ancestor of it, anything inside or above $crew_dir
 # (the grant records, bus log and launch scripts would become writable), and
-# the secrets dirs or an ancestor of one.
+# anything inside or above a secrets/credentials dir under $HOME, matched both
+# as spelled and as resolved, so a ~/.ssh symlinked into /persist is still
+# caught. ~/.config is refused whole: gh, gcloud and most other CLIs keep
+# their credentials under it.
 _add_dir_ok() {
-  local p h c s
+  local p h c s r
   [[ $1 == /* && $1 != *$'\n'* ]] || return 1
   [ -d "$1" ] || return 1
   p="$(realpath -e -- "$1")" || return 1
@@ -719,8 +722,10 @@ _add_dir_ok() {
     c="$(realpath -m -- "$crew_dir")"
     [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
   fi
-  for s in .ssh .gnupg .aws .config/gh; do
-    [[ "$p/" != "$h/$s/"* && "$h/$s/" != "$p/"* ]] || return 1
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+    for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done
   done
   printf '%s\n' "$p"
 }
@@ -2071,7 +2076,7 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory, not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory, not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")
@@ -2701,24 +2706,29 @@ fi
 # set truncates it so a stale record of an old same-named branch cannot leak.
 grants_dir="$crew_dir/grants"
 grant_record="$grants_dir/$branch"
-if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
-  mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
-fi
 if [ -L "$grants_dir" ] || { [ -e "$grants_dir" ] && [ ! -d "$grants_dir" ]; }; then
   echo "dispatch: $grants_dir is a symlink or not a directory — refusing to write a grant record" >&2
   exit 1
 fi
-# shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
-mkdir -p -m 700 "$grants_dir"
-chmod 700 "$grants_dir"
-mkdir -p "$(dirname "$grant_record")"
+if [ -L "$grant_record" ] || { [ -e "$grant_record" ] && [ ! -f "$grant_record" ]; }; then
+  echo "dispatch: $grant_record is a symlink or not a regular file — refusing to use it as a grant record" >&2
+  exit 1
+fi
+if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
+  mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
+fi
+# Written to a temp file and renamed into place: mv replaces a symlink planted
+# at the predictable path instead of writing through it. The umask makes every
+# dir mkdir creates between grants/ and a slashed branch's leaf 0700 too.
 (
   umask 077
+  mkdir -p "$(dirname "$grant_record")"
+  chmod 700 "$grants_dir" "$(dirname "$grant_record")"
+  grant_tmp="$(mktemp "$(dirname "$grant_record")/.grant.XXXXXX")"
   if [ "${#add_dirs[@]}" -gt 0 ]; then
-    printf '%s\n' "${add_dirs[@]}" >"$grant_record"
-  else
-    : >"$grant_record"
+    printf '%s\n' "${add_dirs[@]}" >"$grant_tmp"
   fi
+  mv -f -- "$grant_tmp" "$grant_record"
 )
 
 # Stamp the task file: header fields the worker protocol reads, the closes

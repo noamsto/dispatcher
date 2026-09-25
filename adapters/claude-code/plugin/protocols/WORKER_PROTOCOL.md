@@ -12,11 +12,14 @@ This protocol governs your process end-to-end and is your **human partner's expl
 
 Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authoritative `engine:`, `model:`, `effort:` and `mcp:`, `dispatcher_pane:`, `crew_dir:`, `crew_id:`, `agent_name:` (your FleetView-style codename — use it in human-facing pings), `worker_id:` (your bus identity), and `protocol_dir:` (the absolute directory holding this file and its siblings `EVIDENCE_REVIEW.md`, `GRID_PROTOCOL.md`, `REVIEW_TASK.md` — read those from there, never by searching the filesystem). Read that engine/model/effort tuple verbatim for any recovery decision; never infer it from prose, aliases, or process inspection. `crew` is a CLI on your PATH (not a shell function) and auto-reads `crew_id` from this file, so you can call it straight from your bash tool — no env setup.
 
-Any `add_dir:` header lines list dispatcher-granted working dirs, already passed to
-your engine launch — never add or edit them, and never try to grant yourself access to
-another. A path outside your worktree and those dirs raises a permission prompt only
-the dispatcher (or a human) can answer; if your task needs one, ask for it via
-block→await rather than reading it yourself.
+Any `add_dir:` header lines list the extra dirs the dispatcher granted you. On claude
+they are passed to your launch as `--add-dir`, and your `protocol_dir:`, the skills,
+reviewers and critics dirs, and your own `<crew_dir>/artifacts/<branch>` are always
+granted too, so reading any of them is fine. Never add or edit those lines, and never
+grant yourself access to anything. On claude, reaching any other path outside your
+worktree raises a permission prompt that nobody watches — if your task needs one,
+block→await for the dispatcher to grant it or send you the content. Other engines
+don't take `--add-dir`; there the lines are informational only.
 
 Announce yourself:
 `crew status "$CREW_WORKER_ID" working`

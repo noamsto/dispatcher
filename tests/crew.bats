@@ -3987,13 +3987,19 @@ EOF
 }
 
 @test "stall-watch: role mode exits once the engine pane returns to a bare shell" {
+  # The pane stays sampleable forever and --max-life is far off, so only the
+  # bare-shell check can end the watch within a tick of the shell appearing.
+  # The shell is keyed to the sample count, not wall time: the count left in
+  # $SAMPLER_DIR/n says exactly which tick the watch stopped on.
   p=$(fx_idle_box)
-  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p"
-  export CREW_STALL_PROC_CMD="[ -f $BATS_TEST_TMPDIR/down ] && printf fish || printf claude"
-  (sleep 2 && touch "$BATS_TEST_TMPDIR/down") &
+  stall_sampler "$p"
+  export CREW_STALL_PROC_CMD="[ \"\$(cat '$SAMPLER_DIR/n')\" -ge 3 ] && printf fish || printf claude"
   CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
-    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 8
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 30
   [ "$status" -eq 0 ]
+  n="$(cat "$SAMPLER_DIR/n")"
+  [ "$n" -ge 3 ]
+  [ "$n" -le 4 ]
   run bash -c "bus | grep -c . || true"
   [ "$output" = "0" ]
 }
