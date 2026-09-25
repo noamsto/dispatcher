@@ -5353,7 +5353,7 @@ EOF
   grep -q '^split-window' "$STUB_LOG"
 }
 
-# ── Extra working dirs for claude (--add-dir, #413) ─────────────────
+# ── Extra working dirs for claude (--add-dir) ─────────────────
 
 @test "add-dir: a claude lead launch grants the protocol dir and its artifacts dir, terminated by an option" {
   stub_launch_bins

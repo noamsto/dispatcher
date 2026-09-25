@@ -3936,7 +3936,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# stall-watch: role mode (G2.3)
+# stall-watch: role mode
 # ---------------------------------------------------------------------------
 
 @test "stall-watch: role mode posts blocked/prompt: under the role id, never a worker row" {

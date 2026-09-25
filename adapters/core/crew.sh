@@ -3587,7 +3587,7 @@ stall-watch)
   # (see _pane_engine_alive), so the loop is testable without tmux.
   # D0/D3 stay silent (claude only) while a finished turn waits on a background
   # shell, for at most --bg-wait (default 2h) of unchanged frame.
-  # role:<branch>:<role> selects prompt-only mode (G2.3): a parked role pane
+  # role:<branch>:<role> selects prompt-only mode: a parked role pane
   # legitimately sits static, so only D1/D1b run; D0/D2-D6 and the dead:
   # escalation are off, and a role-mode-only check exits the watch once the
   # pane's engine returns to a bare shell.
@@ -3610,7 +3610,7 @@ stall-watch)
   # this one, and a killed engine posts no terminal state to stop it. Left
   # running it samples the successor's pane and posts under the dead session
   # id, which then reads as the branch's newest session and captures `reply`.
-  # role: selects prompt-only mode (G2.3): a role pane's own stall-watch, keyed
+  # role: selects prompt-only mode: a role pane's own stall-watch, keyed
   # to that role's own bus id rather than the worker's, so its posts never
   # touch the worker row or the lead's watchdog episode state.
   case "$arg" in
@@ -4180,7 +4180,7 @@ BUSLINE
     # detects the engine's own return to a bare shell (a final release, or a
     # crash) and exits directly. Gated on having actually seen the engine once,
     # so a role pane that is still booting is never mistaken for one that
-    # already exited (#342's D5 reasoning, applied to the role-mode exit path).
+    # already exited.
     if [ "$role_mode" = 1 ]; then
       pcmd=$(_pane_cmd)
       if [ -n "$pcmd" ] && _is_engine_cmd "$pcmd"; then
