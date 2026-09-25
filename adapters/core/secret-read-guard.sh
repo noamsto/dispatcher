@@ -140,7 +140,9 @@ template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 # not commands. Dumpers are matched only at this anchor, against text with
 # quoted spans masked (mask_cmd, mask_quotes), so `rg 'env|printenv|x' file`
 # stays allowed while a bare `env` is denied. A masked argument is blank, so a
-# wrapper's option argument is optional wherever the option could be argument-less.
+# wrapper's option argument is optional wherever the option could be argument-less;
+# the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
+# fails closed.
 wrap_word='[^[:space:];&|)]+'
 wrap_rest='[^[:space:];&|)]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
@@ -149,7 +151,7 @@ sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:
 env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
 cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*)'"$cmd_prefix"
-env_dump_re="$cmd_start"'(printenv([[:space:]]+--?[A-Za-z0-9]'"$wrap_rest"')*|env'"$env_opts"')[[:space:]]*($|[;&|)])'
+env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*($|[;&|)#]|[0-9]+>)'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
@@ -161,13 +163,13 @@ printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space
 # functions, not variables), or any flag cluster carrying `p` anywhere
 # (`declare -xp NAME` and `declare -x -p NAME` both print). Bare `export` dumps
 # every exported variable, same as `export -p`.
-declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
-builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)])|[[:space:]]*($|[;&|)]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)]))'
+declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)#])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
+builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)#]))'
 # fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
 # -L) list that scope when no name follows; with a name they're the ordinary
 # `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
 # bash's `set -x` is the harmless xtrace toggle.
-fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)])'
+fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)#])'
 # A `-c` argument is quoted, so mask_quotes alone would erase a dumper the
 # shell actually runs. This only locates where the argument starts (through
 # the interpreter, its flags and trailing whitespace); decode_word extracts it.
@@ -354,7 +356,7 @@ BEGIN {
   HDSTOP = " \t\n;&|()<>"
   sp = 0; pd = 0; hd_i = 0; hd_n = 0
 }
-function wordstart(p) { return p == "" || index(" \t\n;&|(", p) > 0 }
+function wordstart(p) { return p == "" || index(" \t\n;&|()", p) > 0 }
 function push(k, saved) {
   sk[sp] = k; sv[sp] = saved; spd[sp] = pd
   sp++
@@ -372,7 +374,11 @@ function code(c,    d, o) {
   o = " "
   if (esc) {
     esc = 0
-    if (q == "") o = c
+    if (q == "") {
+      o = c
+      if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
+      else if (c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
+    }
   } else if (cm) {
     o = c
     if (c == "\n") cm = 0
@@ -389,19 +395,19 @@ function code(c,    d, o) {
     else if (c == "$") dl = 1
   } else {
     o = c
-    if (c == BS) esc = 1
-    else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
+    if (c == BS) {
+      esc = 1
+      if (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
+    } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
     else if (c == DQ) { q = DQ; o = " " }
     else if (c == BT) {
       if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
-    }
-    else if (c == "(") pd++
+    } else if (c == "(") pd++
     else if (c == ")") {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    }
-    else if (c == "#" && wordstart(prev)) cm = 1
+    } else if (c == "#" && wordstart(prev)) cm = 1
     else if (c == "$") dl = 1
   }
   return o
@@ -453,7 +459,7 @@ function feed(c,    arm, wasesc) {
     if (c == BS) { hbs = 1; hquo = 1; printf " "; return }
     if (c == SQ || c == DQ) { hq = c; hquo = 1; printf " "; return }
     if (!index(HDSTOP, c)) { hw = hw c; printf " "; return }
-    if (hw != "") {
+    if (hw != "" || hquo) {
       hd_n++
       hd_w[hd_n] = hw
       hd_d[hd_n] = hdash

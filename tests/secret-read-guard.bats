@@ -1190,6 +1190,36 @@ allow_cmd() { # <command>
   deny_cmd 'printenv -0'
 }
 
+@test "secret-read-guard: a comment right after a closing parenthesis cannot hide a dump" {
+  deny_cmd $'(echo x)# it\'s\nenv'
+  deny_cmd $'case x in x)# it\'s\nenv\n;; esac'
+}
+
+@test "secret-read-guard: an empty heredoc delimiter cannot hide a dump" {
+  deny_cmd $'cat <<""\nit\'s\n\nenv'
+}
+
+@test "secret-read-guard: denies a dump inside escaped nested backticks" {
+  deny_cmd 'echo `echo \`env\``'
+  deny_cmd 'echo "`echo \`env\``"'
+}
+
+@test "secret-read-guard: denies printenv with a bare double dash" {
+  deny_cmd 'printenv --'
+}
+
+@test "secret-read-guard: denies a shell-variable dump followed by a comment" {
+  deny_cmd 'set # list'
+  deny_cmd 'declare -p # list'
+  deny_cmd 'export -p # list'
+}
+
+@test "secret-read-guard: denies a dump followed by a comment or a descriptor redirect" {
+  deny_cmd 'env # show vars'
+  deny_cmd 'env 2>&1'
+  deny_cmd 'printenv 2>/dev/null'
+}
+
 @test "secret-read-guard: denies a dumper behind env and sudo wrappers" {
   deny_cmd 'env -u X env'
   deny_cmd 'env FOO=1 printenv'
