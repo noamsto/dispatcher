@@ -2706,10 +2706,17 @@ fi
 # set truncates it so a stale record of an old same-named branch cannot leak.
 grants_dir="$crew_dir/grants"
 grant_record="$grants_dir/$branch"
-if [ -L "$grants_dir" ] || { [ -e "$grants_dir" ] && [ ! -d "$grants_dir" ]; }; then
-  echo "dispatch: $grants_dir is a symlink or not a directory — refusing to write a grant record" >&2
-  exit 1
-fi
+# Every dir from grants/ down to a slashed branch's leaf: mkdir, chmod, mktemp
+# and mv below all follow a symlink planted at any of them.
+grant_parent="$grants_dir"
+IFS=/ read -ra grant_parts <<<"$branch"
+for grant_part in "" "${grant_parts[@]:0:${#grant_parts[@]}-1}"; do
+  grant_parent="$grant_parent${grant_part:+/$grant_part}"
+  if [ -L "$grant_parent" ] || { [ -e "$grant_parent" ] && [ ! -d "$grant_parent" ]; }; then
+    echo "dispatch: $grant_parent is a symlink or not a directory — refusing to write a grant record" >&2
+    exit 1
+  fi
+done
 if [ -L "$grant_record" ] || { [ -e "$grant_record" ] && [ ! -f "$grant_record" ]; }; then
   echo "dispatch: $grant_record is a symlink or not a regular file — refusing to use it as a grant record" >&2
   exit 1

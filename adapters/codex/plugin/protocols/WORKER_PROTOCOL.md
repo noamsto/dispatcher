@@ -17,9 +17,11 @@ they are passed to your launch as `--add-dir`, and your `protocol_dir:`, the ski
 reviewers and critics dirs, and your own `<crew_dir>/artifacts/<branch>` are always
 granted too, so reading any of them is fine. Never add or edit those lines, and never
 grant yourself access to anything. On claude, reaching any other path outside your
-worktree raises a permission prompt that nobody watches — if your task needs one,
-block→await for the dispatcher to grant it or send you the content. Other engines
-don't take `--add-dir`; there the lines are informational only.
+worktree hits a permission prompt, which you handle per the **permission prompt**
+rule in "Report to the bus". If the task names such a path up front, say so in a
+blocked question before touching it (block→await): the dispatcher can only grant a
+dir on a fresh dispatch. Other engines don't take `--add-dir`; there the lines are
+informational only.
 
 Announce yourself:
 `crew status "$CREW_WORKER_ID" working`

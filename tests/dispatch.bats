@@ -5496,6 +5496,19 @@ EOF
   [ -L "$TEST_REPO/.git/crew/grants/feat/42-extra-dir" ]
 }
 
+@test "add-dir: a symlink planted at a grant record's parent dir is refused and its target left empty" {
+  stub_launch_bins
+  real="$(realpath "$BATS_TEST_TMPDIR")/real"
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$real" "$victim" "$TEST_REPO/.git/crew/grants"
+  ln -s "$victim" "$TEST_REPO/.git/crew/grants/feat"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$real" --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/grants/feat is a symlink or not a directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -L "$TEST_REPO/.git/crew/grants/feat" ]
+}
+
 @test "add-dir: a resume refuses a symlinked grant record without reading or clobbering its target" {
   setup_resume_branch feat/42-do-a-thing
   victim="$BATS_TEST_TMPDIR/victim"
