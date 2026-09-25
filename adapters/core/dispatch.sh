@@ -939,6 +939,13 @@ if [ "${1:-}" = "--spawn-role" ]; then
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane"
+  # Persist the spec this pane actually launched with: a bare respawn of the
+  # role (a died or stalled pane) must come back at the same rung, not silently
+  # at the dispatch-time one.
+  roles_tmp="$(mktemp "$roles_file.XXXXXX")"
+  jq --arg r "$role" --arg a "$spawn_agent" --arg m "$spawn_model" --arg e "$effort" \
+    '.[$r] = {agent: $a, model: $m, effort: $e}' "$roles_file" >"$roles_tmp"
+  mv "$roles_tmp" "$roles_file"
   # The grid hints follow the pane count: this window now has >=1 role pane.
   # Only the lead publishes the lead hint (a role pane never runs this).
   if [ -z "${CREW_ROLE_ID:-}" ]; then
@@ -1783,20 +1790,27 @@ fi
 # no reviewer role for them (see WORKER_PROTOCOL.md "Grid mode"). Roles
 # inherit the lead's own agent/model below when --roles doesn't say
 # otherwise, so this never requires a second engine. A review-kind worker has
-# no spec/plan phase, so it never gets a default grid; nor does a non-pi deep
-# dispatch whose plan is already provided, since that leaves no critic role
-# to default to.
+# no spec/plan phase, so it gets no critic grid; only a pi review worker above
+# trivial defaults to `reviewer,refuter` panes, since pi has no native subagents
+# to fan out the reviewer batch and the per-finding refuters REVIEW_TASK.md
+# requires (an explicit --grid derives the same pair on any engine, additive
+# there). A non-pi deep dispatch whose plan is already provided gets no default
+# grid either, since that leaves no critic role to default to.
 grid_default_non_pi=""
-if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ] && [ "$kind" != review ]; then
+if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
   if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
     grid_flag=1
+  elif [ "$kind" = review ]; then
+    : # no spec/plan phase, so no critic grid
   elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
     grid_flag=1
     grid_default_non_pi=1
   fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
-  if [ -n "$grid_default_non_pi" ]; then
+  if [ "$kind" = review ]; then
+    [ "$tier" = trivial ] || grid_roles="reviewer,refuter"
+  elif [ -n "$grid_default_non_pi" ]; then
     grid_roles="spec-critic,plan-critic"
   else
     case "$tier" in
@@ -2621,6 +2635,17 @@ if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
   printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
 fi
 
+# Exclude rules do not apply to a file git already tracks, so once a
+# WORKER_TASK.md slips into the base being dispatched the guard above is
+# silently void — the worker's stamped doc rides its diff into every commit
+# until someone removes it (#397). Warn, naming the fix; never abort and never
+# touch the index here (removing a tracked file is the target repo's job, in
+# its own PR). The check is against the dispatched worktree, which sits at that
+# base for a create.
+if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+  echo "dispatch: warning: WORKER_TASK.md is tracked at the base being dispatched — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
+fi
+
 # Record resolved role specs so a lazy grid's lead can spawn each role on demand
 # (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then
@@ -2762,7 +2787,9 @@ esac
 # native code-review gate always runs regardless (WORKER_PROTOCOL.md →
 # "Grid mode").
 grid_note=""
-if [ -n "$roles_stamp" ]; then
+if [ -n "$roles_stamp" ] && [ "$kind" = review ]; then
+  grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — on pi the reviewer and refuter panes are your reviewer batch and refuters; on any other engine they are an additive second opinion next to your native batch."
+elif [ -n "$roles_stamp" ]; then
   grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
 fi
 

@@ -322,9 +322,10 @@ is back.
   - **Reap edge.** `crew reap` reclaims only a MERGED/CLOSED PR (`crew.sh` `reap)`), so a parent whose PR is still open is never pulled out from under a live child. After the parent merges, GitHub retargets the child PR (delete-branch-on-merge), and the worker follows its own PR's live `baseRefName` — reap does not rewrite children's stamps: doing so would mean scanning every other worktree and rewriting a file a live worker may be reading mid-run, and it would still miss a retarget reap never sees.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
-- **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out.
+- **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
-  for standard and adds `spec-critic` for deep, on any engine. **The default**
+  for standard and adds `spec-critic` for deep, on any engine (`reviewer,refuter`
+  on a `--review` worker). **The default**
   (no `--grid`/`--roles`/`--no-grid` given) differs on `deep`: pi still
   defaults to the full `spec-critic,plan-critic,reviewer` topology — its
   `reviewer` pane *is* its review gate, having no native reviewer batch of its
@@ -335,7 +336,9 @@ is back.
   context, the same reason pi's grid exists at all. A `--roles reviewer=...`
   on a non-pi lead is additive — a deliberate cross-engine second opinion
   alongside the native batch, never a substitute. Two cases get no default
-  grid: a `--review` worker (no spec/plan phase) and a non-pi `deep` dispatch
+  critic grid: a `--review` worker (no spec/plan phase — but a pi one above
+  `trivial` defaults to `reviewer,refuter`, since pi cannot spawn the reviewer
+  batch and refuters `REVIEW_TASK.md` requires) and a non-pi `deep` dispatch
   under `--plan provided` (no critic role left once planning is settled).
   With no `--roles`, every role pane runs on the lead's own engine, model,
   and effort (never a second engine the caller didn't ask for, and never
@@ -386,8 +389,8 @@ is back.
   pane in the caller's own window/worktree) and may `dispatch --reap-roles`
   to kill every role pane in its window when done. It rides *whichever*
   topology resolves — an explicit `--grid`/`--roles`, or a topology that
-  resolves by default (pi standard/deep; non-pi `deep` unless `--review` or
-  `--plan provided`) — so a default-grid `deep` dispatch takes `--lazy` on
+  resolves by default (pi standard/deep, including pi `--review`; non-pi `deep` unless
+  `--review` or `--plan provided`) — so a default-grid `deep` dispatch takes `--lazy` on
   its own. **Do not add `--grid` "to satisfy" `--lazy`** on such a dispatch:
   `--grid` changes the topology itself, switching a non-pi `deep`'s default
   `spec-critic,plan-critic` to `spec-critic,plan-critic,reviewer` (this same
@@ -484,6 +487,9 @@ dispatcher whose stream is auto-stopped runs no turn, so it never polls `--statu
 notice. Process death stays covered — the next turn's poll finds `dead`.
 
 **No `Monitor` tool** → follow the cursor lane's background park, below.
+**pi is the exception:** it has no `Monitor` and no background-completion
+notification to bind a turn to, so it takes the codex/pi blocking park below
+instead.
 
 **cursor — background park.** INV-1 below applies to you.
 
@@ -520,15 +526,15 @@ notice. Process death stays covered — the next turn's poll finds `dead`.
   supervisor is needed (G4 self-heal).
 
 **Park length — chosen at re-arm (claude/cursor: only at re-arm, never in a human turn;
-codex: at each park call — see the codex lane's override, below).**
+codex/pi: at each park call — see the codex/pi lane's override, below).**
 Partition the roster: `working`+`blocked` = **ACTIVE**; `pr_open`+`done`+`failed` =
 **TERMINAL / budget-freeing**. At re-arm:
 
 - **ACTIVE** roster → `--timeout 270`: a sub-TTL cache-warm heartbeat (270, not 300 —
   the prompt-cache TTL margin is load-bearing).
 - **DRAINED** roster (nothing active) → `--timeout 3300`: bounds dark time, accepts
-  cache-cold since nothing is in flight. **codex: never this branch** — the codex
-  lane below always parks 270, drained or not.
+  cache-cold since nothing is in flight. **codex/pi: never this branch** — the
+  codex/pi lane below always parks 270, drained or not.
   A DRAINED→ACTIVE transition from a human adding a task happens in a human turn, so it
   does **not** wake the outstanding 3300s park — deliberate: the new worker first posts
   `working` (which `watch` does not match), so nothing needs the park woken until that
@@ -551,11 +557,14 @@ overshoot is ≤4.5 minutes.** Named rather than closed: closing it would mean
 killing the outstanding watch from a human turn, which is more fragile than the
 overshoot it would fix.
 
-**codex — blocking park.** There is no background-notify primitive, but also no
+**codex / pi — blocking park.** There is no background-notify primitive, but also no
 short foreground tool timeout: call `crew watch --timeout 270` in the
 **foreground**, let the turn block until a worker event wakes it or the park
 expires, handle whatever it returns, then park again — this **is** your loop; re-park
-after every batch. Always 270 — **never** the cursor lane's 3300s drained park above:
+after every batch. pi shares this lane: it has no `Monitor` and no
+background-completion notification a turn can be bound to — the cursor lane's
+arm-token completion is exactly what pi lacks — so a pi dispatcher parks in the
+foreground the same way. Always 270 — **never** the cursor lane's 3300s drained park above:
 the park *is* your turn, so a drained 3300 would leave the human queued behind a
 foreground call for ~55 minutes, exactly when their input is the only thing that can
 arrive (short parks cost cache-warmth; that is the acceptable price). **Never pass
@@ -568,7 +577,7 @@ changes nothing here: the always-270s park already covers it, checked on every
 wake the lane already makes regardless.
 
 **Retro synthesis — claude: any batch that leaves the roster DRAINED, heartbeat as
-backstop; cursor/codex: at a DRAINED roster, before the re-arm.** Read the crew's
+backstop; cursor/codex/pi: at a DRAINED roster, before the re-arm.** Read the crew's
 notes and roster, then write:
 
 1. For each terminal worker, compare its outcome against your `{tier, engine, model,

@@ -5,6 +5,12 @@ argument-hint: "[--all] [--repo OWNER/REPO] [--pr N,M,...] [--limit N] [--concur
 
 # Finish PRs: Multi-PR Shepherd Fan-Out
 
+> **Claude Code only.** This command drives Claude Code agent teams
+> (`TaskCreate`, `SendMessage`, `subagent_type`, `teammateMode`) and the
+> `/loop` / `/schedule` skills, which no other engine provides. It ships only to
+> Claude Code. Codex and Cursor users get the same fan-out from the
+> engine-neutral `dispatcher` launcher — `dispatch` once per PR.
+
 You are the **team lead**. You select a batch of the user's already-open PRs, spawn one teammate per PR, and each teammate babysits its PR through CI failures and reviewer comments until everything is clean. You coordinate; you do not implement.
 
 This is the third member of the autopilot family:

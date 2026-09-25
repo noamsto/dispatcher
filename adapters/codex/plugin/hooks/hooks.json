@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/secret-read-guard.sh"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

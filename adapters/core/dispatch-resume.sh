@@ -718,6 +718,14 @@ exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
 if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
   printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
 fi
+
+# Exclude rules do not apply to a file git already tracks, so a WORKER_TASK.md
+# committed on this branch escapes the guard above and rides the diff into
+# commits (#397). Warn, naming the fix; never abort and never touch the index
+# here — removing a tracked file is the target repo's job, in its own PR.
+if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+  echo "dispatch resume: warning: WORKER_TASK.md is tracked on this branch — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
+fi
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
   _hdr_set dispatcher_pane "$dispatcher_pane_new"
 fi
@@ -789,7 +797,9 @@ if [ "$kind" = review ]; then
 fi
 
 grid_note=""
-if [ -n "$grid_roles" ]; then
+if [ -n "$grid_roles" ] && [ "$kind" = review ]; then
+  grid_note=" You lead a review role grid: role panes ($grid_roles) may still be parked in this window. Follow REVIEW_TASK.md Role-grid path and address them through the crew bus."
+elif [ -n "$grid_roles" ]; then
   grid_note=" You lead a role grid: role panes ($grid_roles) may still be parked in this window. Follow WORKER_PROTOCOL.md Grid mode and address them through the crew bus."
 fi
 

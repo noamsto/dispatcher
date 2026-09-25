@@ -6,6 +6,14 @@
       "events": ["pi:session_shutdown"],
       "engines": ["pi"],
       "lane": "fire_and_forget"
+    },
+    {
+      "id": "secret-read-guard",
+      "exec": "adapters/core/secret-read-guard.sh",
+      "events": ["pre_tool"],
+      "engines": ["pi"],
+      "match": ["Bash", "Read", "Grep"],
+      "timeout_ms": 4000
     }
   ]
 }

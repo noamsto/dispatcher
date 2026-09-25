@@ -565,7 +565,7 @@ _copy_if_changed() { # $1=target $2=source
 # it is a cache pi rewrites on refresh, and every worker shares this dir, so a
 # link would aim N concurrent writers at the user's real catalog.
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe bridge bridge_entry
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -598,9 +598,38 @@ _pi_agent_dir() {
     esac
   fi
 
+  # pi's only subprocess hook surface is the extension API, and
+  # PI_CODING_AGENT_DIR *replaces* the ambient config dir rather than
+  # augmenting it — so a worker would otherwise run no hook at all. Seed
+  # hookyard's generated bridge from the ambient dir (byte-identical to the one
+  # hookyard installs per settings path, since it holds absolute router paths)
+  # at the same bin/hookyard-bridge.ts path hookyard itself uses, and register
+  # it below. No ambient bridge means hookyard is not installed; leave the
+  # worker unhooked rather than dangle an extensions entry (README documents
+  # the machine prerequisite).
+  bridge="$ambient/bin/hookyard-bridge.ts"
+  bridge_entry=""
+  if [ -f "$bridge" ]; then
+    mkdir -p "$dir/bin"
+    _copy_if_changed "$dir/bin/hookyard-bridge.ts" "$bridge"
+    bridge_entry="$dir/bin/hookyard-bridge.ts"
+  fi
+
   settings=$(jq -s 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
     "$dir/settings.json" 2>/dev/null) || settings='{}'
-  settings=$(jq -n --argjson base "$settings" '$base + {defaultProjectTrust: "never"}')
+  # A non-array extensions value is hand-edited or future-schema; appending to
+  # it would make jq die with an opaque `cannot be added` and take dispatch down
+  # with it. Refuse legibly, like the auth.json checks below.
+  if [ -n "$bridge_entry" ] &&
+    ! jq -e '(.extensions == null) or (.extensions | type) == "array"' <<<"$settings" >/dev/null 2>&1; then
+    echo "crew: $dir/settings.json has a non-array extensions value — refusing to seed pi worker dir" >&2
+    exit 1
+  fi
+  # Append-if-absent is order-preserving: jq `unique` would sort a pi-written
+  # multi-entry extensions list on every reseed.
+  settings=$(jq -n --argjson base "$settings" --arg b "$bridge_entry" \
+    '$base + {defaultProjectTrust: "never"}
+     | if ($b != "" and ((.extensions // []) | index($b) | not)) then .extensions = ((.extensions // []) + [$b]) else . end')
   _write_if_changed "$dir/settings.json" 644 "$settings"
 
   # Only a genuinely missing file means "no keys". [ -e ] is also false for a
@@ -764,7 +793,9 @@ status | msg)
     # with a tag and no verdict is not a verdict. Any lead -> reviewer msg
     # except the bare {"final":true} release, even an unparseable one, voids
     # every earlier verdict AND the lead's own earlier review seam until a
-    # fresh verdict lands. The assignment is never itself a seam.
+    # fresh verdict lands. The assignment is never itself a seam. The deslop
+    # seam is gated the same way (branch-keyed, earlier sessions count,
+    # presence only): the lead's own {"seam":"deslop"} msg to review:<crew>.
     case "$state:$from" in
     pr_open:worker:* | done:worker:*)
       top=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -861,6 +892,27 @@ status | msg)
           fi
           if [ "${seams:-0}" != 1 ]; then
             echo "crew: refusing $state for $tier session $from — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"review\",\"review_mode\":\"full\"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:$crew seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {\"final\":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives" >&2
+            exit 1
+          fi
+          deslop=0
+          if [ -f "$log" ]; then
+            deslop_rc=0
+            deslop=$(jq -Rnr --arg c "$crew" --arg b "$b" '
+              first(inputs
+                | (try fromjson catch null)
+                | select(type == "object" and .crew_id == $c and .kind == "msg"
+                         and .to == ("review:" + $c)
+                         and ((.from // "") | tostring | sub("#s[^#]*$"; "")) == $b)
+                | (.body | fromjson? // null)
+                | select(type == "object" and .seam == "deslop" and (has("tag") | not))
+                | 1) // 0' "$log" 2>/dev/null) || deslop_rc=$?
+            if [ "$deslop_rc" -ne 0 ]; then
+              echo "crew: refusing $state for $from — could not read the crew log for the deslop seam (jq exit $deslop_rc)" >&2
+              exit 1
+            fi
+          fi
+          if [ "$deslop" != 1 ]; then
+            echo "crew: refusing $state for $tier session $from — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, \$deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg \"\$CREW_WORKER_ID\" \"review:$crew\" '{\"seam\":\"deslop\"}' and retry. The seam records that the skill ran — never post it just to get past this gate" >&2
             exit 1
           fi
           ;;

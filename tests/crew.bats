@@ -771,6 +771,55 @@ EOF
   [ -z "$(find "$WORKER" -name '.seed.*')" ]
 }
 
+@test "pi-agent-dir: seeds the ambient hookyard bridge and registers it" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  [ -f "$WORKER/bin/hookyard-bridge.ts" ]
+  cmp -s "$AMBIENT/bin/hookyard-bridge.ts" "$WORKER/bin/hookyard-bridge.ts"
+  [ "$(jq -r '.extensions[0]' "$WORKER/settings.json")" = "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
+}
+
+@test "pi-agent-dir: no ambient hookyard bridge leaves the worker unhooked" {
+  _pi_fixture
+  run_crew pi-agent-dir >/dev/null
+  [ ! -e "$WORKER/bin/hookyard-bridge.ts" ]
+  [ "$(jq -c '.extensions // "absent"' "$WORKER/settings.json")" = '"absent"' ]
+}
+
+@test "pi-agent-dir: a re-seed appends the bridge once and keeps a pi-written order" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # pi (or a user) may prepend its own extension; a reseed must not reorder the
+  # list nor duplicate hookyard's entry.
+  printf '{"extensions":["/some/other.ts","%s"]}\n' "$WORKER/bin/hookyard-bridge.ts" >"$WORKER/settings.json"
+  run_crew pi-agent-dir >/dev/null
+  [ "$(jq -c .extensions "$WORKER/settings.json")" = "[\"/some/other.ts\",\"$WORKER/bin/hookyard-bridge.ts\"]" ]
+  [ -z "$(find "$WORKER" -name '.seed.*')" ]
+}
+
+@test "pi-agent-dir: a non-array extensions value is refused, not a jq crash" {
+  _pi_fixture
+  mkdir -p "$AMBIENT/bin"
+  printf '// hookyard bridge\n' >"$AMBIENT/bin/hookyard-bridge.ts"
+  run_crew pi-agent-dir >/dev/null
+  # A hand-edited/future-schema settings.json must refuse legibly, not die on an
+  # opaque jq `cannot be added` and take dispatch/dispatch-resume down with it.
+  # `false` is included: jq's `//` would fold it into null and slip the guard.
+  for bad in '{"not":"an array"}' 'false' '"a string"' '3'; do
+    printf '{"extensions":%s}\n' "$bad" >"$WORKER/settings.json"
+    run --separate-stderr run_crew pi-agent-dir
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+    [[ "$stderr" == *"non-array extensions value"* ]]
+    [ "$(jq -c .extensions "$WORKER/settings.json")" = "$bad" ]
+  done
+}
+
 @test "pi-agent-dir: no ambient auth.json seeds an empty auth" {
   _pi_fixture
   rm "$AMBIENT/auth.json"
@@ -4707,6 +4756,7 @@ _refused() {
   [[ "$stderr" == *"$1"* ]]
   [ "$(_status_rows)" -eq 0 ]
 }
+_deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"deslop"}'; }
 
 @test "pr_open: standard with no review seam is refused and not written" {
   _task_doc standard
@@ -4729,6 +4779,7 @@ _refused() {
 @test "pr_open: standard with a review seam posts silently" {
   _task_doc standard
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
@@ -4738,6 +4789,7 @@ _refused() {
 @test "pr_open: a resumed session inherits the branch's earlier review seam" {
   _task_doc deep
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
@@ -4756,6 +4808,7 @@ _refused() {
 @test "pr_open: a pi reviewer accept alone counts as a review seam" {
   _task_doc standard implement pi
   run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"role":"reviewer","seam":"review","verdict":"accept","findings":[],"evidence":"x"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ "$(_status_rows)" -eq 1 ]
@@ -4799,6 +4852,7 @@ _allowed() {
   _task_doc standard implement pi
   _verdict reject
   _verdict accept
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4808,6 +4862,7 @@ _allowed() {
   _verdict reject
   _verdict revise
   _lead_seam
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4816,6 +4871,7 @@ _allowed() {
   _task_doc standard implement pi
   _verdict revise
   _lead_seam
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4824,6 +4880,7 @@ _allowed() {
   _task_doc standard implement pi
   _verdict revise
   _verdict accept
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4849,6 +4906,7 @@ _allowed() {
   _verdict accept
   _assign
   _verdict accept
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4875,6 +4933,7 @@ _allowed() {
 @test "pr_open: a resumed session inherits the latest pi verdict, accept or reject" {
   _task_doc deep implement pi
   _verdict accept worker:feat/x#s1-1
+  _deslop_seam
   _gate s2-2
   _allowed
   rm -f "$(git rev-parse --git-common-dir)/crew/events.jsonl"
@@ -4887,6 +4946,7 @@ _allowed() {
 @test "pr_open: a torn trailing line does not change the pi verdict outcome" {
   _task_doc standard implement pi
   _verdict accept
+  _deslop_seam
   printf 'torn{' >>"$(git rev-parse --git-common-dir)/crew/events.jsonl"
   _gate
   [ "$status" -eq 0 ]
@@ -4957,6 +5017,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _verdict accept
   run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"event":"role_exited"}'
   run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"final":true}'
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4988,6 +5049,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement pi
   _verdict accept
   _verdict accept dispatcher:c1
+  _deslop_seam
   _gate
   _allowed
 }
@@ -4996,6 +5058,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement pi
   _verdict accept
   printf '%s\n' '{"ts":1,"crew_id":"other","from":7,"to":8,"kind":"msg","body":"{}"}' >>"$(_events)"
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5023,6 +5086,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement claude
   _assign
   _lead_seam
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5039,6 +5103,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement pi
   _verdict accept
   run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5047,6 +5112,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement pi
   _verdict accept
   printf '42\n"x"\nnull\n' >>"$(git rev-parse --git-common-dir)/crew/events.jsonl"
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5062,6 +5128,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _gate
   _refused "no review seam"
   _verdict accept
+  _deslop_seam
   _gate
   [ "$status" -eq 0 ]
 }
@@ -5098,6 +5165,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   printf 'torn{' >>"$(_events)"
   run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"note":"x"}'
   printf 'torn{{"ts":1,"crew_id":"other","from":"role:feat/x:reviewer","to":"worker:feat/x","kind":"msg","body":"{}"}\n' >>"$(_events)"
+  _deslop_seam
   _gate
   [ "$status" -eq 0 ]
 }
@@ -5111,6 +5179,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _gate
   _refused "no review seam"
   _verdict accept
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5128,6 +5197,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _verdict accept
   run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
   run_crew msg "worker:feat/x#s1-1" "role:feat/other:reviewer" '{"question":"another branch"}'
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5144,6 +5214,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement pi
   _verdict accept
   run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","tag":"other","detail":"x"}'
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5169,6 +5240,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _task_doc standard implement claude
   _verdict reject
   _lead_seam
+  _deslop_seam
   _gate
   _allowed
 }
@@ -5193,11 +5265,13 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 @test "done: a pi reviewer verdict and the lead's own review seam both count" {
   _task_doc standard implement pi
   run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","verdict":"accept"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ "$(_status_rows)" -eq 1 ]
   rm -f "$(git rev-parse --git-common-dir)/crew/events.jsonl"
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
   [ "$status" -eq 0 ]
 }
@@ -5205,6 +5279,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 @test "pr_open: a reviewer verdict from an earlier session still counts" {
   _task_doc deep implement pi
   run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","verdict":"accept"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
@@ -5268,6 +5343,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
 @test "pr_open: a downgraded review seam counts like a full one" {
   _task_doc standard
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"downgraded"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
@@ -5323,6 +5399,111 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pending(sim)" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ "$(_status_rows)" -eq 1 ]
+}
+
+@test "pr_open: standard with a review seam but no deslop seam is refused" {
+  _task_doc standard
+  _lead_seam
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "done: standard with a review seam but no deslop seam is refused" {
+  _task_doc standard
+  _lead_seam
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
+  _refused "no deslop seam"
+}
+
+@test "pr_open: deep with a review seam but no deslop seam is refused" {
+  _task_doc deep
+  _lead_seam
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "pr_open: standard with review and deslop seams posts silently" {
+  _task_doc standard
+  _lead_seam
+  _deslop_seam
+  _gate
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+}
+
+@test "pr_open/done: a resumed session inherits the branch's earlier review and deslop seams" {
+  _task_doc deep
+  _lead_seam
+  _deslop_seam
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  run --separate-stderr run_crew status "worker:feat/x#s2-2" done "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a deslop seam sent to metrics does not count" {
+  _task_doc standard
+  _lead_seam
+  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"deslop"}'
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "pr_open: a deslop seam from another branch does not count" {
+  _task_doc standard
+  _lead_seam
+  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"deslop"}'
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "pr_open: a tagged deslop seam does not count" {
+  _task_doc standard
+  _lead_seam
+  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"deslop","tag":"x"}'
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "pr_open: a deslop seam alone without a review seam is refused for the review seam first" {
+  _task_doc standard
+  _deslop_seam
+  _gate
+  _refused "no review seam"
+}
+
+@test "pr_open: a kind review deep session needs no review or deslop seam" {
+  _task_doc deep review
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+}
+
+@test "pr_open: a pi reviewer accept with the lead's deslop seam passes" {
+  _task_doc standard implement pi
+  _verdict accept
+  _deslop_seam
+  _gate
+  _allowed
+}
+
+@test "pr_open: a pi reviewer accept without a deslop seam is refused" {
+  _task_doc standard implement pi
+  _verdict accept
+  _gate
+  _refused "no deslop seam"
+}
+
+@test "pr_open: an unparsable log line does not break the deslop check" {
+  _task_doc standard
+  _lead_seam
+  printf 'garbage\n' >>"$(git rev-parse --git-common-dir)/crew/events.jsonl"
+  _deslop_seam
+  _gate
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
 }
 
 # --- terminal status gate: acceptance ledger grammar (#332) ---
@@ -5491,11 +5672,27 @@ EOF
   _refused "could not check the acceptance ledger (jq exit 3)"
 }
 
+@test "pr_open: a jq failure on the deslop seam check refuses (fail closed)" {
+  _task_doc standard
+  _lead_seam
+  mkdir -p "$BATS_TEST_TMPDIR/jqstub"
+  export REAL_JQ
+  REAL_JQ=$(command -v jq)
+  cat >"$BATS_TEST_TMPDIR/jqstub/jq" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in *'"deslop" and (has("tag")'*) exit 3 ;; esac; exec "$REAL_JQ" "$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/jqstub/jq"
+  PATH="$BATS_TEST_TMPDIR/jqstub:$PATH" run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+  _refused "could not read the crew log for the deslop seam (jq exit 3)"
+}
+
 @test "pr_open: the ledger is checked before the review seam" {
   _task_doc deep
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2 pending(sim)" https://example.com/pr/1
   _refused "every acceptance ledger item"
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
+  _deslop_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]

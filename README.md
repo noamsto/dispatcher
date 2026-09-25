@@ -142,7 +142,7 @@ actually express:
 | Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |      ❌      |
 | Skills                    |     ✅      |         ✅          |      ✅      |     ✅⁵      |
 | Native subagents          |     ✅      |         ✅³         |     ✅³      |      ❌      |
-| Hooks                     |     ✅      |         ✅          |      ✅      |      ❌      |
+| Hooks                     |     ✅      |         ✅          |      ✅      |     ✅⁶      |
 | Worker: spec/plan critics |     ✅      |         ✅          |      ✅      | ✅ via grid  |
 | Worker: code-review gate  |     ✅      |         ✅          |      ✅      | ✅ via grid  |
 
@@ -164,6 +164,13 @@ substitute for the native code-review batch. `--no-grid` opts back out.
 passes `--skill $DISPATCHER_SKILLS_DIR` (the `adapters/core/skills` source
 itself, not a generated copy) alongside the worktree's own project skills. The
 launch's `--no-approve` disables discovery, so this flag is the only channel.
+⁶ pi exposes no subprocess hook protocol; hookyard renders pi's hooks as a
+generated `bin/hookyard-bridge.ts` registered in the pi `settings.json`
+`extensions[]`. `crew pi-agent-dir` copies that bridge from the ambient
+`~/.pi/agent` into the worker's `PI_CODING_AGENT_DIR` when it is present, so a
+dispatched worker gets the same `session_shutdown` backstop (and guards) as the
+operator's own pi. Without hookyard there is no bridge to seed and pi has no
+hooks — see the prerequisites below.
 
 **Every tier gate runs on every engine.** A worker's pipeline depth is set by
 its tier, not by which engine drew the task: `standard` and `deep` run the
@@ -172,9 +179,10 @@ spec/plan critics _and_ the code-review gate on all four, so
 values whoever ran. Only the spawn mechanism and the rung are per-engine.
 
 **Two rosters, spawned four ways.** What each reviewer and each critic _is_
-ships with the harness. `adapters/core/reviewers/` holds twelve engine-neutral
+ships with the harness. `adapters/core/reviewers/` holds thirteen engine-neutral
 bodies — Go, Python, TypeScript, shell, Nix, YAML, Terraform, SQLite,
-Postgres, Bubble Tea, security, agent-facing prose — whose `globs:` and
+Postgres, Bubble Tea, security, agent-facing prose, and a general fallback for whatever
+no other entry matches — whose `globs:` and
 `shebang:` frontmatter route a diff to the ones that apply (an extensionless
 changed file matches by its first line); `adapters/core/critics/` holds the
 spec and plan critics that gate a plan before any of it is written. A worker
@@ -261,6 +269,26 @@ For Claude Code, pass the plugin directory to `claude`:
   enabled = true
   ```
 
+  The plugin's hooks (session-end notify, secret-read guard) run subject to
+  codex's own hook trust, which is not verified here.
+
+- **The pi hookyard bridge.** pi's hook surface is its extension API, and
+  `dispatch` runs workers under a separate `PI_CODING_AGENT_DIR`
+  (`~/.pi/dispatcher-worker`), which replaces rather than augments the ambient
+  `~/.pi/agent`. For a pi worker to post `exited` on session end, hookyard must
+  be installed with the dispatcher's manifest wired as an absolute `exec`
+  (`pi:session_shutdown` → `adapters/core/dispatch-notify.sh` — hookyard stats
+  every `exec` at install, so a consumer renders the repo's `hookyard.json`
+  template through its own store path) and an ambient `~/.pi/agent` bridge
+  present, so `crew pi-agent-dir` can copy it into the worker dir at dispatch.
+  Naming `~/.pi/dispatcher-worker/settings.json` in `programs.hookyard.piSettings`
+  is an equivalent alternative — hookyard then installs the bridge into the
+  worker dir itself — not a requirement, since the seeder already covers the
+  ambient-then-copy path. With no ambient bridge and the worker path not named
+  in `programs.hookyard.piSettings`, the worker launches with no hooks, and a
+  pi worker that dies is invisible to the bus until the dispatcher notices the
+  pane.
+
 - **The Cursor `stop` hook.** `~/.cursor/hooks.json` is a single shared file
   several tools write, so this module does not own it. Without the stanza below
   a cursor worker that dies is invisible to the bus — cursor has no session-end
@@ -281,6 +309,37 @@ For Claude Code, pass the plugin directory to `claude`:
   `--turn-end` is load-bearing: cursor only reports end-of-turn, and a `blocked`
   worker also ends its turn while waiting for the dispatcher, so that mode leaves
   `blocked` alone where SessionEnd would override it.
+
+- **The Cursor secret-read guard.** Cursor has no plugin hooks and
+  `~/.cursor/hooks.json` is shared, so this stanza is hand-managed too, same as
+  the `stop` hook above:
+
+  ```json
+  {
+    "hooks": {
+      "preToolUse": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ],
+      "beforeShellExecution": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ],
+      "beforeReadFile": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/secret-read-guard.sh"
+        }
+      ]
+    }
+  }
+  ```
+
+  The Shell payloads (`preToolUse`, `beforeShellExecution`) are verified
+  against captured cursor-agent runs; the `beforeReadFile` payload and the
+  `preToolUse` `Read`/`Grep` input keys are read off the shipped cursor-agent
+  2026.09.23 bundle, not a live capture.
 
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to
@@ -338,7 +397,12 @@ dispatch resume the review comments are the priority
 ```
 
 Four commands ship with the plugin — `/dispatcher`, `/autopilot`, `/finish-prs`,
-`/project-autopilot` (namespaced `/dispatcher:*` on Claude Code and Codex).
+`/project-autopilot`. Claude Code gets all four (namespaced `/dispatcher:*`).
+Codex and cursor get only `/dispatcher` and `/autopilot`: `/finish-prs` and
+`/project-autopilot` are **Claude Code only**, since they drive Claude Code
+agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
+users get the same fan-out from the engine-neutral `dispatcher` launcher —
+`dispatch` once per ticket or PR.
 
 ---
 

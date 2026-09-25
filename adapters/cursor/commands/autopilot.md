@@ -173,16 +173,16 @@ base=$(git merge-base HEAD "$base_ref") || exit 1
 
 ## Step 5: Quality Pass
 
-Run these skills on the branch diff against the **Base ref** `base`:
+Run these passes on the branch diff against the **Base ref** `base`. `/deslop` is the harness `deslop` skill, shipped to every engine — `dispatcher:deslop` on claude, `$deslop` on codex, `deslop` on cursor and pi.
 
-1. **Invoke `/simplify`** — review for reuse, quality, efficiency
+1. **Simplify pass** — re-read the `base..HEAD` diff for reuse of existing helpers, needless abstraction, and avoidable work, and apply the fixes (on claude, `/simplify` is an optional convenience for this)
 2. **Invoke `/deslop`** — remove AI-generated slop (unnecessary comments, defensive blocks, style inconsistencies)
 
 Commit any fixes from these passes.
 
 ## Step 6: Code Review
 
-Dispatch reviewer agents **in parallel** (single message, multiple Agent tool calls). Each reviewer sees the branch diff against the base.
+Dispatch reviewer agents **in parallel** (claude: one message, multiple Agent tool calls; other engines: your native parallel subagent mechanism). Each reviewer sees the branch diff against the base.
 
 ### Reviewer roster
 
@@ -190,7 +190,7 @@ Reviewer bodies ship with the harness: `$DISPATCHER_REVIEWERS_DIR/*.md`, falling
 
 Resolve `base` with the **Base ref** snippet above — the same base your diff (`git diff --name-only "$base"...HEAD`) and PR use. Run `reviewer-roster --base "$base"`, or `bash $DISPATCHER_REVIEWERS_DIR/resolve-roster.sh` (adapter-local `reviewers/resolve-roster.sh`) when that is not on PATH; it also reads `.dispatcher/reviewers/*.md` from the merge-base of `base` with the default branch (`origin/HEAD`, else `origin/main`) — on a stacked branch the unmerged parent's reviewers are never read — from git objects, never the working tree. If the resolver is unavailable or exits non-zero, skip repo-local discovery: route the harness roster directly and record `repo-local discovery skipped: <reason>` — never scan `.dispatcher/reviewers` by hand.
 
-Match your changed paths against every roster `globs:`, honour each matched reviewer's `when:`, and that set is the batch. Nothing matched: one general reviewer running the `find-bugs` skill. Only harness routes decide the `find-bugs` fallback: a repo-local route adds reviewers but never suppresses it.
+Match your changed paths against every roster `globs:`, honour each matched reviewer's `when:`, and that set is the batch. Nothing matched: the one roster entry marked `fallback: true` (`general-reviewer`), whose resolved `brief` runs like any other. Only harness routes decide the fallback: a repo-local route adds reviewers but never suppresses it.
 
 A new repo-local entry (`source: repo`, `override: null`) routes by `globs:` and `shebang:` only; its `when:` is never honoured. An override keeps and honours the harness `when:` and unions routes. In both cases the repo `when:` is reported only as an `ignored_when` hash token — copy it in as a code span. A repo-sourced entry only adds its own reviewer — it never removes or gates another.
 
@@ -255,7 +255,7 @@ Exit when ALL of these are true:
 
 One last pass after all CI/reviewer fixes are done:
 
-1. **Invoke `/simplify`**
+1. **Simplify pass** (as in Step 5)
 2. **Invoke `/deslop`** (with the **Base ref** `base`)
 
 If this produces changes, rerun affected checks; behavioral edits also need the

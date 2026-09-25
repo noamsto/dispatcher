@@ -68,10 +68,23 @@ _body() {
 rm -rf "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
 mkdir -p "$cc" "$cu" "$cx" "$cca" "$ccs" "$cus"
 
+# Commands that drive Claude Code agent teams (TaskCreate/SendMessage/
+# subagent_type/teammateMode, plus /loop and /schedule) and have no codex/cursor
+# equivalent yet. They ship to claude-code only; the body states claude-only at
+# the top. Porting them onto the crew bus is tracked in README's roadmap.
+claude_only=" project-autopilot finish-prs "
+is_claude_only() { case "$claude_only" in *" $1 "*) return 0 ;; *) return 1 ;; esac }
+
 for f in "$src"/*.md; do
   name="$(basename "$f" .md)"
 
   cp "$f" "$cc/$name.md"
+
+  # Claude-only commands are not projected to codex or cursor.
+  if is_claude_only "$name"; then
+    continue
+  fi
+
   cp "$f" "$cu/$name.md"
 
   mkdir -p "$cx/$name"
@@ -85,14 +98,17 @@ for f in "$src"/*.md; do
   } >"$cx/$name/SKILL.md"
 done
 
-# Ship the notify hook and the protocols inside both plugin trees, so a plugin
-# is self-contained: the command bodies tell the agent to fall back to the
-# plugin-local protocols when $DISPATCHER_PROTOCOL_DIR is unset (a non-Nix
-# install, where nothing exports it).
+# Ship the notify hook, the secret-read guard, and the protocols inside both
+# plugin trees, so a plugin is self-contained: the command bodies tell the
+# agent to fall back to the plugin-local protocols when
+# $DISPATCHER_PROTOCOL_DIR is unset (a non-Nix install, where nothing exports
+# it).
 for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   mkdir -p "$d/scripts"
   cp "$root/adapters/core/dispatch-notify.sh" "$d/scripts/dispatch-notify.sh"
   chmod +x "$d/scripts/dispatch-notify.sh"
+  cp "$root/adapters/core/secret-read-guard.sh" "$d/scripts/secret-read-guard.sh"
+  chmod +x "$d/scripts/secret-read-guard.sh"
   rm -rf "$d/protocols" "$d/reviewers"
   cp -r "$protocols" "$d/protocols"
   cp -r "$reviewers" "$d/reviewers"
@@ -104,14 +120,16 @@ rm -rf "$root/adapters/codex/plugin/critics"
 cp -r "$critics" "$root/adapters/codex/plugin/critics"
 
 # Cursor has no plugin tree to be self-contained inside, and ~/.cursor/hooks.json
-# is a single shared file several flakes write — so the hook ships as a loose
-# script referenced by its store path from a hand-managed stanza (see README),
-# the same arrangement as codex's config.toml. It lives beside commands/, not
-# inside it: that dir is cleared and regenerated above.
+# is a single shared file several flakes write — so the hooks ship as loose
+# scripts referenced by their store paths from hand-managed stanzas (see
+# README), the same arrangement as codex's config.toml. They live beside
+# commands/, not inside it: that dir is cleared and regenerated above.
 rm -rf "$root/adapters/cursor/scripts"
 mkdir -p "$root/adapters/cursor/scripts"
 cp "$root/adapters/core/dispatch-notify.sh" "$root/adapters/cursor/scripts/dispatch-notify.sh"
 chmod +x "$root/adapters/cursor/scripts/dispatch-notify.sh"
+cp "$root/adapters/core/secret-read-guard.sh" "$root/adapters/cursor/scripts/secret-read-guard.sh"
+chmod +x "$root/adapters/cursor/scripts/secret-read-guard.sh"
 
 # Both rosters and the protocols ship loose for cursor: a cursor worker
 # resolves these references by path, and without these copies the only
