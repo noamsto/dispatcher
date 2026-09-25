@@ -2698,6 +2698,34 @@ fi
 # boots — its startup drain is unbounded, so a scoping note posted now still lands.
 echo "worker_id: $worker_id"
 
+# Cross-repo dispatch (#398): the crew bus is per repo — `crew stream` reads
+# $(git rev-parse --git-common-dir)/crew of the checkout it runs in — so a lane
+# the dispatcher armed in ITS checkout never sees a worker dispatched into
+# another repo. Print the exact lane command for the worker's repo when the
+# dispatcher's pane sits elsewhere and the worker's bus is not being streamed
+# yet. `crew stream --status` is the single source of truth for that last part
+# (rc 0 alive, 1 stale, 2 dead), so the liveness rule lives in exactly one
+# place — anything but `alive` means the dispatcher cannot see this worker here.
+if [ -n "${TMUX_PANE:-}" ]; then
+  worker_common="${crew_dir%/crew}"
+  dpane_path=$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || true)
+  dcommon=""
+  if [ -n "$dpane_path" ] && [ -d "$dpane_path" ]; then
+    dcommon=$(git -C "$dpane_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  fi
+  if [ -n "$dcommon" ] && [ "$dcommon" != "$worker_common" ]; then
+    if ! crew stream --status --crew "$crew_id" >/dev/null 2>&1; then
+      worker_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+      # Inside the git common dir `--show-toplevel` fails while `crew` still
+      # resolves the same bus, so that is the correct fallback — never the
+      # dispatcher's checkout, which would name the wrong bus.
+      [ -n "$worker_top" ] || worker_top="$worker_common"
+      echo "dispatch: cross-repo worker — its bus is $worker_common/crew, not the dispatcher checkout's ($dcommon)."
+      echo "  arm/adjust the lane: cd $worker_top && crew stream --crew $crew_id"
+    fi
+  fi
+fi
+
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
 tmux set-window-option -t "$win" @crew_name "$agent_name"
