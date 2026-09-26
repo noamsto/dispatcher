@@ -22,9 +22,10 @@
 # Private repos come from `gh api user/repos?visibility=private` (org repos
 # included), cached for a day. Bare repo names are not matched: private repos
 # named `api`, `docs` or `notes` would flag half of all prose. A target in that
-# same list is private, so private-to-private posts pass. When the list can't
-# be fetched and no cache exists, the guard abstains. betterleaks is optional;
-# without it the secret scan is skipped, said once on stderr.
+# same list is private, so private-to-private posts pass. Without the list, an
+# anonymous API lookup decides whether the target is public, and the guard
+# abstains when that fails too. betterleaks is optional; without it the secret
+# scan is skipped, said once on stderr.
 #
 # Portable to macOS's bash 3.2 and BSD userland: no ${var,,}, and `timeout`
 # only where it exists.
@@ -114,9 +115,16 @@ if [[ -z $(find "$cache" -mmin -1440 2>/dev/null) ]]; then
     tr '[:upper:]' '[:lower:]' <<<"$fetched" >"$cache.tmp" && mv "$cache.tmp" "$cache"
   fi
 fi
-[[ -s $cache ]] || exit 0
-
-grep -qxF "$target" "$cache" && exit 0
+if [[ -s $cache ]]; then
+  grep -qxF "$target" "$cache" && exit 0
+else
+  # No list — no authenticated gh, as in a claude.ai/code session. An anonymous
+  # lookup still tells public from private (a private repo is a 404), and every
+  # check but the private-name match still runs.
+  code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "https://api.github.com/repos/$target" 2>/dev/null) || exit 0
+  [[ $code == 200 ]] || exit 0
+  echo "public-leak-guard: no private-repo list (gh not authenticated); private names not checked" >&2
+fi
 
 # Bodies also arrive by file: `--body-file`/`-F <path>`, `--input <path>`,
 # and `gh api`'s `-F body=@<path>`. The path itself is dropped from the scanned
@@ -133,7 +141,10 @@ while read -r path; do
 done < <(grep -oE "$file_arg_re" <<<"$text" |
   sed -E 's/^(--body-file|-F|--input)[[:space:]=]+//; s/^.*=@//; s/[[:space:]]+$//; s/^["'\'']//; s/["'\'']$//' || true)
 
-hits=$(grep -oiwF -f "$cache" <<<"$body" | tr '[:upper:]' '[:lower:]' | sort -u || true)
+hits=
+if [[ -s $cache ]]; then
+  hits=$(grep -oiwF -f "$cache" <<<"$body" | tr '[:upper:]' '[:lower:]' | sort -u || true)
+fi
 hits+=$'\n'$(grep -oE 'claude\.ai/code/session_[A-Za-z0-9]+|/tmp/claude-[^[:space:]]*|'"$HOME"'/[^[:space:]]*' <<<"$body" | sort -u || true)
 if command -v betterleaks >/dev/null; then
   hits+=$'\n'$(betterleaks stdin --no-banner -l error --redact -f json -r - <<<"$body" 2>/dev/null |
