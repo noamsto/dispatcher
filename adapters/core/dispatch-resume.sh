@@ -731,10 +731,12 @@ elif [ "$rec_state" = ok ]; then
     lead_sid="$rec_id"
     lead_session="$rec_id"
   fi
-elif [ "$agent" = claude ]; then
+elif [ "$agent" = claude ] && [ "$(_hdr engine)" = claude ]; then
   # A worker dispatched before records existed: its project dir holds the
   # lead's transcript and, with a role grid, the roles'. Only a lone top-level
   # uuid transcript is unambiguously the lead's (agent-*.jsonl are subagents).
+  # Only when the lead itself ran claude: after an engine switch (--agent) the
+  # transcript is a role's, never the lead's.
   slug="${wt_path//[^a-zA-Z0-9]/-}"
   cands=()
   for f in "$claude_projects/$slug"/*.jsonl; do

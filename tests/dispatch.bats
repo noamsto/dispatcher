@@ -5663,6 +5663,19 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   run ! grep -qF -- '--session-id' <(launch_log)
 }
 
+@test "lead-session: a dispatch aborted before the launch drops a stale record of an older same-named branch" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-grid-lead-border"
+  mkdir -p "$victim" "$art" "$TEST_REPO/.git/crew/leads/feat"
+  ln -s "$victim" "$art/roles.json"
+  printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"roles.json is a directory — refusing"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border" ]
+}
+
 @test "lead-session: a symlinked leads dir is refused before any launch" {
   stub_launch_bins
   victim="$BATS_TEST_TMPDIR/victim"

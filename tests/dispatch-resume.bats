@@ -1150,6 +1150,22 @@ record_lead() {
   [ "$(cat "$(lead_rec)")" = "claude $LEAD_ID" ]
 }
 
+@test "an engine switch to claude never adopts a lone transcript as the lead's" {
+  setup_worker_wt 'roles: reviewer'
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  cd "$WT"
+  run run_resume --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE -- "--session-id $UUID_RE " <(launch_log)
+  sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
+  [ "$sid" != "$ROLE_ID" ]
+  [ "$(cat "$(lead_rec)")" = "claude $sid" ]
+}
+
 @test "legacy claude worker with no transcript still uses --continue and records nothing" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

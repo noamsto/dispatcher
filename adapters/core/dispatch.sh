@@ -2806,6 +2806,10 @@ if ! _lead_record_safe; then
   echo "dispatch: $crew_dir/leads/$branch or a dir above it is a symlink or not a regular file/directory — refusing to record the lead session" >&2
   exit 1
 fi
+# A re-dispatch is a new lead: drop an older same-named branch's record now, so
+# an abort before the launch cannot leave resume attaching to the old
+# conversation (same reason the grant record above is rewritten).
+rm -f -- "$crew_dir/leads/$branch"
 if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
   mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
 fi
