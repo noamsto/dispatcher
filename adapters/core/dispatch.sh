@@ -1002,6 +1002,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   branch="$(git branch --show-current)"
   roles_file="$crew_dir/artifacts/$branch/roles.json"
+  if bad="$(_artifacts_dir_bad "$branch")"; then
+    echo "dispatch: $bad is a symlink or not a directory — refusing to use roles.json" >&2
+    exit 1
+  fi
   [ -f "$roles_file" ] || {
     echo "dispatch: no role grid recorded for $branch (dispatch without --lazy to use an up-front grid)" >&2
     exit 1
@@ -2829,6 +2833,11 @@ if [ "${#role_names[@]}" -gt 0 ]; then
   roles_dir="$crew_dir/artifacts/$branch"
   if bad="$(_artifacts_dir_bad "$branch")"; then
     echo "dispatch: $bad is a symlink or not a directory — refusing to write roles.json" >&2
+    exit 1
+  fi
+  # mv would drop the temp file inside a directory (or a symlink to one) at roles.json.
+  if [ -d "$roles_dir/roles.json" ]; then
+    echo "dispatch: $roles_dir/roles.json is a directory — refusing to write roles.json" >&2
     exit 1
   fi
   mkdir -p "$roles_dir"
