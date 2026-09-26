@@ -449,21 +449,21 @@ mask_cmd() {
 # the first word after { ! shell keywords, as a basename:
 #   B  benign: never prints a file nor runs an argument (echo, ls, test, crew;
 #      git and gh by subcommand)
-#   C  copy: benign, but a credential file it copies or links taints the space
+#   C  copy: like B, but a file it names reaches every other stage
 #   F  filter: prints what it reads (cat, head, `.`, git show/diff/blame, …)
 #   G  grep family: prints matches unless each grep carries a quiet flag
 #   U  anything else, or an assignment prefix — it may run its arguments
 # A stage's verdict comes from its raw text, quotes included, so no wrapper
 # list is needed: a printing word anywhere, an interpreter given inline code
-# or stdin, a loud grep, or an F head that reads by itself. A stage names a
-# credential file when the file's name is spelled in it (templates dropped).
-# Deny when
-#   - an F/G stage with a verdict names a file itself;
-#   - a pipeline holding a U stage has a verdict and names a file anywhere
-#     (`echo .env | xargs cat`, `echo cat .env | bash`);
-#   - the space names a file anywhere and a non-benign stage with a verdict
-#     expands something or is an interpreter (`f=.env; cat "$f"`, loops);
-#   - a C stage copied a named file and any non-benign stage has a verdict.
+# or stdin, a loud grep, or a head that prints by itself (`.`, git show,
+# date -f). A stage names a credential file when the file's name is spelled in
+# it (templates dropped). Deny when the space names a file and
+#   - a stage other than B names it and any non-B/C stage has a verdict
+#     (`cat .env`, `sort .env | head`, `cp .env /tmp/e && cat /tmp/e`);
+#   - a pipeline holding a U stage has a verdict (`echo cat .env | bash`);
+#   - a U stage has a verdict (`echo .env > l; xargs cat < l`), or another
+#     non-benign one expands something or is an interpreter (`f=.env; cat
+#     "$f"`, loops).
 # B stages are otherwise exempt, so prose that mentions a read (commit
 # messages, PR bodies, echo text) is allowed. A heredoc body is data when no
 # stage on its line is U, and code otherwise; the delimiter is found line by
@@ -536,7 +536,8 @@ function subcmd(r, n, W, i, w) {
   for (i = 1; i <= n; i++) {
     w = W[i]
     if (w == "") continue
-    if (w == "-c" || w ~ /^--(config-env|exec-path)/) { GITU = 1; continue }
+    if (w == "-c" || w == "--config-env") { GITU = 1; i++; continue }
+    if (w ~ /^--(config-env|exec-path)/) { GITU = 1; continue }
     if (w == "-C" || w == "--git-dir" || w == "--work-tree" || w == "--namespace" || w == "-R" || w == "--repo") { i++; continue }
     if (w ~ /^-/) continue
     return w
@@ -553,15 +554,16 @@ function klass(r, h, s, c) {
   if (h == "git") {
     s = subcmd(HREST)
     c = (s in GIT) ? GIT[s] : "U"
-    if (GITU) return "U"
     if (c == "B" && (s in GLOG) && r ~ /[[:space:]](-[pucL][^[:space:]]*|-U[0-9]*|--patch|--patch-with-(stat|raw)|--unified(=[^[:space:]]*)?|--cc|--dd|--remerge-diff|--diff-merges(=[^[:space:]]*)?|--binary)([[:space:]]|$)/) c = "F"
     if (c == "B" && (s in GHUNK) && r ~ /[[:space:]](-p|--patch|-U[0-9]*|--unified(=[^[:space:]]*)?|--binary)([[:space:]]|$)/) c = "F"
     if (c == "B" && s == "format-patch" && r ~ /[[:space:]]--stdout([[:space:]]|$)/) c = "F"
-    if (c == "F" && s ~ /^diff/ && r ~ /[[:space:]]--(stat|numstat|shortstat|name-only|name-status|quiet|exit-code|dirstat)([[:space:]=]|$)/) c = "B"
+    if (c == "B" && (s == "status" || s == "commit" || s == "stash") && r ~ /[[:space:]](-v+|--verbose)([[:space:]]|$)/) c = "F"
+    if (c == "F" && s ~ /^diff/ && r ~ /[[:space:]]--(stat|numstat|shortstat|name-only|name-status|quiet|dirstat)([[:space:]=]|$)/ && r !~ /[[:space:]](-p|-u|-U[0-9]*|--patch[^[:space:]]*|--unified(=[^[:space:]]*)?)([[:space:]]|$)/) c = "B"
     if (c == "F") GV = 1
-    return c
+    return GITU ? "U" : c
   }
   if (h == "gh") return (subcmd(HREST) in GH) ? "B" : "U"
+  if ((h == "date" || h == "file") && r ~ /[[:space:]](-[A-Za-z]*f[^[:space:]]*|--file(s-from)?(=[^[:space:]]*)?)([[:space:]]|$)/ || (h in CLS) && CLS[h] == "B" && index(r, "--files0-from")) { GV = 1; return "F" }
   return (h in CLS) ? CLS[h] : "U"
 }
 # Files whose whole content is credentials, as a command line spells them:
@@ -648,7 +650,7 @@ function stage(r, c, own, v) {
     if (r !~ /^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=([^[:space:]()]|\([^()]*\))*[[:space:]]*)+$/) SU = 1
   }
   own = names(r)
-  if (own) { PS[cd] = 1; T = 1; if (c == "C") TS = 1 }
+  if (own) { PS[cd] = 1; T = 1; if (c != "B") TS = 1 }
   v = verdict(r, c)
   if (v != "") {
     if (PV[cd] == "") PV[cd] = v
@@ -903,6 +905,7 @@ grep)
   # secret_path_re is anchored, so path and glob are tested separately. Template
   # names are stripped rather than exempting the call, so `{.env.example,.env}`
   # still trips on its `.env`.
+  # \4 is the character after the name: template_re holds two groups.
   path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
   glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
   if [[ $path_left =~ $secret_path_re ]]; then

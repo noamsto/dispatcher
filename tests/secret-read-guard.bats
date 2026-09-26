@@ -1628,6 +1628,42 @@ rows_proposal=(
   check_rows "${rows_proposal[@]}"
 }
 
+rows_review_round_1=(
+  bash deny "sort @E@ | head"
+  bash deny "sort @E@ | grep KEY"
+  bash deny "uniq @E@ | cat"
+  bash deny "tr -d '\r' < @E@ | grep API"
+  bash deny "column -t -s= @E@ | head -5"
+  bash deny "fold -w 80 @E@ | head"
+  bash deny "tee /dev/null < @E@ | cat"
+  bash deny "sort @E@ > /tmp/x; cat /tmp/x"
+  bash deny "dd if=@E@ of=/tmp/x; cat /tmp/x"
+  bash deny "base64 -d < @E@ > /tmp/x && head /tmp/x"
+  bash deny "git diff --exit-code -- @E@ | head"
+  bash deny "git diff --stat -p -- @E@"
+  bash deny "git status -vv -- @E@ | head"
+  bash deny "git commit --dry-run -v -- @E@"
+  bash deny "date -f @E@"
+  bash deny "file -f @E@"
+  bash deny "wc --files0-from=@E@ 2>&1 | cat"
+  bash deny "git -c color.ui=never show HEAD:@E@"
+  bash deny "git --config-env core.pager=P show HEAD:@E@"
+  bash allow "ls -la @E@; head -20 README.md"
+  bash allow "test -f @E@ || cat README.md"
+  bash allow "grep -c KEY @E@; echo ok"
+  bash allow "git diff --stat -- @E@"
+  bash allow "git diff --quiet -- @E@ && echo same"
+  bash allow "date +%s; ls @E@"
+  bash allow "wc -l @E@"
+  bash allow "git status --short"
+  bash allow "git -c user.name=x commit -m 'fix: docs'"
+  bash allow "date -d yesterday +%F"
+)
+
+@test "secret-read-guard: rule 3 — review round 1" {
+  check_rows "${rows_review_round_1[@]}"
+}
+
 # check_all_rows_under <awk-cmd> — replay every rows_* table through check_rows
 # with <awk-cmd> spliced onto PATH as `awk`, to confirm rule 3's verdicts hold
 # under a non-GNU awk. Skips when <awk-cmd> isn't installed.
