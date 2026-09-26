@@ -155,12 +155,82 @@ _owner_pid() {
   printf '%s\n' "$PPID"
 }
 
-# _pid_alive <pid> — `kill -0 0` signals the caller's own process group and
-# `kill -0 -1` broadcasts, so both all but always succeed; only a positive
-# integer is a liveness probe.
+# _pid_alive <pid> — 0 when a process with this pid exists, under any uid.
+# `kill -0 0` signals the caller's own process group and `kill -0 -1`
+# broadcasts, so only a positive integer is a liveness probe. A failed signal
+# is not proof of death: another uid's process returns EPERM, and the signal
+# merely being refused proves it exists, so EPERM reads alive. `ps -p` is the
+# fallback for any other error (and where `kill` cannot name the error we
+# parse). Fail closed: anything unreadable stays alive.
 _pid_alive() {
   case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
-  kill -0 "$1" 2>/dev/null
+  local kmsg
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in
+  *"not permitted"* | *"not allowed"*) return 0 ;; # EPERM: the process exists
+  esac
+  ps -p "$1" -o pid= >/dev/null 2>&1
+}
+
+# _file_mtime_s <file> — the file's mtime in epoch seconds, or return 1. GNU
+# stat takes `-c %Y`; BSD/macOS takes `-f %m`. GNU first: its `-f` means
+# "filesystem" and would print a filesystem block for a `-f %m` invocation.
+_file_mtime_s() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+# _ps_elapsed_s <pid> — the process's elapsed seconds, or return 1 when ps can
+# not say. Duplicated from dispatch.sh (the two ship as standalone builds):
+# `etimes` is exact where the platform has it; `etime` parses the
+# [[dd-]hh:]mm:ss macOS prints. Both are locale- and timezone-independent.
+_ps_elapsed_s() {
+  local pid="$1" out d h m s rest
+  out="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9]*) ;;
+  *) printf '%s' "$out"; return 0 ;;
+  esac
+  out="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9:-]*) return 1 ;;
+  esac
+  d=0
+  case "$out" in
+  *-*) d="${out%%-*}"; out="${out#*-}" ;;
+  esac
+  [ -n "$d" ] || d=0
+  case "$out" in
+  *:*:*) h="${out%%:*}"; rest="${out#*:}"; m="${rest%%:*}"; s="${rest#*:}" ;;
+  *:*) h=0; m="${out%%:*}"; s="${out#*:}" ;;
+  *) h=0; m=0; s="$out" ;;
+  esac
+  printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
+}
+
+# _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
+# after <pidfile> was last written (plus 2s of slack for ps' second
+# granularity), so it cannot be the dispatcher the file records: that process
+# existed when the file was written, and a later start merely inherited the
+# number. A coarse-mtime filesystem only makes a stale reuse read live, the
+# fail-open direction. Returns 1 when either timestamp is unreadable, so a live
+# process is never judged dead.
+_pid_recycled() {
+  local pid="$1" file="$2" elapsed file_s
+  [ -f "$file" ] || return 1
+  elapsed="$(_ps_elapsed_s "$pid")" || return 1
+  file_s="$(_file_mtime_s "$file")" || return 1
+  case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
+  case "$file_s" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
+}
+
+# _recorded_pid_live <pid> <pidfile> — 0 only when <pid> is live AND not a
+# later-recycled process, i.e. when it can still be the dispatcher recorded in
+# <pidfile>.
+_recorded_pid_live() {
+  _pid_alive "$1" || return 1
+  _pid_recycled "$1" "$2" && return 1
+  return 0
 }
 
 # _is_ancestor_pid <pid> — is <pid> one of this process's ancestors? Bounded
@@ -349,6 +419,9 @@ _lock_acquire() {
   if [ "$held" = "$owner" ]; then
     return 0 # idempotent: this same owner already holds it
   fi
+  # Bare `kill -0`, not `_pid_alive`: a lock holder is always this tool's own
+  # uid, and the `kill -0 0` process-group semantics are relied on by `stream
+  # --force` (tests/crew.bats pins that a literal `0` holder reads as held).
   if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
     return 1
   fi
@@ -1085,7 +1158,7 @@ reply)
             case "$cpid" in
             '') calive=null ;;
             *[!0-9]* | 0) calive=false ;;
-            *) if kill -0 "$cpid" 2>/dev/null; then calive=true; else calive=false; fi ;;
+            *) if _recorded_pid_live "$cpid" "$dir/crews/$c/pid"; then calive=true; else calive=false; fi ;;
             esac
             live+=$(printf '%s' "$n" | jq -c --argjson a "$calive" '. + {crew_alive:$a}')$'\n'
           }
@@ -1265,9 +1338,9 @@ register | deregister)
   epid=$(cat "$cdir/pid" 2>/dev/null || true)
   if [ "$sub" = register ]; then
     pid="${1:-$(_owner_pid)}"
-    if [ "$epid" != "$pid" ] && _pid_alive "$epid"; then
+    if [ "$epid" != "$pid" ] && _recorded_pid_live "$epid" "$cdir/pid"; then
       _pidfile_log register refused "$crew" "$epid" "$pid"
-      echo "crew: crew '$crew' still has a live dispatcher (pid $epid) — 'crew new' starts your own crew; 'crew adopt' re-attaches only a crew whose dispatcher is dead or already yours" >&2
+      echo "crew: crew '$crew' still has a live dispatcher (pid $epid) — 'crew new' starts your own crew; if that pid is a stale reuse, recover with 'crew adopt --force $crew'" >&2
       exit 1
     fi
     mkdir -p "$cdir"
@@ -1281,7 +1354,7 @@ register | deregister)
     fi
   else
     # Exit 0 on refusal: this is cleanup, and dispatcher.sh runs it from its exit path.
-    if _pid_alive "$epid" && [ "$epid" != "$PPID" ] && [ "$epid" != "$(_owner_pid)" ]; then
+    if _recorded_pid_live "$epid" "$cdir/pid" && [ "$epid" != "$PPID" ] && [ "$epid" != "$(_owner_pid)" ]; then
       _pidfile_log deregister refused "$crew" "$epid"
       echo "crew: crew '$crew' still has a live dispatcher (pid $epid) that is not this caller's parent or owner — left in place" >&2
       exit 0
@@ -1328,7 +1401,7 @@ $(jq -r 'select(.crew_id != null and .crew_id != "") | .crew_id' "$log" 2>/dev/n
       # report a dead crew as alive. Only a positive integer is a liveness probe.
       case "$pid" in
       *[!0-9]* | 0) ;;
-      *) if kill -0 "$pid" 2>/dev/null; then alive=true; fi ;;
+      *) if _recorded_pid_live "$pid" "$dir/crews/$cid/pid"; then alive=true; fi ;;
       esac
     fi
     meta=$(printf '%s' "$meta" | jq -c --arg id "$cid" --arg pid "$pid" --argjson alive "$alive" \
@@ -1409,7 +1482,7 @@ adopt)
   # on it too: --force over a genuinely live dispatcher must release nothing.
   epid=$(cat "$cdir/pid" 2>/dev/null || true)
   live=""
-  if _pid_alive "$epid"; then live=1; fi
+  if _recorded_pid_live "$epid" "$cdir/pid"; then live=1; fi
   if [ -z "$force" ]; then
     # A live pid among our own ancestors is *this* session's crew, so re-adopting
     # is idempotent — the recovery path has to survive being run twice. It is a
@@ -1828,7 +1901,7 @@ stream)
     [ -f "$ldir/pid" ] && lockpid=$(cat "$ldir/pid" 2>/dev/null || true)
     case "$lockpid" in '' | *[!0-9]* | 0) lockpid="" ;; esac
     live=""
-    if [ -n "$lockpid" ] && kill -0 "$lockpid" 2>/dev/null; then
+    if [ -n "$lockpid" ] && _pid_alive "$lockpid"; then
       live=1
     fi
     if [ -z "$live" ]; then
@@ -1894,6 +1967,9 @@ stream)
     cleared=""
     tries=0
     while [ "$tries" -lt 50 ]; do
+      # Bare `kill -0`, paired with the `kill -TERM` above: this confirms
+      # signal delivery, not general liveness, so an EPERM that `_pid_alive`
+      # reads alive is the correct "may not have cleared" answer here.
       kill -0 "$holder" 2>/dev/null || {
         cleared=1
         break
