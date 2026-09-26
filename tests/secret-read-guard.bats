@@ -495,11 +495,8 @@ assert_allow() {
 }
 
 # ---------------------------------------------------------------------------
-# Large commands stay inside hookyard's 4 s budget (a timeout is an allow)
+# Large commands stay well inside hookyard's 4 s budget (a timeout is an allow)
 # ---------------------------------------------------------------------------
-# The bound is that budget less headroom, not a speed target: a super-linear
-# pass costs 10 s and more at 100 KB, while a loaded CI runner has pushed a
-# linear one past 2.8 s.
 
 # assert_deny_within <max-ms> <payload> — deny in claude shape, fast enough.
 assert_deny_within() {
@@ -512,16 +509,16 @@ assert_deny_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
-@test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 3.5 s" {
+@test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 2 s" {
   local body
   body=$(printf "a 'b' \"c\"\n%.0s" $(seq 1 10240))
-  assert_deny_within 3500 "$(claude_bash "cat > f <<'X'"$'\n'"$body"$'\n'"X"$'\n'"env")"
+  assert_deny_within 2000 "$(claude_bash "cat > f <<'X'"$'\n'"$body"$'\n'"X"$'\n'"env")"
 }
 
-@test "secret-read-guard: a 100 KB bash -c body ending in a dump denies in under 3.5 s" {
+@test "secret-read-guard: a 100 KB bash -c body ending in a dump denies in under 2 s" {
   local body
   body=$(printf 'echo hi; %.0s' $(seq 1 10240))
-  assert_deny_within 3500 "$(claude_bash "bash -c '${body}env'")"
+  assert_deny_within 2000 "$(claude_bash "bash -c '${body}env'")"
 }
 
 # heredoc_100k — a quoted heredoc of >= 100 KB whose lines carry an apostrophe,
@@ -532,16 +529,16 @@ heredoc_100k() {
   printf '%s' "cat > f <<'X'"$'\n'"$body"$'\n'"X"
 }
 
-@test "secret-read-guard: cat .env ahead of a 100 KB heredoc denies in under 3.5 s" {
-  assert_deny_within 3500 "$(claude_bash "cat .env"$'\n'"$(heredoc_100k)")"
+@test "secret-read-guard: cat .env ahead of a 100 KB heredoc denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "cat .env"$'\n'"$(heredoc_100k)")"
 }
 
-@test "secret-read-guard: bash -c true, a 100 KB heredoc, then env denies in under 3.5 s" {
-  assert_deny_within 3500 "$(claude_bash "bash -c true"$'\n'"$(heredoc_100k)"$'\n'"env")"
+@test "secret-read-guard: bash -c true, a 100 KB heredoc, then env denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "bash -c true"$'\n'"$(heredoc_100k)"$'\n'"env")"
 }
 
-@test "secret-read-guard: bash -c env ahead of a 100 KB heredoc denies in under 3.5 s" {
-  assert_deny_within 3500 "$(claude_bash "bash -c env; $(heredoc_100k)")"
+@test "secret-read-guard: bash -c env ahead of a 100 KB heredoc denies in under 2 s" {
+  assert_deny_within 2000 "$(claude_bash "bash -c env; $(heredoc_100k)")"
 }
 
 # assert_allow_within <max-ms> <payload> — allow in claude shape, fast enough.
