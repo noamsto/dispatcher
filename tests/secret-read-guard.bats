@@ -1840,3 +1840,76 @@ EOF
   [ -z "$output" ]
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
 }
+
+# A `sed` shim that logs every invocation's arguments (so calls can be
+# counted) and then defers to the real sed, so behaviour is unchanged.
+# \4 appears only in the wide name sed's script (credential_read's second
+# sed, and the grep branch's path_left/glob_left sed) — never in the narrow
+# template-strip sed, so grepping the log for it tells the two apart.
+@test "secret-read-guard: the wide name strip runs only when main's name test misses" {
+  local real_sed log
+  real_sed=$(command -v sed)
+  log="$BATS_TEST_TMPDIR/sed.log"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/sed" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$log"
+exec "$real_sed" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/sed"
+
+  local old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+
+  # (a) Both `.env` names are caught by the narrow regex once the template
+  # suffix is stripped, so the wide sed never runs.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_bash 'cat .env .env.example')"
+  assert_deny_claude
+  run grep -qF '\4' "$log"
+  [ "$status" -ne 0 ]
+
+  # (b) The narrow regex requires a space/quote/=// before `.env`; `{.env,`
+  # has none, so only the wide sed (run exactly once) catches it.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_bash 'cat {.env,.env.local}')"
+  assert_deny_claude
+  [ "$(grep -cF '\4' "$log")" -eq 1 ]
+
+  # (c) Grep tool: the narrow regex hits on both the path and the glob
+  # (a bare `.env` needs no wide fallback here), so the wide sed never runs
+  # for either field.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_grep "config/.env" "*.env" "x" content)"
+  assert_deny_claude
+  run grep -qF '\4' "$log"
+  [ "$status" -ne 0 ]
+
+  # (d) Grep tool, glob field: `.env.examples` is not a template name (it
+  # ends in "examples", not "example"), so the narrow regex misses and the
+  # wide sed is needed to catch it.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_grep "" ".env.examples" "x" content)"
+  assert_deny_claude
+  run grep -qF '\4' "$log"
+  [ "$status" -eq 0 ]
+
+  PATH=$old_path
+}
+
+@test "secret-read-guard: a failing sed in the name test fails loud" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/sed" <<'EOF'
+#!/usr/bin/env bash
+exit 4
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/sed"
+
+  local old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  run --separate-stderr run_guard <<<"$(claude_bash 'cat .env')"
+  PATH=$old_path
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
+}

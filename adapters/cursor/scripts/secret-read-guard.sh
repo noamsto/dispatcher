@@ -612,9 +612,11 @@ credential_read() {
   *.env* | *netrc* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.aws/credentials* | *.pem* | *.p12* | *.pfx*) ;;
   *) return 0 ;;
   esac
-  left=$(sed -E "s/$template_re//g" <<<"$1")
-  wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1")
-  grep -qE "$cmd_secret_re" <<<"$left" || grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
+  left=$(sed -E "s/$template_re//g" <<<"$1") || return
+  if ! grep -qE "$cmd_secret_re" <<<"$left"; then
+    wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1") || return
+    grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
+  fi
   awk "$awk_cred" <<<"$1"
 }
 
@@ -644,8 +646,9 @@ grep)
   # template_re holds two groups).
   path_any=$(sed -E "s/$template_re//g" <<<"$path")
   glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
-  path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
-  glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
+  path_left=/ glob_left=/
+  [[ $path_any =~ $secret_path_re ]] || path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
+  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] || glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
   if [[ $path_any =~ $secret_path_re || $path_left =~ $secret_path_re ]]; then
     deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   fi
