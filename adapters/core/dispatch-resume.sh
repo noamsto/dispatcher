@@ -24,6 +24,52 @@ pi_skill_args() {
   return 0
 }
 
+# _uuid — a random lowercase v4 uuid, the id a claude or pi lead is launched
+# with (--session-id) so a resume can find its own session again. Duplicated from
+# dispatch.sh (standalone build); parity-tested.
+_uuid() {
+  local h
+  h="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
+}
+
+# _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
+# it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
+# them. Mirrors the grant-record checks in dispatch.sh.
+_lead_record_safe() {
+  local dir="$crew_dir/leads" part rec="$crew_dir/leads/$branch"
+  local -a parts
+  IFS=/ read -ra parts <<<"$branch"
+  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
+    dir="$dir${part:+/$part}"
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      return 1
+    fi
+  done
+  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
+    return 1
+  fi
+}
+
+# _record_lead_session <engine> <id> — record which engine session is the
+# lead's, as `<engine> <id>` in $crew_dir/leads/<branch>. Not under artifacts/,
+# which is granted to workers. Only a lead launch writes it: role panes share
+# the worktree and must never claim the lead's session.
+_record_lead_session() {
+  local rec="$crew_dir/leads/$branch" tmp
+  if ! _lead_record_safe; then
+    echo "dispatch: $rec is a symlink or not a regular file — not recording the lead session" >&2
+    return 1
+  fi
+  (
+    umask 077
+    mkdir -p "$(dirname "$rec")"
+    tmp="$(mktemp "$(dirname "$rec")/.lead.XXXXXX")"
+    printf '%s %s\n' "$1" "$2" >"$tmp"
+    mv -f -- "$tmp" "$rec"
+  )
+}
+
 # shell_quote and write_launch_script: duplicated from dispatch.sh (standalone
 # build); parity-tested against dispatch.sh's copies.
 shell_quote() {
@@ -557,8 +603,9 @@ _prior_failed_escalation_available() {
   return 0
 }
 
-# Pre-compute crew_dir for escalation checks (normally set later at line 477).
-_escalation_crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+# crew_dir is read by the escalation checks and the lead-session lookup below;
+# the directory itself is only created once --print has had its exit.
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
 
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
@@ -571,14 +618,14 @@ else
   orig_model="$(sed -n 's/^model: //p' "$wt_path/WORKER_TASK.md" | head -1)"
   if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
     # The header is worker-writable, so the bus must agree it is what failed.
-    bus_failed_model="$(_prior_failed_model "$branch" "$_escalation_crew_dir" "$tier")"
+    bus_failed_model="$(_prior_failed_model "$branch" "$crew_dir" "$tier")"
     escalation_info=""
     [ "$bus_failed_model" = "$orig_model" ] && escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
     if [ -n "$escalation_info" ]; then
       escalation_target="${escalation_info#* }"
       if [ "$escalation_target" != "RECORD_ONLY" ]; then
         if _escalation_model_matches "$escalation_target" "$model"; then
-          if _prior_failed_escalation_available "$branch" "$_escalation_crew_dir"; then
+          if _prior_failed_escalation_available "$branch" "$crew_dir"; then
             precheck+=(--ignore-map)
             escalated_from="${escalation_info%% *}"
           fi
@@ -624,15 +671,117 @@ if [ -n "$reused" ] && crew engine-cmd "$pane_cmd" 2>/dev/null; then
   exit 1
 fi
 
+# Which engine session is the lead's own. Role panes share this worktree, so
+# the engine's "latest session here" (--continue, resume --last) may be a role's
+# transcript. dispatch records the lead's id in $crew_dir/leads/<branch> as
+# `<engine> <id>`; resume uses only that id, and relaunches fresh with the
+# reorient note when it cannot identify the lead's session.
+#   lead_cont   flag(s) after the engine binary that select the session
+#   lead_sid    id for --session-id (claude/pi fresh launch; pi resume by id)
+#   lead_record id to write to the record once the launch is committed to
+#   lead_drop   codex/cursor fresh launch: delete the stale record
+_uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+lead_rec="$crew_dir/leads/$branch"
+lead_cont=""
+lead_sid=""
+lead_record=""
+lead_drop=""
+lead_session="-"
+fresh_why=""
+claude_projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+case "$agent" in
+codex) legacy_cont="resume --last" ;;
+*) legacy_cont="--continue" ;;
+esac
+
+rec_state=none
+if [ -L "$lead_rec" ] || { [ -e "$lead_rec" ] && [ ! -f "$lead_rec" ]; }; then
+  rec_state=bad
+elif [ -f "$lead_rec" ]; then
+  rec_state=bad
+  rec_line="$(head -n1 "$lead_rec" 2>/dev/null || true)"
+  rec_engine=""
+  rec_id=""
+  rec_extra=""
+  read -r rec_engine rec_id rec_extra <<<"$rec_line" || true
+  if [ -z "$rec_extra" ] && [ "$rec_engine" = "$agent" ] && [[ $rec_engine == claude || $rec_engine == pi ]] && [[ $rec_id =~ $_uuid_re ]]; then
+    rec_state=ok
+  fi
+fi
+
+if [ -n "$fresh" ]; then
+  :
+elif [ "$rec_state" = bad ]; then
+  fresh_why="the lead's session record is unusable"
+elif [ "$rec_state" = ok ]; then
+  if [ "$agent" = claude ]; then
+    rec_found=""
+    for f in "$claude_projects"/*/"$rec_id".jsonl; do
+      [ -f "$f" ] && rec_found=1
+    done
+    if [ -n "$rec_found" ]; then
+      lead_cont="--resume $rec_id"
+      lead_session="$rec_id"
+    else
+      fresh_why="the lead's recorded claude session has no transcript"
+    fi
+  else
+    # pi has no cheap existence probe: --session-id silently starts a new
+    # session under that id if the transcript vanished.
+    lead_sid="$rec_id"
+    lead_session="$rec_id"
+  fi
+elif [ "$agent" = claude ]; then
+  # A worker dispatched before records existed: its project dir holds the
+  # lead's transcript and, with a role grid, the roles'. Only a lone top-level
+  # uuid transcript is unambiguously the lead's (agent-*.jsonl are subagents).
+  slug="${wt_path//[^a-zA-Z0-9]/-}"
+  cands=()
+  for f in "$claude_projects/$slug"/*.jsonl; do
+    [ -f "$f" ] || continue
+    b="$(basename "$f" .jsonl)"
+    [[ $b =~ $_uuid_re ]] && cands+=("$b")
+  done
+  if [ "${#cands[@]}" -eq 1 ]; then
+    lead_cont="--resume ${cands[0]}"
+    lead_session="${cands[0]}"
+    lead_record="${cands[0]}"
+  elif [ "${#cands[@]}" -gt 1 ]; then
+    fresh_why="cannot tell which of ${#cands[@]} transcripts in this worktree is the lead's"
+  else
+    lead_cont="$legacy_cont"
+  fi
+elif [ -n "$grid_roles" ]; then
+  fresh_why="the lead shares this worktree with role panes and has no recorded session"
+else
+  lead_cont="$legacy_cont"
+fi
+
+if [ -n "$fresh_why" ]; then
+  fresh=1
+  echo "dispatch resume: $fresh_why — relaunching fresh with the reorient note" >&2
+fi
+if [ -n "$fresh" ]; then
+  lead_cont=""
+  lead_session="-"
+  case "$agent" in
+  claude | pi)
+    lead_sid="$(_uuid)"
+    lead_record="$lead_sid"
+    ;;
+  *) lead_drop=1 ;;
+  esac
+fi
+
 # --print is a dry run: report the placement the lookup above already found
 # and stop before anything below opens a window or restyles a pane. On the
 # create path there is no window or pane id yet, so those report as "-" and
 # placement: create carries the meaning.
 if [ -n "$do_print" ]; then
-  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\nwindow: %s\npane: %s\nplacement: %s\n' \
+  printf 'branch: %s\nworktree: %s\nengine: %s\nmodel: %s\neffort: %s\nmcp: %s\ntier: %s\ncrew_id: %s\nagent_name: %s\nprev_worker_id: %s\ncontinue: %s\nlead_session: %s\nwindow: %s\npane: %s\nplacement: %s\n' \
     "$branch" "$wt_path" "$agent" "$model" "$effort" "$mcp_profile" \
     "$tier" "$crew_id" "$agent_name" "$prev_worker_id" \
-    "$([ -n "$fresh" ] && echo false || echo true)" \
+    "$([ -n "$fresh" ] && echo false || echo true)" "$lead_session" \
     "${win:--}" "${pane:--}" "$([ -n "$reused" ] && echo reuse || echo create)"
   exit 0
 fi
@@ -736,8 +885,13 @@ plan_val="$(_hdr plan)"
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
 worker_id="worker:$branch#$session"
 
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
 mkdir -p "$crew_dir"
+
+if [ -n "$lead_record" ]; then
+  _record_lead_session "$agent" "$lead_record" || true
+elif [ -n "$lead_drop" ] && _lead_record_safe; then
+  rm -f -- "$lead_rec"
+fi
 
 # crew.sh's atomic-append helper, duplicated for the same reason dispatch.sh
 # duplicates it: this file builds as its own writeShellApplication with no
@@ -927,24 +1081,24 @@ if [ -r "$hint_lib" ]; then
 fi
 
 if [ "$agent" = codex ]; then
-  cont="resume --last"
-  [ -n "$fresh" ] && cont=""
+  cont="$lead_cont"
   launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = cursor ]; then
-  cont="--continue"
-  [ -n "$fresh" ] && cont=""
+  cont="$lead_cont"
   launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = pi ]; then
-  cont="--continue"
-  [ -n "$fresh" ] && cont=""
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  cont="$lead_cont"
+  pi_sid=""
+  [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
-  cont="--continue"
-  [ -n "$fresh" ] && cont=""
+  cont="$lead_cont"
+  claude_sid=""
+  [ -z "$lead_sid" ] || claude_sid=" --session-id $lead_sid"
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort$claude_sid $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)

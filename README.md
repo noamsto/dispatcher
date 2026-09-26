@@ -386,8 +386,9 @@ lead's own engine/model unless `--roles` says otherwise. Pass `--no-grid` to
 opt a non-pi `deep` dispatch back out; it's refused for pi standard/deep.
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
-effort and crew back from `WORKER_TASK.md` and continues the engine's own
-session:
+effort and crew back from `WORKER_TASK.md` and resumes the lead's own recorded
+session (by id), or relaunches fresh with the reorient note when that session
+cannot be identified (e.g. role panes share the worktree):
 
 ```bash
 dispatch resume                     # continue this worktree's worker

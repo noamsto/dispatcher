@@ -305,9 +305,11 @@ mentions `resume` is never read as one.
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line, task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
 
 To restart a worker that died mid-task, prefer `dispatch resume` run in that
-worker's worktree over a fresh `dispatch` on the same title: it continues the
-engine's own session instead of making the worker rebuild its position from
-`SPEC.md`, `PLAN.md` and `git status`, and it reads the engine/model/effort
+worker's worktree over a fresh `dispatch` on the same title: it resumes the
+lead's own recorded session (by id), or relaunches fresh with the reorient note
+when that session cannot be identified (e.g. role panes share the worktree),
+instead of making the worker rebuild its position from `SPEC.md`, `PLAN.md` and
+`git status` by hand, and it reads the engine/model/effort
 tuple back from `WORKER_TASK.md` rather than having you restate it. A resumed
 worker keeps its crew and posts a `resume` row to the bus; if you are live it
 also messages you, so a worker you had written off as `failed` will tell you it
