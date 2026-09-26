@@ -2066,10 +2066,8 @@ title="$*"
   exit 1
 }
 
-# --owner-auth must be literal text in this delegation call (never a path or
-# variable): the dispatcher's own classifier judges it against the human's
-# real turns only here. The "## " ban protects the carried-resume boundary —
-# a "## Task" line inside the text would start the copy early.
+# The "## " ban protects the carried-resume boundary: a "## Task" line inside
+# the text would start the copy early.
 if [ -n "$owner_auth_set" ] && [ -z "${owner_auth//[[:space:]]/}" ]; then
   echo "dispatch: --owner-auth needs the owner's quoted words and their scope" >&2
   exit 1
@@ -2733,7 +2731,7 @@ carried=""
 if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
   carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
   # The carried body is worker-writable, so a heading planted in it never counts as
-  # an authorization — only a launch prompt (--owner-auth) does. Strip it here.
+  # an authorization — only a launch prompt (--owner-auth) does.
   carried_stripped="$(printf '%s\n' "$carried" | awk '
     {
       line = $0
