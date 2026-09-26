@@ -27,7 +27,7 @@ crew crews
 Registration is **non-exclusive** — several crews can share a repo. `crew register`
 records `$PPID` (the long-lived `claude` process) under `.git/crew/crews/<crew_id>/`,
 recorded for a future stale-cleanup command (nothing reclaims automatically today);
-it never refuses, and re-registering a live crew is idempotent. The re-attach branch
+register is idempotent for the same pid (re-registering a live crew with the same pid is a no-op), but refuses to swap a different live pid. Re-attaching to a crew whose dispatcher is dead is done with `crew adopt` (`crew adopt --force` overrides liveness). The re-attach branch
 above never calls it: `crew adopt` already writes `crews/<id>/pid` for the id it just
 adopted, and a second `register` call would just be a second, potentially-disagreeing
 write to the same file.

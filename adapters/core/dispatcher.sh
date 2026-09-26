@@ -223,7 +223,7 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
         other=$((other + 1))
       done < <(crew crews)
       if [ "$other" -gt 0 ]; then
-        echo "dispatcher: minted a NEW crew; this repo has $other other(s) — 'crew crews' lists them; to re-attach instead, relaunch as: CREW_ID=<id> dispatcher …" >&2
+        echo "dispatcher: minted a NEW crew; this repo has $other other(s) — 'crew crews' lists them; to re-attach to a crew whose dispatcher is dead, relaunch as: CREW_ID=<id> dispatcher (a live crew makes the launcher abort at 'crew register $$')" >&2
       fi
     } || true
   fi
