@@ -14,6 +14,14 @@
       "engines": ["pi"],
       "match": ["Bash", "Read", "Grep"],
       "timeout_ms": 4000
+    },
+    {
+      "id": "public-leak-guard",
+      "exec": "adapters/core/public-leak-guard.sh",
+      "events": ["pre_tool"],
+      "engines": ["pi"],
+      "match": ["Bash"],
+      "timeout_ms": 4000
     }
   ]
 }

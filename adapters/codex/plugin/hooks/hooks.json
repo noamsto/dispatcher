@@ -9,6 +9,15 @@
             "command": "\"$PLUGIN_ROOT\"/scripts/secret-read-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$PLUGIN_ROOT\"/scripts/public-leak-guard.sh"
+          }
+        ]
       }
     ],
     "SessionEnd": [
