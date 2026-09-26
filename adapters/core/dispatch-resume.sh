@@ -88,7 +88,7 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
-# _add_dir_ok and launch_dir_args: duplicated from dispatch.sh (standalone
+# _add_dir_ok, _artifacts_dir_bad and launch_dir_args: duplicated from dispatch.sh (standalone
 # build), parity-tested like the two above. See dispatch.sh for the grant
 # rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
 # the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
@@ -112,9 +112,23 @@ _add_dir_ok() {
   printf '%s\n' "$p"
 }
 
+_artifacts_dir_bad() {
+  local p="$crew_dir/artifacts" part
+  local -a parts
+  IFS=/ read -ra parts <<<"$1"
+  for part in "" "${parts[@]}"; do
+    p="$p${part:+/$part}"
+    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d line dirs=()
+  local a d bad line dirs=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
     if [[ $d == /* ]] && [ -d "$d" ]; then
@@ -122,8 +136,8 @@ launch_dir_args() {
     fi
   done
   a="$crew_dir/artifacts/$2"
-  if [ -L "$a" ]; then
-    echo "dispatch: $a is a symlink — not granting it to $2" >&2
+  if bad="$(_artifacts_dir_bad "$2")"; then
+    echo "dispatch: $bad is a symlink or not a directory — not granting $a to $2" >&2
   else
     mkdir -p -- "$a"
     dirs+=("$a")

@@ -441,7 +441,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _add_dir_ok launch_dir_args; do
+  for fn in shell_quote write_launch_script _add_dir_ok _artifacts_dir_bad launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -724,6 +724,21 @@ _grant_record() {
   [[ "$line" == *"--add-dir $extra "* ]]
   [ -d "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing" ]
   assert_add_dir_terminated "$line"
+}
+
+@test "claude resume refuses a symlinked parent of the artifacts dir and creates nothing under its target" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is a symlink or not a directory — not granting"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *"crew/artifacts"* ]]
 }
 
 @test "claude resume never reads a grant from the task doc's add_dir: header" {

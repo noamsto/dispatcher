@@ -5523,6 +5523,68 @@ EOF
   [ -L "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing" ]
 }
 
+@test "add-dir: a symlinked artifacts parent of a slashed branch is not granted and its target stays empty" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "grant dirs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/artifacts/feat is a symlink or not a directory — not granting"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *"crew/artifacts"* ]]
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+}
+
+@test "add-dir: a symlinked artifacts leaf is not granted" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts/feat"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat/42-grant-dirs"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "grant dirs"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/artifacts/feat/42-grant-dirs is a symlink or not a directory — not granting"* ]]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *"crew/artifacts"* ]]
+}
+
+@test "roles.json: a symlinked artifacts parent is refused and its target left empty" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/artifacts"
+  ln -s "$victim" "$TEST_REPO/.git/crew/artifacts/feat"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $TEST_REPO/.git/crew/artifacts/feat is a symlink or not a directory — refusing to write roles.json"* ]]
+  [ -z "$(ls -A "$victim")" ]
+}
+
+@test "roles.json: a directory planted at roles.json is refused and its target left empty" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-grid-lead-border"
+  mkdir -p "$victim" "$art"
+  ln -s "$victim" "$art/roles.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"roles.json is a directory — refusing"* ]]
+  [ -z "$(ls -A "$victim")" ]
+}
+
+@test "roles.json: --spawn-role refuses a symlinked artifacts parent" {
+  _spawn_role_fixture
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim"
+  cp "$roles_dir/roles.json" "$victim/roles.json"
+  rm -rf "$common/crew/artifacts/feat"
+  ln -s "$victim" "$common/crew/artifacts/feat"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a symlink or not a directory — refusing to use roles.json"* ]]
+  [ "$(ls -A "$victim")" = "roles.json" ]
+}
+
 @test "add-dir: --add-dir needs a directory" {
   run run_dispatch standard sonnet --effort medium --add-dir
   [ "$status" -eq 1 ]
