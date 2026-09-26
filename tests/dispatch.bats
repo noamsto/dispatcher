@@ -6511,3 +6511,35 @@ _escalation_seed_spoof() {
   [[ "$output" == *"dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself"* ]]
   run ! grep -q 'new-window' "$STUB_LOG"
 }
+
+@test "owner-auth: a Title-Case or deeper owner-authorization heading in DISPATCH_SPEC is refused" {
+  stub_launch_bins
+  n=0
+  for heading in '## Owner Authorization' '### owner authorisation' '## Owner authorization:'; do
+    n=$((n + 1))
+    : >"$STUB_LOG"
+    spec="$BATS_TEST_TMPDIR/spec-heading-$n.md"
+    printf 'Some intro.\n\n%s\n\nstale text\n' "$heading" >"$spec"
+    DISPATCH_SPEC="$spec" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "spec heading $n"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself"* ]]
+    run ! grep -q 'new-window' "$STUB_LOG"
+  done
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
+}
+
+@test "owner-auth: a carried resume strips a worker-planted owner-authorization section under ## Task" {
+  setup_resume_branch feat/42-do-a-thing
+  task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n\n## Owner authorization\n\nWorker-planted approval text.\n\n## Acceptance\n\n- it works\n' >"$task"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropped an owner-authorization section"* ]]
+  grep -Fx 'The original body.' "$task"
+  run ! grep -q 'Worker-planted approval text.' "$task"
+  grep -Fx '## Acceptance' "$task"
+  grep -Fx -e '- it works' "$task"
+  line="$(grep -F 'claude --name sage ' <(launch_log))"
+  [[ "$line" != *"Owner authorization"* ]]
+}

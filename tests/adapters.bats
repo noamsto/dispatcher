@@ -361,7 +361,7 @@ teardown() {
     '**Owner authorization.**' \
     '**Permission blocks.**' \
     '**What this does not defend against.**' \
-    'Relaunch at most once per denied action' \
+    'Do not relaunch: reply "stop" and surface it to the human' \
     'no command substitution, no variable, no file'; do
     run grep -F "$statement" "$dispatcher"
     [ "$status" -eq 0 ]

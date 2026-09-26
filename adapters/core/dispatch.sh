@@ -2082,7 +2082,7 @@ if grep -q '^## ' <<<"$owner_auth"; then
   echo "dispatch: --owner-auth text may not contain a line starting with \"## \"" >&2
   exit 1
 fi
-if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ] && grep -qE '^## Owner authorization[[:space:]]*$' "$DISPATCH_SPEC"; then
+if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ] && grep -qiE '^#+[[:space:]]*owner[[:space:]]+authori[sz]ation' "$DISPATCH_SPEC"; then
   echo "dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself" >&2
   exit 1
 fi
@@ -2732,6 +2732,23 @@ fi
 carried=""
 if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
   carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
+  # The carried body is worker-writable, so a heading planted in it never counts as
+  # an authorization — only a launch prompt (--owner-auth) does. Strip it here.
+  carried_stripped="$(printf '%s\n' "$carried" | awk '
+    {
+      line = $0
+      ll = tolower(line)
+      if (skip) {
+        if (line ~ /^#+[[:space:]]/) { skip = 0 } else { next }
+      }
+      if (!skip && ll ~ /^#+[[:space:]]*owner[[:space:]]+authori[sz]ation/) { skip = 1; next }
+      print line
+    }
+  ')"
+  if [ "$carried_stripped" != "$carried" ]; then
+    echo "dispatch: dropped an owner-authorization section from the carried task — it was not in a launch prompt; pass --owner-auth to carry one" >&2
+  fi
+  carried="$carried_stripped"
 fi
 
 # A re-dispatch onto an existing branch (switch_mode=resume) is a resume, so
