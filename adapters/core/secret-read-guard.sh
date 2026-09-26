@@ -448,10 +448,10 @@ mask_cmd() {
 # parsing, on purpose: judging each command separately meant re-implementing
 # the shell's tokeniser, and every place it disagreed with bash turned a read
 # into an allow. So prose that only mentions a read is denied too — the
-# accepted cost for a secret guard. One awk pass, line by line, so it stays
-# linear.
-#   - Names: main's spelling of each file after dropping template names
-#     anywhere, or the wider spelling (after < : { , ( ` and before globs,
+# accepted cost for a secret guard. The name test is grep -E; the rest is one
+# awk pass, line by line, so it stays linear.
+#   - Names (credential_read): cmd_secret_re after dropping template names
+#     anywhere, or cmd_secret_wide_re (after < : { , ( ` and before globs,
 #     braces and backticks too) after dropping them only where the name ends
 #     (.env.examples and .env.example.local are not templates).
 #   - Printing: the word list; $(<file); dot-sourcing; git show, cat-file,
@@ -465,7 +465,8 @@ mask_cmd() {
 #   - grep: each grep word opens a stage that runs to the next ; & | ( ) or
 #     backtick, whose quoted text is blanked and comment dropped; every grep in
 #     it must carry a quiet flag, not counting words after -- or the argument
-#     of -e/-f/-m/-A/-B/-C/-d/-D; ripgrep and ag get a stricter class.
+#     of -e/-f/-m/-A/-B/-C/-d/-D; ripgrep and ag get a stricter class. A CR,
+#     VT or FF in the stage makes it loud: some shells split words there.
 # Prints `print`, `interp`, `grep` or nothing.
 #
 # Regexes are literals (compiled once; BusyBox recompiles a dynamic one on
@@ -484,12 +485,6 @@ BEGIN {
   for (i = 1; i <= n; i++) GHUNK[a[i]] = 1
 }
 {
-  ml = $0
-  gsub(/'"$template_re"'/, "", ml)
-  if (ml ~ /(^|[[:space:]"\047=\/])\.env([[:space:]"\047;|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws\/credentials|(^|[[:space:]"\047=\/~])\.netrc([[:space:]"\047;|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)/) T = 1
-  nl = $0
-  gsub(/'"$template_re"'([^A-Za-z0-9_.*?[-]|$)/, " ", nl)
-  if (nl ~ /(^|[[:space:]"\047=\/<:{,(`])\.env([[:space:]"\047;|&)><*?[{},`]|$|\.[A-Za-z0-9_*?[{-])|(^|[[:space:]"\047=\/<:{,(`])\.envrc\.local([[:space:]"\047;|&)><*?[{},`]|$)|\.aws\/credentials|(^|[[:space:]"\047=\/<:{,(`~])\.netrc([[:space:]"\047;|&)><*?[{},`]|$)|id_(rsa|ed25519|ecdsa)([[:space:]"\047;|&)><*?[{},`]|$)|\.(pem|p12|pfx)([[:space:]"\047;|&)><*?[{},`]|$)/) T = 1
   if ($0 ~ /(^|[^A-Za-z0-9_])(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([^A-Za-z0-9_]|$)/ || $0 ~ /\$\([[:space:]]*</) P = 1
   if ($0 ~ /(^|[^|])\|([^;&|]*[^A-Za-z0-9_.;&|-])?(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)([^A-Za-z0-9_.-]|$)/) I = 1
   ns = split($0, SEG, /[;&|()`]/)
@@ -508,7 +503,7 @@ function segment(g, W, nw, j, w, b) {
     w = W[j]
     if (w == "") continue
     b = w
-    sub(/.*\//, "", b)
+    if (index(b, "/")) b = BP[split(b, BP, "/")]
     if (b == "git") { git_end(); mode = "git"; gs = ""; gskip = glog = ghunk = gpatch = gstat = gv = gso = 0; continue }
     if (b ~ /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)(<<.*)?$/) { git_end(); mode = "interp"; if (index(b, "<<")) I = 1; continue }
     if (b == "date" || b == "file") { git_end(); mode = "df"; continue }
@@ -552,6 +547,7 @@ function git_end(c) {
 function grep_loud(s, m, W, n, j, x, e, rg, found) {
   m = mask(s)
   sub(/[[:space:]]#.*$/, "", m)
+  if (m ~ /[\r\013\f]/) return 1
   n = split(m, W, /[[:space:]]+/)
   for (j = 1; j <= n; j++) {
     if (W[j] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/) continue
@@ -594,17 +590,31 @@ function mask(s, out, ch, k, i, c, mb, q, esc) {
   return out
 }
 END {
-  if (!T) exit
   if (P) print "print"
   else if (I) print "interp"
   else if (G && L) print "grep"
 }'
 
+# On a command line the same path is preceded by a space, quote, = or / (~ for
+# `~/.netrc`), and followed by whitespace, a quote, a redirect or a pipe —
+# never by a line anchor, so the path-anchored pattern above would silently
+# match nothing here.
+cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
+# The same names as the shell also spells them: after < : { , ( or a
+# backtick, and before a glob, a brace, a backtick or a redirect.
+cmd_secret_wide_re='(^|[[:space:]"'"'"'=/<:{,(`])\.env([[:space:]"'"'"';|&)><*?[{},`]|$|\.[A-Za-z0-9_*?[{-])|(^|[[:space:]"'"'"'=/<:{,(`])\.envrc\.local([[:space:]"'"'"';|&)><*?[{},`]|$)|\.aws/credentials|(^|[[:space:]"'"'"'=/<:{,(`~])\.netrc([[:space:]"'"'"';|&)><*?[{},`]|$)|id_(rsa|ed25519|ecdsa)([[:space:]"'"'"';|&)><*?[{},`]|$)|\.(pem|p12|pfx)([[:space:]"'"'"';|&)><*?[{},`]|$)'
+
+# Here-strings, not pipes: under pipefail a grep -q that exits early could
+# fail its writer, and a failed test reads as "no name" — an allow.
 credential_read() {
+  local left wide
   case $1 in
   *.env* | *netrc* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.aws/credentials* | *.pem* | *.p12* | *.pfx*) ;;
   *) return 0 ;;
   esac
+  left=$(sed -E "s/$template_re//g" <<<"$1")
+  wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1")
+  grep -qE "$cmd_secret_re" <<<"$left" || grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
   awk "$awk_cred" <<<"$1"
 }
 
@@ -629,14 +639,17 @@ grep)
   [[ $mode == content ]] || exit 0
   # secret_path_re is anchored, so path and glob are tested separately. Template
   # names are stripped rather than exempting the call, so `{.env.example,.env}`
-  # still trips on its `.env`.
-  # \4 is the character after the name: template_re holds two groups.
+  # still trips on its `.env`: once anywhere, and once only where the name ends,
+  # so `.env.examples` trips too (\4 is the character after the name:
+  # template_re holds two groups).
+  path_any=$(sed -E "s/$template_re//g" <<<"$path")
+  glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
   path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
   glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
-  if [[ $path_left =~ $secret_path_re ]]; then
+  if [[ $path_any =~ $secret_path_re || $path_left =~ $secret_path_re ]]; then
     deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   fi
-  if [[ $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
+  if [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re || $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
     deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   fi
   # A secret-shaped pattern with content output leaks even when the path is broad.

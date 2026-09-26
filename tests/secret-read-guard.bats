@@ -509,6 +509,24 @@ assert_deny_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
+# assert_deny_within_each_awk <max-ms> <payload> — replay assert_deny_within
+# under every non-GNU awk this host has installed (mawk, nawk, busybox-awk),
+# each spliced onto PATH ahead of the real awk. Falls back to a single run
+# under the default awk when none of those are installed.
+assert_deny_within_each_awk() {
+  local max_ms=$1 payload=$2 name awk_path found=0
+
+  for name in mawk nawk busybox-awk; do
+    awk_path=$(command -v "$name") || continue
+    found=1
+    mkdir -p "$BATS_TEST_TMPDIR/$name"
+    ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
+    PATH="$BATS_TEST_TMPDIR/$name:$PATH" assert_deny_within "$max_ms" "$payload"
+  done
+
+  [ "$found" -eq 1 ] || assert_deny_within "$max_ms" "$payload"
+}
+
 @test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 2 s" {
   local body
   body=$(printf "a 'b' \"c\"\n%.0s" $(seq 1 10240))
@@ -579,6 +597,18 @@ assert_allow_within() {
   local body
   body=$(printf 'in %.0s' $(seq 1 24000))
   assert_deny_within 3500 "$(claude_bash "echo ${body}"$'\n'"cat .env")"
+}
+
+@test "secret-read-guard: a 60 KB slash-free word beside a credential read denies in under 3.5 s under every awk" {
+  local hex
+  hex=$(printf 'ab%.0s' $(seq 1 30000))
+  assert_deny_within_each_awk 3500 "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
+}
+
+@test "secret-read-guard: a 48 KB chain of credential names denies in under 3.5 s under every awk" {
+  local body
+  body=$(printf '.env%.0s' $(seq 1 12000))
+  assert_deny_within_each_awk 3500 "$(claude_bash "cat .env ${body}")"
 }
 
 # ---------------------------------------------------------------------------
@@ -1615,8 +1645,6 @@ rows_proposal=(
 }
 
 rows_prose_denied=(
-  bash deny "git commit -m \"fix: python -c open('@E@') was wrong\""
-  bash deny "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
   bash deny "gh pr create --title t --body \"\$(cat <<'EOF'@NL@use python3 -c 'open(\"@E@\")'@NL@EOF@NL@)\""
   bash deny "ls @E@ && cat README.md"
   bash deny "ls @E@ 2>&1 | head -3"
@@ -1644,6 +1672,15 @@ rows_prose_denied=(
 
 @test "secret-read-guard: rule 3 — prose naming a read stays denied, as on main" {
   check_rows "${rows_prose_denied[@]}"
+}
+
+rows_declared_new_denies=(
+  bash deny "git commit -m \"fix: python -c open('@E@') was wrong\""
+  bash deny "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
+)
+
+@test "secret-read-guard: rule 3 — prose the guard newly denies (declared)" {
+  check_rows "${rows_declared_new_denies[@]}"
 }
 
 rows_review_round_1=(
@@ -1716,6 +1753,27 @@ rows_review_round_2=(
 
 @test "secret-read-guard: rule 3 — review round 2" {
   check_rows "${rows_review_round_2[@]}"
+}
+
+rows_review_c1=(
+  bash deny $'grep\r-s\rKEY\r@E@\rx\v-c'
+  bash deny $'fish -c "grep\r-s\rKEY\r@E@\rx\v-c"'
+  bash deny $'c=grep\r-s\rKEY\r@E@\rx\v-c; IFS='"\$'\\r'"'; '"\$c"
+  bash deny $'grep\vKEY\v@E@ -c'
+  bash deny $'grep\f-q KEY @E@'
+  bash deny $'grep KEY @E@ x\v-c'
+  grep deny "id_@E@.examplersa" ""
+  grep deny "x.p@E@.exampleem" ""
+  grep deny "a/.aw@E@.samples/credentials" ""
+  grep deny "a" "*.p@E@.distem"
+  grep deny "a" "@E@.example*"
+  bash allow "rg -n '\\@E@' docs/"
+  bash allow "grep -rn '\\@E@' src/"
+  bash allow "grep -c KEY @E@"
+)
+
+@test "secret-read-guard: rule 3 — review round c1" {
+  check_rows "${rows_review_c1[@]}"
 }
 
 # check_all_rows_under <awk-cmd> — replay every rows_* table through check_rows
