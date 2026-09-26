@@ -39,6 +39,18 @@ in {
       '';
     };
 
+    grantRoots = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "/[^:]*");
+      default = [];
+      example = ["/home/me/git"];
+      description = ''
+        Dirs under which `dispatch --add-dir` may grant a claude worker an extra
+        directory. Exported as DISPATCH_GRANT_ROOTS (colon-separated). Empty, or
+        unset at runtime, refuses every --add-dir. A root must not be / or $HOME
+        or an ancestor of it; secrets dirs inside a root stay refused.
+      '';
+    };
+
     claudePluginDir = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -59,6 +71,7 @@ in {
       sessionVariables = {
         DISPATCH_PROFILE = cfg.profile;
         DISPATCH_ENGINES = lib.concatStringsSep " " cfg.engines;
+        DISPATCH_GRANT_ROOTS = lib.concatStringsSep ":" cfg.grantRoots;
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
         # command and the cursor rule are markdown an agent reads live and
         # resolves through its Bash tool, which a build-time substitution into

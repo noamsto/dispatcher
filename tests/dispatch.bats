@@ -1567,7 +1567,7 @@ _store_protocols() { # <dir> <content>
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "unset dirs"
   [ "$status" -eq 0 ]
-  grep -qF -- "-u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR DISPATCHER_PROTOCOL_DIR=" <(launch_log)
+  grep -qF -- "-u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCH_GRANT_ROOTS DISPATCHER_PROTOCOL_DIR=" <(launch_log)
 }
 
 @test "a raw (unsubstituted) dispatch script leaves unresolved placeholder dirs out of the launch env" {
@@ -5418,6 +5418,7 @@ EOF
 
 @test "add-dir: --spawn-role never grants a dir from the task doc's add_dir: header" {
   _spawn_role_fixture
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   evil="$(realpath "$BATS_TEST_TMPDIR")/evil"
   mkdir -p "$evil"
   printf 'add_dir: %s\n' "$evil" >>WORKER_TASK.md
@@ -5449,6 +5450,7 @@ EOF
 
 @test "add-dir: --add-dir records the canonical dir, mirrors it in the header and grants it" {
   stub_launch_bins
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   real="$(realpath "$BATS_TEST_TMPDIR")/real"
   mkdir -p "$real"
   ln -s "$real" "$BATS_TEST_TMPDIR/link"
@@ -5467,6 +5469,7 @@ EOF
 
 @test "add-dir: a re-dispatch without --add-dir keeps the recorded grants" {
   setup_resume_branch feat/42-do-a-thing
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   real="$(realpath "$BATS_TEST_TMPDIR")/real"
   mkdir -p "$real"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --add-dir "$real" 42 --crew-id c1 "Do a thing"
@@ -5481,6 +5484,7 @@ EOF
 
 @test "add-dir: --add-dir on a re-dispatch replaces the recorded set" {
   setup_resume_branch feat/42-do-a-thing
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   old="$(realpath "$BATS_TEST_TMPDIR")/old"
   new="$(realpath "$BATS_TEST_TMPDIR")/new"
   mkdir -p "$old" "$new"
@@ -5511,6 +5515,7 @@ EOF
 
 @test "add-dir: a symlink planted at the grant record path is refused and its target left untouched" {
   stub_launch_bins
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   real="$(realpath "$BATS_TEST_TMPDIR")/real"
   victim="$BATS_TEST_TMPDIR/victim"
   mkdir -p "$real" "$TEST_REPO/.git/crew/grants/feat"
@@ -5525,6 +5530,7 @@ EOF
 
 @test "add-dir: a symlink planted at a grant record's parent dir is refused and its target left empty" {
   stub_launch_bins
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   real="$(realpath "$BATS_TEST_TMPDIR")/real"
   victim="$BATS_TEST_TMPDIR/victim"
   mkdir -p "$real" "$victim" "$TEST_REPO/.git/crew/grants"
@@ -5743,6 +5749,9 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   persist="$(realpath "$BATS_TEST_TMPDIR")/persist"
   mkdir -p "$persist/ssh" "$HOME/.config/gh" "$HOME/.claude" "$TEST_REPO/.git/crew/artifacts"
   ln -s "$persist/ssh" "$HOME/.ssh"
+  # Roots cover every value below, so each is refused by its intended rule
+  # rather than merely by falling outside the allowlist.
+  export DISPATCH_GRANT_ROOTS="$persist:$HOME/.config:$HOME/.claude:$TEST_REPO"
   for v in rel/dir "$BATS_TEST_TMPDIR/missing" / "$HOME" "$(dirname "$HOME")" \
     "$HOME/.ssh" "$HOME/.config" "$HOME/.config/gh" "$HOME/.claude" \
     "$persist/ssh" "$persist" "$TEST_REPO/.git/crew/artifacts" "$TEST_REPO"; do
@@ -5752,6 +5761,150 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   done
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a dir outside every grant root is refused, a toolchain dir included" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.cargo" "$HOME/git" "$T/elsewhere"
+  export DISPATCH_GRANT_ROOTS="$HOME/git"
+  for v in "$HOME/.cargo" "$T/elsewhere"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "outside root"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a dir inside a grant root is granted, a sibling sharing its prefix is not" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$T/reposx"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/reposx" --crew-id c1 42 "sibling prefix"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/reposx' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/proj" --crew-id c1 42 "granted dir"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/grants/feat/42-granted-dir"
+  [ "$(cat "$rec")" = "$T/repos/proj" ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $T/repos/proj "* ]]
+}
+
+@test "add-dir: a root child symlinked outside the roots is refused at its target" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos" "$T/outside"
+  ln -s "$T/outside" "$T/repos/link"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/link" --crew-id c1 42 "symlinked child"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/link' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a secrets dir inside a root is still refused" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME" "$T/repos/ssh-store"
+  ln -s "$T/repos/ssh-store" "$HOME/.ssh"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/ssh-store" --crew-id c1 42 "secrets in root"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/ssh-store' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: HOME's unresolved parent is refused when HOME is a symlink" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/data/u" "$T/homes/other"
+  ln -s "$T/data/u" "$T/homes/u"
+  HOME="$T/homes/u"
+  export DISPATCH_GRANT_ROOTS="$T/homes"
+  # Passes through root invalidity (R3): $T/homes is $HOME's ancestor as
+  # spelled, so the root itself is skipped and grants nothing. R5's per-grant
+  # spelled-$HOME check would refuse the same candidates but never runs — no
+  # valid root reaches it.
+  for v in "$T/homes" "$T/homes/other"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "home symlink"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: invalid grant roots grant nothing" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/proj"
+  for root in / "$HOME" "$T" rel/dir "$T/missing"; do
+    export DISPATCH_GRANT_ROOTS="$root"
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$HOME/proj" --crew-id c1 42 "invalid root"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$HOME/proj' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: with no grant roots configured every --add-dir is refused, naming the variable" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/x"
+  unset DISPATCH_GRANT_ROOTS
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/x" --crew-id c1 42 "no roots"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/x' refused"* ]]
+  [[ "$output" == *"DISPATCH_GRANT_ROOTS"* ]]
+  [[ "$output" == *"now: unset"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: the lead launch pins the dispatcher's grant roots" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos"
+  DISPATCH_PROFILE=work DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "pin roots"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"DISPATCH_GRANT_ROOTS=$T/repos "* ]]
+
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "pin roots unset"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"-u DISPATCH_GRANT_ROOTS"* ]]
+}
+
+@test "add-dir: --spawn-role re-checks the recorded grant against the lead's roots" {
+  _spawn_role_fixture
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
+  printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
+  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $T/repos/proj "* ]]
+
+  : >"$STUB_LOG"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" != *"$T/repos/proj"* ]]
 }
 
 # _exit_hook_fixture — run an eager reviewer role launch, then take the line
