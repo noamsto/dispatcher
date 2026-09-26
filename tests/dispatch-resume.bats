@@ -1124,7 +1124,7 @@ record_lead() {
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  [[ "$output" == *"cannot tell which"* ]]
+  [[ "$output" == *"role panes"* ]]
   run grep -c -- '--continue' <(launch_log)
   [ "$output" = 0 ]
   grep -q 'Read SPEC.md and PLAN.md' <(launch_log)
@@ -1136,7 +1136,7 @@ record_lead() {
   [ "$(cat "$(lead_rec)")" = "claude $sid" ]
 }
 
-@test "legacy claude worker with exactly one transcript resumes it by id and records it" {
+@test "legacy solo claude worker continues even with one transcript" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   claude_transcript "$LEAD_ID" 600
@@ -1144,10 +1144,10 @@ record_lead() {
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q "claude --resume $LEAD_ID --name iris" <(launch_log)
-  run grep -c -- '--continue' <(launch_log)
+  grep -q 'claude --continue --name iris' <(launch_log)
+  run grep -c -- '--resume' <(launch_log)
   [ "$output" = 0 ]
-  [ "$(cat "$(lead_rec)")" = "claude $LEAD_ID" ]
+  [ ! -e "$(lead_rec)" ]
 }
 
 @test "an engine switch to claude never adopts a lone transcript as the lead's" {
@@ -1164,6 +1164,107 @@ record_lead() {
   sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
   [ "$sid" != "$ROLE_ID" ]
   [ "$(cat "$(lead_rec)")" = "claude $sid" ]
+}
+
+@test "an engine switch to claude with no roles stamp and no roles.json never adopts a lone transcript" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  cd "$WT"
+  run run_resume --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
+  [ -n "$sid" ]
+  [ "$sid" != "$ROLE_ID" ]
+  [ "$(cat "$(lead_rec)")" = "claude $sid" ]
+}
+
+@test "a roles.json beside the branch's artifacts marks role panes even without a roles stamp" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing"
+  printf '{}\n' >"$TEST_REPO/.git/crew/artifacts/feat/7-a-thing/roles.json"
+  claude_transcript "$ROLE_ID" 600
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"role panes"* ]]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE -- "--session-id $UUID_RE " <(launch_log)
+}
+
+@test "a pending tombstone relaunches fresh and the launch overwrites it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  record_lead 'pending -'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"never launched"* ]]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
+  [ "$sid" != "$ROLE_ID" ]
+  [ "$(cat "$(lead_rec)")" = "claude $sid" ]
+}
+
+@test "a grid lead with no record never resumes a lone transcript" {
+  setup_worker_wt 'roles: reviewer'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
+  [ -n "$sid" ]
+  [ "$sid" != "$ROLE_ID" ]
+  [ "$(cat "$(lead_rec)")" = "claude $sid" ]
+}
+
+@test "a codex lead record names the engine and resumes --last for a solo worker" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  record_lead 'codex -'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'codex resume --last' <(launch_log)
+  [ "$(cat "$(lead_rec)")" = "codex -" ]
+}
+
+@test "a codex lead record with role panes relaunches fresh and keeps the record" {
+  setup_worker_wt 'roles: reviewer'
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  record_lead 'codex -'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -c -- 'resume --last' <(launch_log)
+  [ "$output" = 0 ]
+  [ "$(cat "$(lead_rec)")" = "codex -" ]
+}
+
+@test "a claude record with no id is malformed and relaunches fresh" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  record_lead 'claude -'
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"malformed"* ]]
+  run grep -c -- '--continue\|--resume' <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE "^claude $UUID_RE\$" "$(lead_rec)"
 }
 
 @test "legacy claude worker with no transcript still uses --continue and records nothing" {
@@ -1202,6 +1303,7 @@ record_lead() {
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
+  [[ "$output" == *"the lead ran pi, not claude"* ]]
   run grep -c -- '--continue\|--resume' <(launch_log)
   [ "$output" = 0 ]
   grep -q 'Read SPEC.md and PLAN.md' <(launch_log)
@@ -1259,7 +1361,7 @@ record_lead() {
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  [ ! -e "$(lead_rec)" ]
+  [ "$(cat "$(lead_rec)")" = "codex -" ]
 }
 
 @test "a symlinked leads dir is never written through" {

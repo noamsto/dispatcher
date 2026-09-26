@@ -5643,27 +5643,27 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ "$(cat "$TEST_REPO/.git/crew/leads/feat/9-x")" = "claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa" ]
 }
 
-@test "lead-session: a codex lead deletes a stale record" {
+@test "lead-session: a codex lead replaces a stale record with one naming codex and no id" {
   stub_launch_bins
   mkdir -p "$TEST_REPO/.git/crew/leads/feat"
   printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-lead-codex"
   DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "lead codex"
   [ "$status" -eq 0 ]
-  [ ! -e "$TEST_REPO/.git/crew/leads/feat/42-lead-codex" ]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-lead-codex")" = "codex -" ]
   run ! grep -qF -- '--session-id' <(launch_log)
 }
 
-@test "lead-session: a cursor lead deletes a stale record" {
+@test "lead-session: a cursor lead replaces a stale record with one naming cursor and no id" {
   stub_launch_bins
   mkdir -p "$TEST_REPO/.git/crew/leads/feat"
   printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-lead-cursor"
   DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "lead cursor"
   [ "$status" -eq 0 ]
-  [ ! -e "$TEST_REPO/.git/crew/leads/feat/42-lead-cursor" ]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-lead-cursor")" = "cursor -" ]
   run ! grep -qF -- '--session-id' <(launch_log)
 }
 
-@test "lead-session: a dispatch aborted before the launch drops a stale record of an older same-named branch" {
+@test "lead-session: a dispatch aborted before the launch tombstones a stale record of an older same-named branch" {
   stub_launch_bins
   victim="$BATS_TEST_TMPDIR/victim"
   art="$TEST_REPO/.git/crew/artifacts/feat/42-grid-lead-border"
@@ -5673,7 +5673,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
   [ "$status" -eq 1 ]
   [[ "$output" == *"roles.json is a directory — refusing"* ]]
-  [ ! -e "$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border" ]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border")" = "pending -" ]
 }
 
 @test "lead-session: a symlinked leads dir is refused before any launch" {

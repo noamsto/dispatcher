@@ -2806,10 +2806,12 @@ if ! _lead_record_safe; then
   echo "dispatch: $crew_dir/leads/$branch or a dir above it is a symlink or not a regular file/directory — refusing to record the lead session" >&2
   exit 1
 fi
-# A re-dispatch is a new lead: drop an older same-named branch's record now, so
-# an abort before the launch cannot leave resume attaching to the old
-# conversation (same reason the grant record above is rewritten).
-rm -f -- "$crew_dir/leads/$branch"
+# A re-dispatch is a new lead: overwrite an older same-named branch's record now,
+# so an abort before the launch cannot leave resume attaching to the old
+# conversation (same reason the grant record above is rewritten). Any dispatch
+# that reaches here is a post-records lead; the launch overwrites the tombstone,
+# and a dispatch that aborts first must not look like a pre-records worker.
+_record_lead_session pending -
 if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
   mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
 fi
@@ -3066,9 +3068,9 @@ if [ "$agent" = codex ]; then
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  # codex and cursor cannot pre-assign a session id, so there is nothing to
-  # record; drop any record left by an earlier lead on this branch name.
-  rm -f -- "$crew_dir/leads/$branch"
+  # codex and cursor cannot pre-assign a session id, so there is none to verify:
+  # the record names the engine with `-`, replacing any earlier lead's record.
+  _record_lead_session "$agent" -
   launch_cmd="${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
@@ -3086,7 +3088,7 @@ elif [ "$agent" = cursor ]; then
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  rm -f -- "$crew_dir/leads/$branch"
+  _record_lead_session "$agent" -
   launch_cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a

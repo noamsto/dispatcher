@@ -673,19 +673,20 @@ fi
 
 # Which engine session is the lead's own. Role panes share this worktree, so
 # the engine's "latest session here" (--continue, resume --last) may be a role's
-# transcript. dispatch records the lead's id in $crew_dir/leads/<branch> as
-# `<engine> <id>`; resume uses only that id, and relaunches fresh with the
-# reorient note when it cannot identify the lead's session.
+# transcript. dispatch records the lead in $crew_dir/leads/<branch> as
+# `<engine> <id>` (`-` for codex/cursor, whose id cannot be pre-assigned). A
+# dispatch that reaches its lead launch always leaves a record, so an absent
+# record means a worker dispatched before records existed. Resume never resumes
+# a session it cannot attribute to the lead: it relaunches fresh with the
+# reorient note instead.
 #   lead_cont   flag(s) after the engine binary that select the session
 #   lead_sid    id for --session-id (claude/pi fresh launch; pi resume by id)
 #   lead_record id to write to the record once the launch is committed to
-#   lead_drop   codex/cursor fresh launch: delete the stale record
 _uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 lead_rec="$crew_dir/leads/$branch"
 lead_cont=""
 lead_sid=""
 lead_record=""
-lead_drop=""
 lead_session="-"
 fresh_why=""
 claude_projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
@@ -694,26 +695,38 @@ codex) legacy_cont="resume --last" ;;
 *) legacy_cont="--continue" ;;
 esac
 
+# Existence only, never read: roles.json is worker-writable.
+has_roles=""
+[ -z "$grid_roles" ] || has_roles=1
+rj="$crew_dir/artifacts/$branch/roles.json"
+{ [ -e "$rj" ] || [ -L "$rj" ]; } && has_roles=1
+
 rec_state=none
+rec_engine=""
+rec_id=""
+rec_extra=""
 if [ -L "$lead_rec" ] || { [ -e "$lead_rec" ] && [ ! -f "$lead_rec" ]; }; then
   rec_state=bad
 elif [ -f "$lead_rec" ]; then
   rec_state=bad
-  rec_line="$(head -n1 "$lead_rec" 2>/dev/null || true)"
-  rec_engine=""
-  rec_id=""
-  rec_extra=""
-  read -r rec_engine rec_id rec_extra <<<"$rec_line" || true
-  if [ -z "$rec_extra" ] && [ "$rec_engine" = "$agent" ] && [[ $rec_engine == claude || $rec_engine == pi ]] && [[ $rec_id =~ $_uuid_re ]]; then
-    rec_state=ok
+  read -r rec_engine rec_id rec_extra <<<"$(head -n1 "$lead_rec" 2>/dev/null || true)" || true
+  if [ -z "$rec_extra" ]; then
+    case "$rec_engine" in
+    claude | pi) [[ $rec_id =~ $_uuid_re ]] && rec_state=ok ;;
+    codex | cursor) [ "$rec_id" = - ] && rec_state=ok ;;
+    esac
   fi
 fi
 
 if [ -n "$fresh" ]; then
   :
+elif [ "$rec_state" = bad ] && [ "$rec_engine $rec_id" = "pending -" ]; then
+  fresh_why="this branch's last dispatch never launched its lead"
 elif [ "$rec_state" = bad ]; then
-  fresh_why="the lead's session record is unusable"
-elif [ "$rec_state" = ok ]; then
+  fresh_why="the lead's session record is malformed or unsafe"
+elif [ "$rec_state" = ok ] && [ "$rec_engine" != "$agent" ]; then
+  fresh_why="the lead ran $rec_engine, not $agent — its session cannot be resumed on $agent"
+elif [ "$rec_state" = ok ] && [ "$rec_id" != - ]; then
   if [ "$agent" = claude ]; then
     rec_found=""
     for f in "$claude_projects"/*/"$rec_id".jsonl; do
@@ -731,31 +744,12 @@ elif [ "$rec_state" = ok ]; then
     lead_sid="$rec_id"
     lead_session="$rec_id"
   fi
-elif [ "$agent" = claude ] && [ "$(_hdr engine)" = claude ]; then
-  # A worker dispatched before records existed: its project dir holds the
-  # lead's transcript and, with a role grid, the roles'. Only a lone top-level
-  # uuid transcript is unambiguously the lead's (agent-*.jsonl are subagents).
-  # Only when the lead itself ran claude: after an engine switch (--agent) the
-  # transcript is a role's, never the lead's.
-  slug="${wt_path//[^a-zA-Z0-9]/-}"
-  cands=()
-  for f in "$claude_projects/$slug"/*.jsonl; do
-    [ -f "$f" ] || continue
-    b="$(basename "$f" .jsonl)"
-    [[ $b =~ $_uuid_re ]] && cands+=("$b")
-  done
-  if [ "${#cands[@]}" -eq 1 ]; then
-    lead_cont="--resume ${cands[0]}"
-    lead_session="${cands[0]}"
-    lead_record="${cands[0]}"
-  elif [ "${#cands[@]}" -gt 1 ]; then
-    fresh_why="cannot tell which of ${#cands[@]} transcripts in this worktree is the lead's"
-  else
-    lead_cont="$legacy_cont"
-  fi
-elif [ -n "$grid_roles" ]; then
+elif [ "$rec_state" = none ] && [ "$(_hdr engine)" != "$agent" ]; then
+  fresh_why="the lead ran $(_hdr engine), not $agent, and has no recorded session"
+elif [ -n "$has_roles" ]; then
   fresh_why="the lead shares this worktree with role panes and has no recorded session"
 else
+  # A pre-records solo worker, or a codex/cursor solo lead (`codex -`).
   lead_cont="$legacy_cont"
 fi
 
@@ -771,7 +765,7 @@ if [ -n "$fresh" ]; then
     lead_sid="$(_uuid)"
     lead_record="$lead_sid"
     ;;
-  *) lead_drop=1 ;;
+  *) lead_record=- ;;
   esac
 fi
 
@@ -889,11 +883,7 @@ worker_id="worker:$branch#$session"
 
 mkdir -p "$crew_dir"
 
-if [ -n "$lead_record" ]; then
-  _record_lead_session "$agent" "$lead_record" || true
-elif [ -n "$lead_drop" ] && _lead_record_safe; then
-  rm -f -- "$lead_rec"
-fi
+[ -z "$lead_record" ] || _record_lead_session "$agent" "$lead_record" || true
 
 # crew.sh's atomic-append helper, duplicated for the same reason dispatch.sh
 # duplicates it: this file builds as its own writeShellApplication with no
