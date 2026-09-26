@@ -1353,7 +1353,7 @@ record_lead() {
   [[ "$output" == *"continue: true"* ]]
 }
 
-@test "codex --fresh removes a stale lead record" {
+@test "codex --fresh replaces a stale lead record with one naming codex and no id" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
