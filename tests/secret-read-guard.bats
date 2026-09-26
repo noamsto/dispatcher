@@ -568,6 +568,19 @@ assert_allow_within() {
   assert_allow_within 3500 "$(claude_bash "$(heredoc_100k)"$'\n'"ls")"
 }
 
+@test "secret-read-guard: 2000 nested command substitutions ahead of a credential read deny in under 3.5 s" {
+  local opens closes
+  opens=$(printf '$(%.0s' $(seq 1 2000))
+  closes=$(printf ')%.0s' $(seq 1 2000))
+  assert_deny_within 3500 "$(claude_bash "echo ${opens}${closes}"$'\n'"cat .env")"
+}
+
+@test "secret-read-guard: 24000 in words ahead of a credential read deny in under 3.5 s" {
+  local body
+  body=$(printf 'in %.0s' $(seq 1 24000))
+  assert_deny_within 3500 "$(claude_bash "echo ${body}"$'\n'"cat .env")"
+}
+
 # ---------------------------------------------------------------------------
 # Unparseable payloads fail open but loud: exit 1, stderr, nothing on stdout
 # ---------------------------------------------------------------------------
@@ -1475,10 +1488,6 @@ rows_must_allow=(
   bash allow "ls @E@*"
   bash allow "rm -f @E@.*"
   bash allow "echo '@E@*' >> .gitignore"
-  bash allow "git commit -m \"fix: python -c open('@E@') was wrong\""
-  bash allow "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
-  bash allow "gh pr create --title t --body \"\$(cat <<'EOF'@NL@use python3 -c 'open(\"@E@\")'@NL@EOF@NL@)\""
-  bash allow "ls @E@ && cat README.md"
   bash allow "f=README.md; cat \"\$f\""
   bash allow "cat ~/.ssh/id_rsa.pub"
   bash allow "echo KEY=1 >> @E@"
@@ -1507,8 +1516,6 @@ rows_redirects_amp_pipe=(
   bash deny "cat @E@ >| out"
   bash deny "echo \"\`cat @E@\`\""
   bash allow "crew msg w d \"files like (@E@, credentials) and \`true\`\""
-  bash allow "ls @E@ 2>&1 | head -3"
-  bash allow "cat README.md 2>&1 | tail -3; test -f @E@"
 )
 
 @test "secret-read-guard: rule 3 — redirects that hold & or |" {
@@ -1521,8 +1528,6 @@ rows_spec_critic_r1=(
   bash deny "git stash show -p -- @E@"
   bash deny "git format-patch --stdout -1 -- @E@"
   bash allow "git push -u origin feat/x"
-  bash allow "git commit -m 'docs: never cat @E@' && git push"
-  bash allow "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X@NL@git add docs"
   bash deny "git commit -m 'never cat @E@' && npm test"
   bash deny "cat > notes.md <<'X'@NL@cat @E@@NL@X@NL@make"
 )
@@ -1586,43 +1591,59 @@ rows_proposal=(
   bash deny "FOO=1 cat @E@"
   bash deny "/bin/cat @E@"
   bash deny "find . -name @E@ | xargs grep KEY"
-  bash allow "git commit -m 'docs: never cat @E@'"
-  bash allow "gh pr create --body 'Guard blocks cat @E@ and grep over @E@'"
-  bash allow "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X"
   bash allow "grep -qx '@E@' .gitignore"
   bash deny "ls -la @E@; sed -n 1,20p README.md"
   bash allow "bash -lc 'grep -c KEY @E@'"
-  bash allow "git commit -m \"\$(cat <<'EOF'@NL@fix: \"don't\" cat @E@ ever@NL@EOF@NL@)\" && git push"
-  bash allow "gh pr create --title x --body \"\$(cat <<'EOF'@NL@## Summary@NL@Blocks \`cat @E@\` and \"grep @E@\"; don't.@NL@EOF@NL@)\""
-  bash allow "echo 'never cat @E@' | tee -a notes.md"
-  bash allow "ls -la @E@ | head"
   bash allow "echo @E@ >> .gitignore"
   bash allow "timeout 5 rg -c TOKEN @E@"
   bash allow "find . -name @E@ | xargs grep -l KEY"
-  bash allow "crew status w blocked 'a key surfaced via cat @E@; rotate it'"
-  bash allow "git log --oneline | head -3; ls @E@"
-  bash allow "cat <<EOF@NL@\$(date) see @E@ docs, cat it never@NL@EOF"
-  bash allow "test -f @E@ || cat README.md"
-  bash allow "cat <<'A' <<'B'@NL@x@NL@A@NL@y cat @E@@NL@B"
   bash deny "cat <<'A' <<'B'@NL@x@NL@A@NL@y@NL@B@NL@cat @E@"
-  bash allow "echo x \\@NL@cat @E@"
-  bash allow "git commit -m fix -m \"\$(printf 'cat @E@')\""
   bash deny "x=\$(cat @E@)"
   bash deny "diff <(cat @E@) <(cat @E@.example)"
   bash deny "echo \`cat @E@\`"
   bash deny "\"\$(which cat)\" @E@"
-  bash allow "cat README.md # see @E@"
   bash deny "cat <<X > out; cat @E@@NL@body@NL@X"
   bash deny "bash -c 'true' && cat @E@"
   bash allow "docker compose --env-file @E@ up -d"
   bash deny "python3 - <<'EOF'@NL@import subprocess; subprocess.run(['cat', '@E@'])@NL@EOF"
   bash allow "echo \"\${#arr[@]}\" && ls @E@"
-  bash allow "cat > .gitignore <<EOF@NL@@E@@NL@node_modules@NL@EOF"
   bash deny "cat - @E@ <<X@NL@x@NL@X"
 )
 
 @test "secret-read-guard: rule 3 — case-table proposal (cases.sh + extra.sh)" {
   check_rows "${rows_proposal[@]}"
+}
+
+rows_prose_denied=(
+  bash deny "git commit -m \"fix: python -c open('@E@') was wrong\""
+  bash deny "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
+  bash deny "gh pr create --title t --body \"\$(cat <<'EOF'@NL@use python3 -c 'open(\"@E@\")'@NL@EOF@NL@)\""
+  bash deny "ls @E@ && cat README.md"
+  bash deny "ls @E@ 2>&1 | head -3"
+  bash deny "cat README.md 2>&1 | tail -3; test -f @E@"
+  bash deny "git commit -m 'docs: never cat @E@' && git push"
+  bash deny "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X@NL@git add docs"
+  bash deny "git commit -m 'docs: never cat @E@'"
+  bash deny "gh pr create --body 'Guard blocks cat @E@ and grep over @E@'"
+  bash deny "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X"
+  bash deny "git commit -m \"\$(cat <<'EOF'@NL@fix: \"don't\" cat @E@ ever@NL@EOF@NL@)\" && git push"
+  bash deny "gh pr create --title x --body \"\$(cat <<'EOF'@NL@## Summary@NL@Blocks \`cat @E@\` and \"grep @E@\"; don't.@NL@EOF@NL@)\""
+  bash deny "echo 'never cat @E@' | tee -a notes.md"
+  bash deny "ls -la @E@ | head"
+  bash deny "crew status w blocked 'a key surfaced via cat @E@; rotate it'"
+  bash deny "git log --oneline | head -3; ls @E@"
+  bash deny "cat <<EOF@NL@\$(date) see @E@ docs, cat it never@NL@EOF"
+  bash deny "test -f @E@ || cat README.md"
+  bash deny "cat <<'A' <<'B'@NL@x@NL@A@NL@y cat @E@@NL@B"
+  bash deny "echo x \\@NL@cat @E@"
+  bash deny "git commit -m fix -m \"\$(printf 'cat @E@')\""
+  bash deny "cat README.md # see @E@"
+  bash deny "cat > .gitignore <<EOF@NL@@E@@NL@node_modules@NL@EOF"
+  bash deny "ls -la @E@; head -20 README.md"
+)
+
+@test "secret-read-guard: rule 3 — prose naming a read stays denied, as on main" {
+  check_rows "${rows_prose_denied[@]}"
 }
 
 rows_review_round_1=(
@@ -1645,8 +1666,6 @@ rows_review_round_1=(
   bash deny "wc --files0-from=@E@ 2>&1 | cat"
   bash deny "git -c color.ui=never show HEAD:@E@"
   bash deny "git --config-env core.pager=P show HEAD:@E@"
-  bash allow "ls -la @E@; head -20 README.md"
-  bash allow "test -f @E@ || cat README.md"
   bash allow "grep -c KEY @E@; echo ok"
   bash allow "git diff --stat -- @E@"
   bash allow "git diff --quiet -- @E@ && echo same"
@@ -1659,6 +1678,44 @@ rows_review_round_1=(
 
 @test "secret-read-guard: rule 3 — review round 1" {
   check_rows "${rows_review_round_1[@]}"
+}
+
+rows_review_round_2=(
+  bash deny $'echo $$\'\\\' ; cat @E@ #\''
+  bash deny $'cat <<"a\'b"@NL@x@NL@a\'b@NL@cat @E@'
+  bash deny $'cat <<\'a\\b\'@NL@x@NL@a\\b@NL@cat @E@'
+  bash deny $'cat <<"a\\\\b"@NL@x@NL@a\\b@NL@cat @E@'
+  bash deny $'cat <<EOF@NL@hi@NL@EO\\@NL@F@NL@cat @E@'
+  bash deny $'echo $[1<<2]@NL@cat @E@'
+  bash deny $'echo ${x:-<<b}@NL@cat @E@'
+  bash deny $'echo ${a[1<<2]}@NL@cat @E@'
+  bash deny $'a[1<<2]=3@NL@cat @E@'
+  bash deny $'echo `echo \'`; cat @E@ # \'`'
+  bash deny $'echo "`echo "a`"; cat @E@'
+  bash deny $'cat <<$\'EOF\'@NL@x@NL@EOF@NL@cat @E@'
+  bash deny $'cat <<$\'E\\x4fF\'@NL@x@NL@EOF@NL@cat @E@'
+  bash deny $'cat > x.sh <<\'EOF\'@NL@cat @E@@NL@EOF@NL@. x.sh'
+  bash deny $'echo \'cat @E@\' > x.sh; . x.sh'
+  bash deny $'x=$(( 1 <<2 ))@NL@cat @E@'
+  bash deny $'echo "$(cat <<\'EOF\'@NL@hi@NL@EOF)"@NL@cat @E@'
+  bash deny $'git commit -m "$(cat <<\'EOF\'@NL@fix: thing@NL@EOF)"@NL@head -3 @E@'
+  bash deny $'cat <<EOF@NL@x\\@NL@EOF@NL@echo it\'s@NL@EOF@NL@cat @E@ #\''
+  bash deny $'echo "${x:-\'"\'}" ; cat @E@ #\''
+  bash deny $'echo "`echo "`echo "; cat @E@ #"`'
+  bash deny $'echo $((echo <<\'EOF\'@NL@it\'s@NL@EOF@NL@) ); cat @E@ #\''
+  bash deny $'echo \'cat @E@\' > x.sh && . ./x.sh'
+  bash deny $'printf \'cat %s\\n\' @E@ > x.sh; . x.sh'
+  bash deny $'echo \'cat @E@\' > x.sh; source x.sh'
+  bash deny $'echo \'cat @E@\' > x.sh; bash x.sh'
+  bash deny $'echo "`cat <<\'EOF\'@NL@hi@NL@EOF`"@NL@cat @E@'
+  bash deny $'gh pr create --title t --body "$(cat <<\'EOF\'@NL@body@NL@EOF)"@NL@grep KEY @E@'
+  bash deny $'grep KEY\r-e -c @E@'
+  bash deny $'grep KEY\r-- -c @E@'
+  bash deny $'grep KEY\x0b-e -c @E@'
+)
+
+@test "secret-read-guard: rule 3 — review round 2" {
+  check_rows "${rows_review_round_2[@]}"
 }
 
 # check_all_rows_under <awk-cmd> — replay every rows_* table through check_rows
