@@ -49,6 +49,22 @@ teardown() {
   done
 }
 
+@test "dispatch-resume's liveness-helper copies match crew.sh's" {
+  # dispatch-resume.sh is a standalone build with no shared lib to source, so
+  # it carries its own copies of crew.sh's dispatcher-liveness helpers (#461).
+  # crew.sh is the source of truth: a fix to `_pid_alive`/`_pid_recycled` that
+  # misses this copy silently reopens the EPERM/recycled-pid bug in resume.
+  # Byte-compares each definition; flake.nix excludes dispatch-resume.sh from
+  # treefmt for exactly this, so shfmt can never rewrite them out of sync.
+  # `_ps_elapsed_s`'s crew.sh/dispatch.sh pair is pinned separately by #462.
+  for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
+    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
+    [ -n "$canonical" ]
+    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
+    [ "$found" = "$canonical" ]
+  done
+}
+
 @test "generator is idempotent" {
   # Compare checksums across two runs rather than `git diff --exit-code`: that
   # conflates generator drift with any unrelated uncommitted edit, and is

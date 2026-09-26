@@ -741,6 +741,82 @@ _bus_append() {
   printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
 }
 
+# _pid_alive <pid> — 0 when a process with this pid exists, under any uid.
+# `kill -0 0` signals the caller's own process group and `kill -0 -1`
+# broadcasts, so only a positive integer is a liveness probe. A failed signal
+# is not proof of death: another uid's process returns EPERM, and the signal
+# merely being refused proves it exists, so EPERM reads alive. `ps -p` is the
+# fallback for any other error (and where `kill` cannot name the error we
+# parse). Fail closed: anything unreadable stays alive.
+_pid_alive() {
+  case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
+  local kmsg
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in
+  *"not permitted"* | *"not allowed"*) return 0 ;; # EPERM: the process exists
+  esac
+  ps -p "$1" -o pid= >/dev/null 2>&1
+}
+
+# _file_mtime_s <file> — the file's mtime in epoch seconds, or return 1. GNU
+# stat takes `-c %Y`; BSD/macOS takes `-f %m`. GNU first: its `-f` means
+# "filesystem" and would print a filesystem block for a `-f %m` invocation.
+_file_mtime_s() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+# _ps_elapsed_s <pid> — the process's elapsed seconds, or return 1 when ps can
+# not say. Duplicated from dispatch.sh (the two ship as standalone builds):
+# `etimes` is exact where the platform has it; `etime` parses the
+# [[dd-]hh:]mm:ss macOS prints. Both are locale- and timezone-independent.
+_ps_elapsed_s() {
+  local pid="$1" out d h m s rest
+  out="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9]*) ;;
+  *) printf '%s' "$out"; return 0 ;;
+  esac
+  out="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  case "$out" in
+  '' | *[!0-9:-]*) return 1 ;;
+  esac
+  d=0
+  case "$out" in
+  *-*) d="${out%%-*}"; out="${out#*-}" ;;
+  esac
+  [ -n "$d" ] || d=0
+  case "$out" in
+  *:*:*) h="${out%%:*}"; rest="${out#*:}"; m="${rest%%:*}"; s="${rest#*:}" ;;
+  *:*) h=0; m="${out%%:*}"; s="${out#*:}" ;;
+  *) h=0; m=0; s="$out" ;;
+  esac
+  printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
+}
+
+# _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
+# after <pidfile> was last written (plus 2s of slack for ps' second
+# granularity), so it cannot be the dispatcher the file records: that process
+# existed when the file was written, and a later start inherited the number.
+# Returns 1 when either timestamp is unreadable, so a live process is never
+# judged dead; a coarse-mtime filesystem only errs the same, safe way.
+_pid_recycled() {
+  local pid="$1" file="$2" elapsed file_s
+  [ -f "$file" ] || return 1
+  elapsed="$(_ps_elapsed_s "$pid")" || return 1
+  file_s="$(_file_mtime_s "$file")" || return 1
+  case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
+  case "$file_s" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
+}
+
+# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
+# <pidfile> records: live and not a later-recycled pid.
+_recorded_pid_live() {
+  _pid_alive "$1" || return 1
+  _pid_recycled "$1" "$2" && return 1
+  return 0
+}
+
 # Dispatcher liveness. `crew register` writes the pid, and `crew deregister`
 # removes the whole directory on a clean exit — so absent means gone, a dead
 # pid means it crashed, and only a live pid is a dispatcher still watching.
@@ -754,7 +830,7 @@ if [ -d "$cdir" ]; then
   case "$epid" in
   '' | *[!0-9]* | 0) ;;
   *)
-    if kill -0 "$epid" 2>/dev/null; then
+    if _recorded_pid_live "$epid" "$cdir/pid"; then
       dispatcher_live=1
       dispatcher_pane_new="$(cat "$cdir/pane" 2>/dev/null || true)"
     fi
