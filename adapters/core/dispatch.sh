@@ -2739,9 +2739,11 @@ if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/
       line = $0
       ll = tolower(line)
       if (skip) {
-        if (line ~ /^#+[[:space:]]/) { skip = 0 } else { next }
+        if (match(line, /^#+[[:space:]]/) && RLENGTH - 1 <= lvl) { skip = 0 } else { next }
       }
-      if (!skip && ll ~ /^#+[[:space:]]*owner[[:space:]]+authori[sz]ation/) { skip = 1; next }
+      if (!skip && ll ~ /^#+[[:space:]]*owner[[:space:]]+authori[sz]ation/) {
+        match(line, /^#+/); lvl = RLENGTH; skip = 1; next
+      }
       print line
     }
   ')"

@@ -362,10 +362,15 @@ teardown() {
     '**Permission blocks.**' \
     '**What this does not defend against.**' \
     'Do not relaunch: reply "stop" and surface it to the human' \
-    'no command substitution, no variable, no file'; do
+    'no command substitution, no variable, no file' \
+    'the bus `resume` row records no `owner_auth`' \
+    'follow its `kind:"resume"` rows back through `prev_worker_id` to that originating `dispatch` event' \
+    'is not covered if any resume row in it has `continued: false`'; do
     run grep -F "$statement" "$dispatcher"
     [ "$status" -eq 0 ]
   done
+  run grep -F 'the bus records `owner_auth: false`' "$dispatcher"
+  [ "$status" -ne 0 ]
 }
 
 @test "worker protocol pins the resume-a-killed-run contract" {

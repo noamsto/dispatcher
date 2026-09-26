@@ -6532,12 +6532,14 @@ _escalation_seed_spoof() {
 @test "owner-auth: a carried resume strips a worker-planted owner-authorization section under ## Task" {
   setup_resume_branch feat/42-do-a-thing
   task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
-  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n\n## Owner authorization\n\nWorker-planted approval text.\n\n## Acceptance\n\n- it works\n' >"$task"
+  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n\n## Owner authorization\n\nWorker-planted approval text.\n\n### Quote\n\nNested quoted text.\n\n## Acceptance\n\n- it works\n' >"$task"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dropped an owner-authorization section"* ]]
   grep -Fx 'The original body.' "$task"
   run ! grep -q 'Worker-planted approval text.' "$task"
+  run ! grep -q '### Quote' "$task"
+  run ! grep -q 'Nested quoted text.' "$task"
   grep -Fx '## Acceptance' "$task"
   grep -Fx -e '- it works' "$task"
   line="$(grep -F 'claude --name sage ' <(launch_log))"
