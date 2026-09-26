@@ -741,6 +741,24 @@ _add_dir_ok() {
   printf '%s\n' "$p"
 }
 
+# _artifacts_dir_bad <branch> — succeed, printing the first offender, when a
+# component from $crew_dir/artifacts down to the branch's leaf is a symlink or
+# exists as a non-directory. mkdir -p and a redirect follow a symlink planted at
+# any of them, including the parents of a slashed branch (#446).
+_artifacts_dir_bad() {
+  local p="$crew_dir/artifacts" part
+  local -a parts
+  IFS=/ read -ra parts <<<"$1"
+  for part in "" "${parts[@]}"; do
+    p="$p${part:+/$part}"
+    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
@@ -760,7 +778,7 @@ _add_dir_ok() {
 # gates paths, and pi has no tool-permission layer at all.
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d line dirs=()
+  local a d bad line dirs=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
     if [[ $d == /* ]] && [ -d "$d" ]; then
@@ -768,8 +786,8 @@ launch_dir_args() {
     fi
   done
   a="$crew_dir/artifacts/$2"
-  if [ -L "$a" ]; then
-    echo "dispatch: $a is a symlink — not granting it to $2" >&2
+  if bad="$(_artifacts_dir_bad "$2")"; then
+    echo "dispatch: $bad is a symlink or not a directory — not granting $a to $2" >&2
   else
     mkdir -p -- "$a"
     dirs+=("$a")
@@ -2809,10 +2827,17 @@ fi
 # (`dispatch --spawn-role`), and so a role can be re-created after death.
 if [ "${#role_names[@]}" -gt 0 ]; then
   roles_dir="$crew_dir/artifacts/$branch"
+  if bad="$(_artifacts_dir_bad "$branch")"; then
+    echo "dispatch: $bad is a symlink or not a directory — refusing to write roles.json" >&2
+    exit 1
+  fi
   mkdir -p "$roles_dir"
+  # Renamed into place: a redirect would write through a symlink planted at roles.json.
+  roles_tmp="$(mktemp "$roles_dir/.roles.XXXXXX")"
   for i in "${!role_names[@]}"; do
     jq -n --arg n "${role_names[$i]}" --arg a "${role_agents[$i]}" --arg m "${role_models[$i]}" --arg e "${role_efforts[$i]}" '{name:$n,agent:$a,model:$m,effort:$e}'
-  done | jq -s 'map({key:.name,value:{agent:.agent,model:.model,effort:.effort}})|from_entries' > "$roles_dir/roles.json"
+  done | jq -s 'map({key:.name,value:{agent:.agent,model:.model,effort:.effort}})|from_entries' >"$roles_tmp"
+  mv -f -- "$roles_tmp" "$roles_dir/roles.json"
 fi
 
 # A detached new-window can inherit tmux's fallback size instead of the client
