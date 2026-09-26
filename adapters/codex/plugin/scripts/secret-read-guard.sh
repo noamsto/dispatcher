@@ -543,7 +543,7 @@ function git_end(c) {
   if (c == "F") P = 1
 }
 # 1 when a grep in stage s lacks a quiet flag (or no grep word survives the
-# quote mask). Mirrors the shell version this replaced, word for word.
+# quote mask).
 function grep_loud(s, m, W, n, j, x, e, rg, found) {
   m = mask(s)
   sub(/[[:space:]]#.*$/, "", m)
@@ -719,7 +719,7 @@ shell)
   fi
 
   # 3. Reading a credential file's content (credential_read, above deny). A
-  #    failed awk run fails loud rather than allowing.
+  #    failed check fails loud rather than allowing.
   for space in "${raw_spaces[@]}"; do
     verdict=$(credential_read "$space") || {
       echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2

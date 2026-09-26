@@ -1552,7 +1552,7 @@ rows_redirects_amp_pipe=(
   check_rows "${rows_redirects_amp_pipe[@]}"
 }
 
-rows_spec_critic_r1=(
+rows_subst_and_patch=(
   bash deny "echo \"\$(<@E@)\""
   bash deny "x=\$(< @E@)"
   bash deny "git stash show -p -- @E@"
@@ -1562,11 +1562,11 @@ rows_spec_critic_r1=(
   bash deny "cat > notes.md <<'X'@NL@cat @E@@NL@X@NL@make"
 )
 
-@test "secret-read-guard: rule 3 — spec-critic round 1" {
-  check_rows "${rows_spec_critic_r1[@]}"
+@test "secret-read-guard: rule 3 — input substitutions, git patch output and write-then-run" {
+  check_rows "${rows_subst_and_patch[@]}"
 }
 
-rows_spec_critic_r2=(
+rows_laundering_and_patch_flags=(
   bash deny "echo @E@ > l; xargs cat < l"
   bash deny "echo @E@ > l; xargs -a l head"
   bash deny "ls @E@ && timeout 5 sed -n 1p README.md"
@@ -1585,19 +1585,19 @@ rows_spec_critic_r2=(
   bash allow "git log --oneline -- @E@"
 )
 
-@test "secret-read-guard: rule 3 — spec-critic round 2" {
-  check_rows "${rows_spec_critic_r2[@]}"
+@test "secret-read-guard: rule 3 — xargs laundering and git patch flags by subcommand" {
+  check_rows "${rows_laundering_and_patch_flags[@]}"
 }
 
-rows_spec_critic_r3=(
+rows_merge_diff_flags=(
   bash deny "git log --dd -- @E@"
   bash deny "git log --remerge-diff -- @E@"
   bash deny "git reflog --remerge-diff @E@"
   bash deny "git log --diff-merges=on -- @E@"
 )
 
-@test "secret-read-guard: rule 3 — spec-critic round 3" {
-  check_rows "${rows_spec_critic_r3[@]}"
+@test "secret-read-guard: rule 3 — git merge-diff flags" {
+  check_rows "${rows_merge_diff_flags[@]}"
 }
 
 rows_proposal=(
@@ -1668,22 +1668,17 @@ rows_prose_denied=(
   bash deny "cat README.md # see @E@"
   bash deny "cat > .gitignore <<EOF@NL@@E@@NL@node_modules@NL@EOF"
   bash deny "ls -la @E@; head -20 README.md"
-)
-
-@test "secret-read-guard: rule 3 — prose naming a read stays denied, as on main" {
-  check_rows "${rows_prose_denied[@]}"
-}
-
-rows_declared_new_denies=(
   bash deny "git commit -m \"fix: python -c open('@E@') was wrong\""
   bash deny "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
 )
 
-@test "secret-read-guard: rule 3 — prose the guard newly denies (declared)" {
-  check_rows "${rows_declared_new_denies[@]}"
+@test "secret-read-guard: rule 3 — prose naming a read stays denied" {
+  check_rows "${rows_prose_denied[@]}"
 }
 
-rows_review_round_1=(
+
+
+rows_readers_and_git_forms=(
   bash deny "sort @E@ | head"
   bash deny "sort @E@ | grep KEY"
   bash deny "uniq @E@ | cat"
@@ -1713,11 +1708,11 @@ rows_review_round_1=(
   bash allow "date -d yesterday +%F"
 )
 
-@test "secret-read-guard: rule 3 — review round 1" {
-  check_rows "${rows_review_round_1[@]}"
+@test "secret-read-guard: rule 3 — readers without a printing word, printing git forms, git global options" {
+  check_rows "${rows_readers_and_git_forms[@]}"
 }
 
-rows_review_round_2=(
+rows_tokeniser_edges=(
   bash deny $'echo $$\'\\\' ; cat @E@ #\''
   bash deny $'cat <<"a\'b"@NL@x@NL@a\'b@NL@cat @E@'
   bash deny $'cat <<\'a\\b\'@NL@x@NL@a\\b@NL@cat @E@'
@@ -1751,11 +1746,11 @@ rows_review_round_2=(
   bash deny $'grep KEY\x0b-e -c @E@'
 )
 
-@test "secret-read-guard: rule 3 — review round 2" {
-  check_rows "${rows_review_round_2[@]}"
+@test "secret-read-guard: rule 3 — heredocs, substitutions and quoting a tokeniser can misread" {
+  check_rows "${rows_tokeniser_edges[@]}"
 }
 
-rows_review_c1=(
+rows_ctrl_chars_and_grep_paths=(
   bash deny $'grep\r-s\rKEY\r@E@\rx\v-c'
   bash deny $'fish -c "grep\r-s\rKEY\r@E@\rx\v-c"'
   bash deny $'c=grep\r-s\rKEY\r@E@\rx\v-c; IFS='"\$'\\r'"'; '"\$c"
@@ -1772,8 +1767,8 @@ rows_review_c1=(
   bash allow "grep -c KEY @E@"
 )
 
-@test "secret-read-guard: rule 3 — review round c1" {
-  check_rows "${rows_review_c1[@]}"
+@test "secret-read-guard: rule 3 — control characters in grep stages, Grep-tool template spellings" {
+  check_rows "${rows_ctrl_chars_and_grep_paths[@]}"
 }
 
 # check_all_rows_under <awk-cmd> — replay every rows_* table through check_rows
@@ -1841,12 +1836,10 @@ EOF
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
 }
 
-# A `sed` shim that logs every invocation's arguments (so calls can be
-# counted) and then defers to the real sed, so behaviour is unchanged.
-# \4 appears only in the wide name sed's script (credential_read's second
-# sed, and the grep branch's path_left/glob_left sed) — never in the narrow
-# template-strip sed, so grepping the log for it tells the two apart.
-@test "secret-read-guard: the wide name strip runs only when main's name test misses" {
+# \4 appears only in the wide name strip's sed script (credential_read and the
+# grep branch), never in the template-anywhere one, so the sed log tells them
+# apart.
+@test "secret-read-guard: the wide name strip runs only when the template-anywhere name test misses" {
   local real_sed log
   real_sed=$(command -v sed)
   log="$BATS_TEST_TMPDIR/sed.log"
