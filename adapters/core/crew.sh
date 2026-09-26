@@ -210,10 +210,9 @@ _ps_elapsed_s() {
 # _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
 # after <pidfile> was last written (plus 2s of slack for ps' second
 # granularity), so it cannot be the dispatcher the file records: that process
-# existed when the file was written, and a later start merely inherited the
-# number. A coarse-mtime filesystem only makes a stale reuse read live, the
-# fail-open direction. Returns 1 when either timestamp is unreadable, so a live
-# process is never judged dead.
+# existed when the file was written, and a later start inherited the number.
+# Returns 1 when either timestamp is unreadable, so a live process is never
+# judged dead; a coarse-mtime filesystem only errs the same, safe way.
 _pid_recycled() {
   local pid="$1" file="$2" elapsed file_s
   [ -f "$file" ] || return 1
@@ -224,9 +223,8 @@ _pid_recycled() {
   [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
 }
 
-# _recorded_pid_live <pid> <pidfile> — 0 only when <pid> is live AND not a
-# later-recycled process, i.e. when it can still be the dispatcher recorded in
-# <pidfile>.
+# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
+# <pidfile> records: live and not a later-recycled pid.
 _recorded_pid_live() {
   _pid_alive "$1" || return 1
   _pid_recycled "$1" "$2" && return 1
@@ -419,9 +417,9 @@ _lock_acquire() {
   if [ "$held" = "$owner" ]; then
     return 0 # idempotent: this same owner already holds it
   fi
-  # Bare `kill -0`, not `_pid_alive`: a lock holder is always this tool's own
-  # uid, and the `kill -0 0` process-group semantics are relied on by `stream
-  # --force` (tests/crew.bats pins that a literal `0` holder reads as held).
+  # Bare `kill -0`, not `_pid_alive`: a `0` holder must read as held (the
+  # process-group semantics `stream --force` pins), and lock holders are
+  # always this tool's own uid anyway.
   if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
     return 1
   fi
@@ -1967,9 +1965,8 @@ stream)
     cleared=""
     tries=0
     while [ "$tries" -lt 50 ]; do
-      # Bare `kill -0`, paired with the `kill -TERM` above: this confirms
-      # signal delivery, not general liveness, so an EPERM that `_pid_alive`
-      # reads alive is the correct "may not have cleared" answer here.
+      # Bare `kill -0`, paired with the `kill -TERM` above: confirms signal
+      # delivery, not general liveness.
       kill -0 "$holder" 2>/dev/null || {
         cleared=1
         break
