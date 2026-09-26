@@ -541,6 +541,33 @@ heredoc_100k() {
   assert_deny_within 2000 "$(claude_bash "bash -c env; $(heredoc_100k)")"
 }
 
+# assert_allow_within <max-ms> <payload> — allow in claude shape, fast enough.
+assert_allow_within() {
+  local start elapsed
+  start=$(date +%s%N)
+  run run_guard <<<"$2"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  assert_allow
+  echo "elapsed ${elapsed}ms" >&2
+  [ "$elapsed" -lt "$1" ]
+}
+
+@test "secret-read-guard: a 100 KB bash heredoc of commands ending in a credential read denies in under 2 s" {
+  local body
+  body=$(printf 'echo hi; %.0s' $(seq 1 10240))
+  assert_deny_within 2000 "$(claude_bash "bash <<'X'"$'\n'"$body"$'\n'"cat .env"$'\n'"X")"
+}
+
+@test "secret-read-guard: a 100 KB grep with 24000 quoted words allows in under 2 s" {
+  local body
+  body=$(printf "'a' \"b\" %.0s" $(seq 1 12000))
+  assert_allow_within 2000 "$(claude_bash "grep -c ${body}.env")"
+}
+
+@test "secret-read-guard: a 100 KB data heredoc then ls allows in under 2 s" {
+  assert_allow_within 2000 "$(claude_bash "$(heredoc_100k)"$'\n'"ls")"
+}
+
 # ---------------------------------------------------------------------------
 # Unparseable payloads fail open but loud: exit 1, stderr, nothing on stdout
 # ---------------------------------------------------------------------------
@@ -1247,4 +1274,418 @@ allow_cmd() { # <command>
 
 @test "secret-read-guard: allows a dumper word after an exclamation mark in an argument" {
   allow_cmd 'echo wow! env'
+}
+
+# ---------------------------------------------------------------------------
+# Rule 3: credential-file reads, by case table
+# ---------------------------------------------------------------------------
+
+# check_rows — run a flat table of <kind> <expect> <arg…> records through the
+# guard. kind is bash (1 arg: a command), read (1 arg: a path), or grep (2
+# args: a path and a glob, sent through claude_grep with pattern "x" and mode
+# "content"). @E@ becomes .env and @NL@ becomes a real newline in every arg
+# before the payload is built. Non-empty stdout is a deny; a nonzero exit is
+# folded into the verdict as "<verdict>(rc=N)", which never matches a plain
+# expectation. Mismatches are collected and echoed (bats only shows a failing
+# test's own output) before check_rows returns non-zero.
+check_rows() {
+  local mismatches='' kind exp a1 a2 payload out rc got
+  while [ "$#" -gt 0 ]; do
+    kind=$1 exp=$2
+    shift 2
+    case "$kind" in
+      bash)
+        a1=$1
+        shift
+        a1=${a1//@E@/.env}
+        a1=${a1//@NL@/$'\n'}
+        payload=$(claude_bash "$a1")
+        ;;
+      read)
+        a1=$1
+        shift
+        a1=${a1//@E@/.env}
+        a1=${a1//@NL@/$'\n'}
+        payload=$(claude_read "$a1")
+        ;;
+      grep)
+        a1=$1 a2=$2
+        shift 2
+        a1=${a1//@E@/.env}
+        a1=${a1//@NL@/$'\n'}
+        a2=${a2//@E@/.env}
+        a2=${a2//@NL@/$'\n'}
+        payload=$(claude_grep "$a1" "$a2" x content)
+        ;;
+    esac
+    out=$(printf '%s' "$payload" | run_guard 2>/dev/null)
+    rc=$?
+    if [ -n "$out" ]; then got=deny; else got=allow; fi
+    [ "$rc" -ne 0 ] && got="$got(rc=$rc)"
+    if [ "$got" != "$exp" ]; then
+      mismatches+="expected $exp got $got: $(printf '%q' "${a1:0:120}")"$'\n'
+    fi
+  done
+  if [ -n "$mismatches" ]; then
+    echo "$mismatches"
+    return 1
+  fi
+}
+
+rows_interpreters=(
+  bash deny "python3 -c \"print(open('@E@').read())\""
+  bash deny "python -c 'import sys; print(open(sys.argv[1]).read())' @E@"
+  bash deny "node -e \"console.log(require('fs').readFileSync('@E@','utf8'))\""
+  bash deny "ruby -e 'puts File.read(\"@E@\")'"
+  bash deny "perl -ne print @E@"
+  bash deny "python3 - <<'EOF'@NL@print(open('@E@').read())@NL@EOF"
+  bash deny "echo \"print(open('@E@').read())\" | python3"
+  bash deny "python3 <<< \"print(open('@E@').read())\""
+  bash deny "uv run python -c \"print(open('@E@').read())\""
+  bash allow "python -m venv @E@"
+  bash allow "node --env-file=@E@ server.js"
+)
+
+@test "secret-read-guard: rule 3 — interpreters read .env content (#428)" {
+  check_rows "${rows_interpreters[@]}"
+}
+
+rows_lt_no_space=(
+  bash deny "cat<@E@"
+  bash deny "cat <@E@"
+  bash deny "<@E@ cat"
+  bash deny "grep KEY<@E@"
+  bash allow "grep -c KEY <@E@"
+)
+
+@test "secret-read-guard: rule 3 — < without a space (#428)" {
+  check_rows "${rows_lt_no_space[@]}"
+}
+
+rows_dot_sourcing=(
+  bash deny ". @E@"
+  bash deny ". ./@E@ && echo ok"
+  bash deny "set -a; . @E@; set +a"
+)
+
+@test "secret-read-guard: rule 3 — dot-sourcing (#428)" {
+  check_rows "${rows_dot_sourcing[@]}"
+}
+
+rows_git_reads=(
+  bash deny "git show HEAD:@E@"
+  bash deny "git show main:config/@E@"
+  bash deny "git cat-file -p HEAD:@E@"
+  bash deny "git grep KEY -- @E@"
+  bash allow "git grep -c KEY -- @E@"
+  bash deny "git diff --no-index /dev/null @E@"
+  bash allow "git diff --stat -- @E@"
+  bash allow "git show HEAD:@E@.example"
+  bash deny "git log -p -- @E@"
+  bash allow "git log --oneline -- @E@"
+  bash allow "git rm --cached @E@"
+  bash allow "git check-ignore -q @E@"
+)
+
+@test "secret-read-guard: rule 3 — git reads (#428)" {
+  check_rows "${rows_git_reads[@]}"
+}
+
+rows_grep_e_q=(
+  bash deny "grep -e -q KEY @E@"
+)
+
+@test "secret-read-guard: rule 3 — grep -e -q (#428)" {
+  check_rows "${rows_grep_e_q[@]}"
+}
+
+rows_template_anchoring=(
+  bash deny "cat @E@.distro"
+  bash deny "cat @E@.examples"
+  bash deny "cat @E@.example.local"
+  bash allow "cat @E@.local.example"
+  bash allow "cat @E@.dist"
+  read deny "/repo/@E@.example/../@E@"
+  read deny "/repo/@E@.examples"
+  read deny "/repo/@E@.example.local"
+  read deny "/repo/@E@.distro"
+  read allow "/repo/@E@.dist"
+  read allow "/repo/@E@.local.example"
+  grep deny "/repo/@E@.examples" ""
+  grep deny "" "@E@.example.local"
+  grep allow "/repo/@E@.example" ""
+)
+
+@test "secret-read-guard: rule 3 — template anchoring (#428)" {
+  check_rows "${rows_template_anchoring[@]}"
+}
+
+rows_residuals=(
+  bash deny "echo \"\$(cat <<'EOF'@NL@cat @E@@NL@EOF@NL@)\" | bash"
+  bash deny "echo \"\$(case x in a) cat @E@;; esac)\""
+  bash deny "echo \"\$(case x in (a) cat @E@;; esac)\""
+  bash deny "x=\$(case y in a|b) echo;; esac; cat @E@)"
+  bash allow "echo \"\$(case \$x in a) echo hi;; esac)\" done"
+)
+
+@test "secret-read-guard: rule 3 — #427 residuals" {
+  check_rows "${rows_residuals[@]}"
+}
+
+rows_benign_heads=(
+  bash deny "git -c alias.x='!cat @E@' x"
+  bash deny "git -c core.pager='cat @E@' log"
+  bash deny "GIT_PAGER='cat @E@' git log"
+  bash deny "git config alias.x '!cat @E@'"
+  bash deny "git rebase --exec 'cat @E@' HEAD~1"
+  bash deny "gh alias set x --shell 'cat @E@'"
+)
+
+@test "secret-read-guard: rule 3 — adversarial: benign heads that run text" {
+  check_rows "${rows_benign_heads[@]}"
+}
+
+rows_reach_through=(
+  bash deny "f=@E@; cat \"\$f\""
+  bash deny "for f in @E@ @E@.local; do head -3 \"\$f\"; done"
+  bash deny "cp @E@ /tmp/e && cat /tmp/e"
+  bash deny "ln -s @E@ /tmp/e; cat /tmp/e"
+  bash deny "echo 'cat @E@' > >(bash)"
+  bash deny "echo 'cat @E@' | tee /dev/stderr | bash"
+)
+
+@test "secret-read-guard: rule 3 — adversarial: reach through a variable, loop, copy" {
+  check_rows "${rows_reach_through[@]}"
+}
+
+rows_path_spellings=(
+  bash deny "cat @E@*"
+  bash deny "head -5 @E@.*"
+  bash deny "cat {@E@,@E@.local}"
+  bash deny "cat \"\$HOME/.ssh/id_rsa\""
+  bash deny "cat .envrc.local"
+  bash deny "echo \`cat @E@\`"
+)
+
+@test "secret-read-guard: rule 3 — adversarial: path spellings" {
+  check_rows "${rows_path_spellings[@]}"
+}
+
+rows_must_allow=(
+  bash allow "ls @E@*"
+  bash allow "rm -f @E@.*"
+  bash allow "echo '@E@*' >> .gitignore"
+  bash allow "git commit -m \"fix: python -c open('@E@') was wrong\""
+  bash allow "cat > .gitignore <<'EOF'@NL@@E@*@NL@EOF"
+  bash allow "gh pr create --title t --body \"\$(cat <<'EOF'@NL@use python3 -c 'open(\"@E@\")'@NL@EOF@NL@)\""
+  bash allow "ls @E@ && cat README.md"
+  bash allow "f=README.md; cat \"\$f\""
+  bash allow "cat ~/.ssh/id_rsa.pub"
+  bash allow "echo KEY=1 >> @E@"
+  bash allow "cp @E@.example @E@"
+)
+
+@test "secret-read-guard: rule 3 — allows that must hold" {
+  check_rows "${rows_must_allow[@]}"
+}
+
+rows_write_then_run=(
+  bash deny "echo 'cat @E@' > x.sh && bash x.sh"
+  bash deny "cat > run.sh <<'X'@NL@cat @E@@NL@X@NL@bash run.sh"
+  bash deny "printf -v c 'cat @E@'; \$c"
+)
+
+@test "secret-read-guard: rule 3 — writes of a read, run later in the same command" {
+  check_rows "${rows_write_then_run[@]}"
+}
+
+rows_redirects_amp_pipe=(
+  bash deny "agenix -d x.age -i ~/.ssh/id_ed25519 2>&1 | tail -3"
+  bash deny "cat 2>&1 @E@"
+  bash deny "grep KEY 2>&1 @E@"
+  bash deny "cat &>/dev/stderr @E@"
+  bash deny "cat @E@ >| out"
+  bash deny "echo \"\`cat @E@\`\""
+  bash allow "crew msg w d \"files like (@E@, credentials) and \`true\`\""
+  bash allow "ls @E@ 2>&1 | head -3"
+  bash allow "cat README.md 2>&1 | tail -3; test -f @E@"
+)
+
+@test "secret-read-guard: rule 3 — redirects that hold & or |" {
+  check_rows "${rows_redirects_amp_pipe[@]}"
+}
+
+rows_spec_critic_r1=(
+  bash deny "echo \"\$(<@E@)\""
+  bash deny "x=\$(< @E@)"
+  bash deny "git stash show -p -- @E@"
+  bash deny "git format-patch --stdout -1 -- @E@"
+  bash allow "git push -u origin feat/x"
+  bash allow "git commit -m 'docs: never cat @E@' && git push"
+  bash allow "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X@NL@git add docs"
+  bash deny "git commit -m 'never cat @E@' && npm test"
+  bash deny "cat > notes.md <<'X'@NL@cat @E@@NL@X@NL@make"
+)
+
+@test "secret-read-guard: rule 3 — spec-critic round 1" {
+  check_rows "${rows_spec_critic_r1[@]}"
+}
+
+rows_spec_critic_r2=(
+  bash deny "echo @E@ > l; xargs cat < l"
+  bash deny "echo @E@ > l; xargs -a l head"
+  bash deny "ls @E@ && timeout 5 sed -n 1p README.md"
+  bash deny "git log -U3 -- @E@"
+  bash deny "git log --unified=1 -- @E@"
+  bash deny "git log --patch-with-stat -- @E@"
+  bash deny "git log --cc -- @E@"
+  bash deny "git log -c -1 -- @E@"
+  bash deny "git log --binary -- @E@"
+  bash deny "git range-diff main...feat -- @E@"
+  bash allow "cp @E@.example @E@ && git push -u origin feat/x"
+  bash allow "cp @E@.example @E@ && git stash -u"
+  bash allow "ls @E@ && git fetch -p"
+  bash allow "test -f @E@ || git switch -c \"\$b\""
+  bash allow "git stash show -- @E@"
+  bash allow "git log --oneline -- @E@"
+)
+
+@test "secret-read-guard: rule 3 — spec-critic round 2" {
+  check_rows "${rows_spec_critic_r2[@]}"
+}
+
+rows_spec_critic_r3=(
+  bash deny "git log --dd -- @E@"
+  bash deny "git log --remerge-diff -- @E@"
+  bash deny "git reflog --remerge-diff @E@"
+  bash deny "git log --diff-merges=on -- @E@"
+)
+
+@test "secret-read-guard: rule 3 — spec-critic round 3" {
+  check_rows "${rows_spec_critic_r3[@]}"
+}
+
+rows_proposal=(
+  bash deny "ssh -l u host grep KEY @E@"
+  bash deny "echo \"\$(cat @E@)\""
+  bash deny "echo \$(cat @E@)"
+  bash deny "cat \"\$(echo @E@)\""
+  bash deny "echo cat @E@ | bash"
+  bash deny "bash <<'X'@NL@cat @E@@NL@X"
+  bash deny "cat <<'X' | bash@NL@cat @E@@NL@X"
+  bash deny "bash -c \"\$(cat <<'EOF'@NL@cat @E@@NL@EOF@NL@)\""
+  bash deny "cat <<X@NL@\$(cat @E@)@NL@X"
+  bash deny "(cd /w && cat @E@)"
+  bash deny "echo @E@ |@NL@xargs cat"
+  bash deny "printf '%s\\n' @E@ | xargs -I{} cat {}"
+  bash deny "\"cat\" echo @E@"
+  bash deny "bash <<< 'cat @E@'"
+  bash deny "echo \$((1<<2))@NL@cat @E@"
+  bash deny "{ cat @E@; }"
+  bash deny "if grep KEY @E@; then :; fi"
+  bash deny "FOO=1 cat @E@"
+  bash deny "/bin/cat @E@"
+  bash deny "find . -name @E@ | xargs grep KEY"
+  bash allow "git commit -m 'docs: never cat @E@'"
+  bash allow "gh pr create --body 'Guard blocks cat @E@ and grep over @E@'"
+  bash allow "cat > docs/setup.md <<'X'@NL@Run source @E@ before starting.@NL@X"
+  bash allow "grep -qx '@E@' .gitignore"
+  bash deny "ls -la @E@; sed -n 1,20p README.md"
+  bash allow "bash -lc 'grep -c KEY @E@'"
+  bash allow "git commit -m \"\$(cat <<'EOF'@NL@fix: \"don't\" cat @E@ ever@NL@EOF@NL@)\" && git push"
+  bash allow "gh pr create --title x --body \"\$(cat <<'EOF'@NL@## Summary@NL@Blocks \`cat @E@\` and \"grep @E@\"; don't.@NL@EOF@NL@)\""
+  bash allow "echo 'never cat @E@' | tee -a notes.md"
+  bash allow "ls -la @E@ | head"
+  bash allow "echo @E@ >> .gitignore"
+  bash allow "timeout 5 rg -c TOKEN @E@"
+  bash allow "find . -name @E@ | xargs grep -l KEY"
+  bash allow "crew status w blocked 'a key surfaced via cat @E@; rotate it'"
+  bash allow "git log --oneline | head -3; ls @E@"
+  bash allow "cat <<EOF@NL@\$(date) see @E@ docs, cat it never@NL@EOF"
+  bash allow "test -f @E@ || cat README.md"
+  bash allow "cat <<'A' <<'B'@NL@x@NL@A@NL@y cat @E@@NL@B"
+  bash deny "cat <<'A' <<'B'@NL@x@NL@A@NL@y@NL@B@NL@cat @E@"
+  bash allow "echo x \\@NL@cat @E@"
+  bash allow "git commit -m fix -m \"\$(printf 'cat @E@')\""
+  bash deny "x=\$(cat @E@)"
+  bash deny "diff <(cat @E@) <(cat @E@.example)"
+  bash deny "echo \`cat @E@\`"
+  bash deny "\"\$(which cat)\" @E@"
+  bash allow "cat README.md # see @E@"
+  bash deny "cat <<X > out; cat @E@@NL@body@NL@X"
+  bash deny "bash -c 'true' && cat @E@"
+  bash allow "docker compose --env-file @E@ up -d"
+  bash deny "python3 - <<'EOF'@NL@import subprocess; subprocess.run(['cat', '@E@'])@NL@EOF"
+  bash allow "echo \"\${#arr[@]}\" && ls @E@"
+  bash allow "cat > .gitignore <<EOF@NL@@E@@NL@node_modules@NL@EOF"
+  bash deny "cat - @E@ <<X@NL@x@NL@X"
+)
+
+@test "secret-read-guard: rule 3 — case-table proposal (cases.sh + extra.sh)" {
+  check_rows "${rows_proposal[@]}"
+}
+
+# check_all_rows_under <awk-cmd> — replay every rows_* table through check_rows
+# with <awk-cmd> spliced onto PATH as `awk`, to confirm rule 3's verdicts hold
+# under a non-GNU awk. Skips when <awk-cmd> isn't installed.
+check_all_rows_under() {
+  local awk_cmd=$1 awk_path name out mismatches=''
+  local -a arr_names
+
+  awk_path=$(command -v "$awk_cmd") || skip "$awk_cmd not installed"
+
+  mkdir -p "$BATS_TEST_TMPDIR/alt"
+  ln -s "$awk_path" "$BATS_TEST_TMPDIR/alt/awk"
+
+  mapfile -t arr_names < <(compgen -A variable rows_)
+  [ "${#arr_names[@]}" -gt 0 ]
+
+  for name in "${arr_names[@]}"; do
+    local -n rows="$name"
+    if ! out=$(PATH="$BATS_TEST_TMPDIR/alt:$PATH" check_rows "${rows[@]}"); then
+      mismatches+=$(printf '%s\n' "$out" | sed "s/^/$name: /")
+      mismatches+=$'\n'
+    fi
+  done
+
+  if [ -n "$mismatches" ]; then
+    echo "$mismatches"
+    return 1
+  fi
+}
+
+@test "secret-read-guard: rule 3 agrees under mawk" {
+  check_all_rows_under mawk
+}
+
+@test "secret-read-guard: rule 3 agrees under nawk" {
+  check_all_rows_under nawk
+}
+
+@test "secret-read-guard: rule 3 agrees under busybox awk" {
+  check_all_rows_under busybox-awk
+}
+
+@test "secret-read-guard: a rule-3 awk failure fails loud" {
+  local real_awk old_path
+  real_awk=$(command -v awk)
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    *'function grep_loud'*) exit 2 ;;
+  esac
+done
+exec "$real_awk" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
+
+  old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  run --separate-stderr run_guard <<<"$(claude_bash 'cat .env')"
+  PATH=$old_path
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
 }
