@@ -1390,9 +1390,9 @@ _pi_assert_refused() {
 }
 
 # #240: a reply appended after the worker's question but before `crew await`
-# started was hidden behind await's own `start=now` cursor and lost. The wait now
-# anchors on the session's own latest outbound question *per counterpart*, so a
-# reply that landed in that gap is still delivered.
+# started was hidden behind await's own `start=now` cursor and lost. The wait is
+# anchored on the per-sender delivered mark, so a reply that landed in that gap
+# is still delivered.
 @test "await: a reply that landed before await starts is delivered" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
@@ -1403,7 +1403,21 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"answer"'* ]]
 }
 
-# The anchor is per counterpart, not "latest outbound to anyone": a later
+# #385: the dispatcher's reply can cross the worker's own question in flight —
+# the reply lands first, the question second. The question must not hide it: a
+# msg is due until this session has actually been handed it (the per-sender
+# delivered mark), not until the session's latest outbound question.
+@test "await: a reply that crossed the worker's question is delivered" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
+}
+
+# The delivered mark is per sender, not "latest outbound to anyone": a later
 # outbound to a third party must not hide an earlier reply from the dispatcher.
 @test "await: a later outbound to a third party does not hide an earlier reply" {
   id="worker:feat/x#s1-1"
@@ -1417,13 +1431,19 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"answer"'* ]]
 }
 
-@test "await: an answer to an earlier question is not redelivered after a newer question" {
+# #240-era pin flipped for #385: the old anchor dropped A1 once Q2 moved past
+# it, and the title called that "not redelivered" — but A1 was never handed out
+# at all. An unread answer is handed out exactly once whatever question follows.
+@test "await: an unread answer survives a newer question and is handed out once" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
   sleep 1
   CREW_ID=c1 run_crew reply "$id" "A1"
   sleep 1
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"A1"'* ]]
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -1536,15 +1556,18 @@ _pi_assert_refused() {
   [[ "$stderr" == *"$rev"* ]]
 }
 
-@test "await --from: a reply older than this session's question to that sender is not returned" {
+# #385 under --from: the restriction narrows the sender, not the watermark. A
+# reply from the awaited sender that predates the question (it crossed it in
+# flight) is still unread, so it is returned.
+@test "await --from: a reply that crossed the question to that sender is delivered" {
   id="worker:feat/x#s1-1"
   rev="role:feat/x:reviewer"
-  CREW_ID=c1 run_crew msg "$rev" "$id" "stale verdict"
+  CREW_ID=c1 run_crew msg "$rev" "$id" "verdict"
   sleep 1
   CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
   [ "$status" -eq 0 ]
-  [ -z "$output" ]
+  [[ "$output" == *'"body":"verdict"'* ]]
 }
 
 @test "await --from: requires a value" {
@@ -1569,6 +1592,23 @@ _pi_assert_refused() {
   sleep 1
   CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# The delivered mark is the whole contract: a reply already handed out by inbox
+# is not returned by a following await, even after a new question to the same
+# sender — the question does not re-open it.
+@test "await: a reply already handed out by inbox is not returned after a later question" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
+  sleep 1
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  [[ "$output" == *'"body":"answer"'* ]]
+  sleep 1
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
 
@@ -1607,13 +1647,19 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"answer2"'* ]]
 }
 
-# Sensitive by design: this fails if any status row (watchdog or plain blocked)
-# is re-admitted to the anchor computation. A status row is *not* a question, so
-# a reply posted before the await must not become deliverable through it.
-@test "await: a watchdog-sourced blocked status never anchors the wait" {
+# Status rows carry no delivery semantics at all: a watchdog/blocked row is not
+# a msg, so a bus of status rows alone yields an empty await; and it neither
+# marks nor hides a reply — an unread reply is delivered once, then not again.
+@test "await: a watchdog-sourced blocked status neither delivers nor hides a reply" {
   id="worker:feat/x#s1-1"
   seed_raw "$id" blocked "prompt: interactive prompt in pane %9" watchdog
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
   CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"answer"'* ]]
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
@@ -1638,7 +1684,7 @@ _pi_assert_refused() {
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the
 # composition of the crew commands that loop relies on, using `--timeout 0`
-# (an instant timeout) and future-dated seeded rows — the fake-clock pattern,
+# (an instant timeout) and directly seeded bus rows — the fake-clock pattern,
 # no real sleeps. The `crew status`/`crew await`/`crew inbox` commands
 # themselves are covered by their own tests; here the loop's delivery paths
 # and its ending are pinned.
@@ -1653,18 +1699,12 @@ _pi_assert_refused() {
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  # `crew await` delivers a reply only when .ts > `start`, where `start` is
-  # `now*1000|floor` captured the instant cycle 2's await begins — `t` below
-  # uses that same expression, in real ms rather than `date +%s` (whole-second
-  # truncation). Delivery is checked on await's first loop iteration, before
-  # any sleep, so a margin wider than the actual write-to-snapshot gap costs
-  # nothing in test runtime.
   CREW_ID=c1 run run_crew status "$id" blocked "why? (cycle 1 of 24)"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  t=$(jq -nc 'now*1000|floor')
-  jq -nc --arg to "$id" --argjson ts "$((t + 2000))" \
+  jq -nc --arg to "$id" --argjson ts "$(jq -nc 'now*1000|floor')" \
     '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:"answer"}' >>"$log"
-  # Cycle 2: the reply is delivered in-band and the worker resumes in place.
+  # Cycle 2: the reply is unread, so await returns it on its first check and the
+  # worker resumes in place.
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5
   [ "$status" -eq 0 ]
   [[ "$output" == *'"body":"answer"'* ]]
@@ -1682,10 +1722,11 @@ _pi_assert_refused() {
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  # ...and the dispatcher's reply lands after that window closed: it is older
-  # than the NEXT cycle's start, so no future `crew await` can deliver it. The
-  # worker protocol therefore folds stragglers after every timeout —
-  # `crew inbox --since <seen>` — which returns it and resumes the worker.
+  # ...and the dispatcher's reply lands after that window closed. It is unread,
+  # so a later `crew await` would deliver it too; the worker protocol's
+  # straggler fold — `crew inbox --since <seen>` after every timeout — is the
+  # path that takes it here and resumes the worker. The fold stays load-bearing
+  # for the older same-sender siblings a delivered mark hides from `await`.
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   t=$(($(date +%s) * 1000))
   jq -nc --arg to "$id" --argjson ts "$t" \
