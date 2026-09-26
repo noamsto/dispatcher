@@ -50,13 +50,11 @@ teardown() {
 }
 
 @test "dispatch-resume's liveness-helper copies match crew.sh's" {
-  # dispatch-resume.sh is a standalone build with no shared lib to source, so
-  # it carries its own copies of crew.sh's dispatcher-liveness helpers (#461).
-  # crew.sh is the source of truth: a fix to `_pid_alive`/`_pid_recycled` that
-  # misses this copy silently reopens the EPERM/recycled-pid bug in resume.
-  # Byte-compares each definition; flake.nix excludes dispatch-resume.sh from
-  # treefmt for exactly this, so shfmt can never rewrite them out of sync.
-  # `_ps_elapsed_s`'s crew.sh/dispatch.sh pair is pinned separately by #462.
+  # dispatch-resume.sh is a standalone build, so it carries its own copies of
+  # crew.sh's dispatcher-liveness helpers (#461). crew.sh is the source of
+  # truth; flake.nix excludes the file from treefmt so shfmt cannot rewrite
+  # the copies out of sync. The `_ps_elapsed_s` crew.sh/dispatch.sh pair is
+  # pinned separately by #462.
   for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
     canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
     [ -n "$canonical" ]

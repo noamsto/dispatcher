@@ -1135,9 +1135,8 @@ bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
   mkdir -p "$TEST_REPO/.git/crew/crews/c1"
   printf '999999999\n' >"$TEST_REPO/.git/crew/crews/c1/pid"
   printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
-  # A single-uid container or a foreign-uid dispatcher returns EPERM for
-  # `kill -0`. `kill` is a bash builtin, so an exported function (overriding
-  # the builtin) is what the probe actually sees (#450 uses the same shape).
+  # `kill` is a bash builtin, so a PATH stub cannot intercept it; an exported
+  # function overriding the builtin is what the probe sees (#450 does the same).
   kill() {
     printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
     return 1
