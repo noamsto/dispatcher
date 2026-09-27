@@ -2064,7 +2064,7 @@ codex_limit_json() { # <limit_reached jq object literal>
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
-# Write a budget cache with a pi engine (#533, OpenRouter monthly spend) at
+# Write a budget cache with a pi engine (OpenRouter monthly spend) at
 # <pct> used_pct on a "month" window spanning [now-<elapsed_s>, now+<remaining_s>].
 # Parallel to budget_json_at() above — the pace-gate helper for pi's month
 # window rather than an engine's 7d window.
@@ -3195,14 +3195,14 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" != *"the premium rung"* ]]
 }
 
-# #533: pi (OpenRouter, usage-priced) is gated by its "month" window the same
+# pi (OpenRouter, usage-priced) is gated by its "month" window the same
 # way the other engines are gated by their "7d" window — pace_rule_target's
 # jq picks whichever of the two is present.
 
 @test "pi budget pace gate refuses premium effort, but allows high (AC2)" {
   stub_launch_bins
   # 80% used, 30% of a 30-day month elapsed (777600s in, 1814400s left): +50
-  # ahead of pace — the spec's own worked example.
+  # ahead of pace.
   pi_budget_json 80 777600 1814400
   run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi pace refuses max"
   [ "$status" -eq 1 ]

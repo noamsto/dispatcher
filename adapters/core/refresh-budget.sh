@@ -440,10 +440,8 @@ main() {
   # known nominal length — codex's 1d/unknown/other buckets have none, so no
   # pace can be computed for them. The pace figure uses gate 2's formula
   # (without its floor and threshold, which are the gate's business), so the
-  # two renderers never disagree on a number. wsecs is window-aware: pi's
-  # `month` window carries its own starts_at/resets_at (a calendar month has
-  # no fixed length), so its nominal length comes from the window itself
-  # rather than a hard-coded table entry.
+  # two renderers never disagree on a number. A window carrying starts_at
+  # (pi's calendar `month`, which has no fixed length) supplies its own.
   local now jq_time_defs
   now=$(date +%s)
   # shellcheck disable=SC2016  # jq's own $vars, not bash expansions

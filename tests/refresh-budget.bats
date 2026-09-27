@@ -23,7 +23,7 @@ setup() {
 }
 
 # or_key_fixture <usage_monthly> — a stubbed /api/v1/key response shaped like
-# OpenRouter's real one (verified via context7, see spec.md).
+# OpenRouter's documented GET /api/v1/key.
 or_key_fixture() {
   jq -n --argjson u "$1" '{
     data: {
