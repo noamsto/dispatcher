@@ -1378,6 +1378,45 @@ record_lead() {
   grep -qE -- "--session-id $UUID_RE " <(launch_log)
 }
 
+# The reader must apply exactly the writer's safety check (#469): a symlinked
+# leads dir is read through by a plain `[ -f "$lead_rec" ]`, so a record planted
+# in its target would attach resume to whatever session it names — here a role's.
+@test "a symlinked leads dir is never read through: a role's session is not adopted" {
+  setup_worker_wt 'roles: reviewer'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  mkdir -p "$TEST_REPO/elsewhere/feat"
+  printf 'claude %s\n' "$ROLE_ID" >"$TEST_REPO/elsewhere/feat/7-a-thing"
+  mkdir -p "$TEST_REPO/.git/crew"
+  ln -s "$TEST_REPO/elsewhere" "$TEST_REPO/.git/crew/leads"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"malformed or unsafe"* ]]
+  run grep -c -- "--resume $ROLE_ID" <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE -- "--session-id $UUID_RE " <(launch_log)
+}
+
+# Same invariant for a slashed branch: a symlink planted at the branch's parent
+# component (leads/feat) must be rejected too, not just a symlinked leads/.
+@test "a symlinked leads parent component is never read through" {
+  setup_worker_wt 'roles: reviewer'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  claude_transcript "$ROLE_ID" 600
+  mkdir -p "$TEST_REPO/.git/crew/leads"
+  mkdir -p "$TEST_REPO/elsewhere"
+  printf 'claude %s\n' "$ROLE_ID" >"$TEST_REPO/elsewhere/7-a-thing"
+  ln -s "$TEST_REPO/elsewhere" "$TEST_REPO/.git/crew/leads/feat"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"malformed or unsafe"* ]]
+  run grep -c -- "--resume $ROLE_ID" <(launch_log)
+  [ "$output" = 0 ]
+  grep -qE -- "--session-id $UUID_RE " <(launch_log)
+}
+
 @test "writes a resume row naming both worker identities" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

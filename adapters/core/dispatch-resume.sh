@@ -705,7 +705,7 @@ rec_state=none
 rec_engine=""
 rec_id=""
 rec_extra=""
-if [ -L "$lead_rec" ] || { [ -e "$lead_rec" ] && [ ! -f "$lead_rec" ]; }; then
+if ! _lead_record_safe; then
   rec_state=bad
 elif [ -f "$lead_rec" ]; then
   rec_state=bad
