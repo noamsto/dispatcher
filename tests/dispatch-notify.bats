@@ -233,10 +233,38 @@ EOF
   run ! grep -q display-message "$STUB_LOG"
 }
 
+@test "notify: the lead's own SessionEnd (one engine ancestor) still posts exited" {
+  task_doc
+  seed_status working
+  root="$BATS_TEST_TMPDIR/engine-single"
+  mkdir -p "$root"
+  cat >"$root/cursor-agent" <<EOF
+#!/bin/sh
+sleep 0.2
+jq -nc --arg c "\$PWD" '{cwd:\$c,hook_event_name:"SessionEnd",reason:"other"}' | bash -euo pipefail "$NOTIFY"
+EOF
+  chmod +x "$root/cursor-agent"
+  # A real SessionEnd runs under its own engine — exactly one engine-named
+  # ancestor. The dev loop runs bats under the worker's engine, so orphan the
+  # fake engine (`( … & )` reparents it to init) to isolate the chain; the
+  # ambient engine would otherwise count as a second one and the guard would
+  # fire. This pins the count==1 boundary the backstop depends on (a `>=1`
+  # mutation would silence every claude/codex/pi exit and fail here).
+  ( CREW_WORKER_ID='worker:feat/x#s1-1' "$root/cursor-agent" >/dev/null 2>&1 & )
+  exited=""
+  for _ in $(seq 1 50); do
+    if [ -f "$LOG" ] && tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"' >/dev/null 2>&1; then
+      exited=1
+      break
+    fi
+    sleep 0.1
+  done
+  [ -n "$exited" ]
+}
+
 @test "notify: a SessionEnd with the lead process gone still posts exited" {
-  # The hook runs with at most one engine-named ancestor (the lead's own,
-  # or none outside a worker) — the count==1 boundary the backstop depends on —
-  # so the child-session guard must not fire.
+  # No engine-named ancestor at all (a hook outside the pane): the child-session
+  # guard must not fire either.
   task_doc
   seed_status working
 

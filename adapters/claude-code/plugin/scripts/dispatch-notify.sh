@@ -10,7 +10,11 @@
 #                ends without a terminal status is the same silent stop. But a
 #                `blocked` worker also ends its turn to wait for an answer, and
 #                it is still alive — so `blocked` counts as a meaningful end here
-#                and is never overridden.
+#                and is never overridden. A turn that ends with the lead engine
+#                still live in its pane is also not a death (see the #531 guard
+#                below): `stop` fires per turn and per subagent, so only a stop
+#                whose pane engine is already gone posts `exited`; a parked live
+#                worker is left to the stall-watch's prompt detector.
 set -euo pipefail
 
 mode=session-end
