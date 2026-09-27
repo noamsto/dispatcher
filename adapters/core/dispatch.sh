@@ -1564,11 +1564,13 @@ if [ "${1:-}" = "--role-watch" ]; then
     _cursor_composer "$1" 'Plan, search, build anything'
   }
 
-  # _role_pane_ready <text> — the only gate in front of send-keys. Fail closed:
-  # a permission dialog, an option-select or quota prompt, a live turn, or any
-  # frame not positively recognised defers. Each engine has a recognised idle
-  # shape from captured frames. Its recognizer requires its own observed empty
-  # composer, so unknown, boot and dialog frames defer.
+  # _role_pane_ready <text> [colored] [own] — the only gate in front of
+  # send-keys. Fail closed: a permission dialog, an option-select or quota
+  # prompt, a live turn, or any frame not positively recognised defers. Each
+  # engine has a recognised idle shape from captured frames. Its recognizer
+  # requires its own observed empty composer, so unknown, boot and dialog
+  # frames defer. `colored`/`own` are forwarded to claude's `_claude_idle_box`
+  # for the ghost-vs-draft check; every other engine's recognizer ignores them.
   _role_pane_ready() {
     [ -n "$1" ] || return 1
     _is_permission_prompt "$1" && return 1
