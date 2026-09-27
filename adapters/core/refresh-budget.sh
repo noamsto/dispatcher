@@ -27,7 +27,9 @@
 #     member's remaining allowance.
 #   pi     — GET /api/v1/key on OpenRouter (usage-priced, so there is no
 #     quota to probe — only a spend-vs-target check). Key resolution:
-#     DISPATCH_OPENROUTER_KEY_FILE (first line) else OPENROUTER_API_KEY;
+#     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
+#     unreadable or empty file is unknown, never a fallback), else
+#     OPENROUTER_API_KEY;
 #     ~/.pi/agent/auth.json is never read. The key goes to curl through -K -
 #     on stdin only, never argv, and is never printed or cached. spend_usd is
 #     the per-key current-UTC-month figure (data.usage_monthly); the target
