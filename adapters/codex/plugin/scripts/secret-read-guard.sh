@@ -318,17 +318,15 @@ decode_word() {
 #     backtick frame the same level closes it and any other level opens one.
 #
 # W=2 (mask_cmd_frames) is a third reading, searched beside the other two, that
-# delimits backtick frames the way bash does:
-#   - a backtick's level comes from its backslash run: 1 + the trailing 1-bits
-#     of the run's length. Inside a frame of level lv, a backtick of level
-#     k <= lv closes the level-k frame whatever the quote or comment state; one
-#     of level lv + 1 opens a frame only in code or "…"; any other is literal.
-#   - bash strips one layer (`\\`, `` \` ``, `\$`, and `\"` when the frame opened
-#     inside "…") before parsing a frame, so every other escaped character is
-#     judged on the text its level sees, not on raw backslash parity.
-#   - a heredoc body emits every backtick as `;` and every backslash as a space,
-#     so no pairing is assumed there.
-# Heredoc detection inside a frame still judges escapes on raw parity.
+# reads like W=0 outside backtick frames and treats each frame as opaque:
+#   - a frame ends, as in bash's raw scan, at the first backtick behind an even
+#     unbroken run of backslashes. A backslash consumes the next character,
+#     newline included; quotes, comments, heredocs and `$(` do not matter.
+#   - inside a frame every character shows except `\`, `'` and `"` (spaces) and
+#     non-closing backticks (`;`), so nothing inside a frame can hide text.
+#   - a backtick span in a heredoc delimiter word is shown the same way, and
+#     that heredoc's body runs to end of input.
+#   - a heredoc body emits every backtick as `;` and every backslash as a space.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -339,7 +337,6 @@ BEGIN {
 function wordstart(p) { return p == "" || index(" \t\n;&|()", p) > 0 }
 function push(k, saved) {
   sk[sp] = k; sv[sp] = saved; spd[sp] = pd
-  sbl[sp] = sp > 0 ? sbl[sp - 1] : 0
   sp++
   pd = 0
   q = ""
@@ -349,39 +346,10 @@ function pop() {
   q = sv[sp]
   pd = spd[sp]
 }
-function level(n,    k) {
+function tick(n,    k, r, lv) {
   k = 1
-  while (n % 2 == 1) { n = (n - 1) / 2; k++ }
-  return k
-}
-function frametick(n,    k, lv) {
-  k = level(n)
-  lv = sp > 0 ? sbl[sp - 1] : 0
-  if (k <= lv) {
-    while ((sk[sp - 1] != BT && sk[sp - 1] != "E") || sbl[sp - 1] != k) pop()
-    pop()
-    esc = 0
-    cm = 0
-    return ")"
-  }
-  if (k == lv + 1 && !cm && (q == "" || q == DQ)) {
-    ldq[k] = (q == DQ)
-    push(k == 1 ? BT : "E", q)
-    sbl[sp - 1] = k
-    esc = 0
-    opn = 1
-    return "("
-  }
-  if (esc) { esc = 0; return q == "" ? BT : " " }
-  return (cm || q == "") ? BT : " "
-}
-function escaped(n, c, lv,    i) {
-  for (i = 1; i <= lv; i++)
-    n = (c == "$" || (c == DQ && ldq[i])) ? int(n / 2) : n - int(n / 2)
-  return n % 2
-}
-function tick(n,    k, lv) {
-  k = level(n)
+  r = n
+  while (r % 2 == 1) { r = (r - 1) / 2; k++ }
   lv = (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) ? slv[sp - 1] : 0
   if (lv == 0 && k > 1) return BT
   if (k == lv) { pop(); return ")" }
@@ -390,30 +358,39 @@ function tick(n,    k, lv) {
   opn = 1
   return "("
 }
+function frameout(c) {
+  if (c == BS) { fb++; printf " "; return 0 }
+  if (c == BT && fb % 2 == 0) { fb = 0; printf ")"; return 1 }
+  fb = 0
+  if (c == BT) printf ";"
+  else if (c == SQ || c == DQ) printf " "
+  else printf "%s", c
+  return 0
+}
+function framefeed(c) {
+  prev = c
+  if (frameout(c)) { fr = 0; pop() }
+}
 function code(c,    d, o, n) {
   d = dl
   dl = 0
   o = " "
-  if (W) {
+  if (W == 1) {
     wo = opn
     opn = 0
     if (c == BS) bsr++
     else { n = bsr; bsr = 0 }
   }
-  if (W == 2 && c != BS) {
-    if (c == BT) return frametick(n)
-    if (n && !cm && q != SQ && sp > 0 && sbl[sp - 1]) esc = escaped(n, c, sbl[sp - 1])
-  }
   if (esc) {
     esc = 0
     if (q == "") {
       o = c
-      if (W) {
+      if (W == 1) {
         if (c == BT) o = tick(n)
         else if (c == BS && sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
       }
-      else if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
-      else if (c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
+      else if (!W && c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
+      else if (!W && c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
     }
   } else if (cm) {
     o = c
@@ -427,7 +404,12 @@ function code(c,    d, o, n) {
     if (c == BS) esc = 1
     else if (c == DQ) q = ""
     else if (d && c == "(") { push("(", DQ); o = "(" }
-    else if (c == BT) { push(BT, DQ); o = "("; if (W) { slv[sp - 1] = 1; opn = 1 } }
+    else if (c == BT) {
+      push(BT, DQ)
+      o = "("
+      if (W == 1) { slv[sp - 1] = 1; opn = 1 }
+      else if (W == 2) { fr = 1; fb = 0 }
+    }
     else if (c == "$") dl = 1
   } else {
     o = c
@@ -437,14 +419,15 @@ function code(c,    d, o, n) {
     } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
     else if (c == DQ) { q = DQ; o = " " }
     else if (c == BT) {
-      if (W) o = tick(n)
+      if (W == 1) o = tick(n)
+      else if (W == 2) { push(BT, ""); fr = 1; fb = 0; o = "(" }
       else if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
     } else if (c == "(") pd++
     else if (c == ")") {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "#" && (wordstart(prev) || (W && wo))) cm = 1
+    } else if (c == "#" && (wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") dl = 1
   }
   return o
@@ -476,21 +459,24 @@ function bodyfeed(c,    w, term) {
     else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
     else bok = 0
   }
+  if (W == 2 && (c == BT || c == BS)) { printf "%s", (c == BT ? ";" : " "); return }
   if (c == BT && (W || !hd_q[hd_i])) {
-    if (W == 2) { printf ";"; return }
     bbt = !bbt
     printf "%s", (bbt ? "(" : ")")
     return
   }
-  if (W == 2 && c == BS) { printf " "; return }
   printf "%s", c
 }
 function feed(c,    arm, wasesc) {
+  if (fr) { framefeed(c); return }
   if (body) { bodyfeed(c); return }
   if (hs == 3) {
+    if (hbt) { if (frameout(c)) hbt = 0; return }
     if (hbs) { hbs = 0; hw = hw c; printf " "; return }
+    if (W == 2 && c == BT && hq != SQ) { hbt = 1; fb = 0; hspan = 1; printf "("; return }
     if (hq != "") {
       if (c == hq) hq = ""
+      else if (W == 2 && hq == DQ && c == BS) hbs = 1
       else hw = hw c
       printf " "
       return
@@ -498,9 +484,9 @@ function feed(c,    arm, wasesc) {
     if (c == BS) { hbs = 1; hquo = 1; printf " "; return }
     if (c == SQ || c == DQ) { hq = c; hquo = 1; printf " "; return }
     if (!index(HDSTOP, c)) { hw = hw c; printf " "; return }
-    if (hw != "" || hquo) {
+    if (hw != "" || hquo || hspan) {
       hd_n++
-      hd_w[hd_n] = hw
+      hd_w[hd_n] = hspan ? "\n" : hw
       hd_d[hd_n] = hdash
       hd_q[hd_n] = hquo
     }
@@ -510,7 +496,7 @@ function feed(c,    arm, wasesc) {
     if (c == "-" && !hdash) { hdash = 1; printf " "; return }
     if (c == "<") { hs = 0; printf "<"; prev = c; return }
     if (index(HDSTOP, c)) hs = 0
-    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; feed(c); return }
+    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0; feed(c); return }
   }
   arm = (q == "" && !esc && !cm)
   wasesc = esc
@@ -845,13 +831,14 @@ shell)
   check_dump_spaces "${wide_spaces[@]}"
   check_fish_spaces ${wide_fish_spaces[@]+"${wide_fish_spaces[@]}"}
 
-  # Every hole the frame reading closes needs a backtick, so it runs only
-  # on text that has one.
+  # The frame reading differs from W=0 only at a backslash, quote, `#` or `<`
+  # inside or around a backtick, so it runs only on text holding a backtick
+  # and one of those.
   frame_spaces=()
   frame_fish_spaces=()
-  if [[ $command == *'`'* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
+  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
   for ((i = 0; i < ${#subs[@]}; i++)); do
-    [[ ${subs[i]} == *'`'* ]] || continue
+    [[ ${subs[i]} == *'`'* && ${subs[i]} == *[\\\'\"#\<]* ]] || continue
     frame_sub=$(mask_cmd_frames "${subs[i]}")
     frame_spaces+=("$frame_sub")
     if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi

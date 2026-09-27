@@ -1405,10 +1405,10 @@ nested_backticks() {
 }
 
 # ---------------------------------------------------------------------------
-# Rule 2's backtick-frame masker reads frames the way bash actually delimits
-# them: a heredoc body rewrites every backtick to ";" before the frame scan,
-# so a dumper spanning heredoc lines inside a backtick frame cannot hide (#481,
-# #482, #483).
+# Rule 2's backtick-frame masker treats a frame as opaque: it ends at the first
+# backtick behind an even backslash run, as in bash's raw scan, and shows
+# everything inside except quotes and backslashes, so no quote, comment or
+# heredoc inside a frame can hide a dumper (#481, #482, #483).
 # ---------------------------------------------------------------------------
 
 @test "secret-read-guard: denies a backticked dump spanning lines in a quoted heredoc body" {
@@ -1442,7 +1442,7 @@ nested_backticks() {
   deny_cmd $'`echo \\\\\\` ; env`'
 }
 
-@test "secret-read-guard: denies a dump behind a quote that the frame's own parse sees escaped differently" {
+@test "secret-read-guard: denies a dump behind escaped quotes inside a backtick frame" {
   deny_cmd $'echo `echo \\\\\' ; env`'
   deny_cmd $'echo `echo \\\\" ; env`'
   deny_cmd $'echo `echo \\\\\\\' x \' ; env`'
@@ -1455,6 +1455,41 @@ nested_backticks() {
   deny_cmd $'echo `echo \\`echo \\\\\\\\\' ; env\\``'
   deny_cmd $'echo `echo $\'\\\\\\\' ; env`'
   deny_cmd $'echo "$(echo `echo \\\\\\" x " ; env`)"'
+}
+
+@test "secret-read-guard: denies a dump after a heredoc opened inside a backtick frame whose body closes the frame" {
+  deny_cmd $'`cat <<EOF\nx`\nEOF\n` echo \\\\\' ; env `'
+  deny_cmd $'`echo "`; `cat <<EOF\nit\'s\nEOF\nenv`'
+  deny_cmd $'`echo "`; `cat <<\'EOF\'\nit\'s\nEOF\nenv`'
+}
+
+@test "secret-read-guard: denies a dump behind a backslash-newline inside a backtick frame" {
+  deny_cmd $'`echo \\\\\\\n\' ; env`'
+}
+
+@test "secret-read-guard: denies a dump behind a heredoc operator or delimiter that a backtick frame escapes" {
+  deny_cmd $'echo `echo <<\'EOF\'\\\\\' ; env`'
+  deny_cmd $'`cat \\\\<<EOF `\n: `\nEOF\necho \\\\\' ; env `'
+}
+
+@test "secret-read-guard: denies a dump behind a heredoc delimiter word holding a backtick span" {
+  deny_cmd $'( : <<EOF`echo \'(a` ); env'
+  deny_cmd $': <<"a`echo "`" ; env'
+  deny_cmd $'echo $((1<<`env`))'
+  deny_cmd $'echo "$((1<< `env`))"'
+}
+
+@test "secret-read-guard: allows quoted text and heredoc prose inside backtick frames with no dump" {
+  allow_cmd $'echo "Built at `date \'+%F %T\'`"'
+  allow_cmd $'echo `grep -c \'foo; env\' notes.txt`'
+  allow_cmd $'echo `echo "it\'s fine"`'
+  allow_cmd $'echo `cat <<\'EOF\'\nit\'s; fine\nEOF\n`'
+  allow_cmd $'X=`printf \'%s\\n\' "a b"`; echo "$X"'
+}
+
+@test "secret-read-guard: denies a dumper word at a pseudo command start in quoted text inside a backtick frame (accepted over-deny)" {
+  deny_cmd $'echo `grep -E \'^(export|set) \' ~/.bashrc | wc -l`'
+  deny_cmd $'echo "`echo \\\\\\" x " ; env`"'
 }
 
 # Every heredoc body backtick is read as both a command start and a command
@@ -1471,10 +1506,9 @@ nested_backticks() {
   allow_cmd $'gh pr create --body-file - <<\'EOF\'\n## Summary\nThe `set -e` line, a stray ` tick,\nand `env vars` docs.\nEOF'
 }
 
-@test "secret-read-guard: allows literal backticked dumpers in single quotes, escaped in double quotes, and in a double-quoted frame's escaped quote" {
+@test "secret-read-guard: allows literal backticked dumpers in single quotes and escaped in double quotes" {
   allow_cmd $'echo \'`env`\''
   allow_cmd $'echo "\\`env\\`"'
-  allow_cmd $'echo "`echo \\\\\\" x " ; env`"'
 }
 
 # assert_allow_within_each_awk <max-ms> <payload> — the allow twin of
