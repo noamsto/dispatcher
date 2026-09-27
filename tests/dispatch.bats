@@ -6057,12 +6057,20 @@ _rw_wait_sends() {
   return 1
 }
 
+_rw_wait_captures() {
+  local n
+  for n in $(seq 1 60); do
+    [ "$(_rw_captures)" -ge "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 @test "role-watch: a permission dialog receives no keys until it clears, then the assignment lands once" {
   _spawn_role_fixture
   _rw_stub rw_frame_permission
   _rw_start claude
-  sleep 1.2
-  [ "$(_rw_captures)" -ge 3 ]
+  _rw_wait_captures 3
   [ "$(_rw_sends)" -eq 0 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
   rw_frame_idle >"$STUB_DIR/frame"
@@ -6080,7 +6088,7 @@ _rw_wait_sends() {
     rm -f "$STUB_DIR/stop"
     _rw_stub "$fn"
     _rw_start claude
-    sleep 1
+    _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$fn: never captured"; return 1; }
     run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6132,7 +6140,7 @@ _rw_wait_sends() {
     rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
     _rw_stub rw_frame_pi_idle
     _rw_start "$eng"
-    sleep 1
+    _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
     run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6143,7 +6151,7 @@ _rw_wait_sends() {
   _spawn_role_fixture
   _rw_stub rw_frame_shell
   _rw_start pi
-  sleep 1
+  _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6263,7 +6271,7 @@ _rw_wait_sends() {
   _rw_stub rw_frame_idle
   mv "$STUB_DIR/frame.new" "$STUB_DIR/frame"
   _rw_start claude
-  sleep 1
+  _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
