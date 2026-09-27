@@ -159,6 +159,19 @@ regular_file() {
   [ -f "$1" ] && [ ! -L "$1" ]
 }
 
+# branch_dirs_ok <base> <with-leaf> — every dir from <base> down to the
+# branch's parent (or its leaf, when <with-leaf> is 1) is a dir, not a symlink.
+branch_dirs_ok() {
+  local dir=$1 part
+  local -a parts
+  IFS=/ read -ra parts <<<"$BRANCH"
+  [ "$2" = 1 ] || parts=("${parts[@]:0:${#parts[@]}-1}")
+  for part in "" "${parts[@]}"; do
+    dir="$dir${part:+/$part}"
+    [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  done
+}
+
 # lead_session — the lead's session id from <crew>/leads/<branch>, checked as
 # dispatch.sh's _lead_record_safe checks it before writing. Sets SESSION.
 lead_session() {
@@ -167,13 +180,8 @@ lead_session() {
   esac
   [[ "$BRANCH" != *[[:cntrl:]]* ]] || refuse "lead record: unsafe branch name"
 
-  local dir="$CREW_DIR/leads" rec="$CREW_DIR/leads/$BRANCH" part
-  local -a parts
-  IFS=/ read -ra parts <<<"$BRANCH"
-  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
-    dir="$dir${part:+/$part}"
-    [ -d "$dir" ] && [ ! -L "$dir" ] || refuse "lead record: a leads/ dir is a symlink or not a dir"
-  done
+  local rec="$CREW_DIR/leads/$BRANCH"
+  branch_dirs_ok "$CREW_DIR/leads" 0 || refuse "lead record: a leads/ dir is a symlink or not a dir"
   regular_file "$rec" || refuse "lead record: missing, a symlink or not a regular file"
 
   # The whole file, byte for byte, as dispatch writes it.
@@ -263,7 +271,6 @@ end
 # transcript_pending — spec "Transcript binding": the dialog must be the single
 # pending Bash call of a depth-1 subagent in the lead's own session. Sets T_ID
 # and T_COMMAND (the exact command bytes).
-# shellcheck disable=SC2034 # T_* are read by grammar_check, still a stub
 transcript_pending() {
   lead_session
 
@@ -298,16 +305,360 @@ transcript_pending() {
 
   reason=$(jq -r '.refuse // empty' <<<"$res")
   [ -z "$reason" ] || refuse "$reason"
+  # shellcheck disable=SC2034 # the settle's second observation compares it
   T_ID=$(jq -j '.id' <<<"$res")
   T_COMMAND=$(jq -j '.command' <<<"$res")
 }
 
+# lex — spec "Command grammar", characters and quoting: a hand-written scan of
+# T_COMMAND, which bash itself never parses. Fills W (the de-quoted words), WQ
+# (1 when a quote char appeared in the word) and WK (w for a word, s for a
+# separator), so a quoted '&&' stays a word.
+lex() {
+  local s=$T_COMMAND n=${#T_COMMAND} i=0 c part w="" inword=0 q=0
+  W=() WQ=() WK=()
+  while [ "$i" -lt "$n" ]; do
+    c=${s:i:1}
+    case $c in
+    "'")
+      part=${s:i+1}
+      [[ $part == *"'"* ]] || refuse "lex: unterminated single quote"
+      part=${part%%"'"*}
+      w+=$part inword=1 q=1
+      i=$((i + ${#part} + 2))
+      continue
+      ;;
+    ' ') lex_word ;;
+    ';')
+      lex_word
+      lex_sep ';'
+      ;;
+    '|')
+      case ${s:i+1:1} in
+      '|' | '&') refuse "lex: || and |& are not allowed" ;;
+      esac
+      lex_word
+      lex_sep '|'
+      ;;
+    '&')
+      [ "${s:i+1:1}" = '&' ] || refuse "lex: a lone & is not allowed"
+      lex_word
+      lex_sep '&&'
+      i=$((i + 1))
+      ;;
+    [A-Za-z0-9_./,:=@%+-]) w+=$c inword=1 ;;
+    *) refuse "lex: a character outside the allowed set" ;;
+    esac
+    i=$((i + 1))
+  done
+  lex_word
+}
+
+# lex's helpers, on its locals: end the word in progress; append a separator.
+lex_word() {
+  [ "$inword" = 1 ] || return 0
+  W+=("$w") WQ+=("$q") WK+=(w)
+  w="" inword=0 q=0
+}
+
+lex_sep() {
+  W+=("$1") WQ+=(0) WK+=(s)
+}
+
+# grammar_check — spec "Command grammar": the words split into simple commands
+# at the separators, each checked against its command's flag table. Sets BASE
+# (the leading cd's operand, or empty) and P_PATH/P_KIND (every path operand
+# and the kind path_check holds it to).
 grammar_check() {
-  refuse "grammar not implemented"
+  lex
+  local -a starts=() ends=() seps=()
+  local i s=0 n=${#W[@]} k prev next stage
+  for ((i = 0; i <= n; i++)); do
+    [ "$i" -eq "$n" ] || [ "${WK[i]}" = s ] || continue
+    [ "$i" -gt "$s" ] || refuse "grammar: empty command"
+    starts+=("$s") ends+=("$((i - 1))") seps+=("${W[i]:-}")
+    s=$((i + 1))
+  done
+
+  BASE="" P_PATH=() P_KIND=()
+  for k in "${!starts[@]}"; do
+    prev=""
+    [ "$k" -eq 0 ] || prev=${seps[k - 1]}
+    next=${seps[k]}
+    [ "${WQ[starts[k]]}" = 0 ] || refuse "grammar: a quoted command word"
+    if [ "${W[starts[k]]}" = cd ]; then
+      [ "$k" -eq 0 ] || refuse "grammar: cd only as the first command"
+      [ "$next" = '&&' ] || refuse "grammar: cd must be followed by &&"
+      [ "${ends[k]}" -eq "$((starts[k] + 1))" ] || refuse "grammar: cd takes exactly one operand"
+      BASE=${W[ends[k]]}
+      [[ $BASE == /* ]] || refuse "grammar: the cd operand is not absolute"
+      P_PATH+=("$BASE") P_KIND+=(dir)
+      continue
+    fi
+    # A failed cd skips its && chain but not what follows a `;`, which would
+    # then resolve relative operands against an unknown cwd.
+    [ -z "$BASE" ] || [ "$next" != ';' ] || refuse "grammar: ; after a leading cd"
+    stage=first
+    [ "$prev" != '|' ] || stage=later
+    simple_command "${starts[k]}" "${ends[k]}" "$stage"
+  done
+}
+
+# simple_command <first> <last> <first|later> — the command in W[first..last].
+# Flags are checked de-quoted, each its own word. After the first operand, GNU
+# getopt and rg still read a `-x` word as a flag; rather than model that
+# permutation, a later word starting with `-` is refused unless it follows
+# `--`. `-` (stdin) is never an operand.
+simple_command() {
+  local cmd=${W[$1]} i=$1 w kind flags_done=0 operand_seen=0 have_e=0 pattern=0 recursive=0
+  local -a paths=()
+  case $cmd in
+  cat | head | tail | wc | grep | rg | ls) ;;
+  *) refuse "grammar: command not allowed: $cmd" ;;
+  esac
+
+  while [ "$i" -lt "$2" ]; do
+    i=$((i + 1))
+    w=${W[i]}
+    if [ "$flags_done" = 0 ] && [ "$operand_seen" = 0 ] && [[ $w == -?* ]]; then
+      case "$cmd $w" in
+      "grep --" | "rg --") flags_done=1 ;;
+      "wc -l" | "wc -c" | "wc -w") ;;
+      "ls -l" | "ls -a" | "ls -1" | "ls -d" | "ls -h") ;;
+      "grep -n" | "grep -i" | "grep -l" | "grep -L" | "grep -c" | "grep -w" | "grep -F" | "grep -E" | "grep -H" | "grep -h" | "grep -s") ;;
+      "rg -n" | "rg -i" | "rg -l" | "rg -c" | "rg -w" | "rg -F" | "rg -H" | "rg -s" | "rg --no-heading") ;;
+      "grep -r") recursive=1 ;;
+      "head -n" | "tail -n" | "grep -"[ABCm] | "rg -"[ABCm])
+        [ "$i" -lt "$2" ] && [[ ${W[i + 1]} =~ ^[0-9]+$ ]] || refuse "grammar: $cmd $w needs a number"
+        i=$((i + 1))
+        ;;
+      "grep -e" | "rg -e")
+        [ "$i" -lt "$2" ] || refuse "grammar: $cmd -e needs a pattern"
+        i=$((i + 1)) have_e=1
+        ;;
+      "rg -g" | "rg -t")
+        [ "$i" -lt "$2" ] && [[ ${W[i + 1]} != -* ]] || refuse "grammar: rg $w needs a value"
+        i=$((i + 1))
+        ;;
+      *) refuse "grammar: flag not allowed: $cmd $w" ;;
+      esac
+      continue
+    fi
+    [[ $w != -* ]] || [ "$flags_done" = 1 ] || refuse "grammar: an operand starts with -: $cmd $w"
+    operand_seen=1
+    if [[ $cmd == grep || $cmd == rg ]] && [ "$have_e" = 0 ] && [ "$pattern" = 0 ]; then
+      pattern=1
+      continue
+    fi
+    [ "$w" != - ] || refuse "grammar: - (stdin) is not an operand"
+    paths+=("$w")
+  done
+
+  if [[ $cmd == grep || $cmd == rg ]] && [ "$have_e" = 0 ] && [ "$pattern" = 0 ]; then
+    refuse "grammar: $cmd names no pattern"
+  fi
+  if [ "$3" = later ]; then
+    case $cmd in
+    cat | ls) refuse "grammar: $cmd cannot be a later pipeline stage" ;;
+    esac
+    [ "${#paths[@]}" -eq 0 ] || refuse "grammar: a file operand in a later pipeline stage"
+    [ "$recursive" = 0 ] || refuse "grammar: grep -r in a later pipeline stage"
+    return 0
+  fi
+  [ "${#paths[@]}" -gt 0 ] || refuse "grammar: the first pipeline stage names no file"
+
+  case $cmd in
+  grep) if [ "$recursive" = 1 ]; then kind=walk; else kind=file-or-walk; fi ;;
+  rg) kind=file-or-walk ;;
+  ls) kind=file-or-dir ;;
+  *) kind="file" ;;
+  esac
+  for w in "${paths[@]}"; do
+    P_PATH+=("$w") P_KIND+=("$kind")
+  done
+}
+
+# lex_clean <path> — absolute, with no `.` or `..` component, no `//` and no
+# trailing `/` (so `/` itself is not clean).
+lex_clean() {
+  [[ $1 == /* ]] || return 1
+  case "$1/" in
+  *//* | */./* | */../*) return 1 ;;
+  esac
+}
+
+# secret_path <path> — spec "No secrets", matched case-blind: a
+# case-insensitive filesystem (macOS) opens `.ENV` as `.env`.
+secret_path() {
+  local l=${1,,} part
+  local -a parts
+  case ${l##*/} in
+  .env* | *.pem | *.key | id_* | *credentials* | *.netrc | *secret*) return 0 ;;
+  esac
+  IFS=/ read -ra parts <<<"$l"
+  for part in "${parts[@]}"; do
+    case $part in
+    .ssh | .gnupg | .aws | .kube | .docker | .password-store | keyrings) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# grant_ok <line> <canonical-home> — dispatch.sh's _add_dir_ok, plus: not a
+# symlink and spelled cleanly. Prints the grant's canonical dir.
+grant_ok() {
+  local p h=$2 c s r
+  [[ $1 != *[[:cntrl:]]* ]] && lex_clean "$1" || return 1
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  p=$(realpath -e -- "$1") || return 1
+  [ "$p" != / ] || return 1
+  [[ "$h/" != "$p/"* ]] || return 1
+  c=$(realpath -m -- "$CREW_DIR")
+  [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+    for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done
+  done
+  printf '%s\n' "$p"
+}
+
+# add_root <spelled> <canonical> <immutable> — a spelled form that is not clean
+# matches as its canonical form only; a canonical form that is not clean (`/`,
+# or empty after a failed realpath) drops the root.
+add_root() {
+  local spelled=$1
+  lex_clean "$2" || return 0
+  lex_clean "$spelled" || spelled=$2
+  R_SPELLED+=("$spelled") R_CANON+=("$2") R_IMM+=("$3")
+}
+
+# roots — spec "Path rules", the allowed roots, each dropped when it fails its
+# check: the worktree, the branch's artifacts dir, each grant, and the
+# immutable dirs (the store dirs this build ships, and --ro-root in tests).
+# WORKER_TASK.md is never read: the worker edits it.
+roots() {
+  local h c d line grants="$CREW_DIR/grants/$BRANCH"
+  R_SPELLED=() R_CANON=() R_IMM=()
+  h=$(realpath -e -- "$HOME") || refuse "path: HOME does not resolve"
+
+  if [ -d "$WORKTREE" ] && [ ! -L "$WORKTREE" ] && c=$(realpath -e -- "$WORKTREE") &&
+    [[ "$h/" != "$c/"* ]]; then
+    add_root "$WORKTREE" "$c" 0
+  fi
+
+  d="$CREW_DIR/artifacts/$BRANCH"
+  if branch_dirs_ok "$CREW_DIR/artifacts" 1 && c=$(realpath -e -- "$d"); then
+    add_root "$d" "$c" 0
+  fi
+
+  if branch_dirs_ok "$CREW_DIR/grants" 0 && regular_file "$grants"; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue
+      c=$(grant_ok "$line" "$h") || continue
+      add_root "$line" "$c" 0
+    done <"$grants"
+  fi
+
+  for d in "@protocolDir@" "@skillsDir@" "@reviewersDir@" "@criticsDir@"; do
+    [[ $d != @* ]] && [ -d "$d" ] && c=$(realpath -e -- "$d") && [[ $c == /nix/store/?* ]] || continue
+    add_root "$d" "$c" 1
+  done
+  for d in "${RO_ROOTS[@]}"; do
+    if [ -d "$d" ] && c=$(realpath -e -- "$d"); then
+      add_root "$d" "$c" 1
+    fi
+  done
+}
+
+# under_root <path> <remainder> <root-index> <kind> — <path> is <remainder>
+# below that root: no symlink from the root's canonical form down, it resolves
+# to exactly canonical root + remainder, and it is of <kind>. Sets FAIL when not.
+under_root() {
+  local canon=${R_CANON[$3]} kind=$4 q real part
+  local -a parts
+  q=$canon
+  IFS=/ read -ra parts <<<"${2#/}"
+  for part in "${parts[@]}"; do
+    q=$q/$part
+    if [ -L "$q" ]; then
+      FAIL="path: a symlink component: $1"
+      return 1
+    fi
+  done
+  if ! real=$(realpath -e -- "$1" 2>/dev/null) || [ "$real" != "$canon$2" ]; then
+    FAIL="path: does not resolve to itself: $1"
+    return 1
+  fi
+  if secret_path "$real"; then
+    FAIL="path: a secret: $1"
+    return 1
+  fi
+
+  if [ "$kind" = file-or-walk ]; then
+    kind="file"
+    [ ! -d "$real" ] || kind=walk
+  fi
+  case $kind in
+  file) [ -f "$real" ] || FAIL="path: not a regular file: $1" ;;
+  dir) [ -d "$real" ] || FAIL="path: not a directory: $1" ;;
+  file-or-dir) [ -f "$real" ] || [ -d "$real" ] || FAIL="path: not a regular file or directory: $1" ;;
+  walk)
+    if [ "${R_IMM[$3]}" != 1 ]; then
+      FAIL="path: a directory walk outside an immutable root: $1"
+    elif [ ! -f "$real" ] && [ ! -d "$real" ]; then
+      FAIL="path: not a regular file or directory: $1"
+    fi
+    ;;
+  esac
+}
+
+# path_check <operand> <kind> — spec "Path rules". <kind> is file, dir,
+# file-or-dir, walk, or file-or-walk (a directory is a walk). Passes when the
+# operand passes under_root for any root it lies under, as spelled or as
+# canonicalised.
+path_check() {
+  local p=$1 j r rem reason="path: not under an allowed root: $1"
+  if [[ $p != /* ]]; then
+    [ -n "$BASE" ] || refuse "path: a relative operand without a leading cd: $1"
+    p=$BASE/$p
+  fi
+  lex_clean "$p" || refuse "path: a . or .. component, // or a trailing /: $1"
+  if secret_path "$p"; then refuse "path: a secret: $1"; fi
+
+  for j in "${!R_CANON[@]}"; do
+    for r in "${R_SPELLED[j]}" "${R_CANON[j]}"; do
+      if [ "$p" = "$r" ]; then
+        rem=""
+      elif [[ $p == "$r"/* ]]; then
+        rem=${p#"$r"}
+      else
+        continue
+      fi
+      FAIL=""
+      under_root "$p" "$rem" "$j" "$2" && [ -z "$FAIL" ] && return 0
+      reason=$FAIL
+    done
+  done
+  refuse "$reason"
 }
 
 path_checks() {
-  refuse "path rules not implemented"
+  local i
+  roots
+  for i in "${!P_PATH[@]}"; do
+    path_check "${P_PATH[i]}" "${P_KIND[i]}"
+  done
+}
+
+# decide — one observation: the frame, the call it binds to, and that call's
+# command. Any failed rule refuses, which exits.
+decide() {
+  capture
+  frame_parse
+  transcript_pending
+  grammar_check
+  path_checks
 }
 
 verdict() {
@@ -315,14 +666,9 @@ verdict() {
   printf 'allow-once\n'
 }
 
-# shellcheck disable=SC2317 # stages after the stub stay unreachable until built
 main() {
   parse_args "$@"
-  capture
-  frame_parse
-  transcript_pending
-  grammar_check
-  path_checks
+  decide
   verdict
 }
 

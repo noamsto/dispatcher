@@ -21,6 +21,7 @@ setup() {
   RO="$BATS_TEST_TMPDIR/ro"
   PROJECTS="$BATS_TEST_TMPDIR/projects"
   FRAME="$BATS_TEST_TMPDIR/frame.txt"
+  F="$WT/README.md"
 
   mkdir -p "$CREW/leads/${BRANCH%/*}" "$CREW/artifacts/$BRANCH" "$CREW/grants/${BRANCH%/*}"
   printf 'claude %s\n' "$SID" >"$CREW/leads/$BRANCH"
@@ -136,10 +137,17 @@ assert_refused() {
   [[ "$output" == *"$1"* ]]
 }
 
-# The transcript binding passed; the grammar stage (still a stub) refused.
-assert_bound() {
-  [ "$status" -eq 1 ]
-  [ "$output" = "human: grammar not implemented" ]
+assert_allowed() {
+  [ "$status" -eq 0 ]
+  [ "$output" = allow-once ]
+}
+
+# try <command> — the subagent asks for <command> with no description, under
+# a matching frame, and the checker decides.
+try() {
+  pending_bash "$1"
+  frame "$1"
+  check
 }
 
 DENIAL="Permission for this action has been denied by the Claude Code auto mode classifier."
@@ -154,6 +162,52 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   check
   [ "$status" -eq 0 ]
   [ "$output" = allow-once ]
+}
+
+@test "permission-check: rg -n of a worktree file is allowed" {
+  try "rg -n foo $WT/README.md"
+  assert_allowed
+}
+
+@test "permission-check: a relative cat after a leading cd is allowed" {
+  try "cd $WT && cat docs/x.md"
+  assert_allowed
+}
+
+@test "permission-check: cat of a granted file is allowed" {
+  try "cat $GRANT/notes.md"
+  assert_allowed
+}
+
+@test "permission-check: cat of an artifacts file is allowed" {
+  printf 'art\n' >"$CREW/artifacts/$BRANCH/n.md"
+  try "cat $CREW/artifacts/$BRANCH/n.md"
+  assert_allowed
+}
+
+@test "permission-check: head piped to wc is allowed" {
+  try "head -n 5 $WT/a | wc -l"
+  assert_allowed
+}
+
+@test "permission-check: grep -r under an immutable root is allowed" {
+  try "grep -r -n foo $RO"
+  assert_allowed
+}
+
+@test "permission-check: ls -l of a worktree dir is allowed" {
+  try "ls -l $WT/docs"
+  assert_allowed
+}
+
+@test "permission-check: a quoted pattern starting with a dash via -e is allowed" {
+  try "rg -e '-x' $WT/README.md"
+  assert_allowed
+}
+
+@test "permission-check: a quoted pattern with a space is allowed" {
+  try "rg 'two words' $WT/README.md"
+  assert_allowed
 }
 
 # ---------------------------------------------------------------------------
@@ -211,14 +265,14 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   pending_bash "cat $WT/README.md"
   frame "cat $WT/README.md"
   check
-  assert_bound
+  assert_allowed
 }
 
 @test "permission-check: a pending call with a description binds to a two-line block" {
   pending_bash "cat $WT/README.md" "Show the readme"
   frame "cat $WT/README.md" "Show the readme"
   check
-  assert_bound
+  assert_allowed
 }
 
 @test "permission-check: a classifier denial older than the last five results does not refuse" {
@@ -227,7 +281,7 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   pending_bash "cat $WT/README.md"
   frame "cat $WT/README.md"
   check
-  assert_bound
+  assert_allowed
 }
 
 @test "permission-check: no lead record goes to the human" {
@@ -415,6 +469,299 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   frame "cat $WT/README.md"
   check
   assert_refused "not one JSON object"
+}
+
+# ---------------------------------------------------------------------------
+# Command grammar
+# ---------------------------------------------------------------------------
+
+@test "permission-check: a cd after the first command goes to the human" {
+  try "cd $WT/a && cd $WT && cat ../x"
+  assert_refused "grammar: cd only as the first command"
+}
+
+@test "permission-check: a .. operand after a leading cd goes to the human" {
+  try "cd $WT && cat ../README.md"
+  assert_refused "path: a . or .. component"
+}
+
+@test "permission-check: rg -E goes to the human" {
+  try "rg -E utf8 notes.md"
+  assert_refused "grammar: flag not allowed: rg -E"
+}
+
+@test "permission-check: rg -r goes to the human" {
+  try "rg -r x pat $F"
+  assert_refused "grammar: flag not allowed: rg -r"
+}
+
+@test "permission-check: a VAR= prefix goes to the human" {
+  try "RIPGREP_CONFIG_PATH=./r rg x $F"
+  assert_refused "grammar: command not allowed"
+}
+
+@test "permission-check: a * glob goes to the human" {
+  try "cat $WT/*.md"
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: a ? glob goes to the human" {
+  try "rg x $WT/?"
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: a bare cd goes to the human" {
+  try "cd && cat x"
+  assert_refused "grammar: cd takes exactly one operand"
+}
+
+@test "permission-check: cd - goes to the human" {
+  try "cd - && cat x"
+  assert_refused "grammar: the cd operand is not absolute"
+}
+
+@test "permission-check: cd ~ goes to the human" {
+  try "cd ~ && cat x"
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: cd followed by ; goes to the human" {
+  try "cd $WT ; cat README.md"
+  assert_refused "grammar: cd must be followed by &&"
+}
+
+@test "permission-check: a ; after a leading cd goes to the human" {
+  try "cd $WT && cat a ; cat README.md"
+  assert_refused "grammar: ; after a leading cd"
+}
+
+@test "permission-check: rg -z goes to the human" {
+  try "rg -z x $F"
+  assert_refused "grammar: flag not allowed: rg -z"
+}
+
+@test "permission-check: rg --hostname-bin= goes to the human" {
+  try "rg --hostname-bin=x p $F"
+  assert_refused "grammar: flag not allowed"
+}
+
+@test "permission-check: rg -L goes to the human" {
+  try "rg -L p $F"
+  assert_refused "grammar: flag not allowed: rg -L"
+}
+
+@test "permission-check: find goes to the human" {
+  try "find $WT"
+  assert_refused "grammar: command not allowed: find"
+}
+
+@test "permission-check: diff goes to the human" {
+  try "diff $F $F"
+  assert_refused "grammar: command not allowed: diff"
+}
+
+@test "permission-check: a quoted '-r' is the flag -r and goes to the human" {
+  try "rg '-r' x $F"
+  assert_refused "grammar: flag not allowed: rg -r"
+}
+
+@test "permission-check: a flag joined across a quote goes to the human" {
+  try "rg -'-pre=x' p $F"
+  assert_refused "grammar: flag not allowed: rg --pre=x"
+}
+
+@test "permission-check: a quoted command word goes to the human" {
+  try "c'at' $F"
+  assert_refused "grammar: a quoted command word"
+}
+
+@test "permission-check: a redirect goes to the human" {
+  try "cat $F > o"
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: a pipe to sh goes to the human" {
+  try "cat $F | sh"
+  assert_refused "grammar: command not allowed: sh"
+}
+
+@test "permission-check: || goes to the human" {
+  try "cat $F || true"
+  assert_refused "lex: || and |& are not allowed"
+}
+
+@test "permission-check: |& goes to the human" {
+  try "cat $F |& wc -l"
+  assert_refused "lex: || and |& are not allowed"
+}
+
+@test "permission-check: a lone & goes to the human" {
+  try "cat $F &"
+  assert_refused "lex: a lone &"
+}
+
+@test "permission-check: a command substitution goes to the human" {
+  try "cat \$(echo $F)"
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: a double quote goes to the human" {
+  try "cat \"$F\""
+  assert_refused "lex: a character outside"
+}
+
+@test "permission-check: an unterminated single quote goes to the human" {
+  try "cat '$F"
+  assert_refused "lex: unterminated single quote"
+}
+
+@test "permission-check: a command path goes to the human" {
+  try "/bin/cat $F"
+  assert_refused "grammar: command not allowed"
+}
+
+@test "permission-check: an env wrapper goes to the human" {
+  try "env cat $F"
+  assert_refused "grammar: command not allowed: env"
+}
+
+@test "permission-check: a numeric argument joined to its flag goes to the human" {
+  try "head -n5 $F"
+  assert_refused "grammar: flag not allowed: head -n5"
+}
+
+@test "permission-check: bundled flags go to the human" {
+  try "head -ni $F"
+  assert_refused "grammar: flag not allowed: head -ni"
+}
+
+@test "permission-check: a non-numeric -n argument goes to the human" {
+  try "head -n x $F"
+  assert_refused "grammar: head -n needs a number"
+}
+
+@test "permission-check: a flag after an operand goes to the human" {
+  try "cat $F -n"
+  assert_refused "grammar: an operand starts with -"
+}
+
+@test "permission-check: - (stdin) after -- goes to the human" {
+  try "grep -- foo -"
+  assert_refused "grammar: - (stdin)"
+}
+
+@test "permission-check: rg with no path goes to the human" {
+  try "rg p"
+  assert_refused "grammar: the first pipeline stage names no file"
+}
+
+@test "permission-check: cat as a later pipeline stage goes to the human" {
+  try "cat $F | cat"
+  assert_refused "grammar: cat cannot be a later pipeline stage"
+}
+
+@test "permission-check: a file operand in a later pipeline stage goes to the human" {
+  try "cat $F | head -n 1 $F"
+  assert_refused "grammar: a file operand in a later pipeline stage"
+}
+
+@test "permission-check: grep -r as a later pipeline stage goes to the human" {
+  try "cat $F | grep -r foo"
+  assert_refused "grammar: grep -r in a later pipeline stage"
+}
+
+@test "permission-check: a trailing separator goes to the human" {
+  try "cat $F ;"
+  assert_refused "grammar: empty command"
+}
+
+@test "permission-check: a quoted separator is a word, not a separator" {
+  try "cat $F '&&' cat $F"
+  assert_refused "path: a relative operand without a leading cd: &&"
+}
+
+# ---------------------------------------------------------------------------
+# Path rules
+# ---------------------------------------------------------------------------
+
+@test "permission-check: a relative operand without a leading cd goes to the human" {
+  try "cat README.md"
+  assert_refused "path: a relative operand without a leading cd"
+}
+
+@test "permission-check: a .. component in an absolute operand goes to the human" {
+  try "cat $WT/docs/../README.md"
+  assert_refused "path: a . or .. component"
+}
+
+@test "permission-check: a symlinked file goes to the human" {
+  ln -s README.md "$WT/link"
+  try "cat $WT/link"
+  assert_refused "path: a symlink component"
+}
+
+@test "permission-check: a symlinked dir component goes to the human" {
+  ln -s docs "$WT/ldir"
+  try "cat $WT/ldir/x.md"
+  assert_refused "path: a symlink component"
+}
+
+@test "permission-check: a FIFO goes to the human" {
+  mkfifo "$WT/fifo"
+  try "cat $WT/fifo"
+  assert_refused "path: not a regular file"
+}
+
+@test "permission-check: a path outside every root goes to the human" {
+  try "cat /etc/hostname"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a .env under a grant goes to the human" {
+  try "cat $GRANT/.env"
+  assert_refused "path: a secret"
+}
+
+@test "permission-check: a key file in the worktree goes to the human" {
+  printf 'dummy\n' >"$WT/id_ed25519"
+  try "cat $WT/id_ed25519"
+  assert_refused "path: a secret"
+}
+
+@test "permission-check: a grant that is a symlink is dropped" {
+  ln -s "$GRANT" "$BATS_TEST_TMPDIR/glink"
+  printf '%s\n' "$BATS_TEST_TMPDIR/glink" >"$CREW/grants/$BRANCH"
+  try "cat $BATS_TEST_TMPDIR/glink/notes.md"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a grant that is HOME is dropped" {
+  export HOME="$GRANT"
+  try "cat $GRANT/notes.md"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a WORKER_TASK.md add_dir: line grants nothing" {
+  mkdir "$BATS_TEST_TMPDIR/other"
+  printf 'other\n' >"$BATS_TEST_TMPDIR/other/f"
+  printf 'add_dir: %s\n' "$BATS_TEST_TMPDIR/other" >"$WT/WORKER_TASK.md"
+  try "cat $BATS_TEST_TMPDIR/other/f"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: grep -r in the worktree goes to the human" {
+  try "grep -r -n foo $WT"
+  assert_refused "path: a directory walk outside an immutable root"
+}
+
+@test "permission-check: rg of a worktree dir goes to the human" {
+  try "rg foo $WT/docs"
+  assert_refused "path: a directory walk outside an immutable root"
+}
+
+@test "permission-check: cat of a dir goes to the human" {
+  try "cat $WT/docs"
+  assert_refused "path: not a regular file"
 }
 
 # ---------------------------------------------------------------------------
