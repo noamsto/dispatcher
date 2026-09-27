@@ -297,12 +297,16 @@ Tokenised by the checker's own lexer; anything it cannot lex → human.
 
 - **Operands.** After `--`, or once a non-flag word has been seen, every word
   is an operand (for grep/rg the first operand is the pattern unless `-e` was
-  given). An operand that starts with `-` before `--` is a flag and must be
-  allowlisted.
+  given, and a pattern is required). Before `--`, a word starting with `-` is a
+  flag and must be allowlisted; after an operand but before `--`, such a word
+  is refused outright, because GNU getopt and rg still read it as a flag. `-`
+  (stdin) is never an operand. `-g`/`-t` values may not start with `-`.
 - **Pipelines.** The first stage must name at least one file operand (rg/grep
   with none would search the cwd). A later stage (`head tail wc grep rg`)
   takes no file operand — it reads the pipe. `cat`, `ls` and `cd` cannot be a
-  later stage.
+  later stage, and `grep -r` cannot be one (with no file operand it walks the
+  cwd). A leading `cd` bars `;` anywhere in the command: if the `cd` failed,
+  a command after `;` would resolve relative paths against an unknown cwd.
 
 ### Path rules
 
@@ -312,24 +316,33 @@ Tokenised by the checker's own lexer; anything it cannot lex → human.
   the next call's cwd (seen in this machine's process list), so without a
   leading `cd` the cwd is whatever an earlier call left: unknown to the
   checker, and relative operands → human.
-- Resolution is lexical first: any `.` or `..` component, or a `//`, → human.
+- Resolution is lexical first: any `.` or `..` component, a `//`, a trailing
+  `/`, or `/` itself → human.
 - The lexical path must lie under an allowed root as spelled or as
   canonicalised. Roots: the worktree, the branch's artifacts dir, each grant in
   `<crew_dir>/grants/<branch>` re-validated as `dispatch`'s `_add_dir_ok` does,
   and the immutable protocol/skills/reviewers/critics dirs. A grant or root
   that is missing, a symlink, or fails validation is dropped. `WORKER_TASK.md`
-  `add_dir:` lines are never read.
+  `add_dir:` lines are never read. The worktree root itself is dropped if it
+  is a symlink, `/`, or `$HOME` or an ancestor of it.
 - Every component below the root is checked with `lstat`: none may be a
   symlink. `realpath -e` of the path must equal the canonical root + the
   remainder.
 - File operands (cat/head/tail/wc/grep/rg) must be regular files. `cd`'s operand
   and `ls`'s operands must be regular files or directories.
-- **Directory walks** — `grep -r`, or a directory operand to `grep`/`rg` — are
+- **Hard links.** Under a worker-writable root, a file with a link count above
+  one → human: a hard link from the worktree to a file outside the roots would
+  otherwise pass every path rule. Immutable roots are exempt, since the Nix
+  store hard-links identical files.
+- **Directory walks** — `grep -r` (even on a single file), or a directory
+  operand to `grep`/`rg` — are
   allowed only under an immutable root. Under a worker-writable root → human.
 - **No secrets.** Any path whose basename matches `.env*`, `*.pem`, `*.key`,
   `id_*`, `*credentials*`, `*.netrc`, `*secret*`, or which lies under a
   dir named `.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker`, `.password-store`,
-  `keyrings` → human, even under a grant.
+  `keyrings` → human, even under a grant. Names match case-blind (macOS
+  filesystems are case-insensitive) and are checked on both the spelled and
+  the resolved path.
 
 ## Finding → rule → test
 
