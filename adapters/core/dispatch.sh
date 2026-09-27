@@ -1305,6 +1305,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
       ;;
     esac
   done
+  # The role's nohup'd --role-watch and stall-watch inherit this env and locate
+  # the bus through git discovery; a worker-set GIT_* would steer them wrong.
+  # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
+  for _v in "${!GIT_@}"; do unset "$_v"; done
   [ -f WORKER_TASK.md ] || {
     echo "dispatch: --spawn-role must run inside a worker worktree (no WORKER_TASK.md)" >&2
     exit 1
@@ -1333,10 +1337,14 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 1
   }
   mapfile -t rec_lines <"$crew_dir/protocol-dirs/$branch"
-  [ "${rec_lines[4]:-}" = "$(realpath -e -- "$PWD")" ] || {
+  wt_root="${rec_lines[4]:-}"
+  [ -n "$wt_root" ] && [ "$wt_root" = "$(realpath -e -- "$PWD")" ] || {
     echo "dispatch: --spawn-role must run from the dispatched worktree's root (${rec_lines[4]:-unrecorded})" >&2
     exit 1
   }
+  # Pin to the recorded root and use it below, never $PWD: a worker could cd
+  # through a symlink to its worktree and retarget the link after this check.
+  cd -- "$wt_root" || exit 1
   unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
   DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
@@ -1405,8 +1413,8 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
-  role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
-  launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
+  role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
+  launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the

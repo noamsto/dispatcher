@@ -7223,6 +7223,21 @@ _assert_real_anchor() {
   grep -q 'split-window' "$STUB_LOG"
 }
 
+# The check compares the recorded root against realpath($PWD), but a worker
+# could then retarget a symlink pointing at its worktree; the launch must use
+# the pinned root, not the (still-symlinked) logical $PWD.
+@test "spawn-role: anchor — a symlink to the worktree is not used as the launch cwd" {
+  _spawn_role_fixture
+  wt="$(realpath "$PWD")"
+  ln -s "$PWD" "$BATS_TEST_TMPDIR/wtlink"
+  cd "$BATS_TEST_TMPDIR/wtlink"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'split-window' "$STUB_LOG")"
+  [[ "$line" == *"-c $wt "* ]]
+  [[ "$line" != *"wtlink"* ]]
+}
+
 @test "the suite resolves engine CLIs from the stub dir, not the developer's machine" {
   # Without this, a PATH probe in dispatch.sh passes locally (real engines
   # installed) and fails on a bare CI runner. Pin the dependency here.

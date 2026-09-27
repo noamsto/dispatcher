@@ -363,8 +363,12 @@ is back.
   `$crew_dir/protocol-dirs/<branch>`; a lazy `--spawn-role` reads that record, never the
   worker's `DISPATCHER_*_DIR`, and finds it through the worker window's `@crew_dir` and
   `@crew_branch` tmux options that `dispatch` and `dispatch resume` stamp — never the
-  worker's env or git state. It refuses without those options (re-dispatch), without a
-  record, or outside the dispatched worktree's root. Its own `$crew_dir/artifacts/<branch>` is the
+  worker's env or git state. Like `$crew_dir/grants/<branch>`, these options and the
+  record are not a boundary against a worker that deliberately tampers with harness
+  state (a `tmux set-option`, or running `dispatch`/`claude` itself); they close the
+  sanctioned path, and Claude's own permission layer remains the boundary. It refuses
+  without those options (re-dispatch), without a record, or outside the dispatched
+  worktree's root. Its own `$crew_dir/artifacts/<branch>` is the
   only write-capable default grant — no `--add-dir` needed for any of those. Only claude launches take `--add-dir`: codex runs
   sandbox-bypassed, cursor runs `--force`, and pi has no path-permission layer, so
   none of them have a prompt to widen. A worker blocked on a permission prompt
