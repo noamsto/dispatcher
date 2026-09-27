@@ -54,13 +54,24 @@ teardown() {
   # crew.sh's dispatcher-liveness helpers (#461). crew.sh is the source of
   # truth; flake.nix excludes the file from treefmt so shfmt cannot rewrite
   # the copies out of sync. The `_ps_elapsed_s` crew.sh/dispatch.sh pair is
-  # pinned separately by #462.
+  # pinned in "dispatch.sh's _ps_elapsed_s matches crew.sh's" below.
   for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
     canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
     [ -n "$canonical" ]
     found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
     [ "$found" = "$canonical" ]
   done
+}
+
+@test "dispatch.sh's _ps_elapsed_s matches crew.sh's" {
+  # dispatch.sh carries its own byte-identical copy of crew.sh's _ps_elapsed_s
+  # (#462). dispatch.sh is excluded from treefmt (flake.nix), so shfmt cannot
+  # rewrite the copy out of sync.
+  fn=_ps_elapsed_s
+  canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
+  [ -n "$canonical" ]
+  found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
+  [ "$found" = "$canonical" ]
 }
 
 @test "generator is idempotent" {
