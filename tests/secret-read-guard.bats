@@ -1437,7 +1437,7 @@ nested_backticks() {
   deny_cmd $'echo `true # x`; echo `env`'
 }
 
-@test "secret-read-guard: denies a dump behind a backtick that closes its frame inside quotes or sits at a literal level" {
+@test "secret-read-guard: denies a dump behind a backtick that closes its frame inside quotes or is escaped inside it" {
   deny_cmd $'( : `echo \'a` ); env'
   deny_cmd $'`echo \\\\\\` ; env`'
 }
@@ -1514,9 +1514,7 @@ nested_backticks() {
 }
 
 # assert_allow_within_each_awk <max-ms> <payload> — the allow twin of
-# assert_deny_within_each_awk: replay assert_allow_within under every
-# non-GNU awk this host has installed, falling back to a single run under
-# the default awk when none of those are installed.
+# assert_deny_within_each_awk.
 assert_allow_within_each_awk() {
   local max_ms=$1 payload=$2 name awk_path found=0
 
