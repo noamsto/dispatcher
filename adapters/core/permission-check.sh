@@ -155,15 +155,15 @@ frame_parse() {
   [ "$n" -ge 7 ] || refuse "frame: not a permission dialog"
   [ "${ne[n - 1]}" = "Esc to cancel · Tab to amend" ] || refuse "frame: footer is not the last line"
   [ "${ne[n - 2]}" = "3. No" ] || refuse "frame: option 3 is not No"
-  [[ "${ne[n - 3]}" == "2. Yes, and don’t ask again for:"* ]] || refuse "frame: option 2 unrecognised"
+  [[ ${ne[n - 3]} == "2. Yes, and don’t ask again for:"* ]] || refuse "frame: option 2 unrecognised"
   [ "${ne[n - 4]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
   [ "${ne[n - 5]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
 
   # A block line shaped like a header could shift the block boundary, so a
   # header match at both depths is refused rather than resolved.
   local header_re='^Bash command · from the ([A-Za-z0-9:_-]+) agent$' agent1="" agent2=""
-  if [[ "${ne[n - 7]}" =~ $header_re ]]; then agent1=${BASH_REMATCH[1]}; fi
-  if [ "$n" -ge 8 ] && [[ "${ne[n - 8]}" =~ $header_re ]]; then agent2=${BASH_REMATCH[1]}; fi
+  if [[ ${ne[n - 7]} =~ $header_re ]]; then agent1=${BASH_REMATCH[1]}; fi
+  if [ "$n" -ge 8 ] && [[ ${ne[n - 8]} =~ $header_re ]]; then agent2=${BASH_REMATCH[1]}; fi
   if [ -n "$agent1" ] && [ -n "$agent2" ]; then
     refuse "frame: ambiguous header"
   elif [ -n "$agent1" ]; then
@@ -198,7 +198,7 @@ lead_session() {
   case "/$BRANCH/" in
   *//* | */./* | */../*) refuse "lead record: unsafe branch name" ;;
   esac
-  [[ "$BRANCH" != *[[:cntrl:]]* ]] || refuse "lead record: unsafe branch name"
+  [[ $BRANCH != *[[:cntrl:]]* ]] || refuse "lead record: unsafe branch name"
 
   local rec="$CREW_DIR/leads/$BRANCH"
   branch_dirs_ok "$CREW_DIR/leads" 0 || refuse "lead record: a leads/ dir is a symlink or not a dir"
