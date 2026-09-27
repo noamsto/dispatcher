@@ -168,6 +168,25 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
 }
 
+@test "resume refuses a worktree whose admin dir has a config.worktree (#539)" {
+  # #539: per-worktree config lives in the admin dir and is still read under
+  # an anchored gitdir; it can carry keys no -c list enumerates, so resume
+  # must refuse outright rather than try to filter it.
+  setup_worker_wt
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  git -C "$TEST_REPO" config extensions.worktreeConfig true
+  git -C "$WT" config --worktree core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config.worktree"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+}
+
 @test "refuses on a detached HEAD" {
   setup_worker_wt
   git -C "$WT" checkout -q --detach

@@ -3284,6 +3284,55 @@ assert_gate_silent() { # <engine> <model> [profile]
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+@test "--pr on a forged gitlink never runs its gitdir's config (#539)" {
+  # #539: a worker's Edit/Write can rewrite the worktree's .git gitlink to
+  # point at a gitdir it built, and plain `git -C wt_path` (discovery) would
+  # then read that gitdir's config and run core.fsmonitor in the dispatcher's
+  # own shell. --pr's rev-parse/status/reset must run through the worktree's
+  # real admin dir instead (resolved from the main repo's own
+  # worktrees/*/gitdir back-pointer, which the forged gitlink cannot steer),
+  # so the forged gitdir's config never runs and the reset still lands.
+  setup_stale_pr_worktree eng-539-forged
+  wt_path="$TEST_REPO/.worktrees/eng-539-forged"
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  fakegit="$BATS_TEST_TMPDIR/fakegit"
+  cp -r "$TEST_REPO/.git" "$fakegit"
+  rm -rf "$fakegit/worktrees"
+  git --git-dir="$fakegit" config core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  git --git-dir="$fakegit" symbolic-ref HEAD refs/heads/eng-539-forged
+  echo "gitdir: $fakegit" >"$wt_path/.git"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ "$(git --git-dir="$TEST_REPO/.git/worktrees/eng-539-forged" rev-parse HEAD)" = "$STALE_NEW_OID" ]
+}
+
+@test "--pr refuses a worktree whose admin dir has a config.worktree (#539)" {
+  # #539: per-worktree config lives in the admin dir and is still read under
+  # an anchored gitdir; it can carry keys no -c list enumerates, so --pr must
+  # refuse outright rather than try to filter it.
+  setup_stale_pr_worktree eng-539-cfgworktree
+  wt_path="$TEST_REPO/.worktrees/eng-539-cfgworktree"
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  git config extensions.worktreeConfig true
+  git -C "$wt_path" config --worktree core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config.worktree"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
 @test "--pr treats a leftover WORKER_TASK.md alone as clean, not dirty" {
   # WORKER_TASK.md is intentionally untracked and is never cleaned up on
   # reclaim (only `crew reap` trashes it) — a re-dispatch onto a --pr worktree

@@ -44,7 +44,9 @@ _wt_git() { # <admin-dir> <worktree> <git args…>
     echo "refusing git in $wt: $admin/config.worktree exists — per-worktree config is worker-writable" >&2
     return 1
   fi
-  git --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+  # -C: with the caller's cwd inside <wt>, git would resolve pathspecs against
+  # that subdirectory rather than the work-tree root.
+  git -C "$wt" --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null \
     -c submodule.recurse=false --git-dir="$admin" --work-tree="$wt" "$@"
 }
 _wt_status() {

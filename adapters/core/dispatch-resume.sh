@@ -42,6 +42,18 @@ _worktree_anchor_path() {
   printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
 }
 
+# Anchored git for the worktree reads below (#539): a worker's Edit/Write can
+# rewrite its worktree's .git gitlink to point at a gitdir it built, and plain
+# `git -C wt_path` (discovery) would then read that gitdir's config and run
+# config-named programs (core.fsmonitor, hooks, ...) in the dispatcher's own
+# shell. The anchor check below (#518) already pins the genuine admin dir;
+# the functions here pin git to it too, instead of letting it discover one.
+# Unlike the advisory cross-repo-hint lib, sourcing here is unconditional: a
+# missing lib must abort, never silently fall back to discovery.
+wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+# shellcheck source=/dev/null
+. "$wt_git_lib"
+
 # _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
 # it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
 # them. Mirrors the grant-record checks in dispatch.sh.
@@ -1180,7 +1192,16 @@ fi
 # committed on this branch escapes the guard above and rides the diff into
 # commits (#397). Warn, naming the fix; never abort and never touch the index
 # here — removing a tracked file is the target repo's job, in its own PR.
-if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+# `ls-files` (no --error-unmatch) exits 0 whenever the index is readable and
+# prints the path only if it is tracked, so a non-zero exit here means the
+# index itself could not be read (or, per _wt_git, refused) — that must
+# abort, not silently read as "untracked" (#539). _anchor_lines[3] is the
+# admin dir the #518 check above already verified this worktree discovers to.
+tracked="$(_wt_git "${_anchor_lines[3]}" "$wt_path" ls-files -- WORKER_TASK.md)" || {
+  echo "dispatch resume: could not read the index at $wt_path" >&2
+  exit 1
+}
+if [ -n "$tracked" ]; then
   echo "dispatch resume: warning: WORKER_TASK.md is tracked on this branch — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
 fi
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then
