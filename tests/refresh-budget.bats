@@ -5,15 +5,48 @@ setup() {
   STUB_LOG="$STUB_DIR/calls.log"
   FIXTURE_DIR="$(mktemp -d)"
   export STUB_DIR STUB_LOG FIXTURE_DIR
+  # Resolved before $STUB_DIR is prepended to PATH, so the date shim below can
+  # fall through to the genuine binary for every call it doesn't fake.
+  REAL_DATE="$(command -v date)"
+  export REAL_DATE
   # The script reads $HOME/.claude/.credentials.json — give it a throwaway HOME.
   export HOME="$(mktemp -d)"
   mkdir -p "$HOME/.claude"
   printf '%s\n' '{"claudeAiOauth":{"accessToken":"test-token"}}' >"$HOME/.claude/.credentials.json"
+  unset OPENROUTER_API_KEY DISPATCH_OPENROUTER_KEY_FILE DISPATCH_OPENROUTER_MONTHLY_USD
   write_fixtures
   write_curl_shim
   write_codex_shim
   write_tmux_shim
+  write_date_shim
   export PATH="$STUB_DIR:$PATH"
+}
+
+# or_key_fixture <usage_monthly> — a stubbed /api/v1/key response shaped like
+# OpenRouter's real one (verified via context7, see spec.md).
+or_key_fixture() {
+  jq -n --argjson u "$1" '{
+    data: {
+      label: "sk-or-v1-x...", usage: 999, usage_daily: 1, usage_weekly: 2,
+      usage_monthly: $u, limit: null, limit_remaining: null, limit_reset: null,
+      is_management_key: false, is_provisioning_key: false
+    }
+  }' >"$FIXTURE_DIR/or_key.json"
+}
+
+# write_date_shim — a `date` that answers `+%s` from $SHIM_NOW when set, so
+# refresh-budget's month math runs against a chosen instant; every other
+# invocation (formats, -d, -u, ...) execs the real binary unchanged.
+write_date_shim() {
+  cat >"$STUB_DIR/date" <<EOF
+#!/usr/bin/env bash
+if [[ -n "\${SHIM_NOW:-}" && "\$#" -eq 1 && "\$1" == "+%s" ]]; then
+  printf '%s\n' "\$SHIM_NOW"
+  exit 0
+fi
+exec "$REAL_DATE" "\$@"
+EOF
+  chmod +x "$STUB_DIR/date"
 }
 
 write_fixtures() {
@@ -44,6 +77,21 @@ if [[ -n "${SHIM_CLAUDE_429:-}" ]]; then
 fi
 case "${@: -1}" in
   *api.anthropic.com/api/oauth/usage*) cat "$FIXTURE_DIR/claude_usage.json" ;;
+  *openrouter.ai/api/v1/key*)
+    # Consumed, never logged: the key arrives on stdin (-K -), and the whole
+    # point of this shim is to prove it never lands anywhere else.
+    stdin_content="$(cat)"
+    if [[ -n "${SHIM_OR_FAIL:-}" ]]; then
+      exit 22
+    fi
+    expect="${SHIM_OR_EXPECT_KEY:-sk-or-v1-SENTINELKEY123}"
+    if [[ "$stdin_content" == *"Authorization: Bearer $expect"* ]]; then
+      printf 'openrouter_key_on_stdin=yes\n' >>"$STUB_LOG"
+    else
+      printf 'openrouter_key_on_stdin=no\n' >>"$STUB_LOG"
+    fi
+    cat "$FIXTURE_DIR/or_key.json"
+    ;;
   *) exit 22 ;;
 esac
 EOF
@@ -681,4 +729,148 @@ EOF
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
   run jq '.engines.claude.windows["5h"].used_pct' "$cache"
   [ "$output" = "5" ]
+}
+
+@test "no OpenRouter key leaves pi unknown without blocking" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi spend unknown"* ]]
+  [[ "$output" == *"OPENROUTER_API_KEY"* ]]
+  [[ "$output" == *"keyFile"* ]]
+  [[ "$output" == *"pi: unknown"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}
+
+@test "pi spend and target render mid-month with a projection" {
+  or_key_fixture 40
+  now=$("$REAL_DATE" -u -d '2026-09-10T00:00:00Z' +%s)
+  start_epoch=$("$REAL_DATE" -u -d '2026-09-01T00:00:00Z' +%s)
+  reset_epoch=$("$REAL_DATE" -u -d '2026-10-01T00:00:00Z' +%s)
+  SHIM_NOW="$now" DISPATCH_OPENROUTER_MONTHLY_USD=50 \
+    OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'pi: openrouter $40.00 of $50.00 monthly target'* ]]
+  [[ "$output" == *'projected $133.33 at month end'* ]]
+  [[ "$output" == *'budget lever: pi projected $133.33 at month end, over the $50.00 monthly target'* ]]
+  [[ "$output" != *"SENTINELKEY123"* ]]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq -r '.engines.pi.source' "$cache"
+  [ "$output" = "openrouter_key" ]
+  run jq '.engines.pi.spend_usd' "$cache"
+  [ "$output" = "40" ]
+  run jq '.engines.pi.target_usd' "$cache"
+  [ "$output" = "50" ]
+  run jq '.engines.pi.windows.month.used_pct' "$cache"
+  [ "$output" = "80" ]
+  run jq '.engines.pi.windows.month.starts_at' "$cache"
+  [ "$output" = "$start_epoch" ]
+  run jq '.engines.pi.windows.month.resets_at' "$cache"
+  [ "$output" = "$reset_epoch" ]
+  run jq '.engines.pi.elapsed_pct' "$cache"
+  [ "$output" = "30" ]
+  run jq '(.engines.pi.projected_month_end_usd * 100 | round)' "$cache"
+  [ "$output" = "13333" ]
+  ! grep -q SENTINELKEY123 "$cache"
+  ! grep -q SENTINELKEY123 "$STUB_LOG"
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+}
+
+@test "the key file wins over OPENROUTER_API_KEY" {
+  or_key_fixture 10
+  keyfile="$BATS_TEST_TMPDIR/or-key"
+  printf 'sk-or-v1-FILEKEY\r\n' >"$keyfile"
+  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 \
+    SHIM_OR_EXPECT_KEY=sk-or-v1-FILEKEY run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"SENTINELKEY123"* ]]
+  [[ "$output" != *"FILEKEY"* ]]
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+}
+
+@test "an unreadable key file with no env leaves pi unknown" {
+  keyfile="$BATS_TEST_TMPDIR/or-key-missing"
+  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi spend unknown"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "no target records spend without a gating window" {
+  or_key_fixture 40
+  now=$("$REAL_DATE" -u -d '2026-09-10T00:00:00Z' +%s)
+  reset_epoch=$("$REAL_DATE" -u -d '2026-10-01T00:00:00Z' +%s)
+  SHIM_NOW="$now" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"month-to-date (no monthly target"* ]]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.pi.spend_usd' "$cache"
+  [ "$output" = "40" ]
+  run jq '.engines.pi.target_usd' "$cache"
+  [ "$output" = "null" ]
+  run jq '.engines.pi.windows' "$cache"
+  [ "$output" = "{}" ]
+  run jq '.engines.pi.resets_at' "$cache"
+  [ "$output" = "$reset_epoch" ]
+}
+
+@test "the first 24h of the month suppress the projection" {
+  or_key_fixture 5
+  now=$("$REAL_DATE" -u -d '2026-09-01T06:00:00Z' +%s)
+  SHIM_NOW="$now" DISPATCH_OPENROUTER_MONTHLY_USD=50 \
+    OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"too early to project"* ]]
+  [[ "$output" != *'budget lever: pi projected $'* ]]
+  run jq '.engines.pi.projected_month_end_usd' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "December rolls the reset over to next January" {
+  or_key_fixture 1
+  now=$("$REAL_DATE" -u -d '2026-12-15T00:00:00Z' +%s)
+  reset_epoch=$("$REAL_DATE" -u -d '2027-01-01T00:00:00Z' +%s)
+  SHIM_NOW="$now" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq '.engines.pi.resets_at' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "$reset_epoch" ]
+}
+
+@test "a failed OpenRouter call leaves pi unknown, not exhausted" {
+  SHIM_OR_FAIL=1 OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi spend unknown"* ]]
+  [[ "$output" == *"failed"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "a malformed monthly target is ignored with a warning" {
+  or_key_fixture 40
+  DISPATCH_OPENROUTER_MONTHLY_USD=abc OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DISPATCH_OPENROUTER_MONTHLY_USD"* ]]
+  [[ "$output" == *"not a positive number"* ]]
+  run jq '.engines.pi.target_usd' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  run jq '.engines.pi.windows' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "{}" ]
+}
+
+@test "a zero monthly target is ignored with a warning" {
+  or_key_fixture 40
+  DISPATCH_OPENROUTER_MONTHLY_USD=0 OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"DISPATCH_OPENROUTER_MONTHLY_USD"* ]]
+  run jq '.engines.pi.target_usd' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
+@test "a month window at 96% fires the budget lever" {
+  or_key_fixture 48
+  DISPATCH_OPENROUTER_MONTHLY_USD=50 OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: pi month at 96"* ]]
 }

@@ -244,6 +244,10 @@ programs.dispatcher = {
   orgTrackers = {
     factify-inc = "linear:ENG";
   };
+  openrouter = {
+    monthlyTarget = 50;
+    keyFile = "/run/agenix/openrouter";
+  };
 };
 ```
 
@@ -251,9 +255,10 @@ That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
 `refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
 `DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
 `DISPATCH_ORG_TRACKERS`, `DISPATCHER_PROTOCOL_DIR`,
-`DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR` and
-`DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
-rule, commands, skills and rosters when those engines are included in
+`DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`,
+`DISPATCHER_SKILLS_DIR`, `DISPATCH_OPENROUTER_MONTHLY_USD` and
+`DISPATCH_OPENROUTER_KEY_FILE`, installs the Codex plugin and writes the
+Cursor rule, commands, skills and rosters when those engines are included in
 `engines`.
 
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked. `dispatch`
@@ -272,6 +277,23 @@ entry; unset or empty (the default) refuses every `--add-dir`. This is
 breaking for anyone already using `--add-dir` — set `grantRoots` to keep it
 working. A changed value only reaches `dispatch` from a fresh login shell or
 tmux server (#303).
+
+`openrouter.monthlyTarget` sets a monthly USD spend target for pi
+(OpenRouter, usage-priced). `refresh-budget` measures month-to-date spend
+against it — `GET /api/v1/key`'s `usage_monthly`, the current UTC calendar
+month — and records the target and a projected month-end total. `dispatch
+--agent pi` gates on that the same way as the subscription engines: a pace
+refusal of `xhigh`/`max` effort once spend is ≥70% of the target _and_ more
+than 15 points ahead of the month's elapsed fraction (escape with
+`DISPATCH_IGNORE_RUNG=<effort>`), and a hard stop at ≥95% (escape with
+`--ignore-budget`). Without a rebuild, set `DISPATCH_OPENROUTER_MONTHLY_USD`
+and `DISPATCH_OPENROUTER_KEY_FILE` (or `OPENROUTER_API_KEY`) directly.
+`openrouter.keyFile` resolves first (its first line), falling back to
+`OPENROUTER_API_KEY`; `~/.pi/agent/auth.json` is never read for this, and the
+key is never printed or cached. The figure is **per key** — it only covers
+spend on the key pi actually uses, not the whole OpenRouter account — so
+OpenRouter's own per-key credit limit (in its dashboard) stays the hard
+backstop regardless of this target.
 
 Claude workers also get the protocol, skills, reviewers and critics dirs
 granted read-only (an `Edit` deny rule alongside the `--add-dir`), so a
