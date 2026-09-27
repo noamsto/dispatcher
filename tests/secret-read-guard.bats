@@ -533,12 +533,14 @@ assert_deny_within_each_awk() {
 # these tests exist to catch) shows up as tens of seconds, not 5 s, so the headroom
 # is safe.
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 5 s" {
   local body
   body=$(printf "a 'b' \"c\"\n%.0s" $(seq 1 10240))
   assert_deny_within 5000 "$(claude_bash "cat > f <<'X'"$'\n'"$body"$'\n'"X"$'\n'"env")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB bash -c body ending in a dump denies in under 5 s" {
   local body
   body=$(printf 'echo hi; %.0s' $(seq 1 10240))
@@ -553,14 +555,17 @@ heredoc_100k() {
   printf '%s' "cat > f <<'X'"$'\n'"$body"$'\n'"X"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: cat .env ahead of a 100 KB heredoc denies in under 5 s" {
   assert_deny_within 5000 "$(claude_bash "cat .env"$'\n'"$(heredoc_100k)")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: bash -c true, a 100 KB heredoc, then env denies in under 5 s" {
   assert_deny_within 5000 "$(claude_bash "bash -c true"$'\n'"$(heredoc_100k)"$'\n'"env")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: bash -c env ahead of a 100 KB heredoc denies in under 5 s" {
   assert_deny_within 5000 "$(claude_bash "bash -c env; $(heredoc_100k)")"
 }
@@ -576,6 +581,7 @@ assert_allow_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB bash heredoc of commands ending in a credential read denies in under 3.5 s" {
   local body
   body=$(printf 'echo hi; %.0s' $(seq 1 10240))
@@ -592,6 +598,7 @@ assert_allow_within() {
   assert_allow_within 3500 "$(claude_bash "$(heredoc_100k)"$'\n'"ls")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: 2000 nested command substitutions ahead of a credential read deny in under 3.5 s" {
   local opens closes
   opens=$(printf '$(%.0s' $(seq 1 2000))
@@ -599,18 +606,21 @@ assert_allow_within() {
   assert_deny_within 3500 "$(claude_bash "echo ${opens}${closes}"$'\n'"cat .env")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: 24000 in words ahead of a credential read deny in under 3.5 s" {
   local body
   body=$(printf 'in %.0s' $(seq 1 24000))
   assert_deny_within 3500 "$(claude_bash "echo ${body}"$'\n'"cat .env")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 60 KB slash-free word beside a credential read denies in under 3.5 s under every awk" {
   local hex
   hex=$(printf 'ab%.0s' $(seq 1 30000))
   assert_deny_within_each_awk 3500 "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 48 KB chain of credential names denies in under 3.5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 12000))
