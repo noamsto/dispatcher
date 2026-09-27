@@ -509,29 +509,69 @@ assert_deny_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
-# assert_deny_within_each_awk <max-ms> <payload> — replay assert_deny_within
-# under every non-GNU awk this host has installed (mawk, nawk, busybox-awk),
-# each spliced onto PATH ahead of the real awk. Falls back to a single run
-# under the default awk when none of those are installed.
+# assert_deny_within_each_awk <calibration-payload> <payload> — replay the
+# relative bound under every non-GNU awk this host has installed (mawk, nawk,
+# busybox-awk), each spliced onto PATH ahead of the real awk. Falls back to a
+# single run under the default awk when none of those are installed.
+
+# The per-awk bound is RELATIVE: K x a same-size, same-shape calibration input
+# (a linear, trivially-judged variant of the test's own payload), plus an
+# absolute ceiling for a hung guard. A fixed absolute ms was bumped repeatedly
+# (#478, #491, #507, #511, #513, #515) because the slowest non-gawk awk drifts
+# toward it on slow runners; the relative bound tracks the runner's speed.
+#
+# #514 showed a single shared calibration cannot catch the historical
+# strip_templates regression on busybox-awk: that regression is a bash-sed
+# quadratic whose cost is nearly awk-independent, while a shared prose
+# calibration is awk-speed-bound, so busybox's inflated denominator masks it.
+# The fix is a per-construct calibration — a same-size linear variant of the
+# same payload, so the calibration traverses the same awk passes and the same
+# strip path and the ratio is ~1 for legitimate runs on every awk.
+#
+# K=4 gives >=3x headroom over the worst legitimate payload:calibration ratio
+# measured locally (~1.25, t3/t4 nawk); the pre-#476 sed -E revert measures
+# ~4.3-5.0 on busybox-awk, ~7-9 on nawk, ~30 on mawk (see #514). The ceiling is
+# a backstop only; the worst legitimate payload is ~1.4 s locally (~4.2 s on
+# CI's ~3x slower runner), well under 8000 ms. See #514/#515.
+SECRET_GUARD_TIMING_K=4
+SECRET_GUARD_TIMING_CEILING_MS=8000
+
+# assert_deny_relative <calibration-payload> <payload> — deny in claude shape,
+# within K x the calibration and the ceiling. The calibration is timed first in
+# this shell; any verdict it reaches is fine.
+assert_deny_relative() {
+  local calib_ms elapsed start bound
+  start=$(date +%s%N)
+  run run_guard <<<"$1"
+  calib_ms=$((($(date +%s%N) - start) / 1000000))
+  [ "$status" -eq 0 ] || return 1
+  ((calib_ms < 1)) && calib_ms=1
+  start=$(date +%s%N)
+  run run_guard <<<"$2"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  assert_deny_claude
+  bound=$((calib_ms * SECRET_GUARD_TIMING_K))
+  echo "elapsed ${elapsed}ms <= ${SECRET_GUARD_TIMING_K} x calibration ${calib_ms}ms = ${bound}ms (ceiling ${SECRET_GUARD_TIMING_CEILING_MS}ms)" >&2
+  [ "$elapsed" -le "$SECRET_GUARD_TIMING_CEILING_MS" ] && [ "$elapsed" -le "$bound" ]
+}
+
 assert_deny_within_each_awk() {
-  local max_ms=$1 payload=$2 name awk_path found=0
+  local calib=$1 payload=$2 name awk_path found=0
 
   for name in mawk nawk busybox-awk; do
     awk_path=$(command -v "$name") || continue
     found=1
     mkdir -p "$BATS_TEST_TMPDIR/$name"
     ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
-    PATH="$BATS_TEST_TMPDIR/$name:$PATH" assert_deny_within "$max_ms" "$payload"
+    PATH="$BATS_TEST_TMPDIR/$name:$PATH" assert_deny_relative "$calib" "$payload"
   done
 
-  [ "$found" -eq 1 ] || assert_deny_within "$max_ms" "$payload"
+  [ "$found" -eq 1 ] || assert_deny_relative "$calib" "$payload"
 }
 
-# Bound is loose (5 s, not the ~150 ms this case actually takes locally) because CI
-# runs `bats --jobs 16` on a 4-core runner, and the wall-clock budget includes
-# process startup under that contention. A catastrophic backtracking (the scenario
-# these tests exist to catch) shows up as tens of seconds, not 5 s, so the headroom
-# is safe.
+# A catastrophic backtracking (the scenario these tests exist to catch) shows
+# up as tens of seconds, not the ~1 s these cases take locally, so the relative
+# headroom and the ceiling are both safe.
 
 # bats test_tags=timing
 @test "secret-read-guard: a 100 KB heredoc followed by a dump denies in under 5 s" {
@@ -581,6 +621,24 @@ assert_allow_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
+# assert_allow_relative <calibration-payload> <payload> — the allow twin of
+# assert_deny_relative (see the K/ceiling comment there).
+assert_allow_relative() {
+  local calib_ms elapsed start bound
+  start=$(date +%s%N)
+  run run_guard <<<"$1"
+  calib_ms=$((($(date +%s%N) - start) / 1000000))
+  [ "$status" -eq 0 ] || return 1
+  ((calib_ms < 1)) && calib_ms=1
+  start=$(date +%s%N)
+  run run_guard <<<"$2"
+  elapsed=$((($(date +%s%N) - start) / 1000000))
+  assert_allow
+  bound=$((calib_ms * SECRET_GUARD_TIMING_K))
+  echo "elapsed ${elapsed}ms <= ${SECRET_GUARD_TIMING_K} x calibration ${calib_ms}ms = ${bound}ms (ceiling ${SECRET_GUARD_TIMING_CEILING_MS}ms)" >&2
+  [ "$elapsed" -le "$SECRET_GUARD_TIMING_CEILING_MS" ] && [ "$elapsed" -le "$bound" ]
+}
+
 # bats test_tags=timing
 @test "secret-read-guard: a 100 KB bash heredoc of commands ending in a credential read denies in under 3.5 s" {
   local body
@@ -616,19 +674,23 @@ assert_allow_within() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 60 KB slash-free word beside a credential read denies in under 5 s under every awk" {
-  local hex
+@test "secret-read-guard: a 60 KB slash-free word beside a credential read denies within K x its calibration under every awk" {
+  local hex benign
   hex=$(printf 'ab%.0s' $(seq 1 30000))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
-  assert_deny_within_each_awk 5000 "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
+  benign=$(printf 'aa%.0s' $(seq 1 30000))
+  assert_deny_within_each_awk \
+    "$(claude_bash "head -c 64 .env && printf %s ${benign} | xxd -r -p > blob.bin")" \
+    "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 48 KB chain of credential names denies in under 5 s under every awk" {
-  local body
+@test "secret-read-guard: a 48 KB chain of credential names denies within K x its calibration under every awk" {
+  local body benign
   body=$(printf '.env%.0s' $(seq 1 12000))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
-  assert_deny_within_each_awk 5000 "$(claude_bash "cat .env ${body}")"
+  benign=$(printf 'ab.cd%.0s' $(seq 1 12000))
+  assert_deny_within_each_awk \
+    "$(claude_bash "cat .env ${benign}")" \
+    "$(claude_bash "cat .env ${body}")"
 }
 
 # The awk template strip must stay byte-for-byte what sed -E did with
@@ -673,27 +735,34 @@ assert_allow_within() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies within K x its calibration under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
-  assert_deny_within_each_awk 5000 "$(claude_bash "cat .env ${body} .env.example")"
+  # Calibration neutralizes the template (12 chars to match `.env.example`): the
+  # same strip pass runs, but the pre-#476 sed -E quadratic cannot trigger.
+  assert_deny_within_each_awk \
+    "$(claude_bash "cat .env ${body} aaaaaaaaaaaa")" \
+    "$(claude_bash "cat .env ${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny within K x its calibration under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
-  assert_deny_within_each_awk 5000 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
+  assert_deny_within_each_awk \
+    "$(claude_bash "bash -c cat\\ \\.env; x${body} aaaaaaaaaaaa")" \
+    "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob within K x its calibration under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
-  assert_deny_within_each_awk 5000 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
+  # A Grep-shaped calibration, not a Bash one: a bash command's calibration is
+  # inflated by unrelated shell-branch awk passes and would mask the regression.
+  assert_deny_within_each_awk \
+    "$(claude_grep "x${body} aaaaaaaaaaaa" '.env' 'x' content)" \
+    "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
 }
 
 # bats test_tags=timing
@@ -1465,9 +1534,10 @@ nested_backticks() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny in under 5 s under every awk" {
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
-  assert_deny_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14)")"
+@test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny within K x its calibration under every awk" {
+  assert_deny_within_each_awk \
+    "$(claude_bash "$(nested_backticks 14 "echo ok")")" \
+    "$(claude_bash "$(nested_backticks 14)")"
 }
 
 # bats test_tags=timing
@@ -1594,48 +1664,52 @@ nested_backticks() {
   allow_cmd $'echo "\\`env\\`"'
 }
 
-# assert_allow_within_each_awk <max-ms> <payload> — the allow twin of
-# assert_deny_within_each_awk.
+# assert_allow_within_each_awk <calibration-payload> <payload> — the allow twin
+# of assert_deny_within_each_awk.
 assert_allow_within_each_awk() {
-  local max_ms=$1 payload=$2 name awk_path found=0
+  local calib=$1 payload=$2 name awk_path found=0
 
   for name in mawk nawk busybox-awk; do
     awk_path=$(command -v "$name") || continue
     found=1
     mkdir -p "$BATS_TEST_TMPDIR/$name"
     ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
-    PATH="$BATS_TEST_TMPDIR/$name:$PATH" assert_allow_within "$max_ms" "$payload"
+    PATH="$BATS_TEST_TMPDIR/$name:$PATH" assert_allow_relative "$calib" "$payload"
   done
 
-  [ "$found" -eq 1 ] || assert_allow_within "$max_ms" "$payload"
+  [ "$found" -eq 1 ] || assert_allow_relative "$calib" "$payload"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB backticked commit body allows in under 5 s under every awk" {
-  local body
+@test "secret-read-guard: a 100 KB backticked commit body allows within K x its calibration under every awk" {
+  local body benign
   # 900 reps keeps the whole payload under Linux's 128 KiB single-argv-string
   # cap (MAX_ARG_STRLEN) that claude_bash's jq --arg would otherwise blow.
   body=$(printf 'fix(x): handle `foo` in `bar`\n\nReads `DISPATCHER_X` env var and `set -e`. A stray ` tick.\n`env vars` are documented; `export FOO=1` too.\n%.0s' $(seq 1 900))
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
-  assert_allow_within_each_awk 5000 "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
+  # Same-size benign backtick/quote text: the same mask and frame passes run.
+  benign=$(printf '`aa` "bb" %.0s' $(seq 1 12330))
+  assert_allow_within_each_awk \
+    "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$benign"$'\n'"EOF")" \
+    "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: 14 nested levels of backticks around a harmless command allow in under 5 s under every awk" {
-  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
-  assert_allow_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14 date)")"
+@test "secret-read-guard: 14 nested levels of backticks around a harmless command allow within K x its calibration under every awk" {
+  assert_allow_within_each_awk \
+    "$(claude_bash "$(nested_backticks 14 "echo ok")")" \
+    "$(claude_bash "$(nested_backticks 14 date)")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: escape runs inside 14 nested backtick frames allow in under 5 s under every awk" {
-  local body
+@test "secret-read-guard: escape runs inside 14 nested backtick frames allow within K x its calibration under every awk" {
+  local body benign
   body=$(printf '\\\\x %.0s' $(seq 1 20000))
-  # Bound 5000 ms (was 3500): the slowest awk (nawk) measured at 173 ms median / 179 ms max locally
-  # at depth=14, runlen=20000. Growth is ~linear in both depth (ratio ~1.5-2.7 for 14->20) and
-  # runlen (ratio ~1.8-2.0 for each doubling). CI runs bats with --jobs 16 on a 4-core runner,
-  # so wall-clock headroom must absorb contention. The 5000 ms bound is generous; a catastrophic
-  # backtrack (>30 s) would still fail it. See #507.
-  assert_allow_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14 "$body")")"
+  # Same-size escape-run shape with a benign escaped character: the frame pass
+  # sees the same backslash/backtick structure, so the ratio is ~1 when linear.
+  benign=$(printf '\\\\a %.0s' $(seq 1 20000))
+  assert_allow_within_each_awk \
+    "$(claude_bash "$(nested_backticks 14 "$benign")")" \
+    "$(claude_bash "$(nested_backticks 14 "$body")")"
 }
 
 @test "secret-read-guard: denies printenv with a bare double dash" {
