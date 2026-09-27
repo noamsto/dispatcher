@@ -1613,11 +1613,18 @@ if [ "${1:-}" = "--role-watch" ]; then
   # the next capture sees the turn it started. `cooldown` skips the tick right
   # after a send, when the pane may not have repainted as busy yet. The text is
   # pasted via a tmux load-buffer/paste-buffer round trip (bracketed paste,
-  # not send-keys -l, so the pane's shell/editor sees it as one paste rather
-  # than a burst of individual keystrokes), the pane re-checked, and only then
-  # is Enter sent: a dialog raised in between (a subagent's) is never
-  # confirmed. Text left in the pane by a failed re-check is cleared with C-u
-  # before the retry. `pending` lives in this process only, capped at
+  # not send-keys -l) rather than a burst of individual keystrokes; per
+  # tmux(1), `-p` only wraps the paste in bracket codes when the destination
+  # has requested bracketed-paste mode, so this is a real improvement for an
+  # app that has (our engines' composers), not a guarantee for one that
+  # hasn't — the pre-paste gate and the post-paste re-check below remain the
+  # actual backstop. `-r` skips tmux's own LF→CR translation on output, so a
+  # future loosening of `_role_assignment_safe`'s control-byte refusal can't
+  # silently reintroduce CR-as-Enter through that default. The pane is
+  # re-checked, and only then is Enter sent: a dialog raised in between (a
+  # subagent's) is never confirmed. Text left in the pane by a failed
+  # re-check is cleared with C-u before the retry. `pending` lives in this
+  # process only, capped at
   # `pending_max` (oldest dropped silently once full); the watcher exits with
   # its pane.
   pending=()
@@ -1664,18 +1671,29 @@ if [ "${1:-}" = "--role-watch" ]; then
         [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
         buf="rw-assign-$$"
         if printf 'Assignment: %s' "${pending[0]}" | tmux load-buffer -b "$buf" - 2>/dev/null; then
-          tmux paste-buffer -p -d -b "$buf" -t "$watch_pane" 2>/dev/null || true
-          frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
-          frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
-          if _role_assignment_confirmed "$frame" "${pending[0]}" "$frame_e"; then
-            tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
-            pending=("${pending[@]:1}")
-            unsent=0
-            cooldown=1
-            deferred_since=0
-            deferred_told=0
+          if tmux paste-buffer -p -d -r -b "$buf" -t "$watch_pane" 2>/dev/null; then
+            frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
+            frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
+            if _role_assignment_confirmed "$frame" "${pending[0]}" "$frame_e"; then
+              tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+              pending=("${pending[@]:1}")
+              unsent=0
+              cooldown=1
+              deferred_since=0
+              deferred_told=0
+            else
+              unsent=1
+            fi
           else
-            unsent=1
+            : # paste-buffer failed (tmux hiccup, or the pane closed between
+              # load-buffer and paste-buffer) — do NOT fall through to
+              # _role_assignment_confirmed: nothing was actually pasted, so a
+              # stale frame that happens to still look like an idle box could
+              # get a spurious Enter and pending[0] wrongly dequeued as
+              # delivered. Same reasoning as the load-buffer branch below:
+              # leave $unsent untouched. The loaded buffer ($buf) is left on
+              # the server since -d never ran; harmless — the next attempt
+              # reuses the same PID-derived name and overwrites it.
           fi
         else
           : # load-buffer failed (tmux hiccup); leave $unsent untouched — do

@@ -7366,8 +7366,12 @@ send-keys)
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
   fi
   ;;
-load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+load-buffer)
+  [ -e "$STUB_DIR/load_buffer_fail" ] && exit 1
+  cat >"$STUB_DIR/paste_payload"
+  ;;
 paste-buffer)
+  [ -e "$STUB_DIR/paste_buffer_fail" ] && exit 1
   printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
   if [ -e "$STUB_DIR/flip" ]; then
     rm -f "$STUB_DIR/flip"
@@ -7940,6 +7944,36 @@ _rw_wait_captures() {
   _rw_stop
   [ "$(_rw_paste_payload)" = "Assignment: m04" ]
   run ! grep -qE '^(paste |send-keys -t %6 -l )Assignment: m0[1-3]$' "$STUB_LOG"
+}
+
+@test "role-watch: a load-buffer failure never confirms delivery, and recovers once cleared" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  touch "$STUB_DIR/load_buffer_fail"
+  _rw_start claude
+  sleep 0.8
+  [ "$(_rw_deliveries)" -eq 0 ]
+  run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  rm -f "$STUB_DIR/load_buffer_fail"
+  _rw_wait_deliveries 1
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: a paste-buffer failure never confirms delivery, and recovers once cleared" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  touch "$STUB_DIR/paste_buffer_fail"
+  _rw_start claude
+  sleep 0.8
+  [ "$(_rw_deliveries)" -eq 0 ]
+  run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  rm -f "$STUB_DIR/paste_buffer_fail"
+  _rw_wait_deliveries 1
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
 }
 
 @test "role-watch: pi delivers on an idle frame under LC_ALL=C" {
