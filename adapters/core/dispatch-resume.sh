@@ -139,12 +139,45 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
-# _add_dir_ok, _artifacts_dir_bad, _protocol_dirs_record_bad,
-# _record_protocol_dirs and launch_dir_args: duplicated from dispatch.sh
-# (standalone build), parity-tested like the two above. See dispatch.sh for the
-# grant rules: a claude launch gets the protocol dirs read-only, the branch's
-# artifacts dir write-capable, and the grants in $crew_dir/grants/<branch>,
-# never the add_dir: header lines.
+# _symlink_chain_hops, _add_dir_ok, _artifacts_dir_bad,
+# _protocol_dirs_record_bad, _record_protocol_dirs and launch_dir_args:
+# duplicated from dispatch.sh (standalone build), parity-tested like the two
+# above. See dispatch.sh for the grant rules: a claude launch gets the
+# protocol dirs read-only, the branch's artifacts dir write-capable, and the
+# grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
+_symlink_chain_hops() {
+  local resolved="" comp target budget=40
+  local -a queue tcomps
+  IFS=/ read -r -d '' -a queue < <(printf '%s\0' "${1#/}")
+  while [ "${#queue[@]}" -gt 0 ]; do
+    comp="${queue[0]}"
+    queue=("${queue[@]:1}")
+    case "$comp" in
+    '' | '.') continue ;;
+    '..')
+      [ -z "$resolved" ] || printf '%s\0' "$resolved"
+      resolved="${resolved%/*}"
+      continue
+      ;;
+    esac
+    if [ -L "$resolved/$comp" ]; then
+      budget=$((budget - 1))
+      [ "$budget" -gt 0 ] || return 1
+      printf '%s\0' "$resolved/$comp"
+      # the x sentinel keeps a target's trailing newline from $(...) stripping
+      target="$(readlink -n -- "$resolved/$comp" && printf x)" || return 1
+      target="${target%x}"
+      [[ $target == /* ]] || target="$resolved/$target"
+      resolved=""
+      IFS=/ read -r -d '' -a tcomps < <(printf '%s\0' "${target#/}")
+      queue=("${tcomps[@]}" "${queue[@]}")
+    else
+      resolved="$resolved/$comp"
+    fi
+  done
+  printf '%s\0' "$resolved"
+}
+
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -172,23 +205,46 @@ _add_dir_ok() {
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
     if [ -d "$h/$s" ]; then
-      local _f _g
+      local _f _l _hop _hf _n
+      local -a _hops
       _f=$(mktemp) || return 1
-      _g=$(mktemp) || { rm -f "$_f"; return 1; }
       find -H "$h/$s" -maxdepth 2 -type l -print0 > "$_f" 2>/dev/null || {
-        rm -f "$_f" "$_g"; printf >&2 'dispatch: find failed scanning %s for symlinks; refusing the grant\n' "$h/$s"; return 1
+        rm -f "$_f"; printf >&2 'dispatch: find failed scanning %s for symlinks; refusing the grant\n' "$h/$s"; return 1
       }
-      xargs -0r realpath -mz -- < "$_f" > "$_g" || {
-        rm -f "$_f" "$_g"; printf >&2 'dispatch: realpath failed resolving symlinks in %s; refusing the grant\n' "$h/$s"; return 1
-      }
-      rm -f "$_f"
       # shellcheck disable=SC2094 # rm only in the early-exit || branch, not while reading
-      while IFS= read -r -d '' r; do
-        [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || { rm -f "$_g"; return 1; }
-      done < "$_g"
-      rm -f "$_g"
+      while IFS= read -r -d '' _l; do
+        _hf=$(mktemp) || { rm -f "$_f"; return 1; }
+        if ! _symlink_chain_hops "$_l" > "$_hf"; then
+          rm -f "$_f" "$_hf"
+          printf >&2 'dispatch: symlink chain too deep or unreadable resolving %s; refusing the grant\n' "$_l"
+          return 1
+        fi
+        _hops=()
+        while IFS= read -r -d '' _hop; do
+          _hops+=("$_hop")
+        done < "$_hf"
+        rm -f "$_hf"
+        for _hop in "${_hops[@]}"; do
+          [[ "$_hop/" != "$p/"* ]] || { rm -f "$_f"; return 1; }
+        done
+        _n="${#_hops[@]}"
+        if [ "$_n" -gt 0 ]; then
+          _hop="${_hops[$((_n - 1))]}"
+          [[ "$p/" != "$_hop/"* ]] || { rm -f "$_f"; return 1; }
+        fi
+      done < "$_f"
+      rm -f "$_f"
     fi
   done
+  local hit
+  hit="$(find "$p" -xdev \( -name .git -o -name .claude \) -print -quit 2>/dev/null)" || {
+    printf >&2 'dispatch: find failed scanning %s for embedded repos; refusing the grant\n' "$p"
+    return 1
+  }
+  if [ -n "$hit" ]; then
+    printf >&2 'dispatch: %s contains a .git or .claude entry (%s); grant its narrowest subdir instead\n' "$p" "$hit"
+    return 1
+  fi
   printf '%s\n' "$p"
 }
 

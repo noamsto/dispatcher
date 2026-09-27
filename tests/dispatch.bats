@@ -5992,6 +5992,147 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ "$status" -eq 0 ]
 }
 
+@test "add-dir: a secrets-dir symlink whose chain hops through another symlink is refused at every hop" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.claude" "$T/roots/chain/real" "$T/roots/hop" "$T/roots/other"
+  ln -s "$T/roots/chain/real" "$T/roots/hop/via"
+  ln -s "$T/roots/hop/via/settings.json" "$HOME/.claude/settings.json"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  for v in "$T/roots/hop" "$T/roots/chain/real"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "chain hop"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/roots/other" --crew-id c1 42 "sibling no hop"
+  [ "$status" -eq 0 ]
+}
+
+@test "add-dir: a symlink chain with .. after a hop still resolves through the hop, not around it" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.claude" "$T/elsewhere/deep/dir" "$T/elsewhere/x" "$T/roots/hop"
+  ln -s "$T/elsewhere/deep/dir" "$T/roots/hop/via"
+  ln -s "$T/roots/hop/via/../../x" "$HOME/.claude/s"
+  export DISPATCH_GRANT_ROOTS="$T/roots:$T/elsewhere"
+  for v in "$T/roots/hop" "$T/elsewhere/x" "$T/elsewhere/deep"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "dotdot after hop"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a secrets-dir symlink cycle is refused, not followed forever" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.claude" "$T/roots/sub"
+  ln -s "$T/roots/b" "$HOME/.claude/a"
+  ln -s "$HOME/.claude/a" "$T/roots/b"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  for v in "$T/roots" "$T/roots/sub"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "symlink cycle"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: symlink chain too deep or unreadable resolving $HOME/.claude/a; refusing the grant"* ]]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a stow link whose .. climbs past \$HOME does not refuse an unrelated grant under \$HOME" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home/me"
+  mkdir -p "$HOME/.config" "$HOME/src/proj" "$T/opt/dotfiles/nvim/.config/nvim"
+  # The .. arm backs out through $HOME and $T/home: both are hops, and a grant
+  # under $HOME sits inside them without being able to retarget either.
+  ln -s ../../../opt/dotfiles/nvim/.config/nvim "$HOME/.config/nvim"
+  export DISPATCH_GRANT_ROOTS="$HOME/src:$T/opt"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$HOME/src/proj" --crew-id c1 42 "stow link"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refused"* ]]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/opt/dotfiles" --crew-id c1 42 "stow target"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/opt/dotfiles' refused"* ]]
+}
+
+@test "add-dir: a grant containing another repo's .git is refused, a sibling without one is granted" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$T/repos/other-repo/.git/hooks" "$T/repos/other-repo/subdir"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/other-repo" --crew-id c1 42 "embedded git"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $T/repos/other-repo contains a .git or .claude entry ($T/repos/other-repo/.git)"* ]]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/other-repo' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/other-repo/subdir" --crew-id c1 42 "narrow subdir"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-narrow-subdir")" = "$T/repos/other-repo/subdir" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/proj" --crew-id c1 43 "plain dir"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/43-plain-dir")" = "$T/repos/proj" ]
+}
+
+@test "add-dir: a grant containing a linked-worktree-style .git FILE is refused" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/wt"
+  printf 'gitdir: /somewhere/else\n' >"$T/repos/wt/.git"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/wt" --crew-id c1 42 "git file"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/wt' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a grant containing a nested repo several levels down is refused" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/mono/vendor/nested-repo/.git"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/mono" --crew-id c1 42 "nested repo"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/mono' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "add-dir: a grant containing another repo's .claude is refused" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$T/repos/other-repo/.claude" "$T/repos/other-repo/subdir"
+  touch "$T/repos/other-repo/.claude/settings.json"
+  export DISPATCH_GRANT_ROOTS="$T/repos"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/other-repo" --crew-id c1 42 "embedded claude"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: $T/repos/other-repo contains a .git or .claude entry ($T/repos/other-repo/.claude)"* ]]
+  [[ "$output" == *"dispatch: --add-dir '$T/repos/other-repo' refused"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/other-repo/subdir" --crew-id c1 42 "narrow subdir"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-narrow-subdir")" = "$T/repos/other-repo/subdir" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/repos/proj" --crew-id c1 43 "plain dir"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/43-plain-dir")" = "$T/repos/proj" ]
+}
+
 @test "add-dir: HOME's unresolved parent is refused when HOME is a symlink" {
   stub_launch_bins
   T="$(realpath "$BATS_TEST_TMPDIR")"
@@ -6068,6 +6209,25 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
   : >"$STUB_LOG"
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" != *"$T/repos/proj"* ]]
+}
+
+@test "add-dir: --spawn-role drops a recorded grant that now contains a .git" {
+  _spawn_role_fixture
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
+  printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
+  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $T/repos/proj "* ]]
+
+  mkdir -p "$T/repos/proj/.git/hooks"
+  : >"$STUB_LOG"
+  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
@@ -7702,6 +7862,7 @@ _escalation_seed_spoof() {
   # and verify the grant is refused with the wire message. Red on main
   # because main silently ignores the find failure (process substitution
   # loses the exit status).
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
   eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
 
   T="$(realpath "$BATS_TEST_TMPDIR")"
@@ -7721,4 +7882,62 @@ STUBEOF
   run _add_dir_ok "$T/roots/proj"
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: find failed scanning"* ]]
+  [[ "$output" == *"for symlinks"* ]]
+}
+
+@test "add-dir: _add_dir_ok fail-closed when find exits 1 scanning for embedded repos" {
+  # Unit test: same extraction, but with no secrets dirs present at all so
+  # the pre-existing secrets-dir scan's find call never runs (its "[ -d
+  # "$h/$s" ]" guard skips every iteration), and the stubbed find fails only
+  # the new #503 embedded-repo scan. Proves the #503 find call is fail-closed
+  # in its own right, distinct from the secrets-dir scan above.
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME" "$T/roots/proj"
+
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  crew_dir="$T/crew"
+
+  stub_bin find
+  cat >"$STUB_DIR/find" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 1
+STUBEOF
+  chmod +x "$STUB_DIR/find"
+
+  run _add_dir_ok "$T/roots/proj"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: find failed scanning"* ]]
+  [[ "$output" == *"for embedded repos"* ]]
+}
+
+@test "add-dir: a newline inside a secrets-dir link's name or target does not split or truncate its hops" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  nl=$'\n'
+  mkdir -p "$HOME/.ssh" "$HOME/.gnupg" "$HOME/.aws" "$T/roots/ok" "$T/roots/c" \
+    "$T/roots/real${nl}X/sub" "$T/roots/t${nl}/sub"
+  # Embedded newline in the target: the true final hop is inside the grant.
+  ln -s "$T/roots/real${nl}X/sub" "$HOME/.ssh/l"
+  ln -s "$T/roots/real${nl}X" "$T/roots/g1"
+  # Trailing newline in the target, which $(readlink) alone would strip: the
+  # grant is inside the true final hop.
+  ln -s "$T/roots/t${nl}" "$HOME/.gnupg/t"
+  ln -s "$T/roots/t${nl}/sub" "$T/roots/g2"
+  # Newline in the discovered link's own name.
+  ln -s "$T/roots/c" "$HOME/.aws/n${nl}b"
+  for v in "$T/roots/g1" "$T/roots/g2" "$T/roots/c"; do
+    run _add_dir_ok "$v"
+    [ "$status" -eq 1 ]
+  done
+  run _add_dir_ok "$T/roots/ok"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/ok" ]
 }

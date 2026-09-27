@@ -337,8 +337,38 @@ is back.
   `~/.codex`, `~/.kube`, `~/.docker`, `~/.password-store`, `~/.local/share/keyrings`,
   `~/.cargo`, `~/.azure`, `~/.terraform.d`, `~/.gradle`, `~/.m2`, `~/.mozilla` or
   `~/.var`, as defence in depth. Symlinks up to two levels deep inside those dirs
-  are resolved too, so a root holding a home-manager/stow link target from them
-  is refused there.
+  are found, and every hop of each one's chain is now walked, not just its
+  fully-resolved final target: a grant containing any hop is refused (the worker
+  could retarget or replace it), and so is a grant inside the final target — so a
+  root holding a home-manager/stow link target from them is refused there even
+  when it reaches the root only through an intermediate directory symlink partway
+  along the chain. A grant merely inside an intermediate hop (e.g. under `$HOME`
+  when a stow link's `../../..` backs out through it) is not refused: that cannot
+  retarget the hop itself. Hops travel NUL-delimited, so a path holding a literal
+  newline is checked as one path, not split. A symlink cycle, or a `readlink`
+  failure on a hop, now fails closed (refuses every `--add-dir` on the machine)
+  rather than the silent tolerance a plain `realpath` resolution would give a
+  loop; a directory this user cannot search reads as "not a symlink" and is
+  walked past textually, not specially handled.
+
+  A grant is also refused outright if its tree contains a `.git` or `.claude`
+  entry anywhere inside it (any depth, any type — directory, file, or symlink,
+  so a linked git worktree's `.git` file and a submodule's both count — bounded
+  to one filesystem): granting a whole repo checkout would otherwise make its
+  `.git/hooks` (code execution on the human's next `git` command there) and
+  `.claude/settings*.json` (hooks/permissions for the next claude session
+  there) read-write to the worker. Grant the narrowest subdir instead (e.g.
+  `~/other-repo/docs`, not `~/other-repo`). This check runs at grant time only:
+  a worker can still create a `.git`/`.claude` inside an already-issued grant
+  afterward; the next re-check (resume, `--spawn-role`, a re-dispatch) is what
+  catches a literally-named one, dropping the grant via the "dropping invalid
+  grant" path. Neither the grant-time check nor that re-check chases a
+  `.git`/`.claude` reached only through a directory symlink planted inside the
+  granted tree: a worker holding an active grant can plant one pointing at a
+  `.git`-containing location elsewhere, and every later re-check still passes
+  while claude's own file tools follow the link at use time. That is an
+  accepted, narrower defence-in-depth boundary than the secrets-dir
+  symlink-chain check above, kept narrow to bound the scan's cost.
   The grant is read-write **in effect** for a claude worker:
   it is a working directory, so prompt-free reads and edits (per the permission mode)
   both land there, not just reads — including planting symlinks. It is recorded in

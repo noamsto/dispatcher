@@ -773,20 +773,74 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
+# _symlink_chain_hops <path> — print, NUL-terminated, every symlink's own
+# discovered location while walking <path> component by component (not
+# `realpath`: a raw component-at-a-time walk, so a `..` in a target is
+# resolved against whatever is *actually* resolved so far, even when that
+# required following a symlink first), every directory a `..` backs out of,
+# and the fully resolved path last. <path> need not exist past its last real
+# component. Paths and link targets are split and captured NUL-safely, so a
+# component holding a literal newline stays one component. Fails closed
+# (silent, nonzero) on a readlink failure or past a bounded hop budget (a
+# symlink cycle) — a caller that used a partial hop list on failure would be
+# less safe than refusing outright. A component this user cannot search
+# reads as "not a symlink" and is walked past textually, same as it would be
+# for anyone without search access to it.
+_symlink_chain_hops() {
+  local resolved="" comp target budget=40
+  local -a queue tcomps
+  IFS=/ read -r -d '' -a queue < <(printf '%s\0' "${1#/}")
+  while [ "${#queue[@]}" -gt 0 ]; do
+    comp="${queue[0]}"
+    queue=("${queue[@]:1}")
+    case "$comp" in
+    '' | '.') continue ;;
+    '..')
+      [ -z "$resolved" ] || printf '%s\0' "$resolved"
+      resolved="${resolved%/*}"
+      continue
+      ;;
+    esac
+    if [ -L "$resolved/$comp" ]; then
+      budget=$((budget - 1))
+      [ "$budget" -gt 0 ] || return 1
+      printf '%s\0' "$resolved/$comp"
+      # the x sentinel keeps a target's trailing newline from $(...) stripping
+      target="$(readlink -n -- "$resolved/$comp" && printf x)" || return 1
+      target="${target%x}"
+      [[ $target == /* ]] || target="$resolved/$target"
+      resolved=""
+      IFS=/ read -r -d '' -a tcomps < <(printf '%s\0' "${target#/}")
+      queue=("${tcomps[@]}" "${queue[@]}")
+    else
+      resolved="$resolved/$comp"
+    fi
+  done
+  printf '%s\0' "$resolved"
+}
+
 # _add_dir_ok <path> — print <path>'s canonical form if it may be granted to a
-# worker as an extra directory, else fail without a word (the dispatch-time
-# caller words its own refusal). Grantable only when <path> resolves inside a
-# resolved root from $DISPATCH_GRANT_ROOTS (colon-separated); unset or empty
-# grants nothing, so an unconfigured machine refuses every --add-dir. A root
-# is skipped if it isn't absolute or existing, is /, or is $HOME or an
-# ancestor of it under either spelling. Inside a root, defence in depth still
-# refuses /, $HOME or an ancestor of it, anything inside or above $crew_dir
-# (the grant records, bus log and launch scripts would become writable), and
-# anything inside or above a secrets/credentials dir under $HOME, matched both
-# as spelled and as resolved, so a ~/.ssh symlinked into /persist is still
-# caught. ~/.config is refused whole: gh, gcloud and most other CLIs keep
-# their credentials under it. Symlinks up to two levels deep inside a secrets
-# dir are resolved too, so a home-manager/stow link into a root is caught.
+# worker as an extra directory, else fail. The root, $HOME, $crew_dir and
+# secrets-dir checks fail silently (the dispatch-time caller words its own
+# refusal); a symlink chain too deep or unreadable, a .git/.claude hit, and a
+# failed find scan also print their own reason to stderr. Grantable only when
+# <path> resolves inside a resolved root from $DISPATCH_GRANT_ROOTS
+# (colon-separated); unset or empty grants nothing, so an unconfigured machine
+# refuses every --add-dir. A root is skipped if it isn't absolute or existing,
+# is /, or is $HOME or an ancestor of it under either spelling. Inside a root,
+# defence in depth still refuses /, $HOME or an ancestor of it, anything
+# inside or above $crew_dir (the grant records, bus log and launch scripts
+# would become writable), and anything inside or above a secrets/credentials
+# dir under $HOME, matched both as spelled and as resolved, so a ~/.ssh
+# symlinked into /persist is still caught. ~/.config is refused whole: gh,
+# gcloud and most other CLIs keep their credentials under it. Symlinks up to
+# two levels deep inside a secrets dir are found and every hop of each one's
+# chain is walked: a grant containing any hop is refused (the worker could
+# retarget or replace it), so a home-manager/stow link into a root is caught
+# even when it reaches the root through an intermediate directory symlink,
+# and a grant inside the chain's final target is refused. A grant merely
+# inside an intermediate hop is not: that cannot retarget the hop itself.
+# A later check also refuses a grant containing a .git or .claude entry.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -814,23 +868,46 @@ _add_dir_ok() {
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
     if [ -d "$h/$s" ]; then
-      local _f _g
+      local _f _l _hop _hf _n
+      local -a _hops
       _f=$(mktemp) || return 1
-      _g=$(mktemp) || { rm -f "$_f"; return 1; }
       find -H "$h/$s" -maxdepth 2 -type l -print0 > "$_f" 2>/dev/null || {
-        rm -f "$_f" "$_g"; printf >&2 'dispatch: find failed scanning %s for symlinks; refusing the grant\n' "$h/$s"; return 1
+        rm -f "$_f"; printf >&2 'dispatch: find failed scanning %s for symlinks; refusing the grant\n' "$h/$s"; return 1
       }
-      xargs -0r realpath -mz -- < "$_f" > "$_g" || {
-        rm -f "$_f" "$_g"; printf >&2 'dispatch: realpath failed resolving symlinks in %s; refusing the grant\n' "$h/$s"; return 1
-      }
-      rm -f "$_f"
       # shellcheck disable=SC2094 # rm only in the early-exit || branch, not while reading
-      while IFS= read -r -d '' r; do
-        [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || { rm -f "$_g"; return 1; }
-      done < "$_g"
-      rm -f "$_g"
+      while IFS= read -r -d '' _l; do
+        _hf=$(mktemp) || { rm -f "$_f"; return 1; }
+        if ! _symlink_chain_hops "$_l" > "$_hf"; then
+          rm -f "$_f" "$_hf"
+          printf >&2 'dispatch: symlink chain too deep or unreadable resolving %s; refusing the grant\n' "$_l"
+          return 1
+        fi
+        _hops=()
+        while IFS= read -r -d '' _hop; do
+          _hops+=("$_hop")
+        done < "$_hf"
+        rm -f "$_hf"
+        for _hop in "${_hops[@]}"; do
+          [[ "$_hop/" != "$p/"* ]] || { rm -f "$_f"; return 1; }
+        done
+        _n="${#_hops[@]}"
+        if [ "$_n" -gt 0 ]; then
+          _hop="${_hops[$((_n - 1))]}"
+          [[ "$p/" != "$_hop/"* ]] || { rm -f "$_f"; return 1; }
+        fi
+      done < "$_f"
+      rm -f "$_f"
     fi
   done
+  local hit
+  hit="$(find "$p" -xdev \( -name .git -o -name .claude \) -print -quit 2>/dev/null)" || {
+    printf >&2 'dispatch: find failed scanning %s for embedded repos; refusing the grant\n' "$p"
+    return 1
+  }
+  if [ -n "$hit" ]; then
+    printf >&2 'dispatch: %s contains a .git or .claude entry (%s); grant its narrowest subdir instead\n' "$p" "$hit"
+    return 1
+  fi
   printf '%s\n' "$p"
 }
 
@@ -2510,7 +2587,7 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")
