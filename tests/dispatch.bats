@@ -5852,10 +5852,8 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   ln -s "$T/data/u" "$T/homes/u"
   HOME="$T/homes/u"
   export DISPATCH_GRANT_ROOTS="$T/homes"
-  # Passes through root invalidity (R3): $T/homes is $HOME's ancestor as
-  # spelled, so the root itself is skipped and grants nothing. R5's per-grant
-  # spelled-$HOME check would refuse the same candidates but never runs — no
-  # valid root reaches it.
+  # $T/homes is $HOME's ancestor as spelled, so the root itself is skipped and
+  # grants nothing.
   for v in "$T/homes" "$T/homes/other"; do
     DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "home symlink"
     [ "$status" -eq 1 ]

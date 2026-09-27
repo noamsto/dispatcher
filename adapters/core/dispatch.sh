@@ -778,17 +778,15 @@ write_launch_script() {
 # caller words its own refusal). Grantable only when <path> resolves inside a
 # resolved root from $DISPATCH_GRANT_ROOTS (colon-separated); unset or empty
 # grants nothing, so an unconfigured machine refuses every --add-dir. A root
-# is skipped (grants nothing) if it isn't absolute or existing, is /, or is
-# $HOME or an ancestor of it under either spelling. Inside an allowed root,
-# the retained refusals are defence in depth: anything not an existing
-# absolute directory, /, $HOME or an ancestor of it, anything inside or above
-# $crew_dir (the grant records, bus log and launch scripts would become
-# writable), and anything inside or above a secrets/credentials dir under
-# $HOME, matched both as spelled and as resolved, so a ~/.ssh symlinked into
-# /persist is still caught. ~/.config is refused whole: gh, gcloud and most
-# other CLIs keep their credentials under it. Symlinks up to two levels deep
-# inside a secrets dir are resolved too, so a home-manager/stow link into a
-# root is caught.
+# is skipped if it isn't absolute or existing, is /, or is $HOME or an
+# ancestor of it under either spelling. Inside a root, defence in depth still
+# refuses /, $HOME or an ancestor of it, anything inside or above $crew_dir
+# (the grant records, bus log and launch scripts would become writable), and
+# anything inside or above a secrets/credentials dir under $HOME, matched both
+# as spelled and as resolved, so a ~/.ssh symlinked into /persist is still
+# caught. ~/.config is refused whole: gh, gcloud and most other CLIs keep
+# their credentials under it. Symlinks up to two levels deep inside a secrets
+# dir are resolved too, so a home-manager/stow link into a root is caught.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
