@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "preToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "/scratch/fake/notes.txt"
+  }
+}

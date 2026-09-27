@@ -59,8 +59,8 @@ cursor_read_file() { # <path>
     '{hook_event_name:"beforeReadFile",cursor_version:"2026.09.23",file_path:$p,content:"FAKE=1",attachments:[]}'
 }
 
-# cursor preToolUse Read/Grep keys: createToolInput in the cursor-agent
-# 2026.09.23 bundle.
+# cursor preToolUse Read/Grep keys confirmed by a live capture from
+# cursor-agent 2026.09.26-dd393fe on 2026-09-27.
 cursor_pre_read() { # <path>
   jq -nc --arg p "$1" \
     '{hook_event_name:"preToolUse",cursor_version:"2026.09.23",tool_name:"Read",tool_input:{file_path:$p},cwd:""}'
@@ -466,7 +466,8 @@ assert_allow() {
 }
 
 # ---------------------------------------------------------------------------
-# cursor preToolUse Read/Grep (keys from the shipped bundle)
+# cursor preToolUse Read/Grep
+# cursor-agent 2026.09.26-dd393fe on 2026-09-27
 # ---------------------------------------------------------------------------
 
 @test "secret-read-guard: cursor preToolUse Grep content over .env denies in cursor shape" {
@@ -491,6 +492,18 @@ assert_allow() {
 
 @test "secret-read-guard: cursor preToolUse Read of a source file allows" {
   run run_guard <<<"$(cursor_pre_read '/w/a.go')"
+  assert_allow
+}
+
+# cursor-agent 2026.09.26-dd393fe on 2026-09-27. Fixtures are that capture with
+# home paths rewritten to /scratch/fake/ and session fields stripped.
+@test "secret-read-guard: captured cursor preToolUse Read of a fake path allows" {
+  run run_guard < "$BATS_TEST_DIRNAME/fixtures/cursor-pretool-read.json"
+  assert_allow
+}
+
+@test "secret-read-guard: captured cursor preToolUse Grep of a fake path allows" {
+  run run_guard < "$BATS_TEST_DIRNAME/fixtures/cursor-pretool-grep.json"
   assert_allow
 }
 
