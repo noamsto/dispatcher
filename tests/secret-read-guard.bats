@@ -616,17 +616,19 @@ assert_allow_within() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 60 KB slash-free word beside a credential read denies in under 3.5 s under every awk" {
+@test "secret-read-guard: a 60 KB slash-free word beside a credential read denies in under 5 s under every awk" {
   local hex
   hex=$(printf 'ab%.0s' $(seq 1 30000))
-  assert_deny_within_each_awk 3500 "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
+  assert_deny_within_each_awk 5000 "$(claude_bash "head -c 64 .env && printf %s ${hex} | xxd -r -p > blob.bin")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 48 KB chain of credential names denies in under 3.5 s under every awk" {
+@test "secret-read-guard: a 48 KB chain of credential names denies in under 5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 12000))
-  assert_deny_within_each_awk 3500 "$(claude_bash "cat .env ${body}")"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
+  assert_deny_within_each_awk 5000 "$(claude_bash "cat .env ${body}")"
 }
 
 # The awk template strip must stay byte-for-byte what sed -E did with
@@ -671,27 +673,27 @@ assert_allow_within() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 3 s under every awk" {
+@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
-  assert_deny_within_each_awk 3000 "$(claude_bash "cat .env ${body} .env.example")"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
+  assert_deny_within_each_awk 5000 "$(claude_bash "cat .env ${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 3 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
-  assert_deny_within_each_awk 3000 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
+  assert_deny_within_each_awk 5000 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 3 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
-  assert_deny_within_each_awk 3000 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware; the pre-fix quadratic case (~3.4 s local / ~10 s CI) is still reliably caught on CI even at 5000 ms, though it may not exceed 5000 ms on a fast local machine.
+  assert_deny_within_each_awk 5000 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
 }
 
 # bats test_tags=timing
@@ -1463,8 +1465,9 @@ nested_backticks() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny in under 3.5 s under every awk" {
-  assert_deny_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14)")"
+@test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny in under 5 s under every awk" {
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
+  assert_deny_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14)")"
 }
 
 # bats test_tags=timing
@@ -1608,17 +1611,19 @@ assert_allow_within_each_awk() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB backticked commit body allows in under 3.5 s under every awk" {
+@test "secret-read-guard: a 100 KB backticked commit body allows in under 5 s under every awk" {
   local body
   # 900 reps keeps the whole payload under Linux's 128 KiB single-argv-string
   # cap (MAX_ARG_STRLEN) that claude_bash's jq --arg would otherwise blow.
   body=$(printf 'fix(x): handle `foo` in `bar`\n\nReads `DISPATCHER_X` env var and `set -e`. A stray ` tick.\n`env vars` are documented; `export FOO=1` too.\n%.0s' $(seq 1 900))
-  assert_allow_within_each_awk 3500 "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
+  assert_allow_within_each_awk 5000 "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: 14 nested levels of backticks around a harmless command allow in under 3.5 s under every awk" {
-  assert_allow_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14 date)")"
+@test "secret-read-guard: 14 nested levels of backticks around a harmless command allow in under 5 s under every awk" {
+  # Bound 5000 ms: CI's serial timing step runs alone on slow runner hardware (measured 3059/3768 ms there, see #513/#491); a quadratic regression still costs ~10x the fixed case.
+  assert_allow_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14 date)")"
 }
 
 # bats test_tags=timing

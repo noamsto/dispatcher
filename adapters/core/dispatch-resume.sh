@@ -174,10 +174,10 @@ _add_dir_ok() {
       _f=$(mktemp) || return 1
       _g=$(mktemp) || { rm -f "$_f"; return 1; }
       find -H "$h/$s" -maxdepth 2 -type l -print0 > "$_f" 2>/dev/null || {
-        rm -f "$_f" "$_g"; printf >&2 'wire: _add_dir_ok: find failed for %s\n' "$s"; return 1
+        rm -f "$_f" "$_g"; printf >&2 'dispatch: find failed scanning %s for symlinks; refusing the grant\n' "$h/$s"; return 1
       }
       xargs -0r realpath -mz -- < "$_f" > "$_g" || {
-        rm -f "$_f" "$_g"; printf >&2 'wire: _add_dir_ok: realpath pipeline failed for %s\n' "$s"; return 1
+        rm -f "$_f" "$_g"; printf >&2 'dispatch: realpath failed resolving symlinks in %s; refusing the grant\n' "$h/$s"; return 1
       }
       rm -f "$_f"
       # shellcheck disable=SC2094 # rm only in the early-exit || branch, not while reading

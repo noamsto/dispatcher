@@ -7372,5 +7372,5 @@ STUBEOF
 
   run _add_dir_ok "$T/roots/proj"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"wire: _add_dir_ok: find failed"* ]]
+  [[ "$output" == *"dispatch: find failed scanning"* ]]
 }
