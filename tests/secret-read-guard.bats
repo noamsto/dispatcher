@@ -627,6 +627,47 @@ assert_allow_within() {
   assert_deny_within_each_awk 3500 "$(claude_bash "cat .env ${body}")"
 }
 
+# The awk template strip must stay byte-for-byte what sed -E did with
+# template_re: an over-strip there is an allow. sed is the oracle, built from the
+# guard's own template_re so a word added to one and not the other fails here.
+@test "secret-read-guard: the awk template strip equals the sed -E strip it replaced, under every awk" {
+  local template_re awk_strip line mode name awk_path expected got
+  eval "$(grep -m1 '^template_re=' "$GUARD")"
+  eval "$(sed -n "/^awk_strip='/,/^}'\$/p" "$GUARD")"
+  local -a lines=(
+    'cat .env.example' 'cat .env.template .env.sample .env.dist' '.env.env.example'
+    '.env..example' '.env.example.example' '.env.examples' '.env.examples.foo'
+    '.env.example.local' '.env.example*' '.env.example?' '.env.example[' '.env.example,x'
+    '.env.example/.env.example' 'x.env.sample-' '.foo/.env.dist' 'a.env.example.' '.env.'
+    '.env.example.env' '.example.env.example' '.env.x.env.example.y.dist' '.env.dist2.dist'
+    '.env.local .env.example {.env.example,.env}' '.env .env.example .env' 'env.example'
+    '.env.example.template.' 'cat .env.example; .env.sample' '.env.a.b.c.example' '' '.' '..'
+  )
+  local -a modes=(0 1) awks=("")
+  for name in mawk nawk busybox-awk; do
+    awk_path=$(command -v "$name") || continue
+    mkdir -p "$BATS_TEST_TMPDIR/$name"
+    ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
+    awks+=("$BATS_TEST_TMPDIR/$name")
+  done
+  for line in "${lines[@]}"; do
+    for mode in "${modes[@]}"; do
+      if [[ $mode == 0 ]]; then
+        expected=$(sed -E "s/$template_re//g" <<<"$line")
+      else
+        expected=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$line")
+      fi
+      for awk_path in "${awks[@]}"; do
+        got=$(PATH="${awk_path:+$awk_path:}$PATH" awk -v wide="$mode" "$awk_strip" <<<"$line")
+        [[ $got == "$expected" ]] || {
+          echo "wide=$mode ${awk_path:-default awk}: '$line' -> '$got', sed gives '$expected'" >&2
+          return 1
+        }
+      done
+    done
+  done
+}
+
 @test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 1.5 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))

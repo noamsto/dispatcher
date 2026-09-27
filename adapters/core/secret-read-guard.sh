@@ -140,6 +140,7 @@ template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 # it, so it is neither a start nor an end.
 # shellcheck disable=SC2016
 awk_strip='
+# The words and the character class repeat template_re; a test holds them equal.
 function tword(p) {
   if (substr(p, 1, 7) == "example") return 7
   if (substr(p, 1, 8) == "template") return 8
