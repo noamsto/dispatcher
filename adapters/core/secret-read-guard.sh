@@ -194,21 +194,41 @@ strip_templates() {
 # wrapper's option argument is optional wherever the option could be argument-less;
 # the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
 # fails closed.
-wrap_word='[^[:space:];&|)]+'
-wrap_rest='[^[:space:];&|)]*'
+#
+# wrap_word/wrap_rest keep `)` in the class: mask_cmd rewrites a backtick group
+# to `(`…`)`, and a raw `$(...)` is left as code, so either can fill a wrapper's
+# option argument (`sudo -u $(id -un) env`) instead of stopping the argument at
+# its own closing paren.
+wrap_word='[^[:space:];&|]+'
+wrap_rest='[^[:space:];&|]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 # env's options and NAME=value words: what remains when no command follows is a
 # dump (`env -0`, `env -u X`, `env FOO=1`).
 env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
-cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*)'"$cmd_prefix"
-# Where a bare dumper may end: a separator, a comment, or a redirect (`env >&2`,
-# `env 2>&1`, `env 2>/dev/null`) — the redirect leaves the dump on the terminal
-# or in the transcript regardless.
-dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]'
-env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
+# A slot-free wrapper's option: a dash flag, then optionally one following word
+# that isn't itself a flag — its argument wherever the option has one,
+# argument-less otherwise (same over-scan-toward-allow as sudo_opts/env_opts).
+opt_arg='([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)'
+# ssh/container/kube take a target slot (host, container, pod) that must not be
+# swallowed as a preceding option's argument, so their options are named
+# explicitly, sudo_opts-style, instead of using opt_arg.
+wrap_host='[^-[:space:];&|][^[:space:];&|]*'
+ssh_opts='(([[:space:]]+-[A-Za-z]*[bcDEeFIiJLlmOoPpRSWw][[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
+ctr_opts='(([[:space:]]+-[A-Za-z]*[ewuvplfcH][[:space:]]+'"$wrap_word"')|([[:space:]]+--(env|env-file|volume|workdir|user|name|network|entrypoint|publish|mount|platform|label|file|project-name|profile|context|host)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
+kube_opts='(([[:space:]]+-[A-Za-z]*[cn][[:space:]]+'"$wrap_word"')|([[:space:]]+--(container|namespace|context|kubeconfig)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
+cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+-p)+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+# A bare `)` never starts this anchor (`echo (re)set` stays prose): the case-arm
+# reading requires being preceded by ^, ; & or ` in `, so an unrelated paren
+# elsewhere on the line cannot seed it.
+cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
+# Where a bare dumper may end: a separator, a comment, a redirect (`env >&2`,
+# `env 2>&1`, `env 2>/dev/null`), or stdin (`env <file`, `env <<EOF`) — every
+# path still lands the dump somewhere legible. `<(` is a process substitution,
+# not a redirect, so it is excluded.
+dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]|<([^(]|$)'
+env_dump_re="$cmd_start"'(/[^[:space:];&|()]*/)?(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
-printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
+printenv_secret_re="$cmd_start"'(/[^[:space:];&|()]*/)?printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
 # the LINEAR_API_KEY rotation. `-S`/`--show`/`-p` always print, name or not;
 # the rest dump only when bare: `export NAME=v` or `declare -x NAME=v` just
