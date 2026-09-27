@@ -74,6 +74,17 @@ teardown() {
   done
 }
 
+@test "dispatch-notify.sh's _is_engine_cmd copy matches crew.sh's" {
+  # dispatch-notify.sh is a standalone build with no shared lib, so it carries a
+  # copy of crew.sh's engine-signature table (the #531 child-session guard).
+  # flake.nix excludes the hook from treefmt, so shfmt cannot rewrite the copy
+  # out of sync; byte-compare it instead, like the _bus_append copies above.
+  canonical="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/crew.sh")"
+  [ -n "$canonical" ]
+  found="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/dispatch-notify.sh")"
+  [ "$found" = "$canonical" ]
+}
+
 @test "dispatch.sh's --role-watch prompt signatures match crew.sh's stall-watch" {
   # --role-watch gates send-keys on the same frame signatures stall-watch uses
   # (#445). dispatch.sh is a standalone build with no shared lib, so it carries
