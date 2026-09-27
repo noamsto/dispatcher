@@ -40,7 +40,7 @@ teardown() {
   # the guard has the CPU to itself. Scan by helper name, not by eye, so a
   # new wall-clock test can't land untagged; the tag must sit on the line
   # directly above @test.
-  local helpers='assert_deny_within_each_awk|assert_deny_within|assert_allow_within_each_awk|assert_allow_within'
+  local helpers='assert_deny_within_each_awk|assert_deny_relative|assert_deny_within|assert_allow_within_each_awk|assert_allow_relative|assert_allow_within'
   local file found offenders=""
   for file in "$ROOT"/tests/*.bats; do
     found="$(awk -v helpers="$helpers" '
