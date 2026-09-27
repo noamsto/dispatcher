@@ -711,11 +711,13 @@ command -v dispatch >/dev/null 2>&1 || {
 _escalation_target() {
   local eng="$1" tier="$2" failed="$3"
   case "$eng:$tier:$failed" in
-  claude:standard:sonnet | claude:standard:claude-sonnet-*) printf 'sonnet opus' ;;
+  claude:standard:sonnet | claude:standard:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
   claude:trivial:haiku | claude:trivial:claude-haiku-*) printf 'haiku RECORD_ONLY' ;;
-  # claude:trivial:sonnet→opus removed — trivial tier must not reach above its row (#249 acceptance)
+  # trivial sonnet→opus is an in-row hop; trivial still must not reach fable, above its row (#249)
+  claude:trivial:sonnet | claude:trivial:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
   claude:deep:sonnet | claude:deep:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
   claude:deep:opus | claude:deep:claude-opus-*) printf 'opus RECORD_ONLY' ;;
+  # standard/trivial opus has no in-row rung above it — the dispatcher re-tiers a failure to deep
   codex:standard:gpt-5.6-luna) printf 'luna RECORD_ONLY' ;;
   codex:standard:gpt-5.6-terra) printf 'terra gpt-5.6-sol' ;;
   codex:deep:gpt-5.6-terra) printf 'terra RECORD_ONLY' ;;
@@ -756,12 +758,10 @@ _prior_failed_model() {
 }
 
 # _escalation_model_matches <target> <model> — true when <model> names the
-# escalation <target> exactly (claude's target is the alias `opus`, which the
-# claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
+# escalation <target> exactly (cursor takes `-fast`).
 _escalation_model_matches() {
   local target="$1" m="$2"
   case "$target" in
-  opus) [[ $m =~ ^(opus|claude-opus-.*)$ ]] ;;
   cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
   *) [ "$m" = "$target" ] ;;
   esac
