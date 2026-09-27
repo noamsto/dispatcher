@@ -142,7 +142,11 @@ sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:
 env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
 cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*)'"$cmd_prefix"
-env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*($|[;&|)#]|[0-9]+>)'
+# Where a bare dumper may end: a separator, a comment, or a redirect (`env >&2`,
+# `env 2>&1`, `env 2>/dev/null`) — the redirect leaves the dump on the terminal
+# or in the transcript regardless.
+dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]'
+env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
@@ -154,13 +158,13 @@ printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space
 # functions, not variables), or any flag cluster carrying `p` anywhere
 # (`declare -xp NAME` and `declare -x -p NAME` both print). Bare `export` dumps
 # every exported variable, same as `export -p`.
-declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*($|[;&|)#])|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
-builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)#])|[[:space:]]*($|[;&|)#]))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)#]))'
+declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*('"$dump_end"')|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
+builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|tmux[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|launchctl[[:space:]]+getenv([[:space:]]|'"$dump_end"'))'
 # fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
 # -L) list that scope when no name follows; with a name they're the ordinary
 # `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
 # bash's `set -x` is the harmless xtrace toggle.
-fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*($|[;&|)#])'
+fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*('"$dump_end"')'
 # A `-c` argument is quoted, so mask_quotes alone would erase a dumper the
 # shell actually runs. This only locates where the argument starts (through
 # the interpreter, its flags and trailing whitespace); decode_word extracts it.
@@ -303,6 +307,15 @@ decode_word() {
 #     backticks. The terminator line is not blanked: an arithmetic `1<<X` that
 #     merely looks like a heredoc must not be able to hide a real `X` line.
 # Length-preserving, one pass, like mask_quotes.
+#
+# W=1 (mask_cmd_wide) adds three readings on top, each of which could hide text
+# the W=0 reading shows — so rule 2 searches both, never the wide one alone:
+#   - a `#` right after an opening backtick starts a comment, as bash reads it.
+#   - a heredoc body rewrites backticks, quoted delimiter or not — paired per
+#     line, so no nesting and no span across lines.
+#   - escaped backticks outside heredoc bodies nest to any depth: bash writes a
+#     level-k backtick behind 2^(k-1) - 1 backslashes (0, 1, 3, 7, …). Inside a
+#     backtick frame the same level closes it and any other level opens one.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -322,15 +335,37 @@ function pop() {
   q = sv[sp]
   pd = spd[sp]
 }
-function code(c,    d, o) {
+function tick(n,    k, r, lv) {
+  k = 1
+  r = n
+  while (r % 2 == 1) { r = (r - 1) / 2; k++ }
+  lv = (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) ? slv[sp - 1] : 0
+  if (lv == 0 && k > 1) return BT
+  if (k == lv) { pop(); return ")" }
+  push(k == 1 ? BT : "E", "")
+  slv[sp - 1] = k
+  opn = 1
+  return "("
+}
+function code(c,    d, o, n) {
   d = dl
   dl = 0
   o = " "
+  if (W) {
+    wo = opn
+    opn = 0
+    if (c == BS) bsr++
+    else { n = bsr; bsr = 0 }
+  }
   if (esc) {
     esc = 0
     if (q == "") {
       o = c
-      if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
+      if (W) {
+        if (c == BT) o = tick(n)
+        else if (c == BS && sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
+      }
+      else if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
       else if (c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
     }
   } else if (cm) {
@@ -345,7 +380,7 @@ function code(c,    d, o) {
     if (c == BS) esc = 1
     else if (c == DQ) q = ""
     else if (d && c == "(") { push("(", DQ); o = "(" }
-    else if (c == BT) { push(BT, DQ); o = "(" }
+    else if (c == BT) { push(BT, DQ); o = "("; if (W) { slv[sp - 1] = 1; opn = 1 } }
     else if (c == "$") dl = 1
   } else {
     o = c
@@ -355,13 +390,14 @@ function code(c,    d, o) {
     } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
     else if (c == DQ) { q = DQ; o = " " }
     else if (c == BT) {
-      if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
+      if (W) o = tick(n)
+      else if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
     } else if (c == "(") pd++
     else if (c == ")") {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "#" && wordstart(prev)) cm = 1
+    } else if (c == "#" && (wordstart(prev) || (W && wo))) cm = 1
     else if (c == "$") dl = 1
   }
   return o
@@ -393,7 +429,7 @@ function bodyfeed(c,    w, term) {
     else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
     else bok = 0
   }
-  if (c == BT && !hd_q[hd_i]) {
+  if (c == BT && (W || !hd_q[hd_i])) {
     bbt = !bbt
     printf "%s", (bbt ? "(" : ")")
     return
@@ -439,7 +475,11 @@ function feed(c,    arm, wasesc) {
 }'
 
 mask_cmd() {
-  awk "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=0 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+mask_cmd_wide() {
+  awk -v W=1 "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -612,8 +652,13 @@ credential_read() {
   *.env* | *netrc* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.aws/credentials* | *.pem* | *.p12* | *.pfx*) ;;
   *) return 0 ;;
   esac
-  left=$(sed -E "s/$template_re//g" <<<"$1") || return
-  if ! grep -qE "$cmd_secret_re" <<<"$left"; then
+  if [[ $2 == narrow ]]; then
+    left=$(sed -E "s/$template_re//g" <<<"$1") || return
+    grep -qE "$cmd_secret_re" <<<"$left" || {
+      echo miss
+      return 0
+    }
+  else
     wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1") || return
     grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
   fi
@@ -627,6 +672,30 @@ deny() {
     jq -cn --arg r "$1" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   fi
   exit 0
+}
+
+check_dump_spaces() {
+  local space
+  for space in "$@"; do
+    if grep -qE "$env_dump_re" <<<"$space"; then
+      deny "A bare env/printenv prints every secret in scope into this transcript. Name the one variable you need and test it without echoing its value."
+    fi
+    if grep -qE "$printenv_secret_re" <<<"$space"; then
+      deny "printenv with a secret-named variable prints its live value into this transcript. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+    fi
+    if grep -qE "$builtin_dump_re" <<<"$space"; then
+      deny "This lists or shows shell variables, which prints live values into this transcript — the same leak as env/printenv, just through a different command (set -S, declare -p, show-environment, …). To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+    fi
+  done
+}
+
+check_fish_spaces() {
+  local space
+  for space in "$@"; do
+    if grep -qE "$fish_dump_re" <<<"$space"; then
+      deny "set with only scope flags (-x, -g, -U, …) and no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
+    fi
+  done
 }
 
 case $kind in
@@ -646,19 +715,18 @@ grep)
   # template_re holds two groups).
   path_any=$(sed -E "s/$template_re//g" <<<"$path")
   glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
-  path_left=/ glob_left=/
-  [[ $path_any =~ $secret_path_re ]] || path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
-  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] || glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
-  if [[ $path_any =~ $secret_path_re || $path_left =~ $secret_path_re ]]; then
-    deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
-  fi
-  if [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re || $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
-    deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
-  fi
+  [[ $path_any =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
+  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   # A secret-shaped pattern with content output leaks even when the path is broad.
   if [[ $pattern =~ (API_?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY) ]]; then
     deny "Pattern '$pattern' with content output will print any matching credential line it finds. List only the matching files, or count in the shell (grep -c / rg -c) — you need to know where a key is configured, not what it is."
   fi
+  # The wide strips are the quadratic ones, so they run only after every cheaper
+  # deny above has missed.
+  path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
+  [[ $path_left =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
+  glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
+  [[ $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   ;;
 shell)
   [[ -n $command ]] || exit 0
@@ -677,6 +745,8 @@ shell)
   raw_spaces=("$command")
   search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
   fish_spaces=()
+  subs=()
+  sub_fish=()
   worklist=("$command")
   wi=0
   matches=0
@@ -693,49 +763,62 @@ shell)
     quoted_sub=$(mask_quotes "$sub")
     raw_spaces+=("$sub")
     search_spaces+=("$masked_sub" "$quoted_sub")
-    [[ $interpreter == fish ]] && fish_spaces+=("$masked_sub" "$quoted_sub")
+    subs+=("$sub")
+    if [[ $interpreter == fish ]]; then
+      fish_spaces+=("$masked_sub" "$quoted_sub")
+      sub_fish+=(1)
+    else
+      sub_fish+=(0)
+    fi
     matches=$((matches + 1))
     worklist+=("$sub" "${cur:DECODE_WORD_END}")
   done
-  for space in "${search_spaces[@]}"; do
-    if grep -qE "$env_dump_re" <<<"$space"; then
-      deny "A bare env/printenv prints every secret in scope into this transcript. Name the one variable you need and test it without echoing its value."
-    fi
-    if grep -qE "$printenv_secret_re" <<<"$space"; then
-      deny "printenv with a secret-named variable prints its live value into this transcript. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
-    fi
-    if grep -qE "$builtin_dump_re" <<<"$space"; then
-      deny "This lists or shows shell variables, which prints live values into this transcript — the same leak as env/printenv, just through a different command (set -S, declare -p, show-environment, …). To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
-    fi
-  done
-  for space in "${fish_spaces[@]}"; do
-    if grep -qE "$fish_dump_re" <<<"$space"; then
-      deny "set with only scope flags (-x, -g, -U, …) and no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
-    fi
-  done
+  check_dump_spaces "${search_spaces[@]}"
+  check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"}
 
   if grep -qE "$proc_environ_re" <<<"$command"; then
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
   fi
 
+  # The wide masker adds to the base one and never replaces it; it runs last
+  # because it costs one more awk pass per space.
+  wide_spaces=("$(mask_cmd_wide "$command")")
+  wide_fish_spaces=()
+  for ((i = 0; i < ${#subs[@]}; i++)); do
+    wide_sub=$(mask_cmd_wide "${subs[i]}")
+    wide_spaces+=("$wide_sub")
+    if ((sub_fish[i])); then wide_fish_spaces+=("$wide_sub"); fi
+  done
+  check_dump_spaces "${wide_spaces[@]}"
+  check_fish_spaces ${wide_fish_spaces[@]+"${wide_fish_spaces[@]}"}
+
   # 3. Reading a credential file's content (credential_read, above deny). A
-  #    failed check fails loud rather than allowing.
-  for space in "${raw_spaces[@]}"; do
-    verdict=$(credential_read "$space") || {
-      echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
-      exit 1
-    }
-    case $verdict in
-    interp)
-      deny "Inline interpreter code that names a credential file can print it into this transcript, and the guard cannot tell whether the code reads it. If it only writes or edits the file, run the code from a script file; to confirm a key is configured, use grep -c '^NAME=' (a count)."
-      ;;
-    print)
-      deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
-      ;;
-    grep)
-      deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
-      ;;
-    esac
+  #    failed check fails loud rather than allowing. Every space is judged by
+  #    the narrow name test first; the wide strip runs only on the spaces that
+  #    missed it, so a deny elsewhere never pays for it.
+  missed=()
+  for pass in narrow wide; do
+    if [[ $pass == narrow ]]; then spaces=("${raw_spaces[@]}"); else spaces=("${missed[@]}"); fi
+    for space in "${spaces[@]}"; do
+      verdict=$(credential_read "$space" "$pass") || {
+        echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
+        exit 1
+      }
+      case $verdict in
+      miss)
+        missed+=("$space")
+        ;;
+      interp)
+        deny "Inline interpreter code that names a credential file can print it into this transcript, and the guard cannot tell whether the code reads it. If it only writes or edits the file, run the code from a script file; to confirm a key is configured, use grep -c '^NAME=' (a count)."
+        ;;
+      print)
+        deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
+        ;;
+      grep)
+        deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
+        ;;
+      esac
+    done
   done
   ;;
 esac
