@@ -2699,6 +2699,125 @@ EOF
   [[ "$output" == *"keeping feat/stray-file — uncommitted changes"* ]]
 }
 
+@test "reap: a forged gitlink never runs its gitdir's config (#539)" {
+  # #539: a worker's Edit/Write can rewrite the worktree's .git gitlink to
+  # point at a gitdir it built, and plain `git -C wtpath status` (discovery)
+  # then reads that gitdir's config and runs core.fsmonitor in the
+  # dispatcher's own shell. reap must refuse before any such status call.
+  git commit -q --allow-empty -m init
+  git branch feat/539-a
+  wt_path="$BATS_TEST_TMPDIR/539-a-wt"
+  git worktree add -q "$wt_path" feat/539-a
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  fakegit="$BATS_TEST_TMPDIR/fakegit"
+  cp -r .git "$fakegit"
+  rm -rf "$fakegit/worktrees"
+  git --git-dir="$fakegit" config core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  git --git-dir="$fakegit" symbolic-ref HEAD refs/heads/feat/539-a
+  echo "gitdir: $fakegit" >"$wt_path/.git"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/539-a" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/539-a"* ]]
+  [[ "$output" == *"does not point at its git admin dir"* ]]
+}
+
+@test "reap: a submodule in the worktree is never recursed into (#539)" {
+  # #539: git status by default recurses into a gitlink (mode 160000) index
+  # entry via discovery through sub/.git, which the worker fully controls —
+  # --ignore-submodules=all on the command line is the only thing .gitmodules
+  # cannot override, but reap must refuse before status even runs.
+  git commit -q --allow-empty -m init
+  git branch feat/539-b
+  wt_path="$BATS_TEST_TMPDIR/539-b-wt"
+  git worktree add -q "$wt_path" feat/539-b
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  git init -q "$wt_path/sub"
+  git -C "$wt_path/sub" config user.email test@example.com
+  git -C "$wt_path/sub" config user.name test
+  git -C "$wt_path/sub" commit -q --allow-empty -m sub-init
+  git -C "$wt_path/sub" config core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  sub_oid=$(git -C "$wt_path/sub" rev-parse HEAD)
+  git -C "$wt_path" update-index --add --cacheinfo 160000,"$sub_oid",sub
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/539-b" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/539-b"* ]]
+  [[ "$output" == *"it has submodules"* ]]
+}
+
+@test "reap: a config.worktree in the admin dir is refused (#539)" {
+  # #539: per-worktree config lives in the admin dir and is still read under
+  # an anchored gitdir; it can carry keys no -c list enumerates, so reap must
+  # refuse outright rather than try to filter it.
+  git commit -q --allow-empty -m init
+  git branch feat/539-c
+  wt_path="$BATS_TEST_TMPDIR/539-c-wt"
+  git worktree add -q "$wt_path" feat/539-c
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  git config extensions.worktreeConfig true
+  git -C "$wt_path" config --worktree core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/539-c" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/539-c"* ]]
+  [[ "$output" == *"config.worktree"* ]]
+}
+
 @test "reap: a live engine pane keeps a terminal, merged-PR worktree" {
   # Widening the terminal-state filter (defect 1) must not let an exited
   # worker whose PR merged get reclaimed out from under a human (or another

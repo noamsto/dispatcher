@@ -42,6 +42,12 @@ _worktree_anchor_path() {
   printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
 }
 
+# Unconditional, unlike the advisory hint lib: without it resume must abort,
+# never fall back to discovery in the worker's worktree (#539).
+wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+# shellcheck source=/dev/null
+. "$wt_git_lib"
+
 # _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
 # it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
 # them. Mirrors the grant-record checks in dispatch.sh.
@@ -1234,9 +1240,15 @@ fi
 
 # Exclude rules do not apply to a file git already tracks, so a WORKER_TASK.md
 # committed on this branch escapes the guard above and rides the diff into
-# commits (#397). Warn, naming the fix; never abort and never touch the index
-# here — removing a tracked file is the target repo's job, in its own PR.
-if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+# commits (#397). Warn, naming the fix; never touch the index here — removing
+# a tracked file is the target repo's job, in its own PR. Plain `ls-files`
+# prints the path only if tracked, so a non-zero exit means the index was
+# unreadable or _wt_git refused, which must not pass as "untracked" (#539).
+tracked="$(_wt_git "${_anchor_lines[3]}" "$wt_path" ls-files -- WORKER_TASK.md)" || {
+  echo "dispatch resume: could not read the index at $wt_path" >&2
+  exit 1
+}
+if [ -n "$tracked" ]; then
   echo "dispatch resume: warning: WORKER_TASK.md is tracked on this branch — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
 fi
 if [ -n "$dispatcher_live" ] && [ -n "$dispatcher_pane_new" ]; then

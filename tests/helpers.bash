@@ -46,6 +46,10 @@ setup_repo() {
   git config user.email test@example.com
   git config user.name test
   export TEST_REPO
+  # Raw-source runs (crew.sh/dispatch.sh/dispatch-resume.sh here, not the
+  # `sub`-substituted nix build) never see @worktreeGitLib@ substituted, so
+  # point every test at the repo copy of the anchored-git lib (#539).
+  export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
   # Every engine CLI stubbed by default: dispatch's on-PATH probe
   # (check_engine) must not fail a test merely because this environment (CI)
   # has no real engine CLIs installed. A test that needs a genuinely missing

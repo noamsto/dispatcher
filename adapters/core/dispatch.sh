@@ -347,20 +347,28 @@ _bus_append() {
   printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
 }
 
-# _fetch_origin_branch <name> [dir] — fetch an untrusted (gh/stamp-derived)
-# branch name into refs/remotes/origin/<name> only. A bare positional would parse
-# the name as a refspec (`+refs/heads/x:refs/remotes/origin/main` force-updates
-# origin/main) or a fetch option (`--upload-pack=...`), so it must be a plain
-# branch name and is spelled as an explicit refspec.
+# _fetch_origin_branch <name> — fetch an untrusted (gh/stamp-derived) branch
+# name into refs/remotes/origin/<name> only, always in the dispatcher's own
+# repo. A bare positional would parse the name as a refspec
+# (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
+# fetch option (`--upload-pack=...`), so it must be a plain branch name and is
+# spelled as an explicit refspec. Never run it in a worker's worktree: fetch
+# honours that gitdir's config (#539), and refs/remotes are shared anyway.
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
 }
 _fetch_origin_branch() {
-  local name=$1 dir=${2:-.}
+  local name=$1
   _plain_branch_name "$name" || return 1
-  git -C "$dir" fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
+  git fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
+
+# Unconditional, unlike the advisory hint lib: without it dispatch must abort,
+# never fall back to discovery in a worker's worktree (#539).
+wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+# shellcheck source=/dev/null
+. "$wt_git_lib"
 
 # ssh Host aliases are written github.com-<name>. Anything else (a lookalike
 # host, an extra @, a slash) is not GitHub.
@@ -1137,13 +1145,10 @@ _worktree_anchor_path() {
   printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
 }
 
-# _record_worktree_anchor <worktree> — write the record `dispatch resume`
-# checks its git discovery against (#518). The gitdir comes from the main
-# repo's worktrees/*/gitdir back-pointer: the worktree's own gitlink is
-# worker-writable.
+# _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
+# resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
-  local wt="$1" common="${crew_dir%/crew}" anchor dir bad="" wt_git_real
-  local gitdir_file admin_dir back target admin_real tmp
+  local wt="$1" admin_real="$2" anchor dir bad="" tmp
   anchor="$(_worktree_anchor_path "$wt")"
   dir="$(dirname -- "$anchor")"
   if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
@@ -1153,22 +1158,6 @@ _record_worktree_anchor() {
   fi
   if [ -n "$bad" ]; then
     echo "dispatch: $bad is a symlink or the wrong type — not writing $wt's resume record" >&2
-    return 0
-  fi
-  wt_git_real="$(realpath -m -- "$wt/.git")"
-  for gitdir_file in "$common"/worktrees/*/gitdir; do
-    [ -f "$gitdir_file" ] || continue
-    back="$(head -n1 -- "$gitdir_file")"
-    admin_dir="$(dirname -- "$gitdir_file")"
-    [[ $back == /* ]] || back="$admin_dir/$back"
-    target="$(realpath -m -- "$back")"
-    if [ "$target" = "$wt_git_real" ]; then
-      admin_real="$(realpath -e -- "$admin_dir")"
-      break
-    fi
-  done
-  if [ -z "${admin_real:-}" ]; then
-    echo "dispatch: no git admin dir for $wt — not writing its resume record" >&2
     return 0
   fi
   (
@@ -3540,6 +3529,13 @@ if [ -z "$wt_path" ]; then
   exit 1
 fi
 
+# Every git call into the worktree below goes through this admin dir, never
+# through the worktree's own (worker-writable) gitlink (#539).
+wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
+  echo "dispatch: no git admin dir for $wt_path" >&2
+  exit 1
+}
+
 # Pre-trust the worktree for claude (#40). Claude Code keys workspace trust by
 # absolute path in ~/.claude.json under .projects["<path>"].hasTrustDialogAccepted
 # — confirmed by inspecting an already-trusted checkout's own entry there, not
@@ -3624,19 +3620,24 @@ fi
 # attaches to an existing worktree without fetching or resetting it, so a
 # stale local branch would otherwise go unnoticed.
 if [ -n "$pr_number" ]; then
-  worktree_head="$(git -C "$wt_path" rev-parse HEAD)"
+  worktree_head="$(_wt_git "$wt_admin" "$wt_path" rev-parse HEAD)"
   if [ "$worktree_head" != "$head_oid" ]; then
     # A worker's own WORKER_TASK.md is intentionally untracked and is only
     # trashed by `crew reap`, not on reclaim, so it alone must not count as
-    # dirty.
-    dirt="$(git -C "$wt_path" status --porcelain | grep -v '^?? WORKER_TASK\.md$' || true)"
+    # dirty. Captured first so the grep's `|| true` cannot mask a failed
+    # status as clean.
+    st="$(_wt_status "$wt_admin" "$wt_path")" || {
+      echo "dispatch: git status failed for $wt_path — refusing to reset" >&2
+      exit 1
+    }
+    dirt="$(printf '%s\n' "$st" | grep -v '^?? WORKER_TASK\.md$' || true)"
     if [ -z "$dirt" ]; then
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid — fetching and hard-resetting" >&2
-      _fetch_origin_branch "$head" "$wt_path" || {
+      _fetch_origin_branch "$head" || {
         echo "dispatch: PR head '$head' is not a plain branch name or could not be fetched from origin" >&2
         exit 1
       }
-      git -C "$wt_path" reset --hard "$head_oid"
+      _wt_git "$wt_admin" "$wt_path" reset --hard "$head_oid"
     else
       echo "dispatch: worktree HEAD $worktree_head != PR $pr_number head $head_oid, and the worktree has uncommitted changes — refusing to reset. Resolve manually at $wt_path, then re-dispatch." >&2
       exit 1
@@ -3813,7 +3814,7 @@ if bad="$(_protocol_dirs_record_bad)"; then
   exit 1
 fi
 _record_protocol_dirs "$wt_path"
-_record_worktree_anchor "$wt_path"
+_record_worktree_anchor "$wt_path" "$wt_admin"
 
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
@@ -3867,11 +3868,17 @@ fi
 # Exclude rules do not apply to a file git already tracks, so once a
 # WORKER_TASK.md slips into the base being dispatched the guard above is
 # silently void — the worker's stamped doc rides its diff into every commit
-# until someone removes it (#397). Warn, naming the fix; never abort and never
-# touch the index here (removing a tracked file is the target repo's job, in
-# its own PR). The check is against the dispatched worktree, which sits at that
-# base for a create.
-if git -C "$wt_path" ls-files --error-unmatch -- WORKER_TASK.md >/dev/null 2>&1; then
+# until someone removes it (#397). Warn, naming the fix; never touch the index
+# here (removing a tracked file is the target repo's job, in its own PR). The
+# check is against the dispatched worktree, which sits at that base for a
+# create. Plain `ls-files` prints the path only if tracked, so a non-zero exit
+# means the index was unreadable or _wt_git refused, which must not pass as
+# "untracked" (#539).
+tracked="$(_wt_git "$wt_admin" "$wt_path" ls-files -- WORKER_TASK.md)" || {
+  echo "dispatch: could not read the index at $wt_path" >&2
+  exit 1
+}
+if [ -n "$tracked" ]; then
   echo "dispatch: warning: WORKER_TASK.md is tracked at the base being dispatched — .git/info/exclude cannot hide a tracked file, so it will ride into this worker's commits. Remove it in its own PR: git rm --cached WORKER_TASK.md" >&2
 fi
 
