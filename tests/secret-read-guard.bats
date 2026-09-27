@@ -1725,6 +1725,21 @@ assert_allow_within_each_awk() {
     "$(claude_bash "$(nested_backticks 14 "$body")")"
 }
 
+# bats test_tags=timing
+@test "secret-read-guard: rule 2 — a 100 KB run of wrapper options ahead of a dump denies in under 5 s (#452)" {
+  local body
+  body=$(printf -- '-n 1 %.0s' $(seq 1 20000))
+  assert_deny_within 5000 "$(claude_bash "nice ${body}env")"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: rule 2 — a dump continued across 100 KB of backslash-newlines denies in under 5 s (#492)" {
+  local body
+  # Only the joined reading sees one command here, so this times that pass.
+  body=$(printf -- '-u A \\\n%.0s' $(seq 1 16000))
+  assert_deny_within 5000 "$(claude_bash "env ${body}"$'\n'"| sort")"
+}
+
 @test "secret-read-guard: denies printenv with a bare double dash" {
   deny_cmd 'printenv --'
 }
@@ -1768,6 +1783,94 @@ assert_allow_within_each_awk() {
 
 @test "secret-read-guard: allows a dumper word after an exclamation mark in an argument" {
   allow_cmd 'echo wow! env'
+}
+
+@test "secret-read-guard: rule 2 — denies a dumper behind common wrappers (#452)" {
+  deny_cmd 'timeout 5 env'
+  deny_cmd 'timeout -s KILL 5 env'
+  deny_cmd 'nice env'
+  deny_cmd 'nice -n 10 env'
+  deny_cmd 'echo x | xargs env'
+  deny_cmd 'stdbuf -oL env'
+  deny_cmd 'setsid env'
+  deny_cmd 'watch env'
+  deny_cmd 'ssh host env'
+  deny_cmd 'ssh -i k host env'
+  deny_cmd 'docker exec c env'
+  deny_cmd 'docker exec -it c env'
+  deny_cmd 'docker compose exec app env'
+  deny_cmd 'docker compose -f x.yml exec app env'
+  deny_cmd 'docker run --rm img env'
+  deny_cmd 'podman exec c env'
+  deny_cmd 'kubectl exec pod -- env'
+  deny_cmd 'kubectl exec -it pod -c ctr -- env'
+  deny_cmd 'mise exec -- env'
+  deny_cmd 'nix develop -c env'
+  deny_cmd 'command -p env'
+  deny_cmd 'time -p env'
+  deny_cmd 'exec -a x env'
+}
+
+@test "secret-read-guard: rule 2 — denies path-qualified and builtin dumpers (#452)" {
+  deny_cmd '/usr/bin/env'
+  deny_cmd 'builtin set'
+}
+
+@test "secret-read-guard: rule 2 — denies a wrapper whose option argument is a substitution (#452, #484)" {
+  deny_cmd 'sudo -u $(id -un) env'
+  deny_cmd 'sudo -u $(id) env'
+  deny_cmd 'direnv exec $(pwd) env'
+  deny_cmd 'printenv $(echo) GITHUB_TOKEN'
+}
+
+@test "secret-read-guard: rule 2 — denies a dumper in a case arm (#452)" {
+  deny_cmd 'case x in x) env;; esac'
+  deny_cmd $'case x in\n  debug) env ;;\nesac'
+}
+
+@test "secret-read-guard: rule 2 — denies a dumper reading stdin or a heredoc (#493)" {
+  deny_cmd 'env </dev/null'
+  deny_cmd $'env <<E\nx\nE'
+}
+
+@test "secret-read-guard: rule 2 — denies a dump split by a backslash-newline continuation (#492)" {
+  deny_cmd $'env \\\n| sort'
+  deny_cmd $'bash -c \'printenv \\\n| sort\''
+  deny_cmd $'cat <<EOF\na \\\nEOF\nit\'s `env`\nEOF'
+}
+
+@test "secret-read-guard: rule 2 — denies a dump behind a misread comment (#494)" {
+  deny_cmd $'echo \\ # `env`'
+  deny_cmd 'echo $((# `env`))'
+  deny_cmd $'tee a\\ # <<E\nit\'s `env`\nE'
+  deny_cmd $'ls # don\'t\nenv'
+}
+
+@test "secret-read-guard: rule 2 — allows commands that only name env as an argument or run a command" {
+  allow_cmd 'sudo rm -rf env'
+  allow_cmd 'python3 -m venv env'
+  allow_cmd 'uv venv env'
+  allow_cmd 'command -v env'
+  allow_cmd 'timeout 5 make env'
+  allow_cmd 'ssh host ls env'
+  allow_cmd 'ssh -t host ls env'
+  allow_cmd 'docker run --rm img ls env'
+  allow_cmd 'docker exec -it c ls env'
+  allow_cmd 'kubectl exec pod -- ls env'
+  allow_cmd 'env FOO=1 make'
+  allow_cmd 'env <(true)'
+  allow_cmd 'ls # just a comment'
+  allow_cmd $'echo a \\\n  b'
+}
+
+@test "secret-read-guard: rule 2 — allows commit prose and shebangs in quoted heredocs" {
+  allow_cmd $'git commit -F - <<\'EOF\'\nThe variable was (re)set\nLeave PATH as the shell (already) set\n- `env -u X Y=<empty> bats`\nEOF'
+  allow_cmd $'cat > s <<\'EOF\'\n#!/usr/bin/env bash\nEOF'
+  allow_cmd $'cat > s <<\'EOF\'\n#!/usr/bin/env -S bash -e\nEOF'
+}
+
+@test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
+  deny_cmd 'ls # then; env'
 }
 
 # ---------------------------------------------------------------------------
