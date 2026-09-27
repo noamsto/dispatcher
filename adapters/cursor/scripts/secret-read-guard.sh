@@ -134,8 +134,8 @@ template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 # wrapper's option argument is optional wherever the option could be argument-less;
 # the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
 # fails closed.
-wrap_word='([^[:space:];&|)]|\([^()]*\))+'
-wrap_rest='([^[:space:];&|)]|\([^()]*\))*'
+wrap_word='[^[:space:];&|)]+'
+wrap_rest='[^[:space:];&|)]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 # env's options and NAME=value words: what remains when no command follows is a
 # dump (`env -0`, `env -u X`, `env FOO=1`).
@@ -148,7 +148,7 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*)'"$cmd_prefix"
 dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]'
 env_dump_re="$cmd_start"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
-printenv_secret_re="$cmd_start"'printenv([[:space:]]+'"$wrap_word"')*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
+printenv_secret_re="$cmd_start"'printenv([[:space:]]+[^[:space:];&|)]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
 # the LINEAR_API_KEY rotation. `-S`/`--show`/`-p` always print, name or not;
 # the rest dump only when bare: `export NAME=v` or `declare -x NAME=v` just
@@ -159,7 +159,7 @@ printenv_secret_re="$cmd_start"'printenv([[:space:]]+'"$wrap_word"')*[[:space:]]
 # (`declare -xp NAME` and `declare -x -p NAME` both print). Bare `export` dumps
 # every exported variable, same as `export -p`.
 declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*('"$dump_end"')|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
-builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|$|[;&|)#])|[[:space:]]*('"$dump_end"'))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|$|[;&|)#])|[[:space:]]*('"$dump_end"'))|tmux[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|$|[;&|)#])|launchctl[[:space:]]+getenv([[:space:]]|$|[;&|)#]))'
+builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|tmux[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|launchctl[[:space:]]+getenv([[:space:]]|'"$dump_end"'))'
 # fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
 # -L) list that scope when no name follows; with a name they're the ordinary
 # `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
@@ -311,10 +311,11 @@ decode_word() {
 # W=1 (mask_cmd_wide) adds three readings on top, each of which could hide text
 # the W=0 reading shows — so rule 2 searches both, never the wide one alone:
 #   - a `#` right after an opening backtick starts a comment, as bash reads it.
-#   - every heredoc body rewrites backticks, quoted delimiter or not.
-#   - escaped backticks nest to any depth: bash writes a level-k backtick behind
-#     2^(k-1) - 1 backslashes (0, 1, 3, 7, …). Inside a backtick frame the same
-#     level closes it and any other level opens one.
+#   - a heredoc body rewrites backticks, quoted delimiter or not — paired per
+#     line, so no nesting and no span across lines.
+#   - escaped backticks outside heredoc bodies nest to any depth: bash writes a
+#     level-k backtick behind 2^(k-1) - 1 backslashes (0, 1, 3, 7, …). Inside a
+#     backtick frame the same level closes it and any other level opens one.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {

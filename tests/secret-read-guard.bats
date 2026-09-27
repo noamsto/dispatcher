@@ -1277,6 +1277,7 @@ allow_cmd() { # <command>
   deny_cmd $'echo `# it\'s\nenv'
   deny_cmd $'echo `# it\'s`\nenv'
   deny_cmd $'echo "`# it\'s`"\nenv'
+  deny_cmd $'echo "`# it\'s\nenv\n`"'
 }
 
 @test "secret-read-guard: a backtick comment still denies a dump next to it" {
@@ -1310,6 +1311,7 @@ allow_cmd() { # <command>
   deny_cmd $'echo `echo \\`echo \\\\\\`env\\\\\\`\\``'
   deny_cmd $'echo `echo \\`echo \\\\\\`echo \\\\\\\\\\\\\\`env\\\\\\\\\\\\\\`\\\\\\`\\``'
   deny_cmd $'echo "`echo \\`echo \\\\\\`env\\\\\\`\\``"'
+  deny_cmd $'echo `echo \\`echo \\\\\\`# it\'s\n\\\\\\`\\``; echo `env`'
 }
 
 @test "secret-read-guard: denies a dump behind a bare backtick or a quote inside escaped backticks" {
@@ -1327,6 +1329,8 @@ allow_cmd() { # <command>
   done
   deny_cmd "fish -c 'set -x >&2'"
   deny_cmd 'env >&2 # c'
+  deny_cmd 'set -S>&2'
+  deny_cmd 'export -p>&2'
 }
 
 @test "secret-read-guard: allows a backticked word that is not a dump" {
