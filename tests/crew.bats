@@ -1694,6 +1694,64 @@ _pi_assert_refused() {
   [[ "$output" == *'"body":"answer"'* ]]
 }
 
+# #466: a burst from one sender that arrived while the worker was busy used to
+# be reduced to its newest msg — the delivered mark then hid every older
+# sibling from later awaits. One await must hand out the whole backlog from
+# that sender, oldest first, exactly once each.
+@test "await: a same-sender burst is handed out in one await, oldest first" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m1"
+  sleep 1
+  CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m2"
+  sleep 1
+  CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m3"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"m1"'* ]]
+  [[ "$output" == *'"body":"m2"'* ]]
+  [[ "$output" == *'"body":"m3"'* ]]
+  # oldest first: m1 before m3 in the stream
+  [[ "${output%%m3*}" == *'"body":"m1"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# #466 same-ms siblings: two msgs from one sender sharing one millisecond ts are
+# one watermark unit — await must hand both out in the same call, or one is
+# hidden from every later await. Chosen behaviour: the whole same-ms group is
+# delivered together, oldest (log order) first, and never re-handed.
+@test "await: same-ms siblings are handed out together, not hidden" {
+  id="worker:feat/x#s1-1"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  t=$(($(date +%s) * 1000))
+  for b in first second; do
+    jq -nc --arg to "$id" --argjson ts "$t" --arg b "$b" \
+      '{ts:$ts, crew_id:"c1", from:"dispatcher:c1", to:$to, kind:"msg", body:$b}' >>"$log"
+  done
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [[ "$output" == *'"body":"first"'* ]]
+  [[ "$output" == *'"body":"second"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [ -z "$output" ]
+}
+
+# #466 consumer check (`--from`, the grid role loop): the awaited role's whole
+# due backlog is handed out in one call, oldest first, so a note that rode in
+# with the verdict cannot be silently dropped.
+@test "await --from: the awaited role's due backlog comes as one batch" {
+  id="worker:feat/x#s1-1"
+  rev="role:feat/x:reviewer"
+  CREW_ID=c1 run_crew msg "$rev" "$id" "note"
+  sleep 1
+  CREW_ID=c1 run_crew msg "$rev" "$id" "verdict"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"note"'* ]]
+  [[ "$output" == *'"body":"verdict"'* ]]
+  [[ "${output%%verdict*}" == *'"body":"note"'* ]]
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
+  [ -z "$output" ]
+}
+
 # #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the
@@ -1740,7 +1798,8 @@ _pi_assert_refused() {
   # so a later `crew await` would deliver it too; the worker protocol's
   # straggler fold — `crew inbox --since <seen>` after every timeout — is the
   # path that takes it here and resumes the worker. The fold stays load-bearing
-  # for the older same-sender siblings a delivered mark hides from `await`.
+  # for what `await` does not reach — another sender's due backlog, and msgs
+  # that land between its read and the fold's.
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   t=$(($(date +%s) * 1000))
   jq -nc --arg to "$id" --argjson ts "$t" \
