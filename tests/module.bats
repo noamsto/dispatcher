@@ -22,7 +22,7 @@ setup_file() {
   nix build --no-link --print-out-paths \
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
-    "$root#reviewer-roster" \
+    "$root#reviewer-roster" "$root#permission-check" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The three eval tests below force different config shapes (options only vs.
@@ -89,6 +89,7 @@ setup() {
     read -r OUT_REFRESH_MODELS
     read -r OUT_PR_WATCH
     read -r OUT_REVIEWER_ROSTER
+    read -r OUT_PERMISSION_CHECK
   } <"$BATS_FILE_TMPDIR/out-paths"
   EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
@@ -101,7 +102,7 @@ setup() {
   # before any test runs. This just proves every out path came back.
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
-    "$OUT_REVIEWER_ROSTER"; do
+    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK"; do
     [ -n "$out" ]
     [ -e "$out" ]
   done
@@ -298,7 +299,7 @@ setup() {
   [[ "$EVAL_CONFIG" == work\|* ]]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster"* ]]
+  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster,permission-check"* ]]
   [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src ]]
 }
 
@@ -357,6 +358,11 @@ setup() {
 
 @test "the reviewers placeholder is substituted in reviewer-roster" {
   run grep -c '@reviewersDir@' "$OUT_REVIEWER_ROSTER/bin/reviewer-roster"
+  [ "$output" = "0" ]
+}
+
+@test "the protocolDir placeholder is substituted in permission-check" {
+  run grep -c '@protocolDir@' "$OUT_PERMISSION_CHECK/bin/permission-check"
   [ "$output" = "0" ]
 }
 
