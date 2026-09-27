@@ -509,11 +509,6 @@ assert_deny_within() {
   [ "$elapsed" -lt "$1" ]
 }
 
-# assert_deny_within_each_awk <calibration-payload> <payload> — replay the
-# relative bound under every non-GNU awk this host has installed (mawk, nawk,
-# busybox-awk), each spliced onto PATH ahead of the real awk. Falls back to a
-# single run under the default awk when none of those are installed.
-
 # The per-awk bound is RELATIVE: K x a same-size, same-shape calibration input
 # (a linear, trivially-judged variant of the test's own payload), plus an
 # absolute ceiling for a hung guard. A fixed absolute ms was bumped repeatedly
@@ -529,10 +524,10 @@ assert_deny_within() {
 # strip path and the ratio is ~1 for legitimate runs on every awk.
 #
 # K=4 gives >=3x headroom over the worst legitimate payload:calibration ratio
-# measured locally (~1.25, t3/t4 nawk); the pre-#476 sed -E revert measures
-# ~4.3-5.0 on busybox-awk, ~7-9 on nawk, ~30 on mawk (see #514). The ceiling is
-# a backstop only; the worst legitimate payload is ~1.4 s locally (~4.2 s on
-# CI's ~3x slower runner), well under 8000 ms. See #514/#515.
+# measured locally (~1.25); the pre-#476 sed -E revert measures ~4.3-5.0 on
+# busybox-awk, ~7-9 on nawk, ~30 on mawk (see #514). The ceiling is a backstop
+# only; the worst legitimate payload is ~1.4 s locally (~4.2 s on CI's ~3x
+# slower runner), well under 8000 ms. See #514/#515.
 SECRET_GUARD_TIMING_K=4
 SECRET_GUARD_TIMING_CEILING_MS=8000
 
@@ -555,6 +550,10 @@ assert_deny_relative() {
   [ "$elapsed" -le "$SECRET_GUARD_TIMING_CEILING_MS" ] && [ "$elapsed" -le "$bound" ]
 }
 
+# assert_deny_within_each_awk <calibration-payload> <payload> — replay the
+# relative bound under every non-GNU awk this host has installed (mawk, nawk,
+# busybox-awk), each spliced onto PATH ahead of the real awk. Falls back to a
+# single run under the default awk when none of those are installed.
 assert_deny_within_each_awk() {
   local calib=$1 payload=$2 name awk_path found=0
 
