@@ -1068,8 +1068,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' is not part of this grid" >&2
     exit 1
   }
-  # Both reach the role's launch script, which runs outside the engine's
-  # permission layer; the header and roles.json are worker-writable (#470).
+  # Both reach the role's launch script; the header and roles.json are worker-writable (#470).
   agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
   for _v in "$role" "$agent_name"; do
     [[ $_v =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
@@ -3131,7 +3130,7 @@ if [ -n "$owner_auth" ]; then
   owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
 fi
 
-# The recorded identity is replayed from the shared bus, so quote it (#470).
+# The recorded identity is replayed from the shared bus.
 printf -v q_agent_name '%q' "$agent_name"
 
 if [ "$agent" = codex ]; then

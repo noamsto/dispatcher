@@ -373,11 +373,10 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
   exit 1
 }
 
-# Everything below that reaches the launch script — the header fields, the
-# branch name — is worker-writable, and the script runs as the operator, outside
-# the engine's permission layer (#470). Each such value must be a single safe
-# word before anything is spliced into that script; the launch line quotes them
-# again as defence in depth. Refusing here precedes every side effect (bar the operator-set session id below).
+# The task header and the branch name are worker-writable, and the launch script
+# they end up in runs as the operator, outside the engine's permission layer
+# (#470). Each must be a single plain word before it is spliced in; the launch
+# line %q-quotes them again.
 _id_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 _branch_re='^[A-Za-z0-9][A-Za-z0-9._/@+-]*$'
 _model_re='^[A-Za-z0-9][][A-Za-z0-9._/:=,-]*$'
@@ -1103,7 +1102,6 @@ if [ -r "$hint_lib" ]; then
   cross_repo_hint "${crew_dir%/crew}" "$crew_id"
 fi
 
-# The values were validated above; %q is the second line of defence (#470).
 printf -v q_worker_id '%q' "$worker_id"
 printf -v q_crew_id '%q' "$crew_id"
 printf -v q_agent_name '%q' "$agent_name"
