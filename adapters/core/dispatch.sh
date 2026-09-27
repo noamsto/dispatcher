@@ -39,9 +39,9 @@ valid_role_model() {
 }
 
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
-# when its fresh 7d window is materially ahead of pace.
+# when its fresh pace window (7d, or pi's month) is materially ahead of pace.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct used_pct ahead pace_notice pace_clause
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   case "$target_agent:$target_model" in
   claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*) model_downgrade="sonnet" ;;
@@ -55,18 +55,23 @@ pace_rule_target() {
   esac
   [ -n "$model_downgrade$effort_downgrade" ] || return 0
   rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
-    def elapsed_pct($w): (100 * (604800 - ($w.resets_at - $now)) / 604800) as $x
+    def elapsed_pct($w; $len): (100 * ($len - ($w.resets_at - $now)) / $len) as $x
       | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+    def rule($w; $win):
+      if $w.used_pct < 70 then empty
+      elif $w.resets_at == null then "\($win)|\($w.used_pct)"
+      else (if $w.starts_at != null then ($w.resets_at - $w.starts_at) else 604800 end) as $len
+        | ($w.used_pct - elapsed_pct($w; $len)) as $ahead
+        | if $ahead > 15 then "\($win)|\($w.used_pct)|\($ahead | round)" else empty end
+      end;
     if (.fetched_epoch + 7200) < $now then empty
-    elif .engines[$e] == null or .engines[$e].windows["7d"] == null then empty
-    else .engines[$e].windows["7d"] as $w
-      | if $w.used_pct < 70 then empty
-        elif $w.resets_at == null then "\($w.used_pct)"
-        else ($w.used_pct - elapsed_pct($w)) as $ahead
-          | if $ahead > 15 then "\($w.used_pct)|\($ahead | round)" else empty end
-        end
+    elif .engines[$e] == null then empty
+    elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
+    elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
+    else empty
     end' "$budget_file" 2>/dev/null || true)
   [ -n "$rung_pct" ] || return 0
+  win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
   used_pct="$rung_pct" pace_notice="" pace_clause=""
   if [[ $rung_pct == *"|"* ]]; then
     used_pct="${rung_pct%%|*}"; ahead="${rung_pct#*|}"
@@ -74,17 +79,17 @@ pace_rule_target() {
   fi
   if [ -n "$model_downgrade" ]; then
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
-      echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at 7d ${used_pct}%${pace_notice}" >&2
+      echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      echo "dispatch: $target_agent 7d is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
   if [ -n "$effort_downgrade" ]; then
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_effort" ]; then
-      echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at 7d ${used_pct}%${pace_notice}" >&2
+      echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      echo "dispatch: $target_agent 7d is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi

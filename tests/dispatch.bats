@@ -2064,6 +2064,21 @@ codex_limit_json() { # <limit_reached jq object literal>
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+# Write a budget cache with a pi engine (OpenRouter monthly spend) at
+# <pct> used_pct on a "month" window spanning [now-<elapsed_s>, now+<remaining_s>].
+# Parallel to budget_json_at() above — the pace-gate helper for pi's month
+# window rather than an engine's 7d window.
+pi_budget_json() { # <pct> <elapsed_s> <remaining_s>
+  local pct="$1" elapsed="$2" remaining="$3" now
+  now="$(date +%s)"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson pct "$pct" --argjson epoch "$now" \
+    --argjson starts "$((now - elapsed))" --argjson resets "$((now + remaining))" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null,
+        pi: {source: "openrouter_key", windows: {month: {used_pct: $pct, starts_at: $starts, resets_at: $resets}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
   budget_json 97 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
@@ -3178,6 +3193,94 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$status" -eq 1 ]
   [[ "$output" == *"quota exhausted"* ]]
   [[ "$output" != *"the premium rung"* ]]
+}
+
+# pi (OpenRouter, usage-priced) is gated by its "month" window the same
+# way the other engines are gated by their "7d" window — pace_rule_target's
+# jq picks whichever of the two is present.
+
+@test "pi budget pace gate refuses premium effort, but allows high (AC2)" {
+  stub_launch_bins
+  # 80% used, 30% of a 30-day month elapsed (777600s in, 1814400s left): +50
+  # ahead of pace.
+  pi_budget_json 80 777600 1814400
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi pace refuses max"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pi month is at 80% and 50 points ahead of pace"* ]]
+  [[ "$output" == *"premium effort (max)"* ]]
+  [[ "$output" == *"use xhigh instead"* ]]
+
+  pi_budget_json 80 777600 1814400
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "pi pace allows high"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget pace gate: DISPATCH_IGNORE_RUNG skips the effort refusal" {
+  stub_launch_bins
+  pi_budget_json 80 777600 1814400
+  DISPATCH_IGNORE_RUNG=max run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi ignore rung"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"effort refusal skipped (DISPATCH_IGNORE_RUNG) — 'max' on --agent pi at month 80% (50 ahead of pace)"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget pace gate allows burn at or behind pace" {
+  stub_launch_bins
+  # 75% used, 70% of the month elapsed: +5 ahead, under the 15-point margin.
+  pi_budget_json 75 1814400 777600
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi at pace allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget hard stop refuses at 96%, --ignore-budget bypasses (AC3)" {
+  pi_budget_json 96 777600 1814400
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "pi hard stop"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pi quota exhausted (month at 96%"* ]]
+
+  stub_launch_bins
+  pi_budget_json 96 777600 1814400
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --ignore-budget --crew-id c1 42 "pi hard stop ignored"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget gate: no target means no window, no refusal" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null, pi: {source: "openrouter_key", windows: {}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi no target"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  [[ "$output" != *"premium effort"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget gate fails open on a stale month cache" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(($(date +%s) - 10000))" --argjson now "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null,
+        pi: {source: "openrouter_key", windows: {month: {used_pct: 99, starts_at: ($now - 777600), resets_at: ($now + 1814400)}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 42 "pi stale cache"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pi budget pace gate refuses a pi role pane's premium effort" {
+  # A claude lead is unaffected by pi's stop; the pi role pane is
+  # pace-checked before any pane launches, same as the claude-role case above.
+  pi_budget_json 80 777600 1814400
+  run run_dispatch standard sonnet --agent claude --roles "reviewer=pi:openrouter/deepseek/deepseek-v4.1-flash@max" --effort high --crew-id c1 42 "pi role pane refused"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"premium effort (max)"* ]]
+  [ ! -f "$STUB_LOG" ] || ! grep -qE 'split-window|send-keys' "$STUB_LOG"
 }
 
 @test "rejects --pr combined with a GitHub issue token" {

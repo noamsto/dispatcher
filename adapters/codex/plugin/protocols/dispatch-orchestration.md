@@ -47,10 +47,11 @@ Bump the matching table when a new model ships. The `refresh-scores` cache
 rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
 **Burn classes.** Claude, Codex, and Cursor are subscriptions, so their cost is
-quota burn. Pi/OpenRouter is usage-priced and is not represented in the quota
-cache; judge its spend separately — a pi run on the Flash rungs is roughly
-$0.5–2 per Flash run, which is what makes pi the cheap
-lane to shed claude burn onto. Subscription rungs group into three classes:
+quota burn. Pi/OpenRouter is usage-priced; once a key is configured it's
+represented as `engines.pi` (month-to-date spend vs an optional monthly
+target, not a quota window) — a pi run on the Flash rungs is roughly $0.5–2
+per Flash run, which is what makes pi the cheap lane to shed claude burn
+onto. Subscription rungs group into three classes:
 **premium** — opus (fable ≈2× opus),
 `gpt-5.6-sol`, `grok-4.7-high`; **standard** — sonnet, `gpt-5.6-terra`,
 `grok-4.7-medium`; **cheap** — haiku, `gpt-5.6-luna`,
@@ -311,9 +312,11 @@ decision".
 **Budget-aware launch refusal.** Layered above (checked after) the Tier map
 gate itself, so an off-row model is rejected by the Tier map check first,
 regardless of budget. `dispatch` refuses the premium rung for an engine when
-its `7d` window is **both** ≥70% used **and** more than 15 points ahead of
-pace — `used_pct` minus the window's elapsed fraction, `elapsed = clamp(100 *
-(604800 - (resets_at - now)) / 604800, 0, 100)`. Because `used_pct` tops out
+its pace window — `7d`, or pi's calendar-month `month` window — is **both**
+≥70% used **and** more than 15 points ahead of pace — `used_pct` minus the
+window's elapsed fraction, `elapsed = clamp(100 * (L - (resets_at - now)) /
+L, 0, 100)` where `L` is `604800` for `7d`, or `resets_at - starts_at` (the
+calendar month's own length) for pi's `month`. Because `used_pct` tops out
 at 100 the inequality can't fire once elapsed reaches 85%, so a window
 inside its own last 15% (~25h on `7d`) stops refusing on its own — that's the
 near-reset exemption, not a second rule to keep in sync. A null `resets_at`
@@ -335,13 +338,19 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` (downgrade `high`) and `max` (downgrade `xhigh`); `high` is
 not premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`).
+`--ignore-budget`). pi has no premium model rung — every pi model is a Flash
+rung in one burn class — so only effort is ever refused for it. While pi's
+`month` window is ahead of pace, both `max` and `xhigh` are refused at once,
+so a refused pi dispatch lands directly on `high` — which matters because
+`deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
+`xhigh` rung to land on in between.
 
 | engine | premium                                        | downgrade target        |
 | ------ | ----------------------------------------------- | ------------------------ |
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet`                 |
 | codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
 | cursor | `grok-4.7-high`                           | `grok-4.7-medium` |
+| pi     | — (effort only: `max`→`xhigh`→`high`)            | —                        |
 
 ### Cursor Task-spawn slugs
 

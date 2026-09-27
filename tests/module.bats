@@ -51,23 +51,29 @@ setup_file() {
       # deepSeq on a derivation recurses through its self-referential
       # output attrs and never finishes.
       configApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; repoTrackers.\"factify-inc/mono\" = \"linear:ENG\"; orgTrackers.\"factify-inc\" = \"linear:ENG\"; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; repoTrackers.\"factify-inc/mono\" = \"linear:ENG\"; orgTrackers.\"factify-inc\" = \"linear:ENG\"; openrouter = { monthlyTarget = 50; keyFile = \"/run/agenix/openrouter\"; }; }; };
         inherit lib pkgs;
       };
       c = configApplied.config.content;
       configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${c.home.sessionVariables.DISPATCH_REPO_TRACKERS}|\${c.home.sessionVariables.DISPATCH_ORG_TRACKERS}\";
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${c.home.sessionVariables.DISPATCH_REPO_TRACKERS}|\${c.home.sessionVariables.DISPATCH_ORG_TRACKERS}|\${c.home.sessionVariables.DISPATCH_OPENROUTER_MONTHLY_USD}|\${c.home.sessionVariables.DISPATCH_OPENROUTER_KEY_FILE}\";
 
       cursorlessApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; openrouter = { monthlyTarget = null; keyFile = null; }; }; };
         inherit lib pkgs;
       };
       c2 = cursorlessApplied.config.content;
       cursorlessLine = builtins.deepSeq [c2.home.file c2.home.activation]
-        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}|\${c2.home.sessionVariables.DISPATCH_GRANT_ROOTS}\";
+        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}|\${c2.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${toString (c2.home.sessionVariables ? DISPATCH_OPENROUTER_MONTHLY_USD)}|\${toString (c2.home.sessionVariables ? DISPATCH_OPENROUTER_KEY_FILE)}\";
 
       cursorSkillsLine = builtins.replaceStrings [\"\n\"] [\" \"] c.home.activation.dispatcherCursorSkills.data;
-    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine + \"\n\" + cursorSkillsLine
+
+      floatApplied = self.homeManagerModules.default {
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; openrouter = { monthlyTarget = 12.5; keyFile = null; }; }; };
+        inherit lib pkgs;
+      };
+      floatLine = \"\${floatApplied.config.content.home.sessionVariables.DISPATCH_OPENROUTER_MONTHLY_USD}\";
+    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine + \"\n\" + cursorSkillsLine + \"\n\" + floatLine
   " >"$BATS_FILE_TMPDIR/eval-expr.nix"
   nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
     >"$BATS_FILE_TMPDIR/eval-out"
@@ -95,6 +101,7 @@ setup() {
   EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CURSORLESS="$(sed -n '3p' "$BATS_FILE_TMPDIR/eval-out")"
   EVAL_CURSOR_SKILLS="$(sed -n '4p' "$BATS_FILE_TMPDIR/eval-out")"
+  EVAL_FLOAT="$(sed -n '5p' "$BATS_FILE_TMPDIR/eval-out")"
 }
 
 @test "every package builds" {
@@ -286,6 +293,10 @@ setup() {
   [[ "$EVAL_OPTIONS" == *"orgTrackers"* ]]
 }
 
+@test "the module declares the openrouter option" {
+  [[ "$EVAL_OPTIONS" == *"openrouter"* ]]
+}
+
 @test "the module's config body evaluates, and wires the protocol dir for real" {
   # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
   # here would otherwise surface only in a consumer's rebuild. setup_file's
@@ -302,7 +313,7 @@ setup() {
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
   [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster,permission-check"* ]]
-  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src\|factify-inc/mono=linear:ENG\|factify-inc=linear:ENG ]]
+  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src\|factify-inc/mono=linear:ENG\|factify-inc=linear:ENG\|50\|/run/agenix/openrouter ]]
 }
 
 @test "a roster without cursor installs no cursor artifacts" {
@@ -315,7 +326,13 @@ setup() {
 }
 
 @test "the roster is exported for the CLIs" {
-  [[ "$EVAL_CURSORLESS" == *"|claude pi|" ]]
+  [[ "$EVAL_CURSORLESS" == *"|claude pi|||" ]]
+}
+
+@test "a decimal monthly target renders via toString, not the trimmed literal" {
+  # toString 12.5 in nix renders \"12.500000\" -- assert a prefix, not the
+  # exact source literal.
+  [[ "$EVAL_FLOAT" =~ ^12\.5 ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {

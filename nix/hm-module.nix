@@ -78,6 +78,34 @@ in {
       '';
     };
 
+    openrouter = {
+      monthlyTarget = lib.mkOption {
+        type = lib.types.nullOr lib.types.numbers.positive;
+        default = null;
+        example = 50;
+        description = ''
+          Monthly OpenRouter spend target in USD, tracked over the UTC
+          calendar month. Exported as DISPATCH_OPENROUTER_MONTHLY_USD only
+          when set (unset leaves the feature off: `refresh-budget` still
+          records pi's month-to-date spend, but no window gates it).
+        '';
+      };
+
+      keyFile = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "/.*");
+        default = null;
+        example = "/run/agenix/openrouter";
+        description = ''
+          Absolute path to a file whose first line is an OpenRouter API key
+          (e.g. an agenix/sops secret path). A string, never `types.path` --
+          a path would copy the secret into the Nix store. Exported as
+          DISPATCH_OPENROUTER_KEY_FILE only when set; `refresh-budget` falls
+          back to OPENROUTER_API_KEY when unset. `~/.pi/agent/auth.json` is
+          never read.
+        '';
+      };
+    };
+
     claudePluginDir = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -95,35 +123,42 @@ in {
     home = {
       packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check];
 
-      sessionVariables = {
-        DISPATCH_PROFILE = cfg.profile;
-        DISPATCH_ENGINES = lib.concatStringsSep " " cfg.engines;
-        DISPATCH_GRANT_ROOTS = lib.concatStringsSep ":" cfg.grantRoots;
-        DISPATCH_REPO_TRACKERS = trackerExport cfg.repoTrackers;
-        DISPATCH_ORG_TRACKERS = trackerExport cfg.orgTrackers;
-        # Exported, not merely baked into the CLIs. The `dispatcher` slash
-        # command and the cursor rule are markdown an agent reads live and
-        # resolves through its Bash tool, which a build-time substitution into
-        # the shell scripts cannot reach. Each plugin also ships a protocols/
-        # copy as the fallback when this is unset (a non-Nix install). Override
-        # it in your shell to iterate on a checkout without rebuilding.
-        # #184/#193: dispatch / dispatch-resume recompute the built-in
-        # protocol revision as a content hash of the files actually in
-        # $PROTOCOL_DIR, so a checkout override that drifted from the build
-        # aborts with an actionable message rather than silently running
-        # workers against an old protocol contract. #303: a stale value held
-        # by a long-lived shell or tmux server after a rebuild is a store path
-        # from the previous build; dispatch / dispatch-resume / dispatcher
-        # detect that by content, ignore it with a notice and use their baked
-        # directory. The export stays because the markdown reads it. There is
-        # no committed PROTOCOL_REV file to regenerate.
-        DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
-        DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
-        DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
-        # pi only: the other three load the harness skills from their own
-        # adapter trees, so pi is the one engine dispatch has to hand a path.
-        DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";
-      };
+      sessionVariables =
+        {
+          DISPATCH_PROFILE = cfg.profile;
+          DISPATCH_ENGINES = lib.concatStringsSep " " cfg.engines;
+          DISPATCH_GRANT_ROOTS = lib.concatStringsSep ":" cfg.grantRoots;
+          DISPATCH_REPO_TRACKERS = trackerExport cfg.repoTrackers;
+          DISPATCH_ORG_TRACKERS = trackerExport cfg.orgTrackers;
+          # Exported, not merely baked into the CLIs. The `dispatcher` slash
+          # command and the cursor rule are markdown an agent reads live and
+          # resolves through its Bash tool, which a build-time substitution into
+          # the shell scripts cannot reach. Each plugin also ships a protocols/
+          # copy as the fallback when this is unset (a non-Nix install). Override
+          # it in your shell to iterate on a checkout without rebuilding.
+          # #184/#193: dispatch / dispatch-resume recompute the built-in
+          # protocol revision as a content hash of the files actually in
+          # $PROTOCOL_DIR, so a checkout override that drifted from the build
+          # aborts with an actionable message rather than silently running
+          # workers against an old protocol contract. #303: a stale value held
+          # by a long-lived shell or tmux server after a rebuild is a store path
+          # from the previous build; dispatch / dispatch-resume / dispatcher
+          # detect that by content, ignore it with a notice and use their baked
+          # directory. The export stays because the markdown reads it. There is
+          # no committed PROTOCOL_REV file to regenerate.
+          DISPATCHER_PROTOCOL_DIR = "${self}/adapters/core/protocols";
+          DISPATCHER_REVIEWERS_DIR = "${self}/adapters/core/reviewers";
+          DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
+          # pi only: the other three load the harness skills from their own
+          # adapter trees, so pi is the one engine dispatch has to hand a path.
+          DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";
+        }
+        // lib.optionalAttrs (cfg.openrouter.monthlyTarget != null) {
+          DISPATCH_OPENROUTER_MONTHLY_USD = toString cfg.openrouter.monthlyTarget;
+        }
+        // lib.optionalAttrs (cfg.openrouter.keyFile != null) {
+          DISPATCH_OPENROUTER_KEY_FILE = cfg.openrouter.keyFile;
+        };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc
       # rule is silently ignored without `alwaysApply: true` frontmatter, which

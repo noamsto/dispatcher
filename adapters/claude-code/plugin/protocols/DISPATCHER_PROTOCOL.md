@@ -61,7 +61,10 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   ahead of pace** (the exact pace-aware condition the premium gate uses: ≥70%
   used *and* >15 points ahead of elapsed — see "≥70% on the `7d` window,
   pace-aware" under the budget lever), pi becomes the **default engine for
-  `standard` and `trivial`** work, shedding claude's subscription burn.
+  `standard` and `trivial`** work, shedding claude's subscription burn — but
+  only while OpenRouter isn't itself ahead of its own monthly pace
+  (`pi.windows.month`); when both are ahead, shed tier or fan-out instead of
+  burning either engine (see the budget lever's pi bullet).
   Exceptions that stay on claude: UI/frontend, security-adjacent code, and
   genuinely underspecified work. Otherwise pi is an ordinary peer in the
   neutral-fit rotation, reached for when an independent non-Claude/non-OpenAI
@@ -113,9 +116,10 @@ from `required` and departs on the doc you wrote (see "Plan-depth" above).
   reason the orchestrator table gives for holding its own session at `high`,
   see `dispatch-orchestration.md` → "Orchestrator engines"); the work is
   wide-but-shallow; or the budget is tight. Say plainly: the mechanical
-  pace-rule gate below (→ "Budget is the fifth lever") reads only the
-  **rung** — the burn class the model falls into — not the effort, so
-  nothing refuses an expensive `xhigh` dispatch near the wall for you.
+  pace-rule gate below (→ "Budget is the fifth lever") refuses `xhigh`/`max`
+  (and premium rungs) only once the window is ≥70% used and more than 15
+  points ahead of pace; below that threshold nothing refuses an expensive
+  `xhigh` dispatch near the wall for you.
 
 Ladder: `low|medium|high|xhigh|max` on claude/codex/pi, plus codex-only `ultra`
 (maximum reasoning with **automatic task delegation**, `gpt-5.6-sol`/`-terra`) —
@@ -142,16 +146,32 @@ per-engine subscription quota to
 `${XDG_DATA_HOME:-~/.local/share}/crew/engine-budget.json`. Run it once at
 session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
-Pi/OpenRouter spend is usage-priced and absent from this subscription-quota
-cache; do not infer that `null` means free or unlimited.
+Pi/OpenRouter is usage-priced, but once a key is configured it does carry a
+cache entry: `engines.pi` holds month-to-date spend (`spend_usd`) against an
+optional configured monthly target (`target_usd`) and a burn-rate projection
+(`projected_month_end_usd`), over the UTC calendar month. `null` still means
+unknown, never free or unlimited. No target set means the spend is recorded
+but purely informational — no `month` window, no gate. Because the gates
+below fail open on a cache older than ~2h, run `refresh-budget` right before
+sizing a pi fan-out, not just once at session start.
 
-- **pi is the cheap lane when claude's `7d` window runs ahead of pace.** Nothing
-  here gates pi — it is usage-priced and absent from the cache — which is
-  exactly what makes it the default shed target. When claude trips the pace rule
-  below, route `standard` and `trivial` work to pi (see the engine lever's pi
-  bullet) rather than merely shedding a burn class: pi's Flash rungs cost
-  roughly $0.5–2 per run, so the burn it removes is real. The three claude leans
-  (UI/frontend, security-adjacent, genuinely underspecified) stay on claude.
+- **pi is the cheap lane when claude's `7d` window runs ahead of pace — unless
+  OpenRouter is itself ahead of its monthly pace.** `engines.pi.windows.month`
+  (present once a target is configured) trips the same pace condition as
+  claude's `7d` window (≥70% used *and* >15 points ahead of elapsed, read off
+  `pi.windows.month`). While OpenRouter is *not* ahead of pace, it's the
+  default shed target for `standard` and `trivial` work when claude trips its
+  own pace rule (see the engine lever's pi bullet) — pi's Flash rungs cost
+  roughly $0.5–2 per run, so the burn it removes is real. When **both**
+  claude's `7d` and OpenRouter's `month` are ahead of pace, shed tier or
+  fan-out size, or hold, rather than burning either engine. Size a pi fan-out
+  off the burn-rate signal itself — `projected_month_end_usd` vs `target_usd`
+  — not just the pace flag. pi has no premium model rung, so the mechanical
+  pace gate only refuses `xhigh`/`max` effort: at pi's tier-typical `high`
+  (trivial/standard) the pace gate never fires — deep's `max` is refused — so
+  this judgement plus the ≥95% stop below are the actual spend control. The
+  three claude leans (UI/frontend, security-adjacent, genuinely
+  underspecified) stay on claude.
 
 - **`5h` at ≥85%** — a short rate limit that refills inside one session. Inside
   its last 15% (~45m to reset), hold and wake past the reset rather than
@@ -161,10 +181,13 @@ cache; do not infer that `null` means free or unlimited.
   peer engine (budget turns the neutral-fit rotation into a budgeted
   rotation). Inside its last 15% (~25h to reset), prefer waiting to shedding a
   fan-out you would otherwise have run.
-- **Both bullets above are advisory judgement, implemented by nothing** — no
-  code reads the `5h` window for routing, and the mechanical gate below reads
-  only the `7d` window and only the pace rule. Don't mistake this prose for a
-  mechanism.
+- **`month` at ≥85%** (pi's OpenRouter target) — stop shedding standard/trivial
+  work to pi even when it is not ahead of pace, and shed pi fan-out;
+  `refresh-budget`'s lever line says the same.
+- **All three bullets above are advisory judgement, implemented by nothing** —
+  no code reads the `5h` window for routing, and the mechanical gate below
+  reads only the `7d` window (pi: its `month` window) and only the pace rule,
+  never the 85% line. Don't mistake this prose for a mechanism.
 - **The tail of a window is not free headroom.** The pace rule below
   deliberately allows the premium rung at, say, 94% with two hours left on
   the `7d` window. A `deep` fan-out launched there can cross 95% mid-run and
@@ -185,7 +208,11 @@ cache; do not infer that `null` means free or unlimited.
   Either way it names the lower model or effort alternative. `xhigh` and
   `max` are premium effort (to `high` and `xhigh` respectively); `high` is
   not. The check covers every lead, eager role, and final lazy-role override. See
-  `dispatch-orchestration.md` → "Tier map".
+  `dispatch-orchestration.md` → "Tier map". pi's pace window is `month`, not
+  `7d`: its length is the calendar month (`starts_at`→`resets_at`), not a
+  fixed 604800s, but the same ≥70%-and->15-points math runs against
+  `pi.windows.month`, and pi has no premium model to downgrade — only `xhigh`/
+  `max` effort is refused.
 - **Two overrides, different blast radii.** `DISPATCH_IGNORE_RUNG=<the exact
   model id or effort>` bypasses only its matching refusal for that launch target,
   and leaves the ≥95% hard stop armed — the escape an agent can actually
@@ -194,7 +221,10 @@ cache; do not infer that `null` means free or unlimited.
   still bypasses both this gate and the ≥95% stop; that's the human's spend
   decision, say so when you take it.
 - **≥95%** — the engine is full: don't dispatch it (`dispatch` refuses),
-  stop adding workers to it mid-fan-out, and let the roster drain.
+  stop adding workers to it mid-fan-out, and let the roster drain. This stop
+  covers the lead agent only, as for every engine — a pi role pane
+  (`--roles …=pi:…`, `--spawn-role`) still launches at ≥95%; only its premium
+  effort stays pace-checked.
 - **Every fitting engine ≥95%** — *fitting* excludes an engine absent from
   `dispatch --engines`, never a fallback. The gating window is each engine's
   **latest-resetting** ≥95% window — an engine can carry several exhausted
@@ -274,6 +304,10 @@ cache; do not infer that `null` means free or unlimited.
   from the snapshot; claude's oauth payload has no plan key, so `null`; cursor
   unobservable) and prints it in the summary. Missing data never blocks — an
   older cache without `plan_type`/`limit_reached` gates exactly as before.
+- **Report OpenRouter month-to-date spend vs target** using `refresh-budget`'s
+  `pi:` summary line (spend, target, projection) alongside claude/codex/
+  cursor's lines — it's the same one-line-per-engine summary, not a separate
+  report.
 - **cursor's quota is unobservable** — treat it as neutral, but it's the engine
   most likely to surprise you; route the work you'd shed first there, not the
   work you'd shed last.
