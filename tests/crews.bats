@@ -629,17 +629,20 @@ EOF
   [[ "$output" == *"crew new"* ]]
 }
 
-# ---- $PPID must reach every message unexpanded ---------------------------
+# ---- id, register, and dispatch's recovery hints drop the explicit pid ---
 
-@test "id, register, and dispatch's abort messages all spell \$PPID literally" {
+@test "id, register, and dispatch's abort messages name adopt with no pid" {
   CREW_ID= run run_crew id
-  [[ "$output" == *'crew adopt <id> $PPID'* ]]
+  [[ "$output" == *'crew adopt <id>'* ]]
+  [[ "$output" != *'$PPID'* ]]
 
   CREW_ID= run run_crew register
-  [[ "$output" == *'crew adopt <id> $PPID'* ]]
+  [[ "$output" == *'crew adopt <id>'* ]]
+  [[ "$output" != *'$PPID'* ]]
 
   _run_dispatch_no_crew_id
-  [[ "$output" == *'crew adopt <id> $PPID'* ]]
+  [[ "$output" == *'crew adopt <id>'* ]]
+  [[ "$output" != *'$PPID'* ]]
 }
 
 # ---- dispatch's abort message --------------------------------------------
