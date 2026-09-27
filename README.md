@@ -258,7 +258,7 @@ tmux server (#303).
 Claude workers also get the protocol, skills, reviewers and critics dirs
 granted read-only (an `Edit` deny rule alongside the `--add-dir`), so a
 `DISPATCHER_*_DIR` override pointing at a writable checkout can't be edited
-by a worker.
+by a worker through the Edit/Write tools or path-checked shell commands.
 
 For Claude Code, pass the plugin directory to `claude`:
 

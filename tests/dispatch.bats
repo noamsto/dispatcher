@@ -850,6 +850,14 @@ _env_of() {
   [ "$status" -eq 0 ]
 }
 
+@test "dispatch stamps the worker window with its crew dir and branch for --spawn-role" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "window anchor"
+  [ "$status" -eq 0 ]
+  grep -qxF -- "set-window-option -t %1 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t %1 @crew_branch feat/42-window-anchor' "$STUB_LOG"
+}
+
 @test "a grid lead's @crew_name stays the bare codename" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid crew name unchanged"
@@ -5287,12 +5295,20 @@ _spawn_role_fixture() {
   mkdir -p "$roles_dir"
   printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
   _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" ""
+  # The window options dispatch stamps; --spawn-role's only anchor.
+  export STUB_CREW_DIR="$common/crew" STUB_CREW_BRANCH=feat/9-x
 
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 display-message) printf '%s\n' '@1' ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
 list-panes) ;;
 split-window) printf '%s\n' '%6' ;;
 esac
@@ -5374,6 +5390,12 @@ _write_dirs_record() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 display-message) printf '%s\n' '@1' ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
 list-panes) printf '%s\n' "%5||live" "%4|reviewer|${STUB_PANE_STATE}" ;;
 split-window) printf '%s\n' '%6' ;;
 esac
@@ -6957,7 +6979,7 @@ EOF
   DISPATCH_ENGINES="claude pi" run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
-  [ ! -e "$STUB_LOG" ]
+  run ! grep -q 'split-window' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role rejects an explicit effort for the final cursor agent" {
@@ -7053,16 +7075,13 @@ EOF
   [[ "$line" != *"--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/"* ]]
 }
 
-@test "spawn-role: record — none recorded: a store build uses the baked dirs, never the env" {
+@test "spawn-role: record — no record → refused" {
   _spawn_role_fixture
-  _store_dispatch
   rm "$common/crew/protocol-dirs/feat/9-x"
-  cp -r "$BAKED_PROTOCOLS" "$TEST_REPO/checkout-protocols"
-  DISPATCHER_PROTOCOL_DIR="$TEST_REPO/checkout-protocols" run run_store_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 0 ]
-  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
-  [[ "$line" == *"--append-system-prompt-file $BAKED_PROTOCOLS/GRID_PROTOCOL.md "* ]]
-  [[ "$(launch_log)" != *"checkout-protocols"* ]]
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no protocol-dirs record for feat/9-x"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
 }
 
 @test "spawn-role: record — a symlinked record is refused before any split" {
@@ -7083,14 +7102,14 @@ EOF
     >"$common/crew/protocol-dirs/feat/9-x"
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 1 ]
-  [[ "$output" == *"belongs to another worktree"* ]]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
   run ! grep -q 'split-window' "$STUB_LOG"
 }
 
 # _fake_git_dir <dir> <branch> — a bare repo shaped like a real common dir, with
 # a per-worktree dir `worktrees/w` whose back-pointer names this worktree's
-# .git, and a roles.json for <branch> under its crew dir: everything the
-# unanchored --spawn-role needed to accept it.
+# .git, and a roles.json for <branch> under its crew dir: everything a
+# git-discovery anchor would accept.
 _fake_git_dir() {
   git init -q --bare "$1"
   mkdir -p "$1/worktrees/w" "$1/crew/artifacts/$2"
@@ -7100,62 +7119,78 @@ _fake_git_dir() {
   cp "$roles_dir/roles.json" "$1/crew/artifacts/$2/roles.json"
 }
 
-@test "spawn-role: anchor — an exported GIT_COMMON_DIR is ignored" {
+# _forged_record <common> — a record under a fake common dir that widens the
+# grant: $HOME as the skills dir, the real crew dir as the critics dir.
+_forged_record() {
+  mkdir -p "$1/crew/protocol-dirs/feat"
+  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$HOME" "" "$common/crew" "$(realpath "$PWD")" \
+    >"$1/crew/protocol-dirs/feat/9-x"
+}
+
+# _assert_real_anchor <fake> — the role launched against the real crew dir's
+# record and wrote its launch/exit scripts there, never under <fake>.
+_assert_real_anchor() {
+  local line keys
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$line" != *"--add-dir $HOME "* ]]
+  [[ "$line" != *"--add-dir $common/crew "* ]]
+  [[ "$line" != *"$1"* ]]
+  keys="$(grep -F 'send-keys -t %6' "$STUB_LOG")"
+  [[ "$keys" == *"bash '$common/crew/launch/launch."* ]]
+  [[ "$keys" == *"bash '$common/crew/launch/exit."* ]]
+  [[ "$keys" != *"$1"* ]]
+  [ ! -e "$1/crew/launch" ]
+}
+
+@test "spawn-role: anchor — a window without @crew_dir/@crew_branch is refused" {
   _spawn_role_fixture
-  fake="$BATS_TEST_TMPDIR/fake-common"
+  STUB_CREW_DIR="" STUB_CREW_BRANCH="" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--spawn-role: this window has no @crew_dir/@crew_branch"* ]]
+  [[ "$output" == *"re-dispatch"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: anchor — a genuine linked worktree of a worker-built repo is refused" {
+  _spawn_role_fixture
+  task="$(cat WORKER_TASK.md)"
+  r="$BATS_TEST_TMPDIR/scratch/r"
+  git init -q "$r"
+  git -C "$r" -c user.name=a -c user.email=a@b commit -q --allow-empty -m x
+  git -C "$r" worktree add -q -b feat/9-x "$BATS_TEST_TMPDIR/scratch/w"
+  cd "$BATS_TEST_TMPDIR/scratch/w"
+  printf '%s\n' "$task" >WORKER_TASK.md
+  mkdir -p "$r/.git/crew/artifacts/feat/9-x"
+  cp "$roles_dir/roles.json" "$r/.git/crew/artifacts/feat/9-x/"
+  _forged_record "$r/.git"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  [ ! -e "$r/.git/crew/launch" ]
+}
+
+@test "spawn-role: anchor — a gitlink to a fake repo is ignored: the window's crew dir wins" {
+  _spawn_role_fixture
+  fake="$BATS_TEST_TMPDIR/scratch/fake-common"
   _fake_git_dir "$fake" feat/9-x
-  mkdir -p "$fake/crew/protocol-dirs/feat"
-  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "$common/crew" "$(realpath "$PWD")" \
-    >"$fake/crew/protocol-dirs/feat/9-x"
+  _forged_record "$fake"
+  printf 'gitdir: %s\n' "$fake/worktrees/w" >.git
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  _assert_real_anchor "$fake"
+}
+
+@test "spawn-role: anchor — an exported GIT_COMMON_DIR is ignored: the window's crew dir wins" {
+  _spawn_role_fixture
+  fake="$BATS_TEST_TMPDIR/scratch/fake-common"
+  _fake_git_dir "$fake" feat/9-x
+  _forged_record "$fake"
   GIT_COMMON_DIR="$fake" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
-  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
-  [[ "$line" != *"$fake"* ]]
-  [[ "$line" != *"--add-dir $common/crew "* ]]
-  [[ "$line" == *"--add-dir $common/crew/artifacts/feat/9-x "* ]]
-}
-
-@test "spawn-role: anchor — a gitlink to a fake repo inside the worktree is refused" {
-  _spawn_role_fixture
-  _fake_git_dir "$PWD/evil" feat/9-x
-  printf 'gitdir: %s\n' "$PWD/evil/worktrees/w" >.git
-  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"not a linked worktree"* ]]
-  run ! grep -q 'split-window' "$STUB_LOG"
-}
-
-@test "spawn-role: anchor — a gitlink to another worktree's git dir is refused" {
-  _spawn_role_fixture
-  git worktree add -q -b feat/10-y "$TEST_REPO/.dispatch-wt/feat-10-y"
-  other_gd="$(git -C "$TEST_REPO/.dispatch-wt/feat-10-y" rev-parse --absolute-git-dir)"
-  mkdir -p "$common/crew/artifacts/feat/10-y"
-  cp "$roles_dir/roles.json" "$common/crew/artifacts/feat/10-y/roles.json"
-  printf 'gitdir: %s\n' "$other_gd" >.git
-  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"not a linked worktree"* ]]
-  run ! grep -q 'split-window' "$STUB_LOG"
-}
-
-@test "spawn-role: anchor — a fake repo inside the worker's artifacts dir is refused" {
-  _spawn_role_fixture
-  _fake_git_dir "$roles_dir/evil" feat/9-x
-  printf 'gitdir: %s\n' "$roles_dir/evil/worktrees/w" >.git
-  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"inside a crew artifacts dir"* ]]
-  run ! grep -q 'split-window' "$STUB_LOG"
-}
-
-@test "spawn-role: anchor — the main checkout is refused" {
-  _spawn_role_fixture
-  cp WORKER_TASK.md "$TEST_REPO/"
-  cd "$TEST_REPO"
-  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"not a linked worktree"* ]]
-  run ! grep -q 'split-window' "$STUB_LOG"
+  _assert_real_anchor "$fake"
 }
 
 @test "spawn-role: anchor — a subdir of the worktree is refused" {
@@ -7165,17 +7200,27 @@ _fake_git_dir() {
   cd sub
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 1 ]
-  [[ "$output" == *"worktree root"* ]]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
   run ! grep -q 'split-window' "$STUB_LOG"
 }
 
-@test "spawn-role: anchor — a detached HEAD is refused" {
+@test "spawn-role: anchor — the main checkout is refused" {
+  _spawn_role_fixture
+  cp WORKER_TASK.md "$TEST_REPO/"
+  cd "$TEST_REPO"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: anchor — a detached HEAD still spawns: the branch comes from the window" {
   _spawn_role_fixture
   git checkout -q --detach
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"detached HEAD"* ]]
-  run ! grep -q 'split-window' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spawned role reviewer"* ]]
+  grep -q 'split-window' "$STUB_LOG"
 }
 
 @test "the suite resolves engine CLIs from the stub dir, not the developer's machine" {

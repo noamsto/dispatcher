@@ -1313,57 +1313,30 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role must run inside tmux" >&2
     exit 1
   }
-  # Git discovery follows GIT_* env and the worktree's own .git gitlink, both
-  # worker-controlled; anchor crew_dir before reading anything under it (#496).
-  # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
-  for _v in "${!GIT_@}"; do unset "$_v"; done
-  if ! top="$(git rev-parse --show-toplevel)" || ! gd="$(git rev-parse --absolute-git-dir)" ||
-    ! common="$(git rev-parse --path-format=absolute --git-common-dir)"; then
-    echo "dispatch: --spawn-role: not inside a git worktree" >&2
+  # crew_dir and branch come from the window dispatch stamped, never git
+  # discovery: GIT_* env and the worktree's .git gitlink are worker-controlled,
+  # and a worker can build a genuine repo + worktree to point them at (#496).
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  crew_dir="$(tmux show-options -wqv -t "$win" @crew_dir)"
+  branch="$(tmux show-options -wqv -t "$win" @crew_branch)"
+  if [[ $crew_dir != /* ]] || [ -z "$branch" ]; then
+    echo "dispatch: --spawn-role: this window has no @crew_dir/@crew_branch (dispatched before they were stamped) — re-dispatch the task" >&2
     exit 1
   fi
-  top="$(realpath -e -- "$top")"
-  gd="$(realpath -e -- "$gd")"
-  common_real="$(realpath -e -- "$common")"
-  # git's back-pointer to this worktree's .git: a gitlink aimed at another
-  # worktree's git dir names that worktree. Relative under
-  # worktree.useRelativePaths, then against $gd.
-  bp=""
-  [ -f "$gd/gitdir" ] && bp="$(<"$gd/gitdir")"
-  [[ $bp == /* ]] || bp="$gd/$bp"
-  if [ "$gd" = "$common_real" ] || [ "$(dirname -- "$gd")" != "$common_real/worktrees" ] ||
-    [ ! -f "$gd/gitdir" ] || [ "$(realpath -m -- "$bp")" != "$(realpath -e -- "$top/.git")" ] ||
-    [[ "$common_real/" == "$top/"* ]]; then
-    echo "dispatch: --spawn-role: $top is not a linked worktree of its repository — refusing" >&2
-    exit 1
-  fi
-  case "$common_real/" in
-  */crew/artifacts/*)
-    echo "dispatch: --spawn-role: git dir $common_real is inside a crew artifacts dir — refusing" >&2
-    exit 1
-    ;;
-  esac
-  [ "$(realpath -e -- "$PWD")" = "$top" ] || {
-    echo "dispatch: --spawn-role must run from the worktree root ($top)" >&2
-    exit 1
-  }
-  crew_dir="$common/crew"
-  branch="$(git branch --show-current)"
-  [ -n "$branch" ] || {
-    echo "dispatch: --spawn-role: detached HEAD — run from the worker's branch" >&2
-    exit 1
-  }
   # The dirs come from the dispatch-time record, never this (worker's) env.
   if bad="$(_protocol_dirs_record_bad)"; then
     echo "dispatch: $bad is a symlink or the wrong type — refusing to use the protocol-dirs record" >&2
     exit 1
   fi
-  rec_lines=()
-  [ -f "$crew_dir/protocol-dirs/$branch" ] && mapfile -t rec_lines <"$crew_dir/protocol-dirs/$branch"
-  if [ "${#rec_lines[@]}" -gt 0 ] && [ "${rec_lines[4]:-}" != "$top" ]; then
-    echo "dispatch: --spawn-role: the protocol-dirs record for $branch belongs to another worktree — refusing" >&2
+  [ -f "$crew_dir/protocol-dirs/$branch" ] || {
+    echo "dispatch: --spawn-role: no protocol-dirs record for $branch — re-dispatch the task" >&2
     exit 1
-  fi
+  }
+  mapfile -t rec_lines <"$crew_dir/protocol-dirs/$branch"
+  [ "${rec_lines[4]:-}" = "$(realpath -e -- "$PWD")" ] || {
+    echo "dispatch: --spawn-role must run from the dispatched worktree's root (${rec_lines[4]:-unrecorded})" >&2
+    exit 1
+  }
   unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
   DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
@@ -1419,7 +1392,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 1
   fi
   check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
-  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{?@crew_exited,exited,live}' | awk -F'|' -v r="$role" '$2 == r && $3 != "exited" {print $1; exit}')"
   if [ -n "$existing" ]; then
     echo "role $role is already running in pane $existing"
@@ -3354,6 +3326,10 @@ fi
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
 tmux set-window-option -t "$win" @crew_name "$agent_name"
+# --spawn-role finds its crew dir and branch here, not via git discovery, which
+# the worker's env and worktree .git steer (#496).
+tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

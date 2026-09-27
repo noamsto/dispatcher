@@ -451,7 +451,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _add_dir_ok _artifacts_dir_bad launch_dir_args; do
+  for fn in shell_quote write_launch_script _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -760,6 +760,49 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   assert_add_dir_terminated "$line"
   _ro_rule "$DISPATCHER_PROTOCOL_DIR"
   [[ "$line" == *"$r"* ]]
+}
+
+@test "resume stamps the window for --spawn-role and rewrites the protocol-dirs record" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  rec="$TEST_REPO/.git/crew/protocol-dirs/feat/7-a-thing"
+  mkdir -p "$(dirname "$rec")"
+  printf '%s\n' /stale/protocols /stale/skills "" "" /stale/wt >"$rec"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF -- "set-window-option -t @4 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t @4 @crew_branch feat/7-a-thing' "$STUB_LOG"
+  mapfile -t lines <"$rec"
+  [ "${#lines[@]}" -eq 5 ]
+  [ "${lines[0]}" = "$DISPATCHER_PROTOCOL_DIR" ]
+  [ "${lines[1]}" = "$DISPATCHER_SKILLS_DIR" ]
+  [ "${lines[4]}" = "$(realpath "$WT")" ]
+}
+
+@test "resume on a new window stamps it for --spawn-role" {
+  setup_worker_wt
+  stub_tmux_no_pane
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF -- "set-window-option -t %99 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t %99 @crew_branch feat/7-a-thing' "$STUB_LOG"
+}
+
+@test "resume refuses a symlinked protocol-dirs record before launching" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  victim="$BATS_TEST_TMPDIR/victim"
+  printf 'keep me\n' >"$victim"
+  mkdir -p "$TEST_REPO/.git/crew/protocol-dirs/feat"
+  ln -s "$victim" "$TEST_REPO/.git/crew/protocol-dirs/feat/7-a-thing"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to write the protocol-dirs record"* ]]
+  [ "$(cat "$victim")" = "keep me" ]
+  [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "claude resume refuses a symlinked parent of the artifacts dir and creates nothing under its target" {
