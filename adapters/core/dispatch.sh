@@ -1449,7 +1449,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   # genuinely idle pi rule is a pure run of `─` (real capture); any
   # rule-shaped line (starts with `──`) that is NOT entirely dashes is
   # treated as a live-turn label, generalizing beyond the one literal
-  # status text this plan captured. Checked anywhere in the last 30
+  # status text captured above. Checked anywhere in the last 30
   # non-empty lines, mirroring _claude_idle_box's position-flexible
   # _meter_line/_has_subrow/"esc to interrupt" checks. Uses index()/gsub()
   # on the bare glyph, never a quantifier directly on it, so this stays
@@ -1611,22 +1611,20 @@ if [ "${1:-}" = "--role-watch" ]; then
 
   # Assignments wait here until the pane is ready; one is delivered per tick so
   # the next capture sees the turn it started. `cooldown` skips the tick right
-  # after a send, when the pane may not have repainted as busy yet. The text is
-  # pasted via a tmux load-buffer/paste-buffer round trip (bracketed paste,
-  # not send-keys -l) rather than a burst of individual keystrokes; per
-  # tmux(1), `-p` only wraps the paste in bracket codes when the destination
-  # has requested bracketed-paste mode, so this is a real improvement for an
-  # app that has (our engines' composers), not a guarantee for one that
-  # hasn't — the pre-paste gate and the post-paste re-check below remain the
-  # actual backstop. `-r` skips tmux's own LF→CR translation on output, so a
-  # future loosening of `_role_assignment_safe`'s control-byte refusal can't
-  # silently reintroduce CR-as-Enter through that default. The pane is
-  # re-checked, and only then is Enter sent: a dialog raised in between (a
-  # subagent's) is never confirmed. Text left in the pane by a failed
-  # re-check is cleared with C-u before the retry. `pending` lives in this
-  # process only, capped at
-  # `pending_max` (oldest dropped silently once full); the watcher exits with
-  # its pane.
+  # after a send, when the pane may not have repainted as busy yet. The text
+  # is pasted via a tmux load-buffer/paste-buffer round trip (bracketed
+  # paste, not send-keys -l): per tmux(1), `-p` wraps the paste in bracket
+  # codes only when the destination has requested bracketed-paste mode, so
+  # this helps an app that has (our engines' composers) but isn't a
+  # guarantee — the pre-paste gate and post-paste re-check remain the actual
+  # backstop. `-r` skips tmux's default LF→CR translation, so a future
+  # loosening of `_role_assignment_safe`'s control-byte refusal can't
+  # silently reintroduce CR-as-Enter through it. The pane is re-checked, and
+  # only then is Enter sent: a dialog raised in between (a subagent's) is
+  # never confirmed. Text left in the pane by a failed re-check is cleared
+  # with C-u before the retry. `pending` lives in this process only, capped
+  # at `pending_max` (oldest dropped silently once full); the watcher exits
+  # with its pane.
   pending=()
   pending_max=50
   cooldown=0

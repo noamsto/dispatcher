@@ -7358,9 +7358,10 @@ capture-pane)
   esac
   ;;
 send-keys)
-  # Unchanged from before Step 1: the old delivery mechanism's one-shot
-  # race trigger, kept alive alongside paste-buffer's below since main
-  # still delivers this way through Step 4.
+  # dispatch.sh no longer types the assignment via send-keys -l (delivery is
+  # paste-buffer below), but the flip trigger stays here too so a fixture that
+  # still exercises literal typing (e.g. the bare Enter/C-u keystrokes) has a
+  # frame-swap path to hook into.
   if [ "$2 $3 $4" = "-t %6 -l" ] && [ -e "$STUB_DIR/flip" ]; then
     rm -f "$STUB_DIR/flip"
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
