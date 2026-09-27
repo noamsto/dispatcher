@@ -178,8 +178,10 @@ EOF
   mkdir -p "$dir"
   printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/33-thing","name":"$(touch pwned)","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
   printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/34-thing","name":"nova","color":"green","tmux":"red#(touch pwned)"}' >>"$dir/events.jsonl"
-  for b in feat/33-thing feat/34-thing; do
+  printf '%s\n' '{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"feat/35-thing","name":"nova\n","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
+  for b in feat/33-thing feat/34-thing feat/35-thing; do
     id="$(run_crew identity "$b" c1)"
+    [ "$(jq -r .name <<<"$id")" != $'nova\n' ]
     [[ "$(jq -r .name <<<"$id")" =~ ^[a-z]+$ ]]
     [[ "$(jq -r .tmux <<<"$id")" =~ ^colour[0-9]+$ ]]
   done
