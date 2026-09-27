@@ -246,10 +246,8 @@ EOF
   chmod +x "$root/cursor-agent"
   # A real SessionEnd runs under its own engine — exactly one engine-named
   # ancestor. The dev loop runs bats under the worker's engine, so orphan the
-  # fake engine (`( … & )` reparents it to init) to isolate the chain; the
-  # ambient engine would otherwise count as a second one and the guard would
-  # fire. This pins the count==1 boundary the backstop depends on (a `>=1`
-  # mutation would silence every claude/codex/pi exit and fail here).
+  # fake engine (`( … & )` reparents it to init) to isolate the chain; otherwise
+  # the ambient engine counts as a second one and the guard fires.
   ( CREW_WORKER_ID='worker:feat/x#s1-1' "$root/cursor-agent" >/dev/null 2>&1 & )
   exited=""
   for _ in $(seq 1 50); do

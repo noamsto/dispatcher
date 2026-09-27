@@ -10,11 +10,10 @@
 #                ends without a terminal status is the same silent stop. But a
 #                `blocked` worker also ends its turn to wait for an answer, and
 #                it is still alive — so `blocked` counts as a meaningful end here
-#                and is never overridden. A turn that ends with the lead engine
-#                still live in its pane is also not a death (see the #531 guard
-#                below): `stop` fires per turn and per subagent, so only a stop
-#                whose pane engine is already gone posts `exited`; a parked live
-#                worker is left to the stall-watch's prompt detector.
+#                and is never overridden. `stop` fires per turn and per subagent,
+#                so only a stop whose pane engine is already gone posts `exited`
+#                (#531 guard below); a parked live worker is left to the
+#                stall-watch's prompt detector.
 set -euo pipefail
 
 mode=session-end
@@ -53,12 +52,10 @@ _is_engine_cmd() {
 }
 
 # _engine_ancestors — count engine-named processes in this hook's ancestor chain,
-# stopping at the pane boundary (the tmux server). A child session of the lead is
-# a nested process, so its end shows >=2 engines; the lead's own end shows exactly
-# 1. The tmux stop bounds the deliberately broad `node` match to the pane's own
-# subtree, so an unrelated engine above the pane can never suppress a real death.
-# Bounded and non-blocking (no wait), so the #69 deadlock cannot occur; `ps`
-# failing reads as 0, which keeps the backstop (fail-open).
+# stopping at the pane boundary (the tmux server), so the broad `node` match is
+# bounded to the pane's own subtree. A child session is nested inside the lead,
+# so its end shows >=2 engines; the lead's own shows exactly 1. Non-blocking (no
+# wait), so the #69 deadlock cannot occur; `ps` failing reads as 0 (fail-open).
 _engine_ancestors() {
   local p="$PPID" n=0 c ppid depth=0
   while [ "$depth" -lt 32 ]; do
@@ -96,19 +93,14 @@ PANES
 }
 
 # #531 — a child session ending is not the lead ending. The hook fires for any
-# session sharing this window's environment; cursor's native subagents inherit
-# the lead's full CREW_WORKER_ID, so a subagent `stop`/SessionEnd posted `exited`
-# under the live lead's id (stranding `crew reply`, inviting a resume of a live
-# worker, and letting `crew reap` reclaim its worktree). Two independent
-# detectors, either one suppresses:
-#   1. nesting — a child session is a process nested inside the lead, so the
-#      hook's ancestor chain has >=2 engine-named processes; the lead's own
-#      SessionEnd has exactly 1.
-#   2. turn-end pane liveness — cursor's `stop` fires per turn and per subagent,
-#      so a stop with the lead engine still live in its pane is not a death. Not
-#      applied to default SessionEnd: that hook runs while its own engine is
-#      still alive (the engine waits for the hook), so a liveness check there
-#      would silence the genuine claude/codex/pi backstop.
+# session sharing this window's environment, and cursor's native subagents
+# inherit the lead's full CREW_WORKER_ID. Two independent detectors, either one
+# suppresses: (1) nesting — the hook's ancestor chain has >=2 engine-named
+# processes (the lead's own end has exactly 1); (2) a turn-end whose lead pane
+# still runs an engine — `stop` fires per turn and per subagent, so that is not a
+# death. (2) is turn-end-only: a default SessionEnd hook runs while its own engine
+# is still alive, so a liveness check there would silence the genuine
+# claude/codex/pi backstop.
 if [ "$(_engine_ancestors)" -ge 2 ]; then exit 0; fi
 if [ "$mode" = turn-end ] && _is_engine_cmd "$(_pane_cmd)"; then exit 0; fi
 
