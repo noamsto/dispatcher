@@ -48,6 +48,11 @@ jobs:
       #                   (stall-watch: one post per episode...) under that
       #                   much oversubscription -- ~3% faster than 16 isn't
       #                   worth it.
+      # timing-tagged tests (secret-read-guard.bats' assert_deny_within /
+      # assert_deny_within_each_awk cases, #498) are excluded here -- their
+      # wall-clock bounds assume the guard has the CPU to itself, which
+      # --jobs 16 on a 4-core runner cannot promise. They run in their own
+      # serial step below instead.
       - name: bats
         shell: bash
         run: |
@@ -57,7 +62,12 @@ jobs:
           fi
           nix develop -c bash -c '
             files=$(find tests -maxdepth 1 -name "*.bats" ! -name "module.bats" | sort)
-            bats --jobs 16 $files
+            bats --jobs 16 --filter-tags "!timing" $files
           '
+      # secret-read-guard.bats' wall-clock cases (#498, follow-up to #463):
+      # run alone so their timing bounds measure the guard's own cost, not
+      # scheduling contention from --jobs 16 above.
+      - name: bats (secret-read-guard timing, serial)
+        run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
       - name: flake check
         run: nix flake check
