@@ -1549,10 +1549,15 @@ assert_allow_within_each_awk() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: escape runs inside 14 nested backtick frames allow in under 3.5 s under every awk" {
+@test "secret-read-guard: escape runs inside 14 nested backtick frames allow in under 5 s under every awk" {
   local body
   body=$(printf '\\\\x %.0s' $(seq 1 20000))
-  assert_allow_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14 "$body")")"
+  # Bound 5000 ms (was 3500): the slowest awk (nawk) measured at 173 ms median / 179 ms max locally
+  # at depth=14, runlen=20000. Growth is ~linear in both depth (ratio ~1.5-2.7 for 14->20) and
+  # runlen (ratio ~1.8-2.0 for each doubling). CI runs bats with --jobs 16 on a 4-core runner,
+  # so wall-clock headroom must absorb contention. The 5000 ms bound is generous; a catastrophic
+  # backtrack (>30 s) would still fail it. See #507.
+  assert_allow_within_each_awk 5000 "$(claude_bash "$(nested_backticks 14 "$body")")"
 }
 
 @test "secret-read-guard: denies printenv with a bare double dash" {
