@@ -336,6 +336,60 @@ _fetch_origin_branch() {
   git -C "$dir" fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
+# Tracker stamp for a fresh dispatch. The slug comes from the configured
+# origin (`git config --get remote.origin.url`). `git remote get-url` applies
+# insteadOf and would return a rewritten local path for that same remote.
+# A missing key, a local path, or any non-GitHub URL is no slug. Precedence is
+# DISPATCH_REPO_TRACKERS, then DISPATCH_ORG_TRACKERS, then github. A value
+# other than `github` or `linear:TEAM` does not match.
+_resolve_tracker() {
+  local url="" rest="" slug="" org="" map="" want="" entry="" key="" val="" which
+  local -a tracker_parts=()
+  url="$(git config --get remote.origin.url 2>/dev/null || true)"
+  case "$url" in
+  git@github.com:*) rest="${url#git@github.com:}" ;;
+  https://github.com/*) rest="${url#https://github.com/}" ;;
+  ssh://git@github.com/*) rest="${url#ssh://git@github.com/}" ;;
+  git://github.com/*) rest="${url#git://github.com/}" ;;
+  *) rest="" ;;
+  esac
+  if [ -n "$rest" ]; then
+    rest="${rest%.git}"
+    if [[ $rest =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+      slug="$rest"
+    fi
+  fi
+  if [ -n "$slug" ]; then
+    org="${slug%%/*}"
+    for which in repo org; do
+      if [ "$which" = repo ]; then
+        map="${DISPATCH_REPO_TRACKERS:-}"
+        want="$slug"
+      else
+        map="${DISPATCH_ORG_TRACKERS:-}"
+        want="$org"
+      fi
+      [ -n "$map" ] || continue
+      read -ra tracker_parts <<<"$map"
+      for entry in "${tracker_parts[@]}"; do
+        [ -n "$entry" ] || continue
+        key="${entry%%=*}"
+        val="${entry#*=}"
+        [ "$key" = "$want" ] || continue
+        if [ "$val" = github ]; then
+          printf '%s\n' github
+          return 0
+        fi
+        if [[ $val =~ ^linear:([A-Z][A-Z0-9]*)$ ]]; then
+          printf 'linear %s\n' "${BASH_REMATCH[1]}"
+          return 0
+        fi
+      done
+    done
+  fi
+  printf '%s\n' github
+}
+
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
 # override against the baked default (#303). A shell or tmux server that
 # outlives a rebuild keeps the previous build's export, so an override under the
@@ -1573,6 +1627,7 @@ effort=""
 linear_id=""
 gh_issue=""
 pr_number=""
+pr_body=""
 base_ref=""
 base_flag=""
 add_dir_flags=()
@@ -2653,10 +2708,11 @@ wt_post_switch='post-switch.tmux=""'
 # --pr resolves the head ref; the switch itself happens after the gate below, so
 # a refusal costs no worktree and no window.
 if [ -n "$pr_number" ]; then
-  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository,state,mergeCommit) || {
+  pr_json=$(gh pr view "$pr_number" --json headRefName,headRefOid,baseRefName,isCrossRepository,state,mergeCommit,body) || {
     echo "dispatch: --pr $pr_number: could not resolve PR $pr_number" >&2
     exit 1
   }
+  pr_body=$(printf '%s' "$pr_json" | jq -r '.body // empty')
   pr_state=$(printf '%s' "$pr_json" | jq -r .state)
   [ "$pr_state" = OPEN ] || {
     pr_merge_oid=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // empty')
@@ -3154,6 +3210,30 @@ if [ "$switch_mode" = resume ] && [ -z "$base_ref" ] && [ -f "$wt_path/WORKER_TA
   [ -n "$carried_base" ] && base_ref="$carried_base"
 fi
 
+# A re-dispatch keeps the tracker the first dispatch stamped. Re-resolving
+# would change an in-flight task's follow-up path when the maps have changed.
+# A missing or unrecognised line stays absent — this path does not recompute.
+tracker_stamp=""
+if [ "$switch_mode" = resume ]; then
+  if [ -f "$wt_path/WORKER_TASK.md" ]; then
+    carried_tracker="$(sed -nE '/^$/q; s/^tracker: //p' "$wt_path/WORKER_TASK.md" | head -n 1)"
+    if [ "$carried_tracker" = github ] || [[ $carried_tracker =~ ^linear\ [A-Z][A-Z0-9]*$ ]]; then
+      tracker_stamp="$carried_tracker"
+    fi
+  fi
+else
+  tracker_stamp="$(_resolve_tracker)"
+fi
+if [ -n "$pr_number" ] && [ -n "$pr_body" ]; then
+  if [[ $tracker_stamp =~ ^linear\ [A-Z][A-Z0-9]*$ ]] &&
+    grep -qiE 'closes[[:space:]]*#[0-9]+' <<<"$pr_body"; then
+    echo "dispatch: warning: tracker is $tracker_stamp but PR #$pr_number body closes a GitHub issue — stamp unchanged" >&2
+  elif [ "$tracker_stamp" = github ] &&
+    grep -qE 'Closes[[:space:]]*[A-Z]{2,}-[0-9]+' <<<"$pr_body"; then
+    echo "dispatch: warning: tracker is github but PR #$pr_number body closes a Linear ticket — stamp unchanged" >&2
+  fi
+fi
+
 # The grant record, not the header's add_dir: mirror, is what every claude
 # launch reads (launch_dir_args): the worker edits WORKER_TASK.md, so the doc
 # cannot be the authority. Same precedence as base: above — a re-dispatch with
@@ -3220,8 +3300,11 @@ _record_protocol_dirs "$wt_path"
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
-  printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\ndispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
-    "$mcp_profile" "$plan_val" "$title" "$closes" "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
+  printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\n' \
+    "$mcp_profile" "$plan_val" "$title" "$closes"
+  [ -n "$tracker_stamp" ] && printf 'tracker: %s\n' "$tracker_stamp"
+  printf 'dispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
+    "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
   if [ -n "$base_ref" ]; then
     printf 'base: %s\n' "$base_ref"
   fi

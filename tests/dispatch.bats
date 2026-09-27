@@ -11,7 +11,7 @@ setup() {
   # and fails on a personal one. HOME points at the throwaway repo so the codex
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
-  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR
+  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS
   stub_bin tmux
   stub_bin crew
   # pi-agent-dir delegates to the real crew.sh so pi launch tests exercise a
@@ -159,7 +159,14 @@ stub_pr_bins() { # <head-branch> [base-branch]
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$*" in
 pr\ view\ *)
-  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"%s","isCrossRepository":false,"state":"%s","mergeCommit":{"oid":"%s"}}\n' "$PR_HEAD" "$PR_HEAD_OID" "$PR_BASE" "${PR_STATE:-OPEN}" "${PR_MERGE_OID:-}"
+  jq -nc \
+    --arg head "$PR_HEAD" \
+    --arg oid "$PR_HEAD_OID" \
+    --arg base "$PR_BASE" \
+    --arg state "${PR_STATE:-OPEN}" \
+    --arg merge "${PR_MERGE_OID:-}" \
+    --arg body "${PR_BODY:-}" \
+    '{headRefName:$head,headRefOid:$oid,baseRefName:$base,isCrossRepository:false,state:$state,mergeCommit:{oid:$merge},body:$body}'
   ;;
 esac
 exit 0
@@ -4383,6 +4390,154 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
   [ "$status" -eq 0 ]
   grep -qx 'base: feat/parent' "$wt/WORKER_TASK.md"
+}
+
+# Configured origin stays the GitHub URL; fetch rewrites via insteadOf onto
+# the bare repo stub_launch_bins already pushed.
+point_github_origin() {
+  git -C "$TEST_REPO" config "url.$TEST_REPO/origin.git".insteadOf "https://github.com/factify-inc/mono.git"
+  git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
+}
+
+@test "tracker: --pr stamps linear ENG from the org map and keeps pr:" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://github.com/factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'pr: 99' "$task"
+  grep -qx 'tracker: linear ENG' "$task"
+  [ "$(awk '$0 == "pr: 99" { getline; print; exit }' "$task")" = "tracker: linear ENG" ]
+}
+
+@test "tracker: a fresh Linear dispatch stamps linear ENG and keeps Closes" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/eng-1234-implement-thing/WORKER_TASK.md"
+  grep -qx 'Closes ENG-1234' "$task"
+  grep -qx 'tracker: linear ENG' "$task"
+  [ "$(awk '$0 == "Closes ENG-1234" { getline; print; exit }' "$task")" = "tracker: linear ENG" ]
+}
+
+@test "tracker: a fresh GitHub issue with no map stamps github and keeps Closes" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  grep -qx 'Closes #42' "$task"
+  grep -qx 'tracker: github' "$task"
+  [ "$(awk '$0 == "Closes #42" { getline; print; exit }' "$task")" = "tracker: github" ]
+}
+
+@test "tracker: resume keeps the stamped tracker when the map would resolve differently" {
+  setup_resume_branch feat/42-do-a-thing
+  git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'tier: standard\ntracker: github\n\n## Task\n\nkeep\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'tracker: github' "$wt/WORKER_TASK.md"
+  run ! grep -q 'tracker: linear ENG' "$wt/WORKER_TASK.md"
+}
+
+@test "tracker: resume of a task with no tracker line does not add one" {
+  setup_resume_branch feat/42-do-a-thing
+  git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'tier: standard\n\n## Task\n\nkeep\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal DISPATCH_REPO_TRACKERS='factify-inc/mono=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^tracker:' "$wt/WORKER_TASK.md"
+  grep -qx 'keep' "$wt/WORKER_TASK.md"
+}
+
+@test "tracker: --pr warns when a linear repo's PR body closes a GitHub issue" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://github.com/factify-inc/mono.git"
+  export PR_BODY='Closes #3566'
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: warning: tracker is linear ENG but PR #99 body closes a GitHub issue — stamp unchanged"* ]]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+  grep -qx 'pr: 99' "$task"
+}
+
+@test "tracker: --pr warns when a github stamp's PR body closes a Linear ticket" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://github.com/factify-inc/mono.git"
+  export PR_BODY='Closes ENG-8494'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: warning: tracker is github but PR #99 body closes a Linear ticket — stamp unchanged"* ]]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: github' "$task"
+  grep -qx 'pr: 99' "$task"
+}
+
+@test "tracker: a per-repo entry beats the org default" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal \
+    DISPATCH_REPO_TRACKERS='factify-inc/mono=github' \
+    DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-1234 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/eng-1234-implement-thing/WORKER_TASK.md"
+  grep -qx 'tracker: github' "$task"
+  grep -qx 'Closes ENG-1234' "$task"
+}
+
+@test "tracker: the org default beats github" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+  grep -qx 'Closes #42' "$task"
+}
+
+@test "tracker: no map stamps github" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  grep -qx 'tracker: github' "$task"
+  grep -qx 'Closes #42' "$task"
+}
+
+@test "tracker: an invalid repo value falls through to the org map" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal \
+    DISPATCH_REPO_TRACKERS='factify-inc/mono=nope' \
+    DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+  grep -qx 'Closes #42' "$task"
+}
+
+@test "tracker: an invalid org value falls through to github" {
+  stub_launch_bins
+  point_github_origin
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:eng' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  grep -qx 'tracker: github' "$task"
+  grep -qx 'Closes #42' "$task"
 }
 
 # A `base:` line below the first blank line is task text, not the header, so it

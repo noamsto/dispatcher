@@ -238,16 +238,34 @@ programs.dispatcher = {
   profile = "work";
   engines = ["claude" "pi" "codex"];
   grantRoots = ["/home/me/git"];
+  repoTrackers = {
+    "factify-inc/mono" = "linear:ENG";
+  };
+  orgTrackers = {
+    factify-inc = "linear:ENG";
+  };
 };
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
 `refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
-`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`,
-`DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`
-and `DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
+`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
+`DISPATCH_ORG_TRACKERS`, `DISPATCHER_PROTOCOL_DIR`,
+`DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR` and
+`DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
 rule, commands, skills and rosters when those engines are included in
 `engines`.
+
+`repoTrackers` and `orgTrackers` say where a repo's work is tracked. `dispatch`
+stamps that on every fresh task (`tracker: linear ENG` or `tracker: github`)
+and a worker reads the stamp. Precedence is the per-repo entry, then the
+origin org's default, then `github`. With the block above,
+`factify-inc/mono = "linear:ENG"` and the org default
+`factify-inc = "linear:ENG"`, so `factify-inc/mono` resolves to `linear:ENG`.
+Another repo in that org with no per-repo entry resolves to `linear:ENG` from
+the org default. A value is `github` or `linear:TEAM`. Both maps export as
+space-separated `key=value` lists (`factify-inc/mono=linear:ENG`,
+`factify-inc=linear:ENG`); an empty map exports an empty string.
 
 `dispatch --add-dir` grants a dir only when it resolves inside a `grantRoots`
 entry; unset or empty (the default) refuses every `--add-dir`. This is
