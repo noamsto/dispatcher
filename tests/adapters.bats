@@ -49,6 +49,28 @@ teardown() {
   done
 }
 
+@test "dispatch.sh's --role-watch prompt signatures match crew.sh's stall-watch" {
+  # --role-watch gates send-keys on the same frame signatures stall-watch uses
+  # (#445). dispatch.sh is a standalone build with no shared lib, so it carries
+  # copies; byte-compare each against crew.sh, the source of truth. The
+  # multi-line ones are 2-space indented and end at the first `  }`.
+  crew="$ROOT/adapters/core/crew.sh"
+  disp="$ROOT/adapters/core/dispatch.sh"
+  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt; do
+    canonical="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$crew")"
+    [ -n "$canonical" ]
+    found="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$disp")"
+    [ "$found" = "$canonical" ]
+  done
+  for prefix in '  re_option=' '  re_meter=' '  re_subrow=' '  _meter_line() ' '  _has_subrow() '; do
+    canonical="$(grep -hF -- "$prefix" "$crew")"
+    [ -n "$canonical" ]
+    [ "$(printf '%s\n' "$canonical" | wc -l)" -eq 1 ]
+    found="$(grep -hF -- "$prefix" "$disp")"
+    [ "$found" = "$canonical" ]
+  done
+}
+
 @test "generator is idempotent" {
   # Compare checksums across two runs rather than `git diff --exit-code`: that
   # conflates generator drift with any unrelated uncommitted edit, and is

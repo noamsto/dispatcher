@@ -358,6 +358,12 @@ _resolve_dir() {
     echo "$label: $var must be an absolute path, got: $val" >&2
     exit 1
   fi
+  # The dirs are spliced into launch scripts and their prompts, and a role
+  # launched by --spawn-role inherits this env from the worker (#470).
+  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
+    exit 1
+  fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
     echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
@@ -884,8 +890,9 @@ pi_skill_args() {
 # crashes at startup is reported, while a reap (which kills the pane and its
 # shell) is silent. `;` is valid in fish (the pane shell), bash and zsh.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_name quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
   printf -v quoted_model '%q' "$r_model"
+  printf -v quoted_name '%q' "${agent_name}-${role}"
   printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
@@ -898,9 +905,9 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
+    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}claude --name $quoted_name --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
   codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -909,11 +916,11 @@ launch_role() {
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
-# watch_role <role> <pane> — spawn the detached, engine-agnostic bus watcher for
-# a role pane. It types each assignment into the pane and keeps @crew_state
-# fresh, so the role never holds a repainting `crew await`.
+# watch_role <role> <pane> <agent> — spawn the detached, engine-agnostic bus
+# watcher for a role pane. It types each assignment into the pane and keeps
+# @crew_state fresh, so the role never holds a repainting `crew await`.
 watch_role() {
-  nohup "$0" --role-watch "$1" --pane "$2" --branch "$branch" >/dev/null 2>&1 &
+  nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
 }
 
 # watch_role_prompts <role> <pane> <agent> <crew> — a parked claude role can
@@ -924,12 +931,19 @@ watch_role_prompts() {
   CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine claude >/dev/null 2>&1 &
 }
 
-# `dispatch --role-watch <role> --pane <pane> [--branch <b>] [--interval S]` —
-# an ENGINE-AGNOSTIC role supervisor. It watches the crew bus and, when the lead
-# assigns this role work, types the assignment into the role's pane (a normal
-# user turn) and keeps the pane's @crew_state fresh. That lets a role end its
-# turn instead of holding a repainting `crew await`, and it needs only the pane
-# and the bus — so it works for every engine, pi included.
+# `dispatch --role-watch <role> --pane <pane> [--engine E] [--branch <b>]
+# [--interval S] [--defer-notice S]` — a role supervisor. It watches the crew
+# bus and, when the lead assigns this role work, types the assignment into the
+# role's pane (a normal user turn) and keeps the pane's @crew_state fresh. That
+# lets a role end its turn instead of holding a repainting `crew await`.
+#
+# It sends keys ONLY to a pane whose capture is positively an idle input box
+# (claude, pi); anything else — a permission dialog, an option-select or quota
+# prompt, a live turn, an unrecognised frame, or an engine with no recognised
+# idle frame (codex, cursor) — defers to the next tick. After --defer-notice
+# seconds (default 60) of deferral it tells the lead once with an
+# `assignment_deferred` msg, so a role that never receives its assignment is not
+# mistaken for one that is working.
 if [ "${1:-}" = "--role-watch" ]; then
   role="${2:-}"
   [ -n "$role" ] || {
@@ -939,11 +953,15 @@ if [ "${1:-}" = "--role-watch" ]; then
   shift 2
   watch_pane=""
   watch_branch=""
+  engine=claude
   interval=2
+  defer_notice=60
   while [ $# -gt 0 ]; do
     case "$1" in
     --pane) watch_pane="${2:-}"; shift 2 ;;
     --branch) watch_branch="${2:-}"; shift 2 ;;
+    --engine) engine="${2:-}"; shift 2 ;;
+    --defer-notice) defer_notice="${2:-}"; shift 2 ;;
     --interval) interval="${2:-}"; shift 2 ;;
     *)
       echo "dispatch: --role-watch: unexpected argument '$1'" >&2
@@ -970,6 +988,141 @@ if [ "${1:-}" = "--role-watch" ]; then
     tmux set-option -p -t "$watch_pane" @crew_state "$1" 2>/dev/null || true
   }
   watch_set_state idle
+
+  # Signatures copied byte-identically from crew.sh's stall-watch (this is a
+  # standalone build; tests/adapters.bats pins each copy).
+  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
+  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+
+  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
+  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+
+  _is_codex_hook_review_prompt() {
+    local tail_n expected
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
+    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+    [ "$tail_n" = "$expected" ]
+  }
+
+  _is_permission_prompt() {
+    local tail_n last above
+    [ "$engine" = claude ] || return 1
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Esc to cancel · Tab to amend"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
+    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
+  }
+
+  _is_prompt() {
+    local tail_n last above
+    if [ "$engine" = codex ]; then
+      _is_codex_hook_review_prompt "$1"
+      return
+    fi
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Enter to select"* | *"Enter to confirm"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option"
+  }
+
+  # _box_rows <text> <first-row-regex> — the input box of a claude or pi pane:
+  # the LAST two `─` rules in the last 30 non-empty lines bound it, the first
+  # row inside must match <first-row-regex>, at most 12 rows sit inside (typed
+  # text wraps onto continuation rows) and 1-5 rows follow the lower rule.
+  # Prints the first inside row, then up to 7 rows above the upper rule. The
+  # rule test is a prefix match, not a character class: a bracket would consume
+  # one byte of `─`, and claude's upper rule may carry a label (`──── reef ─`).
+  # The regex travels in ENVIRON: `awk -v` would eat the backslashes.
+  _box_rows() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | rx="$2" awk '
+      { l[NR] = $0 }
+      END {
+        b = 0; a = 0
+        for (i = NR; i >= 1; i--) if (index(l[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
+        if (!a || b - a < 1) exit 1
+        if (b - a - 1 > 12 || NR - b < 1 || NR - b > 5) exit 1
+        if (b - a == 1 && "" !~ ENVIRON["rx"]) exit 1
+        if (b - a > 1 && l[a + 1] !~ ENVIRON["rx"]) exit 1
+        print (b - a > 1 ? l[a + 1] : "")
+        for (j = a - 1; j >= 1 && j >= a - 7; j--) print l[j]
+      }'
+  }
+
+  # _claude_idle_box <text> — positive idle shape of a claude pane: a box whose
+  # first row is `❯` (not a numbered option), status rows after it
+  # (fx_bgwait_*, fx_session_limit_refusal). A live turn keeps the box drawn, so
+  # a meter line, subagent row or `esc to interrupt` anywhere in the window, or
+  # a spinner line in the 7 rows above the box, vetoes. The spinner check is
+  # positional so a transcript line like `Summary…` cannot wedge an idle pane.
+  # A non-empty `❯` row still counts as idle: a prompt suggestion is ghost text
+  # a plain capture cannot tell from a draft, and only this watcher types here.
+  _claude_idle_box() {
+    local tail_n out row above
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 || true)
+    [ -n "$(_meter_line "$tail_n")" ] && return 1
+    _has_subrow "$tail_n" && return 1
+    printf '%s\n' "$tail_n" | grep -qF 'esc to interrupt' && return 1
+    out=$(_box_rows "$1" '^[[:space:]]*❯') || return 1
+    row=$(printf '%s\n' "$out" | head -1)
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    printf '%s\n' "$row" | grep -qE "$re_option" && return 1
+    printf '%s\n' "$above" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' && return 1
+    return 0
+  }
+
+  # _pi_idle_box <text> — positive idle shape of a pi pane, from a real capture
+  # (pi 0.87.1): an editor bounded by two `─` rules, blank or holding text, with
+  # the cwd and stats rows after the lower rule. A bare shell prompt or a boot
+  # frame has no such box. The pi live-turn frame is not captured, so a running
+  # turn is not vetoed: pi queues typed input.
+  _pi_idle_box() {
+    local out row
+    out=$(_box_rows "$1" '.*') || return 1
+    row=$(printf '%s\n' "$out" | head -1)
+    printf '%s\n' "$row" | grep -qE "$re_option" && return 1
+    return 0
+  }
+
+  # _role_pane_ready <text> — the only gate in front of send-keys. Fail closed:
+  # a permission dialog, an option-select or quota prompt, a live turn, or any
+  # frame not positively recognised defers. Only claude and pi have a
+  # recognised idle shape (captured frames). codex and cursor have none, and
+  # cursor renders `ask` hook dialogs (public-leak-guard), so they never receive
+  # keys; the watcher tells the lead instead (see deferral notice below).
+  _role_pane_ready() {
+    [ -n "$1" ] || return 1
+    _is_permission_prompt "$1" && return 1
+    _is_prompt "$1" && return 1
+    case "$engine" in
+    claude) _claude_idle_box "$1" ;;
+    pi) _pi_idle_box "$1" ;;
+    *) return 1 ;;
+    esac
+  }
+
+  # Assignments wait here until the pane is ready; one is delivered per tick so
+  # the next capture sees the turn it started. `cooldown` skips the tick right
+  # after a send, when the pane may not have repainted as busy yet. The text is
+  # typed, the pane re-checked, and only then is Enter sent: a dialog raised in
+  # between (a subagent's) is never confirmed. Text left in the pane by a failed
+  # re-check is cleared with C-u before the retry. `pending` lives in this
+  # process only; the watcher exits with its pane.
+  pending=()
+  cooldown=0
+  unsent=0
+  lead_id=""
+  deferred_since=0
+  deferred_told=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
   while tmux display-message -p -t "$watch_pane" '#{pane_id}' >/dev/null 2>&1; do
@@ -978,21 +1131,51 @@ if [ "${1:-}" = "--role-watch" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
         'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
       if [ -n "$batch" ]; then
-        printf '%s\n' "$batch" | while IFS= read -r ev; do
+        while IFS= read -r ev; do
           if [ "$(printf '%s' "$ev" | jq -r '.to // ""')" = "$role_id" ]; then
             body="$(printf '%s' "$ev" | jq -r '.body // ""')"
             [ -n "$body" ] || continue
-            watch_exited && continue
+            lead_id="$(printf '%s' "$ev" | jq -r '.from // ""')"
+            pending+=("$body")
             watch_set_state working
-            tmux send-keys -t "$watch_pane" -l "Assignment: $body" 2>/dev/null || true
-            tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
-          else
+          elif [ "${#pending[@]}" -eq 0 ]; then
             # A verdict from the role — it is idle again.
             watch_set_state idle
           fi
-        done
+        done <<<"$batch"
         next="$(printf '%s\n' "$batch" | jq -s 'map(.ts) | max // empty')"
         since="${next:-$since}"
+      fi
+    fi
+    if [ "${#pending[@]}" -eq 0 ]; then
+      deferred_since=0
+      deferred_told=0
+    elif [ "$cooldown" -gt 0 ]; then
+      cooldown=$((cooldown - 1))
+    elif ! watch_exited; then
+      frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
+      if _role_pane_ready "$frame"; then
+        [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
+        tmux send-keys -t "$watch_pane" -l "Assignment: ${pending[0]}" 2>/dev/null || true
+        frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
+        if _role_pane_ready "$frame"; then
+          tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+          pending=("${pending[@]:1}")
+          unsent=0
+          cooldown=1
+          deferred_since=0
+          deferred_told=0
+        else
+          unsent=1
+        fi
+      else
+        [ "$deferred_since" -gt 0 ] || deferred_since="$(date +%s)"
+        if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
+          [ $(($(date +%s) - deferred_since)) -ge "$defer_notice" ]; then
+          deferred_told=1
+          crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
+            '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
+        fi
       fi
     fi
     sleep "$interval"
@@ -1061,7 +1244,14 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' is not part of this grid" >&2
     exit 1
   }
+  # Both reach the role's launch script; the header and roles.json are worker-writable (#470).
   agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
+  for _v in "$role" "$agent_name"; do
+    [[ $_v =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "dispatch: --spawn-role: refusing ${_v@Q} — a role or agent name must be a plain word" >&2
+      exit 1
+    }
+  done
   IFS=$'\t' read -r saved_agent saved_model saved_effort <<<"$spec"
   task_effort="$(sed -n 's/^effort: //p' WORKER_TASK.md)"
   effort="${spawn_effort:-${saved_effort:-$task_effort}}"
@@ -1104,7 +1294,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
-  watch_role "$role" "$role_pane"
+  watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the
   # role (a died or stalled pane) must come back at the same rung, not silently
@@ -3116,6 +3306,9 @@ if [ -n "$owner_auth" ]; then
   owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
 fi
 
+# The recorded identity is replayed from the shared bus.
+printf -v q_agent_name '%q' "$agent_name"
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -3155,13 +3348,13 @@ elif [ "$agent" = pi ]; then
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 tmux send-keys -t "$pane" "$launch_line" Enter
@@ -3178,7 +3371,7 @@ if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
     role="${role_names[$i]}"
     role_pane="$(split_role_pane "$win" "$wt_path" "$role" "$worker_id" "$crew_id")"
     launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
-    watch_role "$role" "$role_pane"
+    watch_role "$role" "$role_pane" "${role_agents[$i]}"
     watch_role_prompts "$role" "$role_pane" "${role_agents[$i]}" "$crew_id"
   done
   refit_grid "$win"

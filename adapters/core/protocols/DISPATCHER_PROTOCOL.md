@@ -434,7 +434,8 @@ is back.
   `--grid`/`--roles`, or combined with `--no-grid`. What it buys is narrow
   and temporary, not "lazy saves tokens": an idle eager pane already costs no
   repainting poll and no park cap (`GRID_PROTOCOL.md`) once a
-  `dispatch --role-watch` types assignments into it. The real savings are the
+  `dispatch --role-watch` types assignments into it (only at an idle input
+  box — claude and pi; other engines get an `assignment_deferred` msg). The real savings are the
   one-time startup read of `GRID_PROTOCOL.md` + `WORKER_TASK.md` (against the
   same subscription quota the budget lever rations), a live engine process
   for a role never spawned, and screen space. Reach for it when a role is

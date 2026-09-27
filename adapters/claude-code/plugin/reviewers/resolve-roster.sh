@@ -57,6 +57,12 @@ _resolve_dir() {
     echo "$label: $var must be an absolute path, got: $val" >&2
     exit 1
   fi
+  # The dirs are spliced into launch scripts and their prompts, and a role
+  # launched by --spawn-role inherits this env from the worker (#470).
+  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
+    exit 1
+  fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
     echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
