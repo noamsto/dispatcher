@@ -469,6 +469,20 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
+@test "owner-auth cross-engine resume cannot carry the prompt (#459)" {
+  dispatcher="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'the `dispatch` row whose `worker_id` equals the chain' \
+    'or if any resume row'"'"'s `engine` differs from the previous link'"'"'s' \
+    'treat the chain as **not covered** rather than guessing'; do
+    run grep -F "$statement" "$dispatcher"
+    [ "$status" -eq 0 ]
+  done
+  # The bare same-engine-only claim is the over-claim #459 reports.
+  run grep -F 'a `dispatch resume` keeps it' "$dispatcher"
+  [ "$status" -ne 0 ]
+}
+
 @test "worker protocol pins the resume-a-killed-run contract" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
