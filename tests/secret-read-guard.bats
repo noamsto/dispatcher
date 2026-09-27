@@ -687,7 +687,7 @@ assert_allow_relative() {
 @test "secret-read-guard: a 48 KB chain of credential names denies within K x its calibration under every awk" {
   local body benign
   body=$(printf '.env%.0s' $(seq 1 12000))
-  benign=$(printf 'ab.cd%.0s' $(seq 1 12000))
+  benign=$(printf 'a.bc%.0s' $(seq 1 12000))
   assert_deny_within_each_awk \
     "$(claude_bash "cat .env ${benign}")" \
     "$(claude_bash "cat .env ${body}")"
@@ -1686,8 +1686,9 @@ assert_allow_within_each_awk() {
   # 900 reps keeps the whole payload under Linux's 128 KiB single-argv-string
   # cap (MAX_ARG_STRLEN) that claude_bash's jq --arg would otherwise blow.
   body=$(printf 'fix(x): handle `foo` in `bar`\n\nReads `DISPATCHER_X` env var and `set -e`. A stray ` tick.\n`env vars` are documented; `export FOO=1` too.\n%.0s' $(seq 1 900))
-  # Same-size benign backtick/quote text: the same mask and frame passes run.
-  benign=$(printf '`aa` "bb" %.0s' $(seq 1 12330))
+  # Same-size, same-backtick-density benign text: the same mask and frame
+  # passes run with the same frame-masker cost on every awk.
+  benign=$(printf 'fix(x): handle `abc` in `def`\n\nReads `GHIJKLMNOPQR` env var and `set -e`. A stray ` tick.\n`env vars` are documented; `export FOO=1` too.\n%.0s' $(seq 1 900))
   assert_allow_within_each_awk \
     "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$benign"$'\n'"EOF")" \
     "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
