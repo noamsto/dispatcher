@@ -689,6 +689,7 @@ function grep_loud(s, m, W, n, j, x, e, rg, found) {
   m = mask(s)
   sub(/[[:space:]]#.*$/, "", m)
   if (m ~ /[\r\013\f]/) return 1
+  gsub(/[0-9]*(>>?[|&]?|<[<>&]?<?-?)[[:space:]]*[^[:space:]]+/, " ", m)
   n = split(m, W, /[[:space:]]+/)
   for (j = 1; j <= n; j++) {
     if (W[j] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/) continue

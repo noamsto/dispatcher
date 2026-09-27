@@ -1765,6 +1765,27 @@ rows_lt_no_space=(
   bash allow "grep -c KEY <@E@"
 )
 
+rows_redirect_target_not_a_flag=(
+  bash deny "grep KEY @E@ 2> -c"
+  bash deny "grep KEY @E@ > -q"
+  bash deny "grep KEY @E@ >> -c"
+  bash deny "grep KEY @E@ 2>-q"
+  bash deny "grep KEY @E@ < -q"
+  bash deny "grep KEY @E@ <<< -q"
+  bash deny "grep KEY @E@ << -q"
+  bash deny "grep KEY @E@ <<< -c"
+  bash deny "grep KEY @E@ >| -q"
+  bash deny "grep KEY @E@ <> -q"
+  bash deny "grep KEY @E@ <& -q"
+  bash allow "grep -q KEY @E@"
+  bash allow "grep -c KEY @E@ 2>/dev/null"
+  bash allow "grep -c KEY @E@ > -o"
+)
+
+@test "secret-read-guard: rule 3 — a redirect target is never a quiet flag (#439)" {
+  check_rows "${rows_redirect_target_not_a_flag[@]}"
+}
+
 @test "secret-read-guard: rule 3 — < without a space (#428)" {
   check_rows "${rows_lt_no_space[@]}"
 }
