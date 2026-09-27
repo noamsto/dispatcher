@@ -1,10 +1,13 @@
 # Evidence and review contract
 
-Read this before planning or fixing a behavioral bug, changing a shared contract,
-or handling PR feedback. It augments the caller's pipeline; it does not start a
-second lifecycle. Dispatcher owns stages, routing, caps, and handoffs. Reuse
-Superpowers' red-green, debugging, and verify-before-agreeing techniques inside
-those stages, without invoking its separate planning or delivery lifecycle.
+Read this before planning or fixing a behavioral bug, changing a shared
+contract, or handling PR feedback. It augments the caller's pipeline; it does
+not start a second lifecycle. Dispatcher owns stages, routing, caps, and
+handoffs. Inside those stages, on every engine, use red-green testing (a failing
+test before the fix), root-cause debugging, and the receiving-code-review
+discipline defined in `WORKER_PROTOCOL.md` "Process authority"; on claude the
+Superpowers skills are an optional convenience for them, never their separate
+planning or delivery lifecycle.
 
 ## Trigger and evidence
 
