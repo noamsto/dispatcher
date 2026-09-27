@@ -362,14 +362,9 @@ _tracker_slug_from_path() {
   return 0
 }
 
-# Tracker stamp for a fresh dispatch. The slug comes from the configured
-# origin (`git config --get remote.origin.url`). `git remote get-url` applies
-# insteadOf and would return a rewritten local path for that same remote.
-# A missing key, a local path, or any non-GitHub URL is no slug. https
-# userinfo is discarded and never printed. Precedence is
-# DISPATCH_REPO_TRACKERS, then DISPATCH_ORG_TRACKERS, then github. A value
-# other than `github` or `linear:TEAM` does not match. Owner and repo keys
-# compare case-insensitively; the stamped team is the map value unchanged.
+# Configured origin, not `git remote get-url`: that applies insteadOf and
+# would hide a GitHub slug behind a rewritten local path. https userinfo is
+# discarded and never printed.
 _resolve_tracker() {
   local url="" rest="" slug="" org="" map="" want="" entry="" key="" val="" which
   local host="" path="" want_cmp="" key_cmp=""
@@ -3262,10 +3257,9 @@ if [ "$switch_mode" = resume ] && [ -z "$base_ref" ] && [ -f "$wt_path/WORKER_TA
   [ -n "$carried_base" ] && base_ref="$carried_base"
 fi
 
-# A re-dispatch keeps the tracker the first dispatch stamped. Re-resolving
-# would change an in-flight task's follow-up path when the maps have changed.
-# A missing or unrecognised line stays absent — this path does not recompute.
-# A pruned worktree has no task file, so there is no stamp to keep.
+# Keep a stamp already on the task file. A missing or unrecognised line stays
+# absent so a map change cannot retarget an in-flight task. No file means a
+# pruned worktree: there is nothing to keep, so resolve.
 tracker_stamp=""
 if [ "$switch_mode" = resume ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
   carried_tracker="$(sed -nE '/^$/q; s/^tracker: //p' "$wt_path/WORKER_TASK.md" | head -n 1)"
