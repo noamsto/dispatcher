@@ -194,3 +194,78 @@ run_notify_cursor() {
   run ! grep -q '"state":"exited"' "$LOG"
   run ! grep -q display-message "$STUB_LOG"
 }
+
+# ---------------------------------------------------------------------------
+# #531: a child session's end must not mark a live lead `exited`
+# ---------------------------------------------------------------------------
+
+# run_nested_hook — run the hook as a grandchild of a fake lead engine:
+#   lead(claude) -> child(cursor-agent) -> hook
+# so the hook's two engine-named ancestors model a child session ending while
+# the lead process is alive. A `#!/bin/sh` script whose basename is an engine
+# name reports that name from `ps -o comm=` (verified on this host).
+run_nested_hook() {
+  root="$BATS_TEST_TMPDIR/engines"
+  mkdir -p "$root/lead" "$root/child"
+  cat >"$root/child/cursor-agent" <<EOF
+#!/bin/sh
+jq -nc --arg c "\$PWD" '{cwd:\$c,hook_event_name:"SessionEnd",reason:"other"}' | bash -euo pipefail "$NOTIFY"
+EOF
+  cat >"$root/lead/claude" <<EOF
+#!/bin/sh
+"$root/child/cursor-agent"
+EOF
+  chmod +x "$root/child/cursor-agent" "$root/lead/claude"
+  "$root/lead/claude"
+}
+
+@test "notify: a child session's SessionEnd under a live lead posts nothing" {
+  stub_tmux
+  task_doc %9
+  seed_status working
+  before="$BATS_TEST_TMPDIR/events.before"
+  cp "$LOG" "$before"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_nested_hook
+  [ "$status" -eq 0 ]
+
+  cmp -s "$LOG" "$before"
+  run ! grep -q display-message "$STUB_LOG"
+}
+
+@test "notify: a SessionEnd with the lead process gone still posts exited" {
+  # The hook runs with at most one engine-named ancestor (the lead's own,
+  # or none outside a worker) — the count==1 boundary the backstop depends on —
+  # so the child-session guard must not fire.
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
+
+@test "notify: a turn-end (stop) while the lead engine is alive posts nothing" {
+  stub_tmux
+  task_doc %9
+  seed_status working
+  before="$BATS_TEST_TMPDIR/events.before"
+  cp "$LOG" "$before"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' TMUX_PANE=%1 CREW_NOTIFY_PROC_CMD='printf node' run run_notify_cursor
+  [ "$status" -eq 0 ]
+
+  cmp -s "$LOG" "$before"
+  run ! grep -q display-message "$STUB_LOG"
+}
+
+@test "notify: a turn-end (stop) with the lead engine gone still posts exited" {
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' TMUX_PANE=%1 CREW_NOTIFY_PROC_CMD='printf bash' run run_notify_cursor
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
