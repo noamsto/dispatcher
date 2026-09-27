@@ -1057,6 +1057,94 @@ EOF
   [ "$(grep -o "'" <<<"$raw" | wc -l)" -eq 2 ]
 }
 
+# #470: the task header and the branch name are worker-writable, and the launch
+# script they are spliced into runs as the operator. A refused resume writes no
+# launch script, types nothing into a pane, and runs nothing.
+_assert_refused_unlaunched() { # <field> <marker>
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to launch: $1"* ]]
+  [ ! -e "$2" ]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.git/crew/launch" ]
+}
+
+@test "resume refuses a command substitution in the header's agent_name" {
+  marker="$BATS_TEST_TMPDIR/pwned"
+  setup_worker_wt
+  sed -i "s|^agent_name: .*|agent_name: \$(touch $marker)|" "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  _assert_refused_unlaunched agent_name "$marker"
+}
+
+@test "resume refuses shell metacharacters in the header's crew_id" {
+  marker="$BATS_TEST_TMPDIR/pwned"
+  setup_worker_wt
+  sed -i "s|^crew_id: .*|crew_id: c1;touch $marker|" "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  _assert_refused_unlaunched crew_id "$marker"
+}
+
+@test "resume refuses a quote-break in the header's roles" {
+  marker="$BATS_TEST_TMPDIR/pwned"
+  setup_worker_wt
+  sed -i "/^roles: /d" "$WT/WORKER_TASK.md"
+  sed -i "s|^agent_name: iris|agent_name: iris\nroles: x'; touch $marker; '|" "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  _assert_refused_unlaunched roles "$marker"
+}
+
+@test "resume refuses shell metacharacters in the header's model and effort" {
+  marker="$BATS_TEST_TMPDIR/pwned"
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  cp WORKER_TASK.md "$BATS_TEST_TMPDIR/task.orig"
+  sed -i "s|^model: .*|model: sonnet;touch $marker|" WORKER_TASK.md
+  run run_resume
+  _assert_refused_unlaunched model "$marker"
+  cp "$BATS_TEST_TMPDIR/task.orig" WORKER_TASK.md
+  sed -i "s|^effort: .*|effort: medium\$(touch $marker)|" WORKER_TASK.md
+  run run_resume
+  _assert_refused_unlaunched effort "$marker"
+}
+
+@test "resume refuses a branch name carrying a command substitution" {
+  marker="$BATS_TEST_TMPDIR/pwned"
+  git -C "$TEST_REPO" worktree add -q -b 'feat/$(touch${IFS}pwned)' "$TEST_REPO/evilwt" HEAD
+  WT="$TEST_REPO/evilwt"
+  printf 'tier: standard\nkind: implement\nengine: claude\nmodel: sonnet\neffort: medium\ncrew_id: c1\nagent_name: iris\n\n## Task\nx\n' >"$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to launch: branch name"* ]]
+  [ ! -e "$WT/pwned" ] && [ ! -e pwned ]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.git/crew/launch" ]
+}
+
+@test "resume still launches a plain worker for claude and pi" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude ' <(launch_log)
+  grep -q -- '--name iris --model sonnet --effort medium' <(launch_log)
+  sed -i -e 's|^engine: .*|engine: pi|' -e 's|^model: .*|model: openrouter/deepseek/deepseek-v4-flash|' WORKER_TASK.md
+  : >"$STUB_LOG"
+  DISPATCH_SESSION_ID=s3-101 run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s3-101 CREW_ID=c1 ' <(launch_log)
+  grep -q -- '--name iris --model openrouter/deepseek/deepseek-v4-flash --thinking medium' <(launch_log)
+}
+
 bus_log() { printf '%s/.git/crew/events.jsonl' "$TEST_REPO"; }
 
 UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'

@@ -373,6 +373,24 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
   exit 1
 }
 
+# Everything below that reaches the launch script — the header fields, the
+# branch name — is worker-writable, and the script runs as the operator, outside
+# the engine's permission layer (#470). Each such value must be a single safe
+# word before anything is spliced into that script; the launch line quotes them
+# again as defence in depth. Refusing here precedes every side effect.
+_id_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+_branch_re='^[A-Za-z0-9][A-Za-z0-9._/@+-]*$'
+_model_re='^[A-Za-z0-9][][A-Za-z0-9._/:=,-]*$'
+_roles_re='^[A-Za-z0-9][A-Za-z0-9._-]*(,[A-Za-z0-9][A-Za-z0-9._-]*)*$'
+_effort_re='^(low|medium|high|xhigh|max|ultra)$'
+_require_safe() { # $1=label $2=value $3=regex
+  [[ $2 =~ $3 ]] && return 0
+  echo "dispatch resume: refusing to launch: $1 ${2@Q} is not a plain word — a worker-writable value must not reach the launch script unchecked. Fix or re-dispatch this branch." >&2
+  exit 1
+}
+
+_require_safe "branch name" "$branch" "$_branch_re"
+
 # Header reader. `cut -d' ' -f2-` keeps values containing spaces (title), and
 # -m1 pins the first occurrence so a value echoed inside the ## Task body
 # cannot shadow the header.
@@ -416,6 +434,12 @@ trivial | standard | deep) ;;
   exit 1
   ;;
 esac
+
+_require_safe crew_id "$crew_id" "$_id_re"
+[ -z "$agent_name" ] || _require_safe agent_name "$agent_name" "$_id_re"
+[ -z "$grid_roles" ] || _require_safe roles "$grid_roles" "$_roles_re"
+_require_safe model "$model" "$_model_re"
+_require_safe effort "$effort" "$_effort_re"
 
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
 # override against the baked default (#303). A shell or tmux server that
@@ -879,6 +903,7 @@ plan_val="$(_hdr plan)"
 # worker_id: the pane, the watchdog and the bus rows are all new even when the
 # conversation is not. dispatch.sh:832 owns the same shape.
 session="${DISPATCH_SESSION_ID:-s$(date +%s)-$$}"
+_require_safe session "$session" "$_id_re"
 worker_id="worker:$branch#$session"
 
 mkdir -p "$crew_dir"
@@ -1072,17 +1097,24 @@ if [ -r "$hint_lib" ]; then
   cross_repo_hint "${crew_dir%/crew}" "$crew_id"
 fi
 
+# The values were validated above; %q is the second line of defence (#470).
+printf -v q_worker_id '%q' "$worker_id"
+printf -v q_crew_id '%q' "$crew_id"
+printf -v q_agent_name '%q' "$agent_name"
+printf -v q_model '%q' "$model"
+printf -v q_effort '%q' "$effort"
+
 if [ "$agent" = codex ]; then
   cont="$lead_cont"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id codex $cont --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id codex $cont --profile worker -m $q_model -c model_reasoning_effort=$q_effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = cursor ]; then
   cont="$lead_cont"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $q_model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = pi ]; then
   cont="$lead_cont"
   pi_sid=""
   [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $agent_name --model $model --thinking $effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="$lead_cont"
   claude_sid=""
@@ -1090,7 +1122,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$worker_id CREW_ID=$crew_id claude $cont --name $agent_name --model $model --effort $effort$claude_sid $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)

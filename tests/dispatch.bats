@@ -5295,6 +5295,19 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# #470: the header and roles.json are worker-writable and the role's launch
+# script runs as the operator.
+@test "grid: --spawn-role refuses a command substitution in the header's agent_name" {
+  _spawn_role_fixture
+  printf 'agent_name: $(touch %s/pwned)\neffort: high\nworker_id: worker:feat/9-x#s1-1\ncrew_id: c1\n' "$BATS_TEST_TMPDIR" >WORKER_TASK.md
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be a plain word"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "grid: --spawn-role overrides persist so a bare respawn keeps the promoted rung" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer --agent pi --model openrouter/deepseek/deepseek-v4.1-flash --effort max
