@@ -838,31 +838,87 @@ _artifacts_dir_bad() {
   return 1
 }
 
+# _protocol_dirs_record_bad — succeed, printing the first offender, when
+# $crew_dir/protocol-dirs, a dir above a slashed branch's leaf, or the record
+# itself is a symlink or the wrong type (mkdir/mv/reads follow a planted link).
+_protocol_dirs_record_bad() {
+  local p="$crew_dir/protocol-dirs" part rec="$crew_dir/protocol-dirs/$branch"
+  local -a parts
+  IFS=/ read -ra parts <<<"$branch"
+  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
+    p="$p${part:+/$part}"
+    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
+    printf '%s\n' "$rec"
+    return 0
+  fi
+  return 1
+}
+
+# _record_protocol_dirs <worktree> — record the resolved protocol dirs and the
+# worktree they belong to, for --spawn-role (#496): dispatcher-written, outside
+# every prompt-free write grant a worker holds.
+_record_protocol_dirs() {
+  local rec="$crew_dir/protocol-dirs/$branch" n v tmp
+  local -a lines=()
+  for n in PROTOCOL_DIR SKILLS_DIR REVIEWERS_DIR CRITICS_DIR; do
+    v="${!n}"
+    [[ $v == /* ]] || v=""
+    lines+=("$v")
+  done
+  lines+=("$(realpath -e -- "$1")")
+  (
+    umask 077
+    mkdir -p "$(dirname "$rec")"
+    tmp="$(mktemp "$(dirname "$rec")/.dirs.XXXXXX")"
+    printf '%s\n' "${lines[@]}" >"$tmp"
+    mv -f -- "$tmp" "$rec"
+  )
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
 # artifacts dir, and the dispatch-time grants in $crew_dir/grants/<branch>.
 #
 # --add-dir makes a working directory: reads are prompt-free and edits follow
-# the permission mode, which auto allows, so every grant is read-write in
-# effect. Hence the narrow artifacts dir rather than $crew_dir, and grants
-# re-validated on every launch. The record is the only authority: the worker
-# edits WORKER_TASK.md, so its add_dir: header lines are a mirror, never read.
+# the permission mode, which auto allows. The four protocol dirs are read-only
+# (#442): a worker must never edit its own reviewer briefs, critics, skills or
+# WORKER_PROTOCOL.md/GRID_PROTOCOL.md, so each gets `--add-dir` (reads stay
+# prompt-free) plus an `Edit(//<dir>/**)` deny rule via `--disallowedTools`
+# (verified: a `Read` allow rule does not override
+# blockReadsOutsideWorkingDirectories, so `--add-dir` stays the only way to
+# keep reads prompt-free). The artifacts dir and explicit grants stay plain
+# write-capable `--add-dir`, re-validated on every launch. The record is the
+# only authority: the worker edits WORKER_TASK.md, so its add_dir: header
+# lines are a mirror, never read.
 #
-# claude's --add-dir is variadic and would swallow the positional prompt, so
-# callers splice this in right before --append-system-prompt-file.
+# claude's --add-dir and --disallowedTools are both variadic and would swallow
+# the positional prompt, so callers splice this in right before
+# --append-system-prompt-file, terminating both lists.
 #
 # Other engines get nothing: codex runs with
 # --dangerously-bypass-approvals-and-sandbox and cursor with --force, so neither
 # gates paths, and pi has no tool-permission layer at all.
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d bad line dirs=()
+  local a c d bad line dirs=() rules=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
-    if [[ $d == /* ]] && [ -d "$d" ]; then
-      dirs+=("$d")
+    [[ $d == /* ]] && [ -d "$d" ] || continue
+    d="${d%/}"
+    c="$(realpath -e -- "$d")"
+    if [[ ! $d =~ ^/[A-Za-z0-9._/+@-]*$ || ! $c =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+      echo "dispatch: not granting $d — its path cannot be written as a read-only rule" >&2
+      continue
     fi
+    dirs+=("$d")
+    rules+=("Edit(/$d/**)")
+    [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
   a="$crew_dir/artifacts/$2"
   if bad="$(_artifacts_dir_bad "$2")"; then
@@ -886,6 +942,10 @@ launch_dir_args() {
     seen[$d]=1
     printf ' --add-dir %q' "$d"
   done
+  if [ "${#rules[@]}" -gt 0 ]; then
+    printf ' --disallowedTools'
+    printf ' %q' "${rules[@]}"
+  fi
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
@@ -1253,10 +1313,60 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role must run inside tmux" >&2
     exit 1
   }
+  # Git discovery follows GIT_* env and the worktree's own .git gitlink, both
+  # worker-controlled; anchor crew_dir before reading anything under it (#496).
+  # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
+  for _v in "${!GIT_@}"; do unset "$_v"; done
+  if ! top="$(git rev-parse --show-toplevel)" || ! gd="$(git rev-parse --absolute-git-dir)" ||
+    ! common="$(git rev-parse --path-format=absolute --git-common-dir)"; then
+    echo "dispatch: --spawn-role: not inside a git worktree" >&2
+    exit 1
+  fi
+  top="$(realpath -e -- "$top")"
+  gd="$(realpath -e -- "$gd")"
+  common_real="$(realpath -e -- "$common")"
+  # git's back-pointer to this worktree's .git: a gitlink aimed at another
+  # worktree's git dir names that worktree. Relative under
+  # worktree.useRelativePaths, then against $gd.
+  bp=""
+  [ -f "$gd/gitdir" ] && bp="$(<"$gd/gitdir")"
+  [[ $bp == /* ]] || bp="$gd/$bp"
+  if [ "$gd" = "$common_real" ] || [ "$(dirname -- "$gd")" != "$common_real/worktrees" ] ||
+    [ ! -f "$gd/gitdir" ] || [ "$(realpath -m -- "$bp")" != "$(realpath -e -- "$top/.git")" ] ||
+    [[ "$common_real/" == "$top/"* ]]; then
+    echo "dispatch: --spawn-role: $top is not a linked worktree of its repository — refusing" >&2
+    exit 1
+  fi
+  case "$common_real/" in
+  */crew/artifacts/*)
+    echo "dispatch: --spawn-role: git dir $common_real is inside a crew artifacts dir — refusing" >&2
+    exit 1
+    ;;
+  esac
+  [ "$(realpath -e -- "$PWD")" = "$top" ] || {
+    echo "dispatch: --spawn-role must run from the worktree root ($top)" >&2
+    exit 1
+  }
+  crew_dir="$common/crew"
+  branch="$(git branch --show-current)"
+  # The dirs come from the dispatch-time record, never this (worker's) env.
+  if bad="$(_protocol_dirs_record_bad)"; then
+    echo "dispatch: $bad is a symlink or the wrong type — refusing to use the protocol-dirs record" >&2
+    exit 1
+  fi
+  rec_lines=()
+  [ -f "$crew_dir/protocol-dirs/$branch" ] && mapfile -t rec_lines <"$crew_dir/protocol-dirs/$branch"
+  if [ "${#rec_lines[@]}" -gt 0 ] && [ "${rec_lines[4]:-}" != "$top" ]; then
+    echo "dispatch: --spawn-role: the protocol-dirs record for $branch belongs to another worktree — refusing" >&2
+    exit 1
+  fi
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
+  DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
+  DISPATCHER_REVIEWERS_DIR="${rec_lines[2]:-}" _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
+  DISPATCHER_CRITICS_DIR="${rec_lines[3]:-}" _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
   _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md
   _check_protocol_rev "$PROTOCOL_DIR" dispatch
-  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  branch="$(git branch --show-current)"
   roles_file="$crew_dir/artifacts/$branch/roles.json"
   if bad="$(_artifacts_dir_bad "$branch")"; then
     echo "dispatch: $bad is a symlink or not a directory — refusing to use roles.json" >&2
@@ -3095,6 +3205,14 @@ fi
   fi
   mv -f -- "$grant_tmp" "$grant_record"
 )
+
+# The protocol-dirs record is what a lazy --spawn-role reads its dirs from
+# (#496): written next to the grant record, same hardening.
+if bad="$(_protocol_dirs_record_bad)"; then
+  echo "dispatch: $bad is a symlink or the wrong type — refusing to write the protocol-dirs record" >&2
+  exit 1
+fi
+_record_protocol_dirs "$wt_path"
 
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).

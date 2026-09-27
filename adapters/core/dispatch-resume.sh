@@ -141,8 +141,9 @@ write_launch_script() {
 
 # _add_dir_ok, _artifacts_dir_bad and launch_dir_args: duplicated from dispatch.sh (standalone
 # build), parity-tested like the two above. See dispatch.sh for the grant
-# rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
-# the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
+# rules: a claude launch gets the protocol dirs read-only, the branch's
+# artifacts dir write-capable, and the grants in $crew_dir/grants/<branch>,
+# never the add_dir: header lines.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -192,12 +193,19 @@ _artifacts_dir_bad() {
 
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d bad line dirs=()
+  local a c d bad line dirs=() rules=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
-    if [[ $d == /* ]] && [ -d "$d" ]; then
-      dirs+=("$d")
+    [[ $d == /* ]] && [ -d "$d" ] || continue
+    d="${d%/}"
+    c="$(realpath -e -- "$d")"
+    if [[ ! $d =~ ^/[A-Za-z0-9._/+@-]*$ || ! $c =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+      echo "dispatch: not granting $d — its path cannot be written as a read-only rule" >&2
+      continue
     fi
+    dirs+=("$d")
+    rules+=("Edit(/$d/**)")
+    [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
   a="$crew_dir/artifacts/$2"
   if bad="$(_artifacts_dir_bad "$2")"; then
@@ -221,6 +229,10 @@ launch_dir_args() {
     seen[$d]=1
     printf ' --add-dir %q' "$d"
   done
+  if [ "${#rules[@]}" -gt 0 ]; then
+    printf ' --disallowedTools'
+    printf ' %q' "${rules[@]}"
+  fi
 }
 
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if

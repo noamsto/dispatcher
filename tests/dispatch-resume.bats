@@ -737,6 +737,10 @@ _grant_record() {
   printf '%s\n' "$@" >"$TEST_REPO/.git/crew/grants/feat/7-a-thing"
 }
 
+# _ro_rule <dir> — the read-only Edit deny-rule word launch_dir_args emits for
+# a protocol dir, %q-quoted exactly as printf would (sets $r).
+_ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
+
 @test "claude resume grants the mandated dirs and the recorded ones, terminated by an option" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
@@ -754,6 +758,8 @@ _grant_record() {
   [[ "$line" == *"--add-dir $extra "* ]]
   [ -d "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing" ]
   assert_add_dir_terminated "$line"
+  _ro_rule "$DISPATCHER_PROTOCOL_DIR"
+  [[ "$line" == *"$r"* ]]
 }
 
 @test "claude resume refuses a symlinked parent of the artifacts dir and creates nothing under its target" {

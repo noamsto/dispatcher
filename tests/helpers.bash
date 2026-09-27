@@ -116,9 +116,10 @@ launch_log() {
 # assert_add_dir_terminated <launch line> — the line carries --add-dir, and the
 # token after the last one's value is an option. claude's --add-dir is
 # variadic: anything else there (the positional prompt) would be swallowed as
-# one more directory.
+# one more directory. When the line also carries --disallowedTools (variadic
+# too), its value run must be non-empty and likewise option-terminated.
 assert_add_dir_terminated() {
-  local words i last=-1
+  local words i last=-1 k=-1 j
   read -r -a words <<<"$1"
   for i in "${!words[@]}"; do
     if [ "${words[$i]}" = --add-dir ]; then
@@ -127,6 +128,19 @@ assert_add_dir_terminated() {
   done
   [ "$last" -ge 0 ]
   [[ ${words[$((last + 2))]:-} == --* ]]
+  for i in "${!words[@]}"; do
+    if [ "${words[$i]}" = --disallowedTools ]; then
+      k=$i
+    fi
+  done
+  if [ "$k" -ge 0 ]; then
+    j=$((k + 1))
+    while [[ ${words[$j]:-} != --* && -n ${words[$j]:-} ]]; do
+      j=$((j + 1))
+    done
+    [ "$j" -gt $((k + 1)) ]
+    [[ ${words[$j]:-} == --* ]]
+  fi
 }
 
 # stub_bin <name> — put a logging stub for <name> first on PATH.
