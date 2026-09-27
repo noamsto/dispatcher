@@ -2397,11 +2397,13 @@ _escalation_target() {
   local eng="$1" tier="$2" failed="$3"
   case "$eng:$tier:$failed" in
   # claude: haiku → sonnet → opus → fable
-  claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet opus' ;;
+  claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet RECORD_ONLY' ;;
   claude:trivial:haiku|claude:trivial:claude-haiku-*)             printf 'haiku RECORD_ONLY' ;;
-  # claude:trivial:sonnet→opus removed — trivial tier must not reach above its row (#249 acceptance)
+  # trivial sonnet→opus is an in-row hop; trivial still must not reach fable, above its row (#249)
+  claude:trivial:sonnet|claude:trivial:claude-sonnet-*)           printf 'sonnet RECORD_ONLY' ;;
   claude:deep:sonnet|claude:deep:claude-sonnet-*)                 printf 'sonnet RECORD_ONLY' ;;
   claude:deep:opus|claude:deep:claude-opus-*)                     printf 'opus RECORD_ONLY' ;;
+  # standard/trivial opus has no in-row rung above it — the dispatcher re-tiers a failure to deep
   # codex: luna → terra → sol
   codex:standard:gpt-5.6-luna)                                     printf 'luna RECORD_ONLY' ;;
   codex:standard:gpt-5.6-terra)                                    printf 'terra gpt-5.6-sol' ;;
@@ -2445,12 +2447,10 @@ _prior_failed_model() {
 }
 
 # _escalation_model_matches <target> <model> — true when <model> names the
-# escalation <target> exactly (claude's target is the alias `opus`, which the
-# claude shape gate also accepts as claude-opus-*; cursor takes `-fast`).
+# escalation <target> exactly (cursor takes `-fast`).
 _escalation_model_matches() {
   local target="$1" m="$2"
   case "$target" in
-  opus) [[ $m =~ ^(opus|claude-opus-.*)$ ]] ;;
   cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
   *) [ "$m" = "$target" ] ;;
   esac
@@ -2520,12 +2520,12 @@ if [ -z "$ignore_map" ]; then
       [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|fable|claude-fable-.*)$ ]] || tier_ok=0
       ;;
     standard)
-      tier_expected="sonnet or claude-sonnet-*"
-      [[ $model =~ ^(sonnet|claude-sonnet-.*)$ ]] || tier_ok=0
+      tier_expected="opus, claude-opus-*, sonnet, or claude-sonnet-*"
+      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*)$ ]] || tier_ok=0
       ;;
     trivial)
-      tier_expected="sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
-      [[ $model =~ ^(sonnet|claude-sonnet-.*|haiku|claude-haiku-.*)$ ]] || tier_ok=0
+      tier_expected="opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
+      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|haiku|claude-haiku-.*)$ ]] || tier_ok=0
       ;;
     # An unhandled tier can't happen today (the top-of-file case at line 34
     # already restricts $tier to trivial|standard|deep before this code
@@ -2650,6 +2650,12 @@ if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] 
     claude:trivial:haiku:sonnet|claude:trivial:haiku:claude-sonnet-*|\
     claude:trivial:claude-haiku-*:sonnet|claude:trivial:claude-haiku-*:claude-sonnet-*)
       escalated_from="haiku (record only)" ;;
+    claude:standard:sonnet:opus|claude:standard:sonnet:claude-opus-*|\
+    claude:standard:claude-sonnet-*:opus|claude:standard:claude-sonnet-*:claude-opus-*)
+      escalated_from="sonnet (record only)" ;;
+    claude:trivial:sonnet:opus|claude:trivial:sonnet:claude-opus-*|\
+    claude:trivial:claude-sonnet-*:opus|claude:trivial:claude-sonnet-*:claude-opus-*)
+      escalated_from="sonnet (record only)" ;;
     claude:deep:sonnet:opus|claude:deep:sonnet:claude-opus-*|\
     claude:deep:claude-sonnet-*:opus|claude:deep:claude-sonnet-*:claude-opus-*)
       escalated_from="sonnet (record only)" ;;

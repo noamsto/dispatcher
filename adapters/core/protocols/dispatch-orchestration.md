@@ -16,8 +16,8 @@ flowchart TD
     ENG -->|"PR review/finish, eval + measurement, distinct 3rd perspective"| CURSOR["Cursor"]
     ENG -->|"DeepSeek / independent model family"| PI["pi"]
 
-    CLAUDE --> OPUS["opus — deep"]
-    CLAUDE --> SONNET["sonnet — standard/trivial"]
+    CLAUDE --> OPUS["opus — deep/standard/trivial"]
+    CLAUDE --> SONNET["sonnet — budget-shed rung for standard/trivial"]
     CLAUDE --> HAIKU["haiku — truly trivial"]
     CODEX --> GH["codex · deep → model map"]
     CODEX --> GM["codex · standard → model map"]
@@ -68,8 +68,8 @@ review depth.
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
 | `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** → **sonnet** → escalated **opus** | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
-| `trivial`  | **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
+| `standard` | **opus** → **sonnet** → escalated **opus**; **sonnet** is the budget-shed worker when the pace gate refuses opus | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
+| `trivial`  | **opus** or **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
@@ -281,10 +281,8 @@ clears dispatchability (shape), it must also be tier-appropriate for the
 `(tier, engine)` pair. A model is accepted iff it is that tier's **worker** or
 **execute** cell from the Model map above, **or** that tier's **escalate**
 cell when the escalate cell is not burn-stronger (Burn classes, above) than
-the worker cell — this is what excludes claude `standard`'s escalate (`opus`,
-stronger than `standard`'s worker `sonnet`) while admitting every other row's
-escalate, none of which strengthens beyond worker. On top of the map, a small
-set of named exceptions apply: claude also accepts a full `claude-<alias>-*`
+the worker cell — no current row's escalate is burn-stronger than its worker,
+so every escalate cell is admitted. On top of the map, a small set of named exceptions apply: claude also accepts a full `claude-<alias>-*`
 id for any alias already accepted at that tier, plus `fable`/`claude-fable-*`
 on `deep` specifically (the map's own deep-cell prose escalation, above);
 codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
@@ -351,6 +349,10 @@ so a refused pi dispatch lands directly on `high` — which matters because
 | codex  | `gpt-5.6-sol`                                    | `gpt-5.6-terra`          |
 | cursor | `grok-4.7-high`                           | `grok-4.7-medium` |
 | pi     | — (effort only: `max`→`xhigh`→`high`)            | —                        |
+
+Claude `standard` and `trivial` lead on `opus` as well, so the same ≥70%
+pace gate refuses an `opus` dispatch on those rows too, and the downgrade
+target is the same: `sonnet`, each row's budget-shed rung.
 
 ### Cursor Task-spawn slugs
 

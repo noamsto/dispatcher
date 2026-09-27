@@ -1880,13 +1880,13 @@ record_lead() {
   kill "$rec_pid" 2>/dev/null || true
 }
 
-_resume_esc_seed() { # [failed-session] [failed-ts]
-  local fs="${1:-s1-99}" fts="${2:-200}"
+_resume_esc_seed() { # [failed-session] [failed-ts] [engine] [model] [tier]
+  local fs="${1:-s1-99}" fts="${2:-200}" eng="${3:-claude}" mdl="${4:-sonnet}" tr="${5:-standard}"
   crew_dir="$TEST_REPO/.git/crew"
   mkdir -p "$crew_dir"
-  jq -nc --arg b "feat/7-a-thing" '
+  jq -nc --arg b "feat/7-a-thing" --arg eng "$eng" --arg mdl "$mdl" --arg tr "$tr" '
     {ts: 100, kind:"dispatch", branch:$b, session:"s1-99",
-     engine:"claude", model:"sonnet", tier:"standard", effort:"medium",
+     engine:$eng, model:$mdl, tier:$tr, effort:"medium",
      shape:"", task_kind:"implement", title:"a thing", plan:"required", resume:false}
   ' >>"$crew_dir/events.jsonl"
   jq -nc --arg b "feat/7-a-thing" --arg s "$fs" --argjson ts "$fts" '
@@ -1900,94 +1900,109 @@ _resume_esc_seed() { # [failed-session] [failed-ts]
 # precheck that was NOT handed --ignore-map (the real gate would exit 1).
 _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ignore-map'; }
 
-@test "resume escalation: --model opus succeeds after prior failed with matching dispatch" {
+@test "resume escalation: --model gpt-5.6-sol succeeds after prior failed with matching dispatch" {
   setup_worker_wt
-  _resume_esc_seed
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   _precheck_ignores_map
   run jq -r 'select(.kind == "resume") | .escalated_from' "$crew_dir/events.jsonl"
-  [ "$output" = "sonnet" ]
-  grep -qx 'model: opus' "$WT/WORKER_TASK.md"
-  grep -qx 'escalated_from: sonnet' "$WT/WORKER_TASK.md"
+  [ "$output" = "terra" ]
+  grep -qx 'model: gpt-5.6-sol' "$WT/WORKER_TASK.md"
+  grep -qx 'escalated_from: terra' "$WT/WORKER_TASK.md"
   # The header now records the escalated model, so a later plain resume
-  # relaunches on it rather than silently falling back to sonnet.
-  run ! grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
+  # relaunches on it rather than silently falling back to terra.
+  run ! grep -qx 'model: gpt-5.6-terra' "$WT/WORKER_TASK.md"
 }
 
 @test "resume escalation: a failure posted only by the resumed session still escalates" {
   setup_worker_wt
-  _resume_esc_seed s2-99 200
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s2-99 200 codex gpt-5.6-terra standard
   # s1 never failed; s2 exists only in a resume row.
   jq -c 'select(.kind == "status") | .from = "worker:feat/7-a-thing#s2-99"' "$crew_dir/events.jsonl" >"$crew_dir/x"
   jq -c 'select(.kind == "dispatch")' "$crew_dir/events.jsonl" >"$crew_dir/y"
-  jq -nc '{ts:150, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"claude", model:"sonnet"}' >>"$crew_dir/y"
+  jq -nc '{ts:150, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"codex", model:"gpt-5.6-terra"}' >>"$crew_dir/y"
   cat "$crew_dir/x" >>"$crew_dir/y"
   mv "$crew_dir/y" "$crew_dir/events.jsonl"
   rm -f "$crew_dir/x"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   _precheck_ignores_map
   run jq -r 'select(.kind == "resume" and .session != null) | .escalated_from // "none"' "$crew_dir/events.jsonl"
-  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" == *"terra"* ]]
 }
 
-@test "resume escalation: a spoofed failed status does not unlock --model opus" {
+@test "resume escalation: a spoofed failed status does not unlock --model gpt-5.6-sol" {
   setup_worker_wt
-  _resume_esc_seed s-nonexistent
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s-nonexistent 200 codex gpt-5.6-terra standard
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   run ! _precheck_ignores_map
-  grep -qx 'model: sonnet' "$WT/WORKER_TASK.md"
+  grep -qx 'model: gpt-5.6-terra' "$WT/WORKER_TASK.md"
 }
 
-@test "resume escalation: an already-escalated branch refuses a second --model opus" {
+@test "resume escalation: an already-escalated branch refuses a second --model gpt-5.6-sol" {
   setup_worker_wt
-  _resume_esc_seed
-  jq -nc '{ts:250, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"claude", model:"opus", escalated_from:"sonnet"}' >>"$crew_dir/events.jsonl"
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  jq -nc '{ts:250, kind:"resume", branch:"feat/7-a-thing", session:"s2-99", engine:"codex", model:"gpt-5.6-sol", escalated_from:"terra"}' >>"$crew_dir/events.jsonl"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   run ! _precheck_ignores_map
 }
 
 @test "resume escalation: a branch that failed and later finished does not escalate" {
   setup_worker_wt
-  _resume_esc_seed
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
   jq -nc '{ts:300, kind:"status", from:"worker:feat/7-a-thing#s1-99", body:{state:"done"}}' >>"$crew_dir/events.jsonl"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   run ! _precheck_ignores_map
 }
 
-@test "resume escalation: a trivial-tier worker cannot reach opus" {
+@test "resume escalation: a trivial-tier worker cannot reach fable" {
   setup_worker_wt
   sed -i 's/^tier: standard/tier: trivial/' "$WT/WORKER_TASK.md"
   _resume_esc_seed
   sed -i 's/"tier":"standard"/"tier":"trivial"/' "$crew_dir/events.jsonl"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
+  run run_resume --model fable
+  [ "$status" -eq 0 ]
+  run ! _precheck_ignores_map
+}
+
+@test "resume escalation: --model opus after a failed standard sonnet is an in-row hop" {
+  setup_worker_wt
+  _resume_esc_seed
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
   run run_resume --model opus
   [ "$status" -eq 0 ]
   run ! _precheck_ignores_map
 }
 
-@test "resume escalation: a header claiming sonnet/standard cannot borrow a trivial-tier failure" {
+@test "resume escalation: a header claiming standard cannot borrow a trivial-tier failure" {
   setup_worker_wt
-  _resume_esc_seed
-  sed -i 's/"model":"sonnet","tier":"standard"/"model":"haiku","tier":"trivial"/' "$crew_dir/events.jsonl"
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-luna trivial
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
-  run run_resume --model opus
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model gpt-5.6-sol
   [ "$status" -eq 0 ]
   run ! _precheck_ignores_map
 }

@@ -2803,13 +2803,33 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" == *"the premium rung"* ]]
 }
 
-@test "claude standard rejects opus" {
-  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "tier claude standard opus rejected"
+@test "claude standard and trivial accept opus; fable stays deep-only" {
+  stub_launch_bins
+  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "tier claude standard opus accepted"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch trivial opus --agent claude --effort low --crew-id c1 42 "tier claude trivial opus accepted"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch standard claude-opus-5 --agent claude --effort medium --crew-id c1 42 "tier claude standard opus id accepted"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch trivial fable --agent claude --effort low --crew-id c1 42 "tier claude trivial fable rejected"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"standard"* ]]
-  [[ "$output" == *"opus"* ]]
-  [[ "$output" == *"sonnet"* ]]
+  [[ "$output" == *"is not trivial's row"* ]]
   [[ "$output" == *"--ignore-map"* ]]
+
+  run run_dispatch standard fable --agent claude --effort medium --crew-id c1 42 "tier claude standard fable rejected"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
+
+@test "budget rung gate refuses standard opus and names sonnet" {
+  budget_json 80 "$(date +%s)"
+  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "rung claude standard opus"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+  [[ "$output" == *"sonnet"* ]]
 }
 
 @test "cursor confines effort-suffixed cross-vendor ids to deep" {
@@ -2853,10 +2873,10 @@ assert_gate_silent() { # <engine> <model> [profile]
 @test "an off-map --review --pr dispatch is rejected by the tier gate" {
   stub_pr_bins pr-head-review-offmap
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
-  DISPATCH_PROFILE=work run run_dispatch standard opus --agent claude --effort medium --pr 99 --review --crew-id c1 "review off map"
+  DISPATCH_PROFILE=work run run_dispatch standard fable --agent claude --effort medium --pr 99 --review --crew-id c1 "review off map"
   [ "$status" -eq 1 ]
   [[ "$output" == *"standard"* ]]
-  [[ "$output" == *"opus"* ]]
+  [[ "$output" == *"fable"* ]]
   [[ "$output" == *"--ignore-map"* ]]
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
@@ -8793,14 +8813,14 @@ _escalation_seed_spoof() {
   ' >>"$crew_dir/events.jsonl"
 }
 
-@test "escalation: second dispatch after failed accepts standard opus and records escalated_from" {
+@test "escalation: second dispatch after failed accepts standard sol and records escalated_from" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s-test codex
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   events="$TEST_REPO/.git/crew/events.jsonl"
   run jq -r --arg b "feat/42-do-a-thing" '
-    [., inputs] | map(select(.kind == "dispatch" and .branch == $b and .escalated_from == "sonnet")) | length
+    [., inputs] | map(select(.kind == "dispatch" and .branch == $b and .escalated_from == "terra")) | length
   ' "$events"
   [ "$output" -gt 0 ]
 }
@@ -8808,41 +8828,42 @@ _escalation_seed_spoof() {
 @test "escalation: failed status with no matching dispatch row does NOT unlock escalation" {
   stub_launch_bins
   _escalation_seed_spoof "feat/42-do-a-thing"
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
-@test "escalation: trivial→opus refuses" {
+@test "escalation: trivial sonnet→opus is an in-row hop (record only)" {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" sonnet trivial
   run run_dispatch trivial opus --effort high --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not trivial's row"* ]]
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
 }
 
 @test "escalation: two-rung jump refuses" {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" haiku trivial
-  run run_dispatch trivial opus --effort high --crew-id c1 42 "Do a thing"
+  run run_dispatch trivial fable --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not trivial's row"* ]]
 }
 
 @test "escalation: third attempt refuses (already escalated)" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard
-  _esc_dispatch "feat/42-do-a-thing" s-escalated opus standard 250 claude '{"escalated_from":"sonnet"}'
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s-test codex
+  _esc_dispatch "feat/42-do-a-thing" s-escalated gpt-5.6-sol standard 250 codex '{"escalated_from":"terra"}'
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
 @test "escalation: an unstamped second dispatch after the failure also refuses" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard
-  _esc_dispatch "feat/42-do-a-thing" s-escalated opus standard 250
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s-test codex
+  _esc_dispatch "feat/42-do-a-thing" s-escalated gpt-5.6-sol standard 250 codex
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
@@ -8865,40 +8886,47 @@ _escalation_seed_spoof() {
   [[ "$output" == *"is not standard's row"* ]]
 }
 
-@test "escalation: same-model retry counts — sonnet fails twice, then opus refuses" {
+@test "escalation: same-model retry counts — terra fails twice, then sol refuses" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard s1
-  _esc_dispatch "feat/42-do-a-thing" s2 sonnet standard 250
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s1 codex
+  _esc_dispatch "feat/42-do-a-thing" s2 gpt-5.6-terra standard 250 codex
   _esc_status "feat/42-do-a-thing" s2 failed 300
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
 @test "escalation: a branch that failed and later finished does not escalate" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s-test codex
   _esc_status "feat/42-do-a-thing" s-test done 300
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
 @test "escalation: a failed worker that was resumed (resume row only) still escalates" {
   stub_launch_bins
-  _esc_dispatch "feat/42-do-a-thing" s1 sonnet standard 100
-  jq -nc '{ts:160, kind:"resume", branch:"feat/42-do-a-thing", session:"s2", engine:"claude", model:"sonnet"}' \
+  _esc_dispatch "feat/42-do-a-thing" s1 gpt-5.6-terra standard 100 codex
+  jq -nc '{ts:160, kind:"resume", branch:"feat/42-do-a-thing", session:"s2", engine:"codex", model:"gpt-5.6-terra"}' \
     >>"$TEST_REPO/.git/crew/events.jsonl"
   _esc_status "feat/42-do-a-thing" s2 failed 200
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
 }
 
-@test "escalation: claude-opus-* id is accepted as the escalation target" {
+@test "escalation: claude-opus-* id is accepted as an in-row record-only hop" {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" sonnet standard
   run run_dispatch standard claude-opus-5 --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
+  events="$TEST_REPO/.git/crew/events.jsonl"
+  run jq -r --arg b "feat/42-do-a-thing" '
+    [., inputs] | map(select(.kind == "dispatch" and .branch == $b and .model == "claude-opus-5" and has("escalated_from"))) | length
+  ' "$events"
+  [ "$output" -eq 0 ]
 }
 
 @test "escalation: a failed deep pi worker no longer unlocks kimi-k3 (dropped)" {
@@ -8919,27 +8947,35 @@ _escalation_seed_spoof() {
 
 @test "escalation: a failed trivial job does not unlock a standard-tier escalation" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet trivial
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-luna trivial s-test codex
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
 @test "escalation: a Linear id alongside an issue number does not borrow the issue's failed history" {
   stub_launch_bins
-  _escalation_seed "feat/42-do-a-thing" sonnet standard
-  run run_dispatch standard opus --effort high --crew-id c1 ENG-9 42 "Do a thing"
+  _escalation_seed "feat/42-do-a-thing" gpt-5.6-terra standard s-test codex
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 ENG-9 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }
 
-@test "escalation: a trivial-tier failure after a finished standard run does not unlock standard opus" {
+@test "escalation: a trivial-tier failure after a finished standard run does not unlock standard sol" {
   stub_launch_bins
-  _esc_dispatch "feat/42-do-a-thing" s1 sonnet standard 100
+  _esc_dispatch "feat/42-do-a-thing" s1 gpt-5.6-terra standard 100 codex
   _esc_status "feat/42-do-a-thing" s1 pr_open 150
-  _esc_dispatch "feat/42-do-a-thing" s2 haiku trivial 300
+  _esc_dispatch "feat/42-do-a-thing" s2 gpt-5.6-luna trivial 300 codex
   _esc_status "feat/42-do-a-thing" s2 failed 400
-  run run_dispatch standard opus --effort high --crew-id c1 42 "Do a thing"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch standard gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
+
+@test "escalation: a failed standard opus does not unlock fable" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" opus standard
+  run run_dispatch standard fable --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not standard's row"* ]]
 }

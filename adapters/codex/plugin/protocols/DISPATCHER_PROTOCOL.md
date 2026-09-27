@@ -11,16 +11,18 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 | Signal                                                                                                                   | tier       | model                                    |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
 | Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑Fable to escalate |
-| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — sonnet                   |
-| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet\|haiku            |
+| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — opus (sonnet under budget) |
+| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — opus\|sonnet\|haiku      |
 
-**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
+**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`opus`, or `sonnet` when the budget sheds); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
 why — an underpowered worker can escalate via the bus. **One-rung escalation:**
 when a worker ends `failed`, the dispatcher reads the bus for that signal and
 accepts the next rung of the same engine's execute ladder on a retry — without
 `--ignore-map`. The tier stays unchanged, but the escalated model may be from
-outside the tier's normal row (e.g. `standard opus` after a failed `standard
-sonnet`). Only one rung: a two-rung jump or a third attempt still needs
+outside the tier's normal row (e.g. codex `standard gpt-5.6-sol` after a failed
+`standard gpt-5.6-terra`); an in-row hop, such as claude `standard opus` after
+a failed `standard sonnet`, is already accepted by the row and only recorded.
+Only one rung: a two-rung jump or a third attempt still needs
 `--ignore-map` — any retry or in-row hop after the first failure counts as an
 attempt, and the branch's latest terminal status must still be `failed` at the
 same tier (a failure that was later resumed and finished no longer escalates). The pace-rule gate still applies — a premium rung near the 7d
@@ -1062,7 +1064,7 @@ amber -> pr: "#124"
 
 1. **Never implement.** You don't edit code, run the gate, or open PRs — that's the worker. If you catch yourself coding, stop and dispatch it.
 2. **One task = one worker = one issue/branch/worktree/PR.** Don't bundle.
-3. **Judge cost.** Don't dispatch trivial work on opus or a sprawling feature on haiku. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
+3. **Judge cost.** Don't run a sprawling feature on haiku, and when the budget is tight shed trivial/standard opus work to sonnet. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
 4. **Escalations surface in the roster/inbox**, not silently — if a worker `failed` or stalled, decide: re-dispatch (smaller, or a stronger model), intervene, or drop it.
 5. **Cleanup is automatic, and gated on the PR.** Every `dispatch` first runs `crew reap --quiet`, which reclaims the window + worktree of any `done` worker whose PR is merged or closed. A worker with an open PR, a live engine in its worktree, or uncommitted changes is kept. Run `crew reap` by hand (add `--dry-run` to see the plan) to have the keeps explained, e.g. before asking why a finished worker's window is still around. The same `reap` also files each finished run's outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with `crew rate --report`); set `CREW_RATE_AUTOSWEEP=0` to disable it. The sweep runs detached and logs its start, skips and exit code to `~/.local/share/crew/autosweep.log`; if the store looks stale, read that log, or run `crew rate --sweep-all` to backfill every repo with a crew bus under `$HOME` (`--root DIR`, repeatable, replaces that default) plus any repo swept before.
 6. **Never print a secret — rule 7 of `WORKER_PROTOCOL.md` binds you too.** Dispatchers diagnose environment problems, which is where a variable dump leaks: no reading secret files; no bare `env`/`printenv`; no dumping builtin — bare `set` (fish and bash/POSIX), fish `set -S`/`set --show`, `declare -p`/`-x`, bare `declare`/`typeset`, `export -p`, `typeset -p`, `/proc/*/environ`, `tmux show-environment` (a pipe filter does not make a dump safe). Check presence only (`set -q NAME`, or `[ -n "${NAME:-}" ] && echo set || echo unset`) or run the consuming tool and read its error.
