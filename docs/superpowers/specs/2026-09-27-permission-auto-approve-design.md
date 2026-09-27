@@ -132,7 +132,9 @@ Two independent guards, so neither alone has to be right:
    the human.
 2. **Transcript history.** The one captured escalation followed "3 consecutive
    actions were blocked". Each classifier denial is a `tool_result` whose text
-   names the auto mode classifier. If any of the last five `tool_result`s in
+   contains `denied by the Claude Code auto mode classifier` (copied from a
+   real denial in this session's own transcript, and pinned in a fixture). If
+   any of the last five `tool_result`s in
    the pending call's own transcript file is such a denial, the request goes to
    the human even when the frame looks plain.
 
@@ -194,13 +196,16 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
   reviewers and critics dirs from its own install location (the dirs beside
   `protocols/`), and treats a root as immutable only when its canonical path
   is under `/nix/store/`.
-- Transcript base: `$HOME/.claude/projects`; `PERMISSION_CHECK_PROJECTS_DIR`
-  overrides it for tests only.
+- Transcript base: `$HOME/.claude/projects`. `--projects-dir <dir>` overrides
+  it, accepted in `--capture` mode only.
 - Output: exactly one line on stdout. `allow-once` with exit 0; otherwise
   `human: <reason>` with exit 1. Usage errors exit 2 (also human).
 - **Settle.** The decision takes two observations: capture the frame and scan
-  the transcripts, wait `PERMISSION_CHECK_SETTLE` seconds (default 10, twice
-  the ~5 s flush observed; tests set 0), then capture and scan again. Both
+  the transcripts, wait 10 seconds in `--pane` mode (twice the ~5 s flush
+  observed; `PERMISSION_CHECK_SETTLE` can raise it, never lower it), then
+  capture and scan again. `--capture` mode reuses its one capture for both
+  observations and settles `PERMISSION_CHECK_SETTLE` seconds (default 0), so
+  a test can change the transcript during the wait. Both
   observations must see a byte-identical frame and the same single pending
   call id; any difference → human. A live call not yet flushed at the first
   scan shows up at the second as a second pending call.
@@ -236,7 +241,12 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    killed subagent or an interrupted run refuses every later request until
    the human answers, which is the safe direction. The pending call must also
    be the last `tool_use` in its file. Any line that is not a JSON object →
-   human.
+   human. One call is exempt: the parent `Agent` call whose `id` equals the
+   pending call's subagent `meta.json` `toolUseId` — a foreground subagent's
+   parent call is pending for as long as the subagent runs. Only
+   `spawnDepth: 1` subagents are eligible; a deeper one leaves an ancestor call
+   pending, so it refuses. A lead parked in its own foreground call (e.g.
+   `crew await`) has that call pending too, and refuses.
 4. The pending call is in a subagent file whose `agent-<id>.meta.json`
    `agentType` equals the header `<name>`; its `name` is `Bash`; its `input`
    keys are exactly `command` plus optional `description`; if the entry carries
