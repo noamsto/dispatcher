@@ -13,6 +13,12 @@
 # must be a read of an allowed root in a grammar small enough to check
 # completely. See docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md.
 #
+# The decision takes two observations, PERMISSION_CHECK_SETTLE seconds apart:
+# with --pane at least 10 (the env can only raise it; a value that is not one
+# to six digits counts as unset), with --capture default 0 (a value that is not
+# one to six digits is a usage error). --answer then re-captures and, only if the
+# frame is unchanged, sends the one key `1`.
+#
 # Fail closed: stdout carries exactly one line — `allow-once` (exit 0) or
 # `human: <reason>` (exit 1); usage errors are `human: usage: …` (exit 2).
 # Any unexpected failure also ends as a `human:` line, never as an allow.
@@ -99,6 +105,17 @@ parse_args() {
     CREW_DIR="$common/crew"
   fi
   [ -n "$PROJECTS_DIR" ] || PROJECTS_DIR="$HOME/.claude/projects"
+
+  local s=${PERMISSION_CHECK_SETTLE:-}
+  if [ -n "$PANE" ]; then
+    SETTLE=10
+    if [[ $s =~ ^[0-9]{1,6}$ ]] && ((10#$s > SETTLE)); then SETTLE=$((10#$s)); fi
+  elif [ -z "$s" ]; then
+    SETTLE=0
+  else
+    [[ $s =~ ^[0-9]{1,6}$ ]] || usage "PERMISSION_CHECK_SETTLE is not one to six digits"
+    SETTLE=$((10#$s))
+  fi
 }
 
 # The same stripping crew.sh's _permission_detail applies: OSC, CSI and other
@@ -108,15 +125,18 @@ strip() {
     tr -d '\000-\010\013-\037\177'
 }
 
-# capture — the plain, stripped frame text in CAPTURE. Stripping happens in the
-# pipe so a NUL never reaches a bash variable.
+# capture — the plain, stripped frame text in CAPTURE, trailing newlines kept
+# (the `.` sentinel) so observations compare byte for byte. Stripping happens
+# in the pipe so a NUL never reaches a bash variable. --capture re-reads its
+# file each time.
 capture() {
   if [ -n "$PANE" ]; then
-    CAPTURE=$(tmux capture-pane -p -t "$PANE" | strip) || refuse "capture of pane $PANE failed"
+    CAPTURE=$(tmux capture-pane -p -t "$PANE" | strip && printf .) || refuse "capture of pane $PANE failed"
   else
     [ -f "$CAPTURE_FILE" ] && [ -r "$CAPTURE_FILE" ] || refuse "capture file unreadable"
-    CAPTURE=$(strip <"$CAPTURE_FILE") || refuse "capture file unreadable"
+    CAPTURE=$(strip <"$CAPTURE_FILE" && printf .) || refuse "capture file unreadable"
   fi
+  CAPTURE=${CAPTURE%.}
 }
 
 # frame_parse — spec "Frame gate". Walks the non-empty lines up from the
@@ -305,7 +325,6 @@ transcript_pending() {
 
   reason=$(jq -r '.refuse // empty' <<<"$res")
   [ -z "$reason" ] || refuse "$reason"
-  # shellcheck disable=SC2034 # the settle's second observation compares it
   T_ID=$(jq -j '.id' <<<"$res")
   T_COMMAND=$(jq -j '.command' <<<"$res")
 }
@@ -611,6 +630,16 @@ under_root() {
     fi
     ;;
   esac
+
+  # A hard link from a writable root to a file outside every root would pass
+  # each rule above. Immutable roots are exempt: the Nix store hard-links
+  # identical files.
+  local links
+  if [ -z "$FAIL" ] && [ "${R_IMM[$3]}" != 1 ] && [ -f "$real" ]; then
+    if ! links=$(stat -c %h -- "$real") || [ "$links" != 1 ]; then
+      FAIL="path: a hard-linked file: $1"
+    fi
+  fi
 }
 
 # path_check <operand> <kind> — spec "Path rules". <kind> is file, dir,
@@ -652,7 +681,8 @@ path_checks() {
 }
 
 # decide — one observation: the frame, the call it binds to, and that call's
-# command. Any failed rule refuses, which exits.
+# command. Any failed rule refuses, which exits: it runs in the main shell, so
+# a refusal at either observation is the one stdout line.
 decide() {
   capture
   frame_parse
@@ -666,9 +696,25 @@ verdict() {
   printf 'allow-once\n'
 }
 
+# main — spec "Settle": the second observation must see the same frame bytes
+# and the same pending call, and pass on its own. A live call not yet flushed
+# at the first scan shows up at the second as a second pending call.
 main() {
+  local frame id
   parse_args "$@"
   decide
+  frame=$CAPTURE id=$T_ID
+  sleep "$SETTLE"
+  decide
+  [ "$CAPTURE" = "$frame" ] || refuse "settle: the frame changed"
+  [ "$T_ID" = "$id" ] || refuse "settle: the pending call changed"
+
+  if [ "$ANSWER" = 1 ]; then
+    capture
+    [ "$CAPTURE" = "$frame" ] || refuse "answer: the frame changed before the keystroke"
+    # `1` picks option 1 whatever the cursor row. Nothing else is ever sent.
+    tmux send-keys -t "$PANE" 1 >&2 || refuse "answer: send-keys failed"
+  fi
   verdict
 }
 

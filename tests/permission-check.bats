@@ -5,11 +5,15 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 FIXTURE_DIR="$BATS_TEST_DIRNAME/fixtures/permission"
 CLASSIFIER_FRAME="$FIXTURE_DIR/classifier-escalation.txt"
+DENIAL_FIXTURE="$FIXTURE_DIR/classifier-denial.txt"
+DENIAL=$(<"$DENIAL_FIXTURE")
 
 # A world the checker binds a dialog against: a lead record, artifacts and
 # grants for a slashed branch, a worktree, a grant dir, an immutable root, and
 # the lead's transcript with one foreground subagent whose parent `Agent` call
-# is pending while it runs.
+# is pending while it runs. The transcripts live in a tmp HOME's
+# `.claude/projects`, where --pane mode finds them; that HOME is no ancestor of
+# the worktree or grant.
 setup() {
   load helpers
   CHECK="$BATS_TEST_DIRNAME/../adapters/core/permission-check.sh"
@@ -19,9 +23,11 @@ setup() {
   WT="$BATS_TEST_TMPDIR/wt"
   GRANT="$BATS_TEST_TMPDIR/grant"
   RO="$BATS_TEST_TMPDIR/ro"
-  PROJECTS="$BATS_TEST_TMPDIR/projects"
+  PANE_HOME="$BATS_TEST_TMPDIR/home"
+  PROJECTS="$PANE_HOME/.claude/projects"
   FRAME="$BATS_TEST_TMPDIR/frame.txt"
   F="$WT/README.md"
+  stubs
 
   mkdir -p "$CREW/leads/${BRANCH%/*}" "$CREW/artifacts/$BRANCH" "$CREW/grants/${BRANCH%/*}"
   printf 'claude %s\n' "$SID" >"$CREW/leads/$BRANCH"
@@ -56,6 +62,37 @@ setup() {
       message:{role:"user",content:"review it"}}' >"$SUB_LOG"
   jq -nc '{agentType:"shell-reviewer",toolUseId:"toolu_parent",spawnDepth:1}' \
     >"$PROJ/$SID/subagents/agent-a1.meta.json"
+}
+
+# stubs — `tmux` and `sleep` on STUBS, which the checker runs on PATH.
+# tmux logs its argv to TMUX_LOG; capture-pane prints PANE_FRAME, or
+# PANE_FRAME_ALT on call number PANE_FRAME_ALT_AT; send-keys exits
+# SEND_KEYS_STATUS. sleep logs its argument to SLEEP_LOG, runs SLEEP_HOOK (a
+# shell command that changes the world mid-settle) and returns at once.
+stubs() {
+  STUBS="$BATS_TEST_TMPDIR/stubs"
+  mkdir -p "$STUBS"
+  cat >"$STUBS/tmux" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$TMUX_LOG"
+case $1 in
+capture-pane)
+  n=$(($(cat "$TMUX_LOG.captures" 2>/dev/null || echo 0) + 1))
+  printf '%s\n' "$n" >"$TMUX_LOG.captures"
+  if [ "$n" = "${PANE_FRAME_ALT_AT:-}" ]; then cat "$PANE_FRAME_ALT"; else cat "$PANE_FRAME"; fi
+  ;;
+send-keys) exit "${SEND_KEYS_STATUS:-0}" ;;
+esac
+STUB
+  cat >"$STUBS/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$SLEEP_LOG"
+if [ -n "${SLEEP_HOOK:-}" ]; then eval "$SLEEP_HOOK"; fi
+STUB
+  chmod +x "$STUBS/tmux" "$STUBS/sleep"
+  export TMUX_LOG="$BATS_TEST_TMPDIR/tmux.log" SLEEP_LOG="$BATS_TEST_TMPDIR/sleep.log"
+  export PANE_FRAME="$FRAME"
+  unset PANE_FRAME_ALT PANE_FRAME_ALT_AT SEND_KEYS_STATUS SLEEP_HOOK PERMISSION_CHECK_SETTLE
 }
 
 # pending_bash <command> [description] — the subagent asks for a Bash call
@@ -120,9 +157,21 @@ frame() {
 
 # check [frame-file] — the checker in --capture mode against the world.
 check() {
-  run --separate-stderr bash "$CHECK" --capture "${1:-$FRAME}" \
+  run --separate-stderr env PATH="$STUBS:$PATH" bash "$CHECK" --capture "${1:-$FRAME}" \
     --branch "$BRANCH" --worktree "$WT" --crew-dir "$CREW" \
     --projects-dir "$PROJECTS" --ro-root "$RO"
+}
+
+# pane [arg...] — the checker in --pane mode on %9 through the tmux stub,
+# finding the transcripts under the tmp HOME.
+pane() {
+  run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" bash "$CHECK" --pane %9 \
+    --branch "$BRANCH" --worktree "$WT" --crew-dir "$CREW" "$@"
+}
+
+# no_send_keys — the tmux stub never saw send-keys.
+no_send_keys() {
+  ! grep -q '^send-keys' "$TMUX_LOG"
 }
 
 assert_human() {
@@ -149,8 +198,6 @@ try() {
   frame "$1"
   check
 }
-
-DENIAL="Permission for this action has been denied by the Claude Code auto mode classifier."
 
 # ---------------------------------------------------------------------------
 # Positive
@@ -444,6 +491,13 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   frame "cat $WT/README.md"
   check
   assert_refused "classifier denial"
+}
+
+@test "permission-check: the matched denial phrase occurs in the real denial text" {
+  local phrase
+  phrase=$(sed -n 's/.*result_text | contains("\([^"]*\)").*/\1/p' "$CHECK")
+  [ -n "$phrase" ]
+  grep -qF -- "$phrase" "$DENIAL_FIXTURE"
 }
 
 @test "permission-check: a malformed JSON line goes to the human" {
@@ -764,6 +818,132 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
   assert_refused "path: not a regular file"
 }
 
+@test "permission-check: a hard-linked worktree file goes to the human" {
+  ln "$WT/README.md" "$WT/hl"
+  try "cat $WT/hl"
+  assert_refused "path: a hard-linked file"
+}
+
+# ---------------------------------------------------------------------------
+# Settle and --answer
+# ---------------------------------------------------------------------------
+
+# pane_ready — a pending cat of the readme and its matching frame.
+pane_ready() {
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+}
+
+# alt_frame — the same dialog with one more line of output above it: a frame
+# that still parses, but not byte-identical.
+alt_frame() {
+  export PANE_FRAME_ALT="$BATS_TEST_TMPDIR/frame-alt.txt"
+  { printf 'earlier output\n'; cat "$FRAME"; } >"$PANE_FRAME_ALT"
+}
+
+@test "permission-check: pane mode with --answer sends exactly 1 after three captures" {
+  pane_ready
+  pane --answer
+  assert_allowed
+  mapfile -t log <"$TMUX_LOG"
+  [ "${#log[@]}" -eq 4 ]
+  for i in 0 1 2; do [ "${log[i]}" = "capture-pane -p -t %9" ]; done
+  [ "${log[3]}" = "send-keys -t %9 1" ]
+}
+
+@test "permission-check: pane mode without --answer allows and sends nothing" {
+  pane_ready
+  pane
+  assert_allowed
+  [ "$(grep -c '^capture-pane' "$TMUX_LOG")" -eq 2 ]
+  no_send_keys
+}
+
+@test "permission-check: a frame that changes at the second capture goes to the human" {
+  pane_ready
+  alt_frame
+  export PANE_FRAME_ALT_AT=2
+  pane --answer
+  assert_refused "settle: the frame changed"
+  no_send_keys
+}
+
+@test "permission-check: a frame that changes at the third capture goes to the human" {
+  pane_ready
+  alt_frame
+  export PANE_FRAME_ALT_AT=3
+  pane --answer
+  assert_refused "answer: the frame changed"
+  no_send_keys
+}
+
+@test "permission-check: a second pending call appended during the settle goes to the human" {
+  local late="$BATS_TEST_TMPDIR/late.jsonl" subs="$PROJ/$SID/subagents"
+  jq -nc '{agentType:"shell-reviewer",toolUseId:"toolu_parent2",spawnDepth:1}' >"$subs/agent-a2.meta.json"
+  tool_use toolu_late Bash "$late"
+  export SLEEP_HOOK="cat $(printf %q "$late") >>$(printf %q "$subs/agent-a2.jsonl")"
+  export PERMISSION_CHECK_SETTLE=2
+  try "cat $WT/README.md"
+  assert_refused "more than one pending call"
+  [ "$(cat "$SLEEP_LOG")" = 2 ]
+}
+
+@test "permission-check: a pending call id that changes during the settle goes to the human" {
+  pane_ready
+  local next="$BATS_TEST_TMPDIR/next.jsonl"
+  sed 's/toolu_live/toolu_next/g' "$SUB_LOG" >"$next"
+  export SLEEP_HOOK="cp $(printf %q "$next") $(printf %q "$SUB_LOG")"
+  pane --answer
+  assert_refused "settle: the pending call changed"
+  no_send_keys
+}
+
+@test "permission-check: a failing send-keys goes to the human" {
+  pane_ready
+  export SEND_KEYS_STATUS=1
+  pane --answer
+  assert_refused "answer: send-keys failed"
+}
+
+@test "permission-check: a refusal in pane mode never calls send-keys" {
+  pane_ready
+  export PANE_FRAME="$CLASSIFIER_FRAME"
+  pane --answer
+  assert_human
+  [ "$(grep -c '^capture-pane' "$TMUX_LOG")" -eq 1 ]
+  no_send_keys
+}
+
+@test "permission-check: PERMISSION_CHECK_SETTLE=0 in pane mode still settles 10" {
+  pane_ready
+  export PERMISSION_CHECK_SETTLE=0
+  pane
+  assert_allowed
+  [ "$(cat "$SLEEP_LOG")" = 10 ]
+}
+
+@test "permission-check: a non-numeric PERMISSION_CHECK_SETTLE in pane mode settles 10" {
+  pane_ready
+  export PERMISSION_CHECK_SETTLE=5s
+  pane
+  assert_allowed
+  [ "$(cat "$SLEEP_LOG")" = 10 ]
+}
+
+@test "permission-check: PERMISSION_CHECK_SETTLE=30 in pane mode settles 30" {
+  pane_ready
+  export PERMISSION_CHECK_SETTLE=30
+  pane
+  assert_allowed
+  [ "$(cat "$SLEEP_LOG")" = 30 ]
+}
+
+@test "permission-check: capture mode settles 0 by default" {
+  try "cat $WT/README.md"
+  assert_allowed
+  [ "$(cat "$SLEEP_LOG")" = 0 ]
+}
+
 # ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
@@ -780,6 +960,15 @@ DENIAL="Permission for this action has been denied by the Claude Code auto mode 
 @test "permission-check: --projects-dir with --pane is a usage error" {
   run --separate-stderr bash "$CHECK" --pane %9 --branch "$BRANCH" \
     --worktree "$WT" --crew-dir "$CREW" --projects-dir "$PROJECTS"
+  [ "$status" -eq 2 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "$output" == "human: usage: "* ]]
+}
+
+@test "permission-check: a non-numeric PERMISSION_CHECK_SETTLE in capture mode is a usage error" {
+  frame "cat $WT/README.md"
+  export PERMISSION_CHECK_SETTLE=x
+  check
   [ "$status" -eq 2 ]
   [ "${#lines[@]}" -eq 1 ]
   [[ "$output" == "human: usage: "* ]]
