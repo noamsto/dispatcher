@@ -123,18 +123,38 @@ the transcript before continuing": the classifier is asking a human to look.
 its escalation for it is exactly a pre-emption. Classifier **denials** remain
 permission blocks under #457 and are untouched by this policy.
 
-The frame gate recognises a plain dialog by an allowlisted **shape**, not by
-denylisting the classifier's wording: between the header and
-`Do you want to proceed?` only the request block may appear. Any other line —
-the `│` reason box, a hook's reason text, anything unforeseen — goes to the
-human.
+Two independent guards, so neither alone has to be right:
+
+1. **Frame shape.** The gate recognises a plain dialog by an allowlisted
+   shape, not by denylisting the classifier's wording: between the header and
+   `Do you want to proceed?` only the request block may appear. Any other line
+   — the `│` reason box, a hook's reason text, anything unforeseen — goes to
+   the human.
+2. **Transcript history.** The one captured escalation followed "3 consecutive
+   actions were blocked". Each classifier denial is a `tool_result` whose text
+   names the auto mode classifier. If any of the last five `tool_result`s in
+   the pending call's own transcript file is such a denial, the request goes to
+   the human even when the frame looks plain.
+
+The plain frame shape is **inferred**: the escalation capture minus its reason
+box. A live capture of a plain dialog was attempted with a benign command in a
+scratch session on a private tmux server; the auto-mode classifier denied
+driving that session (Self-Modification), and the attempt was dropped rather
+than worked around. A wrong inference fails closed — no plain frame matches, so
+nothing is approved — because the approval is decided from transcript bytes
+and the frame is only a witness. The dangerous inference error would be an
+escalation that renders with no extra line; guard 2 covers the known trigger.
+Validating the frame against a real plain capture is left to #486.
 
 ## Honest expected yield
 
 Every allowlisted root is already an `--add-dir` working dir, where Claude
 reads without a dialog, and auto mode routes everything else through the
-classifier. So for dispatched workers the positive path is expected to fire
-rarely, perhaps never, until a plain-dialog capture shows otherwise. The value
+classifier. On the owner's machine `~/.claude/settings.json` also allows
+`Bash(cat *)`, `Bash(rg *)`, `Bash(head *)`, `Bash(ls *)` and `Bash(wc *)`
+outright, so those never draw a dialog there. So for dispatched workers the
+positive path is expected to fire rarely, perhaps never, until a plain-dialog
+capture shows otherwise. The value
 shipped is a mechanical, tested boundary: the dispatcher no longer has to
 judge a relayed request at all, and the one case it may answer is defined by
 code, not prose.
@@ -178,9 +198,19 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
   overrides it for tests only.
 - Output: exactly one line on stdout. `allow-once` with exit 0; otherwise
   `human: <reason>` with exit 1. Usage errors exit 2 (also human).
-- `--answer` (with `--pane` only): after an allow verdict, capture again, require
-  the frame byte-identical to the one decided on, then `tmux send-keys -t <pane> 1`.
-  `1` selects option 1 (`Yes`) directly, whatever the cursor row.
+- **Settle.** The decision takes two observations: capture the frame and scan
+  the transcripts, wait `PERMISSION_CHECK_SETTLE` seconds (default 10, twice
+  the ~5 s flush observed; tests set 0), then capture and scan again. Both
+  observations must see a byte-identical frame and the same single pending
+  call id; any difference → human. A live call not yet flushed at the first
+  scan shows up at the second as a second pending call.
+- `--answer` (with `--pane` only): after an allow verdict, capture a third time,
+  require it byte-identical to the decided frame, then
+  `tmux send-keys -t <pane> 1`. `1` selects option 1 (`Yes`) directly, whatever
+  the cursor row. It never sends anything else.
+- `--worktree` and `--branch` come from the dispatcher's own record — the
+  `dispatch` event on the bus, or `crew roster` — never from the pane, the
+  `prompt:` detail or the worker's `WORKER_TASK.md`.
 
 ### Frame gate (on the plain capture, stripped as `_permission_detail` strips)
 
@@ -202,7 +232,11 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    with every `/` and `.` replaced by `-`.
 3. Files: `<sid>.jsonl` and `<sid>/subagents/agent-*.jsonl`. A pending call is
    a `tool_use` block whose `id` has no `tool_result` in the same file. Exactly
-   one pending call across all files, else human.
+   one pending call across all files, else human — so an orphan left by a
+   killed subagent or an interrupted run refuses every later request until
+   the human answers, which is the safe direction. The pending call must also
+   be the last `tool_use` in its file. Any line that is not a JSON object →
+   human.
 4. The pending call is in a subagent file whose `agent-<id>.meta.json`
    `agentType` equals the header `<name>`; its `name` is `Bash`; its `input`
    keys are exactly `command` plus optional `description`; if the entry carries
@@ -211,6 +245,8 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    non-ASCII. `description` (if present) likewise.
 6. The request block equals `[command]` (no description) or
    `[command, description]`, compared trimmed, byte for byte.
+7. No classifier denial among the last five `tool_result`s of that file
+   (see Classifier escalations).
 
 ### Command grammar
 
@@ -220,12 +256,15 @@ Tokenised by the checker's own lexer; anything it cannot lex → human.
   and the separators below. So no `$`, backtick, `(`, `)`, `{`, `}`, `<`, `>`,
   `*`, `?`, `[`, `]`, `~`, `!`, `#`, `"`, `\`, `&` (except in `&&`), `|` (except
   as a pipe), newline. Single-quoted strings (`'…'`, no `'` inside) are literal
-  and are joined to adjacent word text, as bash does.
+  and are joined to adjacent word text, as bash does. Every rule below runs on
+  the **joined, de-quoted** word, so `rg '-r' x f` and `rg -'-pre=x' p f` are
+  flags `-r` and `--pre=x`, and refused.
 - **Separators.** `&&`, `;`, `|` between simple commands. `||`, `&`, `|&` →
   human. An empty simple command (leading, trailing or doubled separator) →
   human.
 - **Command word.** The first word of every simple command is exactly one of
-  `cd cat head tail wc grep rg ls`, unquoted. No `VAR=value` prefix (a first
+  `cd cat head tail wc grep rg ls`, written with no quote character at all
+  (`c'at' f` → human). No `VAR=value` prefix (a first
   word containing `=` is not a command name), no path (`/bin/cat`), no builtin
   or wrapper (`command`, `env`, `xargs`, `eval`, `exec`, `sudo`).
 - **`cd`.** Only as the first simple command, followed by `&&`, with exactly
@@ -258,8 +297,11 @@ Tokenised by the checker's own lexer; anything it cannot lex → human.
 ### Path rules
 
 - A relative operand is allowed only after a leading `cd <abs> &&`, resolved
-  against that directory. With no leading `cd` the Bash tool's persistent cwd
-  is unknown, so relative operands → human.
+  against that directory. Claude's Bash tool runs each command as
+  `eval '<command>'` after sourcing a shell snapshot, then records `pwd -P` as
+  the next call's cwd (seen in this machine's process list), so without a
+  leading `cd` the cwd is whatever an earlier call left: unknown to the
+  checker, and relative operands → human.
 - Resolution is lexical first: any `.` or `..` component, or a `//`, → human.
 - The lexical path must lie under an allowed root as spelled or as
   canonicalised. Roots: the worktree, the branch's artifacts dir, each grant in
@@ -296,7 +338,11 @@ Pane-fidelity refusals: a two-line block whose second line is not the
 transcript's description; a block that is not byte-equal to the pending
 command; any command with CR/newline/ESC/non-ASCII; two pending calls; extra
 input keys (`dangerouslyDisableSandbox`, `run_in_background`); a classifier
-frame; a top-level frame; an unknown tool.
+frame; a top-level frame; an unknown tool; a plain frame whose file shows a
+recent classifier denial; a frame or pending id that changed across the settle
+interval; an orphan pending call beside the live one.
+
+Quoting refusals: `rg '-r' x f`; `rg -'-pre=x' p f`; `c'at' f`.
 
 Positive cases: `cat /wt/README.md`; `rg -n foo /wt/README.md`;
 `cd /wt && cat docs/x.md`; `cat <grant>/notes.md`; `head -n 5 /wt/a | wc -l`;
@@ -305,21 +351,30 @@ matching pending call → `allow-once`.
 
 ## Residual risks (stated, not closed)
 
+The owner's machine runs Claude with `sandbox.enabled: false`, so the risks
+below are stated for the unsandboxed case.
+
 - **Rename race.** Between the check and the command running, a process the
   worker already runs can rename a symlink over a checked file. The pre-check
   cannot close that; it only refuses a symlink present at decision time.
-  Exploiting it needs a concurrently running worker-controlled process as the
-  same user, under the same sandbox as the approved command — which can read the
-  target itself. The approval adds no capability that process lacks.
+  Exploiting it needs a concurrently running worker-controlled process — an
+  unsandboxed process running as the same user, which can open the target
+  itself. The approval adds no read that process lacks.
 - **Environment.** The checker cannot see the worker's Bash environment. A
   `PATH` entry, `BASH_ENV` or `RIPGREP_CONFIG_PATH` planted through a
   worker-edited, worker-`direnv allow`ed `.envrc` on a resume already turns
-  every classifier-allowed `cat`/`rg` into worker code with no dialog at all.
-  Same argument: no capability gain. The human's own shell aliases/functions
-  are trusted configuration.
-- **Transcript forgery.** Needs a worker process writing under
-  `~/.claude/projects` _and_ a rendering trick from A — prior code execution
-  again.
+  every allowed `cat`/`rg` into worker code with no dialog at all. Same
+  argument: no capability gain. The human's own shell snapshot (aliases,
+  functions) is trusted configuration.
+- **Transcripts are a trust root that only the classifier protects.** A
+  worker needs no running process to forge one: a single classifier-allowed
+  append under `~/.claude/projects` from a parallel subagent can plant a fake
+  pending call and a fake `tool_result` for the real one. Combined with a
+  rendering trick from A, the checker would then approve a command it never
+  saw. The settle rule, last-`tool_use` rule and `agentType` match raise the
+  bar but do not close it. The policy's guarantee is conditional: **if the
+  session's transcript files are authentic, the approved bytes are the bytes
+  that run.**
 - **Keystroke race.** `--answer` re-captures and compares immediately before
   `send-keys`; a different dialog can only replace this one if something else
   answers it in that window.
@@ -335,6 +390,12 @@ matching pending call → `allow-once`.
   never option 2 or 3, never from the detail text. Classifier escalations
   always go to the human. Keep the verify-then-act step 2 and the manual
   pane-injection bullet consistent with it.
+- _Permission blocks_' "Never deliver an authorization by pane injection":
+  carve out the checker's `--answer` keystroke. It answers a dialog the checker
+  verified; it never carries an authorization for a denied action, and a
+  permission block is still never answered in the pane.
+- Name `--worktree`/`--branch`'s source: the dispatcher's own `dispatch` event
+  or `crew roster`, never the worktree.
 - A short "why" pointer to this spec for the counterexamples and residual risks.
 - `bash scripts/gen-adapters.sh` to regenerate adapter copies; the checker ships
   beside the other core scripts wherever they are packaged.
