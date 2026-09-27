@@ -1665,6 +1665,51 @@ record_lead() {
   grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
 }
 
+# #461: the liveness probe was a bare `kill -0`. A live dispatcher owned by
+# another uid makes that fail EPERM, which reads dead and strands the crew as
+# solo. EPERM is proof the process exists, so resume must still reattach.
+@test "reattaches when the recorded pid only signals EPERM (another uid) (#461)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '999999999\n' >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  # `kill` is a bash builtin, so a PATH stub cannot intercept it; an exported
+  # function overriding the builtin is what the probe sees (#450 does the same).
+  kill() {
+    printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+    return 1
+  }
+  export -f kill
+  cd "$WT"
+  run run_resume
+  unset -f kill
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  grep -qx 'dispatcher_pane: %77' "$WT/WORKER_TASK.md"
+  grep -q 'msg .* dispatcher:c1' "$STUB_LOG"
+}
+
+# #461: a recorded dead pid recycled by an unrelated process succeeds on
+# `kill -0` and reads live. The pid file predates the process now holding its
+# number, which cannot be the dispatcher; resume must treat it as dead.
+@test "runs solo when the recorded pid is a later recycled process (#461)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  sleep 30 &
+  rec_pid=$!
+  printf '%s\n' "$rec_pid" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  touch -t 202001010000 "$TEST_REPO/.git/crew/crews/c1/pid"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"solo"* ]]
+  grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
+  kill "$rec_pid" 2>/dev/null || true
+}
+
 _resume_esc_seed() { # [failed-session] [failed-ts]
   local fs="${1:-s1-99}" fts="${2:-200}"
   crew_dir="$TEST_REPO/.git/crew"

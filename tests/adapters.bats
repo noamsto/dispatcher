@@ -34,6 +34,31 @@ teardown() {
   [ -z "$offenders" ]
 }
 
+@test "every wall-clock test is tagged for the serial timing step" {
+  # CI's parallel step filters out `# bats test_tags=timing` tests and runs
+  # them alone in a later serial step, since their wall-clock bounds assume
+  # the guard has the CPU to itself. Scan by helper name, not by eye, so a
+  # new wall-clock test can't land untagged; the tag must sit on the line
+  # directly above @test.
+  local helpers='assert_deny_within_each_awk|assert_deny_within|assert_allow_within_each_awk|assert_allow_within'
+  local file found offenders=""
+  for file in "$ROOT"/tests/*.bats; do
+    found="$(awk -v helpers="$helpers" '
+      /^# bats test_tags=timing[[:space:]]*$/ { pending = 1; next }
+      /^@test / { in_test = 1; tagged = pending; name = $0; line = NR; pending = 0; next }
+      /^}/ { in_test = 0 }
+      {
+        pending = 0
+        if (in_test && !tagged && $0 ~ "(^|[^A-Za-z0-9_])(" helpers ")([[:space:]]|$)") {
+          print FILENAME ":" line ": " name
+        }
+      }
+    ' "$file")"
+    [ -z "$found" ] || offenders="$offenders"$'\n'"$found"
+  done
+  [ -z "$offenders" ] || { printf '%s\n' "$offenders" >&2; false; }
+}
+
 @test "every standalone script's _bus_append copy matches crew.sh's" {
   # dispatch.sh and dispatch-notify.sh each carry their own copy of this
   # one-liner (#61) — they're separate writeShellApplication builds with no
@@ -69,6 +94,31 @@ teardown() {
     found="$(grep -hF -- "$prefix" "$disp")"
     [ "$found" = "$canonical" ]
   done
+}
+
+@test "dispatch-resume's liveness-helper copies match crew.sh's" {
+  # dispatch-resume.sh is a standalone build, so it carries its own copies of
+  # crew.sh's dispatcher-liveness helpers (#461). crew.sh is the source of
+  # truth; flake.nix excludes the file from treefmt so shfmt cannot rewrite
+  # the copies out of sync. The `_ps_elapsed_s` crew.sh/dispatch.sh pair is
+  # pinned in "dispatch.sh's _ps_elapsed_s matches crew.sh's" below.
+  for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
+    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
+    [ -n "$canonical" ]
+    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
+    [ "$found" = "$canonical" ]
+  done
+}
+
+@test "dispatch.sh's _ps_elapsed_s matches crew.sh's" {
+  # dispatch.sh carries its own byte-identical copy of crew.sh's _ps_elapsed_s
+  # (#462). dispatch.sh is excluded from treefmt (flake.nix), so shfmt cannot
+  # rewrite the copy out of sync.
+  fn=_ps_elapsed_s
+  canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
+  [ -n "$canonical" ]
+  found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
+  [ "$found" = "$canonical" ]
 }
 
 @test "generator is idempotent" {
