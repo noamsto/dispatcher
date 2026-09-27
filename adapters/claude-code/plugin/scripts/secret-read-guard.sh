@@ -612,8 +612,13 @@ credential_read() {
   *.env* | *netrc* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.aws/credentials* | *.pem* | *.p12* | *.pfx*) ;;
   *) return 0 ;;
   esac
-  left=$(sed -E "s/$template_re//g" <<<"$1") || return
-  if ! grep -qE "$cmd_secret_re" <<<"$left"; then
+  if [[ $2 == narrow ]]; then
+    left=$(sed -E "s/$template_re//g" <<<"$1") || return
+    grep -qE "$cmd_secret_re" <<<"$left" || {
+      echo miss
+      return 0
+    }
+  else
     wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1") || return
     grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
   fi
@@ -646,19 +651,16 @@ grep)
   # template_re holds two groups).
   path_any=$(sed -E "s/$template_re//g" <<<"$path")
   glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
-  path_left=/ glob_left=/
-  [[ $path_any =~ $secret_path_re ]] || path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
-  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] || glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
-  if [[ $path_any =~ $secret_path_re || $path_left =~ $secret_path_re ]]; then
-    deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
-  fi
-  if [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re || $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
-    deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
-  fi
+  [[ $path_any =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
+  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   # A secret-shaped pattern with content output leaks even when the path is broad.
   if [[ $pattern =~ (API_?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY) ]]; then
     deny "Pattern '$pattern' with content output will print any matching credential line it finds. List only the matching files, or count in the shell (grep -c / rg -c) — you need to know where a key is configured, not what it is."
   fi
+  path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
+  [[ $path_left =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
+  glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
+  [[ $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   ;;
 shell)
   [[ -n $command ]] || exit 0
@@ -719,23 +721,32 @@ shell)
   fi
 
   # 3. Reading a credential file's content (credential_read, above deny). A
-  #    failed check fails loud rather than allowing.
-  for space in "${raw_spaces[@]}"; do
-    verdict=$(credential_read "$space") || {
-      echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
-      exit 1
-    }
-    case $verdict in
-    interp)
-      deny "Inline interpreter code that names a credential file can print it into this transcript, and the guard cannot tell whether the code reads it. If it only writes or edits the file, run the code from a script file; to confirm a key is configured, use grep -c '^NAME=' (a count)."
-      ;;
-    print)
-      deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
-      ;;
-    grep)
-      deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
-      ;;
-    esac
+  #    failed check fails loud rather than allowing. Every space is judged by
+  #    the narrow name test first; the wide strip runs only on the spaces that
+  #    missed it, so a deny elsewhere never pays for it.
+  missed=()
+  for pass in narrow wide; do
+    if [[ $pass == narrow ]]; then spaces=("${raw_spaces[@]}"); else spaces=("${missed[@]}"); fi
+    for space in "${spaces[@]}"; do
+      verdict=$(credential_read "$space" "$pass") || {
+        echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
+        exit 1
+      }
+      case $verdict in
+      miss)
+        missed+=("$space")
+        ;;
+      interp)
+        deny "Inline interpreter code that names a credential file can print it into this transcript, and the guard cannot tell whether the code reads it. If it only writes or edits the file, run the code from a script file; to confirm a key is configured, use grep -c '^NAME=' (a count)."
+        ;;
+      print)
+        deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
+        ;;
+      grep)
+        deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
+        ;;
+      esac
+    done
   done
   ;;
 esac

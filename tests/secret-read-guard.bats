@@ -1887,6 +1887,23 @@ EOF
   run grep -qF '\4' "$log"
   [ "$status" -eq 0 ]
 
+  # (e) Bash, across spaces: the top level misses the narrow test (`x.env` has
+  # no leading separator) but the `-c` body hits it, so the wide sed must not
+  # run on the top level once another space is denied.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_bash 'bash -c cat\ \.env; x.env')"
+  assert_deny_claude
+  run grep -qF '\4' "$log"
+  [ "$status" -ne 0 ]
+
+  # (f) Grep tool, across fields: the path hits the narrow test, so the wide
+  # sed must not run on the glob that missed it.
+  : >"$log"
+  run --separate-stderr run_guard <<<"$(claude_grep "config/.env" "*.ts" "x" content)"
+  assert_deny_claude
+  run grep -qF '\4' "$log"
+  [ "$status" -ne 0 ]
+
   PATH=$old_path
 }
 
