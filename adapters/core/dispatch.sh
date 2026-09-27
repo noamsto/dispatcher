@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -1252,6 +1252,8 @@ base_ref=""
 base_flag=""
 add_dir_flags=()
 add_dirs=()
+owner_auth=""
+owner_auth_set=""
 kind=implement
 mcp_profile=""
 grid_roles=""
@@ -1362,6 +1364,15 @@ while [ $# -gt 0 ]; do
       exit 1
     }
     add_dir_flags+=("$2")
+    shift 2
+    ;;
+  --owner-auth)
+    [ $# -ge 2 ] || {
+      echo "dispatch: --owner-auth needs the owner's quoted words and their scope" >&2
+      exit 1
+    }
+    owner_auth="$2"
+    owner_auth_set=1
     shift 2
     ;;
   --pr)
@@ -2123,6 +2134,25 @@ title="$*"
   exit 1
 }
 
+# The "## " ban protects the carried-resume boundary: a "## Task" line inside
+# the text would start the copy early.
+if [ -n "$owner_auth_set" ] && [ -z "${owner_auth//[[:space:]]/}" ]; then
+  echo "dispatch: --owner-auth needs the owner's quoted words and their scope" >&2
+  exit 1
+fi
+if [ "${#owner_auth}" -gt 2000 ]; then
+  echo "dispatch: --owner-auth is ${#owner_auth} chars (max 2000) — quote the owner's words and the scope they cover, nothing else" >&2
+  exit 1
+fi
+if grep -q '^## ' <<<"$owner_auth"; then
+  echo "dispatch: --owner-auth text may not contain a line starting with \"## \"" >&2
+  exit 1
+fi
+if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ] && grep -qiE '^#+[[:space:]]*owner[[:space:]]+authori[sz]ation' "$DISPATCH_SPEC"; then
+  echo "dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself" >&2
+  exit 1
+fi
+
 # Pre-scaffold gate check for `dispatch resume`, which re-runs the gates that
 # are properties of now — profile, model shape, effort ceiling, quota, rung —
 # rather than re-deriving them in a second copy that would drift. Everything
@@ -2741,7 +2771,8 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume} + $ident
+  --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
@@ -2767,6 +2798,25 @@ fi
 carried=""
 if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
   carried="$(sed -n '/^## Task$/,$p' "$wt_path/WORKER_TASK.md")"
+  # The carried body is worker-writable, so a heading planted in it never counts as
+  # an authorization — only a launch prompt (--owner-auth) does.
+  carried_stripped="$(printf '%s\n' "$carried" | awk '
+    {
+      line = $0
+      ll = tolower(line)
+      if (skip) {
+        if (match(line, /^#+[[:space:]]/) && RLENGTH - 1 <= lvl) { skip = 0 } else { next }
+      }
+      if (!skip && ll ~ /^#+[[:space:]]*owner[[:space:]]+authori[sz]ation/) {
+        match(line, /^#+/); lvl = RLENGTH; skip = 1; next
+      }
+      print line
+    }
+  ')"
+  if [ "$carried_stripped" != "$carried" ]; then
+    echo "dispatch: dropped an owner-authorization section from the carried task — it was not in a launch prompt; pass --owner-auth to carry one" >&2
+  fi
+  carried="$carried_stripped"
 fi
 
 # A re-dispatch onto an existing branch (switch_mode=resume) is a resume, so
@@ -2852,6 +2902,7 @@ fi
   [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
   # A lazy grid creates no role panes up front; the lead spawns each at its seam.
   [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
+  [ -n "$owner_auth" ] && printf '\n## Owner authorization\n\n%s\n' "$owner_auth"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
     cat "$DISPATCH_SPEC"
@@ -3060,13 +3111,18 @@ fi
 # "sibling" protocol files have no referent unless the directory is named.
 protocol_note=" Protocol files (EVIDENCE_REVIEW.md, GRID_PROTOCOL.md, ...) live in $PROTOCOL_DIR — also stamped as protocol_dir: in WORKER_TASK.md."
 
+owner_note=""
+if [ -n "$owner_auth" ]; then
+  owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
+fi
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
   # latency nobody is watching.
   # agents.*: enable native delegation, cap concurrency at 3 (parity with rule 1),
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   # codex and cursor cannot pre-assign a session id, so there is none to verify:
   # the record names the engine with `-`, replacing any earlier lead's record.
@@ -3086,7 +3142,7 @@ elif [ "$agent" = cursor ]; then
   # `cursor-retrieval` line these were meant to suppress comes from the in-process
   # file_service module, not the indexed-grep path.
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
-  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
+  prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session "$agent" -
   launch_cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
@@ -3095,13 +3151,13 @@ elif [ "$agent" = pi ]; then
   # real appended system prompt; --no-approve ignores project-local resources,
   # so the worktree's own skills go over via --skill (pi_skill_args).
   printf -v quoted_dir '%q' "$pi_agent_dir"
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session pi "$lead_sid"
   launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
-  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
+  prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session claude "$lead_sid"

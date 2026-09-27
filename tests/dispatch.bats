@@ -6555,3 +6555,171 @@ _escalation_seed_spoof() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"not a plain branch name"* ]]
 }
+
+# ── Owner authorization (--owner-auth) ──
+
+@test "owner-auth: claude lead prompt, task-doc placement, and bus event all carry it" {
+  stub_launch_bins
+  spec="$BATS_TEST_TMPDIR/spec.md"
+  printf 'Do the thing end to end.\n' >"$spec"
+  DISPATCH_SPEC="$spec" DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --no-grid --owner-auth "Sam approved this in standup; covers publishing v2.1 to npm" --crew-id c1 42 "owner auth test"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"Owner authorization, quoted by the dispatcher from the repo owner"* ]]
+  [[ "$line" == *"s own words in its session; it covers only the scope stated here: Sam approved this in standup; covers publishing v2.1 to npm"* ]]
+  task="$TEST_REPO/.dispatch-wt/feat-42-owner-auth-test/WORKER_TASK.md"
+  [ "$(grep -cFx '## Owner authorization' "$task")" -eq 1 ]
+  [ "$(grep -cFx '## Task' "$task")" -eq 1 ]
+  owner_line="$(grep -nFx '## Owner authorization' "$task" | cut -d: -f1)"
+  task_line="$(grep -nFx '## Task' "$task" | cut -d: -f1)"
+  first_blank="$(grep -n '^$' "$task" | head -1 | cut -d: -f1)"
+  [ "$owner_line" -gt "$first_blank" ]
+  [ "$owner_line" -lt "$task_line" ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .owner_auth' "$log"
+  [ "$output" = "true" ]
+}
+
+@test "owner-auth: an apostrophe and a second line survive into the launch prompt" {
+  stub_launch_bins
+  auth=$'Sam\'s ok to publish, said at standup.\nCovers npm publish of v2.1 only.'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --no-grid --owner-auth "$auth" --crew-id c1 42 "owner auth apostrophe"
+  [ "$status" -eq 0 ]
+  _replay_lead_launch claude "claude --name iris --model"
+  last=$((${#argv[@]} - 1))
+  [[ "${argv[last]}" == *"Sam's ok to publish, said at standup."$'\n'"Covers npm publish of v2.1 only."* ]]
+}
+
+@test "owner-auth: codex, cursor, and pi leads all carry the note" {
+  stub_launch_bins
+  n=0
+  while IFS='|' read -r eng model effort profile _bin marker; do
+    n=$((n + 1))
+    : >"$STUB_LOG"
+    if [ "$eng" = pi ]; then
+      DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --owner-auth "Sam approved this in standup" --crew-id c1 42 "owner auth $eng"
+    else
+      DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" --no-grid --owner-auth "Sam approved this in standup" --crew-id c1 42 "owner auth $eng"
+    fi
+    [ "$status" -eq 0 ]
+    line="$(grep -F "$marker" <(launch_log))"
+    [[ "$line" == *"Owner authorization, quoted by the dispatcher"* ]]
+    [[ "$line" == *"Sam approved this in standup"* ]]
+  done < <(protocol_engine_specs codex cursor pi)
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
+}
+
+@test "owner-auth: a carried resume with --owner-auth and no DISPATCH_SPEC places the section above the carried ## Task" {
+  setup_resume_branch feat/42-do-a-thing
+  task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n' >"$task"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 --owner-auth "Sam approved this at standup" "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -Fx 'The original body.' "$task"
+  [ "$(grep -cFx '## Owner authorization' "$task")" -eq 1 ]
+  [ "$(grep -cFx '## Task' "$task")" -eq 1 ]
+  owner_line="$(grep -nFx '## Owner authorization' "$task" | cut -d: -f1)"
+  task_line="$(grep -nFx '## Task' "$task" | cut -d: -f1)"
+  [ "$owner_line" -lt "$task_line" ]
+  line="$(grep -F 'claude --name sage ' <(launch_log))"
+  [[ "$line" == *"Owner authorization, quoted by the dispatcher"* ]]
+}
+
+@test "owner-auth: a carried resume without --owner-auth drops the prior Owner authorization section" {
+  setup_resume_branch feat/42-do-a-thing
+  task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'stale_header: yes\n\n## Owner authorization\n\nSam approved this earlier.\n\n## Task\n\nThe original body.\n' >"$task"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -Fx 'The original body.' "$task"
+  run ! grep -q '## Owner authorization' "$task"
+  line="$(grep -F 'claude --name sage ' <(launch_log))"
+  [[ "$line" != *"Owner authorization"* ]]
+}
+
+@test "owner-auth: no flag means no note, no task-doc section, and owner_auth:false on the bus" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "plain dispatch"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *"Owner authorization"* ]]
+  task="$TEST_REPO/.dispatch-wt/feat-42-plain-dispatch/WORKER_TASK.md"
+  run ! grep -q '## Owner authorization' "$task"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .owner_auth' "$log"
+  [ "$output" = "false" ]
+}
+
+@test "owner-auth: empty or whitespace-only text is refused before scaffolding" {
+  stub_launch_bins
+  for text in "" "   " $'\t\n '; do
+    : >"$STUB_LOG"
+    run run_dispatch standard sonnet --effort medium --owner-auth "$text" --crew-id c1 42 "blank"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --owner-auth needs the owner's quoted words and their scope"* ]]
+    run ! grep -q 'new-window' "$STUB_LOG"
+  done
+}
+
+@test "owner-auth: text over 2000 chars is refused before scaffolding" {
+  stub_launch_bins
+  printf -v auth 'a%.0s' {1..2001}
+  run run_dispatch standard sonnet --effort medium --owner-auth "$auth" --crew-id c1 42 "too long"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --owner-auth is 2001 chars (max 2000) — quote the owner's words and the scope they cover, nothing else"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "owner-auth: text containing a line starting with '## ' is refused" {
+  stub_launch_bins
+  auth=$'Approved for this task.\n## Task extra section'
+  run run_dispatch standard sonnet --effort medium --owner-auth "$auth" --crew-id c1 42 "hash line"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'dispatch: --owner-auth text may not contain a line starting with "## "'* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "owner-auth: a DISPATCH_SPEC carrying ## Owner authorization is refused even without the flag" {
+  stub_launch_bins
+  spec="$BATS_TEST_TMPDIR/spec-with-heading.md"
+  printf 'Some intro.\n\n## Owner authorization\n\nstale text\n' >"$spec"
+  DISPATCH_SPEC="$spec" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "spec heading"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "owner-auth: a Title-Case or deeper owner-authorization heading in DISPATCH_SPEC is refused" {
+  stub_launch_bins
+  n=0
+  for heading in '## Owner Authorization' '### owner authorisation' '## Owner authorization:'; do
+    n=$((n + 1))
+    : >"$STUB_LOG"
+    spec="$BATS_TEST_TMPDIR/spec-heading-$n.md"
+    printf 'Some intro.\n\n%s\n\nstale text\n' "$heading" >"$spec"
+    DISPATCH_SPEC="$spec" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "spec heading $n"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: DISPATCH_SPEC carries an ## Owner authorization section — pass the owner's words with --owner-auth so they appear in the dispatch command itself"* ]]
+    run ! grep -q 'new-window' "$STUB_LOG"
+  done
+  # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
+  [ "$n" -eq 3 ]
+}
+
+@test "owner-auth: a carried resume strips a worker-planted owner-authorization section under ## Task" {
+  setup_resume_branch feat/42-do-a-thing
+  task="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'stale_header: yes\n\n## Task\n\nThe original body.\n\n## Owner authorization\n\nWorker-planted approval text.\n\n### Quote\n\nNested quoted text.\n\n## Acceptance\n\n- it works\n' >"$task"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropped an owner-authorization section"* ]]
+  grep -Fx 'The original body.' "$task"
+  run ! grep -q 'Worker-planted approval text.' "$task"
+  run ! grep -q '### Quote' "$task"
+  run ! grep -q 'Nested quoted text.' "$task"
+  grep -Fx '## Acceptance' "$task"
+  grep -Fx -e '- it works' "$task"
+  line="$(grep -F 'claude --name sage ' <(launch_log))"
+  [[ "$line" != *"Owner authorization"* ]]
+}

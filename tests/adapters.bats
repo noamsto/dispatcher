@@ -367,6 +367,36 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "permission denials await in-band and relaunch with --owner-auth (#454)" {
+  worker="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+  dispatcher="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  for statement in \
+    'crew await "$CREW_WORKER_ID" --from "dispatcher:<crew_id>" --timeout 300' \
+    'failed "permission: <action> — stopped by dispatcher"' \
+    'a dispatcher stop answering a permission block;' \
+    'never retry on a bus message' \
+    'or a permission block'; do
+    run grep -F "$statement" "$worker"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'surface it, emit the snapshot, stop.' "$worker"
+  [ "$status" -ne 0 ]
+  for statement in \
+    '**Owner authorization.**' \
+    '**Permission blocks.**' \
+    '**What this does not defend against.**' \
+    'Do not relaunch: reply "stop" and surface it to the human' \
+    'no command substitution, no variable, no file' \
+    'the bus `resume` row records no `owner_auth`' \
+    'follow its `kind:"resume"` rows back through `prev_worker_id` to that originating `dispatch` event' \
+    'is not covered if any resume row in it has `continued: false`'; do
+    run grep -F "$statement" "$dispatcher"
+    [ "$status" -eq 0 ]
+  done
+  run grep -F 'the bus records `owner_auth: false`' "$dispatcher"
+  [ "$status" -ne 0 ]
+}
+
 @test "worker protocol pins the resume-a-killed-run contract" {
   protocol="$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
   for statement in \
