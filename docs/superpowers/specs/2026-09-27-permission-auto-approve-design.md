@@ -91,7 +91,8 @@ within ~5 s (an async write queue), and a parked dialog is older than that
 by the time the dispatcher reads it.
 
 The checker approves only when the pane frame is a **plain** Bash dialog, the
-session tree has **exactly one** pending tool call, the frame's request block
+session tree has **exactly one** pending tool call (beside that call's live
+parent `Agent` call), the pane runs that session, the frame's request block
 equals that call's `command` (and `description`, when one is given) byte for
 byte, and the call's exact `command` passes the grammar and path rules below.
 The decision is taken from transcript bytes; the pane is only a witness that
@@ -171,6 +172,7 @@ code, not prose.
 | Path resolution, roots, symlinks, file types, secrets              | checker              | filesystem checks at decision time                                                     |
 | Keystroke and when to send it                                      | checker (`--answer`) | re-captures and compares, then sends `1` itself, shrinking the race to one `tmux` call |
 | Whether to run the checker at all; relaying a refusal to the human | dispatcher           | routing only, no content judgement                                                     |
+| `--pane`, `--branch`, and running from the worker's repo           | dispatcher           | copied from its own `dispatch` event; the checker derives the worktree and crew dir    |
 | Everything the checker refuses                                     | human                | as today                                                                               |
 
 The dispatcher never overrides a refusal, never approves on its own reading of
@@ -183,14 +185,19 @@ a frame, and never answers "don't ask again" (option 2) or "No".
 tool exits non-zero.
 
 ```
-permission-check.sh --pane <%id> --branch <branch> --worktree <dir> \
-  [--crew-dir <dir>] [--answer]
+permission-check.sh --pane <%id> --branch <branch> [--crew-dir <dir>] [--answer]
+                                # run from the worker's repo
 permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
-  [--crew-dir <dir>]            # fixtures/tests; never answers
+  [--crew-dir <dir>] [--projects-dir <dir>] [--ro-root <dir>]...
+                                # fixtures/tests; never answers
 ```
 
-- `--crew-dir` defaults to the crew dir `crew` resolves; the lead record, the
-  artifacts dir and the grants file come from it.
+- `--crew-dir` defaults to `<git common dir>/crew` of the repo the checker
+  runs in; the lead record, the artifacts dir and the grants file come from it.
+- The worktree: in `--pane` mode the checker takes it from
+  `git worktree list --porcelain` in that repo — the entry whose
+  `branch refs/heads/<branch>` matches, else human — and refuses `--worktree`.
+  `--worktree` exists only in `--capture` mode, where there is no live repo.
 - Immutable read-only roots: `$DISPATCHER_PROTOCOL_DIR`-style dirs are not
   trusted from the environment; the checker takes the protocol, skills,
   reviewers and critics dirs from its own install location (the dirs beside
@@ -203,9 +210,9 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
 - **Settle.** The decision takes two observations: capture the frame and scan
   the transcripts, wait 10 seconds in `--pane` mode (twice the ~5 s flush
   observed; `PERMISSION_CHECK_SETTLE` can raise it, never lower it), then
-  capture and scan again. `--capture` mode reuses its one capture for both
-  observations and settles `PERMISSION_CHECK_SETTLE` seconds (default 0), so
-  a test can change the transcript during the wait. Both
+  capture and scan again. `--capture` mode re-reads its file on every
+  observation and settles `PERMISSION_CHECK_SETTLE` seconds (default 0), so
+  a test can change the frame or the transcript during the wait. Both
   observations must see a byte-identical frame and the same single pending
   call id; any difference → human. A live call not yet flushed at the first
   scan shows up at the second as a second pending call.
@@ -213,9 +220,11 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
   require it byte-identical to the decided frame, then
   `tmux send-keys -t <pane> 1`. `1` selects option 1 (`Yes`) directly, whatever
   the cursor row. It never sends anything else.
-- `--worktree` and `--branch` come from the dispatcher's own record — the
-  `dispatch` event on the bus, or `crew roster` — never from the pane, the
-  `prompt:` detail or the worker's `WORKER_TASK.md`.
+- `--branch` comes from the dispatcher's own `dispatch` event on the bus — not
+  a `crew roster` row, whose `branch` comes from the worker's self-asserted
+  status, and never from the pane, the `prompt:` detail or the worker's
+  `WORKER_TASK.md`. The dispatcher runs the checker from the repo it
+  dispatched the worker into.
 
 ### Frame gate (on the plain capture, stripped as `_permission_detail` strips)
 
@@ -235,18 +244,21 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    `claude <uuid>`; else human.
 2. The project dir is `<projects>/<slug>` with `<slug>` = the canonical (`realpath`) worktree path
    with every character outside `[A-Za-z0-9]` replaced by `-`.
-3. Files: `<sid>.jsonl` and `<sid>/subagents/agent-*.jsonl`. A pending call is
-   a `tool_use` block whose `id` has no `tool_result` in the same file. Exactly
-   one pending call across all files, else human — so an orphan left by a
-   killed subagent or an interrupted run refuses every later request until
-   the human answers, which is the safe direction. The pending call must also
-   be the last `tool_use` in its file. Any line that is not a JSON object →
-   human. One call is exempt: the parent `Agent` call whose `id` equals the
-   pending call's subagent `meta.json` `toolUseId` — a foreground subagent's
-   parent call is pending for as long as the subagent runs. Only
-   `spawnDepth: 1` subagents are eligible; a deeper one leaves an ancestor call
-   pending, so it refuses. A lead parked in its own foreground call (e.g.
-   `crew await`) has that call pending too, and refuses.
+3. Files: `<sid>.jsonl` (the lead file) and `<sid>/subagents/agent-*.jsonl`.
+   A pending call is a `tool_use` block whose `id` has no `tool_result` in the
+   same file. Any line that is not a JSON object → human. Across the subagent
+   files exactly one call is pending, and it is the last `tool_use` in its
+   file. The lead file's pending set must be exactly that subagent's live
+   parent `Agent` call — the call whose `id` equals the subagent's `meta.json`
+   `toolUseId`, pending for as long as a foreground subagent runs — and that
+   call must be the last `tool_use` in the lead file. Only `spawnDepth: 1`
+   subagents are eligible; a deeper one leaves its ancestor's call pending in a
+   subagent file, so it refuses. A lead parked in its own foreground call (e.g.
+   `crew await`) has a second pending call in the lead file, and refuses. An
+   orphan — a call a killed subagent or an interrupted run left without a
+   `tool_result` — is likewise a second pending call (in its subagent file, or
+   in the lead file beside the live parent), so every later request in that
+   session refuses for as long as it stays unmatched: the safe direction.
 4. The pending call is in a subagent file whose `agent-<id>.meta.json`
    `agentType` equals the header `<name>`; its `name` is `Bash`; its `input`
    keys are exactly `command` plus optional `description`; if the entry carries
@@ -257,6 +269,17 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
    `[command, description]`, compared trimmed, byte for byte.
 7. No classifier denial among the last five `tool_result`s of that file
    (see Classifier escalations).
+
+### Pane binding
+
+The transcript says which call is pending; only the pane says whose dialog is
+on screen. In `--pane` mode the pane's process tree must run `claude` with
+`--session-id <sid>` or `--resume <sid>`, `<sid>` being the lead record's
+uuid — every `claude` descendant of the pane, matched token-exact on its argv,
+else human. It is checked in each observation. Without it, a dialog in another
+pane (a role pane, a second session) whose request block equals the lead's
+pending command would be answered. A role pane runs its own session, so it
+refuses here.
 
 ### Command grammar
 
@@ -363,7 +386,9 @@ command; any command with CR/newline/ESC/non-ASCII; two pending calls; extra
 input keys (`dangerouslyDisableSandbox`, `run_in_background`); a classifier
 frame; a top-level frame; an unknown tool; a plain frame whose file shows a
 recent classifier denial; a frame or pending id that changed across the settle
-interval; an orphan pending call beside the live one.
+interval; an orphan pending call beside the live one; a lead-file pending call
+other than the live parent `Agent` call; a pane whose `claude` is not running
+the lead session.
 
 Quoting refusals: `rg '-r' x f`; `rg -'-pre=x' p f`; `c'at' f`.
 
@@ -377,12 +402,13 @@ matching pending call → `allow-once`.
 The owner's machine runs Claude with `sandbox.enabled: false`, so the risks
 below are stated for the unsandboxed case.
 
-- **Rename race.** Between the check and the command running, a process the
-  worker already runs can rename a symlink over a checked file. The pre-check
-  cannot close that; it only refuses a symlink present at decision time.
-  Exploiting it needs a concurrently running worker-controlled process — an
-  unsandboxed process running as the same user, which can open the target
-  itself. The approval adds no read that process lacks.
+- **Rename race.** Between the check and the command running, a symlink can
+  be renamed over a checked file. The pre-check cannot close that; it only
+  refuses a symlink present at decision time. The swap needs no long-lived
+  process: a parallel subagent's classifier-allowed call — a `git checkout`
+  of a committed symlink, an `mv` — can make it. The approval still adds no
+  capability: a classifier-allowed `cat /wt/<link>` already reads through a
+  symlink the classifier cannot see.
 - **Environment.** The checker cannot see the worker's Bash environment. A
   `PATH` entry, `BASH_ENV` or `RIPGREP_CONFIG_PATH` planted through a
   worker-edited, worker-`direnv allow`ed `.envrc` on a resume already turns
@@ -398,6 +424,11 @@ below are stated for the unsandboxed case.
   bar but do not close it. The policy's guarantee is conditional: **if the
   session's transcript files are authentic, the approved bytes are the bytes
   that run.**
+- **Pane binding trusts the process table.** The pane↔session check reads
+  argv from the process table; a same-user process named `claude` can carry
+  any argv, including the lead's `--session-id`. Planting one presupposes
+  worker code execution, which already has every capability an approval
+  grants.
 - **Keystroke race.** `--answer` re-captures and compares immediately before
   `send-keys`; a different dialog can only replace this one if something else
   answers it in that window.
@@ -407,7 +438,7 @@ below are stated for the unsandboxed case.
 - `DISPATCHER_PROTOCOL.md`, the `prompt:` bullet: replace "Tool-permission
   dialogs go to the human … a follow-up issue tracks a dispatcher approval
   policy" with the policy: run
-  `permission-check.sh --pane <%id> --branch <b> --worktree <wt> --answer`;
+  `permission-check.sh --pane <%id> --branch <b> --answer` from the worker's repo;
   on `allow-once` it has answered; on `human: …` relay the captured request and
   the refusal reason to the human exactly as today. Never answer otherwise,
   never option 2 or 3, never from the detail text. Classifier escalations
@@ -417,8 +448,9 @@ below are stated for the unsandboxed case.
   carve out the checker's `--answer` keystroke. It answers a dialog the checker
   verified; it never carries an authorization for a denied action, and a
   permission block is still never answered in the pane.
-- Name `--worktree`/`--branch`'s source: the dispatcher's own `dispatch` event
-  or `crew roster`, never the worktree.
+- Name `--branch`'s source: the dispatcher's own `dispatch` event — not a
+  `crew roster` row (self-asserted by the worker), never the pane, the detail
+  or the worktree. The checker derives the worktree and crew dir itself.
 - A short "why" pointer to this spec for the counterexamples and residual risks.
 - `bash scripts/gen-adapters.sh` to regenerate adapter copies; the checker ships
   beside the other core scripts wherever they are packaged.
@@ -427,7 +459,9 @@ below are stated for the unsandboxed case.
 
 - Top-level dialogs (#486), Read/Grep/Glob tool dialogs (no captures): human.
 - `find`, `diff`, `ls -R`: dropped from the draft's allowlist, human.
-- Role panes: no lead record for them → human.
+- Role panes: the dispatcher sends their dialogs straight to the human; the
+  checker would refuse one anyway, since the pane is not running the lead
+  session (Pane binding).
 - codex/cursor/pi: no permission dialog recognised.
 
 ## Acceptance
