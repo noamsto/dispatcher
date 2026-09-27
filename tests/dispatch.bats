@@ -6538,6 +6538,372 @@ EOF
 # Frames are pinned from tests/crew.bats (real captures unless noted); each
 # helper prints its frame so a test can swap it into the tmux stub mid-run.
 
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:09+03:00: idle_empty.
+rw_frame_codex_idle_empty() {
+  cat <<'EOF'
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.157.0 -> 0.157.1                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                         │
+│                                                    │
+│ model:     GPT-5.6-Sol low   /model to change      │
+│ directory: ~/Data/git/noamsto/…/codex/scratch-repo │
+╰────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                       Tip: Use /title to choose what appears in your terminal’s title.
+
+› Ask Codex to do anything
+
+  GPT-5.6-Sol low · ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-a… Vim: Insert
+  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view
+EOF
+}
+
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:10+03:00: idle_unsent.
+rw_frame_codex_idle_unsent() {
+  cat <<'EOF'
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.157.0 -> 0.157.1                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                         │
+│                                                    │
+│ model:     GPT-5.6-Sol low   /model to change      │
+│ directory: ~/Data/git/noamsto/…/codex/scratch-repo │
+╰────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› draft unsent text for capture
+
+  GPT-5.6-Sol low · ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-a… Vim: Insert
+                                                                                              ⚠ 2 warnings · f2 to view
+EOF
+}
+
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:33+03:00: live_turn.
+rw_frame_codex_live_turn() {
+  cat <<'EOF'
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.157.0 -> 0.157.1                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                         │
+│                                                    │
+│ model:     GPT-5.6-Sol low   /model to change      │
+│ directory: ~/Data/git/noamsto/…/codex/scratch-repo │
+╰────────────────────────────────────────────────────╯
+
+
+› Reply with exactly: CAPTURE_READY
+
+
+
+
+
+
+
+
+• Working (2s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Sol low · ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-a… Vim: Insert
+  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view
+EOF
+}
+
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:02+03:00: folder_trust_dialog.
+rw_frame_codex_folder_trust_dialog() {
+  cat <<'EOF'
+  Folder access
+  /home/noams/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captur
+  es/codex/scratch-repo
+
+  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
+  can run code automatically, even without a model request. Continue only if you trust these files. Your trust
+  decision will be saved.
+
+› 1. Trust and continue
+  2. Quit
+
+  enter continue · esc quit
+EOF
+}
+
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:02+03:00: boot_update.
+# Its captured frame is byte-for-byte the folder-trust dialog above.
+rw_frame_codex_boot_update() { rw_frame_codex_folder_trust_dialog; }
+
+# Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:38+03:00: approval_if_available.
+# This is an observed non-dialog approval probe and must still fail closed.
+rw_frame_codex_approval_probe() {
+  cat <<'EOF'
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.157.0 -> 0.157.1                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                         │
+│                                                    │
+│ model:     GPT-5.6-Sol low   /model to change      │
+│ directory: ~/Data/git/noamsto/…/codex/scratch-repo │
+╰────────────────────────────────────────────────────╯
+
+
+› Reply with exactly: CAPTURE_READY
+
+
+■ Conversation interrupted - tell the model what to do differently. Something went wrong? Hit `/feedback` to report the
+issue.
+
+
+
+
+
+
+
+
+
+
+
+
+› Run the shell command pwd and report only its output.
+
+
+  GPT-5.6-Sol low · ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-a… Vim: Insert
+                                                                                              ⚠ 2 warnings · f2 to view
+EOF
+}
+
+# Real Cursor Agent 2026.09.26-dd393fe capture, 2026-09-27T15:12:14+03:00: idle_empty.
+rw_frame_cursor_idle_empty() {
+  cat <<'EOF'
+
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+
+
+  → Plan, search, build anything
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main
+EOF
+}
+
+# Real Cursor Agent 2026.09.26-dd393fe capture, 2026-09-27T15:12:15+03:00: idle_unsent.
+rw_frame_cursor_idle_unsent() {
+  cat <<'EOF'
+
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+
+
+  → draft unsent text for capture
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main
+EOF
+}
+
+# Real Cursor Agent 2026.09.26-dd393fe capture, 2026-09-27T15:12:35+03:00: live_turn.
+rw_frame_cursor_live_turn() {
+  cat <<'EOF'
+
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Reply with exactly: CAPTURE_READY
+
+
+
+ ⠘⠤ Thinking  11 tokens
+    Tip: Use /debug to instrument and debug complex problems.
+
+
+  → Add a follow-up                                                                                     ctrl+c to stop
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main
+EOF
+}
+
+# Real Cursor Agent 2026.09.26-dd393fe capture, 2026-09-27T15:14:02+03:00: ask_hook_if_available dialog.
+rw_frame_cursor_ask_dialog() {
+  cat <<'EOF'
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+  I'll ask one yes-or-no question before doing anything else.
+
+ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │ Clarifying Questions                                                                                               │
+ │                                                                                                                    │
+ │ Question 1 of 1                                                                                                    │
+ │                                                                                                                    │
+ │ 1. Should I proceed?                                                                                               │
+ │                                                                                                                    │
+ │   › [ ] Yes                                                                                                        │
+ │     [ ] No                                                                                                         │
+ │     [ ] Other: (type to answer)                                                                                    │
+ │                                                                                                                    │
+ │ ↑/↓ option · ←/→ question · Space select · Enter next/submit · Esc to skip                                         │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+EOF
+}
+
+# Real Cursor Agent 2026.09.26-dd393fe capture, 2026-09-27T15:13:21+03:00: ask_hook_settled.
+rw_frame_cursor_ask_hook_settled() {
+  cat <<'EOF'
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+ ⠘⠆ Thinking  112 tokens
+    Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+
+  → Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main
+EOF
+}
+
+# Derived watcher-state frames, deliberately non-real captures. The
+# implementation may confirm only its exact injected payload after re-capture.
+rw_frame_codex_after_assignment() { rw_frame_codex_idle_empty | sed 's/› Ask Codex to do anything/› Assignment: go/'; }
+rw_frame_cursor_after_assignment() { rw_frame_cursor_idle_empty | sed 's/→ Plan, search, build anything/→ Assignment: go/'; }
+rw_frame_codex_historical_assignment_empty() {
+  rw_frame_codex_idle_empty | sed '/Tip: Use \/title/a› Assignment: go'
+}
+rw_frame_codex_historical_assignment_arbitrary() {
+  rw_frame_codex_idle_unsent | sed '/Tip: Use \/title/a› Assignment: go'
+}
+rw_frame_cursor_historical_assignment_empty() {
+  rw_frame_cursor_idle_empty | sed '/Tip: Use \/debug/a\  → Assignment: go'
+}
+rw_frame_cursor_historical_assignment_arbitrary() {
+  rw_frame_cursor_idle_unsent | sed '/Tip: Use \/debug/a\  → Assignment: go'
+}
+rw_wrapped_assignment='{"role":"reviewer","question":"Check the intentionally long assignment that wraps across terminal rows without an editor newline"}'
+rw_frame_codex_after_wrapped_assignment() {
+  rw_frame_codex_idle_empty | sed 's/› Ask Codex to do anything/› Assignment: {"role":"reviewer","question":"Check the intentionally long assignment that wraps across terminal \
+rows without an editor newline"}/'
+}
+rw_frame_cursor_after_wrapped_assignment() {
+  rw_frame_cursor_idle_empty | sed 's/→ Plan, search, build anything/→ Assignment: {"role":"reviewer","question":"Check the intentionally long assignment that wraps across terminal \
+rows without an editor newline"}/'
+}
+rw_frame_codex_after_mismatched_wrapped_assignment() { rw_frame_codex_after_wrapped_assignment | sed 's/intentionally /different /'; }
+rw_frame_cursor_after_mismatched_wrapped_assignment() { rw_frame_cursor_after_wrapped_assignment | sed 's/intentionally /different /'; }
+rw_literal_newline_assignment=$'{"role":"reviewer","question":"literal editor\nnewline"}'
+rw_frame_codex_after_literal_newline_assignment() {
+  rw_frame_codex_idle_empty | sed 's/› Ask Codex to do anything/› Assignment: {"role":"reviewer","question":"literal editor\nnewline"}/'
+}
+rw_frame_cursor_after_literal_newline_assignment() {
+  rw_frame_cursor_idle_empty | sed 's/→ Plan, search, build anything/→ Assignment: {"role":"reviewer","question":"literal editor\nnewline"}/'
+}
+rw_frame_codex_after_decoy_footer_assignment() {
+  rw_frame_codex_after_assignment | sed 's/Vim: Insert/Vim: Insert (historical transcript)/'
+}
+rw_frame_cursor_after_decoy_footer_assignment() {
+  rw_frame_cursor_after_assignment | sed 's/Run Everything -- INSERT --/Run Everything -- INSERT -- (historical transcript)/'
+}
+rw_frame_codex_after_assignment_dialog_overlay() {
+  rw_frame_codex_after_assignment
+  printf '\n  Dialog overlay: Enter to confirm\n'
+}
+rw_frame_cursor_after_assignment_dialog_overlay() {
+  rw_frame_cursor_after_assignment
+  printf '\n  Dialog overlay: Enter to confirm\n'
+}
+
 rw_frame_permission() {
   cat <<'EOF'
 
@@ -6685,7 +7051,8 @@ EOF
 }
 
 # _rw_start <engine> — run the watcher in the background, then post one
-# assignment to the role from the lead.
+# assignment to the role from the lead. $2 is a derived test payload, never a
+# real capture value.
 _rw_start() {
   export STUB_DIR STUB_LOG
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
@@ -6693,7 +7060,7 @@ _rw_start() {
   sleep 0.6
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
-  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  jq -nc --arg body "${2:-go}" '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: $body}' >>"$common/crew/events.jsonl"
 }
 
 _rw_stop() {
@@ -6764,12 +7131,20 @@ _rw_wait_captures() {
 
 @test "role-watch: the frame gate works under LC_ALL=C" {
   _spawn_role_fixture
-  _rw_stub rw_frame_idle
   export LC_ALL=C
-  _rw_start claude
-  _rw_wait_sends 1
-  _rw_stop
-  [ "$(_rw_sends)" -eq 1 ]
+  for spec in \
+    "claude rw_frame_idle" \
+    "codex rw_frame_codex_idle_empty" \
+    "cursor rw_frame_cursor_idle_empty"; do
+    read -r eng frame_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$frame_fn"
+    _rw_start "$eng"
+    _rw_wait_sends 1
+    _rw_stop
+    [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: did not type under LC_ALL=C"; return 1; }
+  done
 }
 
 @test "role-watch: pi delivers on a plain frame but not on an option-select prompt" {
@@ -6789,9 +7164,94 @@ _rw_wait_captures() {
   run ! grep -q '^send-keys' "$STUB_LOG"
 }
 
-@test "role-watch: an engine with no recognised idle frame (cursor, codex, unknown, empty) never receives keys" {
+@test "role-watch: codex and cursor deliver only on their real empty-idle captures" {
   _spawn_role_fixture
-  for eng in cursor codex mystery ""; do
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_assignment"; do
+    read -r eng frame_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$frame_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng"
+    _rw_wait_sends 1
+    _rw_stop
+    [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: did not deliver"; return 1; }
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: C0-bearing assignments are never typed and plain assignments still deliver for every engine" {
+  _spawn_role_fixture
+  for payload in $'go\nsecond line' $'go\eescape'; do
+    for spec in \
+      "claude rw_frame_idle" \
+      "pi rw_frame_pi_idle" \
+      "codex rw_frame_codex_idle_empty" \
+      "cursor rw_frame_cursor_idle_empty"; do
+      read -r eng frame_fn <<<"$spec"
+      : >"$STUB_LOG"
+      rm -f "$STUB_DIR/stop" "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" 2>/dev/null || true
+      _rw_stub "$frame_fn"
+      _rw_start "$eng" "$payload"
+      _rw_wait_captures 2
+      _rw_stop
+      [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
+      run ! grep -q '^send-keys -t %6 -l Assignment:' "$STUB_LOG"
+    done
+  done
+
+  for spec in \
+    "claude rw_frame_idle" \
+    "pi rw_frame_pi_idle" \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_assignment"; do
+    read -r eng frame_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$frame_fn"
+    if [ -n "${after_fn:-}" ]; then
+      "$after_fn" >"$STUB_DIR/frame_after"
+      touch "$STUB_DIR/flip"
+    fi
+    _rw_start "$eng"
+    _rw_wait_sends 1
+    _rw_stop
+    [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: plain assignment did not deliver"; return 1; }
+  done
+}
+
+@test "role-watch: real codex and cursor non-idle captures never receive keys" {
+  _spawn_role_fixture
+  # Cursor boot/update was unobservable, so no synthetic or relabelled fixture
+  # stands in for it. Codex's boot_update is its trust-dialog capture.
+  for spec in \
+    "codex rw_frame_codex_boot_update" \
+    "codex rw_frame_codex_idle_unsent" \
+    "codex rw_frame_codex_live_turn" \
+    "codex rw_frame_codex_folder_trust_dialog" \
+    "codex rw_frame_codex_approval_probe" \
+    "cursor rw_frame_cursor_idle_unsent" \
+    "cursor rw_frame_cursor_live_turn" \
+    "cursor rw_frame_cursor_ask_dialog" \
+    "cursor rw_frame_cursor_ask_hook_settled"; do
+    read -r eng frame_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$frame_fn"
+    _rw_start "$eng"
+    _rw_wait_captures 2
+    _rw_stop
+    [ "$(_rw_captures)" -ge 2 ] || { echo "$eng/$frame_fn: never captured"; return 1; }
+    run ! grep -q '^send-keys' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: unknown and empty engines never receive keys" {
+  _spawn_role_fixture
+  for eng in mystery ""; do
     : >"$STUB_LOG"
     rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
     _rw_stub rw_frame_pi_idle
@@ -6800,6 +7260,129 @@ _rw_wait_captures() {
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
     run ! grep -q '^send-keys' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: codex and cursor confirm only the watcher-injected assignment shape" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_assignment"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng"
+    _rw_wait_sends 1
+    for n in $(seq 1 40); do
+      grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
+      sleep 0.1
+    done
+    _rw_stop
+    [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: assignment was not typed"; return 1; }
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: codex and cursor never confirm a historical assignment row" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_historical_assignment_empty" \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_historical_assignment_arbitrary" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_historical_assignment_empty" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_historical_assignment_arbitrary"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng"
+    _rw_wait_captures 3
+    _rw_stop
+    grep -qx 'send-keys -t %6 -l Assignment: go' "$STUB_LOG" || {
+      echo "$eng/$after_fn: assignment was not typed"; return 1;
+    }
+    run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: codex and cursor confirm their wrapped watcher assignment" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_wrapped_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_wrapped_assignment"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng" "$rw_wrapped_assignment"
+    for n in $(seq 1 40); do
+      grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
+      sleep 0.1
+    done
+    _rw_stop
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" || { echo "$eng: wrapped assignment was not confirmed"; return 1; }
+  done
+}
+
+@test "role-watch: codex and cursor never confirm literal-newline assignments" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_literal_newline_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_literal_newline_assignment"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng" "$rw_literal_newline_assignment"
+    _rw_wait_captures 3
+    _rw_stop
+    run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: codex and cursor never confirm decoy footers or dialog overlays" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_decoy_footer_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_decoy_footer_assignment" \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_assignment_dialog_overlay" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_assignment_dialog_overlay"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng"
+    _rw_wait_captures 3
+    _rw_stop
+    run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: codex and cursor reject a mismatched wrapped composer" {
+  _spawn_role_fixture
+  for spec in \
+    "codex rw_frame_codex_idle_empty rw_frame_codex_after_mismatched_wrapped_assignment" \
+    "cursor rw_frame_cursor_idle_empty rw_frame_cursor_after_mismatched_wrapped_assignment"; do
+    read -r eng idle_fn after_fn <<<"$spec"
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub "$idle_fn"
+    "$after_fn" >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start "$eng" "$rw_wrapped_assignment"
+    _rw_wait_captures 3
+    _rw_stop
+    run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   done
 }
 
