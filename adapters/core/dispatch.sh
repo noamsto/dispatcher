@@ -852,31 +852,87 @@ _artifacts_dir_bad() {
   return 1
 }
 
+# _protocol_dirs_record_bad — succeed, printing the first offender, when
+# $crew_dir/protocol-dirs, a dir above a slashed branch's leaf, or the record
+# itself is a symlink or the wrong type (mkdir/mv/reads follow a planted link).
+_protocol_dirs_record_bad() {
+  local p="$crew_dir/protocol-dirs" part rec="$crew_dir/protocol-dirs/$branch"
+  local -a parts
+  IFS=/ read -ra parts <<<"$branch"
+  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
+    p="$p${part:+/$part}"
+    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
+    printf '%s\n' "$rec"
+    return 0
+  fi
+  return 1
+}
+
+# _record_protocol_dirs <worktree> — record the resolved protocol dirs and the
+# worktree they belong to, for --spawn-role (#496): dispatcher-written, outside
+# every prompt-free write grant a worker holds.
+_record_protocol_dirs() {
+  local rec="$crew_dir/protocol-dirs/$branch" n v tmp
+  local -a lines=()
+  for n in PROTOCOL_DIR SKILLS_DIR REVIEWERS_DIR CRITICS_DIR; do
+    v="${!n}"
+    [[ $v == /* ]] || v=""
+    lines+=("$v")
+  done
+  lines+=("$(realpath -e -- "$1")")
+  (
+    umask 077
+    mkdir -p "$(dirname "$rec")"
+    tmp="$(mktemp "$(dirname "$rec")/.dirs.XXXXXX")"
+    printf '%s\n' "${lines[@]}" >"$tmp"
+    mv -f -- "$tmp" "$rec"
+  )
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
 # artifacts dir, and the dispatch-time grants in $crew_dir/grants/<branch>.
 #
 # --add-dir makes a working directory: reads are prompt-free and edits follow
-# the permission mode, which auto allows, so every grant is read-write in
-# effect. Hence the narrow artifacts dir rather than $crew_dir, and grants
-# re-validated on every launch. The record is the only authority: the worker
-# edits WORKER_TASK.md, so its add_dir: header lines are a mirror, never read.
+# the permission mode, which auto allows. The four protocol dirs are read-only
+# (#442): a worker must never edit its own reviewer briefs, critics, skills or
+# WORKER_PROTOCOL.md/GRID_PROTOCOL.md, so each gets `--add-dir` (reads stay
+# prompt-free) plus an `Edit(//<dir>/**)` deny rule via `--disallowedTools`
+# (verified: a `Read` allow rule does not override
+# blockReadsOutsideWorkingDirectories, so `--add-dir` stays the only way to
+# keep reads prompt-free). The artifacts dir and explicit grants stay plain
+# write-capable `--add-dir`, re-validated on every launch. The record is the
+# only authority: the worker edits WORKER_TASK.md, so its add_dir: header
+# lines are a mirror, never read.
 #
-# claude's --add-dir is variadic and would swallow the positional prompt, so
-# callers splice this in right before --append-system-prompt-file.
+# claude's --add-dir and --disallowedTools are both variadic and would swallow
+# the positional prompt, so callers splice this in right before
+# --append-system-prompt-file, terminating both lists.
 #
 # Other engines get nothing: codex runs with
 # --dangerously-bypass-approvals-and-sandbox and cursor with --force, so neither
 # gates paths, and pi has no tool-permission layer at all.
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d bad line dirs=()
+  local a c d bad line dirs=() rules=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
-    if [[ $d == /* ]] && [ -d "$d" ]; then
-      dirs+=("$d")
+    [[ $d == /* ]] && [ -d "$d" ] || continue
+    d="${d%/}"
+    c="$(realpath -e -- "$d")"
+    if [[ ! $d =~ ^/[A-Za-z0-9._/+@-]*$ || ! $c =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+      echo "dispatch: not granting $d — its path cannot be written as a read-only rule" >&2
+      continue
     fi
+    dirs+=("$d")
+    rules+=("Edit(/$d/**)")
+    [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
   a="$crew_dir/artifacts/$2"
   if bad="$(_artifacts_dir_bad "$2")"; then
@@ -900,6 +956,10 @@ launch_dir_args() {
     seen[$d]=1
     printf ' --add-dir %q' "$d"
   done
+  if [ "${#rules[@]}" -gt 0 ]; then
+    printf ' --disallowedTools'
+    printf ' %q' "${rules[@]}"
+  fi
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
@@ -1259,6 +1319,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
       ;;
     esac
   done
+  # The role's nohup'd --role-watch and stall-watch inherit this env and locate
+  # the bus through git discovery; a worker-set GIT_* would steer them wrong.
+  # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
+  for _v in "${!GIT_@}"; do unset "$_v"; done
   [ -f WORKER_TASK.md ] || {
     echo "dispatch: --spawn-role must run inside a worker worktree (no WORKER_TASK.md)" >&2
     exit 1
@@ -1267,10 +1331,41 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role must run inside tmux" >&2
     exit 1
   }
+  # crew_dir and branch come from the window dispatch stamped, never git
+  # discovery: GIT_* env and the worktree's .git gitlink are worker-controlled,
+  # and a worker can build a genuine repo + worktree to point them at (#496).
+  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
+  crew_dir="$(tmux show-options -wqv -t "$win" @crew_dir)"
+  branch="$(tmux show-options -wqv -t "$win" @crew_branch)"
+  if [[ $crew_dir != /* ]] || [ -z "$branch" ]; then
+    echo "dispatch: --spawn-role: this window has no @crew_dir/@crew_branch (dispatched before they were stamped) — re-dispatch the task" >&2
+    exit 1
+  fi
+  # The dirs come from the dispatch-time record, never this (worker's) env.
+  if bad="$(_protocol_dirs_record_bad)"; then
+    echo "dispatch: $bad is a symlink or the wrong type — refusing to use the protocol-dirs record" >&2
+    exit 1
+  fi
+  [ -f "$crew_dir/protocol-dirs/$branch" ] || {
+    echo "dispatch: --spawn-role: no protocol-dirs record for $branch — re-dispatch the task" >&2
+    exit 1
+  }
+  mapfile -t rec_lines <"$crew_dir/protocol-dirs/$branch"
+  wt_root="${rec_lines[4]:-}"
+  [ -n "$wt_root" ] && [ "$wt_root" = "$(realpath -e -- "$PWD")" ] || {
+    echo "dispatch: --spawn-role must run from the dispatched worktree's root (${rec_lines[4]:-unrecorded})" >&2
+    exit 1
+  }
+  # Pin to the recorded root and use it below, never $PWD: a worker could cd
+  # through a symlink to its worktree and retarget the link after this check.
+  cd -- "$wt_root" || exit 1
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
+  DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
+  DISPATCHER_REVIEWERS_DIR="${rec_lines[2]:-}" _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
+  DISPATCHER_CRITICS_DIR="${rec_lines[3]:-}" _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
   _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md
   _check_protocol_rev "$PROTOCOL_DIR" dispatch
-  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  branch="$(git branch --show-current)"
   roles_file="$crew_dir/artifacts/$branch/roles.json"
   if bad="$(_artifacts_dir_bad "$branch")"; then
     echo "dispatch: $bad is a symlink or not a directory — refusing to use roles.json" >&2
@@ -1319,7 +1414,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 1
   fi
   check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
-  win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{?@crew_exited,exited,live}' | awk -F'|' -v r="$role" '$2 == r && $3 != "exited" {print $1; exit}')"
   if [ -n "$existing" ]; then
     echo "role $role is already running in pane $existing"
@@ -1333,8 +1427,8 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
-  role_pane="$(split_role_pane "$win" "$PWD" "$role" "$spawn_worker_id" "$spawn_crew_id")"
-  launch_role "$role_pane" "$PWD" "$role" "$spawn_agent" "$spawn_model" "$effort"
+  role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
+  launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the
@@ -3110,6 +3204,13 @@ fi
   mv -f -- "$grant_tmp" "$grant_record"
 )
 
+# A lazy --spawn-role takes its dirs from this record, never the worker's env (#496).
+if bad="$(_protocol_dirs_record_bad)"; then
+  echo "dispatch: $bad is a symlink or the wrong type — refusing to write the protocol-dirs record" >&2
+  exit 1
+fi
+_record_protocol_dirs "$wt_path"
+
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 # The review contract is appended so the dispatcher never re-authors it as
@@ -3246,6 +3347,10 @@ fi
 # Identity surfaces: codename on the pane border + the CC prompt box (--name).
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
 tmux set-window-option -t "$win" @crew_name "$agent_name"
+# --spawn-role finds its crew dir and branch here, not via git discovery, which
+# the worker's env and worktree .git steer (#496).
+tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

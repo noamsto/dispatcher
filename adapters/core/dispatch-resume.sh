@@ -139,10 +139,12 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
-# _add_dir_ok, _artifacts_dir_bad and launch_dir_args: duplicated from dispatch.sh (standalone
-# build), parity-tested like the two above. See dispatch.sh for the grant
-# rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
-# the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
+# _add_dir_ok, _artifacts_dir_bad, _protocol_dirs_record_bad,
+# _record_protocol_dirs and launch_dir_args: duplicated from dispatch.sh
+# (standalone build), parity-tested like the two above. See dispatch.sh for the
+# grant rules: a claude launch gets the protocol dirs read-only, the branch's
+# artifacts dir write-capable, and the grants in $crew_dir/grants/<branch>,
+# never the add_dir: header lines.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -204,14 +206,57 @@ _artifacts_dir_bad() {
   return 1
 }
 
+_protocol_dirs_record_bad() {
+  local p="$crew_dir/protocol-dirs" part rec="$crew_dir/protocol-dirs/$branch"
+  local -a parts
+  IFS=/ read -ra parts <<<"$branch"
+  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
+    p="$p${part:+/$part}"
+    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+  done
+  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
+    printf '%s\n' "$rec"
+    return 0
+  fi
+  return 1
+}
+
+_record_protocol_dirs() {
+  local rec="$crew_dir/protocol-dirs/$branch" n v tmp
+  local -a lines=()
+  for n in PROTOCOL_DIR SKILLS_DIR REVIEWERS_DIR CRITICS_DIR; do
+    v="${!n}"
+    [[ $v == /* ]] || v=""
+    lines+=("$v")
+  done
+  lines+=("$(realpath -e -- "$1")")
+  (
+    umask 077
+    mkdir -p "$(dirname "$rec")"
+    tmp="$(mktemp "$(dirname "$rec")/.dirs.XXXXXX")"
+    printf '%s\n' "${lines[@]}" >"$tmp"
+    mv -f -- "$tmp" "$rec"
+  )
+}
+
 launch_dir_args() {
   [ "$1" = claude ] || return 0
-  local a d bad line dirs=()
+  local a c d bad line dirs=() rules=()
   local -A seen=()
   for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
-    if [[ $d == /* ]] && [ -d "$d" ]; then
-      dirs+=("$d")
+    [[ $d == /* ]] && [ -d "$d" ] || continue
+    d="${d%/}"
+    c="$(realpath -e -- "$d")"
+    if [[ ! $d =~ ^/[A-Za-z0-9._/+@-]*$ || ! $c =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+      echo "dispatch: not granting $d — its path cannot be written as a read-only rule" >&2
+      continue
     fi
+    dirs+=("$d")
+    rules+=("Edit(/$d/**)")
+    [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
   done
   a="$crew_dir/artifacts/$2"
   if bad="$(_artifacts_dir_bad "$2")"; then
@@ -235,6 +280,10 @@ launch_dir_args() {
     seen[$d]=1
     printf ' --add-dir %q' "$d"
   done
+  if [ "${#rules[@]}" -gt 0 ]; then
+    printf ' --disallowedTools'
+    printf ' %q' "${rules[@]}"
+  fi
 }
 
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
@@ -843,6 +892,14 @@ if [ -n "$do_print" ]; then
   exit 0
 fi
 
+# Rewrite the protocol-dirs record before anything opens a window, so the lead
+# and a lazy --spawn-role launch against the same dirs (#496).
+if bad="$(_protocol_dirs_record_bad)"; then
+  echo "dispatch resume: $bad is a symlink or the wrong type — refusing to write the protocol-dirs record" >&2
+  exit 1
+fi
+_record_protocol_dirs "$wt_path"
+
 # Fail closed: an empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent,
 # so a broken seeder must abort before the worker ever launches against it.
 if [ "$agent" = pi ]; then
@@ -921,6 +978,10 @@ grid_lead_format() {
 # and a reused worker window may have been renamed since.
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
 tmux set-window-option -t "$win" @crew_name "$agent_name"
+# --spawn-role finds its crew dir and branch here, not via git discovery, which
+# the worker's env and worktree .git steer (#496).
+tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

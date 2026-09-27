@@ -850,6 +850,14 @@ _env_of() {
   [ "$status" -eq 0 ]
 }
 
+@test "dispatch stamps the worker window with its crew dir and branch for --spawn-role" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "window anchor"
+  [ "$status" -eq 0 ]
+  grep -qxF -- "set-window-option -t %1 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t %1 @crew_branch feat/42-window-anchor' "$STUB_LOG"
+}
+
 @test "a grid lead's @crew_name stays the bare codename" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid crew name unchanged"
@@ -2129,7 +2137,7 @@ EOF
 }
 
 @test "DISPATCHER_PROTOCOL_DIR overrides the baked default" {
-  run grep -cF '_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@"' "$DISPATCH"
+  run grep -c '^_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@"' "$DISPATCH"
   [ "$output" = "1" ]
 }
 
@@ -5273,29 +5281,47 @@ EOF
   [[ "$output" == *"must run inside a worker worktree"* ]]
 }
 
-# _spawn_role_fixture — TEST_REPO as a worker worktree with a recorded pi
-# reviewer role, ready for `dispatch --spawn-role reviewer`.
+# _spawn_role_fixture — a linked worktree of TEST_REPO (where a real lead runs)
+# with a recorded pi reviewer role and the protocol-dirs record a dispatch under
+# setup() writes, ready for `dispatch --spawn-role reviewer`.
 _spawn_role_fixture() {
-  git switch -q -c feat/9-x
   git commit -q --allow-empty -m init
+  git worktree add -q -b feat/9-x "$TEST_REPO/.dispatch-wt/feat-9-x"
+  cd "$TEST_REPO/.dispatch-wt/feat-9-x"
   printf 'agent_name: iris\neffort: high\nworker_id: worker:feat/9-x#s1-1\ncrew_id: c1\n' >WORKER_TASK.md
   export TMUX_PANE=%5
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   roles_dir="$common/crew/artifacts/feat/9-x"
   mkdir -p "$roles_dir"
   printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" ""
+  # The window options dispatch stamps; --spawn-role's only anchor.
+  export STUB_CREW_DIR="$common/crew" STUB_CREW_BRANCH=feat/9-x
 
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 display-message) printf '%s\n' '@1' ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
 list-panes) ;;
 split-window) printf '%s\n' '%6' ;;
 esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
+}
+
+# _write_dirs_record <protocol> <skills> <reviewers> <critics> — the
+# protocol-dirs record dispatch writes for feat/9-x, bound to this worktree.
+_write_dirs_record() {
+  mkdir -p "$common/crew/protocol-dirs/feat"
+  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" >"$common/crew/protocol-dirs/feat/9-x"
 }
 
 @test "grid: --spawn-role seeds the worker agent dir before launching a pi role" {
@@ -5364,6 +5390,12 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 display-message) printf '%s\n' '@1' ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
 list-panes) printf '%s\n' "%5||live" "%4|reviewer|${STUB_PANE_STATE}" ;;
 split-window) printf '%s\n' '%6' ;;
 esac
@@ -5427,6 +5459,80 @@ EOF
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $TEST_REPO/.git/crew/artifacts/feat/9-x "* ]]
   [[ "$line" != *"$evil"* ]]
+}
+
+# _ro_rule <dir> — the read-only Edit deny-rule word launch_dir_args emits for
+# a protocol dir, %q-quoted exactly as printf would (sets $r).
+_ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
+
+@test "add-dir: read-only rule denies edits to a lead's protocol dir, artifacts stays writable" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "read only grant"
+  [ "$status" -eq 0 ]
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-read-only-grant"
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--disallowedTools"* ]]
+  _ro_rule "$DISPATCHER_PROTOCOL_DIR"
+  [[ "$line" == *"$r"* ]]
+  assert_add_dir_terminated "$line"
+  _ro_rule "$art"
+  [[ "$line" != *"$r"* ]]
+}
+
+@test "add-dir: read-only rule covers a writable checkout override of a protocol dir" {
+  stub_launch_bins
+  DISPATCHER_CRITICS_DIR="$TEST_REPO/checkout/critics"
+  mkdir -p "$DISPATCHER_CRITICS_DIR"
+  export DISPATCHER_CRITICS_DIR
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "checkout override"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_CRITICS_DIR "* ]]
+  _ro_rule "$DISPATCHER_CRITICS_DIR"
+  [[ "$line" == *"$r"* ]]
+}
+
+@test "add-dir: read-only rule covers both a symlinked protocol dir spelling and its realpath" {
+  stub_launch_bins
+  real="$BATS_TEST_TMPDIR/rev-real"
+  mkdir -p "$real"
+  ln -s "$real" "$BATS_TEST_TMPDIR/revlink"
+  DISPATCHER_REVIEWERS_DIR="$BATS_TEST_TMPDIR/revlink"
+  export DISPATCHER_REVIEWERS_DIR
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "symlinked reviewers"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  _ro_rule "$DISPATCHER_REVIEWERS_DIR"
+  [[ "$line" == *"$r"* ]]
+  _ro_rule "$(realpath -e "$DISPATCHER_REVIEWERS_DIR")"
+  [[ "$line" == *"$r"* ]]
+}
+
+@test "add-dir: read-only skips a protocol dir whose canonical path fails the charset, granting neither spelling" {
+  stub_launch_bins
+  weird="$BATS_TEST_TMPDIR/we ird"
+  mkdir -p "$weird"
+  ln -s "$weird" "$BATS_TEST_TMPDIR/skl"
+  DISPATCHER_SKILLS_DIR="$BATS_TEST_TMPDIR/skl"
+  export DISPATCHER_SKILLS_DIR
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "weird skills"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *"--add-dir $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$line" != *"$weird"* ]]
+  [[ "$output" == *"dispatch: not granting"* ]]
+}
+
+@test "add-dir: read-only rule covers the baked store-style protocol dir, no regression" {
+  stub_launch_bins
+  _store_dispatch
+  DISPATCH_PROFILE=work run run_store_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "store read only"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $BAKED_PROTOCOLS "* ]]
+  _ro_rule "$BAKED_PROTOCOLS"
+  [[ "$line" == *"$r"* ]]
 }
 
 @test "add-dir: an eager claude role gets a prompt-only stall-watch, a codex role none" {
@@ -5553,6 +5659,47 @@ EOF
   [[ "$output" == *"is a symlink or not a regular file"* ]]
   [ "$(cat "$victim")" = "$(realpath "$BATS_TEST_TMPDIR")" ]
   [ -L "$TEST_REPO/.git/crew/grants/feat/42-do-a-thing" ]
+}
+
+@test "protocol-dirs record: dispatch writes the resolved dirs and the worktree" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record"
+  [ -f "$rec" ]
+  [ ! -L "$rec" ]
+  [ "$(stat -c %a "$rec")" = 600 ]
+  mapfile -t lines <"$rec"
+  [ "${lines[0]}" = "$DISPATCHER_PROTOCOL_DIR" ]
+  [ "${lines[1]}" = "$DISPATCHER_SKILLS_DIR" ]
+  [ "${lines[2]}" = "" ]
+  [ "${lines[3]}" = "" ]
+  [ "${lines[4]}" = "$(realpath "$TEST_REPO/.dispatch-wt/feat-42-dirs-record")" ]
+}
+
+@test "protocol-dirs record: a symlink planted at the record path is refused, its target left untouched" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  printf 'keep me\n' >"$victim"
+  mkdir -p "$TEST_REPO/.git/crew/protocol-dirs/feat"
+  ln -s "$victim" "$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to write the protocol-dirs record"* ]]
+  [ "$(cat "$victim")" = "keep me" ]
+  [ -L "$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record" ]
+}
+
+@test "protocol-dirs record: a symlinked protocol-dirs/feat parent is refused, nothing created in the target" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew/protocol-dirs"
+  ln -s "$victim" "$TEST_REPO/.git/crew/protocol-dirs/feat"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to write the protocol-dirs record"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -L "$TEST_REPO/.git/crew/protocol-dirs/feat" ]
 }
 
 @test "add-dir: a symlinked artifacts parent of a slashed branch is not granted and its target stays empty" {
@@ -6832,7 +6979,7 @@ EOF
   DISPATCH_ENGINES="claude pi" run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
-  [ ! -e "$STUB_LOG" ]
+  run ! grep -q 'split-window' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role rejects an explicit effort for the final cursor agent" {
@@ -6866,28 +7013,229 @@ EOF
 @test "grid: --spawn-role refuses a stale protocol dir whose content differs from the script marker" {
   _spawn_role_fixture
   _substituted_dispatch
-  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md" "$DISPATCHER_PROTOCOL_DIR/GRID_PROTOCOL.md"
+  bad="$TEST_REPO/protocols-no-rev"
+  mkdir -p "$bad"
+  touch "$bad/WORKER_PROTOCOL.md" "$bad/EVIDENCE_REVIEW.md" "$bad/GRID_PROTOCOL.md"
+  _write_dirs_record "$bad" "$DISPATCHER_SKILLS_DIR" "" ""
   run run_subst_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
-  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [[ "$output" == *"$bad"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
 
 @test "grid: --spawn-role aborts before split-window when GRID_PROTOCOL.md is missing" {
   _spawn_role_fixture
-  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-grid"
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  bad="$TEST_REPO/protocols-no-grid"
+  mkdir -p "$bad"
+  touch "$bad/WORKER_PROTOCOL.md" "$bad/EVIDENCE_REVIEW.md"
+  _write_dirs_record "$bad" "$DISPATCHER_SKILLS_DIR" "" ""
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"GRID_PROTOCOL.md"* ]]
-  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  [[ "$output" == *"$bad"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+# ── --spawn-role takes its dirs from the dispatch-time record (#496) ──
+
+@test "spawn-role: record — a worker's DISPATCHER_CRITICS_DIR=<crew_dir> is never granted" {
+  _spawn_role_fixture
+  DISPATCHER_CRITICS_DIR="$common/crew" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" != *"--add-dir $common/crew "* ]]
+  [[ "$(launch_log)" != *"DISPATCHER_CRITICS_DIR=$common/crew"* ]]
+  [ -z "$(sed -n 4p "$common/crew/protocol-dirs/feat/9-x")" ]
+}
+
+@test "spawn-role: record — the recorded critics dir wins over the worker's env" {
+  _spawn_role_fixture
+  mkdir -p "$BATS_TEST_TMPDIR/rec-critics" "$BATS_TEST_TMPDIR/env-critics"
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "$BATS_TEST_TMPDIR/rec-critics"
+  DISPATCHER_CRITICS_DIR="$BATS_TEST_TMPDIR/env-critics" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $BATS_TEST_TMPDIR/rec-critics "* ]]
+  [[ "$line" != *"env-critics"* ]]
+}
+
+@test "spawn-role: record — the recorded protocol dir drives the role's system prompt" {
+  _spawn_role_fixture
+  rec="$TEST_REPO/rec-protocols"
+  mkdir -p "$rec"
+  touch "$rec"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  _write_dirs_record "$rec" "$DISPATCHER_SKILLS_DIR" "" ""
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--append-system-prompt-file $rec/GRID_PROTOCOL.md "* ]]
+  [[ "$line" != *"--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/"* ]]
+}
+
+@test "spawn-role: record — no record → refused" {
+  _spawn_role_fixture
+  rm "$common/crew/protocol-dirs/feat/9-x"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no protocol-dirs record for feat/9-x"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: record — a symlinked record is refused before any split" {
+  _spawn_role_fixture
+  rec="$common/crew/protocol-dirs/feat/9-x"
+  mv "$rec" "$BATS_TEST_TMPDIR/real-record"
+  ln -s "$BATS_TEST_TMPDIR/real-record" "$rec"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to use the protocol-dirs record"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: record — a record bound to another worktree is refused" {
+  _spawn_role_fixture
+  mkdir -p "$TEST_REPO/other"
+  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "" "$(realpath "$TEST_REPO/other")" \
+    >"$common/crew/protocol-dirs/feat/9-x"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+# _fake_git_dir <dir> <branch> — a bare repo shaped like a real common dir, with
+# a per-worktree dir `worktrees/w` whose back-pointer names this worktree's
+# .git, and a roles.json for <branch> under its crew dir: everything a
+# git-discovery anchor would accept.
+_fake_git_dir() {
+  git init -q --bare "$1"
+  mkdir -p "$1/worktrees/w" "$1/crew/artifacts/$2"
+  printf 'ref: refs/heads/%s\n' "$2" >"$1/worktrees/w/HEAD"
+  printf '../..\n' >"$1/worktrees/w/commondir"
+  printf '%s\n' "$PWD/.git" >"$1/worktrees/w/gitdir"
+  cp "$roles_dir/roles.json" "$1/crew/artifacts/$2/roles.json"
+}
+
+# _forged_record <common> — a record under a fake common dir that widens the
+# grant: $HOME as the skills dir, the real crew dir as the critics dir.
+_forged_record() {
+  mkdir -p "$1/crew/protocol-dirs/feat"
+  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$HOME" "" "$common/crew" "$(realpath "$PWD")" \
+    >"$1/crew/protocol-dirs/feat/9-x"
+}
+
+# _assert_real_anchor <fake> — the role launched against the real crew dir's
+# record and wrote its launch/exit scripts there, never under <fake>.
+_assert_real_anchor() {
+  local line keys
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [[ "$line" == *"--add-dir $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$line" != *"--add-dir $HOME "* ]]
+  [[ "$line" != *"--add-dir $common/crew "* ]]
+  [[ "$line" != *"$1"* ]]
+  keys="$(grep -F 'send-keys -t %6' "$STUB_LOG")"
+  [[ "$keys" == *"bash '$common/crew/launch/launch."* ]]
+  [[ "$keys" == *"bash '$common/crew/launch/exit."* ]]
+  [[ "$keys" != *"$1"* ]]
+  [ ! -e "$1/crew/launch" ]
+}
+
+@test "spawn-role: anchor — a window without @crew_dir/@crew_branch is refused" {
+  _spawn_role_fixture
+  STUB_CREW_DIR="" STUB_CREW_BRANCH="" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--spawn-role: this window has no @crew_dir/@crew_branch"* ]]
+  [[ "$output" == *"re-dispatch"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: anchor — a genuine linked worktree of a worker-built repo is refused" {
+  _spawn_role_fixture
+  task="$(cat WORKER_TASK.md)"
+  r="$BATS_TEST_TMPDIR/scratch/r"
+  git init -q "$r"
+  git -C "$r" -c user.name=a -c user.email=a@b commit -q --allow-empty -m x
+  git -C "$r" worktree add -q -b feat/9-x "$BATS_TEST_TMPDIR/scratch/w"
+  cd "$BATS_TEST_TMPDIR/scratch/w"
+  printf '%s\n' "$task" >WORKER_TASK.md
+  mkdir -p "$r/.git/crew/artifacts/feat/9-x"
+  cp "$roles_dir/roles.json" "$r/.git/crew/artifacts/feat/9-x/"
+  _forged_record "$r/.git"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  [ ! -e "$r/.git/crew/launch" ]
+}
+
+@test "spawn-role: anchor — a gitlink to a fake repo is ignored: the window's crew dir wins" {
+  _spawn_role_fixture
+  fake="$BATS_TEST_TMPDIR/scratch/fake-common"
+  _fake_git_dir "$fake" feat/9-x
+  _forged_record "$fake"
+  printf 'gitdir: %s\n' "$fake/worktrees/w" >.git
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  _assert_real_anchor "$fake"
+}
+
+@test "spawn-role: anchor — an exported GIT_COMMON_DIR is ignored: the window's crew dir wins" {
+  _spawn_role_fixture
+  fake="$BATS_TEST_TMPDIR/scratch/fake-common"
+  _fake_git_dir "$fake" feat/9-x
+  _forged_record "$fake"
+  GIT_COMMON_DIR="$fake" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  _assert_real_anchor "$fake"
+}
+
+@test "spawn-role: anchor — a subdir of the worktree is refused" {
+  _spawn_role_fixture
+  mkdir sub
+  cp WORKER_TASK.md sub/
+  cd sub
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: anchor — the main checkout is refused" {
+  _spawn_role_fixture
+  cp WORKER_TASK.md "$TEST_REPO/"
+  cd "$TEST_REPO"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must run from the dispatched worktree's root"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "spawn-role: anchor — a detached HEAD still spawns: the branch comes from the window" {
+  _spawn_role_fixture
+  git checkout -q --detach
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spawned role reviewer"* ]]
+  grep -q 'split-window' "$STUB_LOG"
+}
+
+# The check compares the recorded root against realpath($PWD), but a worker
+# could then retarget a symlink pointing at its worktree; the launch must use
+# the pinned root, not the (still-symlinked) logical $PWD.
+@test "spawn-role: anchor — a symlink to the worktree is not used as the launch cwd" {
+  _spawn_role_fixture
+  wt="$(realpath "$PWD")"
+  ln -s "$PWD" "$BATS_TEST_TMPDIR/wtlink"
+  cd "$BATS_TEST_TMPDIR/wtlink"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'split-window' "$STUB_LOG")"
+  [[ "$line" == *"-c $wt "* ]]
+  [[ "$line" != *"wtlink"* ]]
 }
 
 @test "the suite resolves engine CLIs from the stub dir, not the developer's machine" {
