@@ -3244,3 +3244,59 @@ $hits"
     [ "$status" -ne 0 ]
   done
 }
+
+@test "the dispatcher command is engine-neutral (#399)" {
+  for f in "$ROOT/adapters/core/commands/dispatcher.md" \
+    "$ROOT/adapters/cursor/commands/dispatcher.md" \
+    "$ROOT/adapters/codex/plugin/skills/dispatcher/SKILL.md"; do
+    run grep -nF -e '`claude` process' -e 'Claude Code Bash tool' \
+      -e "Claude's own pane" -e 'claude-only' -e 'promotes only claude' \
+      -e 'crew adopt <id> $PPID' -e 'crew register $PPID' "$f"
+    [ "$status" -eq 1 ]
+  done
+}
+
+@test "the dispatcher command stops when its crew does not read alive (#399)" {
+  f="$ROOT/adapters/core/commands/dispatcher.md"
+  run grep -F 'CREW_ID=<id> dispatcher --agent <engine>' "$f"
+  [ "$status" -eq 0 ]
+  run grep -F 'in-place promotion failed' "$f"
+  [ "$status" -eq 0 ]
+}
+
+@test "the dispatcher protocol's activation names every in-place engine (#399)" {
+  line=$(grep -F '> **Activation:**' "$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md")
+  [[ "$line" != *claude-only* ]]
+  [[ "$line" == *'`$dispatcher` on codex'* ]]
+  [[ "$line" == *'`/dispatcher` on cursor'* ]]
+}
+
+@test "autopilot's reviewer spawn names each engine's mechanism (#399)" {
+  f="$ROOT/adapters/core/commands/autopilot.md"
+  run grep -F 'Spawn one Agent-tool subagent per matched roster entry' "$f"
+  [ "$status" -eq 1 ]
+  line=$(grep -F 'per matched roster entry' "$f")
+  [[ "$line" == *codex:* ]]
+  [[ "$line" == *cursor:* ]]
+}
+
+@test "every Argument line covers an engine that does not substitute \$ARGUMENTS (#399)" {
+  for f in "$ROOT/adapters/core/commands/dispatcher.md" "$ROOT/adapters/core/commands/autopilot.md"; do
+    line=$(grep -F '**Argument:**' "$f")
+    [[ "$line" == *'does not substitute'* ]]
+  done
+}
+
+@test "the evidence contract names its techniques engine-neutrally (#399)" {
+  f="$ROOT/adapters/core/protocols/EVIDENCE_REVIEW.md"
+  run grep -F "Superpowers'" "$f"
+  [ "$status" -eq 1 ]
+  run bash -c 'head -12 "$1" | grep -F receiving-code-review' _ "$f"
+  [ "$status" -eq 0 ]
+}
+
+@test "the worker protocol lists no roster reviewer as a skill (#399)" {
+  line=$(grep -F 'Implementation and domain skills' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md")
+  [ -n "$line" ]
+  [[ "$line" != *-reviewer* ]]
+}

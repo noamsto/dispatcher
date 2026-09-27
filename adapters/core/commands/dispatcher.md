@@ -14,29 +14,47 @@ crew crews
   branches), try to re-attach to it — do **not** pre-judge the `alive` column, `adopt`
   is the arbiter:
   ```
-  CREW_ID=$(crew adopt <id> $PPID) && export CREW_ID && echo "crew id: $CREW_ID"
+  CREW_ID=$(crew adopt <id>) && export CREW_ID && echo "crew id: $CREW_ID"
   ```
   It succeeds for a dead crew and for one already yours (its pid is an ancestor of this
   session), and refuses another live dispatcher's crew — in which case fall through to
   the mint below.
 - Otherwise — no crews, or none of them is yours — mint fresh and register:
   ```
-  export CREW_ID=$(crew new); crew register $PPID; echo "crew id: $CREW_ID"
+  export CREW_ID=$(crew new); crew register; echo "crew id: $CREW_ID"
   ```
 
 Registration is **non-exclusive** — several crews can share a repo. `crew register`
-records `$PPID` (the long-lived `claude` process) under `.git/crew/crews/<crew_id>/`,
-recorded for a future stale-cleanup command (nothing reclaims automatically today);
-register is idempotent for the same pid (re-registering a live crew with the same pid is a no-op), but refuses to swap a different live pid. Re-attaching to a crew whose dispatcher is dead is done with `crew adopt` (`crew adopt --force` overrides liveness). The re-attach branch
-above never calls it: `crew adopt` already writes `crews/<id>/pid` for the id it just
-adopted, and a second `register` call would just be a second, potentially-disagreeing
-write to the same file.
+records, since no pid is passed, the nearest non-shell ancestor of the calling shell
+— your engine's long-lived process — under `.git/crew/crews/<crew_id>/`, recorded for
+a future stale-cleanup command (nothing reclaims automatically today); register is
+idempotent for the same pid (re-registering a live crew with the same pid is a
+no-op), but refuses to swap a different live pid. Re-attaching to a crew whose
+dispatcher is dead is done with `crew adopt` (`crew adopt --force` overrides
+liveness). The re-attach branch above never calls it: `crew adopt` already writes
+`crews/<id>/pid` for the id it just adopted, and a second `register` call would just
+be a second, potentially-disagreeing write to the same file.
 
-**Note the literal crew id printed above.** The Claude Code Bash tool does not persist
-environment across separate tool calls — every later Bash call is a fresh shell, so
-`$CREW_ID` will be empty even though this call exported it. From here on, substitute
+**Note the literal crew id printed above.** Your shell tool does not persist
+environment across separate tool calls — on every engine each later call is a fresh
+shell, so `$CREW_ID` will be empty even though this call exported it. From here on, substitute
 the literal id you noted (e.g. `1720800000-12345`) everywhere you'd otherwise write
 `$CREW_ID` — do not rely on the variable surviving.
+
+**Then confirm the crew reads alive, in a separate shell call** — a fresh shell
+sees what every later turn will see:
+
+```
+crew crews
+```
+
+Find the row whose `crew_id` is the id you noted: its `alive` column must read
+`yes`. Anything else means the in-place promotion failed — the recorded pid is
+already gone, the crew dir could not be written, or `crew` failed; the symptom is
+the same, so do not guess which. Stop promoting: tell the user the in-place
+promotion failed for crew `<id>` and to relaunch with
+`CREW_ID=<id> dispatcher --agent <engine>` (the launcher re-attaches to a crew
+whose dispatcher is dead), then wait — dispatch nothing.
 
 Read the dispatcher protocol now and adopt that role for the **rest of this
 session**. Resolve it in this order:
@@ -50,7 +68,7 @@ each task into tier + engine + model + effort, scaffold one worker per task via
 `dispatch`, and watch the `crew` bus — you never implement, gate, or open PRs yourself.
 
 `dispatch` and `crew` are both CLIs on your PATH — call them **directly** (no `fish -c`).
-Because each Bash tool call is a fresh shell, pass the literal crew id you noted, not
+Because each shell tool call is a fresh shell, pass the literal crew id you noted, not
 `$CREW_ID`: `dispatch --crew-id <id> <tier> <model> --effort <low|medium|high|xhigh|max|ultra> …`
 — e.g. `dispatch --crew-id 1720800000-12345 standard sonnet --effort medium …` — and
 prefix crew reads with `CREW_ID=<id> crew …` — e.g. `CREW_ID=1720800000-12345 crew status …`.
@@ -62,7 +80,7 @@ reflow so it renders. Two things bite here:
   hits the session's _active_ window, which is often not this session's window
   (you may not be the focused window, or another window is active) — the badge
   then lands on the wrong window, possibly in another session. `$TMUX_PANE` is
-  Claude's own pane, so it always resolves to _this_ window.
+  your own pane, so it always resolves to _this_ window.
 - **The stamp alone won't render.** No tmux event fires on a user-option set,
   and lazytmux's per-tick poll only runs for the session a client is _currently
   viewing_ — so kick a reflow explicitly, else the badge won't show until you
@@ -76,7 +94,7 @@ tmux set-window-option -t "$TMUX_PANE" @crew_color colour99
 reflow=$(tmux show-option -gqv @reflow_bin); [ -n "$reflow" ] && "$reflow" "$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}')" "$(tmux display-message -p -t "$TMUX_PANE" '#{window_width}')"
 ```
 
-**Argument:** `$ARGUMENTS`
+**Argument:** `$ARGUMENTS` — on an engine that does not substitute `$ARGUMENTS`, the text the user gave with this invocation
 
 - If non-empty: treat it as the first task — judge its tier + **engine** + model + effort
   per the protocol's rubric, state your call and why, then
@@ -84,9 +102,14 @@ reflow=$(tmux show-option -gqv @reflow_bin); [ -n "$reflow" ] && "$reflow" "$(tm
   (substituting the literal crew id you noted for `<id>`).
 - If empty: confirm you're in dispatcher mode and wait for tasks.
 
-> This is the in-session equivalent of the `dispatcher` launcher. The launcher bakes
-> the protocol as a system prompt (sturdier across compaction); this command loads it
-> into context. For a long fan-out, prefer restarting with `dispatcher`.
+> This is the in-session equivalent of the `dispatcher` launcher. The launcher
+> carries the protocol from the first turn (a system prompt on claude and pi, the
+> first prompt on codex and cursor), which is sturdier across compaction; this
+> command loads it mid-session. For a long fan-out, prefer restarting with
+> `dispatcher --agent <engine>`.
 
-> Codex/cursor/pi dispatchers are launcher-only: `dispatcher --agent <engine>`.
-> This command promotes only claude sessions — it can only ever run inside one.
+> This command reaches claude (`/dispatcher:dispatcher`), codex (`$dispatcher`)
+> and cursor (`/dispatcher`). In-place promotion is live-verified on claude only;
+> on codex and cursor the alive check above is what catches a failed promotion.
+> pi has no command for it, so a pi dispatcher is launcher-only:
+> `dispatcher --agent pi`.
