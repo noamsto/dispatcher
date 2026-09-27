@@ -1194,20 +1194,131 @@ if [ "${1:-}" = "--role-watch" ]; then
     return 0
   }
 
+  # _footer_composer_equal <text> <prefix> <footer-regex> <separator-rows>
+  # <expected> <trailing-row-regex>... — confirm only the composer immediately
+  # above one observed engine footer. Captures do not distinguish a literal
+  # editor newline from terminal wrapping, so assignments containing newlines
+  # cannot be safely reconstructed and are refused.
+  _footer_composer_equal() {
+    local text="$1" prefix="$2" footer_re="$3" separator_rows="$4" expected="$5" line value footer_i start_i i trailing_i
+    local -a rows
+    case "$expected" in
+    *$'\n'*) return 1 ;;
+    esac
+    mapfile -t rows <<<"$text"
+    footer_i=-1
+    for ((i = 0; i < ${#rows[@]}; i++)); do
+      [[ ${rows[i]} =~ $footer_re ]] || continue
+      [ "$footer_i" -eq -1 ] || return 1
+      footer_i=$i
+    done
+    [ "$footer_i" -gt "$separator_rows" ] || return 1
+
+    # A footer-like transcript line or dialog overlay is not a writable
+    # composer. The engine's observed trailing status rows must immediately
+    # follow the footer and terminate the pane capture.
+    trailing_i=0
+    shift 5
+    for footer_re in "$@"; do
+      trailing_i=$((trailing_i + 1))
+      [ $((footer_i + trailing_i)) -lt "${#rows[@]}" ] || return 1
+      [[ ${rows[footer_i + trailing_i]} =~ $footer_re ]] || return 1
+    done
+    [ $((footer_i + trailing_i)) -eq $((${#rows[@]} - 1)) ] || return 1
+
+    # The observed geometry is composer block, its engine-specific blank
+    # separator, then the footer. Reconstruct exactly the one block touching
+    # that separator; no prefix search is allowed elsewhere in the capture.
+    for ((i = 1; i <= separator_rows; i++)); do
+      [ -z "${rows[footer_i - i]}" ] || return 1
+    done
+    start_i=$((footer_i - separator_rows - 1))
+    [ -n "${rows[start_i]}" ] || return 1
+    while [ "$start_i" -gt 0 ] && [ -n "${rows[start_i - 1]}" ]; do
+      start_i=$((start_i - 1))
+    done
+    line="${rows[start_i]}"
+    [[ $line == "$prefix"* ]] || return 1
+    value="${line#"$prefix"}"
+    for ((i = start_i + 1; i < footer_i - separator_rows; i++)); do
+      value+="${rows[i]}"
+    done
+    [ "$value" = "$expected" ]
+  }
+
+  # Codex's composer is not bordered. The captured idle frame has its product
+  # banner and Vim status line around the composer; preserve all three anchors
+  # so another terminal's `›` line cannot become writable.
+  _codex_composer() {
+    local text="$1" composer="$2"
+    printf '%s\n' "$text" | grep -qE '^[[:space:]]*│ >_ OpenAI Codex \(v[0-9]' || return 1
+    _footer_composer_equal "$text" '› ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Vim:[[:space:]]Insert$' 1 "$composer" \
+      '^[[:space:]]{2}.*(for shortcuts|warnings).*$' || return 1
+    printf '%s\n' "$text" | grep -qF 'esc to interrupt' && return 1
+    printf '%s\n' "$text" | grep -qE '^[[:space:]]*[•·] Working \(' && return 1
+    return 0
+  }
+
+  _codex_idle_box() {
+    _codex_composer "$1" 'Ask Codex to do anything'
+  }
+
+  # Cursor's captured composer has no box either. Its identity, version and
+  # mode rows are all required in addition to the exact empty prompt.
+  _cursor_composer() {
+    local text="$1" composer="$2"
+    printf '%s\n' "$text" | grep -qFx '  Cursor Agent' || return 1
+    printf '%s\n' "$text" | grep -qE '^[[:space:]]*v[0-9][0-9.]*-' || return 1
+    _footer_composer_equal "$text" '  → ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$' 2 "$composer" \
+      '^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/).*' '^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$' || return 1
+    printf '%s\n' "$text" | grep -qF 'ctrl+c to stop' && return 1
+    printf '%s\n' "$text" | grep -qE 'Thinking[[:space:]]+[0-9]+ tokens' && return 1
+    return 0
+  }
+
+  _cursor_idle_box() {
+    _cursor_composer "$1" 'Plan, search, build anything'
+  }
+
   # _role_pane_ready <text> — the only gate in front of send-keys. Fail closed:
   # a permission dialog, an option-select or quota prompt, a live turn, or any
-  # frame not positively recognised defers. Only claude and pi have a
-  # recognised idle shape (captured frames). codex and cursor have none, and
-  # cursor renders `ask` hook dialogs (public-leak-guard), so they never receive
-  # keys; the watcher tells the lead instead (see deferral notice below).
+  # frame not positively recognised defers. Each engine has a recognised idle
+  # shape from captured frames. Its recognizer requires its own observed empty
+  # composer, so unknown, boot and dialog frames defer.
   _role_pane_ready() {
     [ -n "$1" ] || return 1
     _is_permission_prompt "$1" && return 1
     _is_prompt "$1" && return 1
     case "$engine" in
     claude) _claude_idle_box "$1" ;;
+    codex) _codex_idle_box "$1" ;;
+    cursor) _cursor_idle_box "$1" ;;
     pi) _pi_idle_box "$1" ;;
     *) return 1 ;;
+    esac
+  }
+
+  # Codex and Cursor must prove the watcher just injected this assignment
+  # before Enter is sent.  Their normal ready recognizers intentionally accept
+  # only empty composers. Claude and pi retain their established re-check.
+  _role_assignment_confirmed() {
+    local text="$1" assignment="$2"
+    _is_permission_prompt "$text" && return 1
+    _is_prompt "$text" && return 1
+    case "$engine" in
+    codex) _codex_composer "$text" "Assignment: $assignment" ;;
+    cursor) _cursor_composer "$text" "Assignment: $assignment" ;;
+    *) _role_pane_ready "$text" ;;
+    esac
+  }
+
+  # tmux send-keys would interpret control bytes as terminal input. Assignments
+  # are ordinary single-line turns, so refuse every C0 byte before typing.
+  _role_assignment_safe() {
+    local LC_ALL=C
+    case "$1" in
+    *[[:cntrl:]]*) return 1 ;;
+    *) return 0 ;;
     esac
   }
 
@@ -1255,11 +1366,11 @@ if [ "${1:-}" = "--role-watch" ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
       frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
-      if _role_pane_ready "$frame"; then
+      if _role_pane_ready "$frame" && _role_assignment_safe "${pending[0]}"; then
         [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
         tmux send-keys -t "$watch_pane" -l "Assignment: ${pending[0]}" 2>/dev/null || true
         frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
-        if _role_pane_ready "$frame"; then
+        if _role_assignment_confirmed "$frame" "${pending[0]}"; then
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           pending=("${pending[@]:1}")
           unsent=0
