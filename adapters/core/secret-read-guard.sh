@@ -223,9 +223,10 @@ cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
 # Where a bare dumper may end: a separator, a comment, a redirect (`env >&2`,
 # `env 2>&1`, `env 2>/dev/null`), or stdin (`env <file`, `env <<EOF`) — every
-# path still lands the dump somewhere legible. `<(` is a process substitution,
-# not a redirect, so it is excluded.
-dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]|<([^(]|$)'
+# path still lands the dump somewhere legible. The `<` must follow a space, so
+# prose placeholders (`X=<empty>`) are not redirects, and `<(` is a process
+# substitution.
+dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]|[[:space:]]<[^(]'
 env_dump_re="$cmd_start"'(/[^[:space:];&|()]*/)?(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start"'(/[^[:space:];&|()]*/)?printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
@@ -265,17 +266,28 @@ nl=$'\n'
 # no output — a silent allow. The newline the here-string adds is not data, so
 # a record's newline is fed only once the next record starts. Characters come
 # from 512-byte chunks because BWK awk (macOS) rescans the whole string on
-# every substr.
+# every substr. With J set, a line ending in an odd backslash run loses that
+# last backslash and joins the next line unbroken, as bash's backslash-newline
+# continuation does; the run is counted as the characters go by.
 # shellcheck disable=SC2016
 awk_chars='
 {
-  if (NR > 1) feed("\n")
+  if (NR > 1 && !jn) feed("\n")
+  jn = 0
+  jb = 0
   line = $0
   while (line != "") {
     chunk = substr(line, 1, 512)
     line = substr(line, 513)
     n = length(chunk)
-    for (i = 1; i <= n; i++) feed(substr(chunk, i, 1))
+    if (!J) for (i = 1; i <= n; i++) feed(substr(chunk, i, 1))
+    else for (i = 1; i <= n; i++) {
+      jc = substr(chunk, i, 1)
+      if (jc != "\\") jb = 0
+      else if (i == n && line == "" && jb % 2 == 0) { jn = 1; break }
+      else jb++
+      feed(jc)
+    }
   }
 }'
 
@@ -376,8 +388,9 @@ decode_word() {
 # shows. Every deviation from mask_quotes errs toward showing text (over-scan):
 #   - `$'…'` is a quote whose `\'` does not close it.
 #   - an unquoted `#` at word start begins a comment, emitted RAW with all quote,
-#     heredoc and substitution openers suppressed to the newline — a comment
-#     mis-detected (`a\ #`, `${x%% #*}`) can only over-scan, never hide.
+#     heredoc and substitution openers suppressed to the newline. A comment
+#     mis-detected (`a\ #`, `$((#`) would hide the openers it suppresses; the
+#     J reading below covers that case.
 #   - `$(` and backticks inside "…" open a frame whose text is code again; a
 #     backtick is emitted as `(` … `)` so the command-start anchor sees it, in
 #     double quotes and bare alike.
@@ -409,6 +422,11 @@ decode_word() {
 #   - a heredoc body emits every backtick as `;` and every backslash as a
 #     space, so a dumper word right after a body code span (e.g. `then set
 #     `X`) reads as a command — an accepted over-scan.
+#
+# J=1 (mask_cmd_joined) is W=0 with no `#` comments and with backslash-newline
+# continuations joined (in awk_chars), searched beside the others. The comment
+# rule is a heuristic: the base reading is right for a real comment, J for a
+# misdetected one; a command mixing both is an accepted limit.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -509,7 +527,7 @@ function code(c,    d, o, n) {
     else if (c == ")") {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "#" && (wordstart(prev) || (W == 1 && wo))) cm = 1
+    } else if (c == "#" && !J && (wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") dl = 1
   }
   return o
@@ -601,6 +619,10 @@ mask_cmd_wide() {
 
 mask_cmd_frames() {
   awk -v W=2 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+mask_cmd_joined() {
+  awk -v W=0 -v J=1 "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -957,6 +979,19 @@ shell)
   done
   check_dump_spaces ${frame_spaces[@]+"${frame_spaces[@]}"}
   check_fish_spaces ${frame_fish_spaces[@]+"${frame_fish_spaces[@]}"}
+
+  # The joined reading differs from W=0 only at a `#` or a backslash-newline.
+  joined_spaces=()
+  joined_fish_spaces=()
+  if [[ $command == *'#'* || $command == *\\"$nl"* ]]; then joined_spaces+=("$(mask_cmd_joined "$command")"); fi
+  for ((i = 0; i < ${#subs[@]}; i++)); do
+    [[ ${subs[i]} == *'#'* || ${subs[i]} == *\\"$nl"* ]] || continue
+    joined_sub=$(mask_cmd_joined "${subs[i]}")
+    joined_spaces+=("$joined_sub")
+    if ((sub_fish[i])); then joined_fish_spaces+=("$joined_sub"); fi
+  done
+  check_dump_spaces ${joined_spaces[@]+"${joined_spaces[@]}"}
+  check_fish_spaces ${joined_fish_spaces[@]+"${joined_fish_spaces[@]}"}
   ;;
 esac
 
