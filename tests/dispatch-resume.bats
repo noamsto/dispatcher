@@ -1487,6 +1487,20 @@ record_lead() {
   grep -qE "^claude $UUID_RE\$" "$(lead_rec)"
 }
 
+@test "cross-engine resume records continued false and the new engine (#459)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sed -i -e 's/^engine: claude/engine: codex/' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  run run_resume --agent claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the lead ran codex, not claude"* ]]
+  row="$(jq -c 'select(.kind == "resume")' "$(bus_log)" | tail -1)"
+  [ "$(jq -r .continued <<<"$row")" = false ]
+  [ "$(jq -r .engine <<<"$row")" = claude ]
+  [ "$(jq -r .prev_worker_id <<<"$row")" = 'worker:feat/7-a-thing#s1-99' ]
+}
+
 @test "a recorded claude session whose transcript is gone relaunches fresh" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

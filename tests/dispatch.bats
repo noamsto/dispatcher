@@ -7697,6 +7697,22 @@ _escalation_seed_spoof() {
   [[ "$line" != *"Owner authorization"* ]]
 }
 
+@test "owner-auth: the dispatch row carries worker_id so a resume row can join it (#458)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "join key test"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  session="$(jq -r 'select(.kind=="dispatch") | .session' "$log")"
+  [ -n "$session" ]
+  run jq -r 'select(.kind=="dispatch") | .worker_id // ""' "$log"
+  [ "$status" -eq 0 ]
+  [ "$output" = "worker:feat/42-join-key-test#$session" ]
+  # dispatch-resume.sh reads this same header line as prev_worker_id, so
+  # dispatch.worker_id == resume.prev_worker_id holds by construction (#458).
+  hdr="$(sed -n 's/^worker_id: //p' "$TEST_REPO/.dispatch-wt/feat-42-join-key-test/WORKER_TASK.md" | head -1)"
+  [ "$output" = "$hdr" ]
+}
+
 @test "add-dir: _add_dir_ok fail-closed when find exits 1 (no findutils)" {
   # Unit test: extract _add_dir_ok from dispatch.sh, stub find to exit 1,
   # and verify the grant is refused with the wire message. Red on main
