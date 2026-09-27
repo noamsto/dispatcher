@@ -181,11 +181,9 @@ setup_worker_wt() { # [extra header lines...]
 # window/pane action happened: the anchor check must run before all of them.
 _assert_refused_before_discovery() {
   [ "$status" -eq 1 ]
-  if [ -f "$STUB_LOG" ]; then
-    run ! grep -qE '^standard sonnet ' "$STUB_LOG"
-    run ! grep -q new-window "$STUB_LOG"
-    run ! grep -q set-window-option "$STUB_LOG"
-    run ! grep -q send-keys "$STUB_LOG"
+  [ -f "$STUB_LOG" ] || return 0
+  if grep -qE '^standard sonnet |new-window|set-window-option|send-keys' "$STUB_LOG"; then
+    return 1
   fi
 }
 
