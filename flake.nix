@@ -40,10 +40,14 @@
           # rewritten right now — the exclude is what keeps a future upstream
           # edit from being silently reformatted on its way in.
           # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
+          # dispatch-resume.sh carries byte-identical copies of crew.sh's
+          # liveness helpers (#461); shfmt would reformat some of them and
+          # sever the sync guarantee tests/adapters.bats pins.
           settings.global.excludes = [
             "adapters/core/crew.sh"
             "adapters/core/dispatch.sh"
             "adapters/core/dispatch-notify.sh"
+            "adapters/core/dispatch-resume.sh"
             "adapters/claude-code/plugin/scripts/*"
             "adapters/codex/plugin/scripts/*"
           ];
