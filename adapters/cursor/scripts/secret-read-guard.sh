@@ -316,6 +316,19 @@ decode_word() {
 #   - escaped backticks outside heredoc bodies nest to any depth: bash writes a
 #     level-k backtick behind 2^(k-1) - 1 backslashes (0, 1, 3, 7, …). Inside a
 #     backtick frame the same level closes it and any other level opens one.
+#
+# W=2 (mask_cmd_frames) is a third reading, searched beside the other two, that
+# delimits backtick frames the way bash does:
+#   - a backtick's level comes from its backslash run: 1 + the trailing 1-bits
+#     of the run's length. Inside a frame of level lv, a backtick of level
+#     k <= lv closes the level-k frame whatever the quote or comment state; one
+#     of level lv + 1 opens a frame only in code or "…"; any other is literal.
+#   - bash strips one layer (`\\`, `` \` ``, `\$`, and `\"` when the frame opened
+#     inside "…") before parsing a frame, so every other escaped character is
+#     judged on the text its level sees, not on raw backslash parity.
+#   - a heredoc body emits every backtick as `;` and every backslash as a space,
+#     so no pairing is assumed there.
+# Heredoc detection inside a frame still judges escapes on raw parity.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -326,6 +339,7 @@ BEGIN {
 function wordstart(p) { return p == "" || index(" \t\n;&|()", p) > 0 }
 function push(k, saved) {
   sk[sp] = k; sv[sp] = saved; spd[sp] = pd
+  sbl[sp] = sp > 0 ? sbl[sp - 1] : 0
   sp++
   pd = 0
   q = ""
@@ -335,10 +349,39 @@ function pop() {
   q = sv[sp]
   pd = spd[sp]
 }
-function tick(n,    k, r, lv) {
+function level(n,    k) {
   k = 1
-  r = n
-  while (r % 2 == 1) { r = (r - 1) / 2; k++ }
+  while (n % 2 == 1) { n = (n - 1) / 2; k++ }
+  return k
+}
+function frametick(n,    k, lv) {
+  k = level(n)
+  lv = sp > 0 ? sbl[sp - 1] : 0
+  if (k <= lv) {
+    while ((sk[sp - 1] != BT && sk[sp - 1] != "E") || sbl[sp - 1] != k) pop()
+    pop()
+    esc = 0
+    cm = 0
+    return ")"
+  }
+  if (k == lv + 1 && !cm && (q == "" || q == DQ)) {
+    ldq[k] = (q == DQ)
+    push(k == 1 ? BT : "E", q)
+    sbl[sp - 1] = k
+    esc = 0
+    opn = 1
+    return "("
+  }
+  if (esc) { esc = 0; return q == "" ? BT : " " }
+  return (cm || q == "") ? BT : " "
+}
+function escaped(n, c, lv,    i) {
+  for (i = 1; i <= lv; i++)
+    n = (c == "$" || (c == DQ && ldq[i])) ? int(n / 2) : n - int(n / 2)
+  return n % 2
+}
+function tick(n,    k, lv) {
+  k = level(n)
   lv = (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) ? slv[sp - 1] : 0
   if (lv == 0 && k > 1) return BT
   if (k == lv) { pop(); return ")" }
@@ -356,6 +399,10 @@ function code(c,    d, o, n) {
     opn = 0
     if (c == BS) bsr++
     else { n = bsr; bsr = 0 }
+  }
+  if (W == 2 && c != BS) {
+    if (c == BT) return frametick(n)
+    if (n && !cm && q != SQ && sp > 0 && sbl[sp - 1]) esc = escaped(n, c, sbl[sp - 1])
   }
   if (esc) {
     esc = 0
@@ -430,10 +477,12 @@ function bodyfeed(c,    w, term) {
     else bok = 0
   }
   if (c == BT && (W || !hd_q[hd_i])) {
+    if (W == 2) { printf ";"; return }
     bbt = !bbt
     printf "%s", (bbt ? "(" : ")")
     return
   }
+  if (W == 2 && c == BS) { printf " "; return }
   printf "%s", c
 }
 function feed(c,    arm, wasesc) {
@@ -480,6 +529,10 @@ mask_cmd() {
 
 mask_cmd_wide() {
   awk -v W=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+mask_cmd_frames() {
+  awk -v W=2 "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -791,6 +844,20 @@ shell)
   done
   check_dump_spaces "${wide_spaces[@]}"
   check_fish_spaces ${wide_fish_spaces[@]+"${wide_fish_spaces[@]}"}
+
+  # Every hole the frame reading closes needs a backtick, so it runs only
+  # on text that has one.
+  frame_spaces=()
+  frame_fish_spaces=()
+  if [[ $command == *'`'* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
+  for ((i = 0; i < ${#subs[@]}; i++)); do
+    [[ ${subs[i]} == *'`'* ]] || continue
+    frame_sub=$(mask_cmd_frames "${subs[i]}")
+    frame_spaces+=("$frame_sub")
+    if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi
+  done
+  check_dump_spaces ${frame_spaces[@]+"${frame_spaces[@]}"}
+  check_fish_spaces ${frame_fish_spaces[@]+"${frame_fish_spaces[@]}"}
 
   # 3. Reading a credential file's content (credential_read, above deny). A
   #    failed check fails loud rather than allowing. Every space is judged by
