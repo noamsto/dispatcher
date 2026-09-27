@@ -184,6 +184,29 @@ strip_templates() {
   awk -v wide="$1" "$awk_strip" <<<"$2"
 }
 
+# Threat model: rule 2 is a seatbelt for an accidental worker (A)
+# who dumps its environment out of habit, not a boundary against a hostile
+# one (B) — B already holds the secrets in its own environment and has
+# unbounded non-dumper paths to them (interpreters, /proc, ps, eval, scripts).
+#
+# In scope, one line each: S1 a canonical dumper word, optionally /-rooted,
+# at any bash command position, case arms included. S2 the canonical-idiom
+# wrapper list, grown only when an idiom is seen in use. S3 a separator,
+# comment, redirect or stdin ending, heredocs included. S4 a
+# backslash-newline continuation splitting the dump. S5 the shell structure
+# the masker already models. S6 a `#` misread as a comment, covered by the
+# no-comment (J) reading; a command mixing a real comment with a misread one
+# is an accepted limit.
+#
+# Out of scope, one line each: O1 word-forming obfuscation — quote splicing,
+# escapes, variables, eval, aliases. O2 expansion-dependent structure — a
+# substitution expanding to nothing (`env $(true)`). O3 lexer precision
+# beyond the masker's model — quotes in "${x#...}", an escaped quote in a
+# $'...' heredoc delimiter, a case nested in a double-quoted $(...). O4
+# non-dumper paths, and a quoted ssh remote command.
+#
+# A spelling in O1-O4 is not a finding — cite this block instead of filing it.
+#
 # Command position: start of line, or after ; & | ( { — then any run of
 # keywords/wrappers that run the next word as a command (`then env`, `! env`,
 # `sudo -u root env`, `direnv exec . env`) or of `NAME=value` prefixes. The
@@ -195,10 +218,10 @@ strip_templates() {
 # the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
 # fails closed.
 #
-# wrap_word/wrap_rest keep `)` in the class: mask_cmd rewrites a backtick group
-# to `(`…`)`, and a raw `$(...)` is left as code, so either can fill a wrapper's
-# option argument (`sudo -u $(id -un) env`) instead of stopping the argument at
-# its own closing paren.
+# wrap_word/wrap_rest accept `)` in the class, so a `$(...)` or backtick group
+# (rewritten by mask_cmd to `(`…`)`) can be a wrapper's option argument
+# (`sudo -u $(id -un) env`) instead of stopping the argument at its own
+# closing paren.
 wrap_word='[^[:space:];&|]+'
 wrap_rest='[^[:space:];&|]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
