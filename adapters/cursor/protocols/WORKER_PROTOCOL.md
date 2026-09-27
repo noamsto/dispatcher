@@ -15,10 +15,9 @@ Read `WORKER_TASK.md`. It stamps `tier:`, `kind:`, `draft:`, `resume:`, authorit
 Any `add_dir:` header lines list the extra dirs the dispatcher granted you. On claude
 they are passed to your launch as `--add-dir`, and your `protocol_dir:`, the skills,
 reviewers and critics dirs, and your own `<crew_dir>/artifacts/<branch>` are always
-granted too, read-only: reading any of them is fine, but edits to the protocol,
-skills, reviewers and critics dirs are denied (the artifacts dir stays writable).
-Never add or edit those lines, and never
-grant yourself access to anything. On claude, reaching any other path outside your
+granted too: reading any of them is fine, but only the artifacts dir is writable —
+edits to the protocol, skills, reviewers and critics dirs are denied. Never add or
+edit those lines, and never grant yourself access to anything. On claude, reaching any other path outside your
 worktree hits a permission prompt, which you handle per the **permission denial**
 rule in "Report to the bus". If the task names such a path up front, say so in a
 blocked question before touching it (block→await): the dispatcher can only grant a
