@@ -1,26 +1,14 @@
 #!/usr/bin/env bash
-# Anchored git for dispatcher-context reads inside a worker's worktree (#539).
-# Plain `git -C <worktree> …` discovers the worktree's git dir by reading its
-# `.git` gitlink — a file a claude worker can rewrite with an ordinary
-# Edit/Write to point at a gitdir it built (in its worktree or its artifacts
-# dir), or by adding a submodule gitlink (mode 160000) entry that redirects
-# discovery one level deeper. Git then reads that gitdir's `config`, and
-# several commands execute config-named programs there: `core.fsmonitor`,
-# `filter.<d>.clean/smudge/process`, `core.hooksPath` hooks,
-# `core.sshCommand`/`remote.*.uploadpack` on fetch — in the dispatcher's own
-# shell, outside the classifier. The functions below pin git to the
-# worktree's real admin dir (`--git-dir`/`--work-tree`, resolved by following
-# the main repo's own `worktrees/*/gitdir` back-pointers, which a worker
-# cannot reach with an unnamed call) instead of letting it discover one.
+# Anchored git for dispatcher-context commands inside a worker's worktree
+# (#539). The worktree's `.git` gitlink is worker-writable, and git discovery
+# through it reads whatever config the worker's chosen gitdir holds — status,
+# ls-files and reset then run config-named programs (fsmonitor, filters,
+# hooks) in the dispatcher's shell. These functions take the git dir from the
+# main repo's own worktrees/*/gitdir back-pointer instead.
 #
-# crew.sh, dispatch.sh and dispatch-resume.sh are standalone
-# writeShellApplication builds with no shared library, so flake.nix bakes this
-# file's store path into each as @worktreeGitLib@ and each sources it at the
-# call site; a raw-source run (bats, a checkout without the file wired)
-# overrides the path with $WORKTREE_GIT_LIB. Sourced, never executed — the
-# shebang only keeps the CI `shellcheck adapters/core/*.sh` glob happy. Unlike
-# the advisory cross-repo-hint lib, sourcing here is unconditional: a missing
-# lib must abort, never silently fall back to discovery.
+# Baked into crew, dispatch and dispatch-resume as @worktreeGitLib@ by
+# flake.nix; raw-source runs (bats) point $WORKTREE_GIT_LIB at this file.
+# Sourced, never executed — the shebang keeps the CI shellcheck glob happy.
 
 _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<id>
   local common="$1" wt_git gitdir_file back admin_dir
@@ -40,6 +28,8 @@ _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<i
 _wt_git() { # <admin-dir> <worktree> <git args…>
   local admin="$1" wt="$2"
   shift 2
+  # config.worktree is still read with an anchored --git-dir, and its keys
+  # (include.path, filter drivers) cannot be enumerated away with -c.
   if [ -e "$admin/config.worktree" ] || [ -L "$admin/config.worktree" ]; then
     echo "refusing git in $wt: $admin/config.worktree exists — per-worktree config is worker-writable" >&2
     return 1
@@ -52,6 +42,8 @@ _wt_git() { # <admin-dir> <worktree> <git args…>
 _wt_status() {
   local admin="$1" wt="$2"
   shift 2
+  # A submodule's status runs by discovery through its own worker-writable
+  # .git; only the command-line flag beats a .gitmodules `ignore = none`.
   _wt_git "$admin" "$wt" status --porcelain --ignore-submodules=all "$@"
 }
 _wt_gitlink_ok() { # <admin-dir> <worktree>

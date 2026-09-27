@@ -4904,11 +4904,8 @@ EOF
     }
   done
 
-  # Anchored git for the per-candidate status/index reads below (#539): a
-  # worker can rewrite its worktree's .git gitlink or add a submodule gitlink,
-  # and plain `git -C wtpath` discovery would then run config-named programs
-  # from a gitdir the worker controls. Unlike the advisory cross-repo-hint
-  # lib, a missing lib here must abort reap outright, not fall back silently.
+  # Unconditional, unlike the advisory hint lib: without it reap must abort,
+  # never fall back to discovery in a worker's worktree (#539).
   wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
   # shellcheck source=/dev/null
   . "$wt_git_lib"
@@ -4996,12 +4993,9 @@ PANES
       ;;
     esac
 
-    # Anchor every git read below to the worktree's real admin dir (#539):
-    # a worker's Edit/Write on the worktree's own .git gitlink, or a
-    # submodule gitlink it committed, would otherwise steer plain `git -C
-    # wtpath` discovery into a gitdir it controls and run its config there.
-    # Each gate fails safe by keeping the worktree, before any status call
-    # ever touches a worker-controlled gitdir.
+    # `wt remove` below runs its own discovery-based `git status`, so before
+    # it the gitlink must point at the real admin dir and no submodule may be
+    # there to recurse into (#539). Each gate keeps the worktree.
     if ! admin=$(_wt_admin_dir "$common" "$wtpath"); then
       note "keeping $branch — no git admin dir for $wtpath"
       continue

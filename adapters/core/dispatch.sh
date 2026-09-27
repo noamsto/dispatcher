@@ -347,10 +347,8 @@ _bus_append() {
 # repo. A bare positional would parse the name as a refspec
 # (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
 # fetch option (`--upload-pack=...`), so it must be a plain branch name and is
-# spelled as an explicit refspec. The --pr call used to run this with `-C
-# "$wt_path"`, reading the worker's own worktree config to do it — a worker
-# can rewrite that config (#539), so it now always runs from cwd, which
-# shares the same objects/refs with every worktree of this repo.
+# spelled as an explicit refspec. Never run it in a worker's worktree: fetch
+# honours that gitdir's config (#539), and refs/remotes are shared anyway.
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
@@ -361,14 +359,8 @@ _fetch_origin_branch() {
   git fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
-# Anchored git for the worktree reads/writes below (#539): a worker's
-# Edit/Write can rewrite its worktree's .git gitlink to point at a gitdir it
-# built, and plain `git -C wt_path` (discovery) would then read that gitdir's
-# config and run config-named programs (core.fsmonitor, hooks, ...) in the
-# dispatcher's own shell. The functions below pin git to the worktree's real
-# admin dir instead. Unlike the advisory cross-repo-hint lib, sourcing here is
-# unconditional: a missing lib must abort, never silently fall back to
-# discovery.
+# Unconditional, unlike the advisory hint lib: without it dispatch must abort,
+# never fall back to discovery in a worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
 # shellcheck source=/dev/null
 . "$wt_git_lib"
@@ -1072,9 +1064,7 @@ _worktree_anchor_path() {
 }
 
 # _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
-# resume` checks its git discovery against (#518). <admin-dir> is the
-# caller's already-resolved git admin dir (_wt_admin_dir, #539) — the
-# worktree's own gitlink is worker-writable.
+# resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
   local wt="$1" admin_real="$2" anchor dir bad="" tmp
   anchor="$(_worktree_anchor_path "$wt")"
@@ -3354,10 +3344,8 @@ if [ -z "$wt_path" ]; then
   exit 1
 fi
 
-# Resolve the worktree's real git admin dir now, from the main repo's own
-# worktrees/*/gitdir back-pointer (#539) — every anchored git call below uses
-# this instead of letting `git -C "$wt_path"` discover one via the worktree's
-# own (worker-writable) .git gitlink.
+# Every git call into the worktree below goes through this admin dir, never
+# through the worktree's own (worker-writable) gitlink (#539).
 wt_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || {
   echo "dispatch: no git admin dir for $wt_path" >&2
   exit 1
@@ -3451,8 +3439,8 @@ if [ -n "$pr_number" ]; then
   if [ "$worktree_head" != "$head_oid" ]; then
     # A worker's own WORKER_TASK.md is intentionally untracked and is only
     # trashed by `crew reap`, not on reclaim, so it alone must not count as
-    # dirty. Status is captured before grepping it: piping straight into grep
-    # would let `|| true` mask a status failure as "clean".
+    # dirty. Captured first so the grep's `|| true` cannot mask a failed
+    # status as clean.
     st="$(_wt_status "$wt_admin" "$wt_path")" || {
       echo "dispatch: git status failed for $wt_path — refusing to reset" >&2
       exit 1
@@ -3695,13 +3683,12 @@ fi
 # Exclude rules do not apply to a file git already tracks, so once a
 # WORKER_TASK.md slips into the base being dispatched the guard above is
 # silently void — the worker's stamped doc rides its diff into every commit
-# until someone removes it (#397). Warn, naming the fix; never abort and never
-# touch the index here (removing a tracked file is the target repo's job, in
-# its own PR). The check is against the dispatched worktree, which sits at that
-# base for a create. `ls-files` (no --error-unmatch) exits 0 whenever the
-# index is readable and prints the path only if it is tracked, so a non-zero
-# exit here means the index itself could not be read (or, per _wt_git,
-# refused) — that must abort, not silently read as "untracked" (#539).
+# until someone removes it (#397). Warn, naming the fix; never touch the index
+# here (removing a tracked file is the target repo's job, in its own PR). The
+# check is against the dispatched worktree, which sits at that base for a
+# create. Plain `ls-files` prints the path only if tracked, so a non-zero exit
+# means the index was unreadable or _wt_git refused, which must not pass as
+# "untracked" (#539).
 tracked="$(_wt_git "$wt_admin" "$wt_path" ls-files -- WORKER_TASK.md)" || {
   echo "dispatch: could not read the index at $wt_path" >&2
   exit 1
