@@ -11,8 +11,8 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 | Signal                                                                                                                   | tier       | model                                    |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
 | Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑Fable to escalate |
-| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — opus (sonnet under budget) |
-| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — opus\|sonnet\|haiku      |
+| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — opus @medium (sonnet under budget) |
+| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — opus @low\|sonnet\|haiku |
 
 **Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`opus`, or `sonnet` when the budget sheds); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
 why — an underpowered worker can escalate via the bus. **One-rung escalation:**
@@ -101,6 +101,10 @@ that just needed the worker to think longer before writing.
 Start from the tier-typical rung — `trivial`→`low`, `standard`→`medium`,
 `deep`→`high` — then depart from it on signals, the same way `--plan` starts
 from `required` and departs on the doc you wrote (see "Plan-depth" above).
+This holds for the model too: claude opus on `standard` starts at `medium`
+and on `trivial` at `low`; it must not carry deep's `high` down with it. When
+the pace gate refuses opus, shed to `sonnet` (at the same effort), not to a
+cheaper opus effort.
 
 - **Raise toward `xhigh`** when: the hard part lives inside one turn of
   reasoning — a subtle invariant, an ordering/concurrency argument, a
