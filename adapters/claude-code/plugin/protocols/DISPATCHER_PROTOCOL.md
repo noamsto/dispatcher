@@ -22,6 +22,8 @@ accepts the next rung of the same engine's execute ladder on a retry — without
 outside the tier's normal row (e.g. codex `standard gpt-5.6-sol` after a failed
 `standard gpt-5.6-terra`); an in-row hop, such as claude `standard opus` after
 a failed `standard sonnet`, is already accepted by the row and only recorded.
+A failed claude `standard`/`trivial` opus has no rung above it in the row —
+re-dispatch at `deep` (where fable is admitted), not `standard fable`.
 Only one rung: a two-rung jump or a third attempt still needs
 `--ignore-map` — any retry or in-row hop after the first failure counts as an
 attempt, and the branch's latest terminal status must still be `failed` at the
