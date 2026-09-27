@@ -6088,7 +6088,7 @@ _rw_wait_captures() {
     rm -f "$STUB_DIR/stop"
     _rw_stub "$fn"
     _rw_start claude
-    sleep 1
+    _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$fn: never captured"; return 1; }
     run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6140,7 +6140,7 @@ _rw_wait_captures() {
     rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
     _rw_stub rw_frame_pi_idle
     _rw_start "$eng"
-    sleep 1
+    _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
     run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6151,7 +6151,7 @@ _rw_wait_captures() {
   _spawn_role_fixture
   _rw_stub rw_frame_shell
   _rw_start pi
-  sleep 1
+  _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
@@ -6271,7 +6271,7 @@ _rw_wait_captures() {
   _rw_stub rw_frame_idle
   mv "$STUB_DIR/frame.new" "$STUB_DIR/frame"
   _rw_start claude
-  sleep 1
+  _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
