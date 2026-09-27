@@ -4540,6 +4540,85 @@ point_github_origin() {
   grep -qx 'Closes #42' "$task"
 }
 
+@test "tracker: --pr stamps linear ENG from an ssh host alias" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "git@github.com-work:factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+  grep -qx 'pr: 99' "$task"
+}
+
+@test "tracker: --pr stamps linear ENG from an https origin with userinfo" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://user:s3cret-token@github.com/factify-inc/mono.git/"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *s3cret-token* ]]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+  grep -qx 'pr: 99' "$task"
+  run ! grep -q 's3cret-token' "$task"
+}
+
+@test "tracker: --pr stamps github for a non-GitHub origin" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://gitlab.com/factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: github' "$task"
+  run ! grep -q 'tracker: linear ENG' "$task"
+}
+
+@test "tracker: a multiline org map matches the slug case-insensitively" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://github.com/Factify-Inc/Mono/.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS=$'ignored=github\nfactify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+}
+
+@test "tracker: a per-repo key matches the slug case-insensitively" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://github.com/Factify-Inc/Mono.git"
+  DISPATCH_PROFILE=personal \
+    DISPATCH_REPO_TRACKERS='factify-inc/mono=linear:ENG' \
+    DISPATCH_ORG_TRACKERS='factify-inc=github' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+}
+
+@test "tracker: resume of an unrecognised tracker line does not keep or recompute it" {
+  setup_resume_branch feat/42-do-a-thing
+  git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  printf 'tier: standard\ntracker: linear eng\n\n## Task\n\nkeep\n' >"$wt/WORKER_TASK.md"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^tracker:' "$wt/WORKER_TASK.md"
+  grep -qx 'keep' "$wt/WORKER_TASK.md"
+}
+
+@test "tracker: resume with no task file resolves the tracker from the map" {
+  setup_resume_branch_no_worktree feat/42-do-a-thing
+  git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  wt="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'tracker: linear ENG' "$wt/WORKER_TASK.md"
+}
+
 # A `base:` line below the first blank line is task text, not the header, so it
 # must never be re-stamped as the carried base (#291). Only the header — which
 # ends at the first blank line — is the dispatch base.

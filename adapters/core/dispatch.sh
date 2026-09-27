@@ -336,28 +336,75 @@ _fetch_origin_branch() {
   git -C "$dir" fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
+# ssh Host aliases are written github.com-<name>. Anything else (a lookalike
+# host, an extra @, a slash) is not GitHub.
+_github_ssh_host() {
+  [ "$1" = github.com ] && return 0
+  [[ $1 =~ ^github\.com-[^@/]+$ ]]
+}
+
+# owner/repo from a GitHub path. A trailing slash may sit before or after
+# `.git` (`repo/.git`, `repo.git/`, `repo/`). Empty when it is not one slug.
+_tracker_slug_from_path() {
+  local path="$1"
+  while [[ $path == */ ]]; do
+    path="${path%/}"
+  done
+  if [[ $path == *.git ]]; then
+    path="${path%.git}"
+    while [[ $path == */ ]]; do
+      path="${path%/}"
+    done
+  fi
+  if [[ $path =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+    printf '%s\n' "$path"
+  fi
+  return 0
+}
+
 # Tracker stamp for a fresh dispatch. The slug comes from the configured
 # origin (`git config --get remote.origin.url`). `git remote get-url` applies
 # insteadOf and would return a rewritten local path for that same remote.
-# A missing key, a local path, or any non-GitHub URL is no slug. Precedence is
+# A missing key, a local path, or any non-GitHub URL is no slug. https
+# userinfo is discarded and never printed. Precedence is
 # DISPATCH_REPO_TRACKERS, then DISPATCH_ORG_TRACKERS, then github. A value
-# other than `github` or `linear:TEAM` does not match.
+# other than `github` or `linear:TEAM` does not match. Owner and repo keys
+# compare case-insensitively; the stamped team is the map value unchanged.
 _resolve_tracker() {
   local url="" rest="" slug="" org="" map="" want="" entry="" key="" val="" which
+  local host="" path="" want_cmp="" key_cmp=""
   local -a tracker_parts=()
   url="$(git config --get remote.origin.url 2>/dev/null || true)"
   case "$url" in
-  git@github.com:*) rest="${url#git@github.com:}" ;;
-  https://github.com/*) rest="${url#https://github.com/}" ;;
-  ssh://git@github.com/*) rest="${url#ssh://git@github.com/}" ;;
-  git://github.com/*) rest="${url#git://github.com/}" ;;
-  *) rest="" ;;
-  esac
-  if [ -n "$rest" ]; then
-    rest="${rest%.git}"
-    if [[ $rest =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
-      slug="$rest"
+  https://*)
+    rest="${url#https://}"
+    rest="${rest##*@}"
+    host="${rest%%/*}"
+    if [ "$host" = github.com ] && [ "$rest" != "$host" ]; then
+      path="${rest#*/}"
     fi
+    ;;
+  ssh://git@*/*)
+    rest="${url#ssh://git@}"
+    host="${rest%%/*}"
+    if _github_ssh_host "$host"; then
+      path="${rest#*/}"
+    fi
+    ;;
+  git://github.com/*)
+    path="${url#git://github.com/}"
+    ;;
+  git@*:*)
+    rest="${url#git@}"
+    host="${rest%%:*}"
+    if _github_ssh_host "$host"; then
+      path="${rest#*:}"
+    fi
+    ;;
+  *) path="" ;;
+  esac
+  if [ -n "$path" ]; then
+    slug="$(_tracker_slug_from_path "$path")"
   fi
   if [ -n "$slug" ]; then
     org="${slug%%/*}"
@@ -370,12 +417,17 @@ _resolve_tracker() {
         want="$org"
       fi
       [ -n "$map" ] || continue
+      # A hand-set map may be one entry per line. `read -ra` stops at the
+      # first newline, which would drop every later entry.
+      map="$(printf '%s' "$map" | tr '\n' ' ')"
+      want_cmp="$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')"
       read -ra tracker_parts <<<"$map"
       for entry in "${tracker_parts[@]}"; do
         [ -n "$entry" ] || continue
         key="${entry%%=*}"
         val="${entry#*=}"
-        [ "$key" = "$want" ] || continue
+        key_cmp="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
+        [ "$key_cmp" = "$want_cmp" ] || continue
         if [ "$val" = github ]; then
           printf '%s\n' github
           return 0
@@ -3213,13 +3265,12 @@ fi
 # A re-dispatch keeps the tracker the first dispatch stamped. Re-resolving
 # would change an in-flight task's follow-up path when the maps have changed.
 # A missing or unrecognised line stays absent — this path does not recompute.
+# A pruned worktree has no task file, so there is no stamp to keep.
 tracker_stamp=""
-if [ "$switch_mode" = resume ]; then
-  if [ -f "$wt_path/WORKER_TASK.md" ]; then
-    carried_tracker="$(sed -nE '/^$/q; s/^tracker: //p' "$wt_path/WORKER_TASK.md" | head -n 1)"
-    if [ "$carried_tracker" = github ] || [[ $carried_tracker =~ ^linear\ [A-Z][A-Z0-9]*$ ]]; then
-      tracker_stamp="$carried_tracker"
-    fi
+if [ "$switch_mode" = resume ] && [ -f "$wt_path/WORKER_TASK.md" ]; then
+  carried_tracker="$(sed -nE '/^$/q; s/^tracker: //p' "$wt_path/WORKER_TASK.md" | head -n 1)"
+  if [ "$carried_tracker" = github ] || [[ $carried_tracker =~ ^linear\ [A-Z][A-Z0-9]*$ ]]; then
+    tracker_stamp="$carried_tracker"
   fi
 else
   tracker_stamp="$(_resolve_tracker)"
