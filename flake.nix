@@ -147,7 +147,7 @@
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils diffutils tmux direnv]) ++ [crew dispatch-resume];
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
@@ -159,7 +159,7 @@
           # itself uses for `wt`.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
-            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils diffutils tmux]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
             text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
           };
 
@@ -197,9 +197,15 @@
             text = builtins.replaceStrings ["@reviewersDir@"] ["${./adapters/core/reviewers}"] (builtins.readFile ./adapters/core/reviewers/resolve-roster.sh);
           };
 
+          permission-check = pkgs.writeShellApplication {
+            name = "permission-check";
+            runtimeInputs = with pkgs; [jq coreutils gnused tmux git procps];
+            text = sub (builtins.readFile ./adapters/core/permission-check.sh);
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
 

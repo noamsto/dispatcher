@@ -124,6 +124,66 @@ glob_secret_re='(^|[/*{,[])\.env($|[]*.?,}])|\.(pem|p12|pfx)($|[]*?,}])|\.netrc(
 # templates.
 template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 
+# Drops the template names from each line in one linear pass. sed -E with
+# template_re does the same in quadratic time: the chain `.env.env.env…` is
+# rescanned from every `.env` when a template name elsewhere in the text defeats
+# its prefilter, and hookyard allows on a timeout. Here the line is split at its
+# dots, and every `.env` piece inside one unbroken run of dotted words shares
+# that run's last template word, so a run holds at most one match: from its
+# first `.env` piece to that word — what sed -E takes, leftmost and longest.
+#   wide=0: a word beginning example|template|sample|dist ends a name, and the
+#           rest of that word stays (`.env.examples` leaves `s`).
+#   wide=1: only a word that is exactly one of them, followed by a character
+#           outside [A-Za-z0-9_.*?[-] or by the end of the line, ends a name —
+#           the character stays.
+# Splitting at "." is literal in every awk. The leading piece has no dot before
+# it, so it is neither a start nor an end.
+# shellcheck disable=SC2016
+awk_strip='
+# The words and the character class repeat template_re; a test holds them equal.
+function tword(p) {
+  if (substr(p, 1, 7) == "example") return 7
+  if (substr(p, 1, 8) == "template") return 8
+  if (substr(p, 1, 6) == "sample") return 6
+  if (substr(p, 1, 4) == "dist") return 4
+  return 0
+}
+function finish() {
+  if (first && last > first) { cut[first] = last; drop[last] = len }
+  first = last = 0
+}
+{
+  n = split($0, P, ".")
+  delete cut
+  delete drop
+  first = last = 0
+  for (j = 2; j <= n; j++) {
+    p = P[j]
+    match(p, /^[A-Za-z0-9_-]*/)
+    c = RLENGTH
+    if (c == 0) { finish(); continue }
+    full = (c == length(p))
+    if (!first && p == "env") first = j
+    w = tword(p)
+    if (w && (!wide || (c == w && (full ? j == n : index("*?[", substr(p, c + 1, 1)) == 0)))) { last = j; len = w }
+    if (!full) finish()
+  }
+  finish()
+  printf "%s", P[1]
+  stop = 0
+  for (j = 2; j <= n; j++) {
+    if (j in cut) stop = cut[j]
+    if (!stop) printf ".%s", P[j]
+    else if (j == stop) { printf "%s", substr(P[j], drop[j] + 1); stop = 0 }
+  }
+  printf "\n"
+}'
+
+# strip_templates <wide: 0|1> <text>
+strip_templates() {
+  awk -v wide="$1" "$awk_strip" <<<"$2"
+}
+
 # Command position: start of line, or after ; & | ( { — then any run of
 # keywords/wrappers that run the next word as a command (`then env`, `! env`,
 # `sudo -u root env`, `direnv exec . env`) or of `NAME=value` prefixes. The
@@ -629,6 +689,7 @@ function grep_loud(s, m, W, n, j, x, e, rg, found) {
   m = mask(s)
   sub(/[[:space:]]#.*$/, "", m)
   if (m ~ /[\r\013\f]/) return 1
+  gsub(/[0-9]*(>>?[|&]?|<[<>&]?<?-?)[[:space:]]*[^[:space:]]+/, " ", m)
   n = split(m, W, /[[:space:]]+/)
   for (j = 1; j <= n; j++) {
     if (W[j] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/) continue
@@ -694,13 +755,13 @@ credential_read() {
   *) return 0 ;;
   esac
   if [[ $2 == narrow ]]; then
-    left=$(sed -E "s/$template_re//g" <<<"$1") || return
+    left=$(strip_templates 0 "$1") || return
     grep -qE "$cmd_secret_re" <<<"$left" || {
       echo miss
       return 0
     }
   else
-    wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1") || return
+    wide=$(strip_templates 1 "$1") || return
     grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
   fi
   awk "$awk_cred" <<<"$1"
@@ -752,21 +813,19 @@ grep)
   # secret_path_re is anchored, so path and glob are tested separately. Template
   # names are stripped rather than exempting the call, so `{.env.example,.env}`
   # still trips on its `.env`: once anywhere, and once only where the name ends,
-  # so `.env.examples` trips too (\4 is the character after the name:
-  # template_re holds two groups).
-  path_any=$(sed -E "s/$template_re//g" <<<"$path")
-  glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
+  # so `.env.examples` trips too.
+  path_any=$(strip_templates 0 "$path")
+  glob_any=$(strip_templates 0 "$grep_glob")
   [[ $path_any =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   # A secret-shaped pattern with content output leaks even when the path is broad.
   if [[ $pattern =~ (API_?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|PRIVATE_KEY) ]]; then
     deny "Pattern '$pattern' with content output will print any matching credential line it finds. List only the matching files, or count in the shell (grep -c / rg -c) — you need to know where a key is configured, not what it is."
   fi
-  # The wide strips are the quadratic ones, so they run only after every cheaper
-  # deny above has missed.
-  path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
+  # The wide strips run only after every cheaper deny above has missed.
+  path_left=$(strip_templates 1 "$path")
   [[ $path_left =~ $secret_path_re ]] && deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
-  glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
+  glob_left=$(strip_templates 1 "$grep_glob")
   [[ $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]] && deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   ;;
 shell)
