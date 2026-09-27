@@ -1209,6 +1209,9 @@ reply)
 await)
   # await <agent> [--from SENDER] [--timeout S] [--interval S] — block until a msg
   # addressed to <agent> answers its outstanding question, print it, exit 0.
+  # Every due msg from the sender of the newest due one prints, oldest first, one
+  # compact JSON object per line, so a backlog is drained instead of hidden: the
+  # per-sender delivered mark can never rise past an undelivered sibling (#466).
   # --from restricts that to one exact sender id (a lead waiting on one role's
   # verdict); other senders' msgs are neither returned nor marked delivered.
   # A msg qualifies when this session has not been handed it yet: strictly newer
@@ -1276,8 +1279,11 @@ await)
   while :; do
     if [ -f "$log" ]; then
       # A msg from X is due when it is newer than the last msg from X this
-      # session was handed (the delivered mark). `-R` + `fromjson?` skips a torn
-      # trailing line (the hard-kill crash mode) instead of aborting the read.
+      # session was handed (the delivered mark). The last due msg picks its
+      # sender, whose whole due backlog then prints — so the mark, raised to
+      # the batch's newest ts, never skips a sibling. `-R` + `fromjson?` skips
+      # a torn trailing line (the hard-kill crash mode) instead of aborting
+      # the read.
       ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {cands: []};
@@ -1287,7 +1293,10 @@ await)
         )
         | .cands
         | map(select(.ts > ($got[.from] // 0)))
-        | last // empty
+        | if length == 0 then empty
+          else (.[-1].from) as $s
+          | map(select(.from == $s)) | sort_by(.ts)[]
+          end
       ' "$log" 2>/dev/null || true)
       [ -n "$ans" ] && {
         _await_record "$crew" "$me" "$ans"
