@@ -121,8 +121,8 @@
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
@@ -147,7 +147,9 @@
           dispatch = pkgs.writeShellApplication {
             name = "dispatch";
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv]) ++ [crew dispatch-resume];
+            # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
+            # issue body through.
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
