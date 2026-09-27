@@ -116,9 +116,10 @@ from `required` and departs on the doc you wrote (see "Plan-depth" above).
   reason the orchestrator table gives for holding its own session at `high`,
   see `dispatch-orchestration.md` → "Orchestrator engines"); the work is
   wide-but-shallow; or the budget is tight. Say plainly: the mechanical
-  pace-rule gate below (→ "Budget is the fifth lever") reads only the
-  **rung** — the burn class the model falls into — not the effort, so
-  nothing refuses an expensive `xhigh` dispatch near the wall for you.
+  pace-rule gate below (→ "Budget is the fifth lever") refuses `xhigh`/`max`
+  (and premium rungs) only once the window is ≥70% used and more than 15
+  points ahead of pace; below that threshold nothing refuses an expensive
+  `xhigh` dispatch near the wall for you.
 
 Ladder: `low|medium|high|xhigh|max` on claude/codex/pi, plus codex-only `ultra`
 (maximum reasoning with **automatic task delegation**, `gpt-5.6-sol`/`-terra`) —
@@ -166,7 +167,8 @@ sizing a pi fan-out, not just once at session start.
   fan-out size, or hold, rather than burning either engine. Size a pi fan-out
   off the burn-rate signal itself — `projected_month_end_usd` vs `target_usd`
   — not just the pace flag. pi has no premium model rung, so the mechanical
-  pace gate only refuses `xhigh`/`max` effort; at pi's default `high` effort
+  pace gate only refuses `xhigh`/`max` effort: at pi's tier-typical `high`
+  (trivial/standard) the pace gate never fires — deep's `max` is refused — so
   this judgement plus the ≥95% stop below are the actual spend control. The
   three claude leans (UI/frontend, security-adjacent, genuinely
   underspecified) stay on claude.
@@ -179,10 +181,13 @@ sizing a pi fan-out, not just once at session start.
   peer engine (budget turns the neutral-fit rotation into a budgeted
   rotation). Inside its last 15% (~25h to reset), prefer waiting to shedding a
   fan-out you would otherwise have run.
-- **Both bullets above are advisory judgement, implemented by nothing** — no
-  code reads the `5h` window for routing, and the mechanical gate below reads
-  only the `7d` window and only the pace rule. Don't mistake this prose for a
-  mechanism.
+- **`month` at ≥85%** (pi's OpenRouter target) — stop shedding standard/trivial
+  work to pi even when it is not ahead of pace, and shed pi fan-out;
+  `refresh-budget`'s lever line says the same.
+- **All three bullets above are advisory judgement, implemented by nothing** —
+  no code reads the `5h` window for routing, and the mechanical gate below
+  reads only the `7d` window (pi: its `month` window) and only the pace rule,
+  never the 85% line. Don't mistake this prose for a mechanism.
 - **The tail of a window is not free headroom.** The pace rule below
   deliberately allows the premium rung at, say, 94% with two hours left on
   the `7d` window. A `deep` fan-out launched there can cross 95% mid-run and

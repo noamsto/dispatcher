@@ -288,9 +288,10 @@ than 15 points ahead of the month's elapsed fraction (escape with
 `DISPATCH_IGNORE_RUNG=<effort>`), and a hard stop at ≥95% (escape with
 `--ignore-budget`). Without a rebuild, set `DISPATCH_OPENROUTER_MONTHLY_USD`
 and `DISPATCH_OPENROUTER_KEY_FILE` (or `OPENROUTER_API_KEY`) directly.
-`openrouter.keyFile` resolves first (its first line), falling back to
-`OPENROUTER_API_KEY`; `~/.pi/agent/auth.json` is never read for this, and the
-key is never printed or cached. The figure is **per key** — it only covers
+When `openrouter.keyFile` is set, its first line is the only key source (an
+unreadable or empty file leaves the spend unknown rather than falling back);
+otherwise `OPENROUTER_API_KEY` is used. `~/.pi/agent/auth.json` is never read
+for this, and the key is never printed or cached. The figure is **per key** — it only covers
 spend on the key pi actually uses, not the whole OpenRouter account — so
 OpenRouter's own per-key credit limit (in its dashboard) stays the hard
 backstop regardless of this target.

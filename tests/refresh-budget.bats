@@ -798,6 +798,42 @@ EOF
   [ "$output" = "null" ]
 }
 
+@test "an unreadable key file never falls back to OPENROUTER_API_KEY" {
+  or_key_fixture 10
+  keyfile="$BATS_TEST_TMPDIR/or-key-missing"
+  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 \
+    run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is unreadable or empty"* ]]
+  [[ "$output" != *"SENTINELKEY123"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}
+
+@test "an empty key file never falls back to OPENROUTER_API_KEY" {
+  or_key_fixture 10
+  keyfile="$BATS_TEST_TMPDIR/or-key-empty"
+  : >"$keyfile"
+  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 \
+    run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is unreadable or empty"* ]]
+  [[ "$output" != *"SENTINELKEY123"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}
+
+@test "a malformed key response leaves pi unknown" {
+  jq -n '{data: {}}' >"$FIXTURE_DIR/or_key.json"
+  OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"call failed"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+}
+
 @test "no target records spend without a gating window" {
   or_key_fixture 40
   now=$("$REAL_DATE" -u -d '2026-09-10T00:00:00Z' +%s)

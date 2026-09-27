@@ -310,14 +310,20 @@ probe_codex() {
 }
 
 # _or_key — resolve the OpenRouter key into the caller's `or_key` local
-# (never printed): DISPATCH_OPENROUTER_KEY_FILE's first line when readable,
-# else OPENROUTER_API_KEY. ~/.pi/agent/auth.json is never read.
+# (never printed). DISPATCH_OPENROUTER_KEY_FILE, when set, is the exclusive
+# source — an unreadable file or an empty first line leaves `or_key` empty
+# rather than falling back to OPENROUTER_API_KEY, since spend is per key and
+# the wrong key would pace pi against the wrong spend. Otherwise reads
+# OPENROUTER_API_KEY. ~/.pi/agent/auth.json is never read.
 _or_key() {
-  if [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] && [[ -r $DISPATCH_OPENROUTER_KEY_FILE ]]; then
-    IFS= read -r or_key <"$DISPATCH_OPENROUTER_KEY_FILE" || true
-    or_key="${or_key//$'\r'/}"
-    or_key="${or_key#"${or_key%%[![:space:]]*}"}"
-    or_key="${or_key%"${or_key##*[![:space:]]}"}"
+  or_key=""
+  if [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]]; then
+    if [[ -r $DISPATCH_OPENROUTER_KEY_FILE ]]; then
+      IFS= read -r or_key <"$DISPATCH_OPENROUTER_KEY_FILE" || true
+      or_key="${or_key//$'\r'/}"
+      or_key="${or_key#"${or_key%%[![:space:]]*}"}"
+      or_key="${or_key%"${or_key##*[![:space:]]}"}"
+    fi
   else
     or_key="${OPENROUTER_API_KEY:-}"
   fi
@@ -339,12 +345,16 @@ _or_target() {
 }
 
 # probe_pi — print the pi engine object (OpenRouter per-key month-to-date
-# spend vs an optional target); return 2 with no key configured, 1 when the
+# spend vs an optional target); return 2 with no key configured, 3 when
+# DISPATCH_OPENROUTER_KEY_FILE is set but unreadable or empty, 1 when the
 # call fails or the response has no numeric data.usage_monthly.
 probe_pi() {
   local or_key=""
   _or_key
-  [[ -n $or_key ]] || return 2
+  if [[ -z $or_key ]]; then
+    [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] && return 3
+    return 2
+  fi
 
   local resp
   resp=$(curl -sf --max-time 15 -K - https://openrouter.ai/api/v1/key <<<"header = \"Authorization: Bearer $or_key\"") || return 1
@@ -354,7 +364,7 @@ probe_pi() {
   now=$(date +%s)
   # Month bounds come from `now|gmtime` rather than adding a fixed 30d, since
   # months vary in length; December is rolled to next January explicitly
-  # (mktime does not normalize an out-of-range month index).
+  # rather than relying on mktime's month-overflow normalization.
   out=$(jq -e --argjson now "$now" --argjson target "$target" '
     (.data.usage_monthly) as $spend
     | (if ($spend | type) != "number" then error("bad shape: usage_monthly missing or non-numeric") else . end)
@@ -401,8 +411,10 @@ main() {
     pi=$pi_probe
   elif [[ $rc -eq 2 ]]; then
     warn "pi spend unknown — set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile (DISPATCH_OPENROUTER_KEY_FILE)"
+  elif [[ $rc -eq 3 ]]; then
+    warn "pi spend unknown — DISPATCH_OPENROUTER_KEY_FILE ($DISPATCH_OPENROUTER_KEY_FILE) is unreadable or empty"
   else
-    warn "pi spend unknown — OpenRouter /api/v1/key call failed (set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile if no key is configured)"
+    warn "pi spend unknown — OpenRouter /api/v1/key call failed"
   fi
 
   mkdir -p "$OUT_DIR"

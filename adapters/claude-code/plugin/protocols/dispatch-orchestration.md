@@ -339,7 +339,11 @@ effort is `xhigh` (downgrade `high`) and `max` (downgrade `xhigh`); `high` is
 not premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
 `--ignore-budget`). pi has no premium model rung — every pi model is a Flash
-rung in one burn class — so only effort is ever refused for it.
+rung in one burn class — so only effort is ever refused for it. While pi's
+`month` window is ahead of pace, both `max` and `xhigh` are refused at once,
+so a refused pi dispatch lands directly on `high` — which matters because
+`deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
+`xhigh` rung to land on in between.
 
 | engine | premium                                        | downgrade target        |
 | ------ | ----------------------------------------------- | ------------------------ |
