@@ -316,6 +316,19 @@ decode_word() {
 #   - escaped backticks outside heredoc bodies nest to any depth: bash writes a
 #     level-k backtick behind 2^(k-1) - 1 backslashes (0, 1, 3, 7, …). Inside a
 #     backtick frame the same level closes it and any other level opens one.
+#
+# W=2 (mask_cmd_frames) is a third reading, searched beside the other two, that
+# reads like W=0 outside backtick frames and treats each frame as opaque:
+#   - a frame ends, as in bash's raw scan, at the first backtick behind an even
+#     unbroken run of backslashes. A backslash consumes the next character,
+#     newline included; quotes, comments, heredocs and `$(` do not matter.
+#   - inside a frame every character shows except `\`, `'` and `"` (spaces) and
+#     non-closing backticks (`;`), so nothing inside a frame can hide text.
+#   - a backtick span in a heredoc delimiter word is shown the same way, and
+#     that heredoc's body runs to end of input.
+#   - a heredoc body emits every backtick as `;` and every backslash as a
+#     space, so a dumper word right after a body code span (e.g. `then set
+#     `X`) reads as a command — an accepted over-scan.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -347,11 +360,24 @@ function tick(n,    k, r, lv) {
   opn = 1
   return "("
 }
+function frameout(c) {
+  if (c == BS) { fb++; printf " "; return 0 }
+  if (c == BT && fb % 2 == 0) { fb = 0; printf ")"; return 1 }
+  fb = 0
+  if (c == BT) printf ";"
+  else if (c == SQ || c == DQ) printf " "
+  else printf "%s", c
+  return 0
+}
+function framefeed(c) {
+  prev = c
+  if (frameout(c)) { fr = 0; pop() }
+}
 function code(c,    d, o, n) {
   d = dl
   dl = 0
   o = " "
-  if (W) {
+  if (W == 1) {
     wo = opn
     opn = 0
     if (c == BS) bsr++
@@ -361,12 +387,12 @@ function code(c,    d, o, n) {
     esc = 0
     if (q == "") {
       o = c
-      if (W) {
+      if (W == 1) {
         if (c == BT) o = tick(n)
         else if (c == BS && sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
       }
-      else if (c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
-      else if (c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
+      else if (!W && c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
+      else if (!W && c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
     }
   } else if (cm) {
     o = c
@@ -380,7 +406,12 @@ function code(c,    d, o, n) {
     if (c == BS) esc = 1
     else if (c == DQ) q = ""
     else if (d && c == "(") { push("(", DQ); o = "(" }
-    else if (c == BT) { push(BT, DQ); o = "("; if (W) { slv[sp - 1] = 1; opn = 1 } }
+    else if (c == BT) {
+      push(BT, DQ)
+      o = "("
+      if (W == 1) { slv[sp - 1] = 1; opn = 1 }
+      else if (W == 2) { fr = 1; fb = 0 }
+    }
     else if (c == "$") dl = 1
   } else {
     o = c
@@ -390,14 +421,15 @@ function code(c,    d, o, n) {
     } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
     else if (c == DQ) { q = DQ; o = " " }
     else if (c == BT) {
-      if (W) o = tick(n)
+      if (W == 1) o = tick(n)
+      else if (W == 2) { push(BT, ""); fr = 1; fb = 0; o = "(" }
       else if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
     } else if (c == "(") pd++
     else if (c == ")") {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "#" && (wordstart(prev) || (W && wo))) cm = 1
+    } else if (c == "#" && (wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") dl = 1
   }
   return o
@@ -429,6 +461,7 @@ function bodyfeed(c,    w, term) {
     else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
     else bok = 0
   }
+  if (W == 2 && (c == BT || c == BS)) { printf "%s", (c == BT ? ";" : " "); return }
   if (c == BT && (W || !hd_q[hd_i])) {
     bbt = !bbt
     printf "%s", (bbt ? "(" : ")")
@@ -437,11 +470,15 @@ function bodyfeed(c,    w, term) {
   printf "%s", c
 }
 function feed(c,    arm, wasesc) {
+  if (fr) { framefeed(c); return }
   if (body) { bodyfeed(c); return }
   if (hs == 3) {
+    if (hbt) { if (frameout(c)) hbt = 0; return }
     if (hbs) { hbs = 0; hw = hw c; printf " "; return }
+    if (W == 2 && c == BT && hq != SQ) { hbt = 1; fb = 0; hspan = 1; printf "("; return }
     if (hq != "") {
       if (c == hq) hq = ""
+      else if (W == 2 && hq == DQ && c == BS) hbs = 1
       else hw = hw c
       printf " "
       return
@@ -449,9 +486,9 @@ function feed(c,    arm, wasesc) {
     if (c == BS) { hbs = 1; hquo = 1; printf " "; return }
     if (c == SQ || c == DQ) { hq = c; hquo = 1; printf " "; return }
     if (!index(HDSTOP, c)) { hw = hw c; printf " "; return }
-    if (hw != "" || hquo) {
+    if (hw != "" || hquo || hspan) {
       hd_n++
-      hd_w[hd_n] = hw
+      hd_w[hd_n] = hspan ? "\n" : hw
       hd_d[hd_n] = hdash
       hd_q[hd_n] = hquo
     }
@@ -461,7 +498,7 @@ function feed(c,    arm, wasesc) {
     if (c == "-" && !hdash) { hdash = 1; printf " "; return }
     if (c == "<") { hs = 0; printf "<"; prev = c; return }
     if (index(HDSTOP, c)) hs = 0
-    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; feed(c); return }
+    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0; feed(c); return }
   }
   arm = (q == "" && !esc && !cm)
   wasesc = esc
@@ -480,6 +517,10 @@ mask_cmd() {
 
 mask_cmd_wide() {
   awk -v W=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+mask_cmd_frames() {
+  awk -v W=2 "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -820,6 +861,23 @@ shell)
       esac
     done
   done
+
+  # The frame reading differs from W=0 only at a backslash, quote, `#` or `<`
+  # inside or around a backtick, so it runs only on text holding a backtick
+  # and one of those. It runs after rule 3 so a large rule-3 deny stays inside
+  # hookyard's 4 s budget (a timeout is an allow); each check denies on its
+  # own, so the order only decides which deny fires.
+  frame_spaces=()
+  frame_fish_spaces=()
+  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
+  for ((i = 0; i < ${#subs[@]}; i++)); do
+    [[ ${subs[i]} == *'`'* && ${subs[i]} == *[\\\'\"#\<]* ]] || continue
+    frame_sub=$(mask_cmd_frames "${subs[i]}")
+    frame_spaces+=("$frame_sub")
+    if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi
+  done
+  check_dump_spaces ${frame_spaces[@]+"${frame_spaces[@]}"}
+  check_fish_spaces ${frame_fish_spaces[@]+"${frame_fish_spaces[@]}"}
   ;;
 esac
 
