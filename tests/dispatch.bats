@@ -51,6 +51,10 @@ teardown() {
   if [ -n "${live_pid:-}" ]; then
     kill "$live_pid" 2>/dev/null || true
   fi
+  # Same for a --role-watch watcher a failing test never reached _rw_stop for.
+  if [ -n "${RW_PID:-}" ]; then
+    kill "$RW_PID" 2>/dev/null || true
+  fi
   teardown_repo
 }
 
@@ -5850,6 +5854,424 @@ EOF
   run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
   [ "$status" -eq 0 ]
   run ! grep -qE 'send-keys|set-option -p -t %6 @crew_state (idle|working)' "$STUB_LOG"
+}
+
+# ---- --role-watch delivery gate (#445) ---------------------------------------
+# Frames are pinned from tests/crew.bats (real captures unless noted); each
+# helper prints its frame so a test can swap it into the tmux stub mid-run.
+
+rw_frame_permission() {
+  cat <<'EOF'
+
+● Waiting on the shell reviewer and test-runner.
+
+✻ Waiting for 1 background agent to finish
+
+› Message from @a6fd725715048d707 (ctrl+o to expand)
+
+● The test-runner confirmed every acceptance criterion passes on the branch, and
+  the allowlist tests fail on main. Only the shell reviewer is still out.
+
+✻ Waiting for 2 background agents to finish
+
+● Agent "Review: targeted test-runner" finished · 16m 44s
+
+● Waiting on the shell reviewer.
+
+✻ Waiting for 1 background agent to finish
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+
+ │ Auto mode classifier requires confirmation for this command.
+ │ 3 consecutive actions were blocked. Please review the transcript before
+ │ continuing.
+ │
+ │ Latest blocked action: [Irreversible Local Destruction]
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+EOF
+}
+
+rw_frame_select() {
+  cat <<'EOF'
+  2. Gate everything on 3.8
+     Detect tmux version once in tmux-remux.tmux; emit the 3.8 hook set.
+  3. Require 3.8, drop legacy
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+EOF
+}
+
+rw_frame_quota() {
+  cat <<'EOF'
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+  3. Upgrade to Team plan
+Enter to select · Esc to cancel
+EOF
+}
+
+rw_frame_idle() {
+  cat <<'EOF'
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+}
+
+# fx_subbatch shape above a bordered idle box: a live turn keeps the box drawn.
+rw_frame_live() {
+  cat <<'EOF'
+  ⎿  Done (15 tool uses · 77.2k tokens · 5m 53s)
+✶ Hatching… (6m 1s · ↓ 73.2k tokens)
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
+# Not a prompt and not a box: a claude frame nothing recognises must not be typed into.
+rw_frame_unknown() {
+  cat <<'EOF'
+● Some transcript line
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+EOF
+}
+
+# A pi pane: editor between two rules, then the cwd and stats lines (real
+# capture, pi 0.87.1, no model configured).
+rw_frame_pi_idle() {
+  cat <<'EOF'
+ pi v0.87.1
+──────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)                                                        unknown
+EOF
+}
+
+# A bare shell: the engine is gone or has not started.
+rw_frame_shell() {
+  cat <<'EOF'
+noams@g6 ~/git/dispatcher (feat/9-x)
+$
+EOF
+}
+
+# _rw_stub <frame-fn> — tmux stub: capture-pane prints $STUB_DIR/frame, the
+# pane exists until $STUB_DIR/stop appears, and every call is logged.
+_rw_stub() {
+  "$1" >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+send-keys)
+  # A one-shot race: the frame flips to $STUB_DIR/frame_after as text is typed.
+  if [ "$2 $3 $4" = "-t %6 -l" ] && [ -e "$STUB_DIR/flip" ]; then
+    rm -f "$STUB_DIR/flip"
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# _rw_start <engine> — run the watcher in the background, then post one
+# assignment to the role from the lead.
+_rw_start() {
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+}
+
+_rw_stop() {
+  touch "$STUB_DIR/stop"
+  wait "$RW_PID" 2>/dev/null || true
+}
+
+_rw_sends() { grep -c '^send-keys -t %6 -l Assignment: go$' "$STUB_LOG" || true; }
+_rw_captures() { grep -c '^capture-pane' "$STUB_LOG" || true; }
+
+_rw_wait_sends() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_sends)" -ge "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+@test "role-watch: a permission dialog receives no keys until it clears, then the assignment lands once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  _rw_start claude
+  sleep 1.2
+  [ "$(_rw_captures)" -ge 3 ]
+  [ "$(_rw_sends)" -eq 0 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+  rw_frame_idle >"$STUB_DIR/frame"
+  _rw_wait_sends 1
+  sleep 0.8
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: option-select, quota, live-turn and unrecognised claude frames defer" {
+  _spawn_role_fixture
+  for fn in rw_frame_select rw_frame_quota rw_frame_live rw_frame_unknown; do
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop"
+    _rw_stub "$fn"
+    _rw_start claude
+    sleep 1
+    _rw_stop
+    [ "$(_rw_captures)" -ge 2 ] || { echo "$fn: never captured"; return 1; }
+    run ! grep -q '^send-keys' "$STUB_LOG"
+    rm -f "$common/crew/events.jsonl"
+  done
+}
+
+@test "role-watch: an idle claude input box receives the assignment" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude
+  _rw_wait_sends 1
+  sleep 0.8
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: the frame gate works under LC_ALL=C" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  export LC_ALL=C
+  _rw_start claude
+  _rw_wait_sends 1
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: pi delivers on a plain frame but not on an option-select prompt" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_idle
+  _rw_start pi
+  _rw_wait_sends 1
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+
+  : >"$STUB_LOG"
+  rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl"
+  _rw_stub rw_frame_select
+  _rw_start pi
+  sleep 1
+  _rw_stop
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: an engine with no recognised idle frame (cursor, codex, unknown, empty) never receives keys" {
+  _spawn_role_fixture
+  for eng in cursor codex mystery ""; do
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    _rw_stub rw_frame_pi_idle
+    _rw_start "$eng"
+    sleep 1
+    _rw_stop
+    [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
+    run ! grep -q '^send-keys' "$STUB_LOG"
+  done
+}
+
+@test "role-watch: pi defers on a bare shell prompt" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_shell
+  _rw_start pi
+  sleep 1
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: a live turn that ends then receives the assignment once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_live
+  _rw_start claude
+  sleep 0.8
+  [ "$(_rw_sends)" -eq 0 ]
+  rw_frame_idle >"$STUB_DIR/frame"
+  _rw_wait_sends 1
+  sleep 0.8
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: a spinner-like transcript line above an idle box does not wedge delivery" {
+  _spawn_role_fixture
+  {
+    printf 'Summary… of the findings\n'
+    for i in 1 2 3 4 5 6 7; do printf 'transcript row %s\n' "$i"; done
+    rw_frame_idle
+  } >"$STUB_DIR/frame.new"
+  _rw_stub rw_frame_idle
+  mv "$STUB_DIR/frame.new" "$STUB_DIR/frame"
+  _rw_start claude
+  _rw_wait_sends 1
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: queued assignments go out one per tick, in order" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
+  _rw_wait_sends 1
+  sleep 1.2
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  [ "$(grep -c '^send-keys -t %6 -l Assignment: two$' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -n '^send-keys -t %6 -l Assignment: go$' "$STUB_LOG" | cut -d: -f1)" -lt "$(grep -n '^send-keys -t %6 -l Assignment: two$' "$STUB_LOG" | cut -d: -f1)" ]
+}
+
+@test "role-watch: a dialog raised after the text is typed is never confirmed" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  rw_frame_permission >"$STUB_DIR/frame_after"
+  touch "$STUB_DIR/flip"
+  _rw_start claude
+  _rw_wait_sends 1
+  sleep 0.8
+  run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  rw_frame_idle >"$STUB_DIR/frame"
+  for n in $(seq 1 40); do
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  _rw_stop
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  grep -qx 'send-keys -t %6 C-u' "$STUB_LOG"
+  [ "$(_rw_sends)" -eq 2 ]
+  [ "$(grep -c '^send-keys -t %6 Enter$' "$STUB_LOG")" -eq 1 ]
+}
+
+@test "role-watch: text that wraps or fills the input box after typing still gets its Enter (claude and pi)" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  {
+    printf '  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)\n'
+    printf '────────────────── reef ─\n'
+    printf '❯ Assignment: {"role":"reviewer","roster":"/abs/path/to/roster.json","question":"Review this diff. 1. first"}\n'
+    printf '  continuation of the wrapped assignment text 2. second\n'
+    printf '──────────────────\n'
+    printf '  -- INSERT -- ⏵⏵ auto mode on · ← for agents\n'
+  } >"$STUB_DIR/frame_after"
+  touch "$STUB_DIR/flip"
+  _rw_start claude
+  for n in $(seq 1 40); do
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  _rw_stop
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+  [ "$(_rw_sends)" -eq 1 ]
+
+  : >"$STUB_LOG"
+  rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl"
+  _rw_stub rw_frame_pi_idle
+  {
+    printf ' pi v0.87.1\n'
+    printf '──────────────────────────────\n'
+    printf 'Assignment: {"role":"reviewer","question":"Review this diff. 1. first"}\n'
+    printf 'continuation 2. second\n'
+    printf '──────────────────────────────\n'
+    printf '~/git/dispatcher\n'
+    printf '0.0%%/0 (auto)      unknown\n'
+  } >"$STUB_DIR/frame_after"
+  touch "$STUB_DIR/flip"
+  _rw_start pi
+  for n in $(seq 1 40); do
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  _rw_stop
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: an idle box under an esc-to-interrupt turn line defers" {
+  _spawn_role_fixture
+  {
+    printf '✻ Working (2s · esc to interrupt)\n'
+    rw_frame_idle
+  } >"$STUB_DIR/frame.new"
+  _rw_stub rw_frame_idle
+  mv "$STUB_DIR/frame.new" "$STUB_DIR/frame"
+  _rw_start claude
+  sleep 1
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: an assignment deferred past --defer-notice tells the lead once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  sleep 3.5
+  _rw_stop
+  [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: a role verdict does not flip the role idle while an assignment is queued" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  _rw_start claude
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", to: "worker:feat/9-x#s1-1", from: "role:feat/9-x:reviewer", body: "{}"}' >>"$common/crew/events.jsonl"
+  sleep 1
+  _rw_stop
+  grep -qF '@crew_state working' "$STUB_LOG"
+  run ! grep -qF '@crew_state idle' <(sed -n '/@crew_state working/,$p' "$STUB_LOG")
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {
