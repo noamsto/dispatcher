@@ -377,7 +377,7 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 # branch name — is worker-writable, and the script runs as the operator, outside
 # the engine's permission layer (#470). Each such value must be a single safe
 # word before anything is spliced into that script; the launch line quotes them
-# again as defence in depth. Refusing here precedes every side effect.
+# again as defence in depth. Refusing here precedes every side effect (bar the operator-set session id below).
 _id_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
 _branch_re='^[A-Za-z0-9][A-Za-z0-9._/@+-]*$'
 _model_re='^[A-Za-z0-9][][A-Za-z0-9._/:=,-]*$'
@@ -461,6 +461,12 @@ _resolve_dir() {
   fi
   if [[ $val != /* ]]; then
     echo "$label: $var must be an absolute path, got: $val" >&2
+    exit 1
+  fi
+  # The dirs are spliced into launch scripts and their prompts, and a role
+  # launched by --spawn-role inherits this env from the worker (#470).
+  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
     exit 1
   fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&

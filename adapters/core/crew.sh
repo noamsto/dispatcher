@@ -46,7 +46,9 @@ _identity() { # $1=branch -> {name,color,tmux}
 _identity_recorded() {
   [ -f "$log" ] || return 0
   jq -c -s --arg b "$1" '
-    map(select(.kind == "dispatch" and .branch == $b and .name != null))
+    map(select(.kind == "dispatch" and .branch == $b and .name != null
+      and (.name | test("^[a-z][a-z0-9-]*$"))
+      and (.tmux | strings | test("^colour[0-9]+$"))))
     | last // empty | {name, color, tmux}' "$log" 2>/dev/null || true
 }
 

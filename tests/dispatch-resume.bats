@@ -265,6 +265,16 @@ _store_protocols() { # <dir> <content>
   [[ "$output" == *"DISPATCHER_CRITICS_DIR must be an absolute path, got: critics"* ]]
 }
 
+@test "resume refuses a DISPATCHER_*_DIR override with shell metacharacters (#470)" {
+  setup_worker_wt
+  cd "$WT"
+  _store_resume
+  export DISPATCHER_CRITICS_DIR="$BATS_TEST_TMPDIR/c'; touch pwned; '"
+  run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-store.sh"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"DISPATCHER_CRITICS_DIR must not contain shell metacharacters"* ]]
+}
+
 @test "resume ignores stale reviewers/critics dirs and the launch env carries all four resolved dirs" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

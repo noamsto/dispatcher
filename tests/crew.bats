@@ -173,6 +173,18 @@ EOF
   [ "$(run_crew identity feat/38-thing c1 | jq -r .name)" = "sage" ]
 }
 
+@test "identity: a recorded name or colour outside the codename grammar is not replayed (#470)" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/33-thing","name":"$(touch pwned)","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
+  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/34-thing","name":"nova","color":"green","tmux":"red#(touch pwned)"}' >>"$dir/events.jsonl"
+  for b in feat/33-thing feat/34-thing; do
+    id="$(run_crew identity "$b" c1)"
+    [[ "$(jq -r .name <<<"$id")" =~ ^[a-z]+$ ]]
+    [[ "$(jq -r .tmux <<<"$id")" =~ ^colour[0-9]+$ ]]
+  done
+}
+
 @test "roster: shows the recorded codename without a suffix" {
   dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   mkdir -p "$dir"

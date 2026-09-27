@@ -358,6 +358,12 @@ _resolve_dir() {
     echo "$label: $var must be an absolute path, got: $val" >&2
     exit 1
   fi
+  # The dirs are spliced into launch scripts and their prompts, and a role
+  # launched by --spawn-role inherits this env from the worker (#470).
+  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
+    exit 1
+  fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
     echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
@@ -3125,6 +3131,9 @@ if [ -n "$owner_auth" ]; then
   owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
 fi
 
+# The recorded identity is replayed from the shared bus, so quote it (#470).
+printf -v q_agent_name '%q' "$agent_name"
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -3164,13 +3173,13 @@ elif [ "$agent" = pi ]; then
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 tmux send-keys -t "$pane" "$launch_line" Enter

@@ -1549,6 +1549,15 @@ _store_protocols() { # <dir> <content>
   ! grep -q 'send-keys' <(launch_log)
 }
 
+@test "a DISPATCHER_*_DIR override with shell metacharacters is refused (#470)" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_TMPDIR/p\$(touch pwned)"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "meta dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"DISPATCHER_PROTOCOL_DIR must not contain shell metacharacters"* ]]
+  ! grep -q 'send-keys' <(launch_log)
+}
+
 @test "the launch env unsets every DISPATCHER_*_DIR it does not pin" {
   stub_launch_bins
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
