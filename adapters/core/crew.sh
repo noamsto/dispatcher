@@ -1140,12 +1140,11 @@ await)
   # addressed to <agent> answers its outstanding question, print it, exit 0.
   # --from restricts that to one exact sender id (a lead waiting on one role's
   # verdict); other senders' msgs are neither returned nor marked delivered.
-  # A reply qualifies when it is newer than this session's own latest outbound
-  # msg to the reply's sender (the anchor is per conversation), so a reply that
-  # landed between the question and the await is still delivered (#240), and
-  # newer than the last reply this session was already handed from that sender
-  # (#290, by await or inbox), so a handled reply is never handed back by a later
-  # await. A session that has asked nothing falls back to the await start.
+  # A msg qualifies when this session has not been handed it yet: strictly newer
+  # than the newest msg from that sender already handed to this session (the
+  # per-sender delivered mark, written by await and inbox, #290). No outbound
+  # question filter is applied: a reply that crossed the worker's own question
+  # in flight is unread and must still be delivered (#385).
   # A timeout also exits 0: empty stdout, not the exit code, is the marker.
   # No LLM tokens burned: this is a held bash call, not a
   # spin loop. A late reply is never lost — it stays in the durable log for the
@@ -1205,22 +1204,19 @@ await)
   delivered=$(_await_marks "$crew" "$me")
   while :; do
     if [ -f "$log" ]; then
-      # Anchor per counterpart: a msg from X is due when it is newer than this
-      # session's latest outbound msg to X; a conversation with no outbound from
-      # us falls back to `start`. `-R` + `fromjson?` skips a torn trailing line
-      # (the hard-kill crash mode) instead of aborting the whole read, and no
-      # status row (blocked re-stamp, watchdog) can move the anchor (#240).
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson since "$start" --argjson got "$delivered" '
+      # A msg from X is due when it is newer than the last msg from X this
+      # session was handed (the delivered mark). `-R` + `fromjson?` skips a torn
+      # trailing line (the hard-kill crash mode) instead of aborting the read.
+      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
-          {anchors: {}, cands: []};
-          if ($e.crew_id == $crew and $e.kind == "msg" and $e.from == $me)
-          then .anchors[$e.to] = $e.ts
-          elif ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me and ($from == "" or $e.from == $from))
+          {cands: []};
+          if ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me and ($from == "" or $e.from == $from))
           then .cands += [$e]
           else . end
         )
-        | . as $s
-        | ($s.cands | map(select(.ts > ([($s.anchors[.from] // $since), ($got[.from] // 0)] | max))) | last) // empty
+        | .cands
+        | map(select(.ts > ($got[.from] // 0)))
+        | last // empty
       ' "$log" 2>/dev/null || true)
       [ -n "$ans" ] && {
         _await_record "$crew" "$me" "$ans"
