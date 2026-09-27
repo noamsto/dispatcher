@@ -5600,7 +5600,9 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- 'watch_role' "$DISPATCH"
   [ "$status" -eq 0 ]
-  run grep -F -- 'send-keys -t "$watch_pane" -l' "$DISPATCH"
+  run grep -F -- 'paste-buffer -p' "$DISPATCH"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'load-buffer' "$DISPATCH"
   [ "$status" -eq 0 ]
   # The mechanism is the tmux watcher, not an engine extension.
   run grep -c 'crew-bus.ts' "$DISPATCH"
@@ -6802,7 +6804,7 @@ exit 0
 EOF
   run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
   [ "$status" -eq 0 ]
-  run ! grep -qE 'send-keys|set-option -p -t %6 @crew_state (idle|working)' "$STUB_LOG"
+  run ! grep -qE 'send-keys|load-buffer|paste-buffer|set-option -p -t %6 @crew_state (idle|working)' "$STUB_LOG"
 }
 
 # ---- --role-watch delivery gate (#445) ---------------------------------------
@@ -7269,6 +7271,28 @@ rw_frame_unknown() {
 EOF
 }
 
+# A real unsent draft in the ❯ row (real capture, `capture-pane -e`; the
+# separator after ❯ is U+00A0 nbsp, not a plain space).
+rw_frame_claude_draft() {
+  printf '%s\n' \
+    $'✻ Churned for 36s · done 11:20 AM · 1 shell still running' \
+    $'──────────────────' \
+    $'\033[39m❯\xc2\xa0hello draft text' \
+    $'──────────────────' \
+    $'  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents'
+}
+
+# Ghost prompt-suggestion text in the ❯ row (real capture, `capture-pane -e`;
+# dim SGR wraps the suggestion, distinguishing it from a real draft above).
+rw_frame_claude_ghost() {
+  printf '%s\n' \
+    $'✻ Churned for 36s · done 11:20 AM · 1 shell still running' \
+    $'──────────────────' \
+    $'\033[39m❯\xc2\xa0\033[2mTry "write a test for <filepath>"\033[0m' \
+    $'──────────────────' \
+    $'  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents'
+}
+
 # A pi pane: editor between two rules, then the cwd and stats lines (real
 # capture, pi 0.87.1, no model configured).
 rw_frame_pi_idle() {
@@ -7277,6 +7301,19 @@ rw_frame_pi_idle() {
 ──────────────────────────────────────────────────────────────────────────────
 
 ──────────────────────────────────────────────────────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)                                                        unknown
+EOF
+}
+
+# A pi pane mid-turn: the spinner+status row replaces the top rule (real
+# capture, pi 0.87.1, both during text generation and a live bash tool call).
+rw_frame_pi_live() {
+  cat <<'EOF'
+ pi v0.87.1
+── ⠼ Working ───────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
 ~/git/dispatcher
 0.0%/0 (auto)                                                        unknown
 EOF
@@ -7297,6 +7334,7 @@ _rw_stub() {
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
+esc=$'\033'
 case "$1" in
 display-message)
   case "$*" in
@@ -7313,10 +7351,25 @@ show-options)
   @crew_branch) printf '%s\n' feat/9-x ;;
   esac
   ;;
-capture-pane) cat "$STUB_DIR/frame" ;;
+capture-pane)
+  case " $* " in
+  *' -e '*) cat "$STUB_DIR/frame" ;;
+  *) sed -E "s/${esc}\\[[0-9;]*m//g" "$STUB_DIR/frame" ;;
+  esac
+  ;;
 send-keys)
-  # A one-shot race: the frame flips to $STUB_DIR/frame_after as text is typed.
+  # Unchanged from before Step 1: the old delivery mechanism's one-shot
+  # race trigger, kept alive alongside paste-buffer's below since main
+  # still delivers this way through Step 4.
   if [ "$2 $3 $4" = "-t %6 -l" ] && [ -e "$STUB_DIR/flip" ]; then
+    rm -f "$STUB_DIR/flip"
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  if [ -e "$STUB_DIR/flip" ]; then
     rm -f "$STUB_DIR/flip"
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
   fi
@@ -7327,9 +7380,9 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
-# _rw_start <engine> — run the watcher in the background, then post one
+# _rw_start <engine> [body] — run the watcher in the background, then post one
 # assignment to the role from the lead. $2 is a derived test payload, never a
-# real capture value.
+# real capture value; defaults to "go".
 _rw_start() {
   export STUB_DIR STUB_LOG
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
@@ -7345,13 +7398,25 @@ _rw_stop() {
   wait "$RW_PID" 2>/dev/null || true
 }
 
-_rw_sends() { grep -c '^send-keys -t %6 -l Assignment: go$' "$STUB_LOG" || true; }
+_rw_sends() { grep -cE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" || true; }
 _rw_captures() { grep -c '^capture-pane' "$STUB_LOG" || true; }
+
+_rw_deliveries() { grep -cE '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" || true; }
+_rw_paste_payload() { grep -E '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" | head -1 | sed -E 's/^(paste |send-keys -t %6 -l )//'; }
 
 _rw_wait_sends() {
   local n
   for n in $(seq 1 40); do
     [ "$(_rw_sends)" -ge "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+_rw_wait_deliveries() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_deliveries)" -ge "$1" ] && return 0
     sleep 0.1
   done
   return 1
@@ -7391,7 +7456,7 @@ _rw_wait_captures() {
     _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$fn: never captured"; return 1; }
-    run ! grep -q '^send-keys' "$STUB_LOG"
+    run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
     rm -f "$common/crew/events.jsonl"
   done
 }
@@ -7536,7 +7601,7 @@ _rw_wait_captures() {
     _rw_wait_captures 2
     _rw_stop
     [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
-    run ! grep -q '^send-keys' "$STUB_LOG"
+    run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
   done
 }
 
@@ -7579,7 +7644,7 @@ _rw_wait_captures() {
     _rw_start "$eng"
     _rw_wait_captures 3
     _rw_stop
-    grep -qx 'send-keys -t %6 -l Assignment: go' "$STUB_LOG" || {
+    [ "$(_rw_sends)" -ge 1 ] || {
       echo "$eng/$after_fn: assignment was not typed"; return 1;
     }
     run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
@@ -7670,7 +7735,7 @@ _rw_wait_captures() {
   _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
-  run ! grep -q '^send-keys' "$STUB_LOG"
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
 @test "role-watch: a live turn that ends then receives the assignment once" {
@@ -7710,8 +7775,8 @@ _rw_wait_captures() {
   sleep 1.2
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
-  [ "$(grep -c '^send-keys -t %6 -l Assignment: two$' "$STUB_LOG")" -eq 1 ]
-  [ "$(grep -n '^send-keys -t %6 -l Assignment: go$' "$STUB_LOG" | cut -d: -f1)" -lt "$(grep -n '^send-keys -t %6 -l Assignment: two$' "$STUB_LOG" | cut -d: -f1)" ]
+  [ "$(grep -cE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -nE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -nE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG" | head -1 | cut -d: -f1)" ]
 }
 
 @test "role-watch: a dialog raised after the text is typed is never confirmed" {
@@ -7790,7 +7855,7 @@ _rw_wait_captures() {
   _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_captures)" -ge 2 ]
-  run ! grep -q '^send-keys' "$STUB_LOG"
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
 @test "role-watch: an assignment deferred past --defer-notice tells the lead once" {
@@ -7806,7 +7871,7 @@ _rw_wait_captures() {
   sleep 3.5
   _rw_stop
   [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
-  run ! grep -q '^send-keys' "$STUB_LOG"
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
 @test "role-watch: a role verdict does not flip the role idle while an assignment is queued" {
@@ -7818,6 +7883,83 @@ _rw_wait_captures() {
   _rw_stop
   grep -qF '@crew_state working' "$STUB_LOG"
   run ! grep -qF '@crew_state idle' <(sed -n '/@crew_state working/,$p' "$STUB_LOG")
+}
+
+@test "role-watch: pi defers on a live-turn frame (spinner replaces the top rule)" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_live
+  _rw_start pi
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_sends)" -eq 0 ]
+}
+
+@test "role-watch: a pi live turn that ends then receives the assignment once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_live
+  _rw_start pi
+  sleep 0.8
+  [ "$(_rw_sends)" -eq 0 ]
+  rw_frame_pi_idle >"$STUB_DIR/frame"
+  _rw_wait_sends 1
+  sleep 0.8
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: a real unsent draft in the ❯ row defers" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_claude_draft
+  _rw_start claude
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_sends)" -eq 0 ]
+}
+
+@test "role-watch: ghost text in the ❯ row still delivers" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_claude_ghost
+  _rw_start claude
+  _rw_wait_sends 1
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: assignments queue beyond the cap drop the oldest" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  _rw_start claude m01
+  for n in $(seq 2 53); do
+    body="$(printf 'm%02d' "$n")"
+    jq -nc --arg b "$body" '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: $b}' >>"$common/crew/events.jsonl"
+  done
+  n0="$(_rw_captures)"
+  _rw_wait_captures "$((n0 + 2))"
+  rw_frame_idle >"$STUB_DIR/frame"
+  _rw_wait_deliveries 1
+  _rw_stop
+  [ "$(_rw_paste_payload)" = "Assignment: m04" ]
+  run ! grep -qE '^(paste |send-keys -t %6 -l )Assignment: m0[1-3]$' "$STUB_LOG"
+}
+
+@test "role-watch: pi delivers on an idle frame under LC_ALL=C" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_idle
+  export LC_ALL=C
+  _rw_start pi
+  _rw_wait_sends 1
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+}
+
+@test "role-watch: pi defers on a live-turn frame under LC_ALL=C" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_live
+  export LC_ALL=C
+  _rw_start pi
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_sends)" -eq 0 ]
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {

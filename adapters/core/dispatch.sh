@@ -1322,6 +1322,17 @@ if [ "${1:-}" = "--role-watch" ]; then
   re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
   re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
   re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+  # SGR/CSI stripping regex, built from a raw ESC byte via ANSI-C quoting —
+  # never `\x1b` as escape text in a regex/awk source literal (a GNU
+  # extension; this repo's shell-reviewer already flags `grep -P` the same
+  # way for the same portability reason). Reused by _box_rows.
+  csi_re=$'\033\\[[0-9;]*m'
+  csi_sed="s/${csi_re}//g"
+  # The dim-SGR marker claude wraps a `❯`-row prompt suggestion in (ghost
+  # text), vs. a real unsent draft the user typed: nbsp separator + ESC[2m.
+  # Built from a raw ESC byte via ANSI-C quoting, same reasoning as csi_re.
+  _rw_esc=$'\033'
+  _rw_ghost_marker=$'❯\xc2\xa0'"${_rw_esc}[2m"
 
   _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
@@ -1363,39 +1374,56 @@ if [ "${1:-}" = "--role-watch" ]; then
     printf '%s\n' "$above" | grep -qE "$re_option"
   }
 
-  # _box_rows <text> <first-row-regex> — the input box of a claude or pi pane:
-  # the LAST two `─` rules in the last 30 non-empty lines bound it, the first
-  # row inside must match <first-row-regex>, at most 12 rows sit inside (typed
-  # text wraps onto continuation rows) and 1-5 rows follow the lower rule.
-  # Prints the first inside row, then up to 7 rows above the upper rule. The
-  # rule test is a prefix match, not a character class: a bracket would consume
-  # one byte of `─`, and claude's upper rule may carry a label (`──── reef ─`).
-  # The regex travels in ENVIRON: `awk -v` would eat the backslashes.
+  # _box_rows <text> <first-row-regex> — the input box of a claude or pi
+  # pane: the LAST two `─` rules in the last 30 non-blank lines (blank
+  # determined on the ANSI-stripped form, so this works identically on a
+  # plain `capture-pane -p` or a colored `capture-pane -e` capture) bound
+  # it, the first row inside must match <first-row-regex> against its
+  # STRIPPED text, at most 12 rows sit inside and 1-5 rows follow the lower
+  # rule. Prints the first inside row VERBATIM (colored, if the input was
+  # colored — this is what lets a caller inspect its SGR attributes without
+  # a separate correlation pass), then up to 7 rows above the upper rule
+  # (stripped). The rule test is a prefix match on the stripped form, not a
+  # character class.
   _box_rows() {
-    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | rx="$2" awk '
-      { l[NR] = $0 }
-      END {
-        b = 0; a = 0
-        for (i = NR; i >= 1; i--) if (index(l[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
-        if (!a || b - a < 1) exit 1
-        if (b - a - 1 > 12 || NR - b < 1 || NR - b > 5) exit 1
-        if (b - a == 1 && "" !~ ENVIRON["rx"]) exit 1
-        if (b - a > 1 && l[a + 1] !~ ENVIRON["rx"]) exit 1
-        print (b - a > 1 ? l[a + 1] : "")
-        for (j = a - 1; j >= 1 && j >= a - 7; j--) print l[j]
-      }'
+    printf '%s\n' "$1" |
+      rx="$2" csi="$csi_re" awk '
+        {
+          stripped = $0
+          gsub(ENVIRON["csi"], "", stripped)
+          if (stripped ~ /^[[:space:]]*$/) next
+          n++
+          raw[n] = $0
+          plain[n] = stripped
+        }
+        END {
+          off = (n > 30) ? n - 30 : 0
+          b = 0; a = 0
+          for (i = n; i > off; i--) if (index(plain[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
+          if (!a || b - a < 1) exit 1
+          if (b - a - 1 > 12 || n - b < 1 || n - b > 5) exit 1
+          if (b - a == 1 && "" !~ ENVIRON["rx"]) exit 1
+          if (b - a > 1 && plain[a + 1] !~ ENVIRON["rx"]) exit 1
+          print (b - a > 1 ? raw[a + 1] : "")
+          for (j = a - 1; j > off && j >= a - 7; j--) print plain[j]
+        }'
   }
 
-  # _claude_idle_box <text> — positive idle shape of a claude pane: a box whose
-  # first row is `❯` (not a numbered option), status rows after it
-  # (fx_bgwait_*, fx_session_limit_refusal). A live turn keeps the box drawn, so
-  # a meter line, subagent row or `esc to interrupt` anywhere in the window, or
-  # a spinner line in the 7 rows above the box, vetoes. The spinner check is
-  # positional so a transcript line like `Summary…` cannot wedge an idle pane.
-  # A non-empty `❯` row still counts as idle: a prompt suggestion is ghost text
-  # a plain capture cannot tell from a draft, and only this watcher types here.
+  # _claude_idle_box <text> <colored-text> <own> — positive idle shape of a
+  # claude pane: a box whose first row is `❯` (not a numbered option), status
+  # rows after it (fx_bgwait_*, fx_session_limit_refusal). A live turn keeps
+  # the box drawn, so a meter line, subagent row or `esc to interrupt`
+  # anywhere in the window, or a spinner line in the 7 rows above the box,
+  # vetoes. The spinner check is positional so a transcript line like
+  # `Summary…` cannot wedge an idle pane. `own=1` (the caller's own just-typed
+  # text sitting in the box) counts as idle outright, without inspecting the
+  # `❯` row at all — the escape hatch for the post-type recheck, otherwise the
+  # watcher's own delivered text would defer forever. Otherwise a non-empty
+  # `❯` row is idle only if it is ghost text (a dimmed prompt suggestion,
+  # `_rw_ghost_marker` in the colored `$2` capture) rather than a real unsent
+  # draft; with no colored capture to check, it fails closed (not idle).
   _claude_idle_box() {
-    local tail_n out row above
+    local tail_n out row above draft own="${3:-0}" colored_row
     tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 || true)
     [ -n "$(_meter_line "$tail_n")" ] && return 1
     _has_subrow "$tail_n" && return 1
@@ -1405,16 +1433,45 @@ if [ "${1:-}" = "--role-watch" ]; then
     above=$(printf '%s\n' "$out" | tail -n +2)
     printf '%s\n' "$row" | grep -qE "$re_option" && return 1
     printf '%s\n' "$above" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' && return 1
-    return 0
+    [ "$own" = 1 ] && return 0
+    draft=$(printf '%s\n' "$row" | sed -E $'s/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//')
+    [ -n "$draft" ] || return 0
+    [ -n "$2" ] || return 1 # no colored capture available — fail closed
+    colored_row=$(_box_rows "$2" '^[[:space:]]*❯') || return 1
+    colored_row=$(printf '%s\n' "$colored_row" | head -1)
+    printf '%s\n' "$colored_row" | grep -qF "$_rw_ghost_marker"
+  }
+
+  # _pi_live_turn <text> — a live pi turn replaces the editor's top rule
+  # with a spinner-and-status label row (real capture, pi 0.87.1, both
+  # during text generation and a bash tool call: `── ⠼ Working ──…`),
+  # leaving the box beneath it looking exactly like an idle empty box. A
+  # genuinely idle pi rule is a pure run of `─` (real capture); any
+  # rule-shaped line (starts with `──`) that is NOT entirely dashes is
+  # treated as a live-turn label, generalizing beyond the one literal
+  # status text this plan captured. Checked anywhere in the last 30
+  # non-empty lines, mirroring _claude_idle_box's position-flexible
+  # _meter_line/_has_subrow/"esc to interrupt" checks. Uses index()/gsub()
+  # on the bare glyph, never a quantifier directly on it, so this stays
+  # correct under LC_ALL=C (see _box_rows's own comment on the same trap).
+  _pi_live_turn() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | awk '
+      {
+        if (index($0, "─") != 1) next
+        line = $0
+        gsub(/─/, "", line)
+        if (line !~ /^[[:space:]]*$/) { found = 1; exit }
+      }
+      END { exit (found ? 0 : 1) }'
   }
 
   # _pi_idle_box <text> — positive idle shape of a pi pane, from a real capture
   # (pi 0.87.1): an editor bounded by two `─` rules, blank or holding text, with
   # the cwd and stats rows after the lower rule. A bare shell prompt or a boot
-  # frame has no such box. The pi live-turn frame is not captured, so a running
-  # turn is not vetoed: pi queues typed input.
+  # frame has no such box.
   _pi_idle_box() {
     local out row
+    _pi_live_turn "$1" && return 1
     out=$(_box_rows "$1" '.*') || return 1
     row=$(printf '%s\n' "$out" | head -1)
     printf '%s\n' "$row" | grep -qE "$re_option" && return 1
@@ -1517,7 +1574,7 @@ if [ "${1:-}" = "--role-watch" ]; then
     _is_permission_prompt "$1" && return 1
     _is_prompt "$1" && return 1
     case "$engine" in
-    claude) _claude_idle_box "$1" ;;
+    claude) _claude_idle_box "$1" "$2" "$3" ;;
     codex) _codex_idle_box "$1" ;;
     cursor) _cursor_idle_box "$1" ;;
     pi) _pi_idle_box "$1" ;;
@@ -1527,15 +1584,18 @@ if [ "${1:-}" = "--role-watch" ]; then
 
   # Codex and Cursor must prove the watcher just injected this assignment
   # before Enter is sent.  Their normal ready recognizers intentionally accept
-  # only empty composers. Claude and pi retain their established re-check.
+  # only empty composers. Claude and pi retain their established re-check,
+  # with `own=1` (the caller's own just-pasted text) so claude's ghost-vs-draft
+  # check doesn't fail closed on the text this watcher itself just delivered —
+  # `colored` is the paired `capture-pane -e` frame `_claude_idle_box` needs.
   _role_assignment_confirmed() {
-    local text="$1" assignment="$2"
+    local text="$1" assignment="$2" colored="$3"
     _is_permission_prompt "$text" && return 1
     _is_prompt "$text" && return 1
     case "$engine" in
     codex) _codex_composer "$text" "Assignment: $assignment" ;;
     cursor) _cursor_composer "$text" "Assignment: $assignment" ;;
-    *) _role_pane_ready "$text" ;;
+    *) _role_pane_ready "$text" "$colored" 1 ;;
     esac
   }
 
@@ -1552,11 +1612,16 @@ if [ "${1:-}" = "--role-watch" ]; then
   # Assignments wait here until the pane is ready; one is delivered per tick so
   # the next capture sees the turn it started. `cooldown` skips the tick right
   # after a send, when the pane may not have repainted as busy yet. The text is
-  # typed, the pane re-checked, and only then is Enter sent: a dialog raised in
-  # between (a subagent's) is never confirmed. Text left in the pane by a failed
-  # re-check is cleared with C-u before the retry. `pending` lives in this
-  # process only; the watcher exits with its pane.
+  # pasted via a tmux load-buffer/paste-buffer round trip (bracketed paste,
+  # not send-keys -l, so the pane's shell/editor sees it as one paste rather
+  # than a burst of individual keystrokes), the pane re-checked, and only then
+  # is Enter sent: a dialog raised in between (a subagent's) is never
+  # confirmed. Text left in the pane by a failed re-check is cleared with C-u
+  # before the retry. `pending` lives in this process only, capped at
+  # `pending_max` (oldest dropped silently once full); the watcher exits with
+  # its pane.
   pending=()
+  pending_max=50
   cooldown=0
   unsent=0
   lead_id=""
@@ -1575,6 +1640,7 @@ if [ "${1:-}" = "--role-watch" ]; then
             body="$(printf '%s' "$ev" | jq -r '.body // ""')"
             [ -n "$body" ] || continue
             lead_id="$(printf '%s' "$ev" | jq -r '.from // ""')"
+            [ "${#pending[@]}" -lt "$pending_max" ] || pending=("${pending[@]:1}")
             pending+=("$body")
             watch_set_state working
           elif [ "${#pending[@]}" -eq 0 ]; then
@@ -1592,20 +1658,32 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
-      frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
-      if _role_pane_ready "$frame" && _role_assignment_safe "${pending[0]}"; then
+      frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
+      frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
+      if _role_pane_ready "$frame" "$frame_e" "$unsent" && _role_assignment_safe "${pending[0]}"; then
         [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
-        tmux send-keys -t "$watch_pane" -l "Assignment: ${pending[0]}" 2>/dev/null || true
-        frame="$(tmux capture-pane -p -t "$watch_pane" 2>/dev/null || true)"
-        if _role_assignment_confirmed "$frame" "${pending[0]}"; then
-          tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
-          pending=("${pending[@]:1}")
-          unsent=0
-          cooldown=1
-          deferred_since=0
-          deferred_told=0
+        buf="rw-assign-$$"
+        if printf 'Assignment: %s' "${pending[0]}" | tmux load-buffer -b "$buf" - 2>/dev/null; then
+          tmux paste-buffer -p -d -b "$buf" -t "$watch_pane" 2>/dev/null || true
+          frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
+          frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
+          if _role_assignment_confirmed "$frame" "${pending[0]}" "$frame_e"; then
+            tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+            pending=("${pending[@]:1}")
+            unsent=0
+            cooldown=1
+            deferred_since=0
+            deferred_told=0
+          else
+            unsent=1
+          fi
         else
-          unsent=1
+          : # load-buffer failed (tmux hiccup); leave $unsent untouched — do
+            # NOT set it to 1 here. Nothing was typed, so the box's current
+            # content is whatever it was before this tick, not necessarily the
+            # watcher's own text; setting unsent=1 would make next tick's
+            # pre-type check pass with own=1 and issue a C-u that could wipe an
+            # unrelated real draft.
         fi
       else
         [ "$deferred_since" -gt 0 ] || deferred_since="$(date +%s)"
