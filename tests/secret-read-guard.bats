@@ -629,6 +629,79 @@ assert_allow_within() {
   assert_deny_within_each_awk 3500 "$(claude_bash "cat .env ${body}")"
 }
 
+# The awk template strip must stay byte-for-byte what sed -E did with
+# template_re: an over-strip there is an allow. sed is the oracle, built from the
+# guard's own template_re so a word added to one and not the other fails here.
+@test "secret-read-guard: the awk template strip equals the sed -E strip it replaced, under every awk" {
+  local template_re awk_strip line mode name awk_path expected got
+  eval "$(grep -m1 '^template_re=' "$GUARD")"
+  eval "$(sed -n "/^awk_strip='/,/^}'\$/p" "$GUARD")"
+  local -a lines=(
+    'cat .env.example' 'cat .env.template .env.sample .env.dist' '.env.env.example'
+    '.env..example' '.env.example.example' '.env.examples' '.env.examples.foo'
+    '.env.example.local' '.env.example*' '.env.example?' '.env.example[' '.env.example,x'
+    '.env.example/.env.example' 'x.env.sample-' '.foo/.env.dist' 'a.env.example.' '.env.'
+    '.env.example.env' '.example.env.example' '.env.x.env.example.y.dist' '.env.dist2.dist'
+    '.env.local .env.example {.env.example,.env}' '.env .env.example .env' 'env.example'
+    '.env.example.template.' 'cat .env.example; .env.sample' '.env.a.b.c.example' '' '.' '..'
+  )
+  local -a modes=(0 1) awks=("")
+  for name in mawk nawk busybox-awk; do
+    awk_path=$(command -v "$name") || continue
+    mkdir -p "$BATS_TEST_TMPDIR/$name"
+    ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
+    awks+=("$BATS_TEST_TMPDIR/$name")
+  done
+  for line in "${lines[@]}"; do
+    for mode in "${modes[@]}"; do
+      if [[ $mode == 0 ]]; then
+        expected=$(sed -E "s/$template_re//g" <<<"$line")
+      else
+        expected=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$line")
+      fi
+      for awk_path in "${awks[@]}"; do
+        got=$(PATH="${awk_path:+$awk_path:}$PATH" awk -v wide="$mode" "$awk_strip" <<<"$line")
+        [[ $got == "$expected" ]] || {
+          echo "wide=$mode ${awk_path:-default awk}: '$line' -> '$got', sed gives '$expected'" >&2
+          return 1
+        }
+      done
+    done
+  done
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 3 s under every awk" {
+  local body
+  body=$(printf '.env%.0s' $(seq 1 25000))
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_bash "cat .env ${body} .env.example")"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 3 s under every awk" {
+  local body
+  body=$(printf '.env%.0s' $(seq 1 25000))
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 3 s under every awk" {
+  local body
+  body=$(printf '.env%.0s' $(seq 1 25000))
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 100 KB chain and a template name with no credential read allow in under 3 s" {
+  local body
+  body=$(printf '.env%.0s' $(seq 1 25000))
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_allow_within 3000 "$(claude_bash "echo x${body} y.env.example")"
+}
+
 # ---------------------------------------------------------------------------
 # Unparseable payloads fail open but loud: exit 1, stderr, nothing on stdout
 # ---------------------------------------------------------------------------
@@ -2117,84 +2190,90 @@ EOF
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
 }
 
-# \4 appears only in the wide name strip's sed script (credential_read and the
-# grep branch), never in the template-anywhere one, so the sed log tells them
-# apart.
+# The wide name strip is the one template-stripping awk run with -v wide=1 (the
+# narrow one gets wide=0), so an awk shim's log tells them apart.
 @test "secret-read-guard: the wide name strip runs only when the template-anywhere name test misses" {
-  local real_sed log
-  real_sed=$(command -v sed)
-  log="$BATS_TEST_TMPDIR/sed.log"
+  local real_awk log
+  real_awk=$(command -v awk)
+  log="$BATS_TEST_TMPDIR/awk.log"
   mkdir -p "$BATS_TEST_TMPDIR/bin"
-  cat >"$BATS_TEST_TMPDIR/bin/sed" <<EOF
+  cat >"$BATS_TEST_TMPDIR/bin/awk" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >>"$log"
-exec "$real_sed" "\$@"
+[[ \${2:-} == wide=1 ]] && echo wide >>"$log"
+exec "$real_awk" "\$@"
 EOF
-  chmod +x "$BATS_TEST_TMPDIR/bin/sed"
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
 
   local old_path=$PATH
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 
   # (a) Both `.env` names are caught by the narrow regex once the template
-  # suffix is stripped, so the wide sed never runs.
+  # suffix is stripped, so the wide strip never runs.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_bash 'cat .env .env.example')"
   assert_deny_claude
-  run grep -qF '\4' "$log"
+  run grep -qx wide "$log"
   [ "$status" -ne 0 ]
 
   # (b) The narrow regex requires a space/quote/=// before `.env`; `{.env,`
-  # has none, so only the wide sed (run exactly once) catches it.
+  # has none, so only the wide strip (run exactly once) catches it.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_bash 'cat {.env,.env.local}')"
   assert_deny_claude
-  [ "$(grep -cF '\4' "$log")" -eq 1 ]
+  [ "$(grep -cx wide "$log")" -eq 1 ]
 
   # (c) Grep tool: the narrow regex hits on both the path and the glob
-  # (a bare `.env` needs no wide fallback here), so the wide sed never runs
+  # (a bare `.env` needs no wide fallback here), so the wide strip never runs
   # for either field.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_grep "config/.env" "*.env" "x" content)"
   assert_deny_claude
-  run grep -qF '\4' "$log"
+  run grep -qx wide "$log"
   [ "$status" -ne 0 ]
 
   # (d) Grep tool, glob field: `.env.examples` is not a template name (it
   # ends in "examples", not "example"), so the narrow regex misses and the
-  # wide sed is needed to catch it.
+  # wide strip is needed to catch it.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_grep "" ".env.examples" "x" content)"
   assert_deny_claude
-  run grep -qF '\4' "$log"
+  run grep -qx wide "$log"
   [ "$status" -eq 0 ]
 
   # (e) Bash, across spaces: the top level misses the narrow test (`x.env` has
-  # no leading separator) but the `-c` body hits it, so the wide sed must not
+  # no leading separator) but the `-c` body hits it, so the wide strip must not
   # run on the top level once another space is denied.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_bash 'bash -c cat\ \.env; x.env')"
   assert_deny_claude
-  run grep -qF '\4' "$log"
+  run grep -qx wide "$log"
   [ "$status" -ne 0 ]
 
   # (f) Grep tool, across fields: the path hits the narrow test, so the wide
-  # sed must not run on the glob that missed it.
+  # strip must not run on the glob that missed it.
   : >"$log"
   run --separate-stderr run_guard <<<"$(claude_grep "config/.env" "*.ts" "x" content)"
   assert_deny_claude
-  run grep -qF '\4' "$log"
+  run grep -qx wide "$log"
   [ "$status" -ne 0 ]
 
   PATH=$old_path
 }
 
-@test "secret-read-guard: a failing sed in the name test fails loud" {
+@test "secret-read-guard: a failing template strip in the name test fails loud" {
+  local real_awk
+  real_awk=$(command -v awk)
   mkdir -p "$BATS_TEST_TMPDIR/bin"
-  cat >"$BATS_TEST_TMPDIR/bin/sed" <<'EOF'
+  cat >"$BATS_TEST_TMPDIR/bin/awk" <<EOF
 #!/usr/bin/env bash
-exit 4
+for a in "\$@"; do
+  case "\$a" in
+    *'function tword'*) exit 4 ;;
+  esac
+done
+exec "$real_awk" "\$@"
 EOF
-  chmod +x "$BATS_TEST_TMPDIR/bin/sed"
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
 
   local old_path=$PATH
   PATH="$BATS_TEST_TMPDIR/bin:$PATH"
