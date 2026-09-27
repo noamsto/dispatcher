@@ -354,10 +354,10 @@ list is narrower and is **not** probed by `refresh-models`, so the cursor
 execute/escalate slugs in the model map are launch-list names, not guaranteed
 Task-spawnable.
 
-Recorded Task roster, 2026-09-23, cursor-agent 2026.09.18-9a7762b:
+Recorded Task roster, 2026-09-27, cursor-agent 2026.09.26-dd393fe:
 `claude-fable-5-1-thinking-high`, `claude-opus-5-5-medium`,
 `claude-opus-5-thinking-high`, `composer-2.5`, `composer-2.5-fast`,
-`cursor-grok-4.6-high`, `gemini-3.8-flash-high`, `gpt-5.6-sol-medium`,
+`cursor-grok-4.6-medium`, `gemini-3.8-flash-high`, `gpt-5.6-sol-medium`,
 `grok-4.7-medium`, `muse-spark-1.3-high`. `grok-4.7-medium` is the only
 grok-4.7 slug on it.
 
@@ -366,15 +366,15 @@ or "could not be resolved to a valid subagent model" is not retried on the same
 slug. Walk the named slug's candidate list in order and spawn the first the
 roster accepts — the refusal error quotes the live roster, so read it instead of
 probing. Candidates are the same burn class or higher, never lower. Classes:
-`grok-4.7-low` cheap; `grok-4.7-medium` standard; `grok-4.7-high`,
-`cursor-grok-4.6-high`, `claude-opus-5-thinking-high` premium;
+`grok-4.7-low` cheap; `grok-4.7-medium`, `cursor-grok-4.6-medium` standard;
+`grok-4.7-high`, `claude-opus-5-thinking-high` premium;
 `claude-fable-5-1-thinking-high` above premium.
 
 | named | candidates, in order |
 | ----- | -------------------- |
-| `grok-4.7-low` | `grok-4.7-medium`, `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
-| `grok-4.7-medium` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high` |
-| `grok-4.7-high` | `cursor-grok-4.6-high`, `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |
+| `grok-4.7-low` | `grok-4.7-medium`, `cursor-grok-4.6-medium`, `claude-opus-5-thinking-high` |
+| `grok-4.7-medium` | `cursor-grok-4.6-medium`, `claude-opus-5-thinking-high` |
+| `grok-4.7-high` | `claude-opus-5-thinking-high`, `claude-fable-5-1-thinking-high` |
 
 Walking the list is the retry: the same slug is never respawned. A named slug
 without a row uses the row of its base slug: drop a `-fast` suffix (speed, not
