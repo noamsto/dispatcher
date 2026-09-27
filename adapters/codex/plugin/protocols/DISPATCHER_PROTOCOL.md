@@ -313,7 +313,11 @@ instead of making the worker rebuild its position from `SPEC.md`, `PLAN.md` and
 tuple back from `WORKER_TASK.md` rather than having you restate it. A resumed
 worker keeps its crew and posts a `resume` row to the bus; if you are live it
 also messages you, so a worker you had written off as `failed` will tell you it
-is back.
+is back. Resume trusts the worktree only as far as the record `dispatch` wrote
+for it (see **Trust boundary** below): a worktree whose crew dir, branch or git
+dir no longer matches that record — or one with no record, i.e. dispatched
+before resume anchoring existed — is refused. Re-dispatch such a task onto its
+branch instead; the worktree carries over under `resume: true`.
 
 - **Tracker.** Pass a **Linear id** (e.g. `ENG-6789`) as the token right after the model for Linear-tracked repos (GitHub issues disabled) — it branches `eng-<n>-<slug>` and stamps `Closes ENG-<n>`, no `gh` call. On GitHub-issue repos, pass an **existing issue number** (`#42` or `42`) to reuse it — it branches `feat/42-<slug>` and stamps `Closes #42`, no `gh` call. Omit the tracker entirely and `dispatch` mints a fresh issue (`feat/<n>-<slug>`, `Closes #<n>`); if issue creation fails it aborts instead of half-scaffolding. Pick in this order: the issue the task came from, if there is one, by its number; else, when the task is one slice of a larger issue, mint with `--parent <N>` so it lands as a sub-issue of #N; else mint plainly. A mint posts the **summary** of `DISPATCH_SPEC` — its text before the first `## ` heading — as the issue body, so open every spec you mint from with a short paragraph written for someone outside this crew: what changes and why, no local paths, session links or private repo names. `dispatch` refuses to mint without one, and refuses a summary the public-leak guard flags; the rest of the spec is the worker's brief and never reaches the issue. `--parent` is refused beside an issue number, a Linear id or `--pr`. The slug behind both forms is a fixed transform — lowercase, non-alphanumeric runs collapsed to a single dash, first 40 characters, edge dashes stripped (`dispatch.sh:553`) — and it matters past dispatch's own scaffolding: a resuming dispatcher must compute the identical branch to find evidence of a worker already running, and `DISPATCH_PRECHECK` can't hand it back, since precheck exits at `:548`, above the slug. Both branch forms, with their sources: GitHub `feat/<issue>-<slug>` (`dispatch.sh:563`); Linear `<linear-id lowercased>-<slug>`, with **no** `feat/` prefix (`dispatch.sh:656`). Before dispatching a held task — or resuming anything whose issue or branch might already be live — run the three-way duplicate guard: a `kind:"claim-issue"` row for `task.ref`, a `kind:"dispatch"` row for `task.branch`, or an existing worktree for `task.branch`. Any hit means the dispatch already started: inspect that worker, `dispatch resume` it if it's dead, and never dispatch a second one or release the hold on a guess. **Check 1 is GitHub-only** — a Linear dispatch writes no claim row — so on Linear repos checks 2 and 3 are the whole guard, which is exactly why `task.branch` must be recorded in the branch form `dispatch` will actually use.
 - **Claim (GitHub-issue repos only).** Every issue here is already assigned to the repo owner, so assignee can't signal a claim — the `dispatched` label does instead. An existing-issue dispatch checks that label before touching anything: already there and the resolved branch doesn't exist, it looks for live evidence — a local or `origin` branch matching `feat/<issue>-*`, a `kind:"dispatch"` row for such a branch, or a `claim-issue` row whose recorded dispatcher pid is a live claimant (see below) — and aborts naming the issue and the evidence if it finds any (no branch/worktree/window; an unreachable `origin` counts as evidence, so it fails closed), but with none of that the label is stale (an interrupted dispatch strands it, #304), so it says so on stderr and re-claims; already there and the branch exists, it resumes that branch and re-adds the label; free, `dispatch` adds it before any scaffolding. A minted issue is stamped at creation. `crew reap` removes the label when it reclaims a worker whose PR merged or closed, resolving the issue from the PR's `closingIssuesReferences`; `crew adopt` on a dead-pid crew releases that crew's own recorded claims the same way. A pid counts as a live claimant only when all of these hold: the process exists (`kill -0` succeeds or fails EPERM, else `ps -p` sees it, so a foreign-uid dispatcher stays live even under `hidepid=2`); its `ps -ww -o args=` contains the substring `dispatch` anywhere (a live unrelated process such as pid 1 is not a claimant, but the match is a substring, not a check for the dispatch shell itself); it did not start after the row's `ts` (2s slack — a later start is pid reuse); and the row is under 24 h old, when it has a numeric `ts` (an older row with no branch or dispatch row behind it is abandoned whatever its pid). Anything unreadable fails closed and counts as live: unreadable args, a missing or non-numeric row `ts`, an unreadable process start time, an unreadable events log. Residuals: a forged or stray row naming any live process with `dispatch` in its command line (an editor or tmux session in this repo qualifies) that started before the row's `ts` blocks the self-heal for up to 24 h, and indefinitely when the row has no numeric `ts` (it is never aged out or checked for pid reuse), and a claimant still setting up after 24 h with no branch or dispatch row is treated as abandoned. The label was never a lock, and the self-heal does not make it one: two simultaneous heals with differently worded titles take different per-branch locks and can both proceed (the same window as an unlabelled read-then-add-label race), and a crew in another clone or on another machine is invisible until its worker pushes a `feat/<issue>-*` branch — the dispatcher is single-clone per repo by design. Linear-tracked dispatches are unaffected — Linear has its own status/assignee semantics.
@@ -347,7 +351,8 @@ is back.
   informational only (nothing reads them back as a grant). The record is not a
   boundary against the worker itself: a same-user worker could run `dispatch` or
   `claude` on its own. The real boundary is Claude's own path gating, with every
-  permission dialog `permission-check` does not approve going to the human.
+  permission dialog `permission-check` does not approve going to the human — see
+  **Trust boundary** below for which worker inputs the harness must still anchor.
   A re-dispatch onto the same branch with no `--add-dir` carries the existing grants
   forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
   `--spawn-role` keep whatever is recorded, but every launch — resume and
@@ -380,6 +385,41 @@ is back.
   wait for its `failed`, then re-dispatch onto its branch with `--add-dir
   <narrowest dir>`: the re-dispatch records the grant, and the new session
   gets it.
+- **Trust boundary (worker-controlled inputs).** Every actor shares one uid, so
+  the only boundary between a worker and everything else is its engine's
+  permission layer — and only claude has one: its auto-mode classifier judges
+  each Bash call by its text, and its path gate prompts outside the working dirs.
+  codex, cursor and pi workers have no boundary to defend. So harness hardening
+  has one job: never **launder** a claude worker's action — turn something the
+  classifier approves on its face into an effect it never evaluates. An input is
+  in scope when all three hold: (1) the worker sets it without a call whose text
+  reveals the effect — an Edit/Write in its working dirs (task-doc header, the
+  worktree's `.git` gitlink or HEAD, its artifacts), or an env/argument/cwd of a
+  sanctioned `dispatch`/`crew` command whose text does not name the effect (a
+  pane id meaning "another worker's window"); (2) harness code consumes it
+  outside the worker's own gated session — the dispatcher's shell, a launch or
+  exit script, a nohup'd watcher, another worker's window; (3) the result is code
+  execution there, a grant or identity the dispatcher never chose, or an action
+  on another worker's resources. Out of scope: anything only reachable through a
+  call that names its effect (`tmux set-option @crew_…`, a write under the crew
+  dir or `~/.local/share/crew` by path, `claude --add-dir`, `tmux send-keys -t`,
+  a `crew msg` addressed to another branch's `worker:`/`role:` id — the bus
+  sender is self-asserted, and a role's watcher types what it is sent), which
+  the classifier sees; an effect that stays in the worker's own session or
+  grid (its own roster, its own watchers' bus, its own review — the human PR
+  review is that boundary); and values the dispatcher resolved and recorded
+  (the protocol dirs). The rule for harness code this implies: **anchor, don't
+  discover** — take crew dir, branch, window and pane identity from dispatcher
+  state (the window's `@crew_dir`/`@crew_branch`/`@crew_role` stamps, records
+  under the crew dir, the worktree record in
+  `${XDG_DATA_HOME:-~/.local/share}/crew/worktrees`, process ancestry), never from
+  git discovery inside a worker worktree, the worker's env, or a caller-supplied
+  pane id. Accordingly `--spawn-role`, `--reap-roles` and `--role-exited` act
+  only on a pane whose shell is an ancestor of the calling process (they refuse
+  under a pid-namespaced sandbox, which hides it); `--role-watch` serves only a
+  pane stamped with its role in a window stamped with its branch, never a lead;
+  and `dispatch resume` refuses a worktree whose discovered crew dir, branch or
+  git dir differs from the record `dispatch` wrote when it launched there.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`

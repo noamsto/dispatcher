@@ -33,6 +33,15 @@ _uuid() {
   printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
 }
 
+# _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
+# genuine crew dir, branch and gitdir, keyed by <wt>'s own realpath. Duplicated
+# from dispatch.sh (standalone build); parity-tested.
+_worktree_anchor_path() {
+  local key
+  key="$(printf %s "$(realpath -e -- "$1")" | sha256sum | cut -c1-64)"
+  printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
+}
+
 # _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
 # it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
 # them. Mirrors the grant-record checks in dispatch.sh.
@@ -471,6 +480,31 @@ _require_safe() { # $1=label $2=value $3=regex
 
 _require_safe "branch name" "$branch" "$_branch_re"
 
+# crew_dir is read by the escalation checks and the lead-session lookup below;
+# the directory itself is only created once --print has had its exit.
+crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+
+# crew_dir and branch above came through the worktree's gitlink and HEAD, both
+# worker-writable, so they are trusted only once they match the record dispatch
+# wrote for this worktree (#518).
+anchor="$(_worktree_anchor_path "$wt_path")"
+if [ -L "$anchor" ] || [ ! -f "$anchor" ]; then
+  echo "dispatch resume: no dispatcher record for $wt_path (dispatched before resume anchoring, or not by dispatch) — re-dispatch the task onto its branch; the worktree carries over" >&2
+  exit 1
+fi
+mapfile -t _anchor_lines <"$anchor"
+_wt_real="$(realpath -e -- "$wt_path")"
+_crew_dir_real="$(realpath -m -- "$crew_dir")"
+_gitdir_real="$(realpath -e -- "$(git rev-parse --absolute-git-dir)")"
+_anchor_mismatch() { # $1=label $2=discovered $3=recorded
+  echo "dispatch resume: this worktree's $1 ($2) does not match the dispatcher's record ($3) — refusing to resume" >&2
+  exit 1
+}
+[ "${_anchor_lines[0]:-}" = "$_wt_real" ] || _anchor_mismatch "worktree path" "$_wt_real" "${_anchor_lines[0]:-}"
+[ "${_anchor_lines[1]:-}" = "$_crew_dir_real" ] || _anchor_mismatch "crew dir" "$_crew_dir_real" "${_anchor_lines[1]:-}"
+[ "${_anchor_lines[2]:-}" = "$branch" ] || _anchor_mismatch "branch" "$branch" "${_anchor_lines[2]:-}"
+[ "${_anchor_lines[3]:-}" = "$_gitdir_real" ] || _anchor_mismatch "git dir" "$_gitdir_real" "${_anchor_lines[3]:-}"
+
 # Header reader. `cut -d' ' -f2-` keeps values containing spaces (title), and
 # -m1 pins the first occurrence so a value echoed inside the ## Task body
 # cannot shadow the header.
@@ -712,10 +746,6 @@ _prior_failed_escalation_available() {
   ' "$events" >/dev/null 2>&1 || return 1
   return 0
 }
-
-# crew_dir is read by the escalation checks and the lead-session lookup below;
-# the directory itself is only created once --print has had its exit.
-crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
 
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)

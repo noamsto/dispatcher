@@ -85,6 +85,27 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
+# anchor_path_for <wt> — the dispatcher-owned anchor path for <wt>, as
+# dispatch-resume.sh's _worktree_anchor_path computes it.
+anchor_path_for() {
+  local key
+  key="$(printf %s "$(realpath -e "$1")" | sha256sum | cut -c1-64)"
+  printf '%s/crew/worktrees/%s\n' "$XDG_DATA_HOME" "$key"
+}
+
+# write_anchor <wt> [crew_dir] [branch] [gitdir] — write the dispatcher-owned
+# anchor entry that dispatch-resume.sh's #518 check reads, keyed by <wt>'s own
+# realpath. Defaults mirror a genuine worktree of $TEST_REPO.
+write_anchor() {
+  local wt="$1" cdir="${2:-}" br="${3:-}" gdir="${4:-}" path
+  [ -n "$cdir" ] || cdir="$(realpath -m "$TEST_REPO/.git/crew")"
+  [ -n "$br" ] || br="$(git -C "$wt" branch --show-current)"
+  [ -n "$gdir" ] || gdir="$(realpath -e "$(git -C "$wt" rev-parse --absolute-git-dir)")"
+  path="$(anchor_path_for "$wt")"
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n%s\n%s\n%s\n' "$(realpath -e "$wt")" "$cdir" "$br" "$gdir" >"$path"
+}
+
 # A worktree that looks like a live worker's: its own branch, its own
 # directory, and a task document with a full header.
 setup_worker_wt() { # [extra header lines...]
@@ -100,6 +121,7 @@ setup_worker_wt() { # [extra header lines...]
     printf '\n## Task\n\nthe original body\n'
   } >"$WT/WORKER_TASK.md"
   export WT
+  write_anchor "$WT"
 }
 
 @test "refuses outside a worktree carrying a task document" {
@@ -153,6 +175,80 @@ setup_worker_wt() { # [extra header lines...]
   run run_resume
   [ "$status" -eq 1 ]
   [[ "$output" == *"detached HEAD"* ]]
+}
+
+# _assert_refused_before_discovery <status var already run> — no precheck, no
+# window/pane action happened: the anchor check must run before all of them.
+_assert_refused_before_discovery() {
+  [ "$status" -eq 1 ]
+  [ -f "$STUB_LOG" ] || return 0
+  if grep -qE '^standard sonnet |new-window|set-window-option|send-keys' "$STUB_LOG"; then
+    return 1
+  fi
+}
+
+@test "refuses resume with no dispatcher anchor for the worktree (#518)" {
+  setup_worker_wt
+  rm -f "$(anchor_path_for "$WT")"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"no dispatcher record for $WT"* ]]
+  [[ "$output" == *"re-dispatch the task"* ]]
+}
+
+@test "refuses when the gitlink points at a worker-built admin dir (crew dir mismatch, #518)" {
+  setup_worker_wt
+  # A fake repo with the same branch name, so HEAD still resolves — the point
+  # under test is a crew-dir mismatch, not a broken HEAD.
+  git init -q -b main "$BATS_TEST_TMPDIR/fake"
+  git -C "$BATS_TEST_TMPDIR/fake" config user.email test@example.com
+  git -C "$BATS_TEST_TMPDIR/fake" config user.name test
+  git -C "$BATS_TEST_TMPDIR/fake" commit -q --allow-empty -m init
+  git -C "$BATS_TEST_TMPDIR/fake" branch feat/7-a-thing
+  admin="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  cp -r "$admin" "$BATS_TEST_TMPDIR/fake-admin"
+  realpath -e "$BATS_TEST_TMPDIR/fake/.git" >"$BATS_TEST_TMPDIR/fake-admin/commondir"
+  printf 'gitdir: %s\n' "$BATS_TEST_TMPDIR/fake-admin" >"$WT/.git"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"this worktree's crew dir"* ]]
+  [[ "$output" == *"does not match the dispatcher's record"* ]]
+}
+
+@test "refuses when the gitlink points at another genuine worktree's admin dir (#518)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" worktree add -q -b feat/8-other "$TEST_REPO/wt2" HEAD
+  admin2="$(git -C "$TEST_REPO/wt2" rev-parse --absolute-git-dir)"
+  printf 'gitdir: %s\n' "$admin2" >"$WT/.git"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"does not match the dispatcher's record"* ]]
+  [[ "$output" == *"this worktree's branch"* || "$output" == *"this worktree's git dir"* ]]
+}
+
+@test "refuses when HEAD is switched to another branch (#518)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" branch other-branch
+  git -C "$WT" symbolic-ref HEAD refs/heads/other-branch
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"this worktree's branch (other-branch)"* ]]
+  [[ "$output" == *"does not match the dispatcher's record (feat/7-a-thing)"* ]]
+}
+
+@test "refuses when the anchor file is a symlink (#518)" {
+  setup_worker_wt
+  path="$(anchor_path_for "$WT")"
+  mv "$path" "$BATS_TEST_TMPDIR/anchor-real"
+  ln -s "$BATS_TEST_TMPDIR/anchor-real" "$path"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"no dispatcher record for $WT"* ]]
 }
 
 @test "refuses when the header lacks the launch tuple" {
@@ -457,6 +553,16 @@ _assert_resume_bound() {
     [ -n "$a" ]
     [ "$a" = "$b" ]
   done
+}
+
+# _worktree_anchor_path is the format contract between dispatch (writer) and
+# dispatch-resume (reader); a drift here would make resume verify against a
+# path dispatch never wrote to.
+@test "_worktree_anchor_path is byte-identical between dispatch.sh and dispatch-resume.sh" {
+  a="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
+  b="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
 }
 
 # The lead-session helpers are duplicated for the same reason; one test diffs
