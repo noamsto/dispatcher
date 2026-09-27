@@ -208,6 +208,7 @@ EOF
 }
 
 @test "posts one gh issue comment for a newly minted GitHub issue" {
+  mint_spec
   stub_launch_bins
   stub_gh_full "" 77
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint comment test"

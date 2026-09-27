@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -88,6 +88,27 @@ pace_rule_target() {
       exit 1
     fi
   fi
+}
+
+# _mint_leak_check <body> — run public-leak-guard over a minted issue's body as
+# the `gh issue create` it becomes, and refuse on any verdict: the guard asks,
+# and dispatch has nobody to ask. flake.nix bakes the guard's store path; a raw
+# run without PUBLIC_LEAK_GUARD skips the check and says so.
+_mint_leak_check() {
+  local guard="${PUBLIC_LEAK_GUARD:-@publicLeakGuard@}" body_file verdict
+  if [ ! -r "$guard" ]; then
+    echo "dispatch: public-leak guard not found; minted issue body not checked" >&2
+    return 0
+  fi
+  body_file="$(mktemp)"
+  printf '%s\n' "$1" >"$body_file"
+  verdict="$(jq -nc --arg cmd "gh issue create --body-file $body_file" --arg cwd "$PWD" \
+    '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$cmd},cwd:$cwd}' |
+    bash "$guard" 2>/dev/null || true)"
+  rm -f "$body_file"
+  [ -n "$verdict" ] || return 0
+  echo "dispatch: refusing to mint — $(printf '%s' "$verdict" | jq -r '.hookSpecificOutput.permissionDecisionReason')" >&2
+  exit 1
 }
 
 # Ensure the `dispatched` claim-marker label exists. A no-op if it already
@@ -1573,6 +1594,7 @@ effort=""
 linear_id=""
 gh_issue=""
 pr_number=""
+parent_issue=""
 base_ref=""
 base_flag=""
 add_dir_flags=()
@@ -1708,6 +1730,14 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --parent)
+    parent_issue="${2:-}"
+    [ -n "$parent_issue" ] || {
+      echo "dispatch: --parent needs an issue number" >&2
+      exit 1
+    }
+    shift 2
+    ;;
   --review)
     kind=review
     shift
@@ -1787,6 +1817,22 @@ fi
 if [ -n "$base_flag" ] && [ -n "$pr_number" ]; then
   echo "dispatch: --base cannot combine with --pr (--pr already fixes the base from the PR)" >&2
   exit 1
+fi
+
+if [ -n "$parent_issue" ]; then
+  if [[ $parent_issue =~ ^#?[0-9]+$ ]]; then
+    parent_issue="$(_canonical_number "$parent_issue")"
+  else
+    parent_issue=""
+  fi
+  [ -n "$parent_issue" ] || {
+    echo "dispatch: --parent needs a positive issue number" >&2
+    exit 1
+  }
+  if [ -n "$linear_id" ] || [ -n "$gh_issue" ] || [ -n "$pr_number" ]; then
+    echo "dispatch: --parent only applies to a minted issue — drop it, or drop the Linear id, issue token or --pr" >&2
+    exit 1
+  fi
 fi
 
 # Reject before scaffolding: without a PR there is no head to attach to, and a
@@ -2489,6 +2535,23 @@ if [ -n "${DISPATCH_PRECHECK:-}" ]; then
   exit 0
 fi
 
+# A minted issue's body is the spec's summary — its text before the first `##`
+# heading, written for someone outside this crew. The rest of the spec is the
+# worker's own brief and stays out of the tracker. Past the precheck, so a resume
+# (which never mints) is not held to it, and before the first side effect, so a
+# refusal leaves nothing behind.
+mint_body=""
+if [ -z "$linear_id" ] && [ -z "$gh_issue" ] && [ -z "$pr_number" ]; then
+  if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "$DISPATCH_SPEC" ]; then
+    mint_body="$(awk '/^## /{exit} {print}' "$DISPATCH_SPEC" | sed '/./,$!d')"
+  fi
+  [ -n "$mint_body" ] || {
+    echo "dispatch: minting an issue needs a summary — open \$DISPATCH_SPEC with a paragraph for an outside reader (before its first '## ' heading), or pass an existing issue number" >&2
+    exit 1
+  }
+  _mint_leak_check "$mint_body"
+fi
+
 # Seed once per run, before any window is created: the lead and its role panes
 # share this one seed. Lazy roles are seeded on demand by --spawn-role instead.
 if [ "$agent" = pi ]; then
@@ -2701,7 +2764,9 @@ else
     # $branch was already computed by the hoist above the claim gate.
     closes="Closes #$gh_issue"
   else
-    url=$(gh issue create --assignee @me --title "$title" --body "Dispatched worker task." 2>/dev/null || true)
+    parent_args=()
+    [ -z "$parent_issue" ] || parent_args=(--parent "$parent_issue")
+    url=$(gh issue create --assignee @me --title "$title" --body "$mint_body" ${parent_args[@]+"${parent_args[@]}"} 2>/dev/null || true)
     num=$(printf '%s' "$url" | sed -nE 's#.*/([0-9]+)$#\1#p')
     [ -n "$num" ] || {
       echo "dispatch: could not create a GitHub issue (issues disabled?). Pass a Linear id, e.g. dispatch $tier $model ENG-1234 $title" >&2
