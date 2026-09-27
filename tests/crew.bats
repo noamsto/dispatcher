@@ -3022,6 +3022,102 @@ Enter to confirm
 EOF
 }
 
+# The REAL tool-permission dialog (#435), captured verbatim from a live worker
+# pane by the dispatcher on 2026-09-26: crew 1790450482-1903888, worker coral on
+# #443, pane %78 (82x36), Claude Code 2.1.283 — a subagent (the shell-reviewer)
+# raised it while the lead showed "Waiting for 1 background agent to finish".
+# The footer is `Esc to cancel · Tab to amend`, NOT
+# `Enter to select`/`Enter to confirm` — which is why _is_prompt misses it.
+# A top-level capture was attempted (2026-09-27, claude 2.1.283,
+# --permission-mode auto) but this environment's auto classifier approved every
+# probe, so no real top-level frame exists yet; fx_permission_bash is a
+# follow-up issue and the matcher relies only on lines present in THIS capture.
+# No top-level frame was synthesised and labelled real.
+fx_permission_subagent() {
+  frame_file permission_subagent <<'EOF'
+
+● Waiting on the shell reviewer and test-runner.
+
+✻ Waiting for 1 background agent to finish
+
+› Message from @a6fd725715048d707 (ctrl+o to expand)
+
+● The test-runner confirmed every acceptance criterion passes on the branch, and
+  the allowlist tests fail on main. Only the shell reviewer is still out.
+
+✻ Waiting for 2 background agents to finish
+
+● Agent "Review: targeted test-runner" finished · 16m 44s
+
+● Waiting on the shell reviewer.
+
+✻ Waiting for 1 background agent to finish
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+
+ │ Auto mode classifier requires confirmation for this command.
+ │ 3 consecutive actions were blocked. Please review the transcript before
+ │ continuing.
+ │
+ │ Latest blocked action: [Irreversible Local Destruction]
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+EOF
+}
+
+# DERIVED (not captured): the same dialog scrolled into the transcript. The
+# input box / mode line is the last non-empty line, so the footer-last geometry
+# must reject it — exactly what keeps this repo's own fixture text from being a
+# false-positive source.
+fx_permission_scrollback() {
+  frame_file permission_scrollback <<'EOF'
+ Bash command · from the shell-reviewer agent
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+ │ Auto mode classifier requires confirmation for this command.
+ │ Latest blocked action: [Irreversible Local Destruction]
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+ Esc to cancel · Tab to amend
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)
+EOF
+}
+
+# DERIVED (not captured): the real frame with a >200-char request line carrying
+# a RAW ESC sequence, to pin _permission_detail's control/ESC stripping. The ESC
+# is emitted by command substitution on purpose: `$'\x1b…'` does NOT expand
+# inside a heredoc (it stays the literal characters), which would make the
+# sanitize assertion vacuous.
+fx_permission_sanitize() {
+  frame_file permission_sanitize <<EOF
+ Bash command · from the shell-reviewer agent
+
+   $(printf 'x%.0s' {1..220}) $(printf '\x1b[31mRED\x1b[0m') $(printf 'y%.0s' {1..20})
+   Run a very long command
+
+ │ Auto mode classifier requires confirmation for this command.
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+EOF
+}
+
 @test "stall-watch: D1 posts blocked/prompt: on the option-select frame" {
   p=$(fx_prompt_select)
   stall_sampler "$p" "$p" "$p" "$p"
@@ -3075,6 +3171,154 @@ EOF
   [ "$output" = "0" ]
   run bash -c "bus | grep -c 'stalled:' || true"
   [ "$output" = "0" ]
+}
+
+@test "stall-watch: the real tool-permission frame posts blocked/prompt: permission" {
+  # #435 regression: on main _is_prompt misses this frame because its footer is
+  # `Esc to cancel · Tab to amend`, not `Enter to select`/`Enter to confirm`,
+  # so nothing posts and the worker waits silently (#413: 1516 s).
+  p=$(fx_permission_subagent)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|prompt: permission — Bash command: bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30 — pane %9" ]]
+}
+
+@test "stall-watch: a static permission frame is prompt:, never stalled:" {
+  # D0 defers to D1 for prompt frames; without the permission deferral a static
+  # permission frame inside --window would also raise `stalled: no output`.
+  p=$(fx_permission_subagent)
+  stall_sampler "$p" "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 60 --stall 1 --idle 999 --dead 999 --max-life 8
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == prompt:* ]]
+  run bash -c "bus | grep -c 'stalled:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: the permission dialog scrolled into the transcript posts nothing" {
+  p=$(fx_permission_scrollback)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a permission detail is one line, ESC-free and capped at 160" {
+  p=$(fx_permission_sanitize)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "prompt: permission — Bash command: "* ]]
+  [[ "${lines[0]}" == *" — pane %9" ]]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail | length'"
+  [ "$output" -le 160 ]
+  # _post JSON-encodes a surviving ESC as \u001b; a raw-ESC grep would be a tautology.
+  run bash -c "bus | grep -c 'u001b' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: a stale permission dialog above the live one does not poison the detail" {
+  # The header is the LAST `· from the … agent` line in the capture: a prior
+  # permission block scrolled into the transcript must not be reported while
+  # the live dialog is the one parked at the bottom.
+  p=$(frame_file permission_stale <<'EOF'
+ Bash command · from the lead agent
+   rm -rf /important/data
+   Delete everything
+
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+
+ │ Auto mode classifier requires confirmation for this command.
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+EOF
+)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "prompt: permission — Bash command: bats --filter grant"* ]]
+  [[ "${lines[0]}" != *"rm -rf"* ]]
+}
+
+@test "stall-watch: a permission frame with no header detail still fires (unparsed)" {
+  p=$(frame_file permission_unparsed <<'EOF'
+ │ Auto mode classifier requires confirmation for this command.
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+ Esc to cancel · Tab to amend
+EOF
+)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "prompt: permission — (unparsed) — pane %9" ]
+}
+
+@test "stall-watch: role mode posts a permission prompt under the role id" {
+  p=$(fx_permission_subagent)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.from)|\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "role:feat/x:reviewer|blocked|watchdog|prompt: permission — "* ]]
+  run bash -c "bus | grep -c '\"from\":\"worker:feat/x\"' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: the permission detector does not steal the trust frame" {
+  p=$(fx_prompt_trust)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "prompt: interactive prompt in pane %9 —"* ]]
+}
+
+@test "stall-watch: the permission detector does not steal the quota frame" {
+  p=$(fx_prompt_quota)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == quota:* ]]
+}
+
+@test "stall-watch: the permission detector does not steal the session-limit frame" {
+  p=$(fx_session_limit_refusal)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 4
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == quota:* ]]
 }
 
 @test "stall-watch: D0 posts blocked with a diagnosis-free stalled: detail" {

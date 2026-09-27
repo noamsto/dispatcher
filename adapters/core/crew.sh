@@ -4028,6 +4028,65 @@ BUSLINE
     [ "$tail_n" = "$expected" ]
   }
 
+  # _is_permission_prompt — Claude's tool-permission dialog (#435), claude only.
+  # Its footer `Esc to cancel · Tab to amend` is distinct from every
+  # option-select prompt's `Enter to select`/`Enter to confirm`, and the same
+  # geometry anchor applies: the footer must be the pane's LAST non-empty line,
+  # so the dialog scrolled into the transcript (input box last) cannot match. A
+  # numbered option row and `Do you want to proceed?` must sit within the
+  # tail-10 non-empty lines ending at the footer (capture-bounded: the real
+  # subagent frame has the question at depth 5, the `│` reason rows above it).
+  # Deliberately NOT gated on the meter/subrow veto: a subagent raises the
+  # dialog with a live subagent row and background-agent lines painted above it
+  # (the real capture), so the footer anchor is the false-positive guard.
+  _is_permission_prompt() {
+    local tail_n last above
+    [ "$engine" = claude ] || return 1
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Esc to cancel · Tab to amend"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
+    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
+  }
+
+  # _permission_detail <text> <pane> — human-relay payload for a detected
+  # tool-permission dialog (#435). The payload is pane-scraped and therefore
+  # attacker-influenceable, so it is STRIPPED before it reaches the bus: ESC/CSI
+  # sequences and control characters removed, folded to one line. The trailing
+  # ` — pane <id>` is never truncated (recovery step 1 needs it), so only the
+  # `permission — <tool>: <request>` prefix is capped, keeping the whole detail
+  # at 160 characters. A frame whose tool/request cannot be parsed still fires,
+  # with `(unparsed)`. The header is the LAST `· from the … agent` line in the
+  # capture, not the first: a prior permission dialog scrolled into the
+  # transcript must not make the relay report its stale tool/request while the
+  # live dialog is the one parked at the bottom (footer-last geometry).
+  _permission_detail() {
+    local pane="$2" clean suffix body max
+    clean=$(printf '%s\n' "$1" |
+      sed -E $'s/\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)?//g; s/\x1b\\[[0-9;?]*[ -\\/]*[@-~]//g; s/\x1b[@-Z\\\\-_]//g' |
+      tr -d '\000-\010\013-\037\177')
+    body=$(printf '%s\n' "$clean" | awk '
+      /^[[:space:]]*[A-Za-z][A-Za-z ]+ · from the / {
+        t=$0; sub(/^[[:space:]]+/,"",t); sub(/[[:space:]]+· from the .*/,"",t); r=""; have=1; next
+      }
+      have && r == "" && $0 !~ /^[[:space:]]*$/ {
+        r=$0; gsub(/^[[:space:]]+|[[:space:]]+$/,"",r)
+      }
+      END {
+        if (have && r != "") printf "%s: %s", "prompt: permission — " t, r
+        else printf "%s", "prompt: permission — (unparsed)"
+      }')
+    suffix=" — pane $pane"
+    body=$(printf '%s' "$body" | tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g')
+    max=$((160 - ${#suffix}))
+    [ "$max" -lt 0 ] && max=0
+    printf '%s%s' "${body:0:$max}" "$suffix"
+  }
+
   # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
   # numbered option within the 6 non-empty lines above it. A pane that is not
   # parked on a prompt ends on its input box, never on transcript text (A3), so
@@ -4280,13 +4339,18 @@ BUSLINE
     # non-prompt sample) reclassifies instead of staying mislabeled for the
     # rest of the run. The folding covers D1's rate-limit-prompt variant only;
     # D1b's session-limit frame carries its own counter (d1b_hits/d1b_at).
-    if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ] &&
-      _is_prompt "$text" && [ -z "$(_meter_line "$text")" ]; then
-      if _is_quota_prompt "$text"; then
-        kind=quota
-      else
-        kind=prompt
+    # A tool-permission dialog (#435) is checked FIRST — its footer is not an
+    # `Enter to select` frame, and it must not be gated on `_is_prompt`'s veto.
+    d1_kind_this=""
+    if [ "$suppressed" = 0 ] && [ "$sig_prompt" = 1 ]; then
+      if _is_permission_prompt "$text"; then
+        d1_kind_this=permission
+      elif _is_prompt "$text" && [ -z "$(_meter_line "$text")" ]; then
+        if _is_quota_prompt "$text"; then d1_kind_this=quota; else d1_kind_this=prompt; fi
       fi
+    fi
+    if [ -n "$d1_kind_this" ]; then
+      kind="$d1_kind_this"
       if [ "$d1_at" != 0 ] && [ "$kind" != "$d1_kind" ]; then
         _post_clear "prompt:"
         _post_clear "quota:"
@@ -4295,15 +4359,26 @@ BUSLINE
       fi
       d1_hits=$((d1_hits + 1))
       if [ "$d1_hits" -ge 2 ] && [ "$d1_at" = 0 ]; then
-        if [ "$kind" = quota ]; then
+        case "$kind" in
+        permission)
+          if _post_blocked "prompt:" "$(_permission_detail "$text" "$pane")"; then
+            d1_at="$now"
+            d1_kind=permission
+          fi
+          ;;
+        quota)
           if _post_blocked "quota:" "quota: quota exhausted — worker parked on the rate-limit prompt in pane $pane; do not re-dispatch — Esc dismisses it, resume continues from intact context on the next window"; then
             d1_at="$now"
             d1_kind=quota
           fi
-        elif _post_blocked "prompt:" "prompt: interactive prompt in pane $pane — worker is waiting on input nobody can give"; then
-          d1_at="$now"
-          d1_kind=prompt
-        fi
+          ;;
+        prompt)
+          if _post_blocked "prompt:" "prompt: interactive prompt in pane $pane — worker is waiting on input nobody can give"; then
+            d1_at="$now"
+            d1_kind=prompt
+          fi
+          ;;
+        esac
       fi
     else
       if [ "$d1_at" != 0 ]; then
@@ -4416,8 +4491,8 @@ BUSLINE
       [ $((now - start)) -lt "$window" ] && [ "$quiet_for" -ge "$stall" ]; then
       case "$bus_state" in
       "" | working)
-        if [ "$sig_prompt" = 1 ] && _is_prompt "$text"; then
-          : # D1 owns this frame
+        if [ "$sig_prompt" = 1 ] && { _is_permission_prompt "$text" || _is_prompt "$text"; }; then
+          : # D1 owns this frame (generic or tool-permission)
         elif _post_blocked "stalled:" "stalled: no output for ${stall}s"; then
           d0_at="$now"
         fi
