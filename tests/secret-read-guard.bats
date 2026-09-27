@@ -671,31 +671,35 @@ assert_allow_within() {
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 1.5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies in under 3 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  assert_deny_within_each_awk 1500 "$(claude_bash "cat .env ${body} .env.example")"
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_bash "cat .env ${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 1.5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name beside a bash -c credential read deny in under 3 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  assert_deny_within_each_awk 1500 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_bash "bash -c cat\\ \\.env; x${body} .env.example")"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 1.5 s under every awk" {
+@test "secret-read-guard: a 100 KB chain and a template name in a Grep path deny on the glob in under 3 s under every awk" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  assert_deny_within_each_awk 1500 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_deny_within_each_awk 3000 "$(claude_grep "x${body} .env.example" '.env' 'x' content)"
 }
 
 # bats test_tags=timing
-@test "secret-read-guard: a 100 KB chain and a template name with no credential read allow in under 1.5 s" {
+@test "secret-read-guard: a 100 KB chain and a template name with no credential read allow in under 3 s" {
   local body
   body=$(printf '.env%.0s' $(seq 1 25000))
-  assert_allow_within 1500 "$(claude_bash "echo x${body} y.env.example")"
+  # CI runners ~3× slower; pre-fix was ~3.4 s local (~10 s CI), so 3000 ms still catches regressions.
+  assert_allow_within 3000 "$(claude_bash "echo x${body} y.env.example")"
 }
 
 # ---------------------------------------------------------------------------
