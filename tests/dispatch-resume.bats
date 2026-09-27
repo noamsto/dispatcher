@@ -1378,9 +1378,9 @@ record_lead() {
   grep -qE -- "--session-id $UUID_RE " <(launch_log)
 }
 
-# The reader must apply exactly the writer's safety check (#469): a symlinked
-# leads dir is read through by a plain `[ -f "$lead_rec" ]`, so a record planted
-# in its target would attach resume to whatever session it names — here a role's.
+# The reader must apply the writer's safety check: a symlinked leads dir is
+# followed by a plain existence test, so a record planted in its target would
+# attach resume to whatever session it names — here a role's.
 @test "a symlinked leads dir is never read through: a role's session is not adopted" {
   setup_worker_wt 'roles: reviewer'
   stub_tmux_with_pane_at_wt '@4' '%8' iris
@@ -1398,8 +1398,8 @@ record_lead() {
   grep -qE -- "--session-id $UUID_RE " <(launch_log)
 }
 
-# Same invariant for a slashed branch: a symlink planted at the branch's parent
-# component (leads/feat) must be rejected too, not just a symlinked leads/.
+# Same invariant when the symlink sits at the branch's parent component
+# (leads/feat), not at leads/ itself.
 @test "a symlinked leads parent component is never read through" {
   setup_worker_wt 'roles: reviewer'
   stub_tmux_with_pane_at_wt '@4' '%8' iris
