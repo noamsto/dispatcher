@@ -1214,7 +1214,6 @@ allow_cmd() { # <command>
 @test "secret-read-guard: allows prose and quoted heredocs that only mention a dumper" {
   allow_cmd 'echo hi # env'
   allow_cmd $'cat <<EOF\nrun env to see\nEOF\nls'
-  allow_cmd $'cat <<\'EOF\'\n`env`\nEOF'
   allow_cmd $'echo \'a\nenv\''
 }
 
@@ -1272,6 +1271,116 @@ allow_cmd() { # <command>
 @test "secret-read-guard: denies a dump inside escaped nested backticks" {
   deny_cmd 'echo `echo \`env\``'
   deny_cmd 'echo "`echo \`env\``"'
+}
+
+@test "secret-read-guard: a comment right after an opening backtick cannot hide a dump" {
+  deny_cmd $'echo `# it\'s\nenv'
+  deny_cmd $'echo `# it\'s`\nenv'
+  deny_cmd $'echo "`# it\'s`"\nenv'
+}
+
+@test "secret-read-guard: a backtick comment still denies a dump next to it" {
+  deny_cmd 'echo `#` `env`'
+  deny_cmd $'echo "`# x`"\necho `env`'
+  deny_cmd 'echo `date`# x `env`'
+}
+
+@test "secret-read-guard: denies a dump in a backticked command inside a quoted heredoc" {
+  deny_cmd $'cat <<\'EOF\'\n`env`\nEOF'
+  deny_cmd $'bash <<\'EOF\'\n`env`\nEOF'
+  deny_cmd $'bash <<\'EOF\'\necho hi `printenv`\nEOF'
+  deny_cmd $'bash <<-\'EOF\'\n\t`set`\n\tEOF'
+}
+
+@test "secret-read-guard: denies a wrapper with a backticked argument inside a quoted heredoc" {
+  deny_cmd $'bash <<\'EOF\'\nit\'s\nsudo -u `whoami` env\nEOF'
+  deny_cmd $'bash <<\'EOF\'\nit\'s\ndirenv exec `pwd` env\nEOF'
+  deny_cmd $'bash <<\'EOF\'\nit\'s\nenv -C `pwd` env\nEOF'
+  deny_cmd $'bash <<\'EOF\'\nit\'s\nprintenv `echo` GITHUB_TOKEN\nEOF'
+}
+
+@test "secret-read-guard: denies a wrapper with a backticked argument" {
+  deny_cmd 'sudo -u `whoami` env'
+  deny_cmd 'direnv exec `pwd` env'
+  deny_cmd 'env -C `pwd` env'
+  deny_cmd 'printenv `echo` GITHUB_TOKEN'
+}
+
+@test "secret-read-guard: denies a dump inside three and four levels of escaped backticks" {
+  deny_cmd $'echo `echo \\`echo \\\\\\`env\\\\\\`\\``'
+  deny_cmd $'echo `echo \\`echo \\\\\\`echo \\\\\\\\\\\\\\`env\\\\\\\\\\\\\\`\\\\\\`\\``'
+  deny_cmd $'echo "`echo \\`echo \\\\\\`env\\\\\\`\\``"'
+}
+
+@test "secret-read-guard: denies a dump behind a bare backtick or a quote inside escaped backticks" {
+  deny_cmd $'echo `true \\`x `env`'
+  deny_cmd $'echo `echo \\"`date`\\"; env`'
+}
+
+@test "secret-read-guard: denies a dump followed by an output redirect to a descriptor" {
+  local dumper
+  for dumper in env printenv set declare export typeset; do
+    deny_cmd "$dumper >&2"
+    deny_cmd "$dumper 2>&1"
+    deny_cmd "$dumper 2>/dev/null"
+    deny_cmd "$dumper >& 2"
+  done
+  deny_cmd "fish -c 'set -x >&2'"
+  deny_cmd 'env >&2 # c'
+}
+
+@test "secret-read-guard: allows a backticked word that is not a dump" {
+  allow_cmd $'git commit -m \'run `env` to list\''
+  allow_cmd $'git commit -F - <<\'EOF\'\nfix: `env vars`\n`set -e`\n`export FOO=1`\n`ls`\nEOF'
+  allow_cmd $'echo `date`\nls'
+  allow_cmd $'echo `echo \\`echo \\\\\\`date\\\\\\`\\``'
+}
+
+@test "secret-read-guard: allows a redirected command that is not a dump" {
+  allow_cmd 'env -i mycmd >&2'
+  allow_cmd 'set -euo pipefail >&2'
+  allow_cmd 'export FOO=1 >&2'
+  allow_cmd 'declare -a a 2>/dev/null'
+  allow_cmd 'env >/tmp/x'
+}
+
+# backtick_level <k> — the backtick that opens or closes nesting level k: bash
+# escapes it with 2^(k-1)-1 backslashes.
+backtick_level() {
+  local n=$(((1 << ($1 - 1)) - 1))
+  printf '%*s' "$n" '' | tr ' ' '\\'
+  printf '`'
+}
+
+# nested_backticks <depth> — `echo ` plus a level-k backtick per level, a
+# newline and env at the deepest level, then the closers.
+nested_backticks() {
+  local k out=''
+  for ((k = 1; k <= $1; k++)); do
+    out+="echo $(backtick_level "$k")"
+  done
+  out+=$'\nenv'
+  for ((k = $1; k >= 1; k--)); do
+    out+=$(backtick_level "$k")
+  done
+  printf '%s' "$out"
+}
+
+@test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny in under 3.5 s under every awk" {
+  assert_deny_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14)")"
+}
+
+@test "secret-read-guard: a 100 KB quoted heredoc of backticks ahead of a dump denies in under 3.5 s" {
+  local body
+  body=$(printf '`a` `b`\n%.0s' $(seq 1 12800))
+  assert_deny_within 3500 "$(claude_bash "bash <<'X'"$'\n'"$body"$'\n`env`\nX')"
+  assert_deny_within 3500 "$(claude_bash "cat <<'X'"$'\n'"$body"$'\nX\nenv')"
+}
+
+@test "secret-read-guard: a 100 KB flat run of backticked words ahead of a dump denies in under 3.5 s" {
+  local body
+  body=$(printf '`a`;%.0s' $(seq 1 25600))
+  assert_deny_within 3500 "$(claude_bash "echo ${body}env")"
 }
 
 @test "secret-read-guard: denies printenv with a bare double dash" {
