@@ -175,7 +175,7 @@ setup_worker_wt() { # [extra header lines...]
   [ "$status" -eq 1 ]
   [[ "$output" == *"EVIDENCE_REVIEW.md"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
 }
 
 @test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
@@ -194,7 +194,7 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" == *"0123456789abcdef"* ]]
   [[ "$output" == *"$rev_dir"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
 }
 
 @test "resume proceeds when the protocol dir hashes to the script marker" {
@@ -290,7 +290,8 @@ _store_protocols() { # <dir> <content>
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_CRITICS_DIR"* ]]
   grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS GIT_EDITOR=true" <(launch_log)
-  ! grep -qF -- "h-old-source" <(launch_log)
+  run grep -qF -- "h-old-source" <(launch_log)
+  [ "$status" -ne 0 ]
 }
 
 @test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {
@@ -317,7 +318,7 @@ _store_protocols() { # <dir> <content>
   [[ "$output" != *"ignoring stale"* ]]
   [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
 }
 
 @test "a raw (unsubstituted) resume script skips the revision check with a one-line warning" {
@@ -352,8 +353,8 @@ _store_protocols() { # <dir> <content>
     [ "$status" -eq 1 ]
     [[ "$output" == *"EVIDENCE_REVIEW.md"* ]]
     [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
+    if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+    if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
   done < <(protocol_engine_specs codex cursor pi)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 3 ]
@@ -377,8 +378,8 @@ _store_protocols() { # <dir> <content>
     [[ "$output" == *"0123456789abcdef"* ]]
     [[ "$output" == *"$rev_dir"* ]]
     [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
+    if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+    if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
   done < <(protocol_engine_specs codex cursor pi)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 3 ]
@@ -802,7 +803,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"refusing to write the protocol-dirs record"* ]]
   [ "$(cat "$victim")" = "keep me" ]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'send-keys' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
 }
 
 @test "claude resume refuses a symlinked parent of the artifacts dir and creates nothing under its target" {

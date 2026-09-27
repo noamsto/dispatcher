@@ -315,7 +315,8 @@ _store_launcher_dirs() {
     run env "$var=relative/dir" CREW_ID=c1 bash -euo pipefail "$LAUNCHER"
     [ "$status" -eq 1 ]
     [[ "$output" == *"dispatcher: $var must be an absolute path, got: relative/dir"* ]]
-    ! grep -q -- '--name' "$STUB_LOG" 2>/dev/null
+    run grep -q -- '--name' "$STUB_LOG" 2>/dev/null
+    [ "$status" -ne 0 ]
   done
 }
 

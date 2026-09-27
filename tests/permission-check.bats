@@ -233,7 +233,7 @@ pane() {
 
 # no_send_keys — the tmux stub never saw send-keys.
 no_send_keys() {
-  ! grep -q '^send-keys' "$TMUX_LOG"
+  run ! grep -q '^send-keys' "$TMUX_LOG"
 }
 
 assert_human() {
