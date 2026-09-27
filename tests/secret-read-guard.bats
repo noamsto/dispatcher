@@ -1494,10 +1494,12 @@ nested_backticks() {
 
 # Every heredoc body backtick is read as both a command start and a command
 # end so a stray backtick cannot hide a frame; the cost is that a dumper word
-# right next to a code span at a line start or line end in a commit body denies.
+# after a code span — at a line start, mid-line, or after a keyword like
+# then — or right before one at a line start, denies.
 @test "secret-read-guard: denies a dumper word next to a heredoc body backtick (accepted over-deny)" {
   deny_cmd $'git commit -F - <<\'EOF\'\nexport `FOO` in your rc\nEOF'
   deny_cmd $'git commit -F - <<\'EOF\'\nIt reads `DISPATCHER_X` env\nEOF'
+  deny_cmd $'git commit -F - <<\'EOF\'\nfix: read `FOO` then set `BAR` too\nEOF'
 }
 
 @test "secret-read-guard: allows commit and PR heredoc bodies with prose backticks and a stray one" {

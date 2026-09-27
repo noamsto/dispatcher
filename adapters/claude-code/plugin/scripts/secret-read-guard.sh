@@ -326,7 +326,9 @@ decode_word() {
 #     non-closing backticks (`;`), so nothing inside a frame can hide text.
 #   - a backtick span in a heredoc delimiter word is shown the same way, and
 #     that heredoc's body runs to end of input.
-#   - a heredoc body emits every backtick as `;` and every backslash as a space.
+#   - a heredoc body emits every backtick as `;` and every backslash as a
+#     space, so a dumper word right after a body code span (e.g. `then set
+#     `X`) reads as a command — an accepted over-scan.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
@@ -831,21 +833,6 @@ shell)
   check_dump_spaces "${wide_spaces[@]}"
   check_fish_spaces ${wide_fish_spaces[@]+"${wide_fish_spaces[@]}"}
 
-  # The frame reading differs from W=0 only at a backslash, quote, `#` or `<`
-  # inside or around a backtick, so it runs only on text holding a backtick
-  # and one of those.
-  frame_spaces=()
-  frame_fish_spaces=()
-  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
-  for ((i = 0; i < ${#subs[@]}; i++)); do
-    [[ ${subs[i]} == *'`'* && ${subs[i]} == *[\\\'\"#\<]* ]] || continue
-    frame_sub=$(mask_cmd_frames "${subs[i]}")
-    frame_spaces+=("$frame_sub")
-    if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi
-  done
-  check_dump_spaces ${frame_spaces[@]+"${frame_spaces[@]}"}
-  check_fish_spaces ${frame_fish_spaces[@]+"${frame_fish_spaces[@]}"}
-
   # 3. Reading a credential file's content (credential_read, above deny). A
   #    failed check fails loud rather than allowing. Every space is judged by
   #    the narrow name test first; the wide strip runs only on the spaces that
@@ -874,6 +861,23 @@ shell)
       esac
     done
   done
+
+  # The frame reading differs from W=0 only at a backslash, quote, `#` or `<`
+  # inside or around a backtick, so it runs only on text holding a backtick
+  # and one of those. It runs after rule 3 so a large rule-3 deny stays inside
+  # hookyard's 4 s budget (a timeout is an allow); each check denies on its
+  # own, so the order only decides which deny fires.
+  frame_spaces=()
+  frame_fish_spaces=()
+  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
+  for ((i = 0; i < ${#subs[@]}; i++)); do
+    [[ ${subs[i]} == *'`'* && ${subs[i]} == *[\\\'\"#\<]* ]] || continue
+    frame_sub=$(mask_cmd_frames "${subs[i]}")
+    frame_spaces+=("$frame_sub")
+    if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi
+  done
+  check_dump_spaces ${frame_spaces[@]+"${frame_spaces[@]}"}
+  check_fish_spaces ${frame_fish_spaces[@]+"${frame_fish_spaces[@]}"}
   ;;
 esac
 
