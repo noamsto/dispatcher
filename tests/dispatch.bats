@@ -5585,6 +5585,122 @@ EOF
   [ "$(ls -A "$victim")" = "roles.json" ]
 }
 
+# The lead's engine session id is minted at launch and recorded, so a later
+# `dispatch resume` can reattach to the lead's own transcript rather than the
+# latest one in the shared worktree (#444).
+_lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+
+@test "lead-session: a claude lead launches with a minted --session-id and records it" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "extra dir"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/leads/feat/42-extra-dir"
+  [[ "$(cat "$rec")" =~ ^claude\ ($_lead_uuid_re)$ ]]
+  sid="${BASH_REMATCH[1]}"
+  grep -qF -- "claude --name iris --model sonnet --effort medium --session-id $sid " <(launch_log)
+  [ "$(stat -c %a "$rec")" = 600 ]
+  [ "$(stat -c %a "$TEST_REPO/.git/crew/leads")" = 700 ]
+}
+
+@test "lead-session: a pi lead records its id and its role panes neither get one nor touch the record" {
+  stub_launch_bins
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi lead"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/leads/feat/42-pi-lead"
+  [[ "$(cat "$rec")" =~ ^pi\ ($_lead_uuid_re)$ ]]
+  sid="${BASH_REMATCH[1]}"
+  grep -qF -- "pi --name iris --model openrouter/deepseek/deepseek-v4-flash --thinking high --session-id $sid --append-system-prompt" <(launch_log)
+  role_line="$(grep -F -- 'pi --name iris-reviewer' <(launch_log))"
+  [ -n "$role_line" ]
+  [[ "$role_line" != *"--session-id"* ]]
+  [ "$(grep -cF -- '--session-id' <(launch_log))" -eq 1 ]
+}
+
+@test "lead-session: eager claude roles do not add --session-id or overwrite the lead's record" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer=claude:sonnet" --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/leads/feat/42-do-a-thing"
+  [[ "$(cat "$rec")" =~ ^claude\ ($_lead_uuid_re)$ ]]
+  sid="${BASH_REMATCH[1]}"
+  role_line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [ -n "$role_line" ]
+  [[ "$role_line" != *"--session-id"* ]]
+  [[ "$(grep -F -- 'claude --name iris ' <(launch_log))" == *"--session-id $sid "* ]]
+}
+
+@test "lead-session: --spawn-role leaves the lead's record alone" {
+  _spawn_role_fixture
+  mkdir -p "$TEST_REPO/.git/crew/leads/feat"
+  printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/9-x"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" != *"--session-id"* ]]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/9-x")" = "claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa" ]
+}
+
+@test "lead-session: a codex lead replaces a stale record with one naming codex and no id" {
+  stub_launch_bins
+  mkdir -p "$TEST_REPO/.git/crew/leads/feat"
+  printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-lead-codex"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "lead codex"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-lead-codex")" = "codex -" ]
+  run ! grep -qF -- '--session-id' <(launch_log)
+}
+
+@test "lead-session: a cursor lead replaces a stale record with one naming cursor and no id" {
+  stub_launch_bins
+  mkdir -p "$TEST_REPO/.git/crew/leads/feat"
+  printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-lead-cursor"
+  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "lead cursor"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-lead-cursor")" = "cursor -" ]
+  run ! grep -qF -- '--session-id' <(launch_log)
+}
+
+@test "lead-session: a dispatch aborted before the launch tombstones a stale record of an older same-named branch" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  art="$TEST_REPO/.git/crew/artifacts/feat/42-grid-lead-border"
+  mkdir -p "$victim" "$art" "$TEST_REPO/.git/crew/leads/feat"
+  ln -s "$victim" "$art/roles.json"
+  printf 'claude aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa\n' >"$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --lazy --roles reviewer --effort high --crew-id c1 42 "grid lead border"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"roles.json is a directory — refusing"* ]]
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-grid-lead-border")" = "pending -" ]
+}
+
+@test "lead-session: a symlinked leads dir is refused before any launch" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$TEST_REPO/.git/crew"
+  ln -s "$victim" "$TEST_REPO/.git/crew/leads"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"symlink or not a regular file/directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "lead-session: a symlink planted at the lead record path is refused and its target left untouched" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$TEST_REPO/.git/crew/leads/feat"
+  printf 'keep me\n' >"$victim"
+  ln -s "$victim" "$TEST_REPO/.git/crew/leads/feat/42-extra-dir"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "extra dir"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is a symlink or not a regular file"* ]]
+  [ "$(cat "$victim")" = "keep me" ]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
 @test "add-dir: --add-dir needs a directory" {
   run run_dispatch standard sonnet --effort medium --add-dir
   [ "$status" -eq 1 ]

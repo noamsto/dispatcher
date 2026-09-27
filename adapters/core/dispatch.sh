@@ -630,6 +630,52 @@ split_role_pane() {
   printf '%s' "$pane"
 }
 
+# _uuid — a random lowercase v4 uuid, the id a claude or pi lead is launched
+# with (--session-id) so a resume can find its own session again. Duplicated in
+# dispatch-resume.sh (standalone build); parity-tested.
+_uuid() {
+  local h
+  h="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
+}
+
+# _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
+# it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
+# them. Mirrors the grant-record checks in the dispatch path.
+_lead_record_safe() {
+  local dir="$crew_dir/leads" part rec="$crew_dir/leads/$branch"
+  local -a parts
+  IFS=/ read -ra parts <<<"$branch"
+  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
+    dir="$dir${part:+/$part}"
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      return 1
+    fi
+  done
+  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
+    return 1
+  fi
+}
+
+# _record_lead_session <engine> <id> — record which engine session is the
+# lead's, as `<engine> <id>` in $crew_dir/leads/<branch>. Not under artifacts/,
+# which is granted to workers. Only a lead launch writes it: role panes share
+# the worktree and must never claim the lead's session.
+_record_lead_session() {
+  local rec="$crew_dir/leads/$branch" tmp
+  if ! _lead_record_safe; then
+    echo "dispatch: $rec is a symlink or not a regular file — not recording the lead session" >&2
+    return 1
+  fi
+  (
+    umask 077
+    mkdir -p "$(dirname "$rec")"
+    tmp="$(mktemp "$(dirname "$rec")/.lead.XXXXXX")"
+    printf '%s %s\n' "$1" "$2" >"$tmp"
+    mv -f -- "$tmp" "$rec"
+  )
+}
+
 # shell_quote <var> <text> — set <var> to <text> as ONE single-quoted shell word,
 # for splicing into a tmux send-keys command line the pane's own shell re-parses.
 # ' and \ are closed out of the quotes and escaped outside them, the one form
@@ -2754,6 +2800,18 @@ if [ -L "$grant_record" ] || { [ -e "$grant_record" ] && [ ! -f "$grant_record" 
   echo "dispatch: $grant_record is a symlink or not a regular file — refusing to use it as a grant record" >&2
   exit 1
 fi
+# Refuse an unsafe lead record here too, before the worktree is half set up:
+# the lead launch below writes it.
+if ! _lead_record_safe; then
+  echo "dispatch: $crew_dir/leads/$branch or a dir above it is a symlink or not a regular file/directory — refusing to record the lead session" >&2
+  exit 1
+fi
+# A re-dispatch is a new lead: overwrite an older same-named branch's record now,
+# so an abort before the launch cannot leave resume attaching to the old
+# conversation (same reason the grant record above is rewritten). Any dispatch
+# that reaches here is a post-records lead; the launch overwrites the tombstone,
+# and a dispatch that aborts first must not look like a pre-records worker.
+_record_lead_session pending -
 if [ "$switch_mode" = resume ] && [ "${#add_dir_flags[@]}" -eq 0 ] && [ -f "$grant_record" ]; then
   mapfile -t add_dirs < <(sed '/^$/d' "$grant_record")
 fi
@@ -3010,6 +3068,9 @@ if [ "$agent" = codex ]; then
   # and pin subagent effort one rung down. Never pass ultra as subagent effort.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
+  # codex and cursor cannot pre-assign a session id, so there is none to verify:
+  # the record names the engine with `-`, replacing any earlier lead's record.
+  _record_lead_session "$agent" -
   launch_cmd="${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
@@ -3027,6 +3088,7 @@ elif [ "$agent" = cursor ]; then
   # No CLI concurrency cap — rule 1's "capped at 3 concurrent" is protocol-only.
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
+  _record_lead_session "$agent" -
   launch_cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
@@ -3035,11 +3097,15 @@ elif [ "$agent" = pi ]; then
   printf -v quoted_dir '%q' "$pi_agent_dir"
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  lead_sid="$(_uuid)"
+  _record_lead_session pi "$lead_sid"
+  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}"
   shell_quote quoted_prompt "$prompt"
-  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  lead_sid="$(_uuid)"
+  _record_lead_session claude "$lead_sid"
+  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 tmux send-keys -t "$pane" "$launch_line" Enter
