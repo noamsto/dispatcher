@@ -723,7 +723,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR |-u DISPATCH_GRANT_ROOTS )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -740,6 +740,7 @@ _grant_record() {
 @test "claude resume grants the mandated dirs and the recorded ones, terminated by an option" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
   mkdir -p "$extra"
   _grant_record "$extra"
@@ -775,6 +776,7 @@ _grant_record() {
   mkdir -p "$evil"
   setup_worker_wt "add_dir: $evil"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
@@ -786,6 +788,7 @@ _grant_record() {
 @test "claude resume drops an invalid recorded grant with a warning and still launches" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
   extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
   mkdir -p "$extra"
   _grant_record / "$extra"
@@ -796,6 +799,33 @@ _grant_record() {
   line="$(grep -F 'claude --continue' <(launch_log))"
   [[ "$line" != *"--add-dir / "* ]]
   [[ "$line" == *"--add-dir $extra "* ]]
+}
+
+@test "claude resume drops a recorded grant outside the grant roots and still launches" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  unset DISPATCH_GRANT_ROOTS
+  extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
+  mkdir -p "$extra"
+  _grant_record "$extra"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '$extra' for feat/7-a-thing"* ]]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *"$extra"* ]]
+  [[ "$line" == *"-u DISPATCH_GRANT_ROOTS"* ]]
+}
+
+@test "claude resume pins its grant roots into the launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"DISPATCH_GRANT_ROOTS=$DISPATCH_GRANT_ROOTS "* ]]
 }
 
 @test "restamps protocol_dir into an older task doc and names it in the claude prompt" {
@@ -814,7 +844,7 @@ _grant_record() {
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR |-u DISPATCH_GRANT_ROOTS )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -837,7 +867,7 @@ _grant_record() {
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR |-u DISPATCH_GRANT_ROOTS )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -859,7 +889,7 @@ _grant_record() {
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR |-u DISPATCH_GRANT_ROOTS )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -953,7 +983,7 @@ _grant_record() {
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR |-u DISPATCH_GRANT_ROOTS )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -1633,6 +1663,51 @@ record_lead() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"solo"* ]]
   grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
+}
+
+# #461: the liveness probe was a bare `kill -0`. A live dispatcher owned by
+# another uid makes that fail EPERM, which reads dead and strands the crew as
+# solo. EPERM is proof the process exists, so resume must still reattach.
+@test "reattaches when the recorded pid only signals EPERM (another uid) (#461)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '999999999\n' >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  # `kill` is a bash builtin, so a PATH stub cannot intercept it; an exported
+  # function overriding the builtin is what the probe sees (#450 does the same).
+  kill() {
+    printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+    return 1
+  }
+  export -f kill
+  cd "$WT"
+  run run_resume
+  unset -f kill
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  grep -qx 'dispatcher_pane: %77' "$WT/WORKER_TASK.md"
+  grep -q 'msg .* dispatcher:c1' "$STUB_LOG"
+}
+
+# #461: a recorded dead pid recycled by an unrelated process succeeds on
+# `kill -0` and reads live. The pid file predates the process now holding its
+# number, which cannot be the dispatcher; resume must treat it as dead.
+@test "runs solo when the recorded pid is a later recycled process (#461)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  sleep 30 &
+  rec_pid=$!
+  printf '%s\n' "$rec_pid" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%77\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  touch -t 202001010000 "$TEST_REPO/.git/crew/crews/c1/pid"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"solo"* ]]
+  grep -qx 'dispatcher_pane: %3' "$WT/WORKER_TASK.md"
+  kill "$rec_pid" 2>/dev/null || true
 }
 
 _resume_esc_seed() { # [failed-session] [failed-ts]
