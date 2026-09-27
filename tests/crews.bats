@@ -740,6 +740,7 @@ _pidfile_log_path() {
   [[ "$stderr" == *"c-live"* ]]
   [[ "$stderr" == *"$live_pid"* ]]
   [[ "$stderr" == *"crew new"* ]]
+  [[ "$stderr" == *"crew adopt --force"* ]]
   CREW_ID=c-live run run_crew register 4242
   [ "$status" -ne 0 ]
   [ "$(cat "$(_crew_dir c-live)/pid")" = "$live_pid" ]
@@ -758,6 +759,57 @@ _pidfile_log_path() {
   CREW_ID=c-mine run run_crew register 4242
   [ "$status" -ne 0 ]
   [ "$(cat "$(_crew_dir c-mine)/pid")" = "$$" ]
+}
+
+# #450: a live process owned by another uid makes `kill -0` fail EPERM. That is
+# itself proof the process exists, so the recorded pid must still read live.
+@test "register: a live pid on another uid (kill EPERM) is still refused (#450)" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-eperm run_crew register "$live_pid"
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then
+      printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+      return 1
+    fi
+    builtin kill "$@"
+  }
+  export live_pid
+  export -f kill
+  CREW_ID=c-eperm run --separate-stderr run_crew register
+  unset -f kill
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"$live_pid"* ]]
+  [ "$(cat "$(_crew_dir c-eperm)/pid")" = "$live_pid" ]
+}
+
+# #450: the pid file is written after the dispatcher starts, so a process now
+# holding the recorded pid that started AFTER the file cannot be that dispatcher.
+# It is a recycled pid, not evidence the crew is live, and must not strand it.
+@test "register: a recorded pid recycled by a later process is replaced, not stranded (#450)" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-rec run_crew register "$live_pid"
+  touch -t 202001010000 "$(_crew_dir c-rec)/pid"
+  CREW_ID=c-rec run run_crew register 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$(_crew_dir c-rec)/pid")" = 4242 ]
+}
+
+@test "crews: a live foreign-uid pid (kill EPERM) still lists as alive (#450)" {
+  sleep 30 & live_pid=$!
+  CREW_ID=c-eperm run_crew register "$live_pid"
+  kill() {
+    if [ "$1" = "-0" ] && [ "$2" = "$live_pid" ]; then
+      printf 'bash: kill: (%s) - Operation not permitted\n' "$2" >&2
+      return 1
+    fi
+    builtin kill "$@"
+  }
+  export live_pid
+  export -f kill
+  CREW_ID=c-eperm run run_crew crews
+  unset -f kill
+  [ "$status" -eq 0 ]
+  [[ "$(_crews_row c-eperm)" == *$'\tyes' ]]
 }
 
 @test "worker worktree: WORKER_TASK.md crew_id cannot deregister or re-register a live crew" {

@@ -588,12 +588,14 @@ assert_allow_within() {
   assert_deny_within 3500 "$(claude_bash "bash <<'X'"$'\n'"$body"$'\n'"cat .env"$'\n'"X")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB grep with 24000 quoted words allows in under 3.5 s" {
   local body
   body=$(printf "'a' \"b\" %.0s" $(seq 1 12000))
   assert_allow_within 3500 "$(claude_bash "grep -c ${body}.env")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB data heredoc then ls allows in under 3.5 s" {
   assert_allow_within 3500 "$(claude_bash "$(heredoc_100k)"$'\n'"ls")"
 }
@@ -1387,10 +1389,12 @@ nested_backticks() {
   printf '%s' "$out"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: 14 nested levels of escaped backticks ahead of a dump deny in under 3.5 s under every awk" {
   assert_deny_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14)")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB quoted heredoc of backticks ahead of a dump denies in under 3.5 s" {
   local body
   body=$(printf '`a` `b`\n%.0s' $(seq 1 12800))
@@ -1398,6 +1402,7 @@ nested_backticks() {
   assert_deny_within 3500 "$(claude_bash "cat <<'X'"$'\n'"$body"$'\nX\nenv')"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB flat run of backticked words ahead of a dump denies in under 3.5 s" {
   local body
   body=$(printf '`a`;%.0s' $(seq 1 25600))
