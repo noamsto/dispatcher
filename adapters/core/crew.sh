@@ -1279,11 +1279,11 @@ await)
   while :; do
     if [ -f "$log" ]; then
       # A msg from X is due when it is newer than the last msg from X this
-      # session was handed (the delivered mark). The sender of the last due msg
-      # is picked exactly as `last` did; that sender's whole due backlog then
-      # prints, so the mark (raised to the batch's newest ts) never skips a
-      # sibling. `-R` + `fromjson?` skips a torn trailing line (the hard-kill
-      # crash mode) instead of aborting the read.
+      # session was handed (the delivered mark). The last due msg picks its
+      # sender, whose whole due backlog then prints — so the mark, raised to
+      # the batch's newest ts, never skips a sibling. `-R` + `fromjson?` skips
+      # a torn trailing line (the hard-kill crash mode) instead of aborting
+      # the read.
       ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson got "$delivered" '
         reduce (inputs | fromjson?) as $e (
           {cands: []};
