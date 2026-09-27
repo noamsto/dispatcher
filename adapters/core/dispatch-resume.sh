@@ -126,6 +126,11 @@ write_launch_script() {
         printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
       fi
     done
+    if [ -n "${DISPATCH_GRANT_ROOTS:-}" ]; then
+      printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "$DISPATCH_GRANT_ROOTS"
+    else
+      _unset+='-u DISPATCH_GRANT_ROOTS '
+    fi
     _file="$(mktemp "$_dir/launch.XXXXXX")"
     printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
   fi
@@ -139,21 +144,34 @@ write_launch_script() {
 # rules: a claude launch gets the protocol dirs, the branch's artifacts dir and
 # the grants in $crew_dir/grants/<branch>, never the add_dir: header lines.
 _add_dir_ok() {
-  local p h c s r
+  local p h hs c s r g ok=""
+  local -a roots
   [[ $1 == /* && $1 != *$'\n'* ]] || return 1
   [ -d "$1" ] || return 1
   p="$(realpath -e -- "$1")" || return 1
   h="$(realpath -e -- "$HOME")" || return 1
+  hs="${HOME%/}"
   [ "$p" != / ] || return 1
-  [[ "$h/" != "$p/"* ]] || return 1
+  [[ "$h/" != "$p/"* && "$hs/" != "$p/"* ]] || return 1
+  IFS=: read -ra roots <<<"${DISPATCH_GRANT_ROOTS:-}"
+  for g in "${roots[@]}"; do
+    [[ $g == /* ]] || continue
+    r="$(realpath -e -- "$g" 2>/dev/null)" || continue
+    [[ $r != / && "$h/" != "$r/"* && "$hs/" != "$r/"* ]] || continue
+    if [[ "$p/" == "$r/"* ]]; then ok=1; fi
+  done
+  [ -n "$ok" ] || return 1
   if [ -n "${crew_dir:-}" ]; then
     c="$(realpath -m -- "$crew_dir")"
     [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
   fi
-  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings .cargo .azure .terraform.d .gradle .m2 .mozilla .var; do
     for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
+    while IFS= read -r -d '' r; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done < <(find -H "$h/$s" -maxdepth 2 -type l -print0 2>/dev/null | xargs -0r realpath -mz --)
   done
   printf '%s\n' "$p"
 }

@@ -51,20 +51,20 @@ setup_file() {
       # deepSeq on a derivation recurses through its self-referential
       # output attrs and never finishes.
       configApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; }; };
         inherit lib pkgs;
       };
       c = configApplied.config.content;
       configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}\";
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}\";
 
       cursorlessApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; }; };
         inherit lib pkgs;
       };
       c2 = cursorlessApplied.config.content;
       cursorlessLine = builtins.deepSeq [c2.home.file c2.home.activation]
-        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}\";
+        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}|\${c2.home.sessionVariables.DISPATCH_GRANT_ROOTS}\";
 
       cursorSkillsLine = builtins.replaceStrings [\"\n\"] [\" \"] c.home.activation.dispatcherCursorSkills.data;
     in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine + \"\n\" + cursorSkillsLine
@@ -280,6 +280,7 @@ setup() {
 
 @test "the module declares the engines option" {
   [[ "$EVAL_OPTIONS" == *"engines"* ]]
+  [[ "$EVAL_OPTIONS" == *"grantRoots"* ]]
 }
 
 @test "the module's config body evaluates, and wires the protocol dir for real" {
@@ -298,7 +299,7 @@ setup() {
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
   [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster"* ]]
-  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills ]]
+  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src ]]
 }
 
 @test "a roster without cursor installs no cursor artifacts" {
@@ -311,7 +312,7 @@ setup() {
 }
 
 @test "the roster is exported for the CLIs" {
-  [[ "$EVAL_CURSORLESS" == *"|claude pi" ]]
+  [[ "$EVAL_CURSORLESS" == *"|claude pi|" ]]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {
