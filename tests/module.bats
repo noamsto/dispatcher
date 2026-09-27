@@ -167,6 +167,18 @@ setup() {
   grep -q '^cross_repo_hint() {' "$lib"
 }
 
+@test "the worktree-git lib placeholder is substituted in crew, dispatch and dispatch-resume" {
+  # The anchored-git helper (#539) is a sourced shared lib; an unsubstituted
+  # token is not a readable path, so reap/dispatch/resume would abort under
+  # `set -e` the moment they source it.
+  run grep -c '@worktreeGitLib@' "$OUT_CREW/bin/crew"
+  [ "$output" = "0" ]
+  run grep -c '@worktreeGitLib@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  run grep -c '@worktreeGitLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  [ "$output" = "0" ]
+}
+
 @test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
   run grep -c '@protocolRev@' "$OUT_DISPATCH/bin/dispatch"
   [ "$output" = "0" ]

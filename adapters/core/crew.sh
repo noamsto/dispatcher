@@ -4904,6 +4904,15 @@ EOF
     }
   done
 
+  # Anchored git for the per-candidate status/index reads below (#539): a
+  # worker can rewrite its worktree's .git gitlink or add a submodule gitlink,
+  # and plain `git -C wtpath` discovery would then run config-named programs
+  # from a gitdir the worker controls. Unlike the advisory cross-repo-hint
+  # lib, a missing lib here must abort reap outright, not fall back silently.
+  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+  # shellcheck source=/dev/null
+  . "$wt_git_lib"
+
   # Latest status per worker across every crew; keep the ones in a terminal
   # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
@@ -4987,13 +4996,44 @@ PANES
       ;;
     esac
 
+    # Anchor every git read below to the worktree's real admin dir (#539):
+    # a worker's Edit/Write on the worktree's own .git gitlink, or a
+    # submodule gitlink it committed, would otherwise steer plain `git -C
+    # wtpath` discovery into a gitdir it controls and run its config there.
+    # Each gate fails safe by keeping the worktree, before any status call
+    # ever touches a worker-controlled gitdir.
+    if ! admin=$(_wt_admin_dir "$common" "$wtpath"); then
+      note "keeping $branch — no git admin dir for $wtpath"
+      continue
+    fi
+    if ! _wt_gitlink_ok "$admin" "$wtpath"; then
+      note "keeping $branch — its .git does not point at its git admin dir"
+      continue
+    fi
+    if [ -e "$admin/config.worktree" ] || [ -L "$admin/config.worktree" ]; then
+      note "keeping $branch — $admin/config.worktree exists"
+      continue
+    fi
+    if ! staged=$(_wt_git "$admin" "$wtpath" ls-files --stage); then
+      note "keeping $branch — could not read its index"
+      continue
+    fi
+    if grep -q '^160000 ' <<<"$staged"; then
+      note "keeping $branch — it has submodules"
+      continue
+    fi
+
     # Check for leftover work BEFORE touching anything. `wt remove` refuses a
     # dirty worktree on its own, but discovering that only after trashing the
     # task doc below would strip a worktree that then survives.
     # --untracked-files=all: the default "normal" mode collapses a brand-new
     # untracked directory to just its own name (e.g. `?? docs/`), which would
     # never match the docs/superpowers/plans/*.md pattern in $reap_scaffold_re.
-    dirt=$(git -C "$wtpath" status --porcelain --untracked-files=all | grep -vE "$reap_scaffold_re" || true)
+    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all); then
+      note "keeping $branch — git status failed"
+      continue
+    fi
+    dirt=$(printf '%s\n' "$st" | grep -vE "$reap_scaffold_re" || true)
     if [ -n "$dirt" ]; then
       note "keeping $branch — uncommitted changes"
       continue
@@ -5047,7 +5087,7 @@ PROCS
       [ -n "$scaffold" ] || continue
       gtrash put "$wtpath/$scaffold" >/dev/null 2>&1 || true
     done <<SCAFFOLD
-$(git -C "$wtpath" status --porcelain --untracked-files=all | grep -E "$reap_scaffold_re" || true)
+$(_wt_status "$admin" "$wtpath" --untracked-files=all | grep -E "$reap_scaffold_re" || true)
 SCAFFOLD
     # Kill the window ourselves rather than leaning on worktrunk's post-remove
     # hook: that hook short-circuits under $CLAUDECODE, so relying on it would

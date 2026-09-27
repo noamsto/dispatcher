@@ -121,8 +121,8 @@
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${./adapters/core/worktree-git.sh}"];
         in rec {
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
@@ -140,8 +140,9 @@
             # still recover it. `wt` stays ambient, as in dispatch — reap checks
             # for it and degrades to a notice when absent.
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch];
-            # No substitution: crew never references the protocols.
-            text = builtins.readFile ./adapters/core/crew.sh;
+            # crew never references the protocols, but reap sources the
+            # anchored-git lib (#539), so it still needs `sub`.
+            text = sub (builtins.readFile ./adapters/core/crew.sh);
           };
 
           dispatch = pkgs.writeShellApplication {
