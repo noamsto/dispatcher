@@ -189,7 +189,7 @@ strip_templates() {
 # one (B) — B already holds the secrets in its own environment and has
 # unbounded non-dumper paths to them (interpreters, /proc, ps, eval, scripts).
 #
-# In scope, one line each: S1 a canonical dumper word, optionally /-rooted,
+# In scope: S1 a canonical dumper word, optionally /-rooted,
 # at any bash command position, case arms included. S2 the canonical-idiom
 # wrapper list, grown only when an idiom is seen in use. S3 a separator,
 # comment, redirect or stdin ending, heredocs included. S4 a
@@ -198,7 +198,7 @@ strip_templates() {
 # no-comment (J) reading; a command mixing a real comment with a misread one
 # is an accepted limit.
 #
-# Out of scope, one line each: O1 word-forming obfuscation — quote splicing,
+# Out of scope: O1 word-forming obfuscation — quote splicing,
 # escapes, variables, eval, aliases. O2 expansion-dependent structure — a
 # substitution expanding to nothing (`env $(true)`). O3 lexer precision
 # beyond the masker's model — quotes in "${x#...}", an escaped quote in a
@@ -218,19 +218,16 @@ strip_templates() {
 # the converse over-denies (`env -u "X" cmd` reads cmd as -u's argument), which
 # fails closed.
 #
-# wrap_word/wrap_rest accept `)` in the class, so a `$(...)` or backtick group
-# (rewritten by mask_cmd to `(`…`)`) can be a wrapper's option argument
-# (`sudo -u $(id -un) env`) instead of stopping the argument at its own
-# closing paren.
+# wrap_word/wrap_rest accept `)`, so a `$(...)` or backtick group (masked to
+# `(`…`)`) can be a wrapper's option argument: `sudo -u $(id -un) env`.
 wrap_word='[^[:space:];&|]+'
 wrap_rest='[^[:space:];&|]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 # env's options and NAME=value words: what remains when no command follows is a
 # dump (`env -0`, `env -u X`, `env FOO=1`).
 env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
-# A slot-free wrapper's option: a dash flag, then optionally one following word
-# that isn't itself a flag — its argument wherever the option has one,
-# argument-less otherwise (same over-scan-toward-allow as sudo_opts/env_opts).
+# A slot-free wrapper's option: a flag, optionally followed by one non-flag word
+# read as its argument.
 opt_arg='([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)'
 # ssh/container/kube take a target slot (host, container, pod) that must not be
 # swallowed as a preceding option's argument, so their options are named
@@ -240,9 +237,8 @@ ssh_opts='(([[:space:]]+-[A-Za-z]*[bcDEeFIiJLlmOoPpRSWw][[:space:]]+'"$wrap_word
 ctr_opts='(([[:space:]]+-[A-Za-z]*[ewuvplfcH][[:space:]]+'"$wrap_word"')|([[:space:]]+--(env|env-file|volume|workdir|user|name|network|entrypoint|publish|mount|platform|label|file|project-name|profile|context|host)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 kube_opts='(([[:space:]]+-[A-Za-z]*[cn][[:space:]]+'"$wrap_word"')|([[:space:]]+--(container|namespace|context|kubeconfig)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+-p)+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-# A bare `)` never starts this anchor (`echo (re)set` stays prose): the case-arm
-# reading requires being preceded by ^, ; & or ` in `, so an unrelated paren
-# elsewhere on the line cannot seed it.
+# A case arm (`x) env`) is a command start only at line start or after ; & or
+# `in`. A bare `)` is not: heredoc prose such as `(re)set` is scanned raw.
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
 # Where a bare dumper may end: a separator, a comment, a redirect (`env >&2`,
 # `env 2>&1`, `env 2>/dev/null`), or stdin (`env <file`, `env <<EOF`) — every
@@ -291,7 +287,7 @@ nl=$'\n'
 # from 512-byte chunks because BWK awk (macOS) rescans the whole string on
 # every substr. With J set, a line ending in an odd backslash run loses that
 # last backslash and joins the next line unbroken, as bash's backslash-newline
-# continuation does; the run is counted as the characters go by.
+# continuation does.
 # shellcheck disable=SC2016
 awk_chars='
 {
