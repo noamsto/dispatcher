@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Dispatcher-side checker: may this Claude tool-permission dialog be answered
-# "1. Yes" without the human? (#441)
+# "1. Yes" without the human?
 #
 #   permission-check --pane <%id> --branch <b> [--crew-dir <dir>] [--answer]
 #   permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir>]

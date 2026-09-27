@@ -1,7 +1,7 @@
 bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 # adapters/core/permission-check.sh: the dispatcher's auto-approve checker for
-# Claude permission dialogs. See the #441 spec and plan.
+# Claude permission dialogs. Spec: docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md.
 
 FIXTURE_DIR="$BATS_TEST_DIRNAME/fixtures/permission"
 CLASSIFIER_FRAME="$FIXTURE_DIR/classifier-escalation.txt"
