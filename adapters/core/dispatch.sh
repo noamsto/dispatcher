@@ -786,7 +786,9 @@ write_launch_script() {
 # writable), and anything inside or above a secrets/credentials dir under
 # $HOME, matched both as spelled and as resolved, so a ~/.ssh symlinked into
 # /persist is still caught. ~/.config is refused whole: gh, gcloud and most
-# other CLIs keep their credentials under it.
+# other CLIs keep their credentials under it. Symlinks up to two levels deep
+# inside a secrets dir are resolved too, so a home-manager/stow link into a
+# root is caught.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -800,7 +802,7 @@ _add_dir_ok() {
   IFS=: read -ra roots <<<"${DISPATCH_GRANT_ROOTS:-}"
   for g in "${roots[@]}"; do
     [[ $g == /* ]] || continue
-    r="$(realpath -e -- "$g")" || continue
+    r="$(realpath -e -- "$g" 2>/dev/null)" || continue
     [[ $r != / && "$h/" != "$r/"* && "$hs/" != "$r/"* ]] || continue
     if [[ "$p/" == "$r/"* ]]; then ok=1; fi
   done
@@ -813,6 +815,9 @@ _add_dir_ok() {
     for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
+    while IFS= read -r -d '' r; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done < <(find -H "$h/$s" -maxdepth 2 -type l -print0 2>/dev/null | xargs -0r realpath -mz --)
   done
   printf '%s\n' "$p"
 }
@@ -2399,7 +2404,7 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a DISPATCH_GRANT_ROOTS root (now: ${DISPATCH_GRANT_ROOTS:-unset}), not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")

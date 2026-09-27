@@ -156,7 +156,7 @@ _add_dir_ok() {
   IFS=: read -ra roots <<<"${DISPATCH_GRANT_ROOTS:-}"
   for g in "${roots[@]}"; do
     [[ $g == /* ]] || continue
-    r="$(realpath -e -- "$g")" || continue
+    r="$(realpath -e -- "$g" 2>/dev/null)" || continue
     [[ $r != / && "$h/" != "$r/"* && "$hs/" != "$r/"* ]] || continue
     if [[ "$p/" == "$r/"* ]]; then ok=1; fi
   done
@@ -169,6 +169,9 @@ _add_dir_ok() {
     for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
+    while IFS= read -r -d '' r; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done < <(find -H "$h/$s" -maxdepth 2 -type l -print0 2>/dev/null | xargs -0r realpath -mz --)
   done
   printf '%s\n' "$p"
 }

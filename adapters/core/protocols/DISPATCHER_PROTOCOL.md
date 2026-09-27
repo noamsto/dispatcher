@@ -336,7 +336,9 @@ is back.
   inside or above any of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.claude`,
   `~/.codex`, `~/.kube`, `~/.docker`, `~/.password-store`, `~/.local/share/keyrings`,
   `~/.cargo`, `~/.azure`, `~/.terraform.d`, `~/.gradle`, `~/.m2`, `~/.mozilla` or
-  `~/.var`, as defence in depth.
+  `~/.var`, as defence in depth. Symlinks up to two levels deep inside those dirs
+  are resolved too, so a root holding a home-manager/stow link target from them
+  is refused there.
   The grant is read-write **in effect** for a claude worker:
   it is a working directory, so prompt-free reads and edits (per the permission mode)
   both land there, not just reads — including planting symlinks. It is recorded in

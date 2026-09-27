@@ -5824,6 +5824,27 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
 }
 
+@test "add-dir: a root dir holding a symlink target from inside a secrets dir is refused" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.claude" "$HOME/.config" "$T/cfg/home/ai/claude-code" "$T/cfg/gh/sub" "$T/cfg/other"
+  touch "$T/cfg/home/ai/claude-code/settings.json"
+  ln -s "$T/cfg/home/ai/claude-code/settings.json" "$HOME/.claude/settings.json"
+  ln -s "$T/cfg/gh" "$HOME/.config/gh"
+  export DISPATCH_GRANT_ROOTS="$T/cfg"
+  for v in "$T/cfg/home/ai/claude-code" "$T/cfg" "$T/cfg/gh" "$T/cfg/gh/sub"; do
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "secrets symlink target"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+  done
+  run ! grep -q '^switch' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.dispatch-wt" ]
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$T/cfg/other" --crew-id c1 42 "sibling no link"
+  [ "$status" -eq 0 ]
+}
+
 @test "add-dir: HOME's unresolved parent is refused when HOME is a symlink" {
   stub_launch_bins
   T="$(realpath "$BATS_TEST_TMPDIR")"
@@ -5854,6 +5875,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
     DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$HOME/proj" --crew-id c1 42 "invalid root"
     [ "$status" -eq 1 ]
     [[ "$output" == *"dispatch: --add-dir '$HOME/proj' refused"* ]]
+    [[ "$output" != *"realpath:"* ]]
   done
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
