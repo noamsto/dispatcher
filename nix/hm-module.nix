@@ -11,6 +11,9 @@ self: {
   codexVersion = (lib.importJSON "${codexPlugin}/.codex-plugin/plugin.json").version;
   codexCache = ".codex/plugins/cache/dispatcher/dispatcher";
   hasEngine = e: lib.elem e cfg.engines;
+  # `github` or `linear:TEAM`. TEAM is `[A-Z][A-Z0-9]*`.
+  trackerValue = lib.types.strMatching "github|linear:[A-Z][A-Z0-9]*";
+  trackerExport = attrs: lib.concatStringsSep " " (lib.mapAttrsToList (name: value: "${name}=${value}") attrs);
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -51,6 +54,30 @@ in {
       '';
     };
 
+    repoTrackers = lib.mkOption {
+      type = lib.types.attrsOf trackerValue;
+      default = {};
+      example = {"factify-inc/mono" = "linear:ENG";};
+      description = ''
+        Tracker for one GitHub repo. Keys are `owner/repo`. A value is `github`
+        or `linear:TEAM`. Exported as DISPATCH_REPO_TRACKERS (space-separated
+        `key=value`). Empty exports an empty string. `dispatch` checks this
+        before orgTrackers, then stamps `github`.
+      '';
+    };
+
+    orgTrackers = lib.mkOption {
+      type = lib.types.attrsOf trackerValue;
+      default = {};
+      example = {factify-inc = "linear:ENG";};
+      description = ''
+        Default tracker for every repo in a GitHub org. Keys are the org login.
+        Values match repoTrackers. Exported as DISPATCH_ORG_TRACKERS
+        (space-separated `key=value`). Empty exports an empty string. Used when
+        the repo has no repoTrackers entry.
+      '';
+    };
+
     claudePluginDir = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -72,6 +99,8 @@ in {
         DISPATCH_PROFILE = cfg.profile;
         DISPATCH_ENGINES = lib.concatStringsSep " " cfg.engines;
         DISPATCH_GRANT_ROOTS = lib.concatStringsSep ":" cfg.grantRoots;
+        DISPATCH_REPO_TRACKERS = trackerExport cfg.repoTrackers;
+        DISPATCH_ORG_TRACKERS = trackerExport cfg.orgTrackers;
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
         # command and the cursor rule are markdown an agent reads live and
         # resolves through its Bash tool, which a build-time substitution into

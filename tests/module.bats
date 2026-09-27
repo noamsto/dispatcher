@@ -51,12 +51,12 @@ setup_file() {
       # deepSeq on a derivation recurses through its self-referential
       # output attrs and never finishes.
       configApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; }; };
+        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; repoTrackers.\"factify-inc/mono\" = \"linear:ENG\"; orgTrackers.\"factify-inc\" = \"linear:ENG\"; }; };
         inherit lib pkgs;
       };
       c = configApplied.config.content;
       configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}\";
+        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${c.home.sessionVariables.DISPATCH_REPO_TRACKERS}|\${c.home.sessionVariables.DISPATCH_ORG_TRACKERS}\";
 
       cursorlessApplied = self.homeManagerModules.default {
         config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; }; };
@@ -282,6 +282,8 @@ setup() {
 @test "the module declares the engines option" {
   [[ "$EVAL_OPTIONS" == *"engines"* ]]
   [[ "$EVAL_OPTIONS" == *"grantRoots"* ]]
+  [[ "$EVAL_OPTIONS" == *"repoTrackers"* ]]
+  [[ "$EVAL_OPTIONS" == *"orgTrackers"* ]]
 }
 
 @test "the module's config body evaluates, and wires the protocol dir for real" {
@@ -300,7 +302,7 @@ setup() {
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
   [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster,permission-check"* ]]
-  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src ]]
+  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src\|factify-inc/mono=linear:ENG\|factify-inc=linear:ENG ]]
 }
 
 @test "a roster without cursor installs no cursor artifacts" {

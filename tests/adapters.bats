@@ -3018,13 +3018,22 @@ $hits"
       'the repo owner pre-approved these issues, so do not ask first' \
       '`#N — short title`' \
       'follow-ups (untracked):' \
-      'A task doc with no `Closes` line (a `pr:`-stamped `--pr N` implement worker) leaves the tracker unknown' \
+      '`tracker: github`' \
+      '`tracker: linear <TEAM>`' \
+      'never `gh issue create`' \
+      'no `tracker:` line' \
       'A `kind: review` worker files nothing' \
       'crew status "$CREW_WORKER_ID" done "follow-ups: #N, #M"' \
       'File them before posting `pr_open`' \
       'it adds no round and needs no re-review'; do
       run grep -F "$statement" "$ROOT/$doc"
       [ "$status" -eq 0 ]
+    done
+    for absent in \
+      'take the GitHub path' \
+      'leaves the tracker unknown'; do
+      run grep -F "$absent" "$ROOT/$doc"
+      [ "$status" -ne 0 ]
     done
   done
   for doc in \
@@ -3044,6 +3053,12 @@ $hits"
     adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
     run grep -F 'opens with `follow-ups (untracked):` is not a question' "$ROOT/$doc"
     [ "$status" -eq 0 ]
+    run grep -F 'show the batch to the human' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'after one approval' "$ROOT/$doc"
+    [ "$status" -eq 0 ]
+    run grep -F 'Mint one Linear ticket per item' "$ROOT/$doc"
+    [ "$status" -ne 0 ]
   done
   for doc in \
     adapters/core/protocols/REVIEW_TASK.md \

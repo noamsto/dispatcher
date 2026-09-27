@@ -816,7 +816,7 @@ is the event JSON — `changed[]` names which signals moved. Handle it like any
 other question `msg`: read it, decide, and if the PR needs another pass dispatch
 a `trivial` review worker at it (`--pr N`) rather than doing the work yourself.
 
-A worker `msg` whose body opens with `follow-ups (untracked):` is not a question — nobody is in `crew await`. Mint one Linear ticket per item, linking the parent ticket, then continue. A worker `done` whose detail reads `follow-ups: #N…` lists issues it already filed — nothing to do. Which tracker applies follows `WORKER_PROTOCOL.md` "Deferred findings" (Linear = `Closes <TEAM>-<N>`).
+A worker `msg` whose body opens with `follow-ups (untracked):` is not a question — nobody is in `crew await`. Collect the items; draft one Linear ticket per item (labels, a link to the PR). Parent is the task header's `Closes <TEAM>-<N>` when that line is present. When the header is `pr: N`, parent is the `Closes <TEAM>-<N>` in that PR's body; the team is the `tracker: linear <TEAM>` stamp. If neither closes line exists, draft with no parent. Then show the batch to the human; create them only after one approval; then link each ticket from that PR's `## Follow-ups`, creating that section when the PR only has `## Follow-ups (untracked)`. A worker `done` whose detail reads `follow-ups: #N…` lists issues it already filed — nothing to do. Which path the worker took follows the `tracker:` header in `WORKER_PROTOCOL.md` "Deferred findings".
 
 Two reads remain for detail:
 
