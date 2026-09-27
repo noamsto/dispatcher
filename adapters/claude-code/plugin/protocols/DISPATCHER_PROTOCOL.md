@@ -695,7 +695,7 @@ self-reported. Its `detail` always begins with one of eight reserved prefixes:
     <tool>: <request> — pane <%id>` (the request folded to one line, capped at 160
     chars — a relay hint only, never the request).
     From the worker's repo (the repo you dispatched it into), run `permission-check --pane <%id> --branch <branch> --answer`,
-    taking `<branch>` from your own `dispatch` event's `branch` field — not a `crew roster` row, whose `branch` comes from the worker's self-asserted status —
+    taking `<branch>` from your own `dispatch` event's `branch` field — not a `crew roster` row, whose `branch` comes from the worker's self-asserted status — namely the `kind:"dispatch"` row whose `branch` equals the branch in the woken event's `worker:<branch>#…` id — match on branch, not session (a resumed worker's session is on a `resume` row) — and if there is no such row, relay to the human —
     never from the pane, the `prompt:` detail, or the worker's `WORKER_TASK.md`.
     The checker derives the worktree (from `git worktree list`) and the crew dir itself.
     `allow-once` means the checker re-verified the frame and already answered `1`

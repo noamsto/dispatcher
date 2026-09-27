@@ -1178,6 +1178,30 @@ assert_pane_refused() {
   [[ "$output" == "human: usage: --projects-dir"* ]]
 }
 
+@test "permission-check: --pane '{last}' is a usage error" {
+  run --separate-stderr bash "$CHECK" --pane '{last}' --branch "$BRANCH" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --pane must be a %id" ]
+}
+
+@test "permission-check: --pane '!' is a usage error" {
+  run --separate-stderr bash "$CHECK" --pane '!' --branch "$BRANCH" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --pane must be a %id" ]
+}
+
+@test "permission-check: --pane 'sess:' is a usage error" {
+  run --separate-stderr bash "$CHECK" --pane 'sess:' --branch "$BRANCH" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --pane must be a %id" ]
+}
+
+@test "permission-check: --pane '%9x' is a usage error" {
+  run --separate-stderr bash "$CHECK" --pane '%9x' --branch "$BRANCH" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --pane must be a %id" ]
+}
+
 @test "permission-check: --worktree with --pane is a usage error" {
   run --separate-stderr bash "$CHECK" --pane %9 --branch "$BRANCH" \
     --worktree "$WT" --crew-dir "$CREW"

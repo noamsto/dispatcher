@@ -932,6 +932,7 @@ teardown() {
     for statement in \
       'From the worker'"'"'s repo (the repo you dispatched it into), run `permission-check --pane <%id> --branch <branch> --answer`,' \
       'taking `<branch>` from your own `dispatch` event'"'"'s `branch` field — not a `crew roster` row, whose `branch` comes from the worker'"'"'s self-asserted status —' \
+      'match on branch, not session' \
       'never from the pane, the `prompt:` detail, or the worker'"'"'s `WORKER_TASK.md`.' \
       'The checker derives the worktree (from `git worktree list`) and the crew dir itself.' \
       'or any non-zero exit → relay' \

@@ -192,6 +192,9 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
                                 # fixtures/tests; never answers
 ```
 
+- `--pane` must be a literal `%<n>` pane id — a relative tmux target (`{last}`,
+  `!`, `sess:`) is re-resolved by each tmux call, so the session check, the
+  frame and the keystroke could hit different panes.
 - `--crew-dir` defaults to `<git common dir>/crew` of the repo the checker
   runs in; the lead record, the artifacts dir and the grants file come from it.
 - The worktree: in `--pane` mode the checker takes it from
@@ -432,6 +435,17 @@ below are stated for the unsandboxed case.
 - **Keystroke race.** `--answer` re-captures and compares immediately before
   `send-keys`; a different dialog can only replace this one if something else
   answers it in that window.
+- **The `--session-id`/`--resume` token check shows how the process was
+  launched, not which session is live.** A human-run `--fork-session` or an
+  in-TUI `/clear`/`/resume` would leave argv naming the old session while a
+  new one runs; no dispatcher launch path does this, and recovering from it
+  needs human action.
+- **Git worktree metadata is worker-writable.** `<common>/worktrees/<id>/gitdir`
+  can be edited from inside the worktree, so the derived worktree path is not
+  itself trusted. What pins it is the transcript lookup — `<projects>/<slug>`
+  with `<slug>` derived from the _canonical_ worktree path must hold the
+  `<sid>.jsonl` for the lead's own session — plus the symlink and hard-link
+  path rules. Anyone reusing the derived path elsewhere must keep that pin.
 
 ## Protocol edits
 

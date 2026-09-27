@@ -91,6 +91,10 @@ parse_args() {
     shift 2
   done
 
+  # A relative tmux target is re-resolved by each tmux call, so the session
+  # check, the frame and the keystroke could hit different panes.
+  [[ -z $PANE || $PANE =~ ^%[0-9]+$ ]] || usage "--pane must be a %id"
+
   if [ -n "$PANE" ] && [ -n "$CAPTURE_FILE" ]; then
     usage "--pane and --capture are exclusive"
   fi
