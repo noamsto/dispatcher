@@ -197,9 +197,15 @@
             text = builtins.replaceStrings ["@reviewersDir@"] ["${./adapters/core/reviewers}"] (builtins.readFile ./adapters/core/reviewers/resolve-roster.sh);
           };
 
+          permission-check = pkgs.writeShellApplication {
+            name = "permission-check";
+            runtimeInputs = with pkgs; [jq coreutils gnused tmux git procps];
+            text = sub (builtins.readFile ./adapters/core/permission-check.sh);
+          };
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster];
+            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
 

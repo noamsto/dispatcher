@@ -923,6 +923,38 @@ teardown() {
   done
 }
 
+@test "dispatcher protocol pins the permission-check policy on every copy" {
+  for doc in \
+    adapters/core/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md \
+    adapters/cursor/protocols/DISPATCHER_PROTOCOL.md; do
+    for statement in \
+      'From the worker'"'"'s repo (the repo you dispatched it into), run `permission-check --pane <%id> --branch <branch> --answer`,' \
+      'taking `<branch>` from your own `dispatch` event'"'"'s `branch` field — not a `crew roster` row, whose `branch` comes from the worker'"'"'s self-asserted status —' \
+      'match on branch, not session' \
+      'never from the pane, the `prompt:` detail, or the worker'"'"'s `WORKER_TASK.md`.' \
+      'The checker derives the worktree (from `git worktree list`) and the crew dir itself.' \
+      'or any non-zero exit → relay' \
+      'a role pane'"'"'s permission dialog goes straight to the human: do not run `permission-check` on it' \
+      "never option 2 (\"don't ask again\"), never option 3 or" \
+      '**Classifier escalations always go to the human**' \
+      '`permission-check … --answer`; otherwise it goes to the human' \
+      'keystroke is not an authorization delivery: it answers a tool-permission dialog the checker verified, never a permission block.' \
+      'only by `permission-check --answer`, never by hand'; do
+      run grep -F "$statement" "$ROOT/$doc"
+      [ "$status" -eq 0 ]
+    done
+    for removed in \
+      'a follow-up issue tracks a dispatcher' \
+      '<branch> --worktree <worktree>' \
+      'Never answer the dialog yourself'; do
+      run grep -F "$removed" "$ROOT/$doc"
+      [ "$status" -ne 0 ]
+    done
+  done
+}
+
 @test "every review-task copy mirrors the bounded blocked→await cadence" {
   for copy in \
     "$ROOT/adapters/core/protocols/REVIEW_TASK.md" \
