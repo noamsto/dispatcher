@@ -7348,3 +7348,29 @@ _escalation_seed_spoof() {
   line="$(grep -F 'claude --name sage ' <(launch_log))"
   [[ "$line" != *"Owner authorization"* ]]
 }
+
+@test "add-dir: _add_dir_ok fail-closed when find exits 1 (no findutils)" {
+  # Unit test: extract _add_dir_ok from dispatch.sh, stub find to exit 1,
+  # and verify the grant is refused with the wire message. Red on main
+  # because main silently ignores the find failure (process substitution
+  # loses the exit status).
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME/.ssh" "$T/roots/proj"
+
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  crew_dir="$T/crew"
+
+  stub_bin find
+  cat >"$STUB_DIR/find" <<'STUBEOF'
+#!/usr/bin/env bash
+exit 1
+STUBEOF
+  chmod +x "$STUB_DIR/find"
+
+  run _add_dir_ok "$T/roots/proj"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"wire: _add_dir_ok: find failed"* ]]
+}

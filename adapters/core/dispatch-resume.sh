@@ -169,9 +169,23 @@ _add_dir_ok() {
     for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
-    while IFS= read -r -d '' r; do
-      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
-    done < <(find -H "$h/$s" -maxdepth 2 -type l -print0 2>/dev/null | xargs -0r realpath -mz --)
+    if [ -d "$h/$s" ]; then
+      local _f _g
+      _f=$(mktemp) || return 1
+      _g=$(mktemp) || { rm -f "$_f"; return 1; }
+      find -H "$h/$s" -maxdepth 2 -type l -print0 > "$_f" 2>/dev/null || {
+        rm -f "$_f" "$_g"; printf >&2 'wire: _add_dir_ok: find failed for %s\n' "$s"; return 1
+      }
+      xargs -0r realpath -mz -- < "$_f" > "$_g" || {
+        rm -f "$_f" "$_g"; printf >&2 'wire: _add_dir_ok: realpath pipeline failed for %s\n' "$s"; return 1
+      }
+      rm -f "$_f"
+      # shellcheck disable=SC2094 # rm only in the early-exit || branch, not while reading
+      while IFS= read -r -d '' r; do
+        [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || { rm -f "$_g"; return 1; }
+      done < "$_g"
+      rm -f "$_g"
+    fi
   done
   printf '%s\n' "$p"
 }
