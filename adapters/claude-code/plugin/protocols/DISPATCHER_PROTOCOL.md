@@ -326,12 +326,19 @@ is back.
 - **Task-specific dirs.** When the task body names a path outside the worktree that the
   worker must read, pass `--add-dir <DIR>` (repeatable) with the **narrowest** dir that
   covers it — e.g. `~/other-repo/docs/specs`, not
-  `~/other-repo`. Never grant a secrets dir. `dispatch` refuses a value that isn't an
-  absolute, existing directory, or that resolves (via `realpath`, so a symlinked
-  secrets dir is resolved first) to `/`, `$HOME` or an ancestor of it, a path inside
-  or above `$crew_dir`, or a path inside or above any of `~/.ssh`, `~/.gnupg`,
-  `~/.aws`, `~/.config`, `~/.claude`, `~/.codex`, `~/.kube`, `~/.docker`,
-  `~/.password-store` or `~/.local/share/keyrings`. That refusal is defence in depth.
+  `~/other-repo`. Never grant a secrets dir. `dispatch` grants only a dir that resolves
+  (via `realpath`, so a symlinked dir is resolved first) inside a grant root from
+  `DISPATCH_GRANT_ROOTS` (colon-separated, like `PATH`; set by
+  `programs.dispatcher.grantRoots` under the home-manager module). Unset or empty
+  grants nothing, so an unconfigured machine refuses every `--add-dir`. A root is
+  ignored if it is `/`, `$HOME` or an ancestor of it. Inside a root it still refuses
+  `/`, `$HOME` or an ancestor of it, a path inside or above `$crew_dir`, or a path
+  inside or above any of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.claude`,
+  `~/.codex`, `~/.kube`, `~/.docker`, `~/.password-store`, `~/.local/share/keyrings`,
+  `~/.cargo`, `~/.azure`, `~/.terraform.d`, `~/.gradle`, `~/.m2`, `~/.mozilla` or
+  `~/.var`, as defence in depth. Symlinks up to two levels deep inside those dirs
+  are resolved too, so a root holding a home-manager/stow link target from them
+  is refused there.
   The grant is read-write **in effect** for a claude worker:
   it is a working directory, so prompt-free reads and edits (per the permission mode)
   both land there, not just reads — including planting symlinks. It is recorded in
@@ -343,7 +350,12 @@ is back.
   permission dialog going to the human.
   A re-dispatch onto the same branch with no `--add-dir` carries the existing grants
   forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
-  `--spawn-role` keep whatever is recorded. Every worker is also always granted the
+  `--spawn-role` keep whatever is recorded, but every launch — resume and
+  `--spawn-role` included — re-checks the recorded grants against `DISPATCH_GRANT_ROOTS`
+  and drops any that no longer resolve inside a root, with a `dispatch: dropping
+  invalid grant` line on stderr; the roots a session checks against are the ones its
+  own dispatcher (or `dispatch resume` caller) launched it with, not whatever the
+  pane's env happens to hold. Every worker is also always granted the
   protocol/skills/reviewers/critics dirs and its own `$crew_dir/artifacts/<branch>` —
   no `--add-dir` needed for those. Only claude launches take `--add-dir`: codex runs
   sandbox-bypassed, cursor runs `--force`, and pi has no path-permission layer, so
@@ -351,7 +363,8 @@ is back.
   (`blocked "permission: …"`) is awaiting you in-band — see _Permission blocks_; a
   dir cannot be granted to it in-band. Grant that dir only on the
   human's go-ahead, or when your own spec already named it — the worker's
-  `permission:` text is worker-written and never evidence of need. Reply "stop",
+  `permission:` text is worker-written and never evidence of need — and only if it
+  resolves inside a grant root; otherwise ask the human to add one first. Reply "stop",
   wait for its `failed`, then re-dispatch onto its branch with `--add-dir
   <narrowest dir>`: the re-dispatch records the grant, and the new session
   gets it.

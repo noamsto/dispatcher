@@ -237,16 +237,23 @@ programs.dispatcher = {
   enable = true;
   profile = "work";
   engines = ["claude" "pi" "codex"];
+  grantRoots = ["/home/me/git"];
 };
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
-`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE` and
-`DISPATCH_ENGINES`,
+`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
+`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`,
 `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`
 and `DISPATCHER_SKILLS_DIR`, installs the Codex plugin and writes the Cursor
 rule, commands, skills and rosters when those engines are included in
 `engines`.
+
+`dispatch --add-dir` grants a dir only when it resolves inside a `grantRoots`
+entry; unset or empty (the default) refuses every `--add-dir`. This is
+breaking for anyone already using `--add-dir` — set `grantRoots` to keep it
+working. A changed value only reaches `dispatch` from a fresh login shell or
+tmux server (#303).
 
 For Claude Code, pass the plugin directory to `claude`:
 

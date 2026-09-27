@@ -716,6 +716,10 @@ shell_quote() {
 # the age prune never reaches it while its pane is alive. A reaped pane never
 # runs the hook, so an old exit.* whose pane is gone is reclaimed instead
 # (issue #343).
+#
+# The launching process's own DISPATCH_GRANT_ROOTS is pinned the same way, so a
+# lead's `dispatch --spawn-role` validates grants against the roots its
+# dispatcher used, not whatever the pane's (tmux server's) environment holds.
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -756,6 +760,11 @@ write_launch_script() {
         printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
       fi
     done
+    if [ -n "${DISPATCH_GRANT_ROOTS:-}" ]; then
+      printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "$DISPATCH_GRANT_ROOTS"
+    else
+      _unset+='-u DISPATCH_GRANT_ROOTS '
+    fi
     _file="$(mktemp "$_dir/launch.XXXXXX")"
     printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
   fi
@@ -766,29 +775,47 @@ write_launch_script() {
 
 # _add_dir_ok <path> — print <path>'s canonical form if it may be granted to a
 # worker as an extra directory, else fail without a word (the dispatch-time
-# caller words its own refusal). Refused: anything not an existing absolute
-# directory, /, $HOME or an ancestor of it, anything inside or above $crew_dir
+# caller words its own refusal). Grantable only when <path> resolves inside a
+# resolved root from $DISPATCH_GRANT_ROOTS (colon-separated); unset or empty
+# grants nothing, so an unconfigured machine refuses every --add-dir. A root
+# is skipped if it isn't absolute or existing, is /, or is $HOME or an
+# ancestor of it under either spelling. Inside a root, defence in depth still
+# refuses /, $HOME or an ancestor of it, anything inside or above $crew_dir
 # (the grant records, bus log and launch scripts would become writable), and
 # anything inside or above a secrets/credentials dir under $HOME, matched both
 # as spelled and as resolved, so a ~/.ssh symlinked into /persist is still
 # caught. ~/.config is refused whole: gh, gcloud and most other CLIs keep
-# their credentials under it.
+# their credentials under it. Symlinks up to two levels deep inside a secrets
+# dir are resolved too, so a home-manager/stow link into a root is caught.
 _add_dir_ok() {
-  local p h c s r
+  local p h hs c s r g ok=""
+  local -a roots
   [[ $1 == /* && $1 != *$'\n'* ]] || return 1
   [ -d "$1" ] || return 1
   p="$(realpath -e -- "$1")" || return 1
   h="$(realpath -e -- "$HOME")" || return 1
+  hs="${HOME%/}"
   [ "$p" != / ] || return 1
-  [[ "$h/" != "$p/"* ]] || return 1
+  [[ "$h/" != "$p/"* && "$hs/" != "$p/"* ]] || return 1
+  IFS=: read -ra roots <<<"${DISPATCH_GRANT_ROOTS:-}"
+  for g in "${roots[@]}"; do
+    [[ $g == /* ]] || continue
+    r="$(realpath -e -- "$g" 2>/dev/null)" || continue
+    [[ $r != / && "$h/" != "$r/"* && "$hs/" != "$r/"* ]] || continue
+    if [[ "$p/" == "$r/"* ]]; then ok=1; fi
+  done
+  [ -n "$ok" ] || return 1
   if [ -n "${crew_dir:-}" ]; then
     c="$(realpath -m -- "$crew_dir")"
     [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
   fi
-  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
+  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings .cargo .azure .terraform.d .gradle .m2 .mozilla .var; do
     for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
       [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
     done
+    while IFS= read -r -d '' r; do
+      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+    done < <(find -H "$h/$s" -maxdepth 2 -type l -print0 2>/dev/null | xargs -0r realpath -mz --)
   done
   printf '%s\n' "$p"
 }
@@ -2375,7 +2402,7 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory, not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")
