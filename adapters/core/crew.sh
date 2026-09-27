@@ -815,7 +815,7 @@ if [ "$sub" = id ]; then
     printf '%s\n' "$id"
     exit 0
   fi
-  echo "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find this repo's crews, 'crew adopt <id> \$PPID' to re-attach, or 'crew new' to start one" >&2
+  echo "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one" >&2
   exit 1
 fi
 if [ "$sub" = new ]; then
@@ -1327,7 +1327,7 @@ register | deregister)
   # dispatcher's own pid as its parent can still deregister it.
   crew=$(_crew_id)
   [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id> \$PPID' to re-attach, or 'crew new' to start one" >&2
+    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one" >&2
     exit 1
   }
   # deregister rm -rf's "$dir/crews/$crew", so an unvalidated `..` removes the bus.
