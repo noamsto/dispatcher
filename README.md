@@ -349,9 +349,11 @@ For Claude Code, pass the plugin directory to `claude`:
   ```
 
   The Shell payloads (`preToolUse`, `beforeShellExecution`) are verified
-  against captured cursor-agent runs; the `beforeReadFile` payload and the
-  `preToolUse` `Read`/`Grep` input keys are read off the shipped cursor-agent
-  2026.09.23 bundle, not a live capture.
+  against captured cursor-agent runs. The `preToolUse` `Read`/`Grep` input
+  keys are a live capture from cursor-agent 2026.09.26-dd393fe on 2026-09-27
+  (`tests/fixtures/cursor-pretool-read.json`,
+  `tests/fixtures/cursor-pretool-grep.json`). The `beforeReadFile` payload
+  is read off the shipped cursor-agent 2026.09.23 bundle.
 
 - **The Cursor public-leak guard.** Same arrangement, on the two Shell events.
   It asks before a `gh` post to a repo outside your private-repo list carries a
