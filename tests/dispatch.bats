@@ -1397,8 +1397,8 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"WORKER_PROTOCOL.md"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
 }
 
 @test "deep dispatch aborts before scaffolding when GRID_PROTOCOL.md is missing from the protocol dir" {
@@ -1410,8 +1410,8 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"GRID_PROTOCOL.md"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
 }
 
 @test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
@@ -1427,8 +1427,8 @@ EOF
   [[ "$output" == *"0123456789abcdef"* ]]
   [[ "$output" == *"$rev_dir"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
 }
 
 @test "refuses a stale protocol dir whose content differs from the script marker" {
@@ -1441,8 +1441,8 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
 }
 
 @test "a protocol dir hashing to the script marker dispatches normally" {
@@ -1513,7 +1513,7 @@ _store_protocols() { # <dir> <content>
   grep -q 'new-window' "$STUB_LOG"
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$TEST_REPO/.dispatch-wt/feat-42-stale-store-export/WORKER_TASK.md"
   grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
-  ! grep -qF -- "h-old-source" <(launch_log)
+  run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
 @test "a store-path DISPATCHER_PROTOCOL_DIR with the baked content is the current build's export and is kept silently" {
@@ -1581,7 +1581,7 @@ _store_protocols() { # <dir> <content>
   [[ "$output" == *"ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"ignoring stale DISPATCHER_CRITICS_DIR"* ]]
   grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS GIT_EDITOR=true" <(launch_log)
-  ! grep -qF -- "h-old-source" <(launch_log)
+  run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
 @test "a relative DISPATCHER_*_DIR override is refused, not resolved inside a task worktree" {
@@ -1590,7 +1590,7 @@ _store_protocols() { # <dir> <content>
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "relative dir"
   [ "$status" -ne 0 ]
   [[ "$output" == *"DISPATCHER_REVIEWERS_DIR must be an absolute path, got: reviewers"* ]]
-  ! grep -q 'send-keys' <(launch_log)
+  run ! grep -q 'send-keys' <(launch_log)
 }
 
 @test "a DISPATCHER_*_DIR override with shell metacharacters is refused (#470)" {
@@ -1599,7 +1599,7 @@ _store_protocols() { # <dir> <content>
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "meta dir"
   [ "$status" -ne 0 ]
   [[ "$output" == *"DISPATCHER_PROTOCOL_DIR must not contain shell metacharacters"* ]]
-  ! grep -q 'send-keys' <(launch_log)
+  run ! grep -q 'send-keys' <(launch_log)
 }
 
 @test "the launch env unsets every DISPATCHER_*_DIR it does not pin" {
@@ -1615,8 +1615,8 @@ _store_protocols() { # <dir> <content>
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "raw dirs"
   [ "$status" -eq 0 ]
-  ! grep -qF -- "DISPATCHER_REVIEWERS_DIR=" <(launch_log)
-  ! grep -qF -- "DISPATCHER_CRITICS_DIR=" <(launch_log)
+  run ! grep -qF -- "DISPATCHER_REVIEWERS_DIR=" <(launch_log)
+  run ! grep -qF -- "DISPATCHER_CRITICS_DIR=" <(launch_log)
   grep -qF -- "DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" <(launch_log)
 }
 
@@ -1677,8 +1677,8 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"WORKER_PROTOCOL.md"* ]]
     [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+    if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+    if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
   done < <(protocol_engine_specs codex cursor)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 2 ]
@@ -1700,8 +1700,8 @@ EOF
     [[ "$output" == *"0123456789abcdef"* ]]
     [[ "$output" == *"$rev_dir"* ]]
     [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
-    [ ! -f "$STUB_LOG" ] || ! grep -q 'new-window' "$STUB_LOG"
+    if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+    if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
   done < <(protocol_engine_specs codex cursor)
   # A zero-iteration loop would pass vacuously; a mistyped/renamed filter must fail.
   [ "$n" -eq 2 ]
@@ -1988,7 +1988,7 @@ EOF
   # Assert the real property instead: no `wt switch` scaffolded a worktree.
   # Non-vacuous: move the gate below worktree creation and `wt switch --create`
   # lands in the log, failing this.
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "DISPATCH_PRECHECK runs every gate and exits before any scaffolding" {
@@ -2070,7 +2070,7 @@ codex_limit_json() { # <limit_reached jq object literal>
   [ "$status" -eq 1 ]
   [[ "$output" == *"claude quota exhausted"* ]]
   # The gate rejects before scaffolding, same property as the profile gate.
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "budget gate passes below the threshold" {
@@ -2345,7 +2345,7 @@ EOF
   # $STUB_LOG may not exist at all. Non-vacuous for *this* gate because the row
   # reaches it (profile is work, crew id supplied) — move the gate below
   # dispatch.sh's `wt switch -c` and `switch` lands in the log.
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "rejects a claude alias on --agent codex" {
@@ -2843,7 +2843,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   [[ "$output" == *"standard"* ]]
   [[ "$output" == *"opus"* ]]
   [[ "$output" == *"--ignore-map"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "tier map conformance: dispatch.sh matches the documented rule" {
@@ -3075,13 +3075,13 @@ assert_gate_silent() { # <engine> <model> [profile]
   run run_dispatch deep sonnet --roles 'reviewer@xhigh' --effort high --crew-id c1 42 "explicit role effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (xhigh)"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -qE 'split-window|send-keys' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
 
   budget_json_at claude 77 345600
   run run_dispatch deep sonnet --roles reviewer --effort max --crew-id c1 42 "inherited role effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (max)"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -qE 'split-window|send-keys' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
 }
 
 @test "budget rung gate allows 7d burn that is at or behind pace" {
@@ -3319,7 +3319,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$status" -eq 1 ]
   [[ "$output" == *"--review requires --pr N"* ]]
   # Same idiom as the profile gate: no stub ran, so $STUB_LOG may not exist.
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "--review rejects a tracker token in place of a PR" {
@@ -3341,7 +3341,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   run run_dispatch standard sonnet --effort medium --pr 99 --review --crew-id c1 "review"
   [ "$status" -eq 1 ]
   [[ "$output" == *"no review contract"* ]]
-  [ ! -f "$STUB_LOG" ] || ! grep -q 'switch' "$STUB_LOG"
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
 @test "--review stamps kind: review, appends the contract, and drops the push mandate" {
