@@ -12,6 +12,10 @@ setup() {
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
   unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS
+  # The pane a tmux stub's display-message answers `#{pane_pid}` with, for
+  # dispatch's ancestry gate (_pane_is_ancestor): the bats test process is a
+  # genuine ancestor of any dispatch run under `run`.
+  export STUB_PANE_PID=$$
   stub_bin tmux
   stub_bin crew
   # pi-agent-dir delegates to the real crew.sh so pi launch tests exercise a
@@ -770,6 +774,11 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 new-window) printf '%s %s\n' '%1' '%1' ;;
 split-window) printf '%s\n' '%6' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  esac
+  ;;
 esac
 exit 0
 EOF
@@ -936,7 +945,12 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-display-message) printf '%s\n' '@1' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
 list-panes)
   case " $* " in
   *'#{pane_id}'*) printf '%s\n' '%5 ' '%6 reviewer' ;;
@@ -965,7 +979,12 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-display-message) printf '%s\n' '@1' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
 list-panes)
   case " $* " in
   *'#{pane_id}'*) printf '%s\n' '%5 lead' '%9 ' ;;
@@ -1027,7 +1046,13 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\$STUB_LOG"
 case "\$1" in
-display-message|list-panes|set-option|set-window-option) exec "$REAL_TMUX" -L '$sock' "\$@" ;;
+display-message)
+  case "\$*" in
+  *'#{pane_pid}'*) printf '%s\n' '$STUB_PANE_PID' ;;
+  *) exec "$REAL_TMUX" -L '$sock' "\$@" ;;
+  esac
+  ;;
+list-panes|set-option|set-window-option) exec "$REAL_TMUX" -L '$sock' "\$@" ;;
 kill-pane) ;;
 esac
 exit 0
@@ -5591,6 +5616,95 @@ EOF
   [[ "$output" == *"--role-watch needs --pane"* ]]
 }
 
+# #517/#521: --role-watch is nohup'd by dispatch itself, so ancestry doesn't
+# apply — it must instead trust only what dispatch already stamped on the pane
+# (@crew_role) and window (@crew_branch), never the caller's arguments.
+@test "grid: --role-watch refuses when the pane's @crew_role does not match --role" {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'critic|@1' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --role"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'set-option -p -t %6 @crew_state' "$STUB_LOG"
+}
+
+@test "grid: --role-watch refuses when the window's @crew_branch does not match --branch" {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/other ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --branch"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'set-option -p -t %6 @crew_state' "$STUB_LOG"
+}
+
+@test "grid: --role-watch refuses role 'lead'" {
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch lead --pane %6 --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'lead' is never watched"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'set-option -p -t %6 @crew_state' "$STUB_LOG"
+}
+
+@test "grid: --role-watch refuses a pane whose @crew_role is lead" {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'lead|@1' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match --role"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'set-option -p -t %6 @crew_state' "$STUB_LOG"
+}
+
 @test "grid: --lazy needs a role topology" {
   run run_dispatch standard sonnet --lazy --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
@@ -5638,7 +5752,12 @@ _spawn_role_fixture() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-display-message) printf '%s\n' '@1' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
 show-options)
   case "${*: -1}" in
   @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
@@ -5658,6 +5777,44 @@ EOF
 _write_dirs_record() {
   mkdir -p "$common/crew/protocol-dirs/feat"
   printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" >"$common/crew/protocol-dirs/feat/9-x"
+}
+
+# #517/#521: a worker can set $TMUX_PANE (or --pane) to any pane id it likes —
+# these must refuse a pane this process did not itself descend from.
+@test "grid: --spawn-role refuses a \$TMUX_PANE that is not this process's pane" {
+  _spawn_role_fixture
+  sleep 30 &
+  sibling=$!
+  before="$(cat "$roles_dir/roles.json")"
+  STUB_PANE_PID=$sibling run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not this process's pane"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  [ "$(cat "$roles_dir/roles.json")" = "$before" ]
+  kill "$sibling" 2>/dev/null || true
+}
+
+@test "grid: --reap-roles refuses a \$TMUX_PANE that is not this process's pane" {
+  _spawn_role_fixture
+  sleep 30 &
+  sibling=$!
+  STUB_PANE_PID=$sibling run run_dispatch --reap-roles
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not this process's pane"* ]]
+  run ! grep -q 'kill-pane' "$STUB_LOG"
+  kill "$sibling" 2>/dev/null || true
+}
+
+@test "grid: --role-exited refuses a --pane that is not this process's pane" {
+  _spawn_role_fixture
+  sleep 30 &
+  sibling=$!
+  STUB_PANE_PID=$sibling run run_dispatch --role-exited reviewer --branch feat/9-x --pane %6
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not this process's pane"* ]]
+  run ! grep -q 'set-option' "$STUB_LOG"
+  run ! grep -qE '^(status|msg) ' "$STUB_LOG"
+  kill "$sibling" 2>/dev/null || true
 }
 
 @test "grid: --spawn-role seeds the worker agent dir before launching a pi role" {
@@ -5725,7 +5882,12 @@ _write_dirs_record() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-display-message) printf '%s\n' '@1' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
 show-options)
   case "${*: -1}" in
   @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
@@ -6491,7 +6653,12 @@ _exit_hook_fixture() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-display-message) printf '%s\n' '@1' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
 list-panes) printf '%s\n' '%5 ' '%6 reviewer' ;;
 esac
 exit 0
@@ -6523,7 +6690,13 @@ case "$1" in
 display-message)
   case "$*" in
   *'#{@crew_exited}'*) printf '%s\n' 1 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
   *) printf '%s\n' '%6' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
   esac
   ;;
 esac
@@ -7030,10 +7203,16 @@ case "$1" in
 display-message)
   case "$*" in
   *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
   *)
     [ -e "$STUB_DIR/stop" ] && exit 1
     printf '%s\n' '%6'
     ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
   esac
   ;;
 capture-pane) cat "$STUB_DIR/frame" ;;

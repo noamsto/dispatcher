@@ -752,6 +752,25 @@ seed_pi_agent_dir() {
   exit 1
 }
 
+# _pane_is_ancestor <pane> — is <pane>'s pid one of this process's ancestors?
+# A worker's own dispatch descends from its pane's shell; a pane id copied from
+# another window does not. Bounded walk, spelling copied from crew.sh's
+# _is_ancestor_pid. Assumes the engine's tool shell shares tmux's pid
+# namespace — a pid-namespaced sandbox makes this refuse (fail closed).
+_pane_is_ancestor() {
+  local pane_pid p depth=0
+  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null || true)"
+  case "$pane_pid" in '' | *[!0-9]*) return 1 ;; esac
+  p=$$
+  while [ "$depth" -lt 32 ]; do
+    depth=$((depth + 1))
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$p" in '' | *[!0-9]* | 0) return 1 ;; esac
+    if [ "$p" = "$pane_pid" ]; then return 0; fi
+  done
+  return 1
+}
+
 # split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
 # role pane, decorate it, and echo its pane id. `tmux new-window -e` scopes to
 # that window's first pane only, so every pane split off it must repeat the lead's
@@ -1205,6 +1224,24 @@ if [ "${1:-}" = "--role-watch" ]; then
     exit 1
   }
   watch_branch="${watch_branch:-$(git branch --show-current)}"
+  # --pane is caller-supplied and this watcher types into it as a user turn
+  # (#521). The pane is not our ancestor, so serve it only when dispatch
+  # stamped it as this role in this branch's window — never a lead.
+  [ "$role" != lead ] || {
+    echo "dispatch: --role-watch: role 'lead' is never watched" >&2
+    exit 1
+  }
+  watch_stamp="$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}' 2>/dev/null || true)"
+  IFS='|' read -r w_role w_win <<<"$watch_stamp"
+  [ "$w_role" = "$role" ] || {
+    echo "dispatch: --role-watch: pane $watch_pane's @crew_role ($w_role) does not match --role $role" >&2
+    exit 1
+  }
+  w_branch="$(tmux show-options -wqv -t "$w_win" @crew_branch 2>/dev/null || true)"
+  [ "$w_branch" = "$watch_branch" ] || {
+    echo "dispatch: --role-watch: window $w_win's @crew_branch ($w_branch) does not match --branch $watch_branch" >&2
+    exit 1
+  }
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   role_id="role:$watch_branch:$role"
   since="$(jq -nc 'now*1000|floor')"
@@ -1572,6 +1609,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role must run inside tmux" >&2
     exit 1
   }
+  _pane_is_ancestor "$TMUX_PANE" || {
+    echo "dispatch: --spawn-role: \$TMUX_PANE ($TMUX_PANE) is not this process's pane — run it from the lead's own pane" >&2
+    exit 1
+  }
   # crew_dir and branch come from the window dispatch stamped, never git
   # discovery: GIT_* env and the worktree's .git gitlink are worker-controlled,
   # and a worker can build a genuine repo + worktree to point them at (#496).
@@ -1696,6 +1737,10 @@ if [ "${1:-}" = "--reap-roles" ]; then
     echo "dispatch: --reap-roles must run inside tmux" >&2
     exit 1
   }
+  _pane_is_ancestor "$TMUX_PANE" || {
+    echo "dispatch: --reap-roles: \$TMUX_PANE ($TMUX_PANE) is not this process's pane — run it from the lead's own pane" >&2
+    exit 1
+  }
   win="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}')"
   tmux list-panes -t "$win" -F '#{pane_id} #{@crew_role}' | while read -r p r; do
     [ -n "$r" ] || continue
@@ -1747,6 +1792,10 @@ if [ "${1:-}" = "--role-exited" ]; then
   done
   [ -n "$exited_pane" ] || {
     echo "dispatch: --role-exited needs --pane <id>" >&2
+    exit 1
+  }
+  _pane_is_ancestor "$exited_pane" || {
+    echo "dispatch: --role-exited: --pane ($exited_pane) is not this process's pane — run it from the role's own pane" >&2
     exit 1
   }
   exited_branch="${exited_branch:-$(git branch --show-current)}"

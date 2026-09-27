@@ -149,7 +149,7 @@
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks]) ++ [crew dispatch-resume];
+            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume];
             text = sub (builtins.readFile ./adapters/core/dispatch.sh);
           };
 
