@@ -1529,6 +1529,7 @@ assert_allow_within_each_awk() {
   [ "$found" -eq 1 ] || assert_allow_within "$max_ms" "$payload"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: a 100 KB backticked commit body allows in under 3.5 s under every awk" {
   local body
   # 900 reps keeps the whole payload under Linux's 128 KiB single-argv-string
@@ -1537,10 +1538,12 @@ assert_allow_within_each_awk() {
   assert_allow_within_each_awk 3500 "$(claude_bash "git commit -F - <<'EOF'"$'\n'"$body"$'\n'"EOF")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: 14 nested levels of backticks around a harmless command allow in under 3.5 s under every awk" {
   assert_allow_within_each_awk 3500 "$(claude_bash "$(nested_backticks 14 date)")"
 }
 
+# bats test_tags=timing
 @test "secret-read-guard: escape runs inside 14 nested backtick frames allow in under 3.5 s under every awk" {
   local body
   body=$(printf '\\\\x %.0s' $(seq 1 20000))
