@@ -1055,11 +1055,10 @@ _worktree_anchor_path() {
   printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
 }
 
-# _record_worktree_anchor <worktree> — write the anchor `dispatch resume`
-# verifies its git discovery against (#518): the worktree's own gitlink and
-# HEAD are worker-writable, so resume trusts them only once they match this
-# record. The gitdir line comes from the main repo's own worktrees/*/gitdir
-# back-pointer, never read through the worktree's .git gitlink.
+# _record_worktree_anchor <worktree> — write the record `dispatch resume`
+# checks its git discovery against (#518). The gitdir comes from the main
+# repo's worktrees/*/gitdir back-pointer: the worktree's own gitlink is
+# worker-writable.
 _record_worktree_anchor() {
   local wt="$1" common="${crew_dir%/crew}" anchor dir bad="" wt_git_real
   local gitdir_file admin_dir back target admin_real tmp

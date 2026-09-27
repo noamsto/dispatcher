@@ -5616,9 +5616,6 @@ EOF
   [[ "$output" == *"--role-watch needs --pane"* ]]
 }
 
-# #517/#521: --role-watch is nohup'd by dispatch itself, so ancestry doesn't
-# apply — it must instead trust only what dispatch already stamped on the pane
-# (@crew_role) and window (@crew_branch), never the caller's arguments.
 @test "grid: --role-watch refuses when the pane's @crew_role does not match --role" {
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -5787,8 +5784,6 @@ _write_dirs_record() {
   printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" >"$common/crew/protocol-dirs/feat/9-x"
 }
 
-# #517/#521: a worker can set $TMUX_PANE (or --pane) to any pane id it likes —
-# these must refuse a pane this process did not itself descend from.
 @test "grid: --spawn-role refuses a \$TMUX_PANE that is not this process's pane" {
   _spawn_role_fixture
   sleep 30 &
