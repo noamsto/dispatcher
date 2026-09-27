@@ -555,6 +555,16 @@ _assert_resume_bound() {
   done
 }
 
+# _worktree_anchor_path is the format contract between dispatch (writer) and
+# dispatch-resume (reader); a drift here would make resume verify against a
+# path dispatch never wrote to.
+@test "_worktree_anchor_path is byte-identical between dispatch.sh and dispatch-resume.sh" {
+  a="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
+  b="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
+}
+
 # The lead-session helpers are duplicated for the same reason; one test diffs
 # them so a fix in one file cannot silently miss the other.
 @test "_uuid and the lead-record writers are byte-identical between dispatch.sh and dispatch-resume.sh" {

@@ -6200,6 +6200,81 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ -L "$TEST_REPO/.git/crew/protocol-dirs/feat" ]
 }
 
+# #518: the anchor `dispatch resume` verifies its git discovery against.
+@test "worktree anchor: dispatch writes the resume record" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor record"
+  [ "$status" -eq 0 ]
+  wt="$TEST_REPO/.dispatch-wt/feat-42-anchor-record"
+  key="$(printf %s "$(realpath -e -- "$wt")" | sha256sum | cut -c1-64)"
+  anchor="$XDG_DATA_HOME/crew/worktrees/$key"
+  [ -f "$anchor" ]
+  [ ! -L "$anchor" ]
+  [ "$(stat -c %a "$anchor")" = 600 ]
+  mapfile -t lines <"$anchor"
+  [ "${lines[0]}" = "$(realpath -e -- "$wt")" ]
+  [ "${lines[1]}" = "$(realpath -m -- "$TEST_REPO/.git/crew")" ]
+  [ "${lines[2]}" = feat/42-anchor-record ]
+  [ "${lines[3]}" = "$(realpath -e -- "$(git -C "$wt" rev-parse --absolute-git-dir)")" ]
+}
+
+# git >=2.48 can link a worktree by a relative gitdir back-pointer
+# (worktree.useRelativePaths); the record must still hold the worktree's own
+# absolute realpath regardless of how the admin dir was found.
+@test "worktree anchor: a relative gitdir back-pointer still yields the absolute realpath" {
+  stub_launch_bins
+  git -C "$TEST_REPO" config worktree.useRelativePaths true
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor relative"
+  [ "$status" -eq 0 ]
+  wt="$TEST_REPO/.dispatch-wt/feat-42-anchor-relative"
+  [[ "$(cat "$TEST_REPO"/.git/worktrees/*/gitdir)" != /* ]]
+  key="$(printf %s "$(realpath -e -- "$wt")" | sha256sum | cut -c1-64)"
+  anchor="$XDG_DATA_HOME/crew/worktrees/$key"
+  [ -f "$anchor" ]
+  mapfile -t lines <"$anchor"
+  [ "${lines[0]}" = "$(realpath -e -- "$wt")" ]
+  [ "${lines[3]}" = "$(realpath -e -- "$(git -C "$wt" rev-parse --absolute-git-dir)")" ]
+}
+
+# The worktree's own .git gitlink is worker-writable; the record must come
+# from the main repo's back-pointer, never leak a value read through it.
+@test "worktree anchor: a tampered gitlink does not leak into the resume record" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor tamper"
+  [ "$status" -eq 0 ]
+  wt="$TEST_REPO/.dispatch-wt/feat-42-anchor-tamper"
+  genuine="$(realpath -e -- "$(git -C "$wt" rev-parse --absolute-git-dir)")"
+  fake="$BATS_TEST_TMPDIR/fake-admin"
+  cp -r "$genuine" "$fake"
+  printf 'gitdir: %s\n' "$fake" >"$wt/.git"
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+  stub_crew_gate '[]' '[]'
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor tamper"
+  [ "$status" -eq 0 ]
+  key="$(printf %s "$(realpath -e -- "$wt")" | sha256sum | cut -c1-64)"
+  anchor="$XDG_DATA_HOME/crew/worktrees/$key"
+  mapfile -t lines <"$anchor"
+  [ "${lines[3]}" = "$genuine" ]
+  [[ "${lines[3]}" != "$fake" ]]
+}
+
+@test "worktree anchor: a symlinked worktrees dir is refused, dispatch still succeeds" {
+  stub_launch_bins
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$XDG_DATA_HOME/crew"
+  ln -s "$victim" "$XDG_DATA_HOME/crew/worktrees"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor symlink"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"is a symlink or the wrong type — not writing"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -L "$XDG_DATA_HOME/crew/worktrees" ]
+}
+
 @test "add-dir: a symlinked artifacts parent of a slashed branch is not granted and its target stays empty" {
   stub_launch_bins
   victim="$BATS_TEST_TMPDIR/victim"

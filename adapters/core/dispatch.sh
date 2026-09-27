@@ -1043,6 +1043,59 @@ _record_protocol_dirs() {
   )
 }
 
+# _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
+# genuine crew dir, branch and gitdir, keyed by <wt>'s own realpath. Duplicated
+# in dispatch-resume.sh (standalone build); parity-tested.
+_worktree_anchor_path() {
+  local key
+  key="$(printf %s "$(realpath -e -- "$1")" | sha256sum | cut -c1-64)"
+  printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
+}
+
+# _record_worktree_anchor <worktree> — write the anchor `dispatch resume`
+# verifies its git discovery against (#518): the worktree's own gitlink and
+# HEAD are worker-writable, so resume trusts them only once they match this
+# record. The gitdir line comes from the main repo's own worktrees/*/gitdir
+# back-pointer, never read through the worktree's .git gitlink.
+_record_worktree_anchor() {
+  local wt="$1" common="${crew_dir%/crew}" anchor dir bad="" wt_git_real
+  local gitdir_file admin_dir back target admin_real tmp
+  anchor="$(_worktree_anchor_path "$wt")"
+  dir="$(dirname -- "$anchor")"
+  if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+    bad="$dir"
+  elif [ -L "$anchor" ] || { [ -e "$anchor" ] && [ ! -f "$anchor" ]; }; then
+    bad="$anchor"
+  fi
+  if [ -n "$bad" ]; then
+    echo "dispatch: $bad is a symlink or the wrong type — not writing $wt's resume record" >&2
+    return 0
+  fi
+  wt_git_real="$(realpath -m -- "$wt/.git")"
+  for gitdir_file in "$common"/worktrees/*/gitdir; do
+    [ -f "$gitdir_file" ] || continue
+    back="$(head -n1 -- "$gitdir_file")"
+    admin_dir="$(dirname -- "$gitdir_file")"
+    [[ $back == /* ]] || back="$admin_dir/$back"
+    target="$(realpath -m -- "$back")"
+    if [ "$target" = "$wt_git_real" ]; then
+      admin_real="$(realpath -e -- "$admin_dir")"
+      break
+    fi
+  done
+  if [ -z "${admin_real:-}" ]; then
+    echo "dispatch: no git admin dir for $wt — not writing its resume record" >&2
+    return 0
+  fi
+  (
+    umask 077
+    mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.anchor.XXXXXX")"
+    printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$crew_dir")" "$branch" "$admin_real" >"$tmp"
+    mv -f -- "$tmp" "$anchor"
+  )
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
@@ -3569,6 +3622,7 @@ if bad="$(_protocol_dirs_record_bad)"; then
   exit 1
 fi
 _record_protocol_dirs "$wt_path"
+_record_worktree_anchor "$wt_path"
 
 # Stamp the task file: header fields the worker protocol reads, the closes
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
