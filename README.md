@@ -269,8 +269,8 @@ For Claude Code, pass the plugin directory to `claude`:
   enabled = true
   ```
 
-  The plugin's hooks (session-end notify, secret-read guard) run subject to
-  codex's own hook trust, which is not verified here.
+  The plugin's hooks (session-end notify, secret-read and public-leak guards)
+  run subject to codex's own hook trust, which is not verified here.
 
 - **The pi hookyard bridge.** pi's hook surface is its extension API, and
   `dispatch` runs workers under a separate `PI_CODING_AGENT_DIR`
@@ -340,6 +340,28 @@ For Claude Code, pass the plugin directory to `claude`:
   against captured cursor-agent runs; the `beforeReadFile` payload and the
   `preToolUse` `Read`/`Grep` input keys are read off the shipped cursor-agent
   2026.09.23 bundle, not a live capture.
+
+- **The Cursor public-leak guard.** Same arrangement, on the two Shell events.
+  It asks before a `gh` post to a repo outside your private-repo list carries a
+  private `owner/name`, a session URL, a local path, or (with `betterleaks` on
+  PATH) a secret:
+
+  ```json
+  {
+    "hooks": {
+      "preToolUse": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/public-leak-guard.sh"
+        }
+      ],
+      "beforeShellExecution": [
+        {
+          "command": "/path/to/dispatcher/adapters/cursor/scripts/public-leak-guard.sh"
+        }
+      ]
+    }
+  }
+  ```
 
 - **A Codex worker profile.** `profile = "work"` launches Codex workers with
   `--profile worker`, requiring `~/.codex/worker.config.toml`. That belongs to

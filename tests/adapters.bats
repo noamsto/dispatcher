@@ -202,6 +202,30 @@ teardown() {
   [ -x "$ROOT/adapters/core/secret-read-guard.sh" ]
 }
 
+@test "claude and codex PreToolUse hooks wire the public-leak guard on Bash" {
+  run jq -e '.hooks.PreToolUse[1] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/public-leak-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+  run jq -e '.hooks.PreToolUse[1] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("$PLUGIN_ROOT")) and ($p.hooks[0].command | contains("scripts/public-leak-guard.sh"))' "$ROOT/adapters/codex/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "the public-leak guard ships executable and byte-identical in all three generated trees" {
+  for copy in \
+    "$ROOT/adapters/claude-code/plugin/scripts/public-leak-guard.sh" \
+    "$ROOT/adapters/codex/plugin/scripts/public-leak-guard.sh" \
+    "$ROOT/adapters/cursor/scripts/public-leak-guard.sh"; do
+    [ -x "$copy" ]
+    run cmp -s "$ROOT/adapters/core/public-leak-guard.sh" "$copy"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "hookyard.json wires the public-leak guard for pi" {
+  run jq -e '.handlers[] | select(.id == "public-leak-guard") | (.exec == "adapters/core/public-leak-guard.sh") and (.events | index("pre_tool")) and (.engines == ["pi"]) and (.match == ["Bash"])' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/public-leak-guard.sh" ]
+}
+
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
   run head -3 "$ROOT/adapters/cursor/rules/dispatcher.mdc"
   [[ "$output" == *"alwaysApply: true"* ]]
