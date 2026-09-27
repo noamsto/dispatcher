@@ -402,8 +402,10 @@ branch instead; the worktree carries over under `resume: true`.
   execution there, a grant or identity the dispatcher never chose, or an action
   on another worker's resources. Out of scope: anything only reachable through a
   call that names its effect (`tmux set-option @crew_…`, a write under the crew
-  dir or `~/.local/share/crew` by path, `claude --add-dir`, `tmux send-keys -t`),
-  which the classifier sees; an effect that stays in the worker's own session or
+  dir or `~/.local/share/crew` by path, `claude --add-dir`, `tmux send-keys -t`,
+  a `crew msg` addressed to another branch's `worker:`/`role:` id — the bus
+  sender is self-asserted, and a role's watcher types what it is sent), which
+  the classifier sees; an effect that stays in the worker's own session or
   grid (its own roster, its own watchers' bus, its own review — the human PR
   review is that boundary); and values the dispatcher resolved and recorded
   (the protocol dirs). The rule for harness code this implies: **anchor, don't

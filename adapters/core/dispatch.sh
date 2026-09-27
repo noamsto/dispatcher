@@ -757,8 +757,11 @@ seed_pi_agent_dir() {
 # another window does not. Bounded walk, spelling copied from crew.sh's
 # _is_ancestor_pid. Assumes the engine's tool shell shares tmux's pid
 # namespace — a pid-namespaced sandbox makes this refuse (fail closed).
+# Only a concrete %id: a relative target (`@5.{bottom-right}`) re-resolves to
+# another pane after this check.
 _pane_is_ancestor() {
   local pane_pid p depth=0
+  [[ $1 =~ ^%[0-9]+$ ]] || return 1
   pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null || true)"
   case "$pane_pid" in '' | *[!0-9]*) return 1 ;; esac
   p=$$
@@ -1279,7 +1282,12 @@ if [ "${1:-}" = "--role-watch" ]; then
   watch_branch="${watch_branch:-$(git branch --show-current)}"
   # --pane is caller-supplied and this watcher types into it as a user turn
   # (#521). The pane is not our ancestor, so serve it only when dispatch
-  # stamped it as this role in this branch's window — never a lead.
+  # stamped it as this role in this branch's window — never a lead — and only
+  # by a concrete %id, which cannot re-resolve to another pane later.
+  [[ $watch_pane =~ ^%[0-9]+$ ]] || {
+    echo "dispatch: --role-watch: --pane must be a pane id (%N), got $watch_pane" >&2
+    exit 1
+  }
   [ "$role" != lead ] || {
     echo "dispatch: --role-watch: role 'lead' is never watched" >&2
     exit 1

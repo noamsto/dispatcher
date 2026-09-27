@@ -5705,6 +5705,14 @@ EOF
   run ! grep -q 'set-option -p -t %6 @crew_state' "$STUB_LOG"
 }
 
+@test "grid: --role-watch refuses a --pane that is not a pane id" {
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane '@1.{bottom-right}' --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--role-watch: --pane must be a pane id (%N), got @1.{bottom-right}"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+  run ! grep -q 'set-option' "$STUB_LOG"
+}
+
 @test "grid: --lazy needs a role topology" {
   run run_dispatch standard sonnet --lazy --effort high --crew-id c1 "title"
   [ "$status" -eq 1 ]
@@ -5794,6 +5802,17 @@ _write_dirs_record() {
   kill "$sibling" 2>/dev/null || true
 }
 
+# The fixture's stub would answer an ancestor pid for any target.
+@test "grid: --spawn-role refuses a \$TMUX_PANE that is not a pane id" {
+  _spawn_role_fixture
+  before="$(cat "$roles_dir/roles.json")"
+  TMUX_PANE='@1' run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not this process's pane"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  [ "$(cat "$roles_dir/roles.json")" = "$before" ]
+}
+
 @test "grid: --reap-roles refuses a \$TMUX_PANE that is not this process's pane" {
   _spawn_role_fixture
   sleep 30 &
@@ -5815,6 +5834,15 @@ _write_dirs_record() {
   run ! grep -q 'set-option' "$STUB_LOG"
   run ! grep -qE '^(status|msg) ' "$STUB_LOG"
   kill "$sibling" 2>/dev/null || true
+}
+
+@test "grid: --role-exited refuses a --pane that is not a pane id" {
+  _spawn_role_fixture
+  run run_dispatch --role-exited reviewer --branch feat/9-x --pane '@1'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not this process's pane"* ]]
+  run ! grep -q 'set-option' "$STUB_LOG"
+  run ! grep -qE '^(status|msg) ' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role seeds the worker agent dir before launching a pi role" {
