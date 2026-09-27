@@ -1549,6 +1549,15 @@ _store_protocols() { # <dir> <content>
   ! grep -q 'send-keys' <(launch_log)
 }
 
+@test "a DISPATCHER_*_DIR override with shell metacharacters is refused (#470)" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_TMPDIR/p\$(touch pwned)"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "meta dir"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"DISPATCHER_PROTOCOL_DIR must not contain shell metacharacters"* ]]
+  ! grep -q 'send-keys' <(launch_log)
+}
+
 @test "the launch env unsets every DISPATCHER_*_DIR it does not pin" {
   stub_launch_bins
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
@@ -5293,6 +5302,19 @@ EOF
   [ "$status" -eq 0 ]
   run grep -F -- '--no-approve' <(launch_log)
   [ "$status" -eq 0 ]
+}
+
+# #470: the header and roles.json are worker-writable and the role's launch
+# script runs as the operator.
+@test "grid: --spawn-role refuses a command substitution in the header's agent_name" {
+  _spawn_role_fixture
+  printf 'agent_name: $(touch %s/pwned)\neffort: high\nworker_id: worker:feat/9-x#s1-1\ncrew_id: c1\n' "$BATS_TEST_TMPDIR" >WORKER_TASK.md
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be a plain word"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
+  run ! grep -q 'split-window' "$STUB_LOG"
+  run ! grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role overrides persist so a bare respawn keeps the promoted rung" {

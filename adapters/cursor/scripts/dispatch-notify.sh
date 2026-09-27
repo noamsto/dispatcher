@@ -90,7 +90,7 @@ if [[ -n $pane ]] && { [[ $mode == session-end ]] || [[ $silent == 1 ]]; }; then
   else
     msg="worker stopped without reporting: $branch — check state"
   fi
-  tmux display-message -t "$pane" -d 4000 "$msg" 2>/dev/null || true
+  tmux display-message -t "$pane" -d 4000 "${msg//#/##}" 2>/dev/null || true
 fi
 
 if [[ -n $log && $silent == 1 ]]; then

@@ -358,6 +358,12 @@ _resolve_dir() {
     echo "$label: $var must be an absolute path, got: $val" >&2
     exit 1
   fi
+  # The dirs are spliced into launch scripts and their prompts, and a role
+  # launched by --spawn-role inherits this env from the worker (#470).
+  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
+    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
+    exit 1
+  fi
   if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
     ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
     echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
@@ -884,8 +890,9 @@ pi_skill_args() {
 # crashes at startup is reported, while a reap (which kills the pane and its
 # shell) is silent. `;` is valid in fish (the pane shell), bash and zsh.
 launch_role() {
-  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
+  local pane="$1" wt="$2" role="$3" r_agent="$4" r_model="$5" r_effort="$6" prompt first quoted_model quoted_name quoted_dir quoted_prompt quoted_first cmd exit_cmd launch_line exit_line
   printf -v quoted_model '%q' "$r_model"
+  printf -v quoted_name '%q' "${agent_name}-${role}"
   printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
@@ -898,9 +905,9 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name ${agent_name}-${role} --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
+    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}claude --name ${agent_name}-${role} --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}claude --name $quoted_name --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
   codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -1061,7 +1068,14 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' is not part of this grid" >&2
     exit 1
   }
+  # Both reach the role's launch script; the header and roles.json are worker-writable (#470).
   agent_name="$(sed -n 's/^agent_name: //p' WORKER_TASK.md)"
+  for _v in "$role" "$agent_name"; do
+    [[ $_v =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+      echo "dispatch: --spawn-role: refusing ${_v@Q} — a role or agent name must be a plain word" >&2
+      exit 1
+    }
+  done
   IFS=$'\t' read -r saved_agent saved_model saved_effort <<<"$spec"
   task_effort="$(sed -n 's/^effort: //p' WORKER_TASK.md)"
   effort="${spawn_effort:-${saved_effort:-$task_effort}}"
@@ -3116,6 +3130,9 @@ if [ -n "$owner_auth" ]; then
   owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
 fi
 
+# The recorded identity is replayed from the shared bus.
+printf -v q_agent_name '%q' "$agent_name"
+
 if [ "$agent" = codex ]; then
   # service_tier pinned: the interactive /fast toggle persists locally and would
   # otherwise leak into unattended workers, burning ChatGPT credits at 2.5x for
@@ -3155,13 +3172,13 @@ elif [ "$agent" = pi ]; then
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   lead_sid="$(_uuid)"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}claude --name $agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 tmux send-keys -t "$pane" "$launch_line" Enter
