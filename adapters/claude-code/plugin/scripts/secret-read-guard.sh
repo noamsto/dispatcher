@@ -28,8 +28,9 @@
 #                                        .{pattern,file_path,glob,output_mode}
 #
 # claude/codex shapes: hookyard captures and the codex 0.154.0 embedded
-# pre-tool-use schema. cursor: hookyard captures, plus createToolInput in the
-# cursor-agent 2026.09.23 bundle for the Read/Grep keys (no live capture yet).
+# pre-tool-use schema. cursor: hookyard captures. cursor preToolUse Read/Grep
+# keys are a live capture from cursor-agent 2026.09.26-dd393fe on 2026-09-27
+# (tests/fixtures/cursor-pretool-read.json, tests/fixtures/cursor-pretool-grep.json).
 # Allow is always no stdout, exit 0. Stdout carries exactly one deny object or
 # nothing: cursor blocks the call on any non-JSON stdout, so a stray echo here
 # would block every cursor tool call.
@@ -74,8 +75,9 @@ if type != "object" then empty else
    elif $ev == "beforeReadFile" and $shape == "cursor" then {kind: "read", path: (.file_path | s)}
    elif $shape == "cursor" then
      if $tool == "Shell" then {kind: "shell", command: ($ti.command | s)}
-     # Read/Grep keys are from the shipped bundle, not a live capture, so
-     # path/target_file stay as fallbacks for a build that spells them otherwise.
+     # Live capture (cursor-agent 2026.09.26-dd393fe, 2026-09-27): Read and
+     # Grep send tool_input.file_path; Grep also sends pattern and omits
+     # output_mode and glob. path/target_file stay as fallbacks.
      elif $tool == "Read" then {kind: "read", path: (first($ti.file_path, $ti.path, $ti.target_file | select(type == "string")) // "" | s)}
      elif $tool == "Grep" then {kind: "grep", path: (first($ti.file_path, $ti.path | select(type == "string")) // "" | s),
        glob: ($ti.glob | s), pattern: ($ti.pattern | s),

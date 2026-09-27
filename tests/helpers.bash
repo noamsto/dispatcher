@@ -229,3 +229,11 @@ cursor|cursor-grok-4.6-medium|medium|work|cursor-agent|cursor-agent --force
 pi|openrouter/deepseek/deepseek-v4.1-flash|high||pi|pi --name iris --model
 EOF
 }
+
+# mint_spec — export a DISPATCH_SPEC with the summary a mint posts as the new
+# issue's body.
+mint_spec() {
+  DISPATCH_SPEC="$BATS_TEST_TMPDIR/mint-spec.md"
+  printf 'Summary for the minted issue.\n\n## Task\n\nDo the thing.\n' >"$DISPATCH_SPEC"
+  export DISPATCH_SPEC
+}

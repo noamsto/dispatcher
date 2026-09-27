@@ -3810,6 +3810,7 @@ lock_path() { # <branch>
 }
 
 @test "--base refuses an unfetchable ref in mint mode, without minting an issue" {
+  mint_spec
   stub_launch_bins
   _stub_gh_base_pr
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base nope --crew-id c1 "mint me"
@@ -3899,6 +3900,7 @@ EOF
 }
 
 @test "--base <PR> refuses before scaffolding in mint mode, without minting an issue" {
+  mint_spec
   setup_stacked_base feat/parent
   _stub_gh_base_pr
 
@@ -4103,6 +4105,7 @@ EOF
 }
 
 @test "--base refuses a zero PR number (#320)" {
+  mint_spec
   run run_dispatch standard sonnet --effort medium --base 0 --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"--base PR number must be a positive integer"* ]]
@@ -4126,6 +4129,7 @@ EOF
 }
 
 @test "claim: a minted issue is stamped with dispatched at creation" {
+  mint_spec
   stub_launch_bins
   stub_gh_claim "" 77
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
@@ -4134,7 +4138,83 @@ EOF
   grep -qx 'Closes #77' "$TEST_REPO/.dispatch-wt/feat-77-mint-me/WORKER_TASK.md"
 }
 
+@test "mint: the issue body is the spec's summary, not the worker's brief (#524)" {
+  mint_spec
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  grep -q -- '--body Summary for the minted issue\.' "$STUB_LOG"
+  run ! grep -q 'Do the thing' "$STUB_LOG"
+  run ! grep -q 'Dispatched worker task' "$STUB_LOG"
+}
+
+@test "mint: refuses without a spec summary, before any gh call or scaffolding (#524)" {
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"needs a summary"* ]]
+
+  DISPATCH_SPEC="$BATS_TEST_TMPDIR/no-summary.md"
+  printf '## Task\n\nDo the thing.\n' >"$DISPATCH_SPEC"
+  export DISPATCH_SPEC
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"needs a summary"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "mint: an existing issue token needs no summary (#524)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  run ! grep -q 'issue create' "$STUB_LOG"
+}
+
+@test "mint: refuses a summary the public-leak guard objects to, without minting (#524)" {
+  mint_spec
+  stub_launch_bins
+  stub_gh_claim "" 77
+  PUBLIC_LEAK_GUARD="$BATS_TEST_TMPDIR/guard.sh"
+  cat >"$PUBLIC_LEAK_GUARD" <<'EOF'
+jq -cn '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "carries owner/secret"}}'
+EOF
+  export PUBLIC_LEAK_GUARD
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to mint"*"carries owner/secret"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "mint: --parent mints a sub-issue (#524)" {
+  mint_spec
+  stub_launch_bins
+  stub_gh_claim "" 77
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --parent '#009' --crew-id c1 "mint me"
+  [ "$status" -eq 0 ]
+  grep -q -- 'issue create .* --parent 9$' "$STUB_LOG"
+}
+
+@test "mint: --parent is refused with an issue token or --pr (#524)" {
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --parent 9 --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--parent only applies to a minted issue"* ]]
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --parent 9 --pr 5 --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--parent only applies to a minted issue"* ]]
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --parent x --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--parent needs a positive issue number"* ]]
+  run ! grep -q 'issue ' "$STUB_LOG"
+}
+
 @test "claim: a failed mint claim write fails the dispatch instead of proceeding unclaimed" {
+  mint_spec
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -4562,6 +4642,26 @@ point_github_origin() {
   grep -qx 'tracker: linear ENG' "$task"
   grep -qx 'pr: 99' "$task"
   run ! grep -q 's3cret-token' "$task"
+}
+
+@test "tracker: --pr stamps linear ENG from a mixed-case https host" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "https://GitHub.com/factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
+}
+
+@test "tracker: --pr stamps linear ENG from a mixed-case ssh host" {
+  stub_pr_bins eng-7691-foo
+  git -C "$TEST_REPO" remote add origin "git@GitHub.com:factify-inc/mono.git"
+  DISPATCH_PROFILE=personal DISPATCH_ORG_TRACKERS='factify-inc=linear:ENG' \
+    run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
+  grep -qx 'tracker: linear ENG' "$task"
 }
 
 @test "tracker: --pr stamps github for a non-GitHub origin" {
@@ -5116,6 +5216,7 @@ EOF
 # above, but the issue number is only known once `issue create` mints it — so
 # the refusal is keyed on that number, not on an existing-issue `view`.
 @test "claim: the minted issue's claim-issue row is written before the dispatched label" {
+  mint_spec
   stub_launch_bins
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -5305,6 +5406,7 @@ EOF
 }
 
 @test "claim: a minted issue's claim-issue row carries the dispatcher's numeric pid" {
+  mint_spec
   stub_launch_bins
   stub_gh_claim "" 77
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
