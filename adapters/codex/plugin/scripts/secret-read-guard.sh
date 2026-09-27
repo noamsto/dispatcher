@@ -119,18 +119,9 @@ secret_path_re='(^|/)\.env(\.[A-Za-z0-9_-]+)*$|(^|/)\.envrc\.local$|\.aws/creden
 # Grep globs spell the same files by pattern (`.env*`, `.env.*`, `*.env`), so
 # they get this looser test on top of secret_path_re.
 glob_secret_re='(^|[/*{,[])\.env($|[]*.?,}])|\.(pem|p12|pfx)($|[]*?,}])|\.netrc($|[]*?,}])|id_(rsa|ed25519|ecdsa)($|[]*?,}])|\.aws(/|$)'
-# On a command line the same path is preceded by a space, quote, = or / (~ for
-# `~/.netrc`), and followed by whitespace, a quote, a redirect or a pipe —
-# never by a line anchor, so the path-anchored pattern above would silently
-# match nothing here.
-cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
-# grep and its relatives. A cluster's quiet letter may only follow letters that
-# take no argument, or `-iesecret` (-e secret) would pass; ripgrep and ag differ
-# (-r/-T/-E take an argument, -L means --follow), so they get a stricter class.
-grep_alt='(e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag'
-quiet_flag_re='[[:space:]](-[abEFGhHiInoPrRsTUvVwxyzZ]*[cqlL][abEFGhHiInoPrRsTUvVwxyzZcqlL]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)([[:space:]]|$)'
-rg_quiet_flag_re='[[:space:]](-[abFhHiInPsSuUvwxzN]*[cql][abFhHiInPsSuUvwxzNcql]*|--count|--quiet|--files-with-matches|--files-without-match)([[:space:]]|$)'
-# Committed templates of op:// refs, not resolved values.
+# Committed templates of op:// refs, not resolved values. A template counts
+# only where its name ends, so `.env.examples` and `.env.example.local` are not
+# templates.
 template_re='\.env(\.[A-Za-z0-9_-]+)*\.(example|template|sample|dist)'
 
 # Command position: start of line, or after ; & | ( { — then any run of
@@ -232,43 +223,6 @@ function mask(c) {
 mask_quotes() {
   awk "$awk_mask$awk_chars"'
 function feed(c) { printf "%s", mask(c) }' <<<"$1"
-}
-
-# Succeeds only when every grep in $1 carries an unquoted non-printing flag: one
-# quiet grep must not excuse a printing one. A stage runs from a grep word to
-# the next separator, so the flag must follow the grep word (`ls -l` / `stdbuf
-# -oL` would pass for grep's own -l / -L), and a stage holding several grep
-# words (`find -exec grep … + -exec grep …`) is judged per grep, ending at the
-# `+` that closes an -exec, so a later `-quit` is not a grep flag. Each stage is
-# masked before its flags are read, so a flag spelled inside a pattern is not
-# one; a comment, a word after `--` (a filename) and the argument of a
-# standalone -e/-f/-m/-A/-B/-C/-d/-D are not flags either.
-grep_stages_quiet() {
-  local stage piece re w open
-  local -a words pieces
-  while IFS= read -r stage; do
-    stage=$(mask_quotes "$stage" | sed -E 's/[[:space:]]#.*$//')
-    read -ra words <<<"$stage"
-    pieces=()
-    open=0
-    for w in "${words[@]}"; do
-      if [[ $w =~ ^($grep_alt)$ ]]; then
-        pieces+=("$w")
-        open=1
-      elif [[ $w == + ]]; then
-        open=0
-      elif ((open)); then
-        pieces[${#pieces[@]} - 1]+=" $w"
-      fi
-    done
-    ((${#pieces[@]})) || return 1
-    for piece in "${pieces[@]}"; do
-      piece=$(sed -E 's/[[:space:]]--([[:space:]].*)?$//; s/[[:space:]]-(-regexp|-file|[efmABCdD])[[:space:]]+[^[:space:]]+//g' <<<"$piece")
-      re=$quiet_flag_re
-      [[ $piece =~ ^(rg|ripgrep|ag)([[:space:]]|$) ]] && re=$rg_quiet_flag_re
-      [[ $piece =~ $re ]] || return 1
-    done
-  done < <(grep -oE '\b('"$grep_alt"')\b[^;&|()`]*' <<<"$1")
 }
 
 # Extracts one shell WORD starting at index `start` of `s`: concatenated
@@ -488,6 +442,184 @@ mask_cmd() {
   awk "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
+# Credential-file reads (rule 3): a credential file named anywhere in the
+# space, plus anywhere a printing word, a printing command form, inline
+# interpreter code, or a grep without a quiet flag. Co-occurrence, not
+# parsing, on purpose: judging each command separately meant re-implementing
+# the shell's tokeniser, and every place it disagreed with bash turned a read
+# into an allow. So prose that only mentions a read is denied too — the
+# accepted cost for a secret guard. The name test is grep -E; the rest is one
+# awk pass, line by line, so it stays linear.
+#   - Names (credential_read): cmd_secret_re after dropping template names
+#     anywhere, or cmd_secret_wide_re (after < : { , ( ` and before globs,
+#     braces and backticks too) after dropping them only where the name ends
+#     (.env.examples and .env.example.local are not templates).
+#   - Printing: the word list; $(<file); dot-sourcing; git show, cat-file,
+#     blame, diff (unless --stat and the like, without a patch flag),
+#     range-diff, log/reflog with a patch flag, add/checkout/commit/reset/
+#     restore/stash with -p, format-patch --stdout, status/commit/stash -v;
+#     date -f, file -f and --files0-from.
+#   - Interpreters: given -c/-e/-p (a cluster ending in one), --eval, --print,
+#     - or eval before their first operand, a heredoc or here-string, or a pipe
+#     into them.
+#   - grep: each grep word opens a stage that runs to the next ; & | ( ) or
+#     backtick, whose quoted text is blanked and comment dropped; every grep in
+#     it must carry a quiet flag, not counting words after -- or the argument
+#     of -e/-f/-m/-A/-B/-C/-d/-D; ripgrep and ag get a stricter class. A CR,
+#     VT or FF in the stage makes it loud: some shells split words there.
+# Prints `print`, `interp`, `grep` or nothing.
+#
+# Regexes are literals (compiled once; BusyBox recompiles a dynamic one on
+# every use). \047 is the apostrophe the single-quoted program cannot hold.
+# shellcheck disable=SC2016
+awk_cred='
+BEGIN {
+  SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"
+  n = split("add am apply branch check-attr check-ignore checkout cherry-pick clean clone commit describe fetch format-patch gc init log ls-files ls-remote ls-tree merge merge-base mv notes pull push reflog remote reset restore revert rev-list rev-parse rm shortlog sparse-checkout stash status switch symbolic-ref tag update-index whatchanged worktree", a, " ")
+  for (i = 1; i <= n; i++) GIT[a[i]] = "B"
+  n = split("show cat-file blame annotate diff diff-files diff-index diff-tree range-diff", a, " ")
+  for (i = 1; i <= n; i++) GIT[a[i]] = "F"
+  n = split("log whatchanged reflog", a, " ")
+  for (i = 1; i <= n; i++) GLOG[a[i]] = 1
+  n = split("add checkout commit reset restore stash", a, " ")
+  for (i = 1; i <= n; i++) GHUNK[a[i]] = 1
+}
+{
+  if ($0 ~ /(^|[^A-Za-z0-9_])(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([^A-Za-z0-9_]|$)/ || $0 ~ /\$\([[:space:]]*</) P = 1
+  if ($0 ~ /(^|[^|])\|([^;&|]*[^A-Za-z0-9_.;&|-])?(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)([^A-Za-z0-9_.-]|$)/) I = 1
+  ns = split($0, SEG, /[;&|()`]/)
+  for (s = 1; s <= ns; s++) segment(SEG[s])
+}
+function segment(g, W, nw, j, w, b) {
+  if (g ~ /^[[:space:]]*(([{!]|then|do|else|if|elif|while|until)[[:space:]]+)*\.[[:space:]]/) P = 1
+  if (match(g, /(^|[^A-Za-z0-9_])((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)([^A-Za-z0-9_]|$)/)) {
+    G = 1
+    if (substr(g, RSTART, 1) !~ /[A-Za-z0-9_]/) RSTART++
+    if (grep_loud(substr(g, RSTART))) L = 1
+  }
+  nw = split(g, W, /[[:space:]]+/)
+  mode = ""
+  for (j = 1; j <= nw; j++) {
+    w = W[j]
+    if (w == "") continue
+    b = w
+    if (index(b, "/")) b = BP[split(b, BP, "/")]
+    if (b == "git") { git_end(); mode = "git"; gs = ""; gskip = glog = ghunk = gpatch = gstat = gv = gso = 0; continue }
+    if (b ~ /^(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)(<<.*)?$/) { git_end(); mode = "interp"; if (index(b, "<<")) I = 1; continue }
+    if (b == "date" || b == "file") { git_end(); mode = "df"; continue }
+    if (index(w, "--files0-from")) P = 1
+    if (mode == "git") git_word(w)
+    else if (mode == "interp") {
+      if (index(w, "<<")) I = 1
+      else if (w ~ /^(-[A-Za-z]*[ceEp]|--eval|--print|-|eval)$/) { I = 1; mode = "" }
+      else if (w !~ /^-/) mode = "args"
+    } else if (mode == "args") { if (index(w, "<<")) I = 1 }
+    else if (mode == "df") { if (w ~ /^(-[A-Za-z]*f.*|--file(s-from)?(=.*)?)$/) P = 1 }
+  }
+  git_end()
+}
+# The first non-option word after git is its subcommand; -c, --config-env,
+# -C, --git-dir, --work-tree and --namespace take an argument.
+function git_word(w) {
+  if (gs == "") {
+    if (gskip) gskip = 0
+    else if (w == "-c" || w == "--config-env" || w == "-C" || w == "--git-dir" || w == "--work-tree" || w == "--namespace") gskip = 1
+    else if (w !~ /^-/) gs = w
+    return
+  }
+  if (w ~ /^(-[pucL].*|-U[0-9]*|--patch|--patch-with-(stat|raw)|--unified(=.*)?|--cc|--dd|--remerge-diff|--diff-merges(=.*)?|--binary)$/) glog = 1
+  if (w ~ /^(-p|--patch|-U[0-9]*|--unified(=.*)?|--binary)$/) ghunk = 1
+  if (w ~ /^(-p|-u|-U[0-9]*|--patch.*|--unified(=.*)?)$/) gpatch = 1
+  if (w ~ /^--(stat|numstat|shortstat|name-only|name-status|quiet|dirstat)(=.*)?$/) gstat = 1
+  if (w ~ /^(-v+|--verbose)$/) gv = 1
+  if (w == "--stdout") gso = 1
+}
+function git_end(c) {
+  if (mode != "git" || gs == "") { mode = ""; return }
+  mode = ""
+  c = (gs in GIT) ? GIT[gs] : "U"
+  if (c == "B" && ((gs in GLOG) && glog || (gs in GHUNK) && ghunk || gs == "format-patch" && gso || (gs == "status" || gs == "commit" || gs == "stash") && gv)) c = "F"
+  if (c == "F" && gs ~ /^diff/ && gstat && !gpatch) c = "B"
+  if (c == "F") P = 1
+}
+# 1 when a grep in stage s lacks a quiet flag (or no grep word survives the
+# quote mask).
+function grep_loud(s, m, W, n, j, x, e, rg, found) {
+  m = mask(s)
+  sub(/[[:space:]]#.*$/, "", m)
+  if (m ~ /[\r\013\f]/) return 1
+  n = split(m, W, /[[:space:]]+/)
+  for (j = 1; j <= n; j++) {
+    if (W[j] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/) continue
+    found = 1
+    rg = (W[j] ~ /^(rg|ripgrep|ag)$/)
+    for (e = j + 1; e <= n && W[e] != "+" && W[e] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/; e++) ;
+    for (x = j + 1; x < e && W[x] != "--"; x++) ;
+    for (j++; j < x; j++) {
+      if (W[j] ~ /^-(-regexp|-file|[efmABCdD])$/ && j + 1 < x) j++
+      else if (rg ? W[j] ~ /^(-[abFhHiInPsSuUvwxzN]*[cql][abFhHiInPsSuUvwxzNcql]*|--count|--quiet|--files-with-matches|--files-without-match)$/ : W[j] ~ /^(-[abEFGhHiInoPrRsTUvVwxyzZ]*[cqlL][abEFGhHiInoPrRsTUvVwxyzZcqlL]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)$/) break
+    }
+    if (j >= x) return 1
+    j = e - 1
+  }
+  return !found
+}
+# Quoted text (quotes included) blanked, backslash-aware as in mask_quotes.
+function mask(s, out, ch, k, i, c, mb, q, esc) {
+  out = q = ""
+  while (s != "") {
+    ch = substr(s, 1, 512)
+    s = substr(s, 513)
+    k = length(ch)
+    mb = ""
+    for (i = 1; i <= k; i++) {
+      c = substr(ch, i, 1)
+      if (esc) { esc = 0; mb = mb (q == "" ? c : " "); continue }
+      if (q == "") {
+        if (c == BS) esc = 1
+        else if (c == SQ || c == DQ) { q = c; c = " " }
+        mb = mb c
+        continue
+      }
+      if (c == q) q = ""
+      else if (q == DQ && c == BS) esc = 1
+      mb = mb " "
+    }
+    out = out mb
+  }
+  return out
+}
+END {
+  if (P) print "print"
+  else if (I) print "interp"
+  else if (G && L) print "grep"
+}'
+
+# On a command line the same path is preceded by a space, quote, = or / (~ for
+# `~/.netrc`), and followed by whitespace, a quote, a redirect or a pipe —
+# never by a line anchor, so the path-anchored pattern above would silently
+# match nothing here.
+cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
+# The same names as the shell also spells them: after < : { , ( or a
+# backtick, and before a glob, a brace, a backtick or a redirect.
+cmd_secret_wide_re='(^|[[:space:]"'"'"'=/<:{,(`])\.env([[:space:]"'"'"';|&)><*?[{},`]|$|\.[A-Za-z0-9_*?[{-])|(^|[[:space:]"'"'"'=/<:{,(`])\.envrc\.local([[:space:]"'"'"';|&)><*?[{},`]|$)|\.aws/credentials|(^|[[:space:]"'"'"'=/<:{,(`~])\.netrc([[:space:]"'"'"';|&)><*?[{},`]|$)|id_(rsa|ed25519|ecdsa)([[:space:]"'"'"';|&)><*?[{},`]|$)|\.(pem|p12|pfx)([[:space:]"'"'"';|&)><*?[{},`]|$)'
+
+# Here-strings, not pipes: under pipefail a grep -q that exits early could
+# fail its writer, and a failed test reads as "no name" — an allow.
+credential_read() {
+  local left wide
+  case $1 in
+  *.env* | *netrc* | *id_rsa* | *id_ed25519* | *id_ecdsa* | *.aws/credentials* | *.pem* | *.p12* | *.pfx*) ;;
+  *) return 0 ;;
+  esac
+  left=$(sed -E "s/$template_re//g" <<<"$1") || return
+  if ! grep -qE "$cmd_secret_re" <<<"$left"; then
+    wide=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$1") || return
+    grep -qE "$cmd_secret_wide_re" <<<"$wide" || return 0
+  fi
+  awk "$awk_cred" <<<"$1"
+}
+
 deny() {
   if [[ $shape == cursor ]]; then
     jq -cn --arg r "$1" '{permission: "deny", user_message: $r, agent_message: $r}'
@@ -500,7 +632,7 @@ deny() {
 case $kind in
 read)
   [[ -n $path ]] || exit 0
-  [[ $path =~ $template_re ]] && exit 0
+  [[ $path =~ (^|/)$template_re$ ]] && exit 0
   [[ $path =~ $secret_path_re ]] || exit 0
   deny "Reading $path would print live credentials into this transcript, which costs a rotation. Nothing needs the value: the tool that consumes it reads the environment itself, and a missing key produces a clear error — run the tool and read that instead. To know a key is merely present without seeing it: grep -c '^NAME=' (count, not content)."
   ;;
@@ -509,13 +641,18 @@ grep)
   [[ $mode == content ]] || exit 0
   # secret_path_re is anchored, so path and glob are tested separately. Template
   # names are stripped rather than exempting the call, so `{.env.example,.env}`
-  # still trips on its `.env`.
-  path_left=$(sed -E "s/$template_re//g" <<<"$path")
-  glob_left=$(sed -E "s/$template_re//g" <<<"$grep_glob")
-  if [[ $path_left =~ $secret_path_re ]]; then
+  # still trips on its `.env`: once anywhere, and once only where the name ends,
+  # so `.env.examples` trips too (\4 is the character after the name:
+  # template_re holds two groups).
+  path_any=$(sed -E "s/$template_re//g" <<<"$path")
+  glob_any=$(sed -E "s/$template_re//g" <<<"$grep_glob")
+  path_left=/ glob_left=/
+  [[ $path_any =~ $secret_path_re ]] || path_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$path")
+  [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re ]] || glob_left=$(sed -E "s/($template_re)([^A-Za-z0-9_.*?[-])/\\4/g; s/($template_re)\$//" <<<"$grep_glob")
+  if [[ $path_any =~ $secret_path_re || $path_left =~ $secret_path_re ]]; then
     deny "Grepping $path for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   fi
-  if [[ $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
+  if [[ $glob_any =~ $secret_path_re || $glob_any =~ $glob_secret_re || $glob_left =~ $secret_path_re || $glob_left =~ $glob_secret_re ]]; then
     deny "Grepping with glob $grep_glob for content would print credential lines into this transcript. To confirm a key exists, count in the shell (grep -c / rg -c) or list only the matching files, or run the consuming tool and read its error."
   fi
   # A secret-shaped pattern with content output leaks even when the path is broad.
@@ -581,25 +718,24 @@ shell)
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
   fi
 
-  # 3. Reading a credential file's content. Non-printing inspection (test, [,
-  #    git check-ignore, ls, stat, wc, chmod, rm, gtrash, direnv) stays allowed.
-  #    Judged on the whole command, and again on every `-c` body, on purpose: a
-  #    per-segment, command-position rule missed reads behind wrappers (sudo
-  #    -u, timeout, ssh, docker/kubectl exec, xargs, find -exec, eval) and
-  #    behind a stray apostrophe in a heredoc or comment. Denying prose that
-  #    merely mentions a credential read is the accepted cost for a secret
-  #    guard. Template names are stripped rather than exempting the command, so
-  #    `cat .env.example .env` still trips on its `.env`.
+  # 3. Reading a credential file's content (credential_read, above deny). A
+  #    failed check fails loud rather than allowing.
   for space in "${raw_spaces[@]}"; do
-    left=$(sed -E "s/$template_re//g" <<<"$space")
-    grep -qE "$cmd_secret_re" <<<"$left" || continue
-    if grep -qE '\b(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)\b' <<<"$space"; then
+    verdict=$(credential_read "$space") || {
+      echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
+      exit 1
+    }
+    case $verdict in
+    interp)
+      deny "Inline interpreter code that names a credential file can print it into this transcript, and the guard cannot tell whether the code reads it. If it only writes or edits the file, run the code from a script file; to confirm a key is configured, use grep -c '^NAME=' (a count)."
+      ;;
+    print)
       deny "This prints credential-file content into the transcript. If you need to confirm a key is configured, use grep -c '^NAME=' (a count), or run the consuming tool and read its error — a missing key fails loudly and that failure is the signal."
-    fi
-    # grep/rg leak unless restricted to a non-printing mode, in every grep.
-    if grep -qE '\b('"$grep_alt"')\b' <<<"$space" && ! grep_stages_quiet "$space"; then
+      ;;
+    grep)
       deny "grep/rg over a credential file prints the matching line, value included. Add -c (count) or -q (quiet) to every grep if you only need to know whether it is set."
-    fi
+      ;;
+    esac
   done
   ;;
 esac

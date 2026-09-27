@@ -217,7 +217,14 @@
               pkgs.git
               pkgs.tmux
               pkgs.gh
-            ];
+              # mawk, nawk, and (on Linux) BusyBox awk: tests/secret-read-guard.bats
+              # runs the credential-read rule under each awk implementation.
+              # BusyBox is wrapped as busybox-awk because busybox on PATH would
+              # shadow coreutils.
+              pkgs.mawk
+              pkgs.nawk
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [(pkgs.writeShellScriptBin "busybox-awk" ''exec ${pkgs.busybox}/bin/busybox awk "$@"'')];
         };
       };
     };
