@@ -233,8 +233,8 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
 
 1. `<crew_dir>/leads/<branch>` is a regular, non-symlink file reading
    `claude <uuid>`; else human.
-2. The project dir is `<projects>/<slug>` with `<slug>` = the worktree's path
-   with every `/` and `.` replaced by `-`.
+2. The project dir is `<projects>/<slug>` with `<slug>` = the canonical (`realpath`) worktree path
+   with every character outside `[A-Za-z0-9]` replaced by `-`.
 3. Files: `<sid>.jsonl` and `<sid>/subagents/agent-*.jsonl`. A pending call is
    a `tool_use` block whose `id` has no `tool_result` in the same file. Exactly
    one pending call across all files, else human — so an orphan left by a

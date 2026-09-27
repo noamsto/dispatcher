@@ -11,10 +11,18 @@ orders the work.
 - `tests/permission-check.bats` — new. Table tests: every #441 finding,
   pane-fidelity and quoting refusals, positives, settle, `--answer`.
 - `tests/fixtures/permission/classifier-escalation.txt` — new. Verbatim copy of
-  the real #435 capture (`435-capture/permission-dialog.txt`).
+  the real #435 capture
+  (`/home/noams/git/dispatcher/.git/crew/artifacts/435-capture/permission-dialog.txt`).
 - `flake.nix` — add a `permission-check` `writeShellApplication` package with
   `@protocolDir@ @skillsDir@ @reviewersDir@ @criticsDir@` substituted, and add it
   to `default`'s `paths`.
+- `nix/hm-module.nix` — add `pkgsFor.permission-check` to `home.packages`, so
+  HM-module users get the command the protocol names.
+- `tests/module.bats` — build `#permission-check` in `setup_file`, read its
+  out path, extend the pinned package-list string, assert the protocol
+  placeholder is substituted.
+- `tests/adapters.bats` — pin the new policy sentences on all four
+  `DISPATCHER_PROTOCOL.md` copies.
 - `adapters/core/protocols/DISPATCHER_PROTOCOL.md` — the policy text: the
   `prompt:` bullet, recovery step 2, _Permission blocks_ carve-out, manual
   pane-injection bullet.
@@ -89,9 +97,15 @@ permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir
       (implement: escalated)
 - [ ] **Step 3: transcript binding.** Implement `transcript_pending` in jq per
       spec "Transcript binding" 1–7: lead record regular non-symlink
-      `claude <uuid>`; slug = worktree path with `/` and `.` → `-`; files
+      `claude <uuid>`, and no dir from `leads/` down to a slashed branch's
+      leaf is a symlink or non-dir (mirror `dispatch.sh` `_lead_record_safe`);
+      slug = `realpath -e` of the worktree with every character outside
+      `[A-Za-z0-9]` → `-`; files
       `<sid>.jsonl` + `<sid>/subagents/agent-*.jsonl`; every line must parse as
-      a JSON object (`jq -e 'type=="object"'` over `-c` input, fail → human);
+      a JSON object, checked line by line —
+      `jq -nRe 'all(inputs; (try fromjson catch null) | type == "object")'`
+      (not `jq -e` over a stream, whose status reflects only the last value and
+      whose parser ignores line boundaries); fail → human;
       pending = `tool_use` ids with no `tool_result` in the same file; exempt
       exactly the id equal to the pending call's meta `toolUseId`, only when that
       call is an `Agent`/`Task` `tool_use` in the lead file; exactly one other
@@ -99,7 +113,9 @@ permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir
       `agentType == F_AGENT`; it is the last `tool_use` in its file; `name ==
 "Bash"`; `input` keys ⊆ {command, description} with `command` present;
       `wireToolInputs[id]`, if present, equals `input`; command/description
-      match `^[\x20-\x7e]*$`; block equality (trimmed); no `tool_result` text
+      are printable ASCII by codepoint
+      (`explode | all(. >= 32 and . <= 126)`, no regex anchors); block
+      equality (trimmed); no `tool_result` text
       containing `denied by the Claude Code auto mode classifier` among that
       file's last five `tool_result`s. Bats rows: no lead record; lead record a
       symlink; `codex <uuid>`; two pending (an orphan); parent exempt only by
@@ -109,7 +125,9 @@ permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir
       jq `"\u001b"`-style JSON escapes, never raw bytes, never rendered to a
       terminal), non-ASCII;
       two-line block whose line 2 is not the description; block/command
-      mismatch; recent classifier denial; malformed JSON line.
+      mismatch; recent classifier denial; malformed JSON line; a valid
+      non-object line (`[1]`) mid-file; two objects on one line; a leads/
+      parent dir that is a symlink (slashed branch).
       Proof: all transcript rows pass. (implement: escalated)
 - [ ] **Step 4: lexer + grammar.** Implement `lex` and `grammar_check` per spec
       "Command grammar": allowed outside-quote charset, single-quote joining
@@ -158,13 +176,23 @@ permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir
       `PERMISSION_CHECK_SETTLE=2`, append, wait) → human; `--answer` with
       `--capture` → exit 2; `--projects-dir` with `--pane` → exit 2; refusal
       never calls send-keys; `PERMISSION_CHECK_SETTLE=0` in `--pane` mode still
-      sleeps ≥ 10 (stub `sleep` on PATH records its argument).
+      sleeps ≥ 10 (stub `sleep` on PATH records its argument). Pane-mode rows
+      run with `HOME` set to a tmp home whose `.claude/projects` holds the
+      world's transcripts (`--projects-dir` is refused there); that tmp home
+      is not an ancestor of the worktree/grant dirs, so the grant and
+      `$HOME`-ancestor rows stay consistent.
       Proof: all rows green.
 - [ ] **Step 7: packaging.** `flake.nix`: add
       `permission-check = pkgs.writeShellApplication { name = "permission-check"; runtimeInputs = with pkgs; [jq coreutils gnugrep gnused tmux git]; text = sub (builtins.readFile ./adapters/core/permission-check.sh); };`
-      and add `permission-check` to `default`'s `paths`. Proof:
-      `nix build .#permission-check` succeeds (writeShellApplication runs
-      shellcheck); `shellcheck adapters/core/permission-check.sh` clean.
+      and add `permission-check` to `default`'s `paths`. `nix/hm-module.nix`:
+      append `pkgsFor.permission-check` to `home.packages`. `tests/module.bats`:
+      add `"$root#permission-check"` to the `setup_file` build, a matching
+      `read -r OUT_PERMISSION_CHECK` in the out-path block (same order), extend
+      the pinned list string at the `EVAL_CONFIG` assertion with
+      `,permission-check`, and add a test that
+      `grep -c '@protocolDir@' "$OUT_PERMISSION_CHECK/bin/permission-check"` is 0. Proof: `nix build .#permission-check` succeeds (writeShellApplication
+      runs shellcheck); `shellcheck adapters/core/permission-check.sh` clean;
+      `bats tests/module.bats` green.
 - [ ] **Step 8: protocol text.** Edit `DISPATCHER_PROTOCOL.md` per spec
       "Protocol edits": the `prompt:` sub-bullet "Tool-permission dialogs go to
       the human" becomes the policy (run
@@ -177,8 +205,14 @@ permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir
       counterexamples and residual risks). Recovery step 2 and the manual
       pane-injection bullet say the same. _Permission blocks_' "Never deliver
       an authorization by pane injection" gains the carve-out. Then
-      `bash scripts/gen-adapters.sh`. Proof: `git diff --stat` shows the core
-      file plus only generated copies; `bats tests/adapters.bats` green.
+      `bash scripts/gen-adapters.sh`. Add a `tests/adapters.bats` test (like
+      the existing "dispatcher protocol pins in-band delivery…" one) pinning,
+      on all four `DISPATCHER_PROTOCOL.md` copies, the statements
+      `permission-check --pane`, `never option 2`, and that classifier
+      escalations always go to the human, and asserting the removed sentence
+      `a follow-up issue tracks a dispatcher approval policy` is gone. Proof:
+      `git diff --stat` shows the core file plus only generated copies;
+      `bats tests/adapters.bats` green.
 - [ ] **Step 9: full gate.** `shellcheck adapters/core/*.sh`,
       `bats --jobs 8 tests/permission-check.bats tests/adapters.bats tests/crew.bats`,
       `nix flake check`. Proof: all green.
