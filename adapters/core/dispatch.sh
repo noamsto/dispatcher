@@ -1667,7 +1667,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
       if _role_pane_ready "$frame" "$frame_e" "$unsent" && _role_assignment_safe "${pending[0]}"; then
         [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
-        buf="rw-assign-$$"
+        buf="rw-assign-$$-$RANDOM"
         if printf 'Assignment: %s' "${pending[0]}" | tmux load-buffer -b "$buf" - 2>/dev/null; then
           if tmux paste-buffer -p -d -r -b "$buf" -t "$watch_pane" 2>/dev/null; then
             frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
@@ -1683,15 +1683,16 @@ if [ "${1:-}" = "--role-watch" ]; then
               unsent=1
             fi
           else
-            : # paste-buffer failed (tmux hiccup, or the pane closed between
-              # load-buffer and paste-buffer) — do NOT fall through to
-              # _role_assignment_confirmed: nothing was actually pasted, so a
-              # stale frame that happens to still look like an idle box could
-              # get a spurious Enter and pending[0] wrongly dequeued as
-              # delivered. Same reasoning as the load-buffer branch below:
-              # leave $unsent untouched. The loaded buffer ($buf) is left on
-              # the server since -d never ran; harmless — the next attempt
-              # reuses the same PID-derived name and overwrites it.
+            # paste-buffer failed (tmux hiccup, or the pane closed between
+            # load-buffer and paste-buffer) — do NOT fall through to
+            # _role_assignment_confirmed: nothing was actually pasted, so a
+            # stale frame that happens to still look like an idle box could
+            # get a spurious Enter and pending[0] wrongly dequeued as
+            # delivered. Same reasoning as the load-buffer branch below:
+            # leave $unsent untouched. -d never ran, so clean up the loaded
+            # buffer explicitly — each attempt gets its own name ($RANDOM),
+            # so nothing later would overwrite an orphaned one.
+            tmux delete-buffer -b "$buf" 2>/dev/null || true
           fi
         else
           : # load-buffer failed (tmux hiccup); leave $unsent untouched — do
