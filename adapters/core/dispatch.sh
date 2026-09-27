@@ -1349,6 +1349,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
   }
   crew_dir="$common/crew"
   branch="$(git branch --show-current)"
+  [ -n "$branch" ] || {
+    echo "dispatch: --spawn-role: detached HEAD — run from the worker's branch" >&2
+    exit 1
+  }
   # The dirs come from the dispatch-time record, never this (worker's) env.
   if bad="$(_protocol_dirs_record_bad)"; then
     echo "dispatch: $bad is a symlink or the wrong type — refusing to use the protocol-dirs record" >&2

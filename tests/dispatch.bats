@@ -7169,6 +7169,15 @@ _fake_git_dir() {
   run ! grep -q 'split-window' "$STUB_LOG"
 }
 
+@test "spawn-role: anchor — a detached HEAD is refused" {
+  _spawn_role_fixture
+  git checkout -q --detach
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"detached HEAD"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
 @test "the suite resolves engine CLIs from the stub dir, not the developer's machine" {
   # Without this, a PATH probe in dispatch.sh passes locally (real engines
   # installed) and fails on a bare CI runner. Pin the dependency here.

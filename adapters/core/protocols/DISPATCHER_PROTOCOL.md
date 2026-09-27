@@ -355,9 +355,13 @@ is back.
   and drops any that no longer resolve inside a root, with a `dispatch: dropping
   invalid grant` line on stderr; the roots a session checks against are the ones its
   own dispatcher (or `dispatch resume` caller) launched it with, not whatever the
-  pane's env happens to hold. Every worker is also always granted the
-  protocol/skills/reviewers/critics dirs and its own `$crew_dir/artifacts/<branch>` —
-  no `--add-dir` needed for those. Only claude launches take `--add-dir`: codex runs
+  pane's env happens to hold. The four protocol dirs (protocol/skills/reviewers/critics)
+  are always granted **read-only** — `--add-dir` plus an `Edit(//<dir>/**)` deny rule,
+  so edits there are refused whatever the permission mode — using the values `dispatch`
+  resolved and recorded in `$crew_dir/protocol-dirs/<branch>`; a lazy `--spawn-role`
+  reads that record, never the worker's `DISPATCHER_*_DIR`, and refuses to run outside
+  the dispatched linked worktree's root. Its own `$crew_dir/artifacts/<branch>` is the
+  only write-capable default grant — no `--add-dir` needed for any of those. Only claude launches take `--add-dir`: codex runs
   sandbox-bypassed, cursor runs `--force`, and pi has no path-permission layer, so
   none of them have a prompt to widen. A worker blocked on a permission prompt
   (`blocked "permission: …"`) is awaiting you in-band — see _Permission blocks_; a
