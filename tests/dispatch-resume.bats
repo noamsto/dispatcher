@@ -548,7 +548,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
+  for fn in shell_quote write_launch_script _symlink_chain_hops _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
