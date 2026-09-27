@@ -3190,8 +3190,7 @@ fi
   mv -f -- "$grant_tmp" "$grant_record"
 )
 
-# The protocol-dirs record is what a lazy --spawn-role reads its dirs from
-# (#496): written next to the grant record, same hardening.
+# A lazy --spawn-role takes its dirs from this record, never the worker's env (#496).
 if bad="$(_protocol_dirs_record_bad)"; then
   echo "dispatch: $bad is a symlink or the wrong type — refusing to write the protocol-dirs record" >&2
   exit 1
