@@ -2,7 +2,7 @@
 # Dispatcher-side checker: may this Claude tool-permission dialog be answered
 # "1. Yes" without the human? (#441)
 #
-#   permission-check --pane <%id> --branch <b> --worktree <dir> [--crew-dir <dir>] [--answer]
+#   permission-check --pane <%id> --branch <b> [--crew-dir <dir>] [--answer]
 #   permission-check --capture <file> --branch <b> --worktree <dir> [--crew-dir <dir>]
 #                    [--projects-dir <dir>] [--ro-root <dir>]...
 #
@@ -12,6 +12,11 @@
 # pending Bash call in the worker's own session transcript, and that command
 # must be a read of an allowed root in a grammar small enough to check
 # completely. See docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md.
+#
+# With --pane the checker trusts no caller-given worktree: it takes the one
+# worktree git lists for the branch, in the repo that owns the crew dir
+# (<git-common-dir>/crew), and requires the pane to be running the lead's
+# session.
 #
 # The decision takes two observations, PERMISSION_CHECK_SETTLE seconds apart:
 # with --pane at least 10 (the env can only raise it; a value that is not one
@@ -91,11 +96,12 @@ parse_args() {
   fi
   [ -n "$PANE" ] || [ -n "$CAPTURE_FILE" ] || usage "one of --pane or --capture is required"
   [ -n "$BRANCH" ] || usage "--branch is required"
-  [ -n "$WORKTREE" ] || usage "--worktree is required"
   if [ -n "$PANE" ]; then
+    [ -z "$WORKTREE" ] || usage "--worktree is accepted with --capture only"
     [ "$projects_given" = 0 ] || usage "--projects-dir is accepted with --capture only"
     [ "${#RO_ROOTS[@]}" -eq 0 ] || usage "--ro-root is accepted with --capture only"
   else
+    [ -n "$WORKTREE" ] || usage "--worktree is required with --capture"
     [ "$ANSWER" = 0 ] || usage "--answer is accepted with --pane only"
   fi
   if [ -z "$CREW_DIR" ]; then
@@ -116,6 +122,62 @@ parse_args() {
     [[ $s =~ ^[0-9]{1,6}$ ]] || usage "PERMISSION_CHECK_SETTLE is not one to six digits"
     SETTLE=$((10#$s))
   fi
+}
+
+# pane_worktree — the path of the one worktree `git worktree list` shows on
+# refs/heads/<branch>, in the repo whose common dir holds the crew dir. -z so
+# no path, however spelled, can forge a `branch` line. Sets WORKTREE.
+pane_worktree() {
+  local rec path="" n=0
+  local -a recs
+  mapfile -d '' -t recs < <(git -C "$(dirname -- "$CREW_DIR")" worktree list --porcelain -z)
+  wait "$!" || refuse "worktree: git worktree list failed"
+  for rec in "${recs[@]}"; do
+    case $rec in
+    "worktree "*) path=${rec#worktree } ;;
+    "branch refs/heads/$BRANCH")
+      n=$((n + 1))
+      WORKTREE=$path
+      ;;
+    "") path="" ;;
+    esac
+  done
+  [ "$n" -eq 1 ] || refuse "worktree: not exactly one worktree on the branch"
+}
+
+# pane_session — the pane runs the lead: below its pid there is a `claude`
+# process, and every one there was started with `--session-id <SESSION>` or
+# `--resume <SESSION>`, compared as whole words. The args hold the launch
+# prompt, so no reason ever quotes them.
+pane_session() {
+  local pid table p pp rest q steps ok found=0
+  local -A parent=() args=()
+  local -a t
+  pid=$(tmux display-message -p -t "$PANE" '#{pane_pid}') || refuse "pane: pane_pid unavailable"
+  [[ $pid =~ ^[0-9]{1,10}$ ]] || refuse "pane: pane_pid is not a number"
+  table=$(ps -ww -e -o pid=,ppid=,args=) || refuse "pane: process table unavailable"
+  while read -r p pp rest; do
+    [[ $p =~ ^[0-9]+$ && $pp =~ ^[0-9]+$ ]] || continue
+    parent[$p]=$pp args[$p]=$rest
+  done <<<"$table"
+
+  for p in "${!args[@]}"; do
+    q=$p steps=0
+    while [ "$q" != "$pid" ] && [ -n "${parent[$q]:-}" ] && [ "$steps" -lt "${#parent[@]}" ]; do
+      q=${parent[$q]} steps=$((steps + 1))
+    done
+    [ "$q" = "$pid" ] || continue
+    read -ra t <<<"${args[$p]}"
+    [ "${#t[@]}" -gt 0 ] && [ "${t[0]##*/}" = claude ] || continue
+    found=1 ok=0
+    for ((q = 1; q + 1 < ${#t[@]}; q++)); do
+      if [[ ${t[q]} == --session-id || ${t[q]} == --resume ]] && [ "${t[q + 1]}" = "$SESSION" ]; then
+        ok=1
+      fi
+    done
+    [ "$ok" = 1 ] || refuse "pane: not running the lead session"
+  done
+  [ "$found" = 1 ] || refuse "pane: not running the lead session"
 }
 
 # The same stripping crew.sh's _permission_detail applies: OSC, CSI and other
@@ -260,6 +322,10 @@ if any(.[]; .bad) then refuse("transcript: a line is not one JSON object") else
           and ((.name == "Agent" or .name == "Task") and ($m.toolUseId | type) == "string"
                and .id == $m.toolUseId | not))
         then refuse("transcript: more than one pending call")
+      elif [$pending[] | select(.i == 0)] | length != 1
+        then refuse("transcript: the parent call is not pending")
+      elif any($pending[]; .i == 0 and (.last | not))
+        then refuse("transcript: the parent call is not the last tool_use in the lead transcript")
       elif $m.spawnDepth != 1 then refuse("transcript: subagent spawnDepth is not 1")
       elif $m.agentType != $agent then refuse("transcript: agentType does not match the header")
       elif ($c.id | type) != "string" then refuse("transcript: pending call has no id")
@@ -687,6 +753,7 @@ decide() {
   capture
   frame_parse
   transcript_pending
+  [ -z "$PANE" ] || pane_session
   grammar_check
   path_checks
 }
@@ -702,6 +769,7 @@ verdict() {
 main() {
   local frame id
   parse_args "$@"
+  [ -z "$PANE" ] || pane_worktree
   decide
   frame=$CAPTURE id=$T_ID
   sleep "$SETTLE"

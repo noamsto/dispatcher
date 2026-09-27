@@ -28,6 +28,8 @@ setup() {
   FRAME="$BATS_TEST_TMPDIR/frame.txt"
   F="$WT/README.md"
   stubs
+  ps_table
+  worktrees
 
   mkdir -p "$CREW/leads/${BRANCH%/*}" "$CREW/artifacts/$BRANCH" "$CREW/grants/${BRANCH%/*}"
   printf 'claude %s\n' "$SID" >"$CREW/leads/$BRANCH"
@@ -64,11 +66,18 @@ setup() {
     >"$PROJ/$SID/subagents/agent-a1.meta.json"
 }
 
-# stubs — `tmux` and `sleep` on STUBS, which the checker runs on PATH.
-# tmux logs its argv to TMUX_LOG; capture-pane prints PANE_FRAME, or
-# PANE_FRAME_ALT on call number PANE_FRAME_ALT_AT; send-keys exits
-# SEND_KEYS_STATUS. sleep logs its argument to SLEEP_LOG, runs SLEEP_HOOK (a
-# shell command that changes the world mid-settle) and returns at once.
+# stubs — `tmux`, `ps`, `git` and `sleep` on STUBS, which the checker runs on
+# PATH. tmux logs its argv to TMUX_LOG; capture-pane prints PANE_FRAME, or
+# PANE_FRAME_ALT on call number PANE_FRAME_ALT_AT; display-message prints
+# PANE_PID and exits DISPLAY_STATUS; send-keys exits SEND_KEYS_STATUS. ps prints
+# PS_TABLE. git logs a `worktree list` to GIT_LOG and prints GIT_WORKTREES
+# (a porcelain listing, one field per line) NUL-terminated as -z does; every
+# other git call goes to the real git. sleep logs its argument to SLEEP_LOG,
+# runs SLEEP_HOOK (a shell command that changes the world mid-settle) and
+# returns at once.
+#
+# git is stubbed, not run against a throwaway repo, because real git refuses
+# to check one branch out in two worktrees; one real-git row covers the rest.
 stubs() {
   STUBS="$BATS_TEST_TMPDIR/stubs"
   mkdir -p "$STUBS"
@@ -81,18 +90,69 @@ capture-pane)
   printf '%s\n' "$n" >"$TMUX_LOG.captures"
   if [ "$n" = "${PANE_FRAME_ALT_AT:-}" ]; then cat "$PANE_FRAME_ALT"; else cat "$PANE_FRAME"; fi
   ;;
+display-message)
+  printf '%s\n' "${PANE_PID-4242}"
+  exit "${DISPLAY_STATUS:-0}"
+  ;;
 send-keys) exit "${SEND_KEYS_STATUS:-0}" ;;
 esac
+STUB
+  cat >"$STUBS/ps" <<'STUB'
+#!/usr/bin/env bash
+cat "$PS_TABLE"
+STUB
+  cat >"$STUBS/git" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = -C ] && [ "${*:3}" = "worktree list --porcelain -z" ]; then
+  printf '%s\n' "$*" >>"$GIT_LOG"
+  tr '\n' '\0' <"$GIT_WORKTREES"
+  exit 0
+fi
+exec "$REAL_GIT" "$@"
 STUB
   cat >"$STUBS/sleep" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$SLEEP_LOG"
 if [ -n "${SLEEP_HOOK:-}" ]; then eval "$SLEEP_HOOK"; fi
 STUB
-  chmod +x "$STUBS/tmux" "$STUBS/sleep"
-  export TMUX_LOG="$BATS_TEST_TMPDIR/tmux.log" SLEEP_LOG="$BATS_TEST_TMPDIR/sleep.log"
-  export PANE_FRAME="$FRAME"
+  chmod +x "$STUBS/tmux" "$STUBS/ps" "$STUBS/git" "$STUBS/sleep"
+  REAL_GIT=$(command -v git)
+  export REAL_GIT TMUX_LOG="$BATS_TEST_TMPDIR/tmux.log" SLEEP_LOG="$BATS_TEST_TMPDIR/sleep.log"
+  export GIT_LOG="$BATS_TEST_TMPDIR/git.log" PANE_FRAME="$FRAME"
+  export PS_TABLE="$BATS_TEST_TMPDIR/ps.txt" GIT_WORKTREES="$BATS_TEST_TMPDIR/worktrees.txt"
   unset PANE_FRAME_ALT PANE_FRAME_ALT_AT SEND_KEYS_STATUS SLEEP_HOOK PERMISSION_CHECK_SETTLE
+  unset PANE_PID DISPLAY_STATUS
+}
+
+# ps_table [claude-args...] — the pane's process tree: bash (4242, the pane
+# pid) runs a launch script that runs the given claude command lines, one
+# process each (default: one started on the lead's --session-id). A claude on
+# another session outside the pane is always present.
+ps_table() {
+  local -a cmds=("$@")
+  local pid=4244 c
+  [ "$#" -gt 0 ] || cmds=("claude --name x --model opus --session-id $SID --permission-mode auto 'prompt'")
+  {
+    printf '%7s %7s %s\n' 1 0 init 4242 4241 bash 4243 4242 'bash /tmp/launch.sh'
+    for c in "${cmds[@]}"; do
+      printf '%7s %7s %s\n' "$pid" 4243 "$c"
+      pid=$((pid + 1))
+    done
+    printf '%7s %7s %s\n' 5000 1 'claude --session-id 00000000-0000-4000-8000-000000000000'
+  } >"$PS_TABLE"
+}
+
+# worktrees [branch-ref...] — the porcelain listing: the main worktree on
+# main, then WT on each given ref (default: the world's branch).
+worktrees() {
+  local ref
+  [ "$#" -gt 0 ] || set -- "refs/heads/$BRANCH"
+  {
+    printf 'worktree %s\nHEAD %s\nbranch refs/heads/main\n\n' "$BATS_TEST_TMPDIR/main" "$(printf '1%.0s' {1..40})"
+    for ref in "$@"; do
+      printf 'worktree %s\nHEAD %s\nbranch %s\n\n' "$WT" "$(printf '2%.0s' {1..40})" "$ref"
+    done
+  } >"$GIT_WORKTREES"
 }
 
 # pending_bash <command> [description] — the subagent asks for a Bash call
@@ -125,12 +185,13 @@ tool_use() {
         input:{command:"true"}}]}}' >>"${3:-$SUB_LOG}"
 }
 
-# result_for <id> [text] — a tool_result for <id> lands in the subagent file.
+# result_for <id> [text] [log] — a tool_result for <id> lands in <log>
+# (default: the subagent file).
 result_for() {
   jq -nc --arg sid "$SID" --arg id "$1" --arg text "${2:-ok}" \
     '{type:"user",sessionId:$sid,agentId:"a1",isSidechain:true,uuid:"s2",
       message:{role:"user",content:[{type:"tool_result",tool_use_id:$id,content:$text}]}}' \
-    >>"$SUB_LOG"
+    >>"${3:-$SUB_LOG}"
 }
 
 # frame <line1> [line2] — the real capture's dialog with the classifier's `│`
@@ -163,10 +224,11 @@ check() {
 }
 
 # pane [arg...] — the checker in --pane mode on %9 through the tmux stub,
-# finding the transcripts under the tmp HOME.
+# finding the worktree through the git stub and the transcripts under the tmp
+# HOME.
 pane() {
   run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" bash "$CHECK" --pane %9 \
-    --branch "$BRANCH" --worktree "$WT" --crew-dir "$CREW" "$@"
+    --branch "$BRANCH" --crew-dir "$CREW" "$@"
 }
 
 # no_send_keys — the tmux stub never saw send-keys.
@@ -383,6 +445,31 @@ try() {
   frame "cat $WT/README.md"
   check
   assert_refused "more than one pending call"
+}
+
+@test "permission-check: a pending subagent call under a finished parent goes to the human" {
+  result_for toolu_parent ok "$LEAD_LOG"
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+  check
+  assert_refused "the parent call is not pending"
+}
+
+@test "permission-check: a pending lead call after the parent goes to the human" {
+  tool_use toolu_extra Bash "$LEAD_LOG"
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+  check
+  assert_refused "more than one pending call"
+}
+
+@test "permission-check: a parent call that is not the lead's last tool_use goes to the human" {
+  tool_use toolu_done Read "$LEAD_LOG"
+  result_for toolu_done ok "$LEAD_LOG"
+  pending_bash "cat $WT/README.md"
+  frame "cat $WT/README.md"
+  check
+  assert_refused "the parent call is not the last tool_use in the lead transcript"
 }
 
 @test "permission-check: a spawnDepth 2 subagent goes to the human" {
@@ -846,9 +933,11 @@ alt_frame() {
   pane --answer
   assert_allowed
   mapfile -t log <"$TMUX_LOG"
-  [ "${#log[@]}" -eq 4 ]
-  for i in 0 1 2; do [ "${log[i]}" = "capture-pane -p -t %9" ]; done
-  [ "${log[3]}" = "send-keys -t %9 1" ]
+  [ "${#log[@]}" -eq 6 ]
+  for i in 0 2 4; do [ "${log[i]}" = "capture-pane -p -t %9" ]; done
+  for i in 1 3; do [ "${log[i]}" = "display-message -p -t %9 #{pane_pid}" ]; done
+  [ "${log[5]}" = "send-keys -t %9 1" ]
+  [ "$(cat "$GIT_LOG")" = "-C $BATS_TEST_TMPDIR worktree list --porcelain -z" ]
 }
 
 @test "permission-check: pane mode without --answer allows and sends nothing" {
@@ -945,6 +1034,130 @@ alt_frame() {
 }
 
 # ---------------------------------------------------------------------------
+# Pane binding
+# ---------------------------------------------------------------------------
+
+# assert_pane_refused — refused as not the lead session, without quoting the
+# process args (they carry the launch prompt).
+assert_pane_refused() {
+  assert_refused "pane: not running the lead session"
+  [[ "$output" != *opus* && "$output" != *prompt* ]]
+  no_send_keys
+}
+
+@test "permission-check: a pane claude on another session goes to the human" {
+  pane_ready
+  ps_table "claude --name x --model opus --session-id 11111111-2222-4333-8444-555555555555 'prompt'"
+  pane --answer
+  assert_pane_refused
+}
+
+@test "permission-check: a pane claude resumed on the lead session is allowed" {
+  pane_ready
+  ps_table "claude --model opus --resume $SID 'prompt'"
+  pane --answer
+  assert_allowed
+}
+
+@test "permission-check: a pane with no claude process goes to the human" {
+  pane_ready
+  ps_table "node server.js --session-id $SID"
+  pane --answer
+  assert_pane_refused
+}
+
+@test "permission-check: a pane with a second claude on another session goes to the human" {
+  pane_ready
+  ps_table "claude --model opus --session-id $SID 'prompt'" \
+    "claude --model opus --session-id 11111111-2222-4333-8444-555555555555 'prompt'"
+  pane --answer
+  assert_pane_refused
+}
+
+@test "permission-check: --session-id only as part of a longer word goes to the human" {
+  pane_ready
+  ps_table "claude --model opus --session-idX $SID 'prompt'"
+  pane --answer
+  assert_pane_refused
+}
+
+@test "permission-check: a session id only as part of a longer word goes to the human" {
+  pane_ready
+  ps_table "claude --model opus --session-id ${SID}0 'prompt'"
+  pane --answer
+  assert_pane_refused
+}
+
+@test "permission-check: a pane swapped to another session during the settle goes to the human" {
+  pane_ready
+  export SLEEP_HOOK="ps_table 'claude --session-id 11111111-2222-4333-8444-555555555555'"
+  export -f ps_table
+  export SID
+  pane --answer
+  assert_pane_refused
+  [ "$(grep -c '^display-message' "$TMUX_LOG")" -eq 2 ]
+}
+
+@test "permission-check: a failing display-message goes to the human" {
+  pane_ready
+  export DISPLAY_STATUS=1
+  pane --answer
+  assert_refused "pane: pane_pid unavailable"
+  no_send_keys
+}
+
+@test "permission-check: a non-numeric pane_pid goes to the human" {
+  pane_ready
+  export PANE_PID=abc
+  pane --answer
+  assert_refused "pane: pane_pid is not a number"
+  no_send_keys
+}
+
+@test "permission-check: a branch with no worktree goes to the human" {
+  pane_ready
+  worktrees refs/heads/other
+  pane --answer
+  assert_refused "worktree: not exactly one worktree on the branch"
+  no_send_keys
+}
+
+@test "permission-check: a worktree on a longer branch name does not match" {
+  pane_ready
+  worktrees "refs/heads/${BRANCH}y"
+  pane --answer
+  assert_refused "worktree: not exactly one worktree on the branch"
+  no_send_keys
+}
+
+@test "permission-check: two worktrees claiming the branch go to the human" {
+  pane_ready
+  worktrees "refs/heads/$BRANCH" "refs/heads/$BRANCH"
+  pane --answer
+  assert_refused "worktree: not exactly one worktree on the branch"
+  no_send_keys
+}
+
+@test "permission-check: pane mode finds the worktree with the real git of the cwd repo" {
+  pane_ready
+  git init -q -b "$BRANCH" "$WT"
+  mv "$CREW" "$WT/.git/crew"
+  rm "$STUBS/git"
+  cd "$WT"
+  run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" bash "$CHECK" --pane %9 \
+    --branch "$BRANCH"
+  assert_allowed
+}
+
+@test "permission-check: a crew dir outside any git repo goes to the human" {
+  pane_ready
+  rm "$STUBS/git"
+  pane --answer
+  assert_refused "worktree: git worktree list failed"
+  no_send_keys
+}
+
+# ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------
 
@@ -959,10 +1172,24 @@ alt_frame() {
 
 @test "permission-check: --projects-dir with --pane is a usage error" {
   run --separate-stderr bash "$CHECK" --pane %9 --branch "$BRANCH" \
-    --worktree "$WT" --crew-dir "$CREW" --projects-dir "$PROJECTS"
+    --crew-dir "$CREW" --projects-dir "$PROJECTS"
   [ "$status" -eq 2 ]
   [ "${#lines[@]}" -eq 1 ]
-  [[ "$output" == "human: usage: "* ]]
+  [[ "$output" == "human: usage: --projects-dir"* ]]
+}
+
+@test "permission-check: --worktree with --pane is a usage error" {
+  run --separate-stderr bash "$CHECK" --pane %9 --branch "$BRANCH" \
+    --worktree "$WT" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --worktree is accepted with --capture only" ]
+}
+
+@test "permission-check: --capture without --worktree is a usage error" {
+  frame "cat $WT/README.md"
+  run --separate-stderr bash "$CHECK" --capture "$FRAME" --branch "$BRANCH" --crew-dir "$CREW"
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: usage: --worktree is required with --capture" ]
 }
 
 @test "permission-check: a non-numeric PERMISSION_CHECK_SETTLE in capture mode is a usage error" {

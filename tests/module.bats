@@ -361,8 +361,8 @@ setup() {
   [ "$output" = "0" ]
 }
 
-@test "the protocolDir placeholder is substituted in permission-check" {
-  run grep -c '@protocolDir@' "$OUT_PERMISSION_CHECK/bin/permission-check"
+@test "the root placeholders are substituted in permission-check" {
+  run grep -cE '@(protocol|skills|reviewers|critics)Dir@' "$OUT_PERMISSION_CHECK/bin/permission-check"
   [ "$output" = "0" ]
 }
 

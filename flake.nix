@@ -199,7 +199,7 @@
 
           permission-check = pkgs.writeShellApplication {
             name = "permission-check";
-            runtimeInputs = with pkgs; [jq coreutils gnugrep gnused tmux git];
+            runtimeInputs = with pkgs; [jq coreutils gnused tmux git procps];
             text = sub (builtins.readFile ./adapters/core/permission-check.sh);
           };
 
