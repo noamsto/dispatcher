@@ -1,0 +1,865 @@
+# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — do not edit
+claude	deep	opus	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	sonnet	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	haiku	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	fable	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-sonnet-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-haiku-4-5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-fable-5-1	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-terra	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-luna	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.4	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.4-mini	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	kimi-k3-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	composer-2.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	composer-2.5-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/deepseek/deepseek-v4.1-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/deepseek/deepseek-v4-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/z-ai/glm-5.3-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/qwen/qwen3.8-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.7-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.4-nano	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	kimi-k3-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	kimi-k3-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-xhigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-low-slow	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	grok-4.7-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	cursor-grok-4.6-lowx	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	composer-2.5[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	composer-2	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high-fast	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude--high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claudex-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-thigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[context=1m,effort=high,fast=false]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[xeffort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-sol-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.5-extra-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-sol[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	gpt-5.6-sol-high-fast[context=1m]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high[effort=]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high[]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high[Context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5-high[context=1m,]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[effort=high,context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	claude-opus-5[context=1m,effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	sonnet-5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	deep	opus-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
+claude	standard	opus	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	sonnet	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	haiku	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	fable	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-sonnet-5	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-haiku-4-5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-fable-5-1	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-sol	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-terra	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-luna	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.4	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.4-mini	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	kimi-k3-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-low	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-low-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-medium-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-low	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-low-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-medium-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	composer-2.5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	composer-2.5-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/deepseek/deepseek-v4.1-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/deepseek/deepseek-v4-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/z-ai/glm-5.3-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/qwen/qwen3.8-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.7-sol	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.4-nano	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	kimi-k3-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	kimi-k3-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-xhigh	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-low-slow	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.6-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-high[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	grok-4.7-high[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	cursor-grok-4.6-lowx	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	composer-2.5[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	composer-2	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high-fast	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude--high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claudex-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-thigh	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[effort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[context=1m,effort=high,fast=false]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[xeffort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-sol-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.5-extra-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-sol[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high[context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	gpt-5.6-sol-high-fast[context=1m]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high[effort=]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high[]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high[Context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5-high[context=1m,]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[effort=high,context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	claude-opus-5[context=1m,effort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	sonnet-5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	opus-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	trivial	opus	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	sonnet	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	haiku	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	fable	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-sonnet-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-haiku-4-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-fable-5-1	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-terra	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-luna	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.4	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.4-mini	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	kimi-k3-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	composer-2.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	composer-2.5-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/deepseek/deepseek-v4.1-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/deepseek/deepseek-v4-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/z-ai/glm-5.3-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/qwen/qwen3.8-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.7-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.4-nano	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	kimi-k3-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	kimi-k3-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-xhigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-low-slow	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	grok-4.7-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	cursor-grok-4.6-lowx	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	composer-2.5[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	composer-2	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high-fast	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude--high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claudex-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-thigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[context=1m,effort=high,fast=false]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[xeffort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-sol-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.5-extra-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-sol[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	gpt-5.6-sol-high-fast[context=1m]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high[effort=]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high[]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high[Context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5-high[context=1m,]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[effort=high,context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	claude-opus-5[context=1m,effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	sonnet-5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	trivial	opus-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+codex	deep	opus	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	sonnet	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	haiku	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	fable	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-sonnet-5	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-haiku-4-5	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-fable-5-1	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-sol	1	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-terra	1	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-luna	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.5	1	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.4	1	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.4-mini	1	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	kimi-k3-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-low	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-low-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-medium	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-medium-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-high-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-low	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-low-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-medium	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-medium-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-high-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	composer-2.5	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	composer-2.5-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/deepseek/deepseek-v4.1-flash	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/deepseek/deepseek-v4-flash	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/z-ai/glm-5.3-flash	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/qwen/qwen3.8-flash	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.7-sol	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.4-nano	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	kimi-k3-high-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	kimi-k3-medium	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-xhigh	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-low-slow	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.6-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-high[effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	grok-4.7-high[effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	cursor-grok-4.6-lowx	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	composer-2.5[effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	composer-2	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude--high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claudex-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-thigh	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[context=1m,effort=high,fast=false]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[context=1m]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[xeffort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-sol-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.5-extra-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-sol[effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-high	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high[context=1m]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	gpt-5.6-sol-high-fast[context=1m]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high[effort=]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high[]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high[Context=1m]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5-high[context=1m,]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[effort=high,context=1m]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	claude-opus-5[context=1m,effort=high]	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/deepseek/deepseek-v4-pro	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	openrouter/foo/bar	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	sonnet-5	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	deep	opus-fast	0	gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	opus	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	sonnet	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	haiku	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	fable	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-sonnet-5	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-haiku-4-5	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-fable-5-1	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-sol	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-terra	1	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-luna	1	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.5	1	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.4	1	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.4-mini	1	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	kimi-k3-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-low	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-low-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-medium	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-medium-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-high-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-low	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-low-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-medium	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-medium-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-high-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	composer-2.5	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	composer-2.5-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/deepseek/deepseek-v4.1-flash	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/deepseek/deepseek-v4-flash	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/z-ai/glm-5.3-flash	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/qwen/qwen3.8-flash	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.7-sol	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.4-nano	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	kimi-k3-high-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	kimi-k3-medium	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-xhigh	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-low-slow	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.6-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-high[effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	grok-4.7-high[effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	cursor-grok-4.6-lowx	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	composer-2.5[effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	composer-2	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude--high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claudex-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-thigh	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[context=1m,effort=high,fast=false]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[context=1m]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[xeffort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-sol-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.5-extra-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-sol[effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-high	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high[context=1m]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	gpt-5.6-sol-high-fast[context=1m]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high[effort=]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high[]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high[Context=1m]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5-high[context=1m,]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[effort=high,context=1m]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	claude-opus-5[context=1m,effort=high]	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/deepseek/deepseek-v4-pro	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	openrouter/foo/bar	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	sonnet-5	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	standard	opus-fast	0	gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	opus	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	sonnet	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	haiku	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	fable	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-sonnet-5	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-haiku-4-5	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-fable-5-1	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-sol	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-terra	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-luna	1	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.5	1	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.4	1	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.4-mini	1	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	kimi-k3-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-low	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-low-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-medium	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-medium-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-high-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-low	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-low-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-medium	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-medium-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-high-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	composer-2.5	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	composer-2.5-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/deepseek/deepseek-v4.1-flash	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/deepseek/deepseek-v4-flash	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/z-ai/glm-5.3-flash	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/qwen/qwen3.8-flash	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.7-sol	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.4-nano	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	kimi-k3-high-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	kimi-k3-medium	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-xhigh	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-low-slow	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.6-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-high[effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	grok-4.7-high[effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	cursor-grok-4.6-lowx	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	composer-2.5[effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	composer-2	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude--high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claudex-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-thigh	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[context=1m,effort=high,fast=false]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[context=1m]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[xeffort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-sol-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.5-extra-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-sol[effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-high	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high[context=1m]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	gpt-5.6-sol-high-fast[context=1m]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high[effort=]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high[]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high[Context=1m]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5-high[context=1m,]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[effort=high,context=1m]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	claude-opus-5[context=1m,effort=high]	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/deepseek/deepseek-v4-pro	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	openrouter/foo/bar	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	sonnet-5	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+codex	trivial	opus-fast	0	gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)
+cursor	deep	opus	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	sonnet	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	haiku	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	fable	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-sonnet-5	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-haiku-4-5	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-fable-5-1	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-sol	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-terra	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-luna	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.5	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.4	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.4-mini	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	kimi-k3-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-low	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-low-fast	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-medium	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-medium-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-high-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-low	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-low-fast	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-medium	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-medium-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-high-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	composer-2.5	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	composer-2.5-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/deepseek/deepseek-v4.1-flash	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/deepseek/deepseek-v4-flash	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/z-ai/glm-5.3-flash	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/qwen/qwen3.8-flash	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.7-sol	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.4-nano	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	kimi-k3-high-fast	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	kimi-k3-medium	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-xhigh	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-low-slow	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.6-high	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-high[effort=high]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	grok-4.7-high[effort=high]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	cursor-grok-4.6-lowx	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	composer-2.5[effort=high]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	composer-2	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high-fast	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude--high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claudex-high	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-thigh	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[effort=high]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[context=1m,effort=high,fast=false]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[context=1m]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[xeffort=high]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-sol-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.5-extra-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-sol[effort=high]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-high	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high[context=1m]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	gpt-5.6-sol-high-fast[context=1m]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high[effort=]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high[]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high[Context=1m]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5-high[context=1m,]	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[effort=high,context=1m]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	claude-opus-5[context=1m,effort=high]	1	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/deepseek/deepseek-v4-pro	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	openrouter/foo/bar	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	sonnet-5	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	deep	opus-fast	0	kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id
+cursor	standard	opus	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	sonnet	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	haiku	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	fable	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-sonnet-5	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-haiku-4-5	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-fable-5-1	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-sol	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-terra	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-luna	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.5	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.4	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.4-mini	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	kimi-k3-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-low	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-low-fast	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-medium	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-medium-fast	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-high-fast	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-low	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-low-fast	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-medium	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-medium-fast	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-high-fast	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	composer-2.5	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	composer-2.5-fast	1	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/deepseek/deepseek-v4.1-flash	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/deepseek/deepseek-v4-flash	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/z-ai/glm-5.3-flash	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/qwen/qwen3.8-flash	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.7-sol	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.4-nano	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	kimi-k3-high-fast	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	kimi-k3-medium	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-xhigh	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-low-slow	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.6-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-high[effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	grok-4.7-high[effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	cursor-grok-4.6-lowx	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	composer-2.5[effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	composer-2	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high-fast	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude--high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claudex-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-thigh	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[context=1m,effort=high,fast=false]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[context=1m]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[xeffort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-sol-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.5-extra-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-sol[effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-high	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high[context=1m]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	gpt-5.6-sol-high-fast[context=1m]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high[effort=]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high[]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high[Context=1m]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5-high[context=1m,]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[effort=high,context=1m]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	claude-opus-5[context=1m,effort=high]	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/deepseek/deepseek-v4-pro	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	openrouter/foo/bar	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	sonnet-5	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	standard	opus-fast	0	grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]
+cursor	trivial	opus	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	sonnet	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	haiku	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	fable	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-sonnet-5	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-haiku-4-5	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-fable-5-1	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-sol	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-terra	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-luna	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.5	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.4	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.4-mini	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	kimi-k3-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-low	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-low-fast	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-medium	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-medium-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-high-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-low	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-low-fast	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-medium	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-medium-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-high-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	composer-2.5	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	composer-2.5-fast	1	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/deepseek/deepseek-v4.1-flash	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/deepseek/deepseek-v4-flash	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/z-ai/glm-5.3-flash	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/qwen/qwen3.8-flash	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.7-sol	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.4-nano	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	kimi-k3-high-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	kimi-k3-medium	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-xhigh	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-low-slow	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.6-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-high[effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	grok-4.7-high[effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	cursor-grok-4.6-lowx	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	composer-2.5[effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	composer-2	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude--high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claudex-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-thigh	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[context=1m,effort=high,fast=false]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[context=1m]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[xeffort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-sol-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.5-extra-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-sol[effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-high	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high[context=1m]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	gpt-5.6-sol-high-fast[context=1m]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high[effort=]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high[]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high[Context=1m]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5-high[context=1m,]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[effort=high,context=1m]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	claude-opus-5[context=1m,effort=high]	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/deepseek/deepseek-v4-pro	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	openrouter/foo/bar	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	sonnet-5	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+cursor	trivial	opus-fast	0	grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]
+pi	deep	opus	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	sonnet	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	haiku	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	fable	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-sonnet-5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-haiku-4-5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-fable-5-1	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-sol	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-terra	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-luna	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.4	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.4-mini	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	kimi-k3-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-low	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-low-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-medium	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-medium-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-low	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-low-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-medium	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-medium-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	composer-2.5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	composer-2.5-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/deepseek/deepseek-v4.1-flash	1	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/deepseek/deepseek-v4-flash	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/z-ai/glm-5.3-flash	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/qwen/qwen3.8-flash	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.7-sol	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.4-nano	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	kimi-k3-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	kimi-k3-medium	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-xhigh	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-low-slow	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.6-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-high[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	grok-4.7-high[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	cursor-grok-4.6-lowx	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	composer-2.5[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	composer-2	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude--high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claudex-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-thigh	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[context=1m,effort=high,fast=false]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[xeffort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-sol-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.5-extra-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-sol[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-high	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	gpt-5.6-sol-high-fast[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high[effort=]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high[]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high[Context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5-high[context=1m,]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[effort=high,context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	claude-opus-5[context=1m,effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/deepseek/deepseek-v4-pro	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	openrouter/foo/bar	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	sonnet-5	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	deep	opus-fast	0	openrouter/deepseek/deepseek-v4.1-flash
+pi	standard	opus	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	sonnet	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	haiku	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	fable	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-sonnet-5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-haiku-4-5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-fable-5-1	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-sol	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-terra	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-luna	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.4	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.4-mini	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	kimi-k3-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-low	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-low-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-medium	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-medium-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-low	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-low-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-medium	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-medium-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	composer-2.5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	composer-2.5-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/deepseek/deepseek-v4.1-flash	1	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/deepseek/deepseek-v4-flash	1	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/z-ai/glm-5.3-flash	1	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/qwen/qwen3.8-flash	1	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.7-sol	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.4-nano	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	kimi-k3-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	kimi-k3-medium	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-xhigh	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-low-slow	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.6-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-high[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	grok-4.7-high[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	cursor-grok-4.6-lowx	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	composer-2.5[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	composer-2	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude--high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claudex-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-thigh	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[context=1m,effort=high,fast=false]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[xeffort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-sol-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.5-extra-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-sol[effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-high	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	gpt-5.6-sol-high-fast[context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high[effort=]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high[]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high[Context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5-high[context=1m,]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[effort=high,context=1m]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	claude-opus-5[context=1m,effort=high]	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/deepseek/deepseek-v4-pro	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	openrouter/foo/bar	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	sonnet-5	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	standard	opus-fast	0	openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash
+pi	trivial	opus	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	sonnet	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	haiku	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	fable	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-sonnet-5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-haiku-4-5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-fable-5-1	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-sol	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-terra	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-luna	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.4	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.4-mini	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	kimi-k3-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-low	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-low-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-medium	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-medium-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-high-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-low	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-low-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-medium	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-medium-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-high-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	composer-2.5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	composer-2.5-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/deepseek/deepseek-v4.1-flash	1	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/deepseek/deepseek-v4-flash	1	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/z-ai/glm-5.3-flash	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/qwen/qwen3.8-flash	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.7-sol	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.4-nano	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	kimi-k3-high-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	kimi-k3-medium	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-xhigh	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-low-slow	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.6-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-high[effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	grok-4.7-high[effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	cursor-grok-4.6-lowx	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	composer-2.5[effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	composer-2	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude--high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claudex-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-thigh	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[context=1m,effort=high,fast=false]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[context=1m]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[xeffort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-sol-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.5-extra-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-sol[effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-high	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high[context=1m]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	gpt-5.6-sol-high-fast[context=1m]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high[effort=]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high[]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high[Context=1m]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5-high[context=1m,]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[effort=high,context=1m]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	claude-opus-5[context=1m,effort=high]	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/deepseek/deepseek-v4-pro	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	openrouter/foo/bar	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	sonnet-5	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash
+pi	trivial	opus-fast	0	openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash

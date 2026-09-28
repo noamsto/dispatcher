@@ -33,6 +33,10 @@ cus="$root/adapters/cursor/skills"
 cca="$root/adapters/claude-code/plugin/agents"
 ccs="$root/adapters/claude-code/plugin/skills"
 
+# Render the Model map's generated doc regions (#560) before the protocols
+# directory is copied into each plugin tree below.
+bash "$root/scripts/gen-model-map-doc.sh"
+
 # The protocol revision marker (#184, #193) is no longer a committed file:
 # the content hash of adapters/core/protocols (sorted `name:sha256;` entries,
 # sha256 of the concatenation, first 16 hex chars) is what flake.nix bakes

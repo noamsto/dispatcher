@@ -910,3 +910,39 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"budget lever: pi month at 96"* ]]
 }
+
+@test "a user-layer monthly target is used when the env target is unset" {
+  or_key_fixture 40
+  now=$("$REAL_DATE" -u -d '2026-09-10T00:00:00Z' +%s)
+  start_epoch=$("$REAL_DATE" -u -d '2026-09-01T00:00:00Z' +%s)
+  reset_epoch=$("$REAL_DATE" -u -d '2026-10-01T00:00:00Z' +%s)
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"openrouter":{"monthlyUsd":50}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  SHIM_NOW="$now" OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'pi: openrouter $40.00 of $50.00 monthly target'* ]]
+  [[ "$output" == *'projected $133.33 at month end'* ]]
+  [[ "$output" == *'budget lever: pi projected $133.33 at month end, over the $50.00 monthly target'* ]]
+  [[ "$output" != *"SENTINELKEY123"* ]]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq '.engines.pi.target_usd' "$cache"
+  [ "$output" = "50" ]
+  run jq '.engines.pi.windows.month.starts_at' "$cache"
+  [ "$output" = "$start_epoch" ]
+  run jq '.engines.pi.windows.month.resets_at' "$cache"
+  [ "$output" = "$reset_epoch" ]
+}
+
+@test "a user-layer keyFile is ignored" {
+  keyfile="$BATS_TEST_TMPDIR/or-key"
+  printf 'sk-or-v1-FILEKEY\n' >"$keyfile"
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"openrouter":{"keyFile":"%s"}}\n' "$keyfile" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"pi spend unknown — set OPENROUTER_API_KEY"* ]]
+  [[ "$output" == *"ignoring openrouter.keyFile"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}

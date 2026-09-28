@@ -261,6 +261,24 @@ That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
 Cursor rule, commands, skills and rosters when those engines are included in
 `engines`.
 
+### Settings
+
+`dispatch-config` resolves the module's settings as one JSON tree from four
+layers, each overriding the last: **base** (`adapters/core/defaults.json`,
+baked in at build), **user**
+(`${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json`, optional),
+**locked** (the file named by `$DISPATCH_LOCKED_SETTINGS`, optional), and
+**env** (`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`,
+`DISPATCH_OPENROUTER_MONTHLY_USD`, `DISPATCH_OPENROUTER_KEY_FILE`).
+`dispatch-config --show-origin` shows which layer set each value; the module
+does not install it yet, so run it as `nix run .#dispatch-config --
+--show-origin` from a checkout.
+`grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
+are honoured only from the locked layer or the environment — a copy in the
+base or user layer is dropped with a warning. The model map itself lives in
+`adapters/core/defaults.json`: edit it, then run `scripts/gen-adapters.sh` to
+regenerate the Tier map's doc tables and the adapter mirrors.
+
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked. `dispatch`
 stamps that on every fresh task (`tracker: linear ENG` or `tracker: github`)
 and a worker reads the stamp. Precedence is the per-repo entry, then the

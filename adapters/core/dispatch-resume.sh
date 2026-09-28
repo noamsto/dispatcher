@@ -746,8 +746,54 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" "dispatch resume"
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
 
+# _settings_load, _glob_match, _exact_match and _escalation_hop: duplicated
+# from dispatch.sh (standalone build), parity-tested. See dispatch.sh for
+# their contracts: the settings come from dispatch-config, the escalation
+# rules from defaults.json.
+_settings_load() {
+  settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+  [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+  [ -n "${DISPATCH_GRANT_ROOTS:-}" ] || DISPATCH_GRANT_ROOTS="$(jq -r '.grantRoots // [] | join(":")' <<<"$settings")"
+}
+
+_glob_match() {
+  local glob
+  while IFS= read -r glob; do
+    # shellcheck disable=SC2053 # the unquoted RHS is the glob
+    if [[ $1 == $glob ]]; then return 0; fi
+  done
+  return 1
+}
+
+_exact_match() {
+  local x
+  while IFS= read -r x; do
+    if [ "$x" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
+_escalation_hop() {
+  local rule="" i glob baseline
+  while IFS=$'\t' read -r i glob; do
+    # shellcheck disable=SC2053 # the unquoted RHS is the glob
+    if [[ $3 == $glob ]]; then
+      rule="$i"
+      break
+    fi
+  done < <(jq -r --arg a "$1" --arg t "$2" '.escalation[$a][$t] // [] | to_entries[] | "\(.key)\t\(.value.failed[])"' <<<"$settings")
+  [ -n "$rule" ] || return 0
+  if {
+    read -r baseline
+    if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
+  } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
+    printf '%s' "$baseline"
+  fi
+}
+
 _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
+_settings_load
 
 # mcp is claude-only, and this is the one gate the precheck below cannot make:
 # passing --mcp there would have dispatch resolve and validate the config file
@@ -791,32 +837,6 @@ command -v dispatch >/dev/null 2>&1 || {
 }
 
 # Escalation helpers (duplicated from dispatch.sh — this is a separate binary).
-# _escalation_target <engine> <tier> <failed_model> — prints "<baseline> <escalated>"
-# if the failed_model is exactly one rung below a valid escalation target.
-_escalation_target() {
-  local eng="$1" tier="$2" failed="$3"
-  case "$eng:$tier:$failed" in
-  claude:standard:sonnet | claude:standard:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
-  claude:trivial:haiku | claude:trivial:claude-haiku-*) printf 'haiku RECORD_ONLY' ;;
-  # trivial sonnet→opus is an in-row hop; trivial still must not reach fable, above its row (#249)
-  claude:trivial:sonnet | claude:trivial:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
-  claude:deep:sonnet | claude:deep:claude-sonnet-*) printf 'sonnet RECORD_ONLY' ;;
-  claude:deep:opus | claude:deep:claude-opus-*) printf 'opus RECORD_ONLY' ;;
-  # standard/trivial opus has no in-row rung above it — the dispatcher re-tiers a failure to deep
-  codex:standard:gpt-5.6-luna) printf 'luna RECORD_ONLY' ;;
-  codex:standard:gpt-5.6-terra) printf 'terra gpt-5.6-sol' ;;
-  codex:deep:gpt-5.6-terra) printf 'terra RECORD_ONLY' ;;
-  # codex:trivial:luna→terra removed — trivial tier must not reach above its row
-  cursor:standard:cursor-grok-4.6-low*) printf 'low RECORD_ONLY' ;;
-  cursor:standard:cursor-grok-4.6-medium*) printf 'medium cursor-grok-4.6-high' ;;
-  cursor:deep:cursor-grok-4.6-medium*) printf 'medium RECORD_ONLY' ;;
-  # cursor:trivial:low→medium removed — trivial tier must not reach above its row
-  pi:standard:openrouter/deepseek/deepseek-v4-flash) printf 'v4-flash RECORD_ONLY' ;;
-  pi:deep:openrouter/deepseek/deepseek-v4.1-flash) printf 'v4.1-flash RECORD_ONLY' ;;
-  # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
-  esac
-}
-
 # _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
 # dispatch that the branch's latest terminal worker status (failed/done/pr_open)
 # ended, provided that status is `failed` and that dispatch ran at <tier>. The
@@ -840,16 +860,6 @@ _prior_failed_model() {
       | if $d != null and $d.tier == $t then $d.model // empty else empty end
       end
   ' "$events" 2>/dev/null || true
-}
-
-# _escalation_model_matches <target> <model> — true when <model> names the
-# escalation <target> exactly (cursor takes `-fast`).
-_escalation_model_matches() {
-  local target="$1" m="$2"
-  case "$target" in
-  cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
-  *) [ "$m" = "$target" ] ;;
-  esac
 }
 
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
@@ -900,18 +910,11 @@ else
   if [ -n "$orig_model" ] && [ "$orig_model" != "$model" ]; then
     # The header is worker-writable, so the bus must agree it is what failed.
     bus_failed_model="$(_prior_failed_model "$branch" "$crew_dir" "$tier")"
-    escalation_info=""
-    [ "$bus_failed_model" = "$orig_model" ] && escalation_info="$(_escalation_target "$agent" "$tier" "$orig_model")"
-    if [ -n "$escalation_info" ]; then
-      escalation_target="${escalation_info#* }"
-      if [ "$escalation_target" != "RECORD_ONLY" ]; then
-        if _escalation_model_matches "$escalation_target" "$model"; then
-          if _prior_failed_escalation_available "$branch" "$crew_dir"; then
-            precheck+=(--ignore-map)
-            escalated_from="${escalation_info%% *}"
-          fi
-        fi
-      fi
+    escalation_baseline=""
+    [ "$bus_failed_model" = "$orig_model" ] && escalation_baseline="$(_escalation_hop "$agent" "$tier" "$orig_model" "$model" outOfRow)"
+    if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$branch" "$crew_dir"; then
+      precheck+=(--ignore-map)
+      escalated_from="$escalation_baseline"
     fi
   fi
 fi

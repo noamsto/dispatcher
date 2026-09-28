@@ -2906,8 +2906,8 @@ assert_gate_silent() { # <engine> <model> [profile]
       printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
       return 1
     }
-    grep -qF "$token" "$DISPATCH" || {
-      printf 'token %s missing from dispatch.sh\n' "$token" >&2
+    grep -qF "$token" "$DISPATCH" "$BATS_TEST_DIRNAME/../adapters/core/defaults.json" || {
+      printf 'token %s missing from dispatch.sh and defaults.json\n' "$token" >&2
       return 1
     }
   done
@@ -9937,4 +9937,26 @@ STUBEOF
   run _add_dir_ok "$T/roots/repo/docs"
   [ "$status" -eq 1 ]
   [[ "$output" == *"cannot parse the hooks and git dirs of $T/roots/repo"* ]]
+}
+
+@test "add-dir: a user-layer grantRoots cannot widen --add-dir" {
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/roots/proj" "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"grantRoots":["%s/roots"]}\n' "$T" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 --add-dir "$T/roots/proj" 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--add-dir '"* ]]
+  [[ "$output" == *refused* ]]
+  [[ "$output" == *"ignoring grantRoots from"* ]]
+}
+
+@test "add-dir: a locked-layer grantRoots admits the same --add-dir" {
+  stub_launch_bins
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/roots/proj"
+  printf '{"grantRoots":["%s/roots"]}\n' "$T" >"$T/locked.json"
+  export DISPATCH_LOCKED_SETTINGS="$T/locked.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --add-dir "$T/roots/proj" 42 "t"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-t")" = "$T/roots/proj" ]
 }

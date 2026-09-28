@@ -43,12 +43,7 @@ valid_role_model() {
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
-  case "$target_agent:$target_model" in
-  claude:opus | claude:claude-opus-* | claude:fable | claude:claude-fable-*) model_downgrade="sonnet" ;;
-  codex:gpt-5.6-sol) model_downgrade="gpt-5.6-terra" ;;
-  cursor:grok-4.7-high | cursor:grok-4.7-high\[* ) model_downgrade="grok-4.7-medium" ;;
-  cursor:cursor-grok-4.6-high | cursor:cursor-grok-4.6-high\[* ) model_downgrade="cursor-grok-4.6-medium" ;;
-  esac
+  model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   case "$target_effort" in
   max) effort_downgrade="xhigh" ;;
   xhigh) effort_downgrade="high" ;;
@@ -565,6 +560,91 @@ check_engine() {
     echo "dispatch: $2 is enabled but not installed (no '$cli' on PATH)" >&2
     exit 1
   }
+}
+
+# _settings_load — resolve the settings (dispatch-config) into $settings. A
+# set env var is kept verbatim, so a whitespace-only DISPATCH_ENGINES still
+# enables nothing; the resolver fills only what env leaves empty, unexported.
+_settings_load() {
+  settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+  [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+  [ -n "${DISPATCH_GRANT_ROOTS:-}" ] || DISPATCH_GRANT_ROOTS="$(jq -r '.grantRoots // [] | join(":")' <<<"$settings")"
+}
+
+# _glob_match <model> — true when <model> matches one of the bash globs on
+# stdin, one per line.
+_glob_match() {
+  local glob
+  while IFS= read -r glob; do
+    # shellcheck disable=SC2053 # the unquoted RHS is the glob
+    if [[ $1 == $glob ]]; then return 0; fi
+  done
+  return 1
+}
+
+# _exact_match <model> — true when <model> equals one of the lines on stdin,
+# one per line.
+_exact_match() {
+  local x
+  while IFS= read -r x; do
+    if [ "$x" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
+# _model_in_row <agent> <tier> <model> — true when modelMap's row admits
+# <model> by a `models` glob or a `regex` ERE; a missing row admits nothing.
+_model_in_row() {
+  local kind pat
+  while IFS=$'\t' read -r kind pat; do
+    if [ "$kind" = ere ]; then
+      if [[ $3 =~ $pat ]]; then return 0; fi
+    else
+      # shellcheck disable=SC2053 # the unquoted RHS is the glob
+      if [[ $3 == $pat ]]; then return 0; fi
+    fi
+  done < <(jq -r --arg a "$1" --arg t "$2" '.modelMap[$a][$t] // {} | ("glob\t" + (.models // [])[]), ("ere\t" + (.regex // [])[])' <<<"$settings")
+  return 1
+}
+
+# _row_expected <agent> <tier> — the row's "expected …" text for the refusal.
+_row_expected() {
+  jq -r --arg a "$1" --arg t "$2" '.modelMap[$a][$t].expected // ""' <<<"$settings"
+}
+
+# _escalation_hop <agent> <tier> <failed> <model> <inRow|outOfRow> — the
+# baseline of the first escalation rule whose `failed` globs match <failed>,
+# when that rule's <kind> list admits <model> (inRow: a glob; outOfRow: an
+# exact id). Prints nothing otherwise.
+_escalation_hop() {
+  local rule="" i glob baseline
+  while IFS=$'\t' read -r i glob; do
+    # shellcheck disable=SC2053 # the unquoted RHS is the glob
+    if [[ $3 == $glob ]]; then
+      rule="$i"
+      break
+    fi
+  done < <(jq -r --arg a "$1" --arg t "$2" '.escalation[$a][$t] // [] | to_entries[] | "\(.key)\t\(.value.failed[])"' <<<"$settings")
+  [ -n "$rule" ] || return 0
+  if {
+    read -r baseline
+    if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
+  } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
+    printf '%s' "$baseline"
+  fi
+}
+
+# _pace_downgrade <agent> <model> — the `to` of the first paceDowngrades entry
+# whose `models` globs match <model>; prints nothing when none does.
+_pace_downgrade() {
+  local to glob
+  while IFS=$'\t' read -r to glob; do
+    # shellcheck disable=SC2053 # the unquoted RHS is the glob
+    if [[ $2 == $glob ]]; then
+      printf '%s' "$to"
+      return 0
+    fi
+  done < <(jq -r --arg a "$1" '.paceDowngrades[$a] // [] | .[] | "\(.to)\t\(.models[])"' <<<"$settings")
 }
 
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
@@ -1896,6 +1976,7 @@ git_env="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: "
 # `dispatch --spawn-role <role>` — create a lazy grid's role pane on demand in
 # the caller's own window/worktree, from roles.json. Idempotent.
 if [ "${1:-}" = "--spawn-role" ]; then
+  _settings_load
   role="${2:-}"
   [ -n "$role" ] || {
     echo "dispatch: --spawn-role needs a role name" >&2
@@ -2140,6 +2221,7 @@ fi
 # `dispatch --engines` — the effective roster: enabled AND installed, in
 # canonical order. The dispatcher protocol reads this before judging.
 if [ "${1:-}" = "--engines" ]; then
+  _settings_load
   # shellcheck disable=SC2086 # intentional split of the fixed space-separated roster
   for e in $ENGINES_ALL; do
     engine_enabled "$e" || continue
@@ -2453,10 +2535,12 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 }
 
 # Engine gate. An engine must be enabled (on this machine's roster) and
-# available (its CLI installed). $DISPATCH_ENGINES is set from
-# programs.dispatcher.engines by home-manager; unset means every engine, so a
-# non-Nix checkout and the test suite need no extra setup. $DISPATCH_PROFILE no
+# available (its CLI installed). The roster is $DISPATCH_ENGINES (exported
+# from programs.dispatcher.engines by home-manager), else the settings files'
+# `engines`; unset in both means every engine, so a non-Nix checkout and the
+# test suite need no extra setup. $DISPATCH_PROFILE no
 # longer gates engines — it is still read below for the work+claude+deep rung.
+_settings_load
 profile="${DISPATCH_PROFILE:-personal}"
 
 check_engine "$agent" "--agent $agent"
@@ -2567,40 +2651,12 @@ else
   esac
 fi
 
-# Escalation helpers — query the bus for prior failed workers and compute
-# the one-rung-up escalation target per engine×tier×failed_model.
-# _escalation_target <engine> <tier> <failed_model> — prints "<baseline> <escalated>"
-# if the failed_model is exactly one rung below a valid escalation target.
-# The second word may be "RECORD_ONLY" if the escalated model is already in the row.
-# Keep in sync with dispatch-orchestration.md "Model map" execute ladder.
-_escalation_target() {
-  local eng="$1" tier="$2" failed="$3"
-  case "$eng:$tier:$failed" in
-  # claude: haiku → sonnet → opus → fable
-  claude:standard:sonnet|claude:standard:claude-sonnet-*)         printf 'sonnet RECORD_ONLY' ;;
-  claude:trivial:haiku|claude:trivial:claude-haiku-*)             printf 'haiku RECORD_ONLY' ;;
-  # trivial sonnet→opus is an in-row hop; trivial still must not reach fable, above its row (#249)
-  claude:trivial:sonnet|claude:trivial:claude-sonnet-*)           printf 'sonnet RECORD_ONLY' ;;
-  claude:deep:sonnet|claude:deep:claude-sonnet-*)                 printf 'sonnet RECORD_ONLY' ;;
-  claude:deep:opus|claude:deep:claude-opus-*)                     printf 'opus RECORD_ONLY' ;;
-  # standard/trivial opus has no in-row rung above it — the dispatcher re-tiers a failure to deep
-  # codex: luna → terra → sol
-  codex:standard:gpt-5.6-luna)                                     printf 'luna RECORD_ONLY' ;;
-  codex:standard:gpt-5.6-terra)                                    printf 'terra gpt-5.6-sol' ;;
-  codex:deep:gpt-5.6-terra)                                        printf 'terra RECORD_ONLY' ;;
-  # codex:trivial:luna→terra removed — trivial tier must not reach above its row
-  # cursor: low → medium → high
-  cursor:standard:cursor-grok-4.6-low*)                            printf 'low RECORD_ONLY' ;;
-  cursor:standard:cursor-grok-4.6-medium*)                         printf 'medium cursor-grok-4.6-high' ;;
-  cursor:deep:cursor-grok-4.6-medium*)                             printf 'medium RECORD_ONLY' ;;
-  # cursor:trivial:low→medium removed — trivial tier must not reach above its row
-  # pi: v4-flash → v4.1-flash; deep has no pi escalation — dispatcher re-dispatches
-  pi:standard:openrouter/deepseek/deepseek-v4-flash)               printf 'v4-flash RECORD_ONLY' ;;
-  pi:deep:openrouter/deepseek/deepseek-v4.1-flash)                 printf 'v4.1-flash RECORD_ONLY' ;;
-  # pi:trivial:flash→v4.1-flash removed — trivial tier must not reach above its row
-  esac
-}
-
+# Escalation helpers — query the bus for prior failed workers. The
+# one-rung-up hops themselves live in defaults.json (_escalation_hop). The
+# rules there encode three limits: a trivial row never escalates above itself
+# (#249); standard/trivial opus has no in-row rung above it, so the dispatcher
+# re-tiers that failure to deep; and pi deep has none, so a failed deep pi
+# worker is re-dispatched on another engine.
 # _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
 # dispatch that the branch's latest terminal worker status (failed/done/pr_open)
 # ended, provided that status is `failed` and that dispatch ran at <tier>. The
@@ -2624,16 +2680,6 @@ _prior_failed_model() {
       | if $d != null and $d.tier == $t then $d.model // empty else empty end
       end
   ' "$events" 2>/dev/null || true
-}
-
-# _escalation_model_matches <target> <model> — true when <model> names the
-# escalation <target> exactly (cursor takes `-fast`).
-_escalation_model_matches() {
-  local target="$1" m="$2"
-  case "$target" in
-  cursor-grok-*) [[ $m =~ ^${target//./\\.}(-fast)?$ ]] ;;
-  *) [ "$m" = "$target" ] ;;
-  esac
 }
 
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
@@ -2687,134 +2733,28 @@ fi
 
 # Tier↔model gate (#89). Enforces tier-appropriateness on top of
 # the dispatchability gate above — see dispatch-orchestration.md
-# "Tier map". DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
+# "Tier map". The rows live in defaults.json's modelMap, read through the
+# settings resolver; a tier without a row admits nothing (fail closed).
+# DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
 # about shape/cache staleness, not tier); --ignore-map does.
 if [ -z "$ignore_map" ]; then
-  tier_ok=1
-  tier_expected=""
-  case "$agent" in
-  claude)
-    case "$tier" in
-    deep)
-      tier_expected="opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*"
-      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|fable|claude-fable-.*)$ ]] || tier_ok=0
-      ;;
-    standard)
-      tier_expected="opus, claude-opus-*, sonnet, or claude-sonnet-*"
-      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*)$ ]] || tier_ok=0
-      ;;
-    trivial)
-      tier_expected="opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
-      [[ $model =~ ^(opus|claude-opus-.*|sonnet|claude-sonnet-.*|haiku|claude-haiku-.*)$ ]] || tier_ok=0
-      ;;
-    # An unhandled tier can't happen today (the top-of-file case at line 34
-    # already restricts $tier to trivial|standard|deep before this code
-    # runs) — but fail CLOSED rather than silently accepting every model,
-    # in case a future tier is ever added there without a matching update
-    # here.
-    *) tier_ok=0 ;;
-    esac
-    ;;
-  codex)
-    re_codex_legacy='^(gpt-5\.5|gpt-5\.4|gpt-5\.4-mini)$'
-    case "$tier" in
-    deep)
-      tier_expected="gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
-      [[ $model =~ ^(gpt-5\.6-sol|gpt-5\.6-terra)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
-      ;;
-    standard)
-      tier_expected="gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
-      [[ $model =~ ^(gpt-5\.6-terra|gpt-5\.6-luna)$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
-      ;;
-    trivial)
-      tier_expected="gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
-      [[ $model =~ ^gpt-5\.6-luna$ ]] || [[ $model =~ $re_codex_legacy ]] || tier_ok=0
-      ;;
-    *) tier_ok=0 ;;
-    esac
-    ;;
-  cursor)
-    # Self-contained for $tiermap_cursor_base/$tiermap_cursor_params (unset
-    # on the DISPATCH_SKIP_MODEL_CHECK skip path above) — but
-    # $re_effort_tail is safe to reuse as-is: it's assigned once, before
-    # that skip branch splits, so it's set on both paths.
-    tiermap_re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
-    tiermap_cursor_base="" tiermap_cursor_params=""
-    if [[ $model =~ $tiermap_re_cursor ]]; then
-      tiermap_cursor_base="${BASH_REMATCH[1]}"
-      tiermap_cursor_params="${BASH_REMATCH[2]}"
-    fi
-    # composer-2.5[-fast] has no effort variants (dispatch-orchestration.md),
-    # so a bracket block on it is never legitimate — require the whole
-    # model string to match, not just the base.
-    tiermap_is_composer=0
-    [[ $model =~ ^composer-2\.5(-fast)?$ ]] && tiermap_is_composer=1
-    tiermap_is_alt_effort=0
-    if [[ $tiermap_cursor_base =~ ^(claude|gpt)- ]] && { [[ $tiermap_cursor_base =~ $re_effort_tail ]] || [[ $tiermap_cursor_params =~ (\[|,)effort= ]]; }; then
-      tiermap_is_alt_effort=1
-    fi
-    # The gate enforces EFFORT appropriateness, so each row accepts its rung
-    # with or without `-fast`: the suffix is a price/speed choice (2x the token
-    # rate), not a different rung. The Tier map names the non-fast slug as the
-    # default and `-fast` is the deliberate "I want this now" override.
-    case "$tier" in
-    deep)
-      tier_expected="kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
-      [[ $model =~ ^(kimi-k3-high|(grok-4\.7|cursor-grok-4\.6)-(medium|high)(-fast)?)$ ]] ||
-        [ "$tiermap_is_composer" = 1 ] || [ "$tiermap_is_alt_effort" = 1 ] || tier_ok=0
-      ;;
-    standard)
-      tier_expected="grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]"
-      [[ $model =~ ^(grok-4\.7|cursor-grok-4\.6)-(medium|low)(-fast)?$ ]] ||
-        [ "$tiermap_is_composer" = 1 ] || tier_ok=0
-      ;;
-    trivial)
-      tier_expected="grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]"
-      [[ $model =~ ^(grok-4\.7|cursor-grok-4\.6)-low(-fast)?$ ]] || [ "$tiermap_is_composer" = 1 ] || tier_ok=0
-      ;;
-    *) tier_ok=0 ;;
-    esac
-    ;;
-  pi)
-    case "$tier" in
-    deep)
-      tier_expected="openrouter/deepseek/deepseek-v4.1-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4\.1-flash$ ]] || tier_ok=0
-      ;;
-    standard)
-      tier_expected="openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash"
-      [[ $model =~ ^openrouter/(deepseek/deepseek-v4(\.1)?-flash|z-ai/glm-5\.3-flash|qwen/qwen3\.8-flash)$ ]] || tier_ok=0
-      ;;
-    trivial)
-      tier_expected="openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash"
-      [[ $model =~ ^openrouter/deepseek/deepseek-v4(\.1)?-flash$ ]] || tier_ok=0
-      ;;
-    *) tier_ok=0 ;;
-    esac
-    ;;
-  esac
+  tier_ok=0
+  _model_in_row "$agent" "$tier" "$model" && tier_ok=1
   if [ "$tier_ok" = 0 ]; then
     # Escalation: if the model is not in the tier's row but IS the one-rung-up
     # target from the failed model, AND a prior worker ended failed, allow it.
     if [ -n "${_escalation_branch:-}" ]; then
       failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
       if [ -n "$failed_model" ]; then
-        escalation_info="$(_escalation_target "$agent" "$tier" "$failed_model")"
-        if [ -n "$escalation_info" ]; then
-          escalation_baseline="${escalation_info%% *}"
-          escalation_target="${escalation_info#* }"
-          if [ "$escalation_target" != "RECORD_ONLY" ]; then
-            if _escalation_model_matches "$escalation_target" "$model"; then
-              if _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
-                tier_ok=1
-                escalated_from="$escalation_baseline"
-              fi
-            fi
-          fi
+        escalation_baseline="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" outOfRow)"
+        if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
+          tier_ok=1
+          escalated_from="$escalation_baseline"
         fi
       fi
     fi
     if [ "$tier_ok" = 0 ]; then
+      tier_expected="$(_row_expected "$agent" "$tier")"
       echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
@@ -2826,37 +2766,8 @@ fi
 if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
   failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
   if [ -n "$failed_model" ]; then
-    case "$agent:$tier:$failed_model:$model" in
-    claude:trivial:haiku:sonnet|claude:trivial:haiku:claude-sonnet-*|\
-    claude:trivial:claude-haiku-*:sonnet|claude:trivial:claude-haiku-*:claude-sonnet-*)
-      escalated_from="haiku (record only)" ;;
-    claude:standard:sonnet:opus|claude:standard:sonnet:claude-opus-*|\
-    claude:standard:claude-sonnet-*:opus|claude:standard:claude-sonnet-*:claude-opus-*)
-      escalated_from="sonnet (record only)" ;;
-    claude:trivial:sonnet:opus|claude:trivial:sonnet:claude-opus-*|\
-    claude:trivial:claude-sonnet-*:opus|claude:trivial:claude-sonnet-*:claude-opus-*)
-      escalated_from="sonnet (record only)" ;;
-    claude:deep:sonnet:opus|claude:deep:sonnet:claude-opus-*|\
-    claude:deep:claude-sonnet-*:opus|claude:deep:claude-sonnet-*:claude-opus-*)
-      escalated_from="sonnet (record only)" ;;
-    claude:deep:opus:fable|claude:deep:opus:claude-fable-*|\
-    claude:deep:claude-opus-*:fable|claude:deep:claude-opus-*:claude-fable-*)
-      escalated_from="opus (record only)" ;;
-    codex:standard:gpt-5.6-luna:gpt-5.6-terra)
-      escalated_from="luna (record only)" ;;
-    codex:deep:gpt-5.6-terra:gpt-5.6-sol)
-      escalated_from="terra (record only)" ;;
-    cursor:standard:cursor-grok-4.6-low:cursor-grok-4.6-medium*|\
-    cursor:standard:cursor-grok-4.6-low*:cursor-grok-4.6-medium*)
-      escalated_from="low (record only)" ;;
-    cursor:deep:cursor-grok-4.6-medium:cursor-grok-4.6-high*|\
-    cursor:deep:cursor-grok-4.6-medium*:cursor-grok-4.6-high*)
-      escalated_from="medium (record only)" ;;
-    pi:standard:openrouter/deepseek/deepseek-v4-flash:openrouter/deepseek/deepseek-v4.1-flash)
-      escalated_from="v4-flash (record only)" ;;
-    # pi deep has no escalation — a failed deep pi worker is re-dispatched on
-    # another engine by the dispatcher, so it cannot re-enter pi at a higher rung.
-    esac
+    record_from="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" inRow)"
+    [ -z "$record_from" ] || escalated_from="$record_from (record only)"
   fi
 fi
 

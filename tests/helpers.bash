@@ -18,6 +18,13 @@ unset CREW_ID CREW_WORKER_ID CREW_ROLE_ID
 unset DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_SKILLS_DIR
 unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_GRANT_ROOTS
 unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR
+# Raw-source consumers carry the unsubstituted @dispatchConfig@; point them at
+# the repo copy of the resolver (every test file lives in tests/).
+export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
+# The host's ~/.config/dispatcher/settings.json must never reach a test.
+export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
+# A host's locked settings would override what each test sets up.
+unset DISPATCH_LOCKED_SETTINGS
 # Isolate tmux: point the socket dir at a private per-test directory so no
 # test ever accidentally talks to the host tmux server.  Tests that need a
 # real tmux server start one with `-L <sock>` under this dir and are
