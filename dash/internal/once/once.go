@@ -329,10 +329,11 @@ func tagstrDash(notes []data.Note) string {
 	}
 	parts := make([]string, 0, len(order))
 	for _, t := range order {
+		clean := cleanText(t)
 		if counts[t] > 1 {
-			parts = append(parts, fmt.Sprintf("%s x%d", t, counts[t]))
+			parts = append(parts, fmt.Sprintf("%s x%d", clean, counts[t]))
 		} else {
-			parts = append(parts, t)
+			parts = append(parts, clean)
 		}
 	}
 	return strings.Join(parts, ", ")
@@ -492,18 +493,16 @@ func workerCells(w map[string]any) []string {
 	}
 	prURL := "—"
 	if s, ok := strField(w, "pr_url"); ok {
-		prURL = s
+		prURL = cleanText(s)
 	}
 	return []string{cleanText(name), cleanText(state), tier + "/" + engine + "/" + model, reltime(ageS), prURL}
 }
 
 func rosterCrewLines(c data.RosterCrew) []line {
 	out := []line{{style: "h", text: "crew " + c.ID}}
-	if c.Error != nil {
-		out = append(out, line{style: "n", text: "  unavailable: " + *c.Error})
-		return out
-	}
-	if len(c.Workers) > 0 {
+	if c.WorkersError != nil {
+		out = append(out, line{style: "n", text: "  unavailable: " + *c.WorkersError})
+	} else if len(c.Workers) > 0 {
 		headers := []string{"name", "state", "tier/engine/model", "age", "pr"}
 		wrows := make([][]string, 0, len(c.Workers))
 		for _, w := range c.Workers {
@@ -517,8 +516,12 @@ func rosterCrewLines(c data.RosterCrew) []line {
 			out = append(out, line{style: "n", text: "  " + padRow(r, widths, left)})
 		}
 	}
-	for _, h := range c.Holds {
-		out = append(out, line{style: "n", text: "  " + holdLine(h)})
+	if c.HoldsError != nil {
+		out = append(out, line{style: "n", text: "  holds unavailable: " + *c.HoldsError})
+	} else {
+		for _, h := range c.Holds {
+			out = append(out, line{style: "n", text: "  " + holdLine(h)})
+		}
 	}
 	return out
 }

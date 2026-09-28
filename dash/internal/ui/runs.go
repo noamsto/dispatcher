@@ -392,10 +392,11 @@ func tagCounts(notes []data.Note, excludeTag string) string {
 	}
 	parts := make([]string, 0, len(order))
 	for _, t := range order {
+		clean := cleanText(t)
 		if counts[t] > 1 {
-			parts = append(parts, fmt.Sprintf("%s x%d", t, counts[t]))
+			parts = append(parts, fmt.Sprintf("%s x%d", clean, counts[t]))
 		} else {
-			parts = append(parts, t)
+			parts = append(parts, clean)
 		}
 	}
 	return strings.Join(parts, ", ")

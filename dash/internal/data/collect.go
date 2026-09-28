@@ -216,12 +216,7 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 			holds = []map[string]any{}
 		}
 
-		crewErr := wErr
-		if crewErr == nil {
-			crewErr = hErr
-		}
-
-		crews = append(crews, RosterCrew{ID: id, Workers: workers, Holds: holds, Error: crewErr})
+		crews = append(crews, RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr})
 	}
 	return RosterSection{Crews: crews, Error: nil}
 }

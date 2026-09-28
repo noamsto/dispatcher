@@ -116,6 +116,9 @@ func (v *rosterView) setRoster(r data.RosterSection) {
 	v.err = r.Error
 	v.flat = nil
 	for _, c := range v.crews {
+		if c.WorkersError != nil {
+			continue
+		}
 		for _, w := range c.Workers {
 			v.flat = append(v.flat, rosterWorkerRow{crewID: c.ID, w: w})
 		}
@@ -288,11 +291,9 @@ func (v rosterView) tableView(w, h int) string {
 	flatIdx := 0
 	for _, c := range v.crews {
 		body = append(body, truncateLine(headerStyle.Render("crew "+c.ID), w))
-		if c.Error != nil {
-			body = append(body, truncateLine("  unavailable: "+*c.Error, w))
-			continue
-		}
-		if len(c.Workers) > 0 {
+		if c.WorkersError != nil {
+			body = append(body, truncateLine("  unavailable: "+*c.WorkersError, w))
+		} else if len(c.Workers) > 0 {
 			rows := make([][]string, len(c.Workers))
 			for i, wm := range c.Workers {
 				rows[i] = rosterWorkerCells(wm, v.now())
@@ -311,8 +312,12 @@ func (v rosterView) tableView(w, h int) string {
 				flatIdx++
 			}
 		}
-		for _, hd := range c.Holds {
-			body = append(body, truncateLine("  "+holdLine(hd), w))
+		if c.HoldsError != nil {
+			body = append(body, truncateLine("  holds unavailable: "+*c.HoldsError, w))
+		} else {
+			for _, hd := range c.Holds {
+				body = append(body, truncateLine("  "+holdLine(hd), w))
+			}
 		}
 	}
 
@@ -403,7 +408,7 @@ func rosterWorkerCells(w map[string]any, now time.Time) []string {
 	}
 	pr := "—"
 	if s, ok := strField(w, "pr_url"); ok {
-		pr = s
+		pr = cleanText(s)
 	}
 	return []string{
 		truncateLine(cleanText(name), rosterNameCap),

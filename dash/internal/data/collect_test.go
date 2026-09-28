@@ -279,8 +279,8 @@ func TestRosterPerCrewFailureSetsError(t *testing.T) {
 		t.Fatalf("expected 1 crew, got %d", len(snap.Roster.Crews))
 	}
 	c := snap.Roster.Crews[0]
-	if c.Error == nil || *c.Error != "boom" {
-		t.Errorf("Crew.Error = %v, want \"boom\"", c.Error)
+	if c.WorkersError == nil || *c.WorkersError != "boom" {
+		t.Errorf("Crew.WorkersError = %v, want \"boom\"", c.WorkersError)
 	}
 	if len(c.Workers) != 0 {
 		t.Errorf("Workers = %+v, want empty on a roster failure", c.Workers)
@@ -301,8 +301,36 @@ func TestRosterPerCrewUnparseableJSONSetsError(t *testing.T) {
 	if len(snap.Roster.Crews) != 1 {
 		t.Fatalf("expected 1 crew, got %d", len(snap.Roster.Crews))
 	}
-	if snap.Roster.Crews[0].Error == nil {
-		t.Errorf("expected Crew.Error to be set for unparseable roster JSON")
+	if snap.Roster.Crews[0].WorkersError == nil {
+		t.Errorf("expected Crew.WorkersError to be set for unparseable roster JSON")
+	}
+}
+
+// TestRosterHoldsFailureIsIndependentOfWorkers covers the split of
+// RosterCrew.Error into WorkersError/HoldsError: a `crew roster <id>`
+// success alongside a `crew hold list` failure must not blank out the
+// workers that did load, and must not be reported as a WorkersError.
+func TestRosterHoldsFailureIsIndependentOfWorkers(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
+	}
+	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte(`[{"name":"w1"},{"name":"w2"}]`)}
+	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stderr: []byte("hold boom\n"), Err: FakeExitError{Code: 1}}
+	snap := Collect(context.Background(), r, baseConfig())
+
+	if len(snap.Roster.Crews) != 1 {
+		t.Fatalf("expected 1 crew, got %d", len(snap.Roster.Crews))
+	}
+	c := snap.Roster.Crews[0]
+	if c.WorkersError != nil {
+		t.Errorf("WorkersError = %v, want nil", *c.WorkersError)
+	}
+	if c.HoldsError == nil || *c.HoldsError != "hold boom" {
+		t.Errorf("HoldsError = %v, want \"hold boom\"", c.HoldsError)
+	}
+	if len(c.Workers) != 2 {
+		t.Errorf("Workers len = %d, want 2", len(c.Workers))
 	}
 }
 

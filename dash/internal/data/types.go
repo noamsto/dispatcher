@@ -185,13 +185,17 @@ type RosterSection struct {
 
 // RosterCrew keeps workers/holds as raw maps (pass-through: crew roster and
 // crew hold list --json carry fields no view reads yet, e.g. sessions,
-// prev_state, task.spec). The collector adds "age_s" to each worker. Error
-// is set when `crew roster <id>` or `crew hold list --crew <id>` itself
-// fails (non-zero exit or unparseable JSON) — otherwise that per-crew
-// failure would be indistinguishable from a genuinely idle crew.
+// prev_state, task.spec). The collector adds "age_s" to each worker.
+// WorkersError/HoldsError are set when `crew roster <id>` or `crew hold
+// list --crew <id>` itself fails (non-zero exit or unparseable JSON) —
+// otherwise that per-crew failure would be indistinguishable from a
+// genuinely idle crew or a crew with no holds. They're independent: a
+// holds failure must not blank out workers that loaded fine, and vice
+// versa.
 type RosterCrew struct {
-	ID      string           `json:"id"`
-	Workers []map[string]any `json:"workers"`
-	Holds   []map[string]any `json:"holds"`
-	Error   *string          `json:"error"`
+	ID           string           `json:"id"`
+	Workers      []map[string]any `json:"workers"`
+	Holds        []map[string]any `json:"holds"`
+	WorkersError *string          `json:"workers_error"`
+	HoldsError   *string          `json:"holds_error"`
 }

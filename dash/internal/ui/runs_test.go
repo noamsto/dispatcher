@@ -260,6 +260,28 @@ func TestRunsRatingsWrongShapeIsUnavailable(t *testing.T) {
 	}
 }
 
+// TestRunsRowTagInjectionIsCleaned matches fix 3: a retro note's Tag must
+// not carry a raw terminal escape or bidi override into the aggregated tag
+// summary tagCounts renders on the "Runs (newest first)" row list. The
+// Ascii color profile makes the rendered frame itself style-free, so any
+// surviving ESC/U+202E must have come from the (uncleaned) data.
+func TestRunsRowTagInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Runs.Retro.Rows[0].Notes[0].Tag = "tag\x1b]0;x\x07‮"
+	v := newRunsView(snap)
+	out := v.View(80, 24)
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("rendered rows list contains a raw ESC from an injected tag:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("rendered rows list contains U+202E from an injected tag:\n%q", out)
+	}
+}
+
 // TestRunsNoteSeamInjectionIsCleaned matches finding 5: a retro note's Seam
 // (and Tag) must not carry a raw terminal escape or bidi override from
 // untrusted bus data into the rendered detail pane. The Ascii color profile

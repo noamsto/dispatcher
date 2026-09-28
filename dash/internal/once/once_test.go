@@ -106,10 +106,76 @@ func TestCJKNotTruncated(t *testing.T) {
 func TestRosterCrewErrorShown(t *testing.T) {
 	snap := loadSnapshot(t)
 	msg := "boom"
-	snap.Roster.Crews = []data.RosterCrew{{ID: "c1", Error: &msg}}
+	snap.Roster.Crews = []data.RosterCrew{{ID: "c1", WorkersError: &msg}}
 	got := Render(snap, false)
 	if !strings.Contains(got, "unavailable: boom") {
 		t.Errorf("crew roster failure should read unavailable: boom:\n%s", got)
+	}
+}
+
+// TestRosterHoldsErrorShownWorkersStillRender matches the WorkersError/
+// HoldsError split: a holds-only failure must still render the crew's
+// worker table under --once, alongside a "holds unavailable: <err>" line.
+func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
+	snap := loadSnapshot(t)
+	msg := "hold boom"
+	snap.Roster.Crews = []data.RosterCrew{{
+		ID: "c1",
+		Workers: []map[string]any{
+			{"name": "w1", "branch": "feat/x", "state": "working", "tier": "deep", "engine": "claude", "model": "opus", "age_s": float64(5), "pr_url": "-"},
+		},
+		HoldsError: &msg,
+	}}
+	got := Render(snap, false)
+	if !strings.Contains(got, "w1") {
+		t.Errorf("holds-only failure should still render the crew's workers:\n%s", got)
+	}
+	if !strings.Contains(got, "holds unavailable: hold boom") {
+		t.Errorf("holds-only failure should read holds unavailable: hold boom:\n%s", got)
+	}
+}
+
+// TestRosterPRURLInjectionIsCleaned matches fix 2: a worker's raw "pr_url"
+// field must not carry a terminal escape or bidi override into the
+// rendered pr column under --once.
+func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
+	snap := loadSnapshot(t)
+	snap.Roster.Crews = []data.RosterCrew{{
+		ID: "c1",
+		Workers: []map[string]any{
+			{"name": "w1", "branch": "feat/x", "state": "working", "tier": "deep", "engine": "claude", "model": "opus", "age_s": float64(5), "pr_url": "\x1b[2Jhttps://pr‮"},
+		},
+	}}
+	got := Render(snap, false)
+	if strings.ContainsRune(got, 0x1b) {
+		t.Errorf("rendered roster pane contains a raw ESC from an injected pr_url:\n%q", got)
+	}
+	if strings.ContainsRune(got, 0x202e) {
+		t.Errorf("rendered roster pane contains U+202E from an injected pr_url:\n%q", got)
+	}
+}
+
+// TestTagsLineInjectionIsCleaned matches fix 3: a retro note's Tag must not
+// carry a raw terminal escape or bidi override into the "tags:" line
+// tagstrDash formats under --once.
+func TestTagsLineInjectionIsCleaned(t *testing.T) {
+	snap := loadSnapshot(t)
+	crew := "c1"
+	snap.Runs.Retro = &data.RetroReport{Rows: []data.RetroRow{{
+		Kind: "dispatcher",
+		Crew: &crew,
+		T0:   1,
+		Notes: []data.Note{
+			{Tag: "session_summary", Detail: "did stuff"},
+			{Tag: "tag\x1b]0;x\x07‮", Detail: "detail"},
+		},
+	}}}
+	got := Render(snap, false)
+	if strings.ContainsRune(got, 0x1b) {
+		t.Errorf("rendered runs pane contains a raw ESC from an injected tag:\n%q", got)
+	}
+	if strings.ContainsRune(got, 0x202e) {
+		t.Errorf("rendered runs pane contains U+202E from an injected tag:\n%q", got)
 	}
 }
 

@@ -71,11 +71,67 @@ func TestRosterSourceError(t *testing.T) {
 func TestRosterCrewErrorShown(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "boom"
-	snap.Roster.Crews[0].Error = &msg
+	snap.Roster.Crews[0].WorkersError = &msg
 	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Fatalf("crew roster failure should read unavailable: boom:\n%s", out)
+	}
+}
+
+// TestRosterHoldsErrorShownWorkersStillRender matches the WorkersError/
+// HoldsError split: a holds-only failure must still render the crew's
+// worker table, alongside a "holds unavailable: <err>" line in place of the
+// hold lines.
+func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	msg := "hold boom"
+	snap.Roster.Crews[0].HoldsError = &msg
+	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	out := v.View(80, 24)
+	if !strings.Contains(out, "sage") || !strings.Contains(out, "coral") {
+		t.Fatalf("holds-only failure should still render the crew's workers:\n%s", out)
+	}
+	if !strings.Contains(out, "holds unavailable: hold boom") {
+		t.Fatalf("holds-only failure should read holds unavailable: hold boom:\n%s", out)
+	}
+}
+
+// TestRosterFlatSkipsWorkersErrorCrew matches finding: the roster cursor
+// list must contain only workers that tableView actually renders. A crew
+// with WorkersError set — even one carrying a (malformed/legacy) non-empty
+// Workers slice — must contribute nothing to v.flat, so "enter" can never
+// target a hidden row.
+func TestRosterFlatSkipsWorkersErrorCrew(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	msg := "boom"
+	snap.Roster.Crews[0].WorkersError = &msg // c1 keeps its 2 workers (malformed input)
+	healthy := data.RosterCrew{
+		ID: "healthy",
+		Workers: []map[string]any{
+			{"name": "h1", "branch": "feat/healthy-1", "ts": float64(snap.Now * 1000)},
+		},
+	}
+	snap.Roster.Crews = append(snap.Roster.Crews, healthy)
+
+	v := newRosterView(snap, rosterDeps{eventsPath: "testdata/events.jsonl"}, fixedRosterNow(t))
+	if len(v.flat) != 1 {
+		t.Fatalf("flat should count only the healthy crew's workers, got %d", len(v.flat))
+	}
+
+	nv, _ := v.Update(keyRune('G'))
+	v = nv.(rosterView)
+	if v.flat[v.cursor].crewID != "healthy" {
+		t.Fatalf("cursor after G should target the healthy crew's worker, got crewID=%q", v.flat[v.cursor].crewID)
+	}
+
+	nv, cmd := v.Update(keyType(tea.KeyEnter))
+	v = nv.(rosterView)
+	if !v.detail {
+		t.Fatalf("enter on the healthy crew's worker should open the detail view")
+	}
+	if cmd == nil {
+		t.Fatalf("enter on the healthy crew's worker should return a fetch cmd")
 	}
 }
 
@@ -98,6 +154,28 @@ func TestRosterStateInjectionIsCleaned(t *testing.T) {
 	}
 	if strings.ContainsRune(out, 0x202e) {
 		t.Errorf("rendered roster table contains U+202E from an injected state:\n%q", out)
+	}
+}
+
+// TestRosterPRURLInjectionIsCleaned matches fix 2: a worker's raw "pr_url"
+// field must not carry a terminal escape or bidi override into the
+// rendered pr column. The Ascii color profile makes the rendered frame
+// itself style-free, so any surviving ESC/U+202E must have come from the
+// (uncleaned) data.
+func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Roster.Crews[0].Workers[0]["pr_url"] = "\x1b[2Jhttps://pr‮"
+	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	out := v.View(80, 24)
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("rendered roster table contains a raw ESC from an injected pr_url:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("rendered roster table contains U+202E from an injected pr_url:\n%q", out)
 	}
 }
 
