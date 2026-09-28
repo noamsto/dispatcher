@@ -2258,8 +2258,8 @@ stream)
   holderrf="$cdir/stream.hold.err"
   reapoutf="$cdir/stream.reap.out"
   reaperrf="$cdir/stream.reap.err"
-  # A reap child that outlived its stream may have written these after that
-  # stream's cleanup removed them; they are not this stream's to print.
+  # Clears what a reap child that outlived its stream wrote after that stream's
+  # cleanup; a child still running past this point can still write here.
   rm -f "$reapoutf" "$reaperrf"
   # Initialized before the trap is armed, so a signal landing before the
   # first iteration can't abort the handler on an unbound variable.
