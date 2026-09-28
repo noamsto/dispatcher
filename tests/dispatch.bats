@@ -3752,6 +3752,62 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
+# stub_wt_operator_hook — wraps the fixture's $STUB_DIR/wt with a simulated
+# operator post-switch hook that fires unless `--no-hooks` is passed (#558).
+# Call it after the fixture helper: fixtures overwrite $STUB_DIR/wt.
+stub_wt_operator_hook() {
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" = --no-hooks ] && no_hooks=1
+done
+[ "\${no_hooks:-}" = 1 ] || touch "$BATS_TEST_TMPDIR/operator-hook-ran"
+exec "$STUB_DIR/wt.orig" "\$@"
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "resume: suppresses operator hooks with --no-hooks" {
+  setup_resume_branch feat/42-do-a-thing
+  stub_crew_gate '[]' '[]'
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch feat/42-do-a-thing -y --no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+@test "--pr path suppresses operator hooks with --no-hooks" {
+  stub_pr_bins eng-7691-foo
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -q '^switch eng-7691-foo -y --no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+# The default base is operator-trusted, and its devshell hook is what
+# materializes .pre-commit-config.yaml, so only the tmux hook is blanked.
+@test "default create: leaves operator hooks running, blanks only the tmux hook" {
+  stub_launch_bins
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch -c feat/42-do-a-thing' "$STUB_LOG"
+  run ! grep -q -- '--no-hooks' "$STUB_LOG"
+  [ -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+@test "stacked create: suppresses operator hooks with --no-hooks" {
+  setup_stacked_base feat/parent
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch -c feat/42-implement-thing .*--no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
 # An existing worktree for the branch the --pr path resolves to, so the gate has
 # something to find. headRefOid matches the worktree's actual HEAD so the
 # verification step sees a match (not the concern of these gate tests).
