@@ -437,9 +437,23 @@ branch instead; the worktree carries over under `resume: true`.
   or filters run); `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CONFIG` and
   command-line `-c` config (`GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_COUNT`) are
   dropped from its env so the answer is the human's own config. Paths are taken
-  as git prints them, not re-resolved, so a symlink on the way is itself a hop;
-  git prints a gitfile's target already resolved, so the `.git` entry itself and
-  its `gitdir:` line as spelled are walked too. A git error (e.g. an invalid
+  as git prints them, not re-resolved, so a symlink on the way is itself a hop,
+  and the `.git` entry itself is walked too. So is every config file git reads
+  there and outside any repo, as `git config --show-origin` spells it, every
+  `include.path`/`includeIf.*.path` target whether or not it exists, and the
+  global config files git would read if present (`$GIT_CONFIG_GLOBAL`, else
+  `~/.gitconfig` and `$XDG_CONFIG_HOME/git/config`): a grant holding an included
+  file, or the target of a stow-style `~/.gitconfig` link, could set
+  `core.hooksPath`. git prints the git dir and common dir already resolved, so a
+  link on a path some file spells (a gitfile's `gitdir:`, a git dir's
+  `commondir`) is never a hop; instead every symlink inside the grant is
+  resolved, and one whose target lies outside the grant and contains a hop of,
+  or lies inside, any of those chains refuses the grant. Whichever file spelled
+  a path through the grant, git's answer lands under that link's target; this
+  also catches a write-through link like `docs/hooks -> ../.husky`. A link to an
+  ancestor of a repo's `.git` (`docs/x -> ../..`), to `$HOME` or to `/` is
+  refused too; each is a real write-through path into hooks or config. A git
+  error (e.g. an invalid
   gitfile, or a repo git refuses to open) fails closed. The re-check (resume,
   `--spawn-role`, re-dispatch) applies the same rule, so a grant that a later
   `core.hooksPath` change puts in scope is dropped via "dropping invalid grant".
@@ -452,12 +466,15 @@ branch instead; the worktree carries over under `resume: true`.
   outside any repo does not, so its dir is grantable from outside those repos;
   and the re-check reads config in the launching process's env, so a
   `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` override there only loses freshness
-  for the global value, which was checked at dispatch time. Two more residuals
-  of the same shape: git prints the common dir resolved, so a git dir's
-  `commondir` file spelled through a symlink inside the grant escapes the hop
-  walk (the worker could retarget that link at a common dir it controls); and a
-  repo's `include.path` (or `includeIf.*.path`) naming a file inside a grantable
-  dir lets a worker holding that dir set `core.hooksPath` there. Other
+  for the global value, which was checked at dispatch time. From the link scan
+  and config walk: a path spelled through a grant-held link and then a second
+  symlink outside the grant; a path spelled with `..` after a real dir or a
+  link inside the grant (the worker could swap that dir for a link, and
+  `lnk/..` resolves to the link target's parent); links on a filesystem mounted
+  inside the grant (the scan stays on one filesystem); a grant-held link into
+  another repo that does not contain the grant; an include named only by a file
+  that a currently non-matching `includeIf` pulls in; and links the worker
+  plants after the grant, until the next re-check drops it. Other
   exec-capable repo config (`core.fsmonitor`, filter drivers) is not covered by
   this check.
 
