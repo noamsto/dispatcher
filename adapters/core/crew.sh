@@ -4691,13 +4691,9 @@ git-baseline)
   # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
   # terminal, and --accept writes exactly the pairs this run printed: each
   # context is read once, and a pair is shown and collected in one step.
-  if [ $# -gt 1 ]; then
-    echo "usage: crew git-baseline [--accept]" >&2
-    exit 1
-  fi
-  case "${1:-}" in
-  "") accept= ;;
-  --accept) accept=1 ;;
+  case "$#:${1:-}" in
+  0:) accept= ;;
+  1:--accept) accept=1 ;;
   *)
     echo "usage: crew git-baseline [--accept]" >&2
     exit 1
@@ -4728,9 +4724,6 @@ git-baseline)
     [ -f "$gb_head" ] && gb_ctxs+=("${gb_head%/HEAD}")
   done
 
-  # Each context is read exactly once; a pair is added to gb_shown in the same
-  # step it is printed, so what's written on --accept is exactly what a human
-  # saw (#585) — never a second, possibly-drifted read.
   gb_shown=()
   for gb_ctx in "${gb_ctxs[@]}"; do
     gb_label="main checkout"
@@ -4778,8 +4771,8 @@ git-baseline)
   gb_tmp="$(mktemp "$baseline_file.XXXXXX")" || exit 1
   # Merge, never replace: git-hooks.nix writes core.hooksPath relative from
   # the main checkout and absolute from a linked worktree, so a replace would
-  # flip-flop. Empty records are dropped; an empty gb_recs+gb_shown union
-  # writes nothing, so a first accept with nothing to show is a 0-byte file.
+  # flip-flop. An empty set writes a 0-byte file, never a lone NUL (an empty
+  # record).
   if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}"; do
     [ -z "$gb_rec" ] || printf '%s\0' "$gb_rec"
   done | LC_ALL=C sort -z -u >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
