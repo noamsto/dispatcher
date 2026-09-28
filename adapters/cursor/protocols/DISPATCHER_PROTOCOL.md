@@ -460,7 +460,14 @@ branch instead; the worktree carries over under `resume: true`.
   a path through the grant, git's answer lands under that link's target; this
   also catches a write-through link like `docs/hooks -> ../.husky`. A link to an
   ancestor of a repo's `.git` (`docs/x -> ../..`), to `$HOME` or to `/` is
-  refused too; each is a real write-through path into hooks or config. A git
+  refused too; each is a real write-through path into hooks or config. A hooks
+  dir's own entries count as well: a hook that is a symlink
+  (`.git/hooks/pre-commit -> ../../scripts/githooks/pre-commit`) has its chain
+  and target protected like the hooks dir, and a grant holding a hard link
+  (same device and inode) to a hook file, a symlinked hook's target or a config
+  file is refused, as is a grant holding a symlink to such a hard link, or to a
+  dir containing one, outside the grant. That inode scan runs only when such a
+  file has more than one link and shares a filesystem with the dir scanned. A git
   error (e.g. an invalid
   gitfile, or a repo git refuses to open) fails closed. The re-check (resume,
   `--spawn-role`, re-dispatch) applies the same rule, so a grant that a later
@@ -468,7 +475,8 @@ branch instead; the worktree carries over under `resume: true`.
   Residuals, not enforced: a bare repo (no `.git` entry) that the grant is inside
   or contains; a repo *not* on the grant's ancestor chain whose repo-level
   `core.hooksPath` is an absolute dir elsewhere (e.g. repo X with
-  `hooksPath=~/shared-hooks`, grant `~/shared-hooks`) — unenforceable without a
+  `hooksPath=~/shared-hooks`, grant `~/shared-hooks`), or whose hook entries are
+  symlinks to files elsewhere — unenforceable without a
   machine-wide repo scan; a global `core.hooksPath` set only under a conditional
   include (`includeIf "gitdir:…"`), which repos matching it see but the lookup
   outside any repo does not, so its dir is grantable from outside those repos;
@@ -478,14 +486,15 @@ branch instead; the worktree carries over under `resume: true`.
   and config walk: a path spelled through a grant-held link and then a second
   symlink outside the grant; a path spelled with `..` after a real dir or a
   link inside the grant (the worker could swap that dir for a link, and
-  `lnk/..` resolves to the link target's parent); links on a filesystem mounted
-  inside the grant (the scan stays on one filesystem); a grant-held link into
-  another repo that does not contain the grant; an include named only by a file
+  `lnk/..` resolves to the link target's parent); symlinks and hard links on a
+  filesystem mounted inside the grant (the scan stays on one filesystem); a
+  grant-held symlink or hard link into another repo that does not contain the
+  grant; an include named only by a file
   that a currently non-matching `includeIf` pulls in; a `core.hooksPath` with a
-  `:(optional)` prefix naming a missing dir, which git treats as unset; a hook
-  file that is itself a symlink out of the hooks dir; a hard link to a hook or
-  config file; and links the worker plants after the grant, until the next
-  re-check drops it. Other
+  `:(optional)` prefix naming a missing dir, which git treats as unset; a file
+  in a subdirectory of the hooks dir, or one a hook runs by its content (only
+  each hook entry's own symlink chain is followed); and symlinks or hard links
+  the worker plants after the grant, until the next re-check drops it. Other
   exec-capable repo config (`core.fsmonitor`, filter drivers) is not covered by
   this check.
 

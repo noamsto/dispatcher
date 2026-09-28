@@ -135,6 +135,18 @@ _git_config_files() {
   fi
 }
 
+# _hook_entries <hooks-dir> — print, NUL-terminated, every entry directly in
+# <hooks-dir> that is a symlink or a hard-linked regular file: git runs
+# <hooks-dir>/<name> through the link, so its target or other links to it are
+# as protected as the hooks dir. Fails closed, printing why.
+_hook_entries() {
+  [ -d "$1" ] || return 0
+  find -H "$1" -mindepth 1 -maxdepth 1 \( -type l -o \( -type f -links +1 \) \) -print0 2>/dev/null || {
+    printf >&2 'dispatch: find failed scanning hooks dir %s; refusing the grant\n' "$1"
+    return 1
+  }
+}
+
 # _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir,
 # common dir and .git entry of every repo whose worktree contains <path>, a
 # gitfile's gitdir: and a git dir's commondir as spelled, and the config
@@ -145,9 +157,10 @@ _git_config_files() {
 # missing one. A grant overlapping any of these is a grant on some repo's
 # hooks or config: Husky's .husky via core.hooksPath, a submodule's git dir
 # under .git/modules, an included file a worker could fill with
-# core.hooksPath. git only reads config here, and the caller's repo-location,
-# GIT_CONFIG and -c env overrides are dropped so the answer comes from the
-# human's own config. Fails closed, printing why.
+# core.hooksPath. Each hooks dir's symlinked or hard-linked entries are
+# printed too (see _hook_entries). git only reads config here, and the
+# caller's repo-location, GIT_CONFIG and -c env overrides are dropped so the
+# answer comes from the human's own config. Fails closed, printing why.
 _git_protected_dirs() {
   local a="$1" out gd rc
   local -a lines
@@ -173,6 +186,9 @@ _git_protected_dirs() {
         [[ $out == /* ]] || out="$a/$out"
         printf '%s\0' "$out"
       done
+      out="${lines[0]}"
+      [[ $out == /* ]] || out="$a/$out"
+      _hook_entries "$out" || return 1
       printf '%s\0' "$a/.git"
       # git prints both dirs resolved; walk a gitfile's gitdir: and the
       # commondir as spelled so a link on either path is a hop
@@ -204,7 +220,10 @@ _git_protected_dirs() {
   0)
     out="${out%x}"
     out="${out%$'\n'}"
-    [[ $out != /* ]] || printf '%s\0' "$out"
+    if [[ $out == /* ]]; then
+      printf '%s\0' "$out"
+      _hook_entries "$out" || return 1
+    fi
     ;;
   # exit 1: core.hooksPath is unset
   1) ;;
@@ -221,6 +240,41 @@ _git_protected_dirs() {
       [[ $out != /* ]] || printf '%s\0' "$out"
     done
   fi
+}
+
+# _hard_link_in <dir> — set the caller's _hl and _hown to the first regular
+# file under <dir>, on <dir>'s filesystem, sharing an inode with a protected
+# file, and to that file; they stay empty when none does. Protected files come
+# from the caller's _hino (dev:ino -> protected path); <dir> is not scanned
+# when no key is on its device. Fails closed, printing why.
+_hard_link_in() {
+  local d k f hit=""
+  _hl="" _hown=""
+  if ! d="$(stat -L -c %d -- "$1")"; then
+    printf >&2 'dispatch: cannot stat %s; refusing the grant\n' "$1"
+    return 1
+  fi
+  for k in "${!_hino[@]}"; do
+    [ "${k%%:*}" != "$d" ] || {
+      hit=1
+      break
+    }
+  done
+  [ -n "$hit" ] || return 0
+  f=$(mktemp) || return 1
+  if ! find "$1" -xdev -type f -links +1 -printf '%D:%i\0%p\0' >"$f" 2>/dev/null; then
+    rm -f "$f"
+    printf >&2 'dispatch: find failed scanning %s for hard links; refusing the grant\n' "$1"
+    return 1
+  fi
+  while IFS= read -r -d '' k && IFS= read -r -d '' _hl; do
+    [ -z "${_hino[$k]+x}" ] || {
+      _hown="${_hino[$k]}"
+      break
+    }
+    _hl=""
+  done <"$f"
+  rm -f "$f"
 }
 
 # _add_dir_ok <path> — print <path>'s canonical form if it may be granted to a
@@ -252,7 +306,9 @@ _git_protected_dirs() {
 # outside the grant and contains a hop of, or lies inside, any protected
 # chain is refused: git reports those dirs resolved, so whichever file
 # spelled a path through the grant, git's answer lands under the link's
-# target.
+# target. A protected regular file with other hard links is refused when one
+# of them lies inside the grant, or is, or lies inside, the outside target of
+# a symlink the grant holds.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -385,6 +441,37 @@ _add_dir_ok() {
     fi
   done <"$_gf"
   rm -f "$_gf"
+  local _hs _hk _hl _hown
+  local -a _hfiles=() _hfown=() _hst=()
+  local -A _hino=()
+  for _gi in "${!_gres[@]}"; do
+    [ -f "${_gres[_gi]}" ] || continue
+    _hfiles+=("${_gres[_gi]}")
+    _hfown+=("${_greso[_gi]}")
+  done
+  if [ "${#_hfiles[@]}" -gt 0 ]; then
+    if ! _hs="$(stat --printf '%h %d:%i\n' -- "${_hfiles[@]}")"; then
+      rm -f "$_lf"
+      printf >&2 'dispatch: cannot stat the git hooks and config files for %s; refusing the grant\n' "$p"
+      return 1
+    fi
+    mapfile -t _hst <<<"$_hs"
+    for _gi in "${!_hfiles[@]}"; do
+      [ "${_hst[_gi]%% *}" -gt 1 ] || continue
+      _hino[${_hst[_gi]#* }]="${_hfown[_gi]}"
+    done
+  fi
+  if [ "${#_hino[@]}" -gt 0 ]; then
+    _hard_link_in "$p" || {
+      rm -f "$_lf"
+      return 1
+    }
+    if [ -n "$_hl" ]; then
+      rm -f "$_lf"
+      printf >&2 'dispatch: %s holds hard link %s to git hooks or config file %s; grant a dir without it\n' "$p" "$_hl" "$_hown"
+      return 1
+    fi
+  fi
   if [ "${#_links[@]}" -gt 0 ]; then
     if ! printf '%s\0' "${_links[@]}" | xargs -0 realpath -m -z -- >"$_lf"; then
       rm -f "$_lf"
@@ -423,6 +510,23 @@ _add_dir_ok() {
     if [ -n "$_gown" ]; then
       printf >&2 'dispatch: %s holds symlink %s to %s, which overlaps git hooks, git dir or config file %s; grant a dir without it\n' "$p" "${_links[_li]}" "${_lres[_li]}" "$_gown"
       return 1
+    fi
+    [ "${#_hino[@]}" -gt 0 ] || continue
+    if [ -d "${_lres[_li]}" ]; then
+      _hard_link_in "${_lres[_li]}" || return 1
+      if [ -n "$_hl" ]; then
+        printf >&2 'dispatch: %s holds symlink %s to %s, which holds hard link %s to git hooks or config file %s; grant a dir without it\n' "$p" "${_links[_li]}" "${_lres[_li]}" "$_hl" "$_hown"
+        return 1
+      fi
+    elif [ -f "${_lres[_li]}" ]; then
+      if ! _hk="$(stat -L --printf '%d:%i' -- "${_lres[_li]}")"; then
+        printf >&2 'dispatch: cannot stat %s; refusing the grant\n' "${_lres[_li]}"
+        return 1
+      fi
+      if [ -n "${_hino[$_hk]+x}" ]; then
+        printf >&2 'dispatch: %s holds symlink %s to %s, a hard link to git hooks or config file %s; grant a dir without it\n' "$p" "${_links[_li]}" "${_lres[_li]}" "${_hino[$_hk]}"
+        return 1
+      fi
     fi
   done
   printf '%s\n' "$p"
