@@ -47,7 +47,7 @@ in {
     };
 
     engines = lib.mkOption {
-      type = lib.types.nullOr (lib.types.listOf (lib.types.enum ["claude" "codex" "cursor" "pi"]));
+      type = lib.types.nullOr (lib.types.nonEmptyListOf (lib.types.enum ["claude" "codex" "cursor" "pi"]));
       default = null;
       description = ''
         Engines this machine may dispatch, and gates the per-engine artifacts
@@ -59,7 +59,8 @@ in {
         runtime. `null` also installs the codex and cursor artifacts below,
         since Nix cannot see which engines an out-of-store user file will
         enable. Set this to restrict the roster; the old default was
-        `["claude" "pi"]`. A per-launch `DISPATCH_ENGINES` still overrides
+        `["claude" "pi"]`. An empty list is rejected by the type -- leave the
+        option unset instead. A per-launch `DISPATCH_ENGINES` still overrides
         every layer.
       '';
     };

@@ -177,6 +177,20 @@ in {
   cursorless = mkResult cursorlessCfg;
   float = mkResult floatCfg;
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
+  # `engines = []` must be a type error, not a silently-accepted value that
+  # bakes `"engines": []` into the locked settings file (dispatch-config dies
+  # on that at runtime).
+  emptyEnginesRejected =
+    !(builtins.tryEval
+      (builtins.deepSeq (eval {
+          enable = true;
+          engines = [];
+        })
+        .programs
+        .dispatcher
+        .engines
+        true))
+    .success;
 }
 NIXEOF
   sed -i "s|@ROOT@|$root|" "$BATS_FILE_TMPDIR/eval-expr.nix"
@@ -428,6 +442,11 @@ setup() {
     run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
+}
+
+@test "engines = [] is rejected by the option type" {
+  run jq -e '.emptyEnginesRejected == true' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module declares the openrouter option" {

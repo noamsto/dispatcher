@@ -218,6 +218,12 @@ locked_settings() {
   jq -e '.repoTrackers["a/b"] == "linear:X"' <<<"$output"
 }
 
+@test "a tracker key repeated with different case in one env var is still last-wins" {
+  DISPATCH_REPO_TRACKERS='a/b=github A/B=linear:X a/b=github' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"a/b":"github"}' <<<"$output"
+}
+
 @test "a whitespace-only tracker env var contributes nothing" {
   DISPATCH_REPO_TRACKERS=$'  \n ' run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

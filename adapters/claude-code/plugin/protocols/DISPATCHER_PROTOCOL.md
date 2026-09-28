@@ -324,9 +324,10 @@ sizing a pi fan-out, not just once at session start.
   work you'd shed last.
 
 **Engine constraint:** the dispatchable set is whatever `dispatch --engines`
-prints — the resolved `engines` setting (`programs.dispatcher.engines` in the
-home-manager module's locked layer when set there, else the user settings
-file, else all four) intersected with what is installed. `dispatch` and `dispatcher` both reject anything else before
+prints — the resolved `engines` setting (a per-launch `DISPATCH_ENGINES` when
+set, else `programs.dispatcher.engines` in the home-manager module's locked
+layer, else the user settings file, else all four) intersected with what is
+installed. `dispatch` and `dispatcher` both reject anything else before
 scaffolding, with `is not enabled here` or `is enabled but not installed`.
 Authentication is separate and out of band: a listed engine can still fail its
 first turn if it has no session.
@@ -380,8 +381,10 @@ branch instead; the worktree carries over under `resume: true`.
   (via `realpath`, so a symlinked dir is resolved first) inside a root from the
   resolved `grantRoots` setting — set by `programs.dispatcher.grantRoots` in the
   home-manager module's locked settings layer. `DISPATCH_GRANT_ROOTS`
-  (colon-separated, like `PATH`) is a per-launch override on top of that. Unset or
-  empty grants nothing, so an unconfigured machine refuses every `--add-dir`. A root is
+  (colon-separated, like `PATH`), when set, replaces those roots for that launch;
+  a resolved `grantRoots` that is unset or empty grants nothing, so an
+  unconfigured machine refuses every `--add-dir`; an empty `DISPATCH_GRANT_ROOTS`
+  falls through to the locked setting, and only `:` forces no roots. A root is
   ignored if it is `/`, `$HOME` or an ancestor of it. Inside a root it still refuses
   `/`, `$HOME` or an ancestor of it, a path inside or above `$crew_dir`, or a path
   inside or above any of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.claude`,
