@@ -3250,10 +3250,17 @@ if [ -n "$prev_wt" ]; then
   fi
 fi
 
+# Only a default create checks out operator-trusted content (the fetched
+# default-branch tip); every other switch below may check out a tree a worker
+# or a PR author controls, so it runs with no in-tree attributes and fires no
+# post-checkout hook — a baselined driver whose program is a worktree-relative
+# path the tree rewrote must never run from it (#596).
+neutral_switch=
 case "$switch_mode" in
 create)
   if [ -n "$base_flag" ]; then
-    wt switch -c "$branch" -b "$create_base_oid" -y --no-hooks
+    neutral_switch=1
+    _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid" -y --no-hooks
   else
     wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
   fi
@@ -3326,21 +3333,33 @@ resume)
 $(tmux list-panes -a -F '#{window_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
 WINDOWS
   fi
-  wt switch "$branch" -y --no-hooks
+  neutral_switch=1
+  _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
   branch_short="$(git rev-parse --short "$branch")"
   echo "dispatch: resuming branch $branch at $branch_short"
   ;;
-name) wt switch "$branch" -y --no-hooks ;;
+name)
+  neutral_switch=1
+  _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
+  ;;
 fetch-name)
   # A PR head branch is attacker-named; see _fetch_origin_branch.
   _fetch_origin_branch "$branch" || {
     echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   }
-  wt switch "$branch" -y --no-hooks
+  neutral_switch=1
+  _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
   ;;
-pr-ref) wt switch "pr:$pr_number" -y --no-hooks ;;
+pr-ref)
+  neutral_switch=1
+  _wt_neutral "${crew_dir%/crew}" wt switch "pr:$pr_number" -y --no-hooks
+  ;;
 esac
+
+if [ -n "$neutral_switch" ] && [ -z "$prev_wt" ]; then
+  echo "dispatch: checked out $branch without its in-tree attributes — LFS content, smudge filters and eol conversion were not applied; tell the worker to run \`git lfs pull\` (or re-smudge its fresh tree) if it needs them" >&2
+fi
 
 sanitized="${branch//\//-}"
 
