@@ -775,6 +775,19 @@ EOF
   [ "$output" = "premium 2400000" ]
 }
 
+# #575: crew.sh now reads burnClasses through dispatch-config. When the
+# resolver is unavailable the burn table is empty, which is indistinguishable
+# per-row from a legitimately unclassed model — so rate must say so once
+# rather than silently reporting every cost_class as null.
+@test "cost: rate warns when dispatch-config is unavailable instead of silently unclassing" {
+  seed_dispatch cost-no-config 1000 claude opus deep high
+  seed_status worker:cost-no-config 601000 done
+  export DISPATCH_CONFIG_BIN="$BATS_TEST_TMPDIR/no-such-dispatch-config"
+  run --separate-stderr bash -euo pipefail "$CREW" rate
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch-config unavailable"* ]]
+}
+
 # The pricing correction this pins: `-fast` doubles the token rate, so it lifts
 # a rung one class rather than being the cheap lane the doc used to call it.
 @test "cost: a -fast cursor slug burns a class above its own effort rung" {
