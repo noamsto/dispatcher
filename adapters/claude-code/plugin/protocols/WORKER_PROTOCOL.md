@@ -498,8 +498,12 @@ Rule of thumb: every visible line of the PR body must help a human reviewer deci
 
 Non-blocking findings never ride only in the PR body: fix them in place or file an issue. Blocking correctness findings and critic escalations (`## Escalated`) keep their meaning in `EVIDENCE_REVIEW.md`; this section covers non-blocking deferrals only. A `kind: review` worker files nothing — its findings stay in the posted review.
 
-- **Small-fix bar.** A finding is small only if **all** hold: it touches only files the diff already changes (or their direct test/doc siblings); it is mechanical — fixable without changing behavior, so per `EVIDENCE_REVIEW.md` it needs no targeted re-review; it needs no design decision (one obvious fix); the fast deterministic gate already covers it. Fix small findings in place through the fast gate: a small fix rides the round whose batch returned the finding; it adds no round and needs no re-review. If both rounds' batches have already returned, it is not small (file an issue). Any condition failing also means not small.
-- **Everything else not done and non-blocking** branches on the task header `tracker:` (stamped by `dispatch`; never inferred from the closes line or the PR body):
+- **Belongs to this task?** Ask this first. Yes when the diff introduced the finding, or it lives in code the diff changes (or those files' direct test/doc siblings) and the task's goal is visibly incomplete or wrong without it. The task doc's file list is where the work was expected to land, not a fence: a sibling test or the same function's error message belongs. No when it is pre-existing and orthogonal to the task, needs a design decision the task doc does not settle, needs a refactor of shared code outside the feature, or touches an unrelated subsystem — file it.
+- **Fits in this run?** Only for a finding that belongs:
+  - mechanical — no behavior change, and the fast deterministic gate covers it → fix it in place through the fast gate; it rides the round whose batch returned it, so it adds no round and needs no re-review.
+  - behavioral → fix it and carry it into the next round's targeted re-review per `EVIDENCE_REVIEW.md`; it shares that round and never adds one beyond the two-round budget.
+  - behavioral with no round left (both rounds' batches have returned) → file it, saying in the issue that it belongs to the parent task and was deferred only for lack of a review round.
+- **Filing** — every non-blocking finding not fixed above — branches on the task header `tracker:` (stamped by `dispatch`; never inferred from the closes line or the PR body):
   - `tracker: github` → one GitHub issue per independent item, the GitHub path below.
   - `tracker: linear <TEAM>` → never `gh issue create`; the untracked path below.
   - no `tracker:` line (an old task doc) → the untracked path below, not GitHub.

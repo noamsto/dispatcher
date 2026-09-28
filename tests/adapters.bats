@@ -3025,7 +3025,10 @@ $hits"
     adapters/cursor/protocols/WORKER_PROTOCOL.md; do
     for statement in \
       '## Deferred findings (standard/deep)' \
-      'A finding is small only if **all** hold' \
+      '**Belongs to this task?**' \
+      '**Fits in this run?**' \
+      'not a fence' \
+      'deferred only for lack of a review round' \
       'the repo owner pre-approved these issues, so do not ask first' \
       '`#N — short title`' \
       'follow-ups (untracked):' \
@@ -3042,7 +3045,9 @@ $hits"
     done
     for absent in \
       'take the GitHub path' \
-      'leaves the tracker unknown'; do
+      'leaves the tracker unknown' \
+      'A finding is small only if' \
+      'Small-fix bar'; do
       run grep -F "$absent" "$ROOT/$doc"
       [ "$status" -ne 0 ]
     done
@@ -3070,6 +3075,8 @@ $hits"
     [ "$status" -eq 0 ]
     run grep -F 'Mint one Linear ticket per item' "$ROOT/$doc"
     [ "$status" -ne 0 ]
+    run grep -F "reads a spec's file list as a starting point, not a scope boundary" "$ROOT/$doc"
+    [ "$status" -eq 0 ]
   done
   for doc in \
     adapters/core/protocols/REVIEW_TASK.md \
