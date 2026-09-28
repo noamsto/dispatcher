@@ -65,8 +65,8 @@ check_no_blank_engines() {
 # check_model_shapes <json> <file> <layer> — die, naming <file> and <layer>
 # and the JSON path, when the layer's modelMap / escalation / paceDowngrades
 # holds a wrong-shaped leaf. Only shapes present in the layer are checked, so a
-# layer that refines a single row stays valid, and a merge of well-shaped
-# layers is well-shaped (objects merge, arrays and scalars replace whole).
+# layer that refines a single row stays valid and the merge of well-shaped
+# layers is well-shaped.
 check_model_shapes() {
   local violations path what
   violations=$(jq -r '
