@@ -449,8 +449,14 @@ branch instead; the worktree carries over under `resume: true`.
   outside any repo does not, so its dir is grantable from outside those repos;
   and the re-check reads config in the launching process's env, so a
   `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` override there only loses freshness
-  for the global value, which was checked at dispatch time. Other exec-capable
-  repo config (`core.fsmonitor`, filter drivers) is not covered by this check.
+  for the global value, which was checked at dispatch time. Two more residuals
+  of the same shape: git prints the common dir resolved, so a git dir's
+  `commondir` file spelled through a symlink inside the grant escapes the hop
+  walk (the worker could retarget that link at a common dir it controls); and a
+  repo's `include.path` (or `includeIf.*.path`) naming a file inside a grantable
+  dir lets a worker holding that dir set `core.hooksPath` there. Other
+  exec-capable repo config (`core.fsmonitor`, filter drivers) is not covered by
+  this check.
 
   The grant is read-write **in effect** for a claude worker:
   it is a working directory, so prompt-free reads and edits (per the permission mode)

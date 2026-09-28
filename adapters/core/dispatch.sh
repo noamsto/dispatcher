@@ -986,11 +986,13 @@ _symlink_chain_hops() {
 
 # _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir
 # and common dir of every repo whose worktree contains <path>, then the global
-# core.hooksPath when it is absolute. A grant overlapping any of these is a
-# grant on some repo's hooks or config: Husky's .husky via core.hooksPath, a
-# submodule's git dir under .git/modules. git only reads config here, and the
-# caller's repo-location, GIT_CONFIG and -c env overrides are dropped so the
-# answer comes from the human's own config. Fails closed, printing why.
+# core.hooksPath when it is absolute; also each .git entry and a gitfile's
+# gitdir: target as spelled, since git prints that target resolved. A grant
+# overlapping any of these is a grant on some repo's hooks or config: Husky's
+# .husky via core.hooksPath, a submodule's git dir under .git/modules. git
+# only reads config here, and the caller's repo-location, GIT_CONFIG and -c env
+# overrides are dropped so the answer comes from the human's own config. Fails
+# closed, printing why.
 _git_protected_dirs() {
   local a="$1" out rc
   local -a lines
@@ -1073,7 +1075,10 @@ _git_protected_dirs() {
 # A later check also refuses a grant containing a .git or .claude entry, then
 # one equal to, inside or above the hooks dir, git dir or common dir of any
 # repo whose worktree contains it, or an absolute global core.hooksPath (see
-# _git_protected_dirs).
+# _git_protected_dirs). Not caught: a commondir file spelled through a symlink
+# inside the grant (git prints the common dir resolved, so that link is never a
+# hop), and an include.path/includeIf.*.path naming a file inside the grant,
+# through which a worker could set core.hooksPath.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
