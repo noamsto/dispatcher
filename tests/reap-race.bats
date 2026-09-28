@@ -12,6 +12,7 @@ setup() {
   # shellcheck disable=SC2329  # invoked via `run run_crew`
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  seed_git_baseline
   unset CREW_ID
 }
 

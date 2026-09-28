@@ -147,6 +147,7 @@ add_worktree() { # <name> -> $WT, $ADMIN
   run --separate-stderr _wt_git "$ADMIN" "$WT" status --porcelain
   [ "$status" -eq 1 ]
   [[ $stderr == *"no git-config baseline at $BASELINE"* ]]
+  [[ $stderr == *"crew git-baseline --accept"* ]]
   [ ! -e "$BASELINE" ]
   [ ! -e "$COMMON/crew" ]
 }
@@ -173,4 +174,84 @@ add_worktree() { # <name> -> $WT, $ADMIN
   [ "$status" -eq 1 ]
   [[ $stderr == *filter.x.clean* ]]
   [ ! -e "$SENTINEL" ]
+}
+
+@test "_wt_cfg_pairs lists config-defined hooks and gc.recentObjectsHook (#557)" {
+  git config hook.x.command "$HIT"
+  git config gc.recentObjectsHook "$HIT"
+  run pairs "$COMMON"
+  [ "$status" -eq 0 ]
+  grep -Fx "hook.x.command=$HIT" <<<"$output"
+  grep -Fx "gc.recentobjectshook=$HIT" <<<"$output"
+}
+
+@test "a planted config-defined hook is refused and never runs (#557)" {
+  # hook.<name>.command fires on its event even under core.hooksPath=/dev/null.
+  add_worktree w
+  _wt_cfg_baseline_init "$COMMON"
+  git config hook.x.event reference-transaction
+  git config hook.x.command "touch $SENTINEL"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *hook.x.command* ]]
+  run --separate-stderr _wt_git "$ADMIN" "$WT" reset -q --hard HEAD
+  [ "$status" -eq 1 ]
+  [ ! -e "$SENTINEL" ]
+}
+
+@test "_wt_git suppresses baselined config hooks on the events it triggers (#557)" {
+  : >f
+  git add f
+  git commit -q -m f
+  add_worktree w
+  for event in reference-transaction post-checkout post-index-change; do
+    git config --add hook.x.event "$event"
+  done
+  git config hook.x.command "touch $SENTINEL"
+  _wt_cfg_baseline_init "$COMMON"
+  echo x >"$WT/f"
+  _wt_git "$ADMIN" "$WT" reset -q --hard HEAD
+  _wt_git "$ADMIN" "$WT" checkout -q -b w2
+  [ ! -e "$SENTINEL" ]
+  # Control: the same reset without _wt_git does fire it.
+  git -C "$WT" -c core.hooksPath=/dev/null reset -q --hard HEAD
+  [ -e "$SENTINEL" ]
+}
+
+@test "_wt_cfg_guard_cwd also checks the caller's own worktree config (#557)" {
+  add_worktree b
+  git config extensions.worktreeConfig true
+  _wt_cfg_baseline_init "$COMMON"
+  git -C "$WT" config --worktree core.fsmonitor "$HIT"
+  _wt_cfg_guard_cwd "$COMMON"
+  cd "$WT"
+  _wt_cfg_guard "$COMMON"
+  run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *core.fsmonitor* ]]
+}
+
+@test "guard escapes worker-controlled key and origin bytes (#557)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config "filter.a"$'\e'"[2Kb.clean" "$HIT"
+  inc="$BATS_TEST_TMPDIR/inc"$'\e'"[2K"
+  printf '[diff]\n\texternal = %s\n' "$HIT" >"$inc"
+  git config include.path "$inc"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *filter.a* ]]
+  [[ $stderr == *diff.external* ]]
+  [[ $stderr != *$'\e'* ]]
+}
+
+@test "pairs dedupe bytewise whatever the locale (#557)" {
+  export LC_ALL=en_US.UTF-8
+  [ "$(printf 'a\376\0a\377\0' | sort -z -u | tr -cd '\0' | wc -c)" -eq 1 ] ||
+    skip "no locale here collates distinct bytes equal"
+  git config filter.x.clean "cat #"$'\376'
+  _wt_cfg_baseline_init "$COMMON"
+  git config --add filter.x.clean "cat #"$'\377'
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *filter.x.clean* ]]
 }

@@ -5,6 +5,8 @@ setup() {
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  # A dispatch records it before any worker exists; reap never does (#557).
+  seed_git_baseline
   unset CREW_ID
   # Absent unless a test sets it, so pane-recording stays deterministic
   # regardless of whether bats itself runs inside a tmux pane.
@@ -2990,7 +2992,7 @@ EOF
 @test "reap: a worker-planted clean filter never runs (#557)" {
   # #557: a worker's `git config filter.x.clean <cmd>` in a linked worktree
   # writes the COMMON config that dispatcher-run git reads. The git-config
-  # baseline (seeded by `crew git-baseline` before any worker existed) is
+  # baseline (recorded by a dispatch before any worker existed) is
   # TOFU for the human's own config, so a key planted afterward must refuse
   # reap's status call rather than let the filter run in the dispatcher shell.
   git commit -q --allow-empty -m init
@@ -3007,7 +3009,7 @@ EOF
 touch "$BATS_TEST_TMPDIR/SENTINEL"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/hit.sh"
-  run run_crew git-baseline
+  seed_git_baseline
   git config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
   echo x >"$wt_path/f"
   stub_tmux "" ""
@@ -3048,7 +3050,7 @@ EOF
 touch "$BATS_TEST_TMPDIR/SENTINEL"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/hit.sh"
-  run run_crew git-baseline
+  seed_git_baseline
   cat >"$BATS_TEST_TMPDIR/include.gitconfig" <<EOF
 [filter "x"]
 	clean = $BATS_TEST_TMPDIR/hit.sh
@@ -3090,7 +3092,7 @@ EOF
 touch "$BATS_TEST_TMPDIR/SENTINEL"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/hit.sh"
-  run run_crew git-baseline
+  seed_git_baseline
   git config core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
   stub_tmux "" ""
   cat >"$STUB_DIR/gh" <<'EOF'
@@ -3133,7 +3135,7 @@ EOF
   git commit -q --allow-empty -m init
   git config core.hooksPath .husky
   git config credential.helper store
-  run run_crew git-baseline
+  seed_git_baseline
   baseline="$TEST_REPO/.git/crew/git-config-baseline"
   grep -q 'core.hookspath' "$baseline"
   git branch feat/557-d
@@ -3163,7 +3165,7 @@ EOF
   # non-interactively (no tty on stdin) it must refuse rather than silently
   # widen the baseline to whatever config happens to be sitting there.
   git commit -q --allow-empty -m init
-  run run_crew git-baseline
+  seed_git_baseline
   baseline="$TEST_REPO/.git/crew/git-config-baseline"
   [ -f "$baseline" ]
   before="$(cksum "$baseline")"
@@ -3172,6 +3174,132 @@ EOF
   [ "$status" -ne 0 ]
   after="$(cksum "$baseline" 2>/dev/null || true)"
   [ "$before" = "$after" ]
+}
+
+# crew_tty <answer> <crew args...> — run crew on a real pty (a private tmux
+# server) and type <answer> at its `type yes` prompt; sets $status/$output.
+crew_tty() {
+  local answer="$1" sock="tty-$BATS_TEST_NUMBER" out="$BATS_TEST_TMPDIR/tty.out"
+  local rc="$BATS_TEST_TMPDIR/tty.rc" script="$BATS_TEST_TMPDIR/tty.sh" i
+  shift
+  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
+  rm -f "$out" "$rc"
+  printf 'bash -euo pipefail %q' "$CREW" >"$script"
+  printf ' %q' "$@" >>"$script"
+  printf ' >%q 2>&1\necho $? >%q\n' "$out" "$rc" >>"$script"
+  "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -x 200 -y 50 -c "$PWD" "bash $script"
+  for ((i = 0; i < 100; i++)); do
+    if [ -e "$rc" ] || grep -q 'type yes' "$out" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys -l "$answer"
+  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys Enter
+  for ((i = 0; i < 100; i++)); do
+    if [ -s "$rc" ]; then break; fi
+    sleep 0.1
+  done
+  "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
+  status="$(cat "$rc")"
+  output="$(cat "$out")"
+}
+
+@test "git-baseline never records a missing baseline (#557)" {
+  # #557: only a dispatch records the baseline (TOFU before any worker of the
+  # crew exists); a later review run must not trust whatever is there now.
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"none yet"* ]]
+  [[ "$output" == *"crew git-baseline --accept"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
+}
+
+@test "git-baseline exits 0 without drift and 1 listing drifted keys (#557)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand=$BATS_TEST_TMPDIR/hit.sh (main checkout, "* ]]
+}
+
+@test "git-baseline prints worker-controlled bytes escaped (#557)" {
+  # #557: a raw ESC/CR in a key, value or origin could redraw the lines above
+  # the `type yes` prompt and disguise what the human accepts.
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config filter.x.clean "evil"$'\e[2K\r'"cat"
+  git config "filter.a"$'\e'"[2Kb.smudge" cat
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *filter.x.clean* ]]
+  [[ "$output" == *filter.a* ]]
+  [[ "$output" != *$'\e'* ]]
+  [[ "$output" != *$'\r'* ]]
+}
+
+@test "git-baseline --accept merges into the baseline (#557)" {
+  # #557: git-hooks.nix writes core.hooksPath relative from the main checkout
+  # and absolute from a linked worktree; a replacing accept flip-flops forever.
+  git commit -q --allow-empty -m init
+  git config core.hooksPath .git/hooks
+  seed_git_baseline
+  git config core.hooksPath "$TEST_REPO/.git/hooks"
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"core.hookspath=$TEST_REPO/.git/hooks"* ]]
+  git config core.hooksPath .git/hooks
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}
+
+@test "git-baseline --accept without a baseline shows every pair, records on yes (#557)" {
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  baseline="$TEST_REPO/.git/crew/git-config-baseline"
+  crew_tty no git-baseline --accept
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.sshcommand=* ]]
+  [ ! -e "$baseline" ]
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *core.sshcommand=* ]]
+  grep -q core.sshcommand "$baseline"
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+}
+
+@test "reap: no baseline keeps the worktree and records none (#557)" {
+  # #557: reap runs once workers exist, so it must never record a baseline.
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git branch feat/557-e
+  wt_path="$BATS_TEST_TMPDIR/557-e-wt"
+  git worktree add -q "$wt_path" feat/557-e
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF2
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/557-e" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/557-e"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
 @test "reap: a live engine pane keeps a terminal, merged-PR worktree" {

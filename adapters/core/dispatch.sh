@@ -166,7 +166,7 @@ _claim_evidence() {
   # Read as evidence below, same as an unreachable origin (#557): ls-remote runs
   # sshCommand/credential helper, and _wt_cfg_guard already wrote its reason to
   # stderr.
-  if ! _wt_cfg_guard "${crew_dir%/crew}" >&2; then
+  if ! _wt_cfg_guard_cwd "${crew_dir%/crew}" >&2; then
     echo "git config drift"
     return 0
   fi
@@ -393,7 +393,7 @@ _plain_branch_name() {
 _fetch_origin_branch() {
   local name=$1
   # fetch runs sshCommand/credential helper/reference-transaction hooks (#557).
-  _wt_cfg_guard "${crew_dir%/crew}" || return 1
+  _wt_cfg_guard_cwd "${crew_dir%/crew}" || return 1
   _plain_branch_name "$name" || return 1
   git fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
@@ -3227,7 +3227,7 @@ mkdir -p "$crew_dir"
 
 # Entry guard (#557): refuse a drifted config now, before `gh issue create`
 # mints an issue that a later refusal would strand.
-if ! _wt_cfg_baseline_init "${crew_dir%/crew}" || ! _wt_cfg_guard "${crew_dir%/crew}"; then
+if ! _wt_cfg_baseline_init "${crew_dir%/crew}" || ! _wt_cfg_guard_cwd "${crew_dir%/crew}"; then
   exit 1
 fi
 
@@ -3570,11 +3570,17 @@ if [ -n "$prev_wt" ]; then
 fi
 
 # Main-context guard (#557), right before the `wt switch` calls below. Also
-# guard $prev_wt's admin dir: worktrunk may run git there on attach. A failed
-# _wt_admin_dir lookup is skipped — the later wt_admin resolution refuses.
-_wt_cfg_guard "${crew_dir%/crew}" || exit 1
+# guard $prev_wt's admin dir: worktrunk may run git there on attach. The
+# primary worktree reads the common config, already guarded.
+_wt_cfg_guard_cwd "${crew_dir%/crew}" || exit 1
 if [ -n "$prev_wt" ]; then
-  if prev_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$prev_wt")"; then
+  # No `exit` in the awk: an early close SIGPIPEs git and trips pipefail.
+  primary_wt="$(git worktree list --porcelain | awk '/^worktree /{if (!p) p=$2} END{print p}')"
+  if [ "$prev_wt" != "$primary_wt" ]; then
+    prev_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$prev_wt")" || {
+      echo "dispatch: no git admin dir for $prev_wt" >&2
+      exit 1
+    }
     _wt_cfg_guard "${crew_dir%/crew}" "$prev_admin" || exit 1
   fi
 fi
@@ -3627,8 +3633,6 @@ resume)
   # checkout, dispatch's own cwd and a human sitting in a plain shell all read as
   # empty. This runs after that gate, so it only ever sees a tree the gate allowed.
   if [ -n "$prev_wt" ]; then
-    # No `exit` in the awk: an early close SIGPIPEs git and trips pipefail.
-    primary_wt="$(git worktree list --porcelain | awk '/^worktree /{if (!p) p=$2} END{print p}')"
     if [ "$prev_wt" = "$primary_wt" ]; then
       echo "dispatch: $branch is checked out in the primary worktree $prev_wt — a worker must not run in the main checkout. Move the branch to its own worktree, then re-dispatch." >&2
       exit 1

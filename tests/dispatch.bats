@@ -3549,7 +3549,7 @@ touch "$BATS_TEST_TMPDIR/SENTINEL"
 cat
 EOF
   chmod +x "$BATS_TEST_TMPDIR/hit.sh"
-  run bash -euo pipefail "$CREW_REAL" git-baseline
+  seed_git_baseline
   git -C "$TEST_REPO" config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
   echo x >"$wt_path/f"
 
@@ -3566,7 +3566,7 @@ EOF
   mint_spec
   stub_launch_bins
   stub_gh_claim "" 77
-  run bash -euo pipefail "$CREW_REAL" git-baseline
+  seed_git_baseline
   cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
 #!/usr/bin/env bash
 touch "$BATS_TEST_TMPDIR/SENTINEL"
@@ -3594,7 +3594,7 @@ EOF
 touch "$BATS_TEST_TMPDIR/SENTINEL"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/hit.sh"
-  run bash -euo pipefail "$CREW_REAL" git-baseline
+  seed_git_baseline
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -3614,6 +3614,39 @@ EOF
   run ! grep -q 'switch' "$STUB_LOG"
 }
 
+@test "dispatch from a linked worktree refuses that worktree's own drift (#557)" {
+  # #557: plain git run from a linked worktree also reads its config.worktree,
+  # which the common-dir guard alone never sees.
+  mint_spec
+  stub_launch_bins
+  stub_gh_claim "" 77
+  git -C "$TEST_REPO" config extensions.worktreeConfig true
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/op" -b op
+  seed_git_baseline
+  git -C "$TEST_REPO/.worktrees/op" config --worktree core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  cd "$TEST_REPO/.worktrees/op"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.fsmonitor"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+}
+
+@test "dispatch refuses a previous worktree with no admin dir before wt switch (#557)" {
+  # #557: worktrunk may run git in $prev_wt on attach, so an unresolvable
+  # admin dir (here a symlinked worktrees/<id>) must refuse, not be skipped.
+  setup_stale_pr_worktree eng-557-noadmin
+  admin="$TEST_REPO/.git/worktrees/eng-557-noadmin"
+  cp -a "$admin" "$BATS_TEST_TMPDIR/admin-copy"
+  rm -rf "$admin"
+  ln -s "$BATS_TEST_TMPDIR/admin-copy" "$admin"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no git admin dir for $TEST_REPO/.worktrees/eng-557-noadmin"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
 @test "baseline human keys do not refuse dispatch (#557)" {
   # #557 TOFU: hooksPath and credential.helper already present when the
   # baseline is first seeded are the human's own and must never refuse a
@@ -3621,7 +3654,7 @@ EOF
   stub_launch_bins
   git -C "$TEST_REPO" config core.hooksPath .husky
   git -C "$TEST_REPO" config credential.helper store
-  run bash -euo pipefail "$CREW_REAL" git-baseline
+  seed_git_baseline
   grep -q 'core.hookspath' "$TEST_REPO/.git/crew/git-config-baseline"
   stub_gh_claim "" ""
 

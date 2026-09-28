@@ -32,7 +32,7 @@ _wt_exec_keys=(
   'include.path' 'includeif.*.path'
   'core.fsmonitor' 'core.hookspath' 'core.sshcommand' 'core.gitproxy'
   'core.pager' 'core.editor' 'core.askpass' 'core.alternaterefscommand'
-  'sequence.editor' 'pager.*'
+  'sequence.editor' 'pager.*' 'hook.*.command' 'hook.*.event' 'gc.recentobjectshook'
   'filter.*.clean' 'filter.*.smudge' 'filter.*.process'
   'diff.external' 'diff.*.textconv' 'diff.*.command' 'merge.*.driver'
   'difftool.*.cmd' 'mergetool.*.cmd'
@@ -65,7 +65,7 @@ _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktr
         break
       fi
     done
-  done | sort -z -u
+  done | LC_ALL=C sort -z -u
 }
 _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admin dir
   local common="$1" head dir
@@ -79,7 +79,7 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
     pairs+=("${got[@]}")
   done
   ((${#pairs[@]})) || return 0
-  printf '%s\0' "${pairs[@]}" | sort -z -u
+  printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
 _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite
   local common="$1" file tmp rec keys=
@@ -109,7 +109,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
   if [ ! -f "$file" ]; then
-    echo "refusing git: no git-config baseline at $file — run \`crew git-baseline\` from the main checkout" >&2
+    echo "refusing git: no git-config baseline at $file — a dispatch records it, or run \`crew git-baseline --accept\` from a real terminal" >&2
     return 1
   fi
   mapfile -d '' pairs <"$file" || return 1
@@ -140,13 +140,23 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
       origin="${listing[i + 1]#file:}"
       [[ " $found " != *" $origin "* ]] || continue
       found+=" $origin"
-      echo "refusing git: $key (from $origin) is not in the git-config baseline $file" >&2
+      printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$key" "$origin" "$file" >&2
       printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
     done
-    [ -n "$found" ] || echo "refusing git: $key is not in the git-config baseline $file" >&2
+    [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
   done
   echo "  or, if it is yours, accept it from a real terminal: crew git-baseline --accept" >&2
   return 1
+}
+_wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir the caller's cwd resolves to
+  local own
+  _wt_cfg_guard "$1" || return 1
+  # A linked worktree's cwd adds its config.worktree to what plain git reads.
+  own="$(git rev-parse --absolute-git-dir)" || {
+    echo "refusing git: cannot resolve the git dir of $PWD" >&2
+    return 1
+  }
+  [ "$own" = "$1" ] || _wt_cfg_guard "$1" "$own"
 }
 
 _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<id>
@@ -185,8 +195,11 @@ _wt_git() { # <admin-dir> <worktree> <git args…>
   # -C: with the caller's cwd inside <wt>, git would resolve pathspecs against
   # that subdirectory rather than the work-tree root. The -c overrides still
   # matter past the guard: a baselined core.hooksPath=.husky resolves inside
-  # the worker's tree.
+  # the worker's tree. hooksPath does not reach config-defined hooks
+  # (hook.<name>.command), so the events these calls trigger are switched off.
   git -C "$wt" --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+    -c hook.reference-transaction.enabled=false -c hook.post-checkout.enabled=false \
+    -c hook.post-index-change.enabled=false \
     -c submodule.recurse=false --git-dir="$admin" --work-tree="$wt" "$@"
 }
 _wt_status() {

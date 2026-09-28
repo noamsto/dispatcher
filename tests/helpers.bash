@@ -81,6 +81,17 @@ teardown_repo() {
   [ -n "${TEST_REPO:-}" ] && rm -rf "$TEST_REPO"
 }
 
+# seed_git_baseline [repo] — (re-)record the #557 git-config baseline from the
+# current config, the way a dispatch's entry guard does; `crew git-baseline`
+# itself never creates it.
+seed_git_baseline() {
+  local common
+  common="$(git -C "${1:-$TEST_REPO}" rev-parse --path-format=absolute --git-common-dir)"
+  rm -f "$common/crew/git-config-baseline"
+  # shellcheck source=/dev/null
+  (. "$WORKTREE_GIT_LIB" && _wt_cfg_baseline_init "$common") 2>/dev/null
+}
+
 # seed_hold <crew> <id> <resets_at> [branch] [ref] [wait_engine] [task_engine]
 # [title] [ts_ms] — a hold row shaped like `_build_hold`'s output
 # (adapters/core/crew.sh:2508-2527), written directly to the bus so a test can

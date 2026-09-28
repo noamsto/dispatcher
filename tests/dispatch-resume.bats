@@ -122,6 +122,7 @@ setup_worker_wt() { # [extra header lines...]
   } >"$WT/WORKER_TASK.md"
   export WT
   write_anchor "$WT"
+  seed_git_baseline
 }
 
 @test "refuses outside a worktree carrying a task document" {
@@ -193,7 +194,6 @@ EOF
   # and status calls) reads; a key planted after the baseline was seeded
   # must refuse resume outright.
   setup_worker_wt
-  run bash -euo pipefail "$CREW_REAL" git-baseline
   cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
 #!/usr/bin/env bash
 touch "$BATS_TEST_TMPDIR/SENTINEL"
@@ -208,6 +208,18 @@ EOF
   run run_resume
   [ "$status" -eq 1 ]
   [[ "$output" == *"include.path"* ]]
+}
+
+@test "resume refuses without a git-config baseline and never records one (#557)" {
+  # #557: only a dispatch records the baseline. Resume runs later, once
+  # workers exist, so a baseline it recorded could trust a worker's key.
+  setup_worker_wt
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no git-config baseline"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
 @test "refuses on a detached HEAD" {

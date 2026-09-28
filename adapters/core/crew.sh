@@ -4686,9 +4686,11 @@ pr-watch)
   printf '%s\n' "$ev"
   ;;
 git-baseline)
-  # TOFU review/accept for the exec-capable git-config baseline _wt_cfg_guard
-  # enforces (#557). Values ARE shown here — a human run, they need to see
-  # what they would accept.
+  # Review/accept for the exec-capable git-config baseline _wt_cfg_guard
+  # enforces (#557). Never records a missing one unasked: only a dispatch
+  # does, before any worker of the crew exists. Values ARE shown here — a
+  # human run, they need to see what they would accept — %q-escaped, so a
+  # planted ESC/CR cannot redraw the lines above the prompt.
   case "${1:-}" in
   "") accept= ;;
   --accept) accept=1 ;;
@@ -4705,11 +4707,16 @@ git-baseline)
   wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
   # shellcheck source=/dev/null
   . "$wt_git_lib"
-  _wt_cfg_baseline_init "$common" || exit 1
   baseline_file="$common/crew/git-config-baseline"
+  gb_recs=()
+  if [ -f "$baseline_file" ]; then
+    mapfile -d '' gb_recs <"$baseline_file"
+  elif [ -z "$accept" ]; then
+    echo "git-config baseline $baseline_file: none yet — a dispatch records it, or run crew git-baseline --accept from a real terminal" >&2
+    exit 1
+  fi
 
   declare -A gb_base=()
-  mapfile -d '' gb_recs <"$baseline_file"
   for gb_rec in "${gb_recs[@]}"; do gb_base["$gb_rec"]=1; done
   mapfile -d '' gb_union < <(_wt_cfg_union "$common")
   wait $! || exit 1
@@ -4718,7 +4725,7 @@ git-baseline)
     [ -n "${gb_base["$gb_rec"]+x}" ] || gb_drift+=("$gb_rec")
   done
 
-  if [ "${#gb_drift[@]}" -eq 0 ]; then
+  if [ "${#gb_drift[@]}" -eq 0 ] && [ -f "$baseline_file" ]; then
     echo "git-config baseline $baseline_file: no drift"
     exit 0
   fi
@@ -4728,7 +4735,7 @@ git-baseline)
   for gb_ctx in "$common" "$common"/worktrees/*; do
     [ -e "$gb_ctx" ] || continue
     gb_label="main checkout"
-    [ "$gb_ctx" = "$common" ] || gb_label="worktree ${gb_ctx##*/}"
+    [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
     mapfile -d '' gb_listing < <(git --git-dir="$gb_ctx" config --list --show-origin --show-scope -z 2>/dev/null)
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
       [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
@@ -4737,7 +4744,7 @@ git-baseline)
       [ -n "${gb_wanted["$gb_rec"]+x}" ] || continue
       gb_key="${gb_rec%%$'\n'*}"
       gb_value="${gb_rec#"$gb_key"$'\n'}"
-      echo "$gb_key=$gb_value ($gb_label, ${gb_listing[gb_i + 1]#file:})"
+      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "${gb_listing[gb_i + 1]#file:}"
     done
   done
 
@@ -4749,10 +4756,15 @@ git-baseline)
     echo "crew: baseline unchanged" >&2
     exit 1
   fi
+  mkdir -p -- "$dir" || exit 1
   gb_tmp="$(mktemp "$dir/git-config-baseline.XXXXXX")" || exit 1
-  # Write the set that was shown, not a fresh union: a key planted while the
-  # human read the prompt must not ride in on their yes.
-  if ! printf '%s\0' "${gb_union[@]}" >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
+  # Merge the set that was shown, not a fresh union, into the old baseline: a
+  # key planted while the human read the prompt must not ride in on their yes,
+  # and replacing would drop a pair that differs by context (git-hooks.nix
+  # writes core.hooksPath relative from the main checkout, absolute from a
+  # linked worktree), so accepts would flip-flop.
+  if ! printf '%s\0' "${gb_recs[@]}" "${gb_union[@]}" | LC_ALL=C sort -z -u >"$gb_tmp" ||
+    ! mv -f -- "$gb_tmp" "$baseline_file"; then
     rm -f -- "$gb_tmp"
     exit 1
   fi
@@ -4982,11 +4994,6 @@ EOF
   # shellcheck source=/dev/null
   . "$wt_git_lib"
 
-  _wt_cfg_baseline_init "$common" || {
-    note "git-config baseline unavailable"
-    exit 0
-  }
-
   # Latest status per worker across every crew; keep the ones in a terminal
   # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
@@ -5180,7 +5187,7 @@ SCAFFOLD
     # (#194). --no-hooks because the window is already gone; no -f, because a
     # genuinely dirty worktree must survive.
     # Per-call guard (#557): `wt remove` runs git in both contexts below.
-    if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard "$common"; then
+    if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
       note "keeping $branch — git config drift"
       continue
     fi
@@ -5209,7 +5216,7 @@ SCAFFOLD
       if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
-          if _wt_cfg_guard "$common"; then
+          if _wt_cfg_guard_cwd "$common"; then
             git branch -D "$branch" >/dev/null 2>&1 || true
           else
             note "kept local branch $branch — git config drift"
