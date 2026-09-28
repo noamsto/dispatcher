@@ -515,7 +515,7 @@ _add_dir_ok() {
     [ "${#_hino[@]}" -gt 0 ] || continue
     if [ -d "${_lres[_li]}" ]; then
       # defer the dir scan so links sharing or nesting an outside dir cost one
-      # find, not one each (see the batched scan after this loop)
+      # find, not one each
       _hdirs+=("${_lres[_li]}")
       _hlinks+=("${_links[_li]}")
     elif [ -f "${_lres[_li]}" ]; then
@@ -530,12 +530,10 @@ _add_dir_ok() {
     fi
   done
   if [ "${#_hdirs[@]}" -gt 0 ]; then
-    # One find per outside dir instead of one per symlink. A dir shared by
-    # several links is scanned once, and a dir nested in another is dropped
-    # only when that dir's own -xdev scan really reaches it: every path
-    # component between them stays on the ancestor's device, since a mount in
-    # between stops the -xdev descent. _hrep keeps the first link that reached
-    # each dir for the refusal message.
+    # One find per outside dir; a dir shared by several links is scanned once.
+    # A nested dir is dropped only when the ancestor's -xdev scan reaches it:
+    # every component between them on the ancestor's device (a mount stops the
+    # descent). _hrep keeps the first link per dir for the refusal message.
     local -A _hdev=() _hrep=()
     local -a _hscan=()
     local _hi _hdir _hanc _hhit _hrel _hwalk _hreach _hc _hrest
