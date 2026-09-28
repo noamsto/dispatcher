@@ -10614,6 +10614,52 @@ STUBEOF
   [[ "$output" == *"hard link"* ]]
 }
 
+@test "add-dir: a grant-held symlink to an outside hard link of a config file is refused" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/roots/stash" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/roots/stash/gc"
+  ln -s ../stash/gc "$T/roots/grant/l"
+
+  run _add_dir_ok "$T/roots/grant"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+}
+
+@test "add-dir: a grant-held symlink to an outside dir holding a hard link of a config file is refused" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/roots/stash" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/roots/stash/gc"
+  ln -s ../stash "$T/roots/grant/d"
+
+  run _add_dir_ok "$T/roots/grant"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+
+  rm "$T/roots/stash/gc"
+  cp "$HOME/.gitconfig" "$T/roots/stash/gc"
+  run _add_dir_ok "$T/roots/grant"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/grant" ]
+}
+
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
