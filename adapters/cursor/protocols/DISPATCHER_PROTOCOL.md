@@ -567,7 +567,11 @@ branch instead; the worktree carries over under `resume: true`.
   under a pid-namespaced sandbox, which hides it); `--role-watch` serves only a
   pane stamped with its role in a window stamped with its branch, never a lead,
   and types only msgs from that branch's lead or the window's stamped dispatcher,
-  reporting others to the dispatcher;
+  reporting others to the dispatcher as a `role_watch_drop` msg naming `from`: a
+  `worker:`/`role:` sender from another branch is a cross-grid write attempt to
+  surface to the human, anything else is a misrouted msg to resend from the
+  right id; a grid window stamped before `@crew_id` existed admits only its
+  lead until resumed;
   and `dispatch resume` refuses a worktree whose discovered crew dir, branch or
   git dir differs from the record `dispatch` wrote when it launched there.
   `git config <key>` in a linked worktree writes the repo's shared config,

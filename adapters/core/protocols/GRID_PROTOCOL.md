@@ -48,8 +48,10 @@ The watcher types only msgs from your lead (`worker:<branch>#s…`, any session
 number — a resumed lead still reaches you) or your crew's dispatcher
 (`dispatcher:<crew_id>`); anything else — another branch's worker or role,
 another crew's dispatcher, a sibling role — is dropped and reported to the
-dispatcher as a `role_watch_drop` event, never typed into your pane. Roles never
-message each other. This is a routing check, not authentication: the bus sender
+dispatcher as a `role_watch_drop` event, never typed into your pane. A window
+dispatched before the `@crew_id` stamp existed admits only the lead — the
+dispatcher cannot reach its roles and drops go unreported — until the task is
+resumed (`dispatch resume` stamps it). Roles never message each other. This is a routing check, not authentication: the bus sender
 is self-asserted and every actor shares one uid; what it prevents is a
 cross-branch `crew msg` landing as a user turn without the sender forging your
 lead's or dispatcher's id in call text the auto-mode classifier sees.
