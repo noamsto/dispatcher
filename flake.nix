@@ -31,70 +31,13 @@
         pkgs,
         config,
         ...
-      }: {
-        treefmt = {
-          projectRootFile = "flake.nix";
-          # Vendored shell is payload, not our source: it must stay
-          # byte-identical to upstream so this extraction can prove it changed
-          # no behaviour. They happen to be shfmt-clean today, so nothing is
-          # rewritten right now — the exclude is what keeps a future upstream
-          # edit from being silently reformatted on its way in.
-          # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
-          # dispatch-resume.sh carries byte-identical copies of crew.sh's
-          # liveness helpers (#461); shfmt would reformat some of them and
-          # sever the sync guarantee tests/adapters.bats pins.
-          settings.global.excludes = [
-            "adapters/core/crew.sh"
-            "adapters/core/dispatch.sh"
-            "adapters/core/dispatch-notify.sh"
-            "adapters/core/dispatch-resume.sh"
-            "adapters/claude-code/plugin/scripts/*"
-            "adapters/codex/plugin/scripts/*"
-          ];
-          programs = {
-            alejandra.enable = true;
-            shfmt = {
-              enable = true;
-              indent_size = 2;
-            };
-          };
-        };
-
-        pre-commit.settings.hooks = {
-          statix.enable = true;
-          deadnix.enable = true;
-          alejandra.enable = true;
-          shellcheck = {
-            enable = true;
-            # .envrc: sourced by direnv, no shebang (SC2148).
-            # .bats: a test DSL, not plain bash — shellcheck misparses `done`
-            # as a loop keyword (SC1010), the `VAR= cmd` idiom (SC1007), and
-            # bats-invoked helpers as dead (SC2329). CI lints core shell
-            # explicitly via `shellcheck adapters/core/*.sh`, not the tests.
-            excludes = ["^\\.envrc$" "\\.bats$"];
-          };
-          prettier = {
-            enable = true;
-            # .bats: prettier has no bats formatter and mangles the DSL.
-            #
-            # ^adapters/: all vendored payload or generator output, never
-            # hand-authored here. Reformatting it broke two things — it rewrote
-            # nested code fences inside a teammate prompt template (these files
-            # are instructions a model reads, so their bytes are content), and
-            # it would deadlock CI's drift gate, which regenerates the adapters
-            # and asserts no diff.
-            excludes = ["\\.bats$" "^adapters/"];
-          };
-          check-merge-conflicts.enable = true;
-          trim-trailing-whitespace.enable = true;
-        };
-
-        # Fails `nix flake check` on doc drift even without a full checkout run
-        # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
-        # role for dispatch.sh, but for the generated doc regions.
-        checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
-
-        packages = let
+      }: let
+        # mkPackages builds a system's package set with `lockedSettings` (a
+        # writeText'd JSON file, or null) baked into dispatch-config. The
+        # home-manager module (nix/hm-module.nix) calls this with its
+        # generated locked-settings file; `packages` and
+        # `legacyPackages.mkPackages` below just expose it per-system.
+        mkPackages = lockedSettings: let
           protocols = ./adapters/core/protocols;
           # @protocolDir@ is the build-time default for the env-overridable
           # PROTOCOL_DIR in dispatch.sh / dispatcher.sh. Substituting a store
@@ -134,7 +77,11 @@
           dispatchConfig = pkgs.writeShellApplication {
             name = "dispatch-config";
             runtimeInputs = with pkgs; [jq coreutils];
-            text = builtins.replaceStrings ["@defaultsJson@"] ["${./adapters/core/defaults.json}"] (builtins.readFile ./adapters/core/dispatch-config.sh);
+            text =
+              builtins.replaceStrings
+              (["@defaultsJson@"] ++ pkgs.lib.optional (lockedSettings != null) "@lockedSettings@")
+              (["${./adapters/core/defaults.json}"] ++ pkgs.lib.optional (lockedSettings != null) "${lockedSettings}")
+              (builtins.readFile ./adapters/core/dispatch-config.sh);
           };
           withConfig = builtins.replaceStrings ["@dispatchConfig@"] ["${dispatchConfig}/bin/dispatch-config"];
         in rec {
@@ -227,6 +174,72 @@
             paths = [crew dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
+      in {
+        treefmt = {
+          projectRootFile = "flake.nix";
+          # Vendored shell is payload, not our source: it must stay
+          # byte-identical to upstream so this extraction can prove it changed
+          # no behaviour. They happen to be shfmt-clean today, so nothing is
+          # rewritten right now — the exclude is what keeps a future upstream
+          # edit from being silently reformatted on its way in.
+          # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
+          # dispatch-resume.sh carries byte-identical copies of crew.sh's
+          # liveness helpers (#461); shfmt would reformat some of them and
+          # sever the sync guarantee tests/adapters.bats pins.
+          settings.global.excludes = [
+            "adapters/core/crew.sh"
+            "adapters/core/dispatch.sh"
+            "adapters/core/dispatch-notify.sh"
+            "adapters/core/dispatch-resume.sh"
+            "adapters/claude-code/plugin/scripts/*"
+            "adapters/codex/plugin/scripts/*"
+          ];
+          programs = {
+            alejandra.enable = true;
+            shfmt = {
+              enable = true;
+              indent_size = 2;
+            };
+          };
+        };
+
+        pre-commit.settings.hooks = {
+          statix.enable = true;
+          deadnix.enable = true;
+          alejandra.enable = true;
+          shellcheck = {
+            enable = true;
+            # .envrc: sourced by direnv, no shebang (SC2148).
+            # .bats: a test DSL, not plain bash — shellcheck misparses `done`
+            # as a loop keyword (SC1010), the `VAR= cmd` idiom (SC1007), and
+            # bats-invoked helpers as dead (SC2329). CI lints core shell
+            # explicitly via `shellcheck adapters/core/*.sh`, not the tests.
+            excludes = ["^\\.envrc$" "\\.bats$"];
+          };
+          prettier = {
+            enable = true;
+            # .bats: prettier has no bats formatter and mangles the DSL.
+            #
+            # ^adapters/: all vendored payload or generator output, never
+            # hand-authored here. Reformatting it broke two things — it rewrote
+            # nested code fences inside a teammate prompt template (these files
+            # are instructions a model reads, so their bytes are content), and
+            # it would deadlock CI's drift gate, which regenerates the adapters
+            # and asserts no diff.
+            excludes = ["\\.bats$" "^adapters/"];
+          };
+          check-merge-conflicts.enable = true;
+          trim-trailing-whitespace.enable = true;
+        };
+
+        # Fails `nix flake check` on doc drift even without a full checkout run
+        # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
+        # role for dispatch.sh, but for the generated doc regions.
+        checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+
+        packages = mkPackages null;
+
+        legacyPackages.mkPackages = mkPackages;
 
         devShells.default = pkgs.mkShell {
           inherit (config.pre-commit) shellHook;
