@@ -1093,17 +1093,64 @@ _symlink_chain_hops() {
   printf '%s\0' "$resolved"
 }
 
-# _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir
-# and common dir of every repo whose worktree contains <path>, then the global
-# core.hooksPath when it is absolute; also each .git entry and a gitfile's
-# gitdir: target as spelled, since git prints that target resolved. A grant
-# overlapping any of these is a grant on some repo's hooks or config: Husky's
-# .husky via core.hooksPath, a submodule's git dir under .git/modules. git
-# only reads config here, and the caller's repo-location, GIT_CONFIG and -c env
-# overrides are dropped so the answer comes from the human's own config. Fails
-# closed, printing why.
+# _git_config_files <dir> — print, NUL-terminated, every config file git reads
+# for <dir>, as git spells its origin (a relative origin joined to <dir>;
+# non-file origins skipped), then every include.path/includeIf.*.path target
+# whether or not it exists, since a worker could create it (a relative target
+# joined to its including file's dir). Env overrides are dropped as in
+# _git_protected_dirs. Fails closed, printing why.
+_git_config_files() {
+  local a="$1" f last="" kv v tf rc
+  tf=$(mktemp) || return 1
+  if ! env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+    git -C "$a" config --show-origin -z --list >"$tf"; then
+    rm -f "$tf"
+    printf >&2 'dispatch: git cannot list the config files of %s; refusing the grant\n' "$a"
+    return 1
+  fi
+  # -z output: an origin record, then a key<newline>value record
+  while IFS= read -r -d '' f && IFS= read -r -d '' kv; do
+    [[ $f == file:* && $f != "$last" ]] || continue
+    last="$f"
+    f="${f#file:}"
+    [[ $f == /* ]] || f="$a/$f"
+    printf '%s\0' "$f"
+  done <"$tf"
+  rc=0
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+    git -C "$a" config --show-origin -z --path --get-regexp '^include(if\..*)?\.path$' >"$tf" || rc=$?
+  # exit 1: no include is set
+  if [ "$rc" -gt 1 ]; then
+    rm -f "$tf"
+    printf >&2 'dispatch: git cannot list the config includes of %s; refusing the grant\n' "$a"
+    return 1
+  fi
+  while IFS= read -r -d '' f && IFS= read -r -d '' kv; do
+    [[ $f == file:* ]] || continue
+    f="${f#file:}"
+    [[ $f == /* ]] || f="$a/$f"
+    v="${kv#*$'\n'}"
+    [[ $v == /* ]] || v="${f%/*}/$v"
+    printf '%s\0' "$v"
+  done <"$tf"
+  rm -f "$tf"
+}
+
+# _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir,
+# common dir and .git entry of every repo whose worktree contains <path>, a
+# gitfile's gitdir: and a git dir's commondir as spelled, and the config
+# files and include targets git reads there, as git spells them (see
+# _git_config_files); then the global core.hooksPath when it is absolute,
+# the global and system config files and include targets, and the global
+# config candidates git reads when present, since a grant could create a
+# missing one. A grant overlapping any of these is a grant on some repo's
+# hooks or config: Husky's .husky via core.hooksPath, a submodule's git dir
+# under .git/modules, an included file a worker could fill with
+# core.hooksPath. git only reads config here, and the caller's repo-location,
+# GIT_CONFIG and -c env overrides are dropped so the answer comes from the
+# human's own config. Fails closed, printing why.
 _git_protected_dirs() {
-  local a="$1" out rc
+  local a="$1" out gd rc
   local -a lines
   while :; do
     if [ -e "$a/.git" ] || [ -L "$a/.git" ]; then
@@ -1127,16 +1174,25 @@ _git_protected_dirs() {
         [[ $out == /* ]] || out="$a/$out"
         printf '%s\0' "$out"
       done
-      # git prints a gitfile's target symlink-resolved, so walk the .git entry
-      # and its gitdir: line as spelled; git has already validated both
       printf '%s\0' "$a/.git"
+      # git prints both dirs resolved; walk a gitfile's gitdir: and the
+      # commondir as spelled so a link on either path is a hop
+      gd="$a/.git"
       if [ -f "$a/.git" ]; then
         IFS= read -r -d '' out <"$a/.git" || :
         while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
         out="${out#gitdir: }"
         [[ $out == /* ]] || out="$a/$out"
         printf '%s\0' "$out"
+        gd="$out"
       fi
+      if [ -f "$gd/commondir" ]; then
+        IFS= read -r -d '' out <"$gd/commondir" || :
+        while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
+        [[ $out == /* ]] || out="$gd/$out"
+        printf '%s\0' "$out"
+      fi
+      _git_config_files "$a" || return 1
     fi
     [ "$a" != / ] || break
     a="${a%/*}"
@@ -1158,6 +1214,14 @@ _git_protected_dirs() {
     return 1
     ;;
   esac
+  _git_config_files / || return 1
+  if [ -n "${GIT_CONFIG_GLOBAL:-}" ]; then
+    [[ $GIT_CONFIG_GLOBAL != /* ]] || printf '%s\0' "$GIT_CONFIG_GLOBAL"
+  else
+    for out in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; do
+      [[ $out != /* ]] || printf '%s\0' "$out"
+    done
+  fi
 }
 
 # _add_dir_ok <path> — print <path>'s canonical form if it may be granted to a
@@ -1183,11 +1247,13 @@ _git_protected_dirs() {
 # inside an intermediate hop is not: that cannot retarget the hop itself.
 # A later check also refuses a grant containing a .git or .claude entry, then
 # one equal to, inside or above the hooks dir, git dir or common dir of any
-# repo whose worktree contains it, or an absolute global core.hooksPath (see
-# _git_protected_dirs). Not caught: a commondir file spelled through a symlink
-# inside the grant (git prints the common dir resolved, so that link is never a
-# hop), and an include.path/includeIf.*.path naming a file inside the grant,
-# through which a worker could set core.hooksPath.
+# repo whose worktree contains it, a config file or include target git reads
+# for it, or an absolute global core.hooksPath (see _git_protected_dirs).
+# Every symlink inside the grant is resolved too, and one whose target lies
+# outside the grant and contains a hop of, or lies inside, any protected
+# chain is refused: git reports those dirs resolved, so whichever file
+# spelled a path through the grant, git's answer lands under the link's
+# target.
 _add_dir_ok() {
   local p h hs c s r g ok=""
   local -a roots
@@ -1246,24 +1312,35 @@ _add_dir_ok() {
       rm -f "$_f"
     fi
   done
-  local hit
-  hit="$(find "$p" -xdev \( -name .git -o -name .claude \) -print -quit 2>/dev/null)" || {
+  local _lf _le _li _lt _gi _gown
+  local -a _links=() _lres=()
+  _lf=$(mktemp) || return 1
+  if ! find "$p" -xdev \( \( -name .git -o -name .claude \) -print0 -quit \) -o \( -type l -print0 \) >"$_lf" 2>/dev/null; then
+    rm -f "$_lf"
     printf >&2 'dispatch: find failed scanning %s for embedded repos; refusing the grant\n' "$p"
     return 1
-  }
-  if [ -n "$hit" ]; then
-    printf >&2 'dispatch: %s contains a .git or .claude entry (%s); grant its narrowest subdir instead\n' "$p" "$hit"
-    return 1
   fi
+  # shellcheck disable=SC2094 # rm only in the early-exit branch, not while reading
+  while IFS= read -r -d '' _le; do
+    case "${_le##*/}" in
+    .git | .claude)
+      rm -f "$_lf"
+      printf >&2 'dispatch: %s contains a .git or .claude entry (%s); grant its narrowest subdir instead\n' "$p" "$_le"
+      return 1
+      ;;
+    esac
+    _links+=("$_le")
+  done <"$_lf"
   local _gf _gd _ghf _ghop _gn _ghit
-  local -a _ghops
-  _gf=$(mktemp) || return 1
-  _git_protected_dirs "$p" > "$_gf" || { rm -f "$_gf"; return 1; }
+  # every hop and every final target, each beside the protected path it came from
+  local -a _ghops _ghall=() _ghallo=() _gres=() _greso=()
+  _gf=$(mktemp) || { rm -f "$_lf"; return 1; }
+  _git_protected_dirs "$p" > "$_gf" || { rm -f "$_gf" "$_lf"; return 1; }
   # shellcheck disable=SC2094 # rm only in the early-exit branches, not while reading
   while IFS= read -r -d '' _gd; do
-    _ghf=$(mktemp) || { rm -f "$_gf"; return 1; }
+    _ghf=$(mktemp) || { rm -f "$_gf" "$_lf"; return 1; }
     if ! _symlink_chain_hops "$_gd" > "$_ghf"; then
-      rm -f "$_gf" "$_ghf"
+      rm -f "$_gf" "$_ghf" "$_lf"
       printf >&2 'dispatch: symlink chain too deep or unreadable resolving %s; refusing the grant\n' "$_gd"
       return 1
     fi
@@ -1275,16 +1352,54 @@ _add_dir_ok() {
     _ghit=""
     for _ghop in "${_ghops[@]}"; do
       [[ "$_ghop/" != "$p/"* ]] || _ghit=1
+      _ghall+=("$_ghop")
+      _ghallo+=("$_gd")
     done
     _gn="${#_ghops[@]}"
     [[ "$p/" != "${_ghops[$((_gn - 1))]}/"* ]] || _ghit=1
+    _gres+=("${_ghops[$((_gn - 1))]}")
+    _greso+=("$_gd")
     if [ -n "$_ghit" ]; then
-      rm -f "$_gf"
-      printf >&2 'dispatch: %s overlaps git hooks or git dir %s; grant a dir outside it\n' "$p" "$_gd"
+      rm -f "$_gf" "$_lf"
+      printf >&2 'dispatch: %s overlaps git hooks, git dir or config file %s; grant a dir outside it\n' "$p" "$_gd"
       return 1
     fi
   done < "$_gf"
   rm -f "$_gf"
+  if [ "${#_links[@]}" -gt 0 ]; then
+    if ! printf '%s\0' "${_links[@]}" | xargs -0 realpath -m -z -- >"$_lf"; then
+      rm -f "$_lf"
+      printf >&2 'dispatch: cannot resolve the symlinks in %s; refusing the grant\n' "$p"
+      return 1
+    fi
+    while IFS= read -r -d '' _lt; do
+      _lres+=("$_lt")
+    done <"$_lf"
+  fi
+  rm -f "$_lf"
+  if [ "${#_lres[@]}" -ne "${#_links[@]}" ]; then
+    printf >&2 'dispatch: cannot resolve the symlinks in %s; refusing the grant\n' "$p"
+    return 1
+  fi
+  for _li in "${!_links[@]}"; do
+    # the trailing slash makes a link to / compare as /
+    _lt="${_lres[_li]%/}/"
+    # a target inside the grant is covered by the grant's own checks
+    [[ $_lt != "$p/"* ]] || continue
+    _gown=""
+    for _gi in "${!_ghall[@]}"; do
+      [[ "${_ghall[_gi]%/}/" != "$_lt"* ]] || { _gown="${_ghallo[_gi]}"; break; }
+    done
+    if [ -z "$_gown" ]; then
+      for _gi in "${!_gres[@]}"; do
+        [[ $_lt != "${_gres[_gi]%/}/"* ]] || { _gown="${_greso[_gi]}"; break; }
+      done
+    fi
+    if [ -n "$_gown" ]; then
+      printf >&2 'dispatch: %s holds symlink %s to %s, which overlaps git hooks, git dir or config file %s; grant a dir without it\n' "$p" "${_links[_li]}" "${_lres[_li]}" "$_gown"
+      return 1
+    fi
+  done
   printf '%s\n' "$p"
 }
 
@@ -3102,7 +3217,7 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir, not holding a repo's git config file or a symlink into or over its hooks/git dir" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")
