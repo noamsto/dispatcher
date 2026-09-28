@@ -479,10 +479,11 @@ branch instead; the worktree carries over under `resume: true`.
   `lnk/..` resolves to the link target's parent); links on a filesystem mounted
   inside the grant (the scan stays on one filesystem); a grant-held link into
   another repo that does not contain the grant; an include named only by a file
-  that a currently non-matching `includeIf` pulls in; a hook file that is
-  itself a symlink out of the hooks dir; a hard link to a hook or config file;
-  and links the worker plants after the grant, until the next re-check drops
-  it. Other
+  that a currently non-matching `includeIf` pulls in; a `core.hooksPath` with a
+  `:(optional)` prefix naming a missing dir, which git treats as unset; a hook
+  file that is itself a symlink out of the hooks dir; a hard link to a hook or
+  config file; and links the worker plants after the grant, until the next
+  re-check drops it. Other
   exec-capable repo config (`core.fsmonitor`, filter drivers) is not covered by
   this check.
 
