@@ -530,13 +530,15 @@ _add_dir_ok() {
     fi
   done
   if [ "${#_hdirs[@]}" -gt 0 ]; then
-    # One find per outside dir instead of one per symlink. A dir nested in
-    # another on the same device is reached by that dir's own -xdev scan, so it
-    # is dropped; a dir shared by several links is scanned once. _hrep keeps
-    # the first link that reached each dir for the refusal message.
+    # One find per outside dir instead of one per symlink. A dir shared by
+    # several links is scanned once, and a dir nested in another is dropped
+    # only when that dir's own -xdev scan really reaches it: every path
+    # component between them stays on the ancestor's device, since a mount in
+    # between stops the -xdev descent. _hrep keeps the first link that reached
+    # each dir for the refusal message.
     local -A _hdev=() _hrep=()
-    local -a _hscan=()
-    local _hi _hdir _hanc _hhit
+    local -a _hscan=() _hcomps=()
+    local _hi _hdir _hanc _hhit _hrel _hwalk _hreach _hc
     for _hi in "${!_hdirs[@]}"; do
       _hdir="${_hdirs[_hi]}"
       [ -n "${_hrep[$_hdir]+x}" ] || _hrep[$_hdir]="${_hlinks[_hi]}"
@@ -551,7 +553,20 @@ _add_dir_ok() {
       for _hanc in "${!_hrep[@]}"; do
         [ "$_hanc" != "$_hdir" ] || continue
         [[ "${_hdir}/" == "${_hanc}/"* ]] || continue
-        if [ -n "${_hdev[$_hdir]}" ] && [ "${_hdev[$_hdir]}" = "${_hdev[$_hanc]}" ]; then
+        [ -n "${_hdev[$_hdir]}" ] || continue
+        [ "${_hdev[$_hdir]}" = "${_hdev[$_hanc]}" ] || continue
+        _hrel="${_hdir#"$_hanc"/}"
+        _hwalk="$_hanc"
+        _hreach=1
+        IFS=/ read -ra _hcomps <<<"$_hrel"
+        for _hc in "${_hcomps[@]}"; do
+          _hwalk="$_hwalk/$_hc"
+          if [ "$(stat -L -c %d -- "$_hwalk" 2>/dev/null)" != "${_hdev[$_hanc]}" ]; then
+            _hreach=""
+            break
+          fi
+        done
+        if [ -n "$_hreach" ]; then
           _hhit=1
           break
         fi

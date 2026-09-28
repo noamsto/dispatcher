@@ -11034,6 +11034,41 @@ STUBEOF
   [ "$output" = "$T/roots/grant" ]
 }
 
+@test "add-dir: a mount between nested outside dirs does not hide a hard link from the batched scan" {
+  command -v unshare >/dev/null || skip "unshare is not installed"
+  unshare -rm true 2>/dev/null || skip "no unprivileged mount namespace"
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/hidden" "$T/roots/outside" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/hidden/gc"
+  # the grant holds a symlink to the outside dir A and one to A/c/d, a dir on
+  # A's own device but behind a different-device tmpfs mount at A/c: a -xdev
+  # scan of A cannot reach it, so the batched scan must still scan A/c/d
+  ln -s ../outside "$T/roots/grant/a"
+  ln -s ../outside/c/d "$T/roots/grant/b"
+
+  run unshare -rm bash -c '
+    set -e
+    mkdir -p "$0/outside/c" || exit 2
+    mount -t tmpfs tmpfs "$0/outside/c" || exit 2
+    mkdir -p "$0/outside/c/d" || exit 2
+    mount --bind "$1" "$0/outside/c/d" || exit 2
+    . "$2" || exit 2
+    _add_dir_ok "$3"
+  ' "$T/roots" "$T/hidden" "$GRANT_CHECK_LIB" "$T/roots/grant"
+  [ "$status" -eq 2 ] && skip "cannot set up a private mount namespace here"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+}
+
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
