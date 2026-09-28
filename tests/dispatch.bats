@@ -9748,3 +9748,137 @@ STUBEOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"git cannot resolve the hooks and git dirs of $T/roots/broken"* ]]
 }
+
+@test "add-dir: a symlink on a gitfile's spelled gitdir path refuses a grant holding the link" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  # git reports the git dir as $T/store/gd, but a worker holding sub could
+  # retarget sub/lnk at a git dir of its own.
+  git init -q --bare "$T/store/gd"
+  mkdir -p "$T/roots/proj/sub" "$T/roots/proj/docs"
+  ln -s "$T/store" "$T/roots/proj/sub/lnk"
+  printf 'gitdir: %s\n' "$T/roots/proj/sub/lnk/gd" >"$T/roots/proj/.git"
+
+  run _add_dir_ok "$T/roots/proj/sub"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks or git dir $T/roots/proj/sub/lnk/gd"* ]]
+  run _add_dir_ok "$T/roots/proj/docs"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/proj/docs" ]
+
+  printf 'gitdir: sub/lnk/gd\n' >"$T/roots/proj/.git"
+  run _add_dir_ok "$T/roots/proj/sub"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks or git dir $T/roots/proj/sub/lnk/gd"* ]]
+}
+
+@test "add-dir: a grant inside the worktree holding the gitfile its symlinked .git points at is refused" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  # A worker holding meta could rewrite the gitfile to name a git dir of its own.
+  git init -q --bare "$T/store/gd"
+  mkdir -p "$T/roots/wt/meta" "$T/roots/wt/docs"
+  printf 'gitdir: %s\n' "$T/store/gd" >"$T/roots/wt/meta/gitfile"
+  ln -s meta/gitfile "$T/roots/wt/.git"
+
+  run _add_dir_ok "$T/roots/wt/meta"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks or git dir $T/roots/wt/.git"* ]]
+  run _add_dir_ok "$T/roots/wt/docs"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/wt/docs" ]
+}
+
+@test "add-dir: GIT_CONFIG in the caller's env does not hide a global core.hooksPath" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  mkdir -p "$T/roots/shared-hooks"
+  printf '[core]\n\thooksPath = %s\n' "$T/roots/shared-hooks" >"$T/gitconfig"
+  export GIT_CONFIG_GLOBAL="$T/gitconfig"
+  export GIT_CONFIG=/dev/null
+
+  run _add_dir_ok "$T/roots/shared-hooks"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks or git dir $T/roots/shared-hooks"* ]]
+}
+
+@test "add-dir: GIT_DIR in the caller's env does not redirect a containing repo's hooks lookup" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  git init -q "$T/unrelated"
+  git init -q "$T/roots/repo"
+  git -C "$T/roots/repo" config core.hooksPath .husky
+  mkdir -p "$T/roots/repo/.husky"
+
+  export GIT_DIR="$T/unrelated/.git"
+  run _add_dir_ok "$T/roots/repo/.husky"
+  unset GIT_DIR
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks or git dir $T/roots/repo/.husky"* ]]
+}
+
+@test "add-dir: _add_dir_ok fails closed when git cannot read the global config" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  mkdir -p "$T/roots/other"
+  printf '[core\n' >"$T/gitconfig"
+  export GIT_CONFIG_GLOBAL="$T/gitconfig"
+
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"git cannot read the global core.hooksPath"* ]]
+}
+
+@test "add-dir: _add_dir_ok fails closed when a hooks path holds a newline" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+
+  git init -q "$T/roots/repo"
+  git -C "$T/roots/repo" config core.hooksPath "$(printf '.hu\nsky')"
+  mkdir -p "$T/roots/repo/docs"
+
+  run _add_dir_ok "$T/roots/repo/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot parse the hooks and git dirs of $T/roots/repo"* ]]
+}

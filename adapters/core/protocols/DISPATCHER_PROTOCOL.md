@@ -431,21 +431,26 @@ branch instead; the worktree carries over under `resume: true`.
   dirs. Plus `git config --path --get core.hooksPath` outside any repo for an
   absolute user-wide value. Each of those dirs' symlink chains is walked hop by hop
   as for the secrets dirs above. git only reads config there (no hooks, fsmonitor
-  or filters run); `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and command-line
-  `-c` config (`GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_COUNT`) are dropped from its
-  env so the answer is the human's own config. Paths are taken as git spells
-  them, not resolved, so a symlink on the way is itself a hop. A git error
-  (e.g. an invalid gitfile, a repo git refuses) fails closed. The re-check (resume, `--spawn-role`, re-dispatch) applies the
-  same rule, so a grant that a later `core.hooksPath` change puts in scope is
-  dropped via "dropping invalid grant". Residuals, not enforced: a bare repo (no
-  `.git` entry) that the grant is inside or contains; a repo *not* on the grant's
-  ancestor chain whose repo-level `core.hooksPath` is an absolute dir elsewhere
-  (e.g. repo X with `hooksPath=~/shared-hooks`, grant `~/shared-hooks`) —
-  unenforceable without a machine-wide repo scan; and the re-check reads config
-  in the launching process's env, so a `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM`
-  override there only loses freshness for the global value, which was checked at
-  dispatch time. Other exec-capable repo config (`core.fsmonitor`, filter drivers)
-  is not covered by this check.
+  or filters run); `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CONFIG` and
+  command-line `-c` config (`GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_COUNT`) are
+  dropped from its env so the answer is the human's own config. Paths are taken
+  as git prints them, not re-resolved, so a symlink on the way is itself a hop;
+  git prints a gitfile's target already resolved, so the `.git` entry itself and
+  its `gitdir:` line as spelled are walked too. A git error (e.g. an invalid
+  gitfile, or a repo git refuses to open) fails closed. The re-check (resume,
+  `--spawn-role`, re-dispatch) applies the same rule, so a grant that a later
+  `core.hooksPath` change puts in scope is dropped via "dropping invalid grant".
+  Residuals, not enforced: a bare repo (no `.git` entry) that the grant is inside
+  or contains; a repo *not* on the grant's ancestor chain whose repo-level
+  `core.hooksPath` is an absolute dir elsewhere (e.g. repo X with
+  `hooksPath=~/shared-hooks`, grant `~/shared-hooks`) — unenforceable without a
+  machine-wide repo scan; a global `core.hooksPath` set only under a conditional
+  include (`includeIf "gitdir:…"`), which repos matching it see but the lookup
+  outside any repo does not, so its dir is grantable from outside those repos;
+  and the re-check reads config in the launching process's env, so a
+  `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` override there only loses freshness
+  for the global value, which was checked at dispatch time. Other exec-capable
+  repo config (`core.fsmonitor`, filter drivers) is not covered by this check.
 
   The grant is read-write **in effect** for a claude worker:
   it is a working directory, so prompt-free reads and edits (per the permission mode)

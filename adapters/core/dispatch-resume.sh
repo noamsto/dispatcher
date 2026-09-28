@@ -199,7 +199,7 @@ _git_protected_dirs() {
   while :; do
     if [ -e "$a/.git" ] || [ -L "$a/.git" ]; then
       # the x sentinel keeps a path's trailing newline from $(...) stripping
-      out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+      out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
         git -C "$a" rev-parse --git-path hooks --git-dir --git-common-dir && printf x)" || {
         printf >&2 'dispatch: git cannot resolve the hooks and git dirs of %s; refusing the grant\n' "$a"
         return 1
@@ -218,13 +218,23 @@ _git_protected_dirs() {
         [[ $out == /* ]] || out="$a/$out"
         printf '%s\0' "$out"
       done
+      # git prints a gitfile's target symlink-resolved, so walk the .git entry
+      # and its gitdir: line as spelled; git has already validated both
+      printf '%s\0' "$a/.git"
+      if [ -f "$a/.git" ]; then
+        IFS= read -r -d '' out <"$a/.git" || :
+        while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
+        out="${out#gitdir: }"
+        [[ $out == /* ]] || out="$a/$out"
+        printf '%s\0' "$out"
+      fi
     fi
     [ "$a" != / ] || break
     a="${a%/*}"
     a="${a:-/}"
   done
   rc=0
-  out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+  out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
     git -C / config --path --get core.hooksPath && printf x)" || rc=$?
   case $rc in
   0)
