@@ -10465,6 +10465,155 @@ STUBEOF
   [ "$output" = "$T/roots/dotfiles/other" ]
 }
 
+@test "add-dir: a hook file symlinked out of the hooks dir refuses a grant holding its target, allows a sibling" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/scripts/githooks" "$T/roots/repo/docs"
+  printf '#!/bin/sh\n' >"$T/roots/repo/scripts/githooks/pre-commit"
+  chmod +x "$T/roots/repo/scripts/githooks/pre-commit"
+  ln -s ../../scripts/githooks/pre-commit "$T/roots/repo/.git/hooks/pre-commit"
+
+  run _add_dir_ok "$T/roots/repo/scripts/githooks"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+  [[ "$output" == *"$T/roots/repo/.git/hooks/pre-commit"* ]]
+
+  run _add_dir_ok "$T/roots/repo/scripts"
+  [ "$status" -eq 1 ]
+
+  run _add_dir_ok "$T/roots/repo/docs"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/repo/docs" ]
+}
+
+@test "add-dir: a grant-held symlink into a symlinked hook's target is refused" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/scripts/githooks" "$T/roots/repo/docs"
+  printf '#!/bin/sh\n' >"$T/roots/repo/scripts/githooks/pre-commit"
+  chmod +x "$T/roots/repo/scripts/githooks/pre-commit"
+  ln -s ../../scripts/githooks/pre-commit "$T/roots/repo/.git/hooks/pre-commit"
+  ln -s ../scripts/githooks "$T/roots/repo/docs/x"
+
+  run _add_dir_ok "$T/roots/repo/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+}
+
+@test "add-dir: a global core.hooksPath entry symlinked elsewhere refuses its target" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  mkdir -p "$T/hooks" "$T/roots/tools" "$T/roots/other"
+  git config --file "$T/gc" core.hooksPath "$T/hooks"
+  printf '#!/bin/sh\n' >"$T/roots/tools/pp"
+  chmod +x "$T/roots/tools/pp"
+  ln -s "$T/roots/tools/pp" "$T/hooks/pre-push"
+
+  run _add_dir_ok "$T/roots/tools"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/other" ]
+}
+
+@test "add-dir: a hard link to a hook file refuses the grant holding it" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/other"
+  printf '#!/bin/sh\n' >"$T/roots/repo/.git/hooks/pre-commit"
+  chmod +x "$T/roots/repo/.git/hooks/pre-commit"
+  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/other/pc"
+
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+
+  rm "$T/roots/other/pc"
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/other" ]
+}
+
+@test "add-dir: a hard link to the global gitconfig refuses the grant holding it" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/roots/dot" "$T/roots/plain"
+  ln "$HOME/.gitconfig" "$T/roots/dot/gc"
+
+  run _add_dir_ok "$T/roots/dot"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+
+  printf 'a\n' >"$T/roots/plain/a"
+  ln "$T/roots/plain/a" "$T/roots/plain/b"
+  run _add_dir_ok "$T/roots/plain"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/plain" ]
+}
+
+@test "add-dir: a hard link to a symlinked hook's target is refused" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/scripts/githooks" "$T/roots/other"
+  printf '#!/bin/sh\n' >"$T/roots/repo/scripts/githooks/pre-commit"
+  chmod +x "$T/roots/repo/scripts/githooks/pre-commit"
+  ln -s ../../scripts/githooks/pre-commit "$T/roots/repo/.git/hooks/pre-commit"
+  ln "$T/roots/repo/scripts/githooks/pre-commit" "$T/roots/other/x"
+
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+}
+
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
