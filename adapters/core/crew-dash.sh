@@ -58,7 +58,7 @@ cp_width() {
 # forks): this runs on every line of every interactive repaint.
 trunc() {
   local w=$1 s=$2
-  if [[ "$s" != *[![:ascii:]]* ]]; then
+  if [[ $s != *[![:ascii:]]* ]]; then
     if ((${#s} <= w)); then
       TRUNC_RESULT="$s"
     elif ((w <= 1)); then
