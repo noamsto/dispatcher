@@ -750,6 +750,12 @@ _anchor_mismatch() { # $1=label $2=discovered $3=recorded
 [ "${_anchor_lines[2]:-}" = "$branch" ] || _anchor_mismatch "branch" "$branch" "${_anchor_lines[2]:-}"
 [ "${_anchor_lines[3]:-}" = "$_gitdir_real" ] || _anchor_mismatch "git dir" "$_gitdir_real" "${_anchor_lines[3]:-}"
 
+# Anchored crew dir is now trusted; refuse a drifted config before it reaches
+# the launch script (#557).
+if ! _wt_cfg_baseline_init "${_crew_dir_real%/crew}" || ! _wt_cfg_guard "${_crew_dir_real%/crew}"; then
+  exit 1
+fi
+
 # Header reader. `cut -d' ' -f2-` keeps values containing spaces (title), and
 # -m1 pins the first occurrence so a value echoed inside the ## Task body
 # cannot shadow the header.

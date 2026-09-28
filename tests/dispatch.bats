@@ -3532,6 +3532,105 @@ EOF
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
+@test "--pr never runs a worker-planted clean filter (#557)" {
+  # #557: --pr's status/reset calls must never run a clean filter a worker
+  # planted in the common config by writing it through the worktree. The
+  # tracked file is committed empty, so git status must rehash it (a zero
+  # index size forces a rehash) and the clean filter really would run.
+  printf '' >"$TEST_REPO/f"
+  printf 'f filter=x\n' >"$TEST_REPO/.gitattributes"
+  git -C "$TEST_REPO" add f .gitattributes
+  git -C "$TEST_REPO" commit -q -m 'track f under filter x'
+  setup_stale_pr_worktree eng-557-filter
+  wt_path="$TEST_REPO/.worktrees/eng-557-filter"
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+cat
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  run bash -euo pipefail "$CREW_REAL" git-baseline
+  git -C "$TEST_REPO" config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
+  echo x >"$wt_path/f"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"filter.x.clean"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "dispatch refuses at entry before minting on drift (#557)" {
+  # #557: an exec-capable key planted before dispatch even starts must be
+  # caught before any scaffolding — no issue minted, no worktree switched.
+  mint_spec
+  stub_launch_bins
+  stub_gh_claim "" 77
+  run bash -euo pipefail "$CREW_REAL" git-baseline
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  git -C "$TEST_REPO" config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "a key planted mid-dispatch is caught before wt switch (#557)" {
+  # #557: a key planted as a side effect mid-dispatch (simulated here inside
+  # the stubbed `gh pr view` call) must still be caught by dispatch's own
+  # later git calls, before it ever reaches `wt switch`. The sentinel here is
+  # not red evidence (sshCommand only fires against a real network remote,
+  # never a local origin) — the discriminating checks are the refusal itself
+  # and that `wt switch` is never reached.
+  setup_stale_pr_worktree eng-557-mid
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  run bash -euo pipefail "$CREW_REAL" git-baseline
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+pr\ view\ *)
+  git -C "$TEST_REPO" config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  printf '{"headRefName":"%s","headRefOid":"%s","baseRefName":"extract","isCrossRepository":false,"state":"OPEN"}\n' "$STALE_HEAD" "$STALE_NEW_OID"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "baseline human keys do not refuse dispatch (#557)" {
+  # #557 TOFU: hooksPath and credential.helper already present when the
+  # baseline is first seeded are the human's own and must never refuse a
+  # normal dispatch.
+  stub_launch_bins
+  git -C "$TEST_REPO" config core.hooksPath .husky
+  git -C "$TEST_REPO" config credential.helper store
+  run bash -euo pipefail "$CREW_REAL" git-baseline
+  grep -q 'core.hookspath' "$TEST_REPO/.git/crew/git-config-baseline"
+  stub_gh_claim "" ""
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
+}
+
 @test "--pr treats a leftover WORKER_TASK.md alone as clean, not dirty" {
   # WORKER_TASK.md is intentionally untracked and is never cleaned up on
   # reclaim (only `crew reap` trashes it) — a re-dispatch onto a --pr worktree

@@ -187,6 +187,29 @@ EOF
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
 }
 
+@test "resume refuses on a worker-planted include (#557)" {
+  # #557: a worker's `git config include.path <file>` in the worktree writes
+  # the COMMON config that dispatcher-run git (here, resume's own ls-files
+  # and status calls) reads; a key planted after the baseline was seeded
+  # must refuse resume outright.
+  setup_worker_wt
+  run bash -euo pipefail "$CREW_REAL" git-baseline
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  cat >"$BATS_TEST_TMPDIR/include.gitconfig" <<EOF
+[filter "x"]
+	smudge = $BATS_TEST_TMPDIR/hit.sh
+EOF
+  git -C "$TEST_REPO" config include.path "$BATS_TEST_TMPDIR/include.gitconfig"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"include.path"* ]]
+}
+
 @test "refuses on a detached HEAD" {
   setup_worker_wt
   git -C "$WT" checkout -q --detach
