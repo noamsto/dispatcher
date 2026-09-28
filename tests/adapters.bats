@@ -92,13 +92,14 @@ teardown() {
   # multi-line ones are 2-space indented and end at the first `  }`.
   crew="$ROOT/adapters/core/crew.sh"
   disp="$ROOT/adapters/core/dispatch.sh"
-  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt; do
+  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt _box_rows _claude_idle_box; do
     canonical="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$crew")"
     [ -n "$canonical" ]
     found="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$disp")"
     [ "$found" = "$canonical" ]
   done
-  for prefix in '  re_option=' '  re_meter=' '  re_subrow=' '  _meter_line() ' '  _has_subrow() '; do
+  for prefix in '  re_option=' '  re_meter=' '  re_subrow=' '  _meter_line() ' '  _has_subrow() ' \
+    '  csi_re=' '  _rw_esc=' '  _rw_ghost_marker='; do
     canonical="$(grep -hF -- "$prefix" "$crew")"
     [ -n "$canonical" ]
     [ "$(printf '%s\n' "$canonical" | wc -l)" -eq 1 ]

@@ -161,7 +161,11 @@ EOF
 # `list-windows -F …@crew_branch…` (the orphan-window report, run on every
 # reap) answers from `$STUB_DIR/wins3.txt` if the test wrote one, else empty —
 # most tests have no orphan to report. `capture-pane -t <pane>` answers from
-# `$STUB_DIR/frames/<pane>` if the test wrote one, else empty (no capture).
+# `$STUB_DIR/frames/<pane>` if the test wrote one, else empty (no capture);
+# with `-e` (colored) it prefers `frames/<pane>.e`. The Nth plain capture of a
+# pane answers from `frames/<pane>.<N>` when that exists, and runs
+# `frames/<pane>.<N>.hook` first when that exists — how a test changes the
+# pane, or the bus, between reap's two samples.
 stub_tmux_frames() {
   STUB_DIR="${STUB_DIR:-$(mktemp -d)}"
   STUB_LOG="${STUB_LOG:-$STUB_DIR/calls.log}"
@@ -192,7 +196,19 @@ capture-pane)
     [ "$prev" = "-t" ] && pane="$a"
     prev="$a"
   done
-  [ -f "$STUB_DIR/frames/$pane" ] && cat "$STUB_DIR/frames/$pane"
+  f="$STUB_DIR/frames/$pane"
+  case " $* " in
+  *" -e "*)
+    [ -f "$f.e" ] && f="$f.e"
+    ;;
+  *)
+    n=$(($(cat "$f.n" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"$f.n"
+    [ -x "$f.$n.hook" ] && "$f.$n.hook"
+    [ -f "$f.$n" ] && f="$f.$n"
+    ;;
+  esac
+  [ -f "$f" ] && cat "$f"
   ;;
 display-message) : ;;
 esac
@@ -631,7 +647,7 @@ EOF
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]
-  [[ "$output" == *"reap takes --quiet, --dry-run and --idle S"* ]]
+  [[ "$output" == *"reap takes --quiet, --dry-run, --no-wait and --idle S"* ]]
 }
 
 @test "reap: is a no-op when the bus has no events" {
@@ -3588,7 +3604,7 @@ EOF
   grep -q 'kill-window -t @1' "$STUB_LOG"
 }
 
-@test "reap: merged + done + meter frame is kept — turn in progress" {
+@test "reap: merged + done + meter frame is kept — live turn" {
   git commit -q --allow-empty -m init
   git branch feat/meter-keep
   wt_path="$BATS_TEST_TMPDIR/meter-keep-wt"
@@ -3608,8 +3624,7 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/meter-keep#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"an engine is still running there"* ]]
-  [[ "$output" == *"turn in progress"* ]]
+  [[ "$output" == *"an engine is still running there (live turn, unsent input, or no idle input box)"* ]]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -3838,10 +3853,35 @@ EOF
   echo $$ >"$log_dir/reap.lock.d/pid"
   stub_bin gh
   stub_bin wt
-  CREW_ID=c1 run run_crew reap
+  CREW_ID=c1 run run_crew reap --no-wait
   [ "$status" -eq 0 ]
   [[ "$output" == *"another reap is running — skipped"* ]]
   run ! grep -q 'pr' "$STUB_LOG"
+}
+
+@test "reap: by default waits out a live reap.lock.d, then does its work" {
+  git commit -q --allow-empty -m init
+  git branch feat/lock-wait
+  wt_path="$BATS_TEST_TMPDIR/lock-wait-wt"
+  git worktree add -q "$wt_path" feat/lock-wait
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" ""
+  CREW_ID=c1 run_crew status "worker:feat/lock-wait#s1-1" done "" "https://example.com/pr/1"
+  log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  sleep 2 &
+  holder=$!
+  mkdir -p "$log_dir/reap.lock.d"
+  echo "$holder" >"$log_dir/reap.lock.d/pid"
+  start=$(date +%s)
+  CREW_ID=c1 run run_crew reap --quiet
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [ "$(($(date +%s) - start))" -ge 1 ]
+  [[ "$output" == *"reaped feat/lock-wait"* ]]
+  [[ "$output" != *"skipped"* ]]
 }
 
 @test "reap: an idle frame is still classified idle under LC_ALL=C" {
@@ -3883,6 +3923,220 @@ EOF
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/idle-nbsp"* ]]
+}
+
+# reap_idle_fixture <slug> [engine] — a done worker whose PR merged, at a
+# fresh worktree with one <engine> (default claude) pane %1 in window @1. The
+# caller writes the pane's frame(s) and runs reap.
+reap_idle_fixture() {
+  git commit -q --allow-empty -m init
+  git branch "feat/$1"
+  wt_path="$BATS_TEST_TMPDIR/$1-wt"
+  git worktree add -q "$wt_path" "feat/$1"
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\t%s\t%s\n' "${2:-claude}" "$wt_path")"
+  CREW_ID=c1 run_crew status "worker:feat/$1#s1-1" done "" "https://example.com/pr/1"
+}
+
+# assert_engine_kept <reason> — reap kept the worker for <reason> and touched
+# neither its window nor its worktree.
+assert_engine_kept() {
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"an engine is still running there ($1)"* ]]
+  run ! grep -qE 'kill-window|^remove' "$STUB_LOG"
+}
+
+@test "reap: an esc-to-interrupt turn above an empty box is kept" {
+  reap_idle_fixture idle-working
+  set_frame %1 <<'EOF'
+✻ Working (2s · esc to interrupt)
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "live turn, unsent input, or no idle input box"
+}
+
+@test "reap: a thinking turn with a todo list between it and the box is kept" {
+  reap_idle_fixture idle-thinking
+  set_frame %1 <<'EOF'
+✻ Thinking… (12s · ↑ 1.2k tokens · esc to interrupt)
+  ⎿  ☐ Read the reap arm
+     ☐ Reuse the idle classifier
+     ☐ Re-sample before the kill
+     ☐ Wait on the reap lock
+     ☐ Run the suite
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "live turn, unsent input, or no idle input box"
+}
+
+@test "reap: a live subagent row above a finished-looking box is kept" {
+  reap_idle_fixture idle-subagent
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+  ◯ general-purpose  Revise spec per critic                              2m 3s · ↓ 71.5k tokens
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "live turn, unsent input, or no idle input box"
+}
+
+@test "reap: an option-select prompt frame is kept" {
+  reap_idle_fixture idle-select
+  set_frame %1 <<'EOF'
+  2. Gate everything on 3.8
+     Detect tmux version once in tmux-remux.tmux; emit the 3.8 hook set.
+  3. Require 3.8, drop legacy
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "prompt on screen"
+}
+
+@test "reap: a finished turn still running a background shell is kept" {
+  reap_idle_fixture idle-shell
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "background shell or monitor still running"
+}
+
+@test "reap: a non-claude engine pane is kept — no idle signature" {
+  reap_idle_fixture idle-pi pi
+  set_frame %1 <<'EOF'
+──────────────────────────────
+❯
+──────────────────────────────
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "pi has no idle signature"
+}
+
+@test "reap: an empty box with no finished-turn marker (fresh boot) is kept" {
+  reap_idle_fixture idle-boot
+  set_frame %1 <<'EOF'
+╭───────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                 │
+╰───────────────────────────────────────────╯
+────────────────── reef ─
+❯
+──────────────────
+  ? for shortcuts
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "no finished-turn marker above the input box"
+}
+
+@test "reap: a real unsent draft (not dimmed in the colored capture) is kept" {
+  reap_idle_fixture idle-draft
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯ push it
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  printf '✻ Churned for 36s · done 11:20 AM\n────────────────── reef ─\n❯\xc2\xa0push it\n──────────────────\n  -- INSERT --\n' >"$STUB_DIR/frames/%1.e"
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "live turn, unsent input, or no idle input box"
+}
+
+@test "reap: a dimmed prompt suggestion in the box is ghost text — reaped" {
+  reap_idle_fixture idle-ghost
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯ push it
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  printf '✻ Churned for 36s · done 11:20 AM\n────────────────── reef ─\n❯\xc2\xa0\033[2mpush it\033[0m\n──────────────────\n  -- INSERT --\n' >"$STUB_DIR/frames/%1.e"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/idle-ghost"* ]]
+  grep -q 'kill-window -t @1' "$STUB_LOG"
+}
+
+@test "reap: a pane that changes between the two samples is kept" {
+  reap_idle_fixture idle-moved
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  set_frame %1.2 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+> go on
+✻ Churned for 2s · done 11:21 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/idle-moved — pane changed between samples"* ]]
+  run ! grep -qE 'kill-window|^remove' "$STUB_LOG"
+}
+
+@test "reap: a branch that posts between the two samples is kept" {
+  reap_idle_fixture idle-posted
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  cat >"$STUB_DIR/frames/%1.2.hook" <<EOF
+#!/usr/bin/env bash
+jq -nc '{ts:(now*1000|floor + 1000), crew_id:"c1", from:"worker:feat/idle-posted#s2-2", to:"dispatcher:c1", kind:"msg", body:"back"}' >>"$log"
+EOF
+  chmod +x "$STUB_DIR/frames/%1.2.hook"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/idle-posted — the branch posted since"* ]]
+  run ! grep -qE 'kill-window|^remove' "$STUB_LOG"
+}
+
+@test "reap: a msg from another session of the branch after done keeps it" {
+  reap_idle_fixture idle-sibling
+  set_frame %1 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:(now*1000|floor + 1000), crew_id:"c1", from:"worker:feat/idle-sibling#s2-2", to:"dispatcher:c1", kind:"msg", body:"hi"}' >>"$log"
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "session posted after its done"
 }
 
 @test "msg: an oversized JSON body stays parseable JSON" {
@@ -6429,6 +6683,23 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   sleep 3
   run ! has_reap_line
   stop_stream
+}
+
+@test "stream: a failing reap surfaces as one stream error line" {
+  git commit -q --allow-empty -m init
+  _stream_seed_reapable feat/x c9
+  export WORKTREE_GIT_LIB="$BATS_TEST_TMPDIR/missing-worktree-git.sh"
+  start_stream --crew c1 --reap-every 1 --park 1 --interval 1 --heartbeat 3600
+  poll_for 150 grep -q '"detail":"reap: ' "$STREAM_OUT"
+  sleep 3
+  stop_stream
+
+  run ! has_reap_line
+  line="$(grep '"detail":"reap: ' "$STREAM_OUT" | head -n1)"
+  run jq -e '.stream == "error" and .crew == "c1" and .rc != 0 and (.detail | test("missing-worktree-git"))' <<<"$line"
+  [ "$status" -eq 0 ]
+  # Rate-limited like the inner-watch errors: one cause, one line per heartbeat.
+  [ "$(grep -c '"detail":"reap: ' "$STREAM_OUT")" -eq 1 ]
 }
 
 @test "identity: a recorded name another live worker now holds is not reused" {
