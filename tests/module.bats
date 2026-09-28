@@ -668,9 +668,12 @@ setup() {
   cd "$repo"
   # PATH=/nonexistent so the only resolver available is the one the wrapper's
   # own runtimeInputs put on PATH; -u DISPATCH_CONFIG_BIN so nothing exported
-  # can stand in for it.
+  # can stand in for it. XDG_CONFIG_HOME/HOME are isolated so a host settings
+  # file's burnClasses override cannot flip the asserted class (dispatch-config
+  # merges ${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json).
   run --separate-stderr env -u DISPATCH_CONFIG_BIN -u _BURN_SETTINGS \
     PATH=/nonexistent XDG_DATA_HOME="$BATS_TEST_TMPDIR/data" \
+    XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" HOME="$BATS_TEST_TMPDIR/home" \
     "$OUT_CREW/bin/crew" rate
   [ "$status" -eq 0 ]
   [[ "$stderr" != *"dispatch-config unavailable"* ]]
