@@ -567,7 +567,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _symlink_chain_hops _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
+  for fn in shell_quote write_launch_script _symlink_chain_hops _git_protected_dirs _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -974,6 +974,24 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   line="$(grep -F 'claude --continue' <(launch_log))"
   [[ "$line" != *"--add-dir / "* ]]
   [[ "$line" == *"--add-dir $extra "* ]]
+}
+
+@test "claude resume drops a recorded grant that is a hooks dir via core.hooksPath" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  export DISPATCH_GRANT_ROOTS="$(realpath "$BATS_TEST_TMPDIR")"
+  extra="$(realpath "$BATS_TEST_TMPDIR")/extra"
+  git init -q "$extra"
+  git -C "$extra" config core.hooksPath .husky
+  mkdir -p "$extra/.husky" "$extra/docs"
+  _grant_record "$extra/.husky" "$extra/docs"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '$extra/.husky' for feat/7-a-thing"* ]]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" != *"--add-dir $extra/.husky "* ]]
+  [[ "$line" == *"--add-dir $extra/docs "* ]]
 }
 
 @test "claude resume drops a recorded grant outside the grant roots and still launches" {

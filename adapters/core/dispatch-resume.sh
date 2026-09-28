@@ -154,7 +154,7 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
-# _symlink_chain_hops, _add_dir_ok, _artifacts_dir_bad,
+# _symlink_chain_hops, _git_protected_dirs, _add_dir_ok, _artifacts_dir_bad,
 # _protocol_dirs_record_bad, _record_protocol_dirs and launch_dir_args:
 # duplicated from dispatch.sh (standalone build), parity-tested like the two
 # above. See dispatch.sh for the grant rules: a claude launch gets the
@@ -191,6 +191,64 @@ _symlink_chain_hops() {
     fi
   done
   printf '%s\0' "$resolved"
+}
+
+_git_protected_dirs() {
+  local a="$1" out rc
+  local -a lines
+  while :; do
+    if [ -e "$a/.git" ] || [ -L "$a/.git" ]; then
+      # the x sentinel keeps a path's trailing newline from $(...) stripping
+      out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+        git -C "$a" rev-parse --git-path hooks --git-dir --git-common-dir && printf x)" || {
+        printf >&2 'dispatch: git cannot resolve the hooks and git dirs of %s; refusing the grant\n' "$a"
+        return 1
+      }
+      out="${out%x}"
+      out="${out%$'\n'}"
+      mapfile -t lines <<<"$out"
+      # a path holding a newline splits into extra lines
+      if [ "${#lines[@]}" -ne 3 ]; then
+        printf >&2 'dispatch: cannot parse the hooks and git dirs of %s; refusing the grant\n' "$a"
+        return 1
+      fi
+      # relative to $a, and spelled as configured: an absolute format would
+      # resolve the symlinks the caller must walk hop by hop
+      for out in "${lines[@]}"; do
+        [[ $out == /* ]] || out="$a/$out"
+        printf '%s\0' "$out"
+      done
+      # git prints a gitfile's target symlink-resolved, so walk the .git entry
+      # and its gitdir: line as spelled; git has already validated both
+      printf '%s\0' "$a/.git"
+      if [ -f "$a/.git" ]; then
+        IFS= read -r -d '' out <"$a/.git" || :
+        while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
+        out="${out#gitdir: }"
+        [[ $out == /* ]] || out="$a/$out"
+        printf '%s\0' "$out"
+      fi
+    fi
+    [ "$a" != / ] || break
+    a="${a%/*}"
+    a="${a:-/}"
+  done
+  rc=0
+  out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+    git -C / config --path --get core.hooksPath && printf x)" || rc=$?
+  case $rc in
+  0)
+    out="${out%x}"
+    out="${out%$'\n'}"
+    [[ $out != /* ]] || printf '%s\0' "$out"
+    ;;
+  # exit 1: core.hooksPath is unset
+  1) ;;
+  *)
+    printf >&2 'dispatch: git cannot read the global core.hooksPath; refusing the grant\n'
+    return 1
+    ;;
+  esac
 }
 
 _add_dir_ok() {
@@ -260,6 +318,36 @@ _add_dir_ok() {
     printf >&2 'dispatch: %s contains a .git or .claude entry (%s); grant its narrowest subdir instead\n' "$p" "$hit"
     return 1
   fi
+  local _gf _gd _ghf _ghop _gn _ghit
+  local -a _ghops
+  _gf=$(mktemp) || return 1
+  _git_protected_dirs "$p" > "$_gf" || { rm -f "$_gf"; return 1; }
+  # shellcheck disable=SC2094 # rm only in the early-exit branches, not while reading
+  while IFS= read -r -d '' _gd; do
+    _ghf=$(mktemp) || { rm -f "$_gf"; return 1; }
+    if ! _symlink_chain_hops "$_gd" > "$_ghf"; then
+      rm -f "$_gf" "$_ghf"
+      printf >&2 'dispatch: symlink chain too deep or unreadable resolving %s; refusing the grant\n' "$_gd"
+      return 1
+    fi
+    _ghops=()
+    while IFS= read -r -d '' _ghop; do
+      _ghops+=("$_ghop")
+    done < "$_ghf"
+    rm -f "$_ghf"
+    _ghit=""
+    for _ghop in "${_ghops[@]}"; do
+      [[ "$_ghop/" != "$p/"* ]] || _ghit=1
+    done
+    _gn="${#_ghops[@]}"
+    [[ "$p/" != "${_ghops[$((_gn - 1))]}/"* ]] || _ghit=1
+    if [ -n "$_ghit" ]; then
+      rm -f "$_gf"
+      printf >&2 'dispatch: %s overlaps git hooks or git dir %s; grant a dir outside it\n' "$p" "$_gd"
+      return 1
+    fi
+  done < "$_gf"
+  rm -f "$_gf"
   printf '%s\n' "$p"
 }
 
