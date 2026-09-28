@@ -6705,12 +6705,10 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   [ "$(grep -c '"detail":"reap: ' "$STREAM_OUT")" -eq 1 ]
 }
 
-# #602: a reap child the stream spawned keeps running after the stream exits, so
-# its late write must not clobber a newer stream's reap output. The injected hook
-# stands in for `crew reap` (read-only, no real reap): stream A's child blocks on
-# a release file, A is force-stopped while the child runs, then stream B reaps
-# normally. On the base both children share stream.reap.out, so A's late line is
-# flushed by B (and truncates B's); each child owning its own file keeps them apart.
+# #602: a reap child the stream spawned outlives the stream, so its late write
+# must not clobber a newer stream's reap output. The hook stands in for `crew
+# reap` (no real reap): A's child blocks on a release file, A is force-stopped,
+# then B reaps. On base both share stream.reap.out; per-child files keep them apart.
 @test "stream: a reap child that outlives its stream cannot clobber the next stream's reap output" {
   git commit -q --allow-empty -m init
   STREAM_CREW="$BATS_TEST_TMPDIR/crew-copy.sh"

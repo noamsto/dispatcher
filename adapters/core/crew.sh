@@ -2257,10 +2257,9 @@ stream)
   reapoutf="$cdir/stream.reap.out"
   reaperrf="$cdir/stream.reap.err"
   # Each background reap writes its own `$reapoutf.<pid>`/`$reaperrf.<pid>`
-  # pair, so a child that outlives its stream can neither truncate a newer
-  # stream's output nor supply its error detail. These base names are swept
-  # with any pair a previous stream's outlived child left behind; a child
-  # still running past this point can still write its own pair.
+  # pair, so a child outliving its stream cannot clobber the next one. Sweep
+  # the base names and any orphan pair a previous child left behind; a child
+  # still running can recreate its own pair.
   rm -f "$reapoutf" "$reaperrf" "$reapoutf".* "$reaperrf".*
   # Initialized before the trap is armed, so a signal landing before the
   # first iteration can't abort the handler on an unbound variable.
@@ -2329,10 +2328,9 @@ stream)
     [ -n "$reap_child" ] && jobs -rp | grep -qx "$reap_child"
   }
 
-  # _stream_reap_flush — print what the tracked background reap left in its own
-  # $reap_child_out, once that child has exited (a running child may still be
-  # writing), then drop its pair. Another stream's outlived child writes to its
-  # own pair and is never read here.
+  # _stream_reap_flush — print and drop the tracked child's $reap_child_out
+  # once it has exited (a running child may still be writing). Another
+  # stream's outlived child writes its own pair and is never read here.
   _stream_reap_flush() {
     [ -n "$reap_child_out" ] || return 0
     ! _stream_reap_running || return 0
