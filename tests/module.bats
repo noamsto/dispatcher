@@ -643,12 +643,8 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-# #606: `crew rate` resolves its burn table through dispatch-config. The
-# package's runtimeInputs now carry dispatch-config, so a bare packaged crew
-# finds the resolver with DISPATCH_CONFIG_BIN unset and nothing on the
-# inherited PATH — the default the dispatch family already gets via a baked
-# store path. Without that runtime input the sweep still exits 0 but warns it
-# could not resolve settings and prices every run as unclassed.
+# #606: the crew package carries dispatch-config, so `crew rate` resolves its
+# burn table with DISPATCH_CONFIG_BIN unset and nothing on the inherited PATH.
 @test "the crew package resolves its burn table with no dispatch-config on PATH" {
   repo="$BATS_TEST_TMPDIR/crew-606-repo"
   mkdir -p "$repo"

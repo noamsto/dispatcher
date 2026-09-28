@@ -102,8 +102,7 @@
             # for it and degrades to a notice when absent.
             # dispatch-config (#606) is on PATH so `crew rate` / _burn_weight
             # resolve the burn table out of the box, with no DISPATCH_CONFIG_BIN
-            # set and no ambient resolver — the same default the dispatch family
-            # bakes in, only via PATH rather than a substituted store path.
+            # and no ambient resolver required.
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
