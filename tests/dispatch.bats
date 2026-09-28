@@ -4433,7 +4433,7 @@ EOF
   stub_gh_claim "" 77
   PUBLIC_LEAK_GUARD="$BATS_TEST_TMPDIR/guard.sh"
   cat >"$PUBLIC_LEAK_GUARD" <<'EOF'
-jq -cn '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "carries owner/secret"}}'
+jq -cn '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "carries owner/secret"}}'
 EOF
   export PUBLIC_LEAK_GUARD
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 "mint me"

@@ -397,7 +397,7 @@ For Claude Code, pass the plugin directory to `claude`:
   is read off the shipped cursor-agent 2026.09.23 bundle.
 
 - **The Cursor public-leak guard.** Same arrangement, on the two Shell events.
-  It asks before a `gh` post to a repo outside your private-repo list carries a
+  It denies a `gh` post to a repo outside your private-repo list that carries a
   private `owner/name`, a session URL, a local path, or (with `betterleaks` on
   PATH) a secret:
 
