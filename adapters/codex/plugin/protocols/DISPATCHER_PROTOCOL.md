@@ -598,7 +598,8 @@ branch instead; the worktree carries over under `resume: true`.
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
   remove` and `git branch -D`; anchored calls — and, via `GIT_CONFIG_COUNT`,
-  the git that `crew reap`'s `wt remove` spawns — pass `core.fsmonitor=false`,
+  the git that `crew reap`'s `wt remove` spawns, and `dispatch`'s own `wt
+  switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
   `submodule.recurse=false`, disable the config-hook events they trigger (the
   set is `_wt_neutral_cfg` in `worktree-git.sh`), and read no in-tree
@@ -606,12 +607,18 @@ branch instead; the worktree carries over under `resume: true`.
   file in a worker's tree selects a driver there and a baselined
   worktree-relative program (Husky's `.husky`, a repo-relative filter or
   textconv the worker rewrote) is never run by that git unless
-  `<git-common-dir>/info/attributes` selects it. Cost: it applies no
-  LFS/eol/encoding attributes — a `--pr` attach that must reset leaves LFS
-  pointer files, so tell the worker (in `DISPATCH_SPEC`) to run `git lfs pull`
-  in its own session (never run LFS commands in a worker's worktree from your
-  shell: they read its attributes) — and status may read a stat-dirty filtered
-  file as modified, so reap keeps the worktree. Relay a refusal to the human
+  `<git-common-dir>/info/attributes` selects it; so a stacked `--base`
+  create, a resume whose worktree was reaped, or a `--pr` attach whose head
+  has no worktree here checks the new tree out with neither its attributes
+  nor its post-checkout hook. Cost: it applies no LFS/eol/encoding
+  attributes — such a new tree, or a `--pr` attach that must reset, leaves
+  the worker on raw blobs (LFS pointer files, no eol conversion, other smudge
+  filters unapplied; `dispatch` prints a note when it creates one), so tell
+  it (in `DISPATCH_SPEC`) to run `git lfs pull` — or, on a fresh tree, `git
+  rm -rq --cached . && git reset -q --hard` to re-smudge it all — in its own
+  session (never run LFS commands in a worker's worktree from your shell:
+  they read its attributes) — and status may read a stat-dirty filtered file
+  as modified, so reap keeps the worktree. Relay a refusal to the human
   verbatim; never run its printed `--unset-all` or clear it yourself — only
   the human clears it: they inspect drift (`crew git-baseline`), remove keys
   they did not set (`git config --unset-all`), then run `crew git-baseline
@@ -632,14 +639,14 @@ branch instead; the worktree carries over under `resume: true`.
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
   config, not the program; `<git-common-dir>/info/attributes` still selects
-  drivers in that git (a worker writing it names its path, but one the human
-  wrote can select a relative driver whose script the worker rewrites); and
-  any `wt switch` that creates a worktree — `-c`, a resume whose worktree was
-  reaped, a `--pr` attach whose PR head has no worktree here — checks it out
-  with the new tree's own attributes, so a baselined relative smudge program
-  runs whatever that tree holds — worker-committed code on a stacked `--base`
-  or a resumed branch, a fork author's on `--pr` — in the dispatcher's shell:
-  keep driver programs outside the repo tree (absolute paths).
+  drivers in that git and in those worktree creations (a worker writing it
+  names its path, but one the human wrote can select a relative driver whose
+  script the worker rewrites); and
+  only a default create — `wt switch -c` off the freshly fetched
+  default-branch tip, operator-trusted — still checks out with the new
+  tree's own attributes and hooks, so a baselined relative smudge program or
+  hook runs whatever that tree holds in the dispatcher's shell: keep driver
+  programs outside the repo tree (absolute paths).
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Questions you put there are answered in the worker's tally, not on the PR: frame each as "report in your tally: …", and never ask the worker to write context (bench evidence, sibling-PR composition) onto the PR. Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`

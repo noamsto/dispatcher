@@ -4066,6 +4066,89 @@ EOF
   [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
 }
 
+# commit_smudge_driver <branch> — on main, commit a benign tools/conv.sh, a
+# file `z` it smudges, and baseline filter.x.smudge=tools/conv.sh; on <branch>,
+# commit a tools/conv.sh that touches $BATS_TEST_TMPDIR/SENTINEL. `z` sorts
+# after `tools/`, so the driver is checked out before the file it filters.
+# Leaves the primary checkout on main; <branch> must be a local ref (#596).
+commit_smudge_driver() { # <branch>
+  local branch="$1"
+  git -C "$TEST_REPO" checkout -q main
+  mkdir -p "$TEST_REPO/tools"
+  printf '#!/bin/sh\ncat\n' >"$TEST_REPO/tools/conv.sh"
+  chmod +x "$TEST_REPO/tools/conv.sh"
+  printf 'z filter=x\n' >"$TEST_REPO/.gitattributes"
+  printf 'z\n' >"$TEST_REPO/z"
+  git -C "$TEST_REPO" add tools/conv.sh .gitattributes z
+  git -C "$TEST_REPO" commit -q -m 'seed a benign smudge driver'
+  git -C "$TEST_REPO" config filter.x.smudge tools/conv.sh
+  seed_git_baseline
+  git -C "$TEST_REPO" checkout -q "$branch"
+  # <branch> may have forked before the commit above: recommit all three.
+  mkdir -p "$TEST_REPO/tools"
+  printf '#!/bin/sh\ntouch %q\ncat\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$TEST_REPO/tools/conv.sh"
+  chmod +x "$TEST_REPO/tools/conv.sh"
+  printf 'z filter=x\n' >"$TEST_REPO/.gitattributes"
+  printf 'z\n' >"$TEST_REPO/z"
+  git -C "$TEST_REPO" add tools/conv.sh .gitattributes z
+  git -C "$TEST_REPO" commit -q -m 'rewrite the smudge driver'
+  git -C "$TEST_REPO" checkout -q main
+}
+
+@test "resume: a branch with no worktree is checked out without its tree's attributes (#596)" {
+  setup_resume_branch_no_worktree feat/42-do-a-thing
+  commit_smudge_driver feat/42-do-a-thing
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -f "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/z" ]
+  [[ "$output" == *"git lfs pull"* ]]
+}
+
+@test "--pr attach creating a worktree does not run the PR head's smudge driver (#596)" {
+  stub_pr_bins eng-7691-foo
+  commit_smudge_driver eng-7691-foo
+  # commit_smudge_driver advanced the head branch past the tip stub_pr_bins
+  # captured into PR_HEAD_OID; the worktree-verification step compares
+  # against it, so it must be re-read after the rewrite commit.
+  export PR_HEAD_OID
+  PR_HEAD_OID="$(git -C "$TEST_REPO" rev-parse eng-7691-foo)"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -f "$TEST_REPO/.worktrees/eng-7691-foo/z" ]
+}
+
+@test "default create still smudges with the tree's attributes (#596)" {
+  stub_launch_bins
+  # branch=main: the rewrite lands on main itself, so the checked-out tree
+  # this dispatch trusts (the fetched default-branch tip) is the one carrying
+  # the SENTINEL-touching driver.
+  commit_smudge_driver main
+  git -C "$TEST_REPO" push -q origin main
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [[ "$output" != *"git lfs pull"* ]]
+}
+
+@test "stacked create does not run the parent's smudge driver (#596)" {
+  setup_stacked_base feat/parent
+  # setup_stale_default_branch advanced origin/main without fast-forwarding
+  # TEST_REPO's local main; sync it first so the benign-driver commit below
+  # can push cleanly.
+  git -C "$TEST_REPO" fetch -q origin main
+  git -C "$TEST_REPO" checkout -q main
+  git -C "$TEST_REPO" reset --hard origin/main
+  git -C "$TEST_REPO" fetch -q origin feat/parent:feat/parent
+  commit_smudge_driver feat/parent
+  git -C "$TEST_REPO" push -q origin main feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -f "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/z" ]
+}
+
 # An existing worktree for the branch the --pr path resolves to, so the gate has
 # something to find. headRefOid matches the worktree's actual HEAD so the
 # verification step sees a match (not the concern of these gate tests).
