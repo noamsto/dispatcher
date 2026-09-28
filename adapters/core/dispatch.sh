@@ -1624,6 +1624,10 @@ watch_role_prompts() {
 # bus and, when the lead assigns this role work, types the assignment into the
 # role's pane (a normal user turn) and keeps the pane's @crew_state fresh. That
 # lets a role end its turn instead of holding a repainting `crew await`.
+# It types only msgs from its lead (worker:<branch>#s…, any session) or its
+# dispatcher (dispatcher:<@crew_id>), both anchored on the window's stamps;
+# any other sender is dropped and reported to the dispatcher. Not
+# authentication — the bus sender is self-asserted.
 #
 # It sends keys ONLY to a pane whose capture is positively an idle input box
 # (claude, pi); anything else — a permission dialog, an option-select or quota
@@ -1684,6 +1688,16 @@ if [ "${1:-}" = "--role-watch" ]; then
   [ "$w_branch" = "$watch_branch" ] || {
     echo "dispatch: --role-watch: window $w_win's @crew_branch ($w_branch) does not match --branch $watch_branch" >&2
     exit 1
+  }
+  w_crew="$(tmux show-options -wqv -t "$w_win" @crew_id 2>/dev/null || true)"
+  # Branches may contain `#`; only the trailing `#s…` is the session (crew.sh
+  # strips it with `sub("#s[^#]*$";"")`).
+  _rw_sender_allowed() {
+    local lead_prefix="worker:$watch_branch#s"
+    if [[ $1 == "$lead_prefix"* ]] && [[ ${1#"$lead_prefix"} != *'#'* ]]; then
+      return 0
+    fi
+    [ -n "$w_crew" ] && [ "$1" = "dispatcher:$w_crew" ]
   }
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   role_id="role:$watch_branch:$role"
@@ -2026,15 +2040,25 @@ if [ "${1:-}" = "--role-watch" ]; then
         'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
       if [ -n "$batch" ]; then
         while IFS= read -r ev; do
-          if [ "$(printf '%s' "$ev" | jq -r '.to // ""')" = "$role_id" ]; then
+          to="$(printf '%s' "$ev" | jq -r '.to // ""')"
+          if [ "$to" = "$role_id" ]; then
+            from="$(printf '%s' "$ev" | jq -r '.from // ""')"
+            if ! _rw_sender_allowed "$from"; then
+              # crew msg stamps crew_id from the worktree's WORKER_TASK.md, the
+              # header dispatch/resume stamp @crew_id from, so this reaches dispatcher:<C>.
+              [ -z "$w_crew" ] || crew msg "$role_id" "dispatcher:$w_crew" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg f "$from" --arg t "$role_id" \
+                '{role:$r,event:"role_watch_drop",pane:$p,from:$f,to:$t,detail:("role-watch: dropped msg from " + $f)}')" 2>/dev/null || true
+              continue
+            fi
             body="$(printf '%s' "$ev" | jq -r '.body // ""')"
             [ -n "$body" ] || continue
-            lead_id="$(printf '%s' "$ev" | jq -r '.from // ""')"
+            lead_id="$from"
             [ "${#pending[@]}" -lt "$pending_max" ] || pending=("${pending[@]:1}")
             pending+=("$body")
             watch_set_state working
-          elif [ "${#pending[@]}" -eq 0 ]; then
-            # A verdict from the role — it is idle again.
+          elif [[ $to != dispatcher:* ]] && [ "${#pending[@]}" -eq 0 ]; then
+            # A verdict from the role — it is idle again. The watcher's own
+            # drop posts go to dispatcher:* and must not idle a working role.
             watch_set_state idle
           fi
         done <<<"$batch"
@@ -4128,9 +4152,11 @@ fi
 # lazytmux owns the tab text; @crew_* tint the status-bar tab.
 tmux set-window-option -t "$win" @crew_name "$agent_name"
 # --spawn-role finds its crew dir and branch here, not via git discovery, which
-# the worker's env and worktree .git steer (#496).
+# the worker's env and worktree .git steer (#496); the role watcher anchors its
+# dispatcher on @crew_id.
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
+tmux set-window-option -t "$win" @crew_id "$crew_id"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

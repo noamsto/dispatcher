@@ -549,21 +549,25 @@ branch instead; the worktree carries over under `resume: true`.
   on another worker's resources. Out of scope: anything only reachable through a
   call that names its effect (`tmux set-option @crew_…`, a write under the crew
   dir or `~/.local/share/crew` by path, `claude --add-dir`, `tmux send-keys -t`,
-  a `crew msg` addressed to another branch's `worker:`/`role:` id — the bus
-  sender is self-asserted, and a role's watcher types what it is sent), which
-  the classifier sees; an effect that stays in the worker's own session or
+  a `crew msg` addressed to another branch's `worker:` id — the worker reads
+  it as tool output; for a `role:` id, the watcher types only its lead's or
+  dispatcher's msgs, so reaching another grid's role means forging one of those
+  ids in the call text — not authentication (self-asserted sender, shared uid)),
+  which the classifier sees; an effect that stays in the worker's own session or
   grid (its own roster, its own watchers' bus, its own review — the human PR
   review is that boundary); and values the dispatcher resolved and recorded
   (the protocol dirs). The rule for harness code this implies: **anchor, don't
   discover** — take crew dir, branch, window and pane identity from dispatcher
-  state (the window's `@crew_dir`/`@crew_branch`/`@crew_role` stamps, records
-  under the crew dir, the worktree record in
+  state (the window's `@crew_dir`/`@crew_branch`/`@crew_id`/`@crew_role` stamps,
+  records under the crew dir, the worktree record in
   `${XDG_DATA_HOME:-~/.local/share}/crew/worktrees`, process ancestry), never from
   git discovery inside a worker worktree, the worker's env, or a caller-supplied
   pane id. Accordingly `--spawn-role`, `--reap-roles` and `--role-exited` act
   only on a pane whose shell is an ancestor of the calling process (they refuse
   under a pid-namespaced sandbox, which hides it); `--role-watch` serves only a
-  pane stamped with its role in a window stamped with its branch, never a lead;
+  pane stamped with its role in a window stamped with its branch, never a lead,
+  and types only msgs from that branch's lead or the window's stamped dispatcher,
+  reporting others to the dispatcher;
   and `dispatch resume` refuses a worktree whose discovered crew dir, branch or
   git dir differs from the record `dispatch` wrote when it launched there.
   `git config <key>` in a linked worktree writes the repo's shared config,

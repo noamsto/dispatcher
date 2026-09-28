@@ -44,6 +44,16 @@ An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — th
 artifact to read, the question, the seam, and for a review the roster or its skip reason. Handle it, post your verdict, and
 end your turn again; the watcher wakes you for the next one.
 
+The watcher types only msgs from your lead (`worker:<branch>#s…`, any session
+number — a resumed lead still reaches you) or your crew's dispatcher
+(`dispatcher:<crew_id>`); anything else — another branch's worker or role,
+another crew's dispatcher, a sibling role — is dropped and reported to the
+dispatcher as a `role_watch_drop` event, never typed into your pane. Roles never
+message each other. This is a routing check, not authentication: the bus sender
+is self-asserted and every actor shares one uid; what it prevents is a
+cross-branch `crew msg` landing as a user turn without the sender forging your
+lead's or dispatcher's id in call text the auto-mode classifier sees.
+
 ## Assignment contract
 
 The lead assigns work with a `crew msg` to `$id` naming:
