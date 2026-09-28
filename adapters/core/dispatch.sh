@@ -1137,9 +1137,10 @@ _git_config_files() {
 }
 
 # _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir,
-# common dir and .git entry of every repo whose worktree contains <path>, and
-# the config files and include targets git reads there, as git spells them
-# (see _git_config_files); then the global core.hooksPath when it is absolute,
+# common dir and .git entry of every repo whose worktree contains <path>, a
+# gitfile's gitdir: and a git dir's commondir as spelled, and the config
+# files and include targets git reads there, as git spells them (see
+# _git_config_files); then the global core.hooksPath when it is absolute,
 # the global and system config files and include targets, and the global
 # config candidates git reads when present, since a grant could create a
 # missing one. A grant overlapping any of these is a grant on some repo's
@@ -1149,7 +1150,7 @@ _git_config_files() {
 # GIT_CONFIG and -c env overrides are dropped so the answer comes from the
 # human's own config. Fails closed, printing why.
 _git_protected_dirs() {
-  local a="$1" out rc
+  local a="$1" out gd rc
   local -a lines
   while :; do
     if [ -e "$a/.git" ] || [ -L "$a/.git" ]; then
@@ -1174,6 +1175,24 @@ _git_protected_dirs() {
         printf '%s\0' "$out"
       done
       printf '%s\0' "$a/.git"
+      # git prints the git dir and common dir resolved, so a symlink on the
+      # spelled path to either — a gitfile's gitdir: target, a git dir's
+      # commondir target — is a hop only visible by walking them as spelled
+      gd="$a/.git"
+      if [ -f "$a/.git" ]; then
+        IFS= read -r -d '' out <"$a/.git" || :
+        while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
+        out="${out#gitdir: }"
+        [[ $out == /* ]] || out="$a/$out"
+        printf '%s\0' "$out"
+        gd="$out"
+      fi
+      if [ -f "$gd/commondir" ]; then
+        IFS= read -r -d '' out <"$gd/commondir" || :
+        while [[ $out == *[$'\r\n'] ]]; do out="${out%?}"; done
+        [[ $out == /* ]] || out="$gd/$out"
+        printf '%s\0' "$out"
+      fi
       _git_config_files "$a" || return 1
     fi
     [ "$a" != / ] || break

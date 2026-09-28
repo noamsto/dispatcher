@@ -7001,6 +7001,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ "$status" -eq 1 ]
   [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
   [[ "$output" == *"git hooks dir (core.hooksPath or the default)"* ]]
+  [[ "$output" == *"not holding a repo's git config file or a symlink into or over its hooks/git dir"* ]]
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
 }
@@ -9931,7 +9932,7 @@ STUBEOF
 
   run _add_dir_ok "$T/roots/proj/sub"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"holds symlink $T/roots/proj/sub/lnk to $T/store"* ]]
+  [[ "$output" == *"overlaps git hooks, git dir or config file $T/roots/proj/sub/lnk/gd"* ]]
   run _add_dir_ok "$T/roots/proj/docs"
   [ "$status" -eq 0 ]
   [ "$output" = "$T/roots/proj/docs" ]
@@ -9939,7 +9940,7 @@ STUBEOF
   printf 'gitdir: sub/lnk/gd\n' >"$T/roots/proj/.git"
   run _add_dir_ok "$T/roots/proj/sub"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"holds symlink $T/roots/proj/sub/lnk to $T/store"* ]]
+  [[ "$output" == *"overlaps git hooks, git dir or config file $T/roots/proj/sub/lnk/gd"* ]]
 }
 
 @test "add-dir: a grant-held link retargeting a commondir spelled through it is refused" {
@@ -9970,11 +9971,55 @@ STUBEOF
   run _add_dir_ok "$T/roots/proj/sub"
   [ "$status" -eq 1 ]
   [[ "$output" == *"$T/roots/proj/sub/lnk"* ]]
-  [[ "$output" == *"holds symlink"* ]]
 
   run _add_dir_ok "$T/roots/proj/docs"
   [ "$status" -eq 0 ]
   [ "$output" = "$T/roots/proj/docs" ]
+}
+
+@test "add-dir: a grant-held link over a symlink on a gitfile's or commondir's spelled path outside the grant is refused" {
+  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+
+  # The gitdir line spells a path through $T/x/l2, a symlink to $T/y outside
+  # the grant; a worker holding sub/L -> $T/x could retarget l2 itself.
+  mkdir -p "$T/x" "$T/roots/r/sub" "$T/roots/r/docs"
+  ln -s "$T/y" "$T/x/l2"
+  git init -q --bare "$T/y/gd"
+  printf 'gitdir: %s\n' "$T/x/l2/gd" >"$T/roots/r/.git"
+  ln -s "$T/x" "$T/roots/r/sub/L"
+
+  run _add_dir_ok "$T/roots/r/sub"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"holds symlink"* ]]
+
+  run _add_dir_ok "$T/roots/r/docs"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/r/docs" ]
+
+  # Same shape, but the spelled path is a linked-worktree's commondir.
+  mkdir -p "$T/store/gd" "$T/roots/w/sub"
+  git init -q --bare "$T/y/common"
+  printf 'ref: refs/heads/main\n' >"$T/store/gd/HEAD"
+  printf '%s\n' "$T/x/l2/common" >"$T/store/gd/commondir"
+  printf '%s\n' "$T/roots/w/.git" >"$T/store/gd/gitdir"
+  printf 'gitdir: %s\n' "$T/store/gd" >"$T/roots/w/.git"
+  ln -s "$T/x" "$T/roots/w/sub/L"
+
+  run git -C "$T/roots/w" rev-parse --git-common-dir
+  [ "$status" -eq 0 ]
+
+  run _add_dir_ok "$T/roots/w/sub"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"holds symlink"* ]]
 }
 
 @test "add-dir: a link inside a grant to a repo's core.hooksPath dir is refused" {

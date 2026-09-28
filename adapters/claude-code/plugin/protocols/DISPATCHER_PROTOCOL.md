@@ -445,9 +445,10 @@ branch instead; the worktree carries over under `resume: true`.
   `~/.gitconfig` and `$XDG_CONFIG_HOME/git/config`): a grant holding an included
   file, or the target of a stow-style `~/.gitconfig` link, could set
   `core.hooksPath`. git prints the git dir and common dir already resolved, so a
-  link on a path some file spells (a gitfile's `gitdir:`, a git dir's
-  `commondir`) is never a hop; instead every symlink inside the grant is
-  resolved, and one whose target lies outside the grant and contains a hop of,
+  gitfile's `gitdir:` and a git dir's `commondir` are walked as spelled too.
+  Any file git reads can spell a path through the grant, so every symlink
+  inside the grant is also resolved, and one whose target lies outside the
+  grant and contains a hop of,
   or lies inside, any of those chains refuses the grant. Whichever file spelled
   a path through the grant, git's answer lands under that link's target; this
   also catches a write-through link like `docs/hooks -> ../.husky`. A link to an
@@ -473,8 +474,11 @@ branch instead; the worktree carries over under `resume: true`.
   `lnk/..` resolves to the link target's parent); links on a filesystem mounted
   inside the grant (the scan stays on one filesystem); a grant-held link into
   another repo that does not contain the grant; an include named only by a file
-  that a currently non-matching `includeIf` pulls in; and links the worker
-  plants after the grant, until the next re-check drops it. Other
+  that a currently non-matching `includeIf` pulls in; an include value with a
+  `:(optional)` prefix, which `git config --path` reports as unset; a hook file
+  that is itself a symlink out of the hooks dir; a hard link to a hook or
+  config file; and links the worker plants after the grant, until the next
+  re-check drops it. Other
   exec-capable repo config (`core.fsmonitor`, filter drivers) is not covered by
   this check.
 
