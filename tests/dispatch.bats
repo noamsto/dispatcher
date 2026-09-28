@@ -3752,12 +3752,9 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
-# stub_wt_operator_hook — wraps whatever $STUB_DIR/wt a fixture already
-# installed with a simulated operator user-level post-switch hook (#558): a
-# real worktrunk hook (e.g. a devshell hook running `nix develop` on the
-# worktree's flake.nix) fires on every `wt switch` unless `--no-hooks` is
-# passed. Must be called AFTER the fixture helper, since fixtures like
-# setup_resume_branch overwrite $STUB_DIR/wt themselves.
+# stub_wt_operator_hook — wraps the fixture's $STUB_DIR/wt with a simulated
+# operator post-switch hook that fires unless `--no-hooks` is passed (#558).
+# Call it after the fixture helper: fixtures overwrite $STUB_DIR/wt.
 stub_wt_operator_hook() {
   mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
   cat >"$STUB_DIR/wt" <<EOF
@@ -3771,9 +3768,6 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
-# #558: a resume switches onto a branch a worker already wrote, so the
-# operator's post-switch hooks (which run in the dispatcher's own shell) must
-# be suppressed with --no-hooks.
 @test "resume: suppresses operator hooks with --no-hooks" {
   setup_resume_branch feat/42-do-a-thing
   stub_crew_gate '[]' '[]'
@@ -3784,8 +3778,6 @@ EOF
   [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
 }
 
-# #558: --pr attaches to the PR author's head branch, so operator hooks must
-# not run against it.
 @test "--pr path suppresses operator hooks with --no-hooks" {
   stub_pr_bins eng-7691-foo
   stub_wt_operator_hook
@@ -3795,10 +3787,8 @@ EOF
   [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
 }
 
-# #558: a default-base create's tree is the merged default branch, not
-# worker/PR-controlled content, so the operator's other hooks (e.g. a devshell
-# hook materializing .pre-commit-config.yaml) deliberately still run — only
-# the tmux hook is blanked (it would open a second undecorated window, #123).
+# The default base is operator-trusted, and its devshell hook is what
+# materializes .pre-commit-config.yaml, so only the tmux hook is blanked.
 @test "default create: leaves operator hooks running, blanks only the tmux hook" {
   stub_launch_bins
   stub_wt_operator_hook
@@ -3809,8 +3799,6 @@ EOF
   [ -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
 }
 
-# #558: a stacked --base create branches from a parent ref a worker/PR author
-# wrote, so operator hooks must be suppressed the same as resume/--pr.
 @test "stacked create: suppresses operator hooks with --no-hooks" {
   setup_stacked_base feat/parent
   stub_wt_operator_hook

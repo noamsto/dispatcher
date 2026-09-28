@@ -3207,23 +3207,18 @@ fi
 # idle-done is protected by the claim write near `worker_id=` below.
 crew reap --quiet || true
 
-# The create arm's default-base tree is the merged default branch, not
-# worker/PR-controlled content, so only worktrunk's post-switch *tmux* hook is
-# blanked for that one call: we drive tmux ourselves below, and the hook would
+# A switch onto a tree a worker or PR author wrote (resume, --pr, a stacked
+# --base parent) runs with --no-hooks: the operator's hooks run in this shell,
+# and a devshell hook would evaluate that tree's flake.nix here (#558). Such a
+# worker's .pre-commit-config.yaml appears once its own direnv devshell loads.
+#
+# A default-base create is operator-trusted, so it blanks only worktrunk's
+# post-switch *tmux* hook: we drive tmux ourselves below, and the hook would
 # otherwise open a second, undecorated shell window at the same worktree
 # (#123). Its own `$CLAUDECODE` guard only covers a Claude-launched dispatcher,
 # and setting CLAUDECODE here would leak Claude's identity into a codex/cursor
-# worker. Scoped to `tmux`, so the operator's other hooks still run — e.g. a
-# devshell hook materializes .pre-commit-config.yaml, without which the worker
-# cannot commit at all.
-#
-# Every other switch_mode lands on a tree a worker or PR author wrote — a
-# resumed branch, a --pr head, a stacked --base parent — so those use
-# `--no-hooks` instead: the operator's hooks run in the dispatcher's own
-# shell, and a devshell hook would evaluate that tree's flake.nix there (#558,
-# DISPATCHER_PROTOCOL.md Trust boundary). Such a worker's own
-# .pre-commit-config.yaml still appears once its devshell (direnv) loads in
-# the worker's session, so nobody has to "restore" the skipped hooks.
+# worker. The devshell hook still runs there — it materializes
+# .pre-commit-config.yaml, without which the worker cannot commit at all.
 wt_post_switch='post-switch.tmux=""'
 
 # --pr resolves the head ref; the switch itself happens after the gate below, so
