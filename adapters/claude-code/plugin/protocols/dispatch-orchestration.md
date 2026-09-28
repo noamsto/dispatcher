@@ -361,8 +361,8 @@ in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
 
 The same rule applies independently to every lead and eager role target, and
 to a lazy role after its persisted values and CLI overrides resolve. Premium
-effort is `xhigh` (downgrade `high`) and `max` (downgrade `xhigh`); `high` is
-not premium. Model refusal is checked before effort refusal, so a target that
+effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
+premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
 `--ignore-budget`). pi has no premium model rung — every pi model is a Flash
 rung in one burn class — so only effort is ever refused for it. While pi's
@@ -379,7 +379,7 @@ so a refused pi dispatch lands directly on `high` — which matters because
 | codex | `gpt-5.6-sol` | `gpt-5.6-terra` |
 | cursor | `grok-4.7-high`, `grok-4.7-high[*` | `grok-4.7-medium` |
 | cursor | `cursor-grok-4.6-high`, `cursor-grok-4.6-high[*` | `cursor-grok-4.6-medium` |
-| pi | — (effort only: `max`→`xhigh`→`high`) | — |
+| pi | — (effort only: `max`/`xhigh`→`high`) | — |
 
 <!-- END generated:pace-downgrades -->
 

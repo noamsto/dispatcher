@@ -45,8 +45,7 @@ pace_rule_target() {
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   case "$target_effort" in
-  max) effort_downgrade="xhigh" ;;
-  xhigh) effort_downgrade="high" ;;
+  max | xhigh) effort_downgrade="high" ;;
   esac
   [ -n "$model_downgrade$effort_downgrade" ] || return 0
   rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
