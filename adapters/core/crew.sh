@@ -5064,8 +5064,13 @@ PANES
 $(_reap_procs)
 PROCS
 
+    # The resume record's path is keyed by the worktree's own realpath, so it
+    # must be computed while the directory still exists — before `wt remove` (#556).
+    anchor="$(_worktree_anchor_path "$wtpath")"
+
     if [ -n "$dry" ]; then
       say "would reap $branch ($pr_state) @ $wtpath"
+      say "would prune record $anchor"
       continue
     fi
 
@@ -5103,6 +5108,10 @@ SCAFFOLD
     if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
       reaped=$((reaped + 1))
       say "reaped $branch ($pr_state)"
+      # The record's worktree is gone, so prune it now (#556). `|| true`: a
+      # failed unlink (EACCES/EROFS) must not abort the reap row, branch delete
+      # and label release below.
+      rm -f -- "$anchor" || true
       line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
         '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
       _bus_append "$log" "$line"
