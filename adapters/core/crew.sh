@@ -1970,7 +1970,7 @@ watch)
   ;;
 stream)
   # stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S]
-  #        [--coalesce S] [--retry S] [--interval S] [--force]
+  #        [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S]
   # stream --status [--crew ID]
   # Wraps `watch` in a long-lived process, so a streaming lane gets pushed
   # batches instead of re-arming a one-shot park every turn. `--crew` is
@@ -1989,6 +1989,7 @@ stream)
   interval=2
   force=""
   statusmode=""
+  reap_every=900
   while [ $# -gt 0 ]; do
     case "$1" in
     --crew)
@@ -2055,6 +2056,14 @@ stream)
       statusmode=1
       shift
       ;;
+    --reap-every)
+      [ -n "${2:-}" ] || {
+        echo "crew: --reap-every needs a value" >&2
+        exit 64
+      }
+      reap_every="$2"
+      shift 2
+      ;;
     *)
       echo "crew: stream: unknown arg '$1'" >&2
       exit 64
@@ -2077,6 +2086,13 @@ stream)
   _stream_posint coalesce "$coalesce"
   _stream_posint retry "$retry"
   _stream_posint interval "$interval"
+  # Non-negative, not positive like the others above: 0 is how the cadence
+  # reap is disabled, not an error.
+  case "$reap_every" in '' | *[!0-9]*)
+    echo "crew: --reap-every must be a non-negative integer number of seconds" >&2
+    exit 64
+    ;;
+  esac
   statesjson=$(printf '%s' "$states" | jq -Rc 'split(",") | map(select(length>0))')
   [ "$statesjson" = "[]" ] && {
     echo "crew: --states must be non-empty" >&2
@@ -2213,6 +2229,10 @@ stream)
   last_hold_ts=0
   last_holderr_key=""
   last_holderr_ts=0
+  # last_reap starts at stream start, not epoch 0, so the first cadence reap
+  # is $reap_every out rather than firing on the very first iteration.
+  reap_child=""
+  last_reap=$(date +%s)
 
   # The handler must disarm itself first — its own closing `exit` would
   # otherwise re-enter it and re-print `$pending` — and must end by exiting
@@ -2250,6 +2270,42 @@ stream)
     exit 0
   }
   trap _stream_cleanup EXIT INT TERM HUP
+
+  # _stream_reap — fire a background `crew reap` for this stream. Never
+  # awaited and never killed on stream TERM (see _stream_cleanup): a
+  # half-done `wt remove` left mid-flight is worse than a reap line the
+  # stream missed printing. Overlap with another stream's or dispatch's own
+  # reap is reap.lock.d's job, not ours — this only avoids piling up a second
+  # background reap while our own last one is still running.
+  _stream_reap() {
+    [ "$reap_every" -gt 0 ] || return 0
+    if [ -n "$reap_child" ] && jobs -p | grep -qx "$reap_child"; then
+      return 0
+    fi
+    last_reap=$(date +%s)
+    (
+      out=$(bash -euo pipefail "$0" reap --quiet 2>/dev/null </dev/null) || true
+      [ -z "$out" ] || jq -nc --arg crew "$crew" --arg out "$out" --argjson ts "$(jq -nc 'now*1000|floor')" \
+        '{stream:"reap", crew:$crew, lines:($out | split("\n") | map(select(length>0) | sub("^crew reap: ";""))), ts:$ts}' || true
+    ) </dev/null &
+    reap_child=$!
+  }
+
+  # _stream_batch_wants_reap <batch-json> — true when the just-printed batch
+  # (one JSON object per line) carries a terminal status, or a pr-watch msg
+  # reporting the PR itself landed. Reacting to the event we already have
+  # beats waiting out the cadence for the common case.
+  _stream_batch_wants_reap() {
+    jq -e -s 'any(.[]; .events[]? as $e |
+        if $e.kind == "status" then
+          (["done","failed","exited"] | index($e.body.state)) != null
+        elif $e.kind == "msg" and (($e.from // "") | startswith("pr-watch:")) then
+          ($e.body | fromjson? // {}) as $b |
+          ((($b.changed // []) | index("state")) != null)
+            and ((["MERGED","CLOSED"] | index($b.state.state)) != null)
+        else false end
+      )' >/dev/null 2>&1 <<<"$1"
+  }
 
   while :; do
     # Written at the top of every iteration — including the first, right
@@ -2320,6 +2376,9 @@ stream)
       # A gone reader must not abort the loop mid-write (`set -e`): the batch
       # is still consumed and the cursor still advances, only the print fails.
       printf '%s\n' "$pending" || true
+      # React to the event we already have rather than waiting out the
+      # cadence: a terminal status or a PR-merged msg is worth a reap now.
+      _stream_batch_wants_reap "$pending" && _stream_reap
       pending=""
       : >"$outf"
       quiet=0
@@ -2349,6 +2408,13 @@ stream)
         last_err_ts="$e_ts"
       fi
       sleep "$retry"
+    fi
+    # Cadence: every branch above may have consumed anywhere from --interval
+    # to --park+--retry seconds, so the elapsed check belongs here rather
+    # than pinned to one branch.
+    now_s=$(date +%s)
+    if [ "$reap_every" -gt 0 ] && [ "$((now_s - last_reap))" -ge "$reap_every" ]; then
+      _stream_reap
     fi
   done
   ;;
@@ -5448,7 +5514,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

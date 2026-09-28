@@ -5719,11 +5719,15 @@ start_stream() {
   # Recorded so stop_stream polls the right crew's lock dir instead of always
   # c1's — a future test using --crew c2 would otherwise wait uselessly on c1
   # and then force-KILL a stream mid-shutdown.
-  local args=("$@") i
+  local args=("$@") i has_reap_every=""
   for ((i = 0; i < ${#args[@]}; i++)); do
     [ "${args[i]}" = --crew ] && STREAM_CREW_ID="${args[i + 1]}"
+    [ "${args[i]}" = --reap-every ] && has_reap_every=1
   done
-  bash -euo pipefail "${STREAM_CREW:-$CREW}" stream "$@" >"$STREAM_OUT" 2>"$STREAM_ERR" </dev/null &
+  # Defaults to no cadence reap: without this every pre-existing stream test's
+  # batch would spawn a background `crew reap` against the host tmux server.
+  [ -n "$has_reap_every" ] || args+=(--reap-every 0)
+  bash -euo pipefail "${STREAM_CREW:-$CREW}" stream "${args[@]}" >"$STREAM_OUT" 2>"$STREAM_ERR" </dev/null &
   STREAM_PID=$!
   STREAM_PIDS="${STREAM_PIDS:-} $STREAM_PID"
 }
@@ -6335,6 +6339,95 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$status" -eq 0 ]
   run jq -e --argjson cursor "$(cat "$cdir/cursor")" '.cursor == $cursor' <<<"$(head -n1 "$STREAM_OUT")"
   [ "$status" -eq 0 ]
+  stop_stream
+}
+
+# _stream_seed_reapable <branch> <crew> — a `done` worker with a merged PR and
+# no engine pane, worktree in place: reap's cheapest reclaim shape (see "reap:
+# merged + done with no engine pane is reaped as before"). Stubs must be in
+# place before start_stream, since the background stream process's PATH is
+# fixed at launch.
+_stream_seed_reapable() {
+  local branch="$1" crew="$2" wt_path
+  git branch "$branch"
+  wt_path="$BATS_TEST_TMPDIR/${branch//\//-}-wt"
+  git worktree add -q "$wt_path" "$branch"
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" ""
+  CREW_ID="$crew" run_crew status "worker:$branch#s1-1" done "" "https://example.com/pr/1"
+}
+
+has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
+
+@test "stream: a cadence reap fires for a worker from another crew, never as a batch" {
+  git commit -q --allow-empty -m init
+  _stream_seed_reapable feat/x c9
+  start_stream --crew c1 --reap-every 1 --park 1 --interval 1
+  poll_for 150 has_reap_line
+
+  line="$(grep '"stream":"reap"' "$STREAM_OUT" | head -n1)"
+  run jq -e '.' <<<"$line"
+  [ "$status" -eq 0 ]
+  run jq -e '.crew == "c1"' <<<"$line"
+  [ "$status" -eq 0 ]
+  run jq -e '.lines | any(test("reaped feat/x"))' <<<"$line"
+  [ "$status" -eq 0 ]
+  run ! grep -q '"cursor"' "$STREAM_OUT"
+  stop_stream
+}
+
+@test "stream: a terminal batch triggers an immediate reap, cadence aside" {
+  git commit -q --allow-empty -m init
+  git branch feat/x
+  wt_path="$BATS_TEST_TMPDIR/feat-x-wt"
+  git worktree add -q "$wt_path" feat/x
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" ""
+  start_stream --crew c1 --reap-every 3600 --park 1 --interval 1
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://example.com/pr/1"
+  poll_for 150 has_reap_line
+
+  line="$(grep '"stream":"reap"' "$STREAM_OUT" | head -n1)"
+  run jq -e '.lines | any(test("reaped feat/x"))' <<<"$line"
+  [ "$status" -eq 0 ]
+  stop_stream
+}
+
+@test "stream: --reap-every 0 disables the terminal-batch reap trigger" {
+  git commit -q --allow-empty -m init
+  git branch feat/x
+  wt_path="$BATS_TEST_TMPDIR/feat-x-wt"
+  git worktree add -q "$wt_path" feat/x
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" ""
+  start_stream --crew c1 --reap-every 0 --park 1 --interval 1
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://example.com/pr/1"
+  poll_for 100 at_least_lines 1
+  sleep 3
+  run ! has_reap_line
+  stop_stream
+}
+
+@test "stream: rejects a non-numeric or negative --reap-every" {
+  run --separate-stderr run_crew stream --crew c1 --reap-every nope
+  [ "$status" -eq 64 ]
+  [[ "$stderr" == *"--reap-every"* ]]
+
+  run --separate-stderr run_crew stream --crew c1 --reap-every -1
+  [ "$status" -eq 64 ]
+  [[ "$stderr" == *"--reap-every"* ]]
+}
+
+@test "stream: a no-op reap is silent" {
+  start_stream --crew c1 --reap-every 1 --park 1 --interval 1
+  sleep 3
+  run ! has_reap_line
   stop_stream
 }
 
