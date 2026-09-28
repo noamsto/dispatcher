@@ -5110,8 +5110,10 @@ SCAFFOLD
       say "reaped $branch ($pr_state)"
       # The worktree is gone, so its anchor record can never be read again —
       # prune it or the store accumulates forever (#556). Best-effort: the
-      # record is bookkeeping, not the outcome reap reports.
-      rm -f -- "$anchor"
+      # record is bookkeeping, not the outcome reap reports, so a failed
+      # unlink (EACCES/EROFS) must not abort before the reap row, branch
+      # delete and label release below.
+      rm -f -- "$anchor" || true
       line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
         '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
       _bus_append "$log" "$line"

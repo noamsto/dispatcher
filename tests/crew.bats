@@ -2512,6 +2512,45 @@ EOF
   [ -e "$anchor" ]
 }
 
+@test "reap: an undeletable anchor record does not abort the reclaim (#556)" {
+  # Review-fix guard: `rm -f` still fails on a directory (or EACCES/EROFS).
+  # Under `set -e` an unguarded rm would abort reap right after `wt remove`
+  # deleted the worktree, before the reap row, branch delete and label
+  # release — permanently losing that bookkeeping (no worktree next sweep).
+  git commit -q --allow-empty -m init
+  git branch feat/anchor-dir
+  wt_path="$BATS_TEST_TMPDIR/anchor-dir-wt"
+  git worktree add -q "$wt_path" feat/anchor-dir
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "anchor-dir work"
+  anchor="$(anchor_record_path "$wt_path")"
+  mkdir -p "$anchor"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/anchor-dir)" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/anchor-dir" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/anchor-dir (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+  run ! git show-ref --verify --quiet refs/heads/feat/anchor-dir
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -e 'select(.kind=="reap" and .branch=="feat/anchor-dir")' "$log" >/dev/null
+  [ -d "$anchor" ]
+}
+
 @test "reap: a merged branch whose local tip diverges from the PR head is kept" {
   # Review-fix guard: the branch is only force-deleted when the local tip is
   # exactly the merged PR head. A resumed run or a human that committed past
