@@ -269,8 +269,10 @@ baked in at build), **user**
 (`${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json`, optional),
 **locked** (the file named by `$DISPATCH_LOCKED_SETTINGS`, optional), and
 **env** (`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`,
-`DISPATCH_OPENROUTER_MONTHLY_USD`, `DISPATCH_OPENROUTER_KEY_FILE`). Run
-`dispatch-config --show-origin` to see which layer set each value.
+`DISPATCH_OPENROUTER_MONTHLY_USD`, `DISPATCH_OPENROUTER_KEY_FILE`).
+`dispatch-config --show-origin` shows which layer set each value; the module
+does not install it yet, so run it as `nix run .#dispatch-config --
+--show-origin` from a checkout.
 `grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
 are honoured only from the locked layer or the environment — a copy in the
 base or user layer is dropped with a warning. The model map itself lives in
