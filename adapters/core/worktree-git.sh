@@ -9,7 +9,9 @@
 # The anchored git still reads the COMMON config, which a worker can also
 # write (`git config filter.x.clean …`). _wt_git therefore refuses when an
 # exec-capable (key,value) pair has drifted from a baseline recorded while
-# the repo was still trusted (#557).
+# the repo was still trusted (#557). The anchored git also reads no in-tree
+# .gitattributes and ignores core.attributesFile, so a baselined driver whose
+# program is a worktree-relative path the worker rewrote never runs (#578).
 #
 # Baked into crew, dispatch and dispatch-resume as @worktreeGitLib@ by
 # flake.nix; raw-source runs (bats) point $WORKTREE_GIT_LIB at this file.
@@ -182,8 +184,38 @@ _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<i
   done
   return 1
 }
+# -c overrides that still matter past the guard: a baselined
+# core.hooksPath=.husky resolves inside the worker's tree. hooksPath does not
+# reach config-defined hooks (hook.<name>.command), so the events these calls
+# trigger are switched off. core.attributesFile is not a guarded key, so a
+# worker could point it at its own file and select a driver past
+# --attr-source (#578).
+_wt_neutral_cfg=(
+  core.fsmonitor=false core.hooksPath=/dev/null core.attributesFile=/dev/null
+  hook.reference-transaction.enabled=false hook.post-checkout.enabled=false
+  hook.post-index-change.enabled=false submodule.recurse=false
+)
+_wt_empty_tree() { # <git-dir> -> the repo's empty-tree oid (sha1 or sha256)
+  git --git-dir="$1" hash-object --no-filters -t tree /dev/null
+}
+_wt_neutral() { # <git-dir> <cmd…> — run a tool that spawns its own git (wt) with _wt_git's overrides, via env
+  local gitdir="$1" empty kv key value n=0
+  local -a kv_env=()
+  shift
+  empty="$(_wt_empty_tree "$gitdir")" || {
+    echo "refusing git: cannot compute the empty tree of $gitdir" >&2
+    return 1
+  }
+  for kv in "${_wt_neutral_cfg[@]}"; do
+    key="${kv%%=*}" value="${kv#*=}"
+    kv_env+=("GIT_CONFIG_KEY_$n=$key" "GIT_CONFIG_VALUE_$n=$value")
+    n=$((n + 1))
+  done
+  env GIT_ATTR_SOURCE="$empty" GIT_CONFIG_COUNT="$n" "${kv_env[@]}" "$@"
+}
 _wt_git() { # <admin-dir> <worktree> <git args…>
-  local admin="$1" wt="$2"
+  local admin="$1" wt="$2" empty kv
+  local -a cfg=()
   shift 2
   # config.worktree is still read with an anchored --git-dir, and its keys
   # (include.path, filter drivers) cannot be enumerated away with -c.
@@ -196,15 +228,15 @@ _wt_git() { # <admin-dir> <worktree> <git args…>
     return 1
   fi
   _wt_cfg_guard "${admin%/worktrees/*}" "$admin" || return 1
+  empty="$(_wt_empty_tree "$admin")" || {
+    echo "refusing git: cannot compute the empty tree of $admin" >&2
+    return 1
+  }
+  for kv in "${_wt_neutral_cfg[@]}"; do cfg+=(-c "$kv"); done
   # -C: with the caller's cwd inside <wt>, git would resolve pathspecs against
-  # that subdirectory rather than the work-tree root. The -c overrides still
-  # matter past the guard: a baselined core.hooksPath=.husky resolves inside
-  # the worker's tree. hooksPath does not reach config-defined hooks
-  # (hook.<name>.command), so the events these calls trigger are switched off.
-  git -C "$wt" --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null \
-    -c hook.reference-transaction.enabled=false -c hook.post-checkout.enabled=false \
-    -c hook.post-index-change.enabled=false \
-    -c submodule.recurse=false --git-dir="$admin" --work-tree="$wt" "$@"
+  # that subdirectory rather than the work-tree root.
+  git -C "$wt" --no-optional-locks "${cfg[@]}" --attr-source="$empty" \
+    --git-dir="$admin" --work-tree="$wt" "$@"
 }
 _wt_status() {
   local admin="$1" wt="$2"
