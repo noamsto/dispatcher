@@ -3109,11 +3109,9 @@ EOF_REPOS
   # Resolve the burn table once. _burn_weight runs in a command substitution
   # per model, so without this each row would fork dispatch-config afresh.
   _BURN_SETTINGS="$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null || true)"
-  # Fail loudly, not silently: an unavailable resolver would otherwise make
-  # every row read as an unclassed model (cost_class/cost_proxy null) with no
-  # signal that anything was wrong. The crew package does not yet bake
-  # dispatch-config as a runtimeInput, so a bare `nix run .#crew rate` can hit
-  # this; the home-manager install puts it on PATH.
+  # Without a resolver the table is empty, which per-row looks exactly like a
+  # legitimately unclassed model — say so once instead of reporting a clean run
+  # of null cost classes.
   if [ -z "$_BURN_SETTINGS" ]; then
     echo "crew rate: could not resolve settings (dispatch-config unavailable) — every model will read as unclassed; set DISPATCH_CONFIG_BIN or install dispatch-config beside crew" >&2
   fi
