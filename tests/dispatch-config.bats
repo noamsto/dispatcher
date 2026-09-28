@@ -5,6 +5,7 @@ setup() {
   CONFIG="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
   DEFAULTS="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
   unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE
+  unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS
   export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
   USER_FILE="$XDG_CONFIG_HOME/dispatcher/settings.json"
   LOCKED_FILE="$BATS_TEST_TMPDIR/locked.json"
@@ -183,4 +184,112 @@ locked_settings() {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"$LOCKED_FILE sets a blank engine name in engines"* ]]
+}
+
+@test "DISPATCH_PROFILE sets profile" {
+  DISPATCH_PROFILE=work run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.profile == "work"' <<<"$output"
+
+  DISPATCH_PROFILE=work run --separate-stderr "$CONFIG" --show-origin
+  [ "$status" -eq 0 ]
+  jq -e '.profile == {"value":"work","origin":"env"}' <<<"$output"
+}
+
+@test "DISPATCH_REPO_TRACKERS and DISPATCH_ORG_TRACKERS parse whitespace-separated key=value pairs" {
+  DISPATCH_REPO_TRACKERS=$'a/b=github\n  C/D=linear:ENG' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"a/b":"github","c/d":"linear:ENG"}' <<<"$output"
+
+  DISPATCH_ORG_TRACKERS='org=linear:X' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.orgTrackers == {"org":"linear:X"}' <<<"$output"
+}
+
+@test "a tracker entry without '=' maps to itself, never a valid tracker" {
+  DISPATCH_REPO_TRACKERS='junk a/b=github' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"junk":"junk","a/b":"github"}' <<<"$output"
+}
+
+@test "a tracker key repeated in one env var is last-wins" {
+  DISPATCH_REPO_TRACKERS='a/b=github a/b=linear:X' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers["a/b"] == "linear:X"' <<<"$output"
+}
+
+@test "a tracker key repeated with different case in one env var is still last-wins" {
+  DISPATCH_REPO_TRACKERS='a/b=github A/B=linear:X a/b=github' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"a/b":"github"}' <<<"$output"
+}
+
+@test "a whitespace-only tracker env var contributes nothing" {
+  DISPATCH_REPO_TRACKERS=$'  \n ' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e 'has("repoTrackers") | not' <<<"$output"
+}
+
+@test "tracker maps merge per key across layers, case-insensitively" {
+  user_settings '{"repoTrackers":{"Own/Repo":"github","x/y":"github"}}'
+  locked_settings '{"repoTrackers":{"own/repo":"linear:ENG"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"own/repo":"linear:ENG","x/y":"github"}' <<<"$output"
+
+  DISPATCH_REPO_TRACKERS='OWN/REPO=github' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.repoTrackers == {"own/repo":"github","x/y":"github"}' <<<"$output"
+}
+
+@test "profile and tracker maps are validated, naming the key" {
+  user_settings '{"profile":1}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *profile* ]]
+
+  user_settings '{"repoTrackers":["x"]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *repoTrackers* ]]
+
+  user_settings '{"orgTrackers":{"o":1}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *orgTrackers* ]]
+}
+
+@test "a baked build ignores DISPATCH_LOCKED_SETTINGS, warning when it differs" {
+  locked_settings '{"engines":["codex"]}'
+  local baked="$BATS_TEST_TMPDIR/baked.sh"
+  sed -e "s|@lockedSettings@|$LOCKED_FILE|" -e "s|@defaultsJson@|$DEFAULTS|" "$CONFIG" >"$baked"
+  chmod +x "$baked"
+
+  local other="$BATS_TEST_TMPDIR/other.json"
+  printf '%s\n' '{"engines":["pi"]}' >"$other"
+
+  DISPATCH_LOCKED_SETTINGS="$other" run --separate-stderr "$baked"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["codex"]' <<<"$output"
+  [[ "$stderr" == *"ignoring DISPATCH_LOCKED_SETTINGS"* ]]
+
+  unset DISPATCH_LOCKED_SETTINGS
+  run --separate-stderr "$baked"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+
+  DISPATCH_LOCKED_SETTINGS="$LOCKED_FILE" run --separate-stderr "$baked"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+}
+
+@test "a baked build with an unreadable locked file is refused, naming it" {
+  local missing="$BATS_TEST_TMPDIR/nope.json"
+  local baked="$BATS_TEST_TMPDIR/baked-missing.sh"
+  sed -e "s|@lockedSettings@|$missing|" -e "s|@defaultsJson@|$DEFAULTS|" "$CONFIG" >"$baked"
+  chmod +x "$baked"
+
+  run --separate-stderr "$baked"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$missing"* ]]
 }

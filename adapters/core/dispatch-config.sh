@@ -6,16 +6,26 @@
 #   base   — defaults.json, baked in at build; a raw-source run reads the copy
 #            beside this script.
 #   user   — ${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json, optional.
-#   locked — the file named by $DISPATCH_LOCKED_SETTINGS, optional; once set it
-#            must be a readable JSON object (fail closed: it is the security
-#            layer).
+#   locked — when built by the home-manager module, the file baked in at
+#            @lockedSettings@; otherwise the file named by
+#            $DISPATCH_LOCKED_SETTINGS, optional. Once set it must be a
+#            readable JSON object (fail closed: it is the security layer). A
+#            baked build ignores $DISPATCH_LOCKED_SETTINGS, warning on stderr
+#            if it names a different path.
 #   env    — DISPATCH_ENGINES (whitespace-split), DISPATCH_GRANT_ROOTS
 #            (colon-split), DISPATCH_OPENROUTER_MONTHLY_USD,
-#            DISPATCH_OPENROUTER_KEY_FILE; an empty var contributes nothing.
+#            DISPATCH_OPENROUTER_KEY_FILE, DISPATCH_PROFILE,
+#            DISPATCH_REPO_TRACKERS/DISPATCH_ORG_TRACKERS (whitespace-separated
+#            key=value pairs, split at the first "="; a repeated key is
+#            last-wins); an empty var contributes nothing.
 #
 # Security: grantRoots and openrouter.keyFile widen what a worker can read, so
 # they are honoured only from the locked layer or the environment — a copy in
 # the base or user layer is dropped with a warning on stderr.
+#
+# Tracker map keys (repoTrackers/orgTrackers) are lowercased within each layer
+# before the merge, so a later layer's entry for the same key (any case)
+# collapses and wins.
 #
 # --show-origin prints the same tree with every leaf replaced by
 # {"value": …, "origin": "base|user|locked|env"}.
@@ -78,7 +88,12 @@ if [[ -e $user_file ]]; then
   user=$(strip "$user" "$user_file")
 fi
 
-locked_file="${DISPATCH_LOCKED_SETTINGS:-}"
+locked_file="@lockedSettings@"
+if [[ $locked_file == @* ]]; then
+  locked_file="${DISPATCH_LOCKED_SETTINGS:-}"
+elif [[ -n ${DISPATCH_LOCKED_SETTINGS:-} && $DISPATCH_LOCKED_SETTINGS != "$locked_file" ]]; then
+  echo "dispatch-config: ignoring DISPATCH_LOCKED_SETTINGS — this build bakes $locked_file" >&2
+fi
 locked='{}'
 if [[ -n $locked_file ]]; then
   [[ -r $locked_file ]] || die "$locked_file is not readable"
@@ -93,11 +108,17 @@ env_layer=$(jq -cn '
     | if $v == "" then .
       else ($v | f) as $r | if ($r | length) > 0 then setpath($p; $r) else . end
       end;
+  def trackers:
+    [splits("\\s+")] | map(select(. != ""))
+    | reduce .[] as $e ({}; ($e | capture("^(?<k>[^=]*)=(?<v>.*)$") // {k: $e, v: $e}) as $kv | . + {($kv.k | ascii_downcase): $kv.v});
   {}
   | from_env_nonempty("DISPATCH_ENGINES"; ["engines"]; [splits("\\s+")] | map(select(. != "")))
   | from_env("DISPATCH_GRANT_ROOTS"; ["grantRoots"]; split(":") | map(select(. != "")))
   | from_env("DISPATCH_OPENROUTER_MONTHLY_USD"; ["openrouter", "monthlyUsd"]; .)
-  | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)')
+  | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)
+  | from_env("DISPATCH_PROFILE"; ["profile"]; .)
+  | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
+  | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)')
 
 printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_origin "$show_origin" "$jq_defs"'
   def string_array: type == "array" and all(.[]; type == "string");
@@ -110,11 +131,17 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
     then with_entries(.key as $k | .value |= tag($layers; $p + [$k]))
     else {value: ., origin: ($layers | to_entries | map(select(.value | holds($p)) | .key) | last)}
     end;
-  [inputs] as [$base, $user, $locked, $env]
+  def lower_trackers:
+    reduce ("repoTrackers", "orgTrackers") as $k
+      (.; if (.[$k] | type) == "object" then .[$k] |= with_entries(.key |= ascii_downcase) else . end);
+  [inputs | lower_trackers] as [$base, $user, $locked, $env]
   | $base * $user * $locked * $env
   | need(["engines"]; "a non-empty array of strings"; string_array and length > 0)
   | need(["grantRoots"]; "an array of strings without \":\""; string_array and all(.[]; contains(":") | not))
   | need(["openrouter"]; "an object"; type == "object")
   | need(["openrouter", "keyFile"]; "a string"; type == "string")
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
+  | need(["profile"]; "a string"; type == "string")
+  | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
+  | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'

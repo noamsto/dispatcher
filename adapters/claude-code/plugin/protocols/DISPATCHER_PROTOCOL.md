@@ -324,8 +324,10 @@ sizing a pi fan-out, not just once at session start.
   work you'd shed last.
 
 **Engine constraint:** the dispatchable set is whatever `dispatch --engines`
-prints — a machine's roster (`programs.dispatcher.engines`) intersected with
-what is installed. `dispatch` and `dispatcher` both reject anything else before
+prints — the resolved `engines` setting (a per-launch `DISPATCH_ENGINES` when
+set, else `programs.dispatcher.engines` in the home-manager module's locked
+layer, else the user settings file, else all four) intersected with what is
+installed. `dispatch` and `dispatcher` both reject anything else before
 scaffolding, with `is not enabled here` or `is enabled but not installed`.
 Authentication is separate and out of band: a listed engine can still fail its
 first turn if it has no session.
@@ -376,10 +378,13 @@ branch instead; the worktree carries over under `resume: true`.
   worker must read, pass `--add-dir <DIR>` (repeatable) with the **narrowest** dir that
   covers it — e.g. `~/other-repo/docs/specs`, not
   `~/other-repo`. Never grant a secrets dir. `dispatch` grants only a dir that resolves
-  (via `realpath`, so a symlinked dir is resolved first) inside a grant root from
-  `DISPATCH_GRANT_ROOTS` (colon-separated, like `PATH`; set by
-  `programs.dispatcher.grantRoots` under the home-manager module). Unset or empty
-  grants nothing, so an unconfigured machine refuses every `--add-dir`. A root is
+  (via `realpath`, so a symlinked dir is resolved first) inside a root from the
+  resolved `grantRoots` setting — set by `programs.dispatcher.grantRoots` in the
+  home-manager module's locked settings layer. `DISPATCH_GRANT_ROOTS`
+  (colon-separated, like `PATH`), when set, replaces those roots for that launch;
+  a resolved `grantRoots` that is unset or empty grants nothing, so an
+  unconfigured machine refuses every `--add-dir`; an empty `DISPATCH_GRANT_ROOTS`
+  falls through to the locked setting, and only `:` forces no roots. A root is
   ignored if it is `/`, `$HOME` or an ancestor of it. Inside a root it still refuses
   `/`, `$HOME` or an ancestor of it, a path inside or above `$crew_dir`, or a path
   inside or above any of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.claude`,
@@ -495,11 +500,13 @@ branch instead; the worktree carries over under `resume: true`.
   A re-dispatch onto the same branch with no `--add-dir` carries the existing grants
   forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
   `--spawn-role` keep whatever is recorded, but every launch — resume and
-  `--spawn-role` included — re-checks the recorded grants against `DISPATCH_GRANT_ROOTS`
-  and drops any that no longer resolve inside a root, with a `dispatch: dropping
-  invalid grant` line on stderr; the roots a session checks against are the ones its
-  own dispatcher (or `dispatch resume` caller) launched it with, not whatever the
-  pane's env happens to hold. The four protocol dirs (protocol/skills/reviewers/critics)
+  `--spawn-role` included — pins its launcher's own resolved grant roots onto the
+  launch as `DISPATCH_GRANT_ROOTS` (`:` when the roots resolved empty, never unset),
+  re-checks the recorded grants against that pinned value, and drops any that no
+  longer resolve inside a root, with a `dispatch: dropping invalid grant` line on
+  stderr; the roots a session checks against are always the ones its own dispatcher
+  (or `dispatch resume` caller) launched it with, never whatever the pane's own env
+  or locked settings layer happens to hold. The four protocol dirs (protocol/skills/reviewers/critics)
   are always granted **read-only** — `--add-dir` plus an `Edit(//<dir>/**)` deny rule,
   so edits there through the Edit/Write tools and path-checked Bash commands are refused
   whatever the permission mode (other shell writes fall to the permission mode's normal

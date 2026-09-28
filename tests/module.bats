@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 # Every test here runs a real `nix build`/`nix eval`/`nix store` against the
 # shared local flake -- including one `nix build` of 9 outputs at once and a
 # fresh <nixpkgs> resolution. On a cold cache (true on every fresh CI runner)
@@ -25,62 +27,190 @@ setup_file() {
     "$root#reviewer-roster" "$root#permission-check" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
-  # The three eval tests below force different config shapes (options only vs.
-  # the full activated config), so they can't share one expression -- but
-  # both still fit in one `nix eval`, so evaluate both here and split the
-  # result on a newline. `--raw` just prints the string verbatim, so an
-  # embedded "\n" is a safe separator: nix's own output never contains one.
-  printf '%s\n' "
-    let
-      self = builtins.getFlake (toString $root);
-      nixlib = (import <nixpkgs> {}).lib;
-      lib = nixlib // { hm.dag.entryAfter = _: data: { inherit data; }; };
-      pkgs = import <nixpkgs> {};
+  # The module's own eval, through a real `lib.evalModules` (not a bare call
+  # of the module function) so option defaults, merging and the mkIf'd config
+  # body apply exactly as they would for a real home-manager user. A stub
+  # module declares only the handful of home-manager options this module
+  # touches (home.*, xdg.configFile, config.lib.file.mkOutOfStoreSymlink) and
+  # a stand-in for lib.hm.dag.entryAfter, so evaluating needs no home-manager
+  # input. Emitted as one JSON object -- five config shapes plus the option
+  # list all fit in one `nix eval`, which is what keeps this to a single
+  # invocation.
+  cat >"$BATS_FILE_TMPDIR/eval-expr.nix" <<'NIXEOF'
+let
+  root = @ROOT@;
+  self = builtins.getFlake (toString root);
+  nixlib = (import <nixpkgs> {}).lib;
+  # hm.dag.entryAfter is the only home-manager lib helper the module calls;
+  # stub it to the DAG-free shape the module's own comments already treat it
+  # as ({ inherit data; }) rather than pull in home-manager as a dependency.
+  extLib = nixlib.extend (_: _: {hm.dag.entryAfter = _: data: {inherit data;};});
+  pkgs = import <nixpkgs> {};
 
-      optionsApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = false; profile = \"personal\"; }; };
-        inherit lib pkgs;
+  # Declares just enough of the home-manager option surface for the module
+  # to write into for real: home.packages/sessionVariables/file/activation,
+  # xdg.configFile, and the config.lib.file.mkOutOfStoreSymlink helper.
+  stub = {lib, ...}: {
+    options = {
+      home.packages = lib.mkOption {
+        type = lib.types.listOf lib.types.package;
+        default = [];
       };
-      optionNames = builtins.concatStringsSep \",\" (builtins.attrNames optionsApplied.options.programs.dispatcher);
-
-      # home-manager extends lib with lib.hm; stub the single helper the
-      # module uses so config can be forced without taking a home-manager
-      # dependency. Forcing sessionVariables + file + activation is what
-      # catches a typo'd option, a bad importJSON path, or a broken
-      # interpolation. The package list is read by name instead --
-      # deepSeq on a derivation recurses through its self-referential
-      # output attrs and never finishes.
-      configApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"codex\" \"cursor\" \"pi\"]; grantRoots = [\"/a/git\" \"/b/src\"]; repoTrackers.\"factify-inc/mono\" = \"linear:ENG\"; orgTrackers.\"factify-inc\" = \"linear:ENG\"; openrouter = { monthlyTarget = 50; keyFile = \"/run/agenix/openrouter\"; }; }; };
-        inherit lib pkgs;
+      home.sessionVariables = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = {};
       };
-      c = configApplied.config.content;
-      configLine = builtins.deepSeq [c.home.sessionVariables c.home.file c.home.activation]
-        \"\${c.home.sessionVariables.DISPATCH_PROFILE}|\${builtins.concatStringsSep \",\" (map (p: p.name) c.home.packages)}|\${c.home.sessionVariables.DISPATCHER_PROTOCOL_DIR}|\${c.home.sessionVariables.DISPATCHER_REVIEWERS_DIR}|\${c.home.sessionVariables.DISPATCHER_CRITICS_DIR}|\${c.home.sessionVariables.DISPATCHER_SKILLS_DIR}|\${c.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${c.home.sessionVariables.DISPATCH_REPO_TRACKERS}|\${c.home.sessionVariables.DISPATCH_ORG_TRACKERS}|\${c.home.sessionVariables.DISPATCH_OPENROUTER_MONTHLY_USD}|\${c.home.sessionVariables.DISPATCH_OPENROUTER_KEY_FILE}\";
-
-      cursorlessApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; openrouter = { monthlyTarget = null; keyFile = null; }; }; };
-        inherit lib pkgs;
+      home.file = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
       };
-      c2 = cursorlessApplied.config.content;
-      cursorlessLine = builtins.deepSeq [c2.home.file c2.home.activation]
-        \"\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.file)}|\${builtins.concatStringsSep \",\" (builtins.attrNames c2.home.activation)}|\${c2.home.sessionVariables.DISPATCH_ENGINES}|\${c2.home.sessionVariables.DISPATCH_GRANT_ROOTS}|\${toString (c2.home.sessionVariables ? DISPATCH_OPENROUTER_MONTHLY_USD)}|\${toString (c2.home.sessionVariables ? DISPATCH_OPENROUTER_KEY_FILE)}\";
-
-      cursorSkillsLine = builtins.replaceStrings [\"\n\"] [\" \"] c.home.activation.dispatcherCursorSkills.data;
-
-      floatApplied = self.homeManagerModules.default {
-        config = { programs.dispatcher = { enable = true; profile = \"work\"; engines = [\"claude\" \"pi\"]; grantRoots = []; openrouter = { monthlyTarget = 12.5; keyFile = null; }; }; };
-        inherit lib pkgs;
+      home.activation = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
       };
-      floatLine = \"\${floatApplied.config.content.home.sessionVariables.DISPATCH_OPENROUTER_MONTHLY_USD}\";
-    in optionNames + \"\n\" + configLine + \"\n\" + cursorlessLine + \"\n\" + cursorSkillsLine + \"\n\" + floatLine
-  " >"$BATS_FILE_TMPDIR/eval-expr.nix"
-  nix eval --impure --raw --file "$BATS_FILE_TMPDIR/eval-expr.nix" 2>/dev/null \
-    >"$BATS_FILE_TMPDIR/eval-out"
+      xdg.configFile = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
+      };
+      lib = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
+      };
+    };
+    config.lib.file.mkOutOfStoreSymlink = p: "out-of-store:" + p;
+  };
+
+  eval = cfg:
+    (extLib.evalModules {
+      modules = [
+        stub
+        self.homeManagerModules.default
+        {
+          _module.args.pkgs = pkgs;
+          programs.dispatcher = cfg;
+        }
+      ];
+    }).config;
+
+  optionNames = builtins.attrNames
+    (extLib.evalModules {
+      modules = [
+        stub
+        self.homeManagerModules.default
+        {
+          _module.args.pkgs = pkgs;
+          programs.dispatcher.enable = false;
+        }
+      ];
+    }).options.programs.dispatcher;
+
+  findPkg = name: pkgList: nixlib.findFirst (p: p.name == name) null pkgList;
+
+  # sessionVariables/fileNames/activationNames/packageNames/xdgConfigFile are
+  # forced (not just referenced) so a typo'd option, a bad importJSON path or
+  # a broken interpolation fails the eval here, not on a real rebuild.
+  mkResult = cfg: let
+    r = eval cfg;
+  in
+    builtins.deepSeq [r.home.sessionVariables r.home.file r.home.activation r.xdg.configFile] {
+      sessionVariables = r.home.sessionVariables;
+      fileNames = builtins.attrNames r.home.file;
+      activationNames = builtins.attrNames r.home.activation;
+      packageNames = map (p: p.name) r.home.packages;
+      xdgConfigFile = r.xdg.configFile;
+      locked = builtins.fromJSON (builtins.readFile r.programs.dispatcher.lockedSettingsFile);
+    };
+
+  mkDrvs = cfg: let
+    r = eval cfg;
+  in {
+    dispatchConfigDrv = (findPkg "dispatch-config" r.home.packages).drvPath;
+    dispatchDrv = (findPkg "dispatch" r.home.packages).drvPath;
+  };
+
+  fullCfg = {
+    enable = true;
+    profile = "work";
+    engines = ["claude" "codex" "cursor" "pi"];
+    grantRoots = ["/a/git" "/b/src"];
+    repoTrackers."factify-inc/mono" = "linear:ENG";
+    orgTrackers."factify-inc" = "linear:ENG";
+    openrouter = {
+      monthlyTarget = 50;
+      keyFile = "/run/agenix/openrouter";
+    };
+    userSettings = "/home/u/cfg/settings.json";
+  };
+
+  minimalCfg = {enable = true;};
+
+  cursorlessCfg = {
+    enable = true;
+    engines = ["claude" "pi"];
+    grantRoots = [];
+    openrouter = {
+      monthlyTarget = null;
+      keyFile = null;
+    };
+  };
+
+  floatCfg = {
+    enable = true;
+    engines = ["claude" "pi"];
+    grantRoots = [];
+    openrouter = {
+      monthlyTarget = 12.5;
+      keyFile = null;
+    };
+  };
+
+  codexOnlyCfg = {
+    enable = true;
+    engines = ["codex"];
+  };
+in {
+  options = optionNames;
+  full =
+    mkResult fullCfg
+    // {cursorSkills = builtins.replaceStrings ["\n"] [" "] (eval fullCfg).home.activation.dispatcherCursorSkills.data;};
+  minimal = mkResult minimalCfg // mkDrvs minimalCfg;
+  cursorless = mkResult cursorlessCfg;
+  float = mkResult floatCfg;
+  codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
+  # `engines = []` must be a type error, not a silently-accepted value that
+  # bakes `"engines": []` into the locked settings file (dispatch-config dies
+  # on that at runtime).
+  emptyEnginesRejected =
+    !(builtins.tryEval
+      (builtins.deepSeq (eval {
+          enable = true;
+          engines = [];
+        })
+        .programs
+        .dispatcher
+        .engines
+        true))
+    .success;
+}
+NIXEOF
+  sed -i "s|@ROOT@|$root|" "$BATS_FILE_TMPDIR/eval-expr.nix"
+  nix eval --impure --json --file "$BATS_FILE_TMPDIR/eval-expr.nix" \
+    >"$BATS_FILE_TMPDIR/eval-out.json"
+
+  # Build the module's own baked dispatch-config/dispatch for two engine
+  # shapes (engines left unset vs. set to ["codex"]) so the integration tests
+  # below run the real binaries, not just inspect the eval.
+  nix build --no-link --print-out-paths \
+    "$(jq -r '.minimal.dispatchConfigDrv' "$BATS_FILE_TMPDIR/eval-out.json")^out" \
+    "$(jq -r '.minimal.dispatchDrv' "$BATS_FILE_TMPDIR/eval-out.json")^out" \
+    "$(jq -r '.codexOnly.dispatchConfigDrv' "$BATS_FILE_TMPDIR/eval-out.json")^out" \
+    "$(jq -r '.codexOnly.dispatchDrv' "$BATS_FILE_TMPDIR/eval-out.json")^out" \
+    >"$BATS_FILE_TMPDIR/baked-out-paths"
 }
 
 setup() {
   ROOT="$BATS_TEST_DIRNAME/.."
+  EVAL="$BATS_FILE_TMPDIR/eval-out.json"
   # `nix build --print-out-paths` prints one line per installable, in the same
   # order they were given on the command line (see setup_file) -- pinning that
   # assumption here since a future nix reordering them would go undetected: a
@@ -97,11 +227,12 @@ setup() {
     read -r OUT_REVIEWER_ROSTER
     read -r OUT_PERMISSION_CHECK
   } <"$BATS_FILE_TMPDIR/out-paths"
-  EVAL_OPTIONS="$(sed -n '1p' "$BATS_FILE_TMPDIR/eval-out")"
-  EVAL_CONFIG="$(sed -n '2p' "$BATS_FILE_TMPDIR/eval-out")"
-  EVAL_CURSORLESS="$(sed -n '3p' "$BATS_FILE_TMPDIR/eval-out")"
-  EVAL_CURSOR_SKILLS="$(sed -n '4p' "$BATS_FILE_TMPDIR/eval-out")"
-  EVAL_FLOAT="$(sed -n '5p' "$BATS_FILE_TMPDIR/eval-out")"
+  {
+    read -r OUT_MINIMAL_DISPATCH_CONFIG
+    read -r OUT_MINIMAL_DISPATCH
+    read -r OUT_CODEX_DISPATCH_CONFIG
+    read -r OUT_CODEX_DISPATCH
+  } <"$BATS_FILE_TMPDIR/baked-out-paths"
 }
 
 @test "every package builds" {
@@ -109,7 +240,9 @@ setup() {
   # before any test runs. This just proves every out path came back.
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
-    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK"; do
+    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" \
+    "$OUT_MINIMAL_DISPATCH_CONFIG" "$OUT_MINIMAL_DISPATCH" \
+    "$OUT_CODEX_DISPATCH_CONFIG" "$OUT_CODEX_DISPATCH"; do
     [ -n "$out" ]
     [ -e "$out" ]
   done
@@ -294,57 +427,115 @@ setup() {
 }
 
 @test "the module declares its options" {
-  [[ "$EVAL_OPTIONS" == *"enable"* ]]
-  [[ "$EVAL_OPTIONS" == *"profile"* ]]
+  run jq -e '(.options | index("enable")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("profile")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("lockedSettingsFile")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("userSettings")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module declares the engines option" {
-  [[ "$EVAL_OPTIONS" == *"engines"* ]]
-  [[ "$EVAL_OPTIONS" == *"grantRoots"* ]]
-  [[ "$EVAL_OPTIONS" == *"repoTrackers"* ]]
-  [[ "$EVAL_OPTIONS" == *"orgTrackers"* ]]
+  for name in engines grantRoots repoTrackers orgTrackers; do
+    run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "engines = [] is rejected by the option type" {
+  run jq -e '.emptyEnginesRejected == true' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module declares the openrouter option" {
-  [[ "$EVAL_OPTIONS" == *"openrouter"* ]]
+  run jq -e '(.options | index("openrouter")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module's config body evaluates, and wires the protocol dir for real" {
   # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
-  # here would otherwise surface only in a consumer's rebuild. setup_file's
-  # deepSeq forces the config body, not just the options -- that's what
-  # actually catches a typo'd option, a bad importJSON path, or a broken
-  # interpolation.
-  #
-  # Assert the wiring, not the flavour of path it resolves to: whether `self`
-  # lands in the store or stays a source path depends on how the flake was
-  # evaluated (a CI checkout differs from a local dev tree), and that is not the
-  # behaviour under test. Removing either export still fails here — a missing
-  # attribute makes setup_file's eval error, which fails the whole file.
-  [[ "$EVAL_CONFIG" == work\|* ]]
+  # here would otherwise surface only in a consumer's rebuild.
+  run jq -e '.full.sessionVariables.DISPATCHER_PROTOCOL_DIR | endswith("/adapters/core/protocols")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.sessionVariables.DISPATCHER_REVIEWERS_DIR | endswith("/adapters/core/reviewers")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.sessionVariables.DISPATCHER_CRITICS_DIR | endswith("/adapters/core/critics")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.sessionVariables.DISPATCHER_SKILLS_DIR | endswith("/adapters/core/skills")' "$EVAL"
+  [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  [[ "$EVAL_CONFIG" == *"crew,dispatch,dispatch-resume,dispatcher,refresh-scores,refresh-budget,refresh-models,pr-watch,reviewer-roster,permission-check"* ]]
-  [[ "$EVAL_CONFIG" == */adapters/core/protocols\|*/adapters/core/reviewers\|*/adapters/core/critics\|*/adapters/core/skills\|/a/git:/b/src\|factify-inc/mono=linear:ENG\|factify-inc=linear:ENG\|50\|/run/agenix/openrouter ]]
+  for pkg in crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config; do
+    run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "the locked settings layer carries the routing options, only when set" {
+  run jq -e '.full.locked.grantRoots == ["/a/git", "/b/src"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.profile == "work"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.repoTrackers == {"factify-inc/mono": "linear:ENG"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.orgTrackers == {"factify-inc": "linear:ENG"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.openrouter.keyFile == "/run/agenix/openrouter"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
+  [ "$status" -eq 0 ]
+
+  # Every routing option left unset: the locked layer holds only the two
+  # always-emitted keys, so the user settings file (or the base default)
+  # governs everything else.
+  run jq -e '.minimal.locked == {"grantRoots": [], "profile": "personal"}' "$EVAL"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.float.locked.openrouter.monthlyUsd == 12.5' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "no settings var is exported any more, only the four directory ones" {
+  for cfgname in full minimal cursorless float; do
+    run jq -e --arg c "$cfgname" '[.[$c].sessionVariables | keys[] | select(test("^DISPATCH_"))] | length == 0' "$EVAL"
+    [ "$status" -eq 0 ]
+    for var in DISPATCHER_PROTOCOL_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR DISPATCHER_SKILLS_DIR; do
+      run jq -e --arg c "$cfgname" --arg v "$var" '.[$c].sessionVariables | has($v)' "$EVAL"
+      [ "$status" -eq 0 ]
+    done
+  done
+}
+
+@test "userSettings symlinks the settings file out of the store, unset installs no symlink" {
+  run jq -e '.full.xdgConfigFile["dispatcher/settings.json"].source == "out-of-store:/home/u/cfg/settings.json"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.minimal.xdgConfigFile | has("dispatcher/settings.json") | not' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "engines left unset installs the codex and cursor artifacts" {
+  run jq -e '(.minimal.activationNames | index("dispatcherCodexPlugin")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.minimal.activationNames | index("dispatcherCursorSkills")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '[.minimal.fileNames[] | select(startswith(".cursor/"))] | length > 0' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "a roster without cursor installs no cursor artifacts" {
-  [[ "$EVAL_CURSORLESS" != *".cursor/"* ]]
-  [[ "$EVAL_CURSORLESS" != *"dispatcherCursorSkills"* ]]
+  run jq -e '[.cursorless.fileNames[] | select(startswith(".cursor/"))] | length == 0' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.cursorless.activationNames | index("dispatcherCursorSkills")) == null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "a roster without codex installs no codex plugin activation" {
-  [[ "$EVAL_CURSORLESS" != *"dispatcherCodexPlugin"* ]]
-}
-
-@test "the roster is exported for the CLIs" {
-  [[ "$EVAL_CURSORLESS" == *"|claude pi|||" ]]
-}
-
-@test "a decimal monthly target renders via toString, not the trimmed literal" {
-  # toString 12.5 in nix renders \"12.500000\" -- assert a prefix, not the
-  # exact source literal.
-  [[ "$EVAL_FLOAT" =~ ^12\.5 ]]
+  run jq -e '(.cursorless.activationNames | index("dispatcherCodexPlugin")) == null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the codex plugin is copied as a real dir, never symlinked" {
@@ -383,8 +574,10 @@ setup() {
 }
 
 @test "cursor skill links are enumerated from the adapter dir, not hard-coded" {
-  [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"'* ]]
-  [[ "$EVAL_CURSOR_SKILLS" == *'/adapters/cursor/skills/deslop" "$skills_dir/deslop"'* ]]
+  run jq -r '.full.cursorSkills' "$EVAL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'/adapters/cursor/skills/spec-plan-critic" "$skills_dir/spec-plan-critic"'* ]]
+  [[ "$output" == *'/adapters/cursor/skills/deslop" "$skills_dir/deslop"'* ]]
 }
 
 @test "the reviewers placeholder is substituted in reviewer-roster" {
@@ -434,5 +627,43 @@ setup() {
 
   run env -u DISPATCH_CONFIG_BIN -u DISPATCH_ENGINES -u DISPATCH_LOCKED_SETTINGS \
     XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" "$OUT_DISPATCH/bin/dispatch" --engines
+  [ "$status" -eq 0 ]
+}
+
+# --- Integration: the module's baked dispatch-config/dispatch, run for real ---
+
+@test "a module install with engines left unset resolves the user settings file's engines" {
+  mkdir -p "$BATS_TEST_TMPDIR/cfg/dispatcher"
+  echo '{"engines": ["cursor"]}' >"$BATS_TEST_TMPDIR/cfg/dispatcher/settings.json"
+
+  run env -u DISPATCH_ENGINES -u DISPATCH_LOCKED_SETTINGS \
+    XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" "$OUT_MINIMAL_DISPATCH_CONFIG/bin/dispatch-config"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.engines' <<<"$output")" = '["cursor"]' ]
+}
+
+@test "a module install with engines set wins over the user settings file's engines" {
+  mkdir -p "$BATS_TEST_TMPDIR/cfg/dispatcher"
+  echo '{"engines": ["cursor"]}' >"$BATS_TEST_TMPDIR/cfg/dispatcher/settings.json"
+
+  run env -u DISPATCH_ENGINES -u DISPATCH_LOCKED_SETTINGS \
+    XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" "$OUT_CODEX_DISPATCH_CONFIG/bin/dispatch-config"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.engines' <<<"$output")" = '["codex"]' ]
+}
+
+@test "a baked dispatch-config ignores DISPATCH_LOCKED_SETTINGS, with a stderr notice" {
+  echo '{"engines": ["pi"]}' >"$BATS_TEST_TMPDIR/other-locked.json"
+
+  run --separate-stderr env -u DISPATCH_ENGINES XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" \
+    DISPATCH_LOCKED_SETTINGS="$BATS_TEST_TMPDIR/other-locked.json" \
+    "$OUT_CODEX_DISPATCH_CONFIG/bin/dispatch-config"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.engines' <<<"$output")" = '["codex"]' ]
+  [[ "$stderr" == *"ignoring DISPATCH_LOCKED_SETTINGS"* ]]
+}
+
+@test "a module install's dispatch bakes that same install's dispatch-config" {
+  run grep -F "$OUT_CODEX_DISPATCH_CONFIG/bin/dispatch-config" "$OUT_CODEX_DISPATCH/bin/dispatch"
   [ "$status" -eq 0 ]
 }
