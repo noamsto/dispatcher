@@ -95,6 +95,35 @@ pace_rule_target() {
   fi
 }
 
+# budget_stop <engine> [<role-label>] — refuse an engine whose quota is
+# ~exhausted (>=95% of a window that has not reset). With a role-label, the
+# refusal names the role. The cache is advisory data from refresh-budget — fail
+# open when it is missing, stale (>2h), or silent on this engine ("unknown" is
+# never "exhausted"). A window whose resets_at has already passed does not gate
+# (the cache can predate the reset); a null resets_at still does. --ignore-budget
+# is the manual escape hatch.
+budget_stop() {
+  local engine="$1" role_label="${2:-}" exhausted now_ts stale_before
+  [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
+  now_ts="$(date +%s)"
+  stale_before=$((now_ts - 7200))
+  exhausted=$(jq -r --arg e "$engine" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
+    if .fetched_epoch < $stale_before then empty
+    elif .engines[$e] == null then empty
+    else .engines[$e].windows | to_entries[]
+      | select(.value.used_pct >= 95
+               and (.value.resets_at == null or .value.resets_at > $now))
+      | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
+    end' "$budget_file" 2>/dev/null || true)
+  [ -n "$exhausted" ] || return 0
+  if [ -n "$role_label" ]; then
+    echo "dispatch: role '$role_label' ($engine) quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+  else
+    echo "dispatch: $engine quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+  fi
+  exit 1
+}
+
 # _mint_leak_check <body> — run public-leak-guard over a minted issue's body as
 # the `gh issue create` it becomes, and refuse on any verdict: the guard asks,
 # and dispatch has nobody to ask. flake.nix bakes the guard's store path; a raw
@@ -1936,6 +1965,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 1
   fi
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
+  budget_stop "$spawn_agent" "$role"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
@@ -2784,21 +2814,10 @@ fi
 # predate the reset); a null resets_at still does.
 # --ignore-budget is the manual escape hatch (e.g. credits cover the overage).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+budget_stop "$agent"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   now_ts="$(date +%s)"
   stale_before=$((now_ts - 7200))
-  exhausted=$(jq -r --arg e "$agent" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
-    if .fetched_epoch < $stale_before then empty
-    elif .engines[$e] == null then empty
-    else .engines[$e].windows | to_entries[]
-      | select(.value.used_pct >= 95
-               and (.value.resets_at == null or .value.resets_at > $now))
-      | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
-    end' "$budget_file" 2>/dev/null || true)
-  if [ -n "$exhausted" ]; then
-    echo "dispatch: $agent quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
-    exit 1
-  fi
   if [ "$agent" = claude ] && jq -e --argjson stale_before "$stale_before" --argjson now "$now_ts" \
     '.fetched_epoch >= $stale_before and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
     echo "dispatch: budget gate blind: claude quota unknown" >&2
@@ -2973,6 +2992,7 @@ pace_rule_target "$agent" "$model" "$effort"
 if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
+    budget_stop "${role_agents[$i]}" "${role_names[$i]}"
   done
 fi
 
