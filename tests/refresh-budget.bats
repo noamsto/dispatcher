@@ -177,10 +177,11 @@ EOF
   [ "$status" -eq 0 ]
   # The fixture's 7d window is 97.0% (>=85%) — the budget lever must visibly
   # fire a warning for it, and must NOT fire one for the 12.5% 5h window.
-  # Its resets_at (2026-08-09) is already in the past, so the line carries
-  # no "(resets in ...)" parenthetical — verified by requiring the "%" to
-  # butt directly against the em dash.
-  [[ "$output" == *"budget lever: claude 7d at 97.0% — not holdable: no reset time, hand the task back"* ]]
+  # Its resets_at (2026-08-09) is already in the past, so the window does not
+  # gate — the cache predates the reset (same exemption as dispatch's own
+  # >=95% stop) — and the line carries no "(resets in ...)" parenthetical,
+  # verified by requiring the "%" to butt directly against the em dash.
+  [[ "$output" == *"budget lever: claude 7d at 97.0% — not binding: window has already reset"* ]]
   [[ "$output" != *"budget lever: claude 5h at 12.5"* ]]
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
   run jq -r '.engines.claude.source' "$cache"
@@ -523,6 +524,24 @@ EOF
   SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"budget lever: claude 5h at 96% — not holdable: no reset time, hand the task back"* ]]
+}
+
+@test "a >=95% window whose reset has passed does not gate, a future sibling does" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  now=$(date +%s)
+  # The 5h window is exhausted but its reset already passed (#548) — the
+  # cache predates the rollover, so it must not gate. The 7d window is real,
+  # future, and sized, so it binds and the 5h sibling defers to it.
+  cat >"$XDG_DATA_HOME/crew/claude-statusline.json" <<EOF
+{"rate_limits": {
+  "five_hour": {"used_percentage": 97, "resets_at": $((now - 100))},
+  "seven_day": {"used_percentage": 96, "resets_at": $((now + 300000))}
+}}
+EOF
+  SHIM_CLAUDE_429=1 SHIM_CODEX_GENERIC=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"budget lever: claude 5h at 97% — not binding: claude is gated until 7d resets"* ]]
+  [[ "$output" == *"budget lever: claude 7d at 96% (resets in 3d 11h"*"binding window; not holdable"* ]]
 }
 
 @test "an unsized window at >=95% is unholdable even with a real reset time" {

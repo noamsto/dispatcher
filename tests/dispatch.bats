@@ -2088,6 +2088,29 @@ pi_budget_json() { # <pct> <elapsed_s> <remaining_s>
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
+@test ">=95% window with a past resets_at does not gate; future and null still do" {
+  stub_launch_bins
+  # Already reset: the cache predates the window's rollover, so the engine is
+  # not exhausted (#548).
+  budget_json_at claude 97 -3600
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "past reset"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+
+  # Still in the future: refuses, as before.
+  budget_json_at claude 97 3600
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "future reset"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude quota exhausted"* ]]
+
+  # Null resets_at: no usable deadline, still refuses.
+  budget_json 97 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "null reset"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude quota exhausted"* ]]
+}
+
 @test "budget gate passes below the threshold" {
   stub_launch_bins
   budget_json 94 "$(date +%s)"
@@ -2156,6 +2179,59 @@ pi_budget_json() { # <pct> <elapsed_s> <remaining_s>
   [ "$status" -eq 0 ]
   [[ "$output" != *"quota exhausted"* ]]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "lead >=95% refusal message is unchanged by the role-gate refactor" {
+  budget_json 97 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: claude quota exhausted (7d at 97%) — pick another engine, wait for the reset, or pass --ignore-budget"* ]]
+}
+
+# #549: the >=95% stop must apply to a role's engine, not only the lead's.
+@test ">=95% gate refuses an eager role on that engine, naming the role" {
+  stub_launch_bins
+  budget_json_at pi 97 3600
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude \
+    --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "role gate"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (pi) quota exhausted"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test ">=95% gate refuses --spawn-role on that engine, naming the role" {
+  _spawn_role_fixture
+  budget_json_at pi 97 3600
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (pi) quota exhausted"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test ">=95% gate lets a role on an already-reset engine through" {
+  stub_launch_bins
+  budget_json_at pi 97 -3600
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude \
+    --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "role reset"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "--ignore-budget lets an eager role through an at-95% engine" {
+  stub_launch_bins
+  budget_json_at pi 97 3600
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --ignore-budget \
+    --roles "reviewer=pi:openrouter/deepseek/deepseek-v4-flash" --effort high --crew-id c1 42 "role ignore"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "--ignore-budget lets --spawn-role through an at-95% engine" {
+  _spawn_role_fixture
+  budget_json_at pi 97 3600
+  run run_dispatch --spawn-role reviewer --ignore-budget
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
 }
 
 @test "worker window starts at the invoking client size" {
