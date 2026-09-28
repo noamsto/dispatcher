@@ -165,8 +165,22 @@ locked_settings() {
   [[ "$stderr" == *openrouter* ]]
 }
 
-@test "a whitespace-only DISPATCH_ENGINES enables nothing, same as unset" {
+@test "a whitespace-only DISPATCH_ENGINES contributes no engines layer" {
   DISPATCH_ENGINES=" " run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
   [ "$(jq -c .engines <<<"$output")" = "$(jq -c .engines "$DEFAULTS")" ]
+}
+
+@test "a blank engine name in the user or locked layer is refused, naming that layer's file" {
+  user_settings '{"engines":[""]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE sets a blank engine name in engines"* ]]
+
+  unset DISPATCH_LOCKED_SETTINGS
+  user_settings '{"engines":["claude"]}'
+  locked_settings '{"engines":["claude"," "]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$LOCKED_FILE sets a blank engine name in engines"* ]]
 }

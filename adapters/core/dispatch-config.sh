@@ -44,6 +44,14 @@ layer() {
     die "$1 is not a JSON object"
 }
 
+# check_no_blank_engines <json> <path> — die, naming <path>, when the layer's
+# engines array holds an empty or whitespace-only string.
+check_no_blank_engines() {
+  if jq -e '(if (.engines | type) == "array" then .engines else [] end) | any(type == "string" and (gsub("^\\s+|\\s+$"; "") == ""))' <<<"$1" >/dev/null; then
+    die "$2 sets a blank engine name in engines"
+  fi
+}
+
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
@@ -66,6 +74,7 @@ user_file="${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json"
 user='{}'
 if [[ -e $user_file ]]; then
   user=$(layer "$user_file")
+  check_no_blank_engines "$user" "$user_file"
   user=$(strip "$user" "$user_file")
 fi
 
@@ -74,6 +83,7 @@ locked='{}'
 if [[ -n $locked_file ]]; then
   [[ -r $locked_file ]] || die "$locked_file is not readable"
   locked=$(layer "$locked_file")
+  check_no_blank_engines "$locked" "$locked_file"
 fi
 
 env_layer=$(jq -cn '

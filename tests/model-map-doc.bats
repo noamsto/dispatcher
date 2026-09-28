@@ -61,3 +61,33 @@ teardown() {
   run bash -c "ls \"$BATS_TEST_TMPDIR\"/writeme.md.*"
   [ "$status" -ne 0 ]
 }
+
+@test "doc check fails on a stale row hidden by a BEGIN marker with trailing whitespace" {
+  tmpdoc="$BATS_TEST_TMPDIR/trailing-begin.md"
+  cp "$DOC" "$tmpdoc"
+  sed -i 's|<!-- BEGIN generated:tier-rows from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->|<!-- BEGIN generated:tier-rows from adapters/core/defaults.json by scripts/gen-model-map-doc.sh --> |' "$tmpdoc"
+  sed -i '0,/`gpt-5\.4-mini` |/s//`gpt-5.4-nano` |/' "$tmpdoc"
+  run bash "$GEN" --check "$DEFAULTS" "$tmpdoc"
+  [ "$status" -ne 0 ]
+}
+
+@test "write mode refuses to truncate the doc when an END marker has trailing whitespace" {
+  tmpdoc="$BATS_TEST_TMPDIR/trailing-end.md"
+  cp "$DOC" "$tmpdoc"
+  lines_before="$(wc -l <"$tmpdoc")"
+  sed -i 's|<!-- END generated:pace-downgrades -->|<!-- END generated:pace-downgrades --> |' "$tmpdoc"
+  run bash "$GEN" "$DEFAULTS" "$tmpdoc"
+  [ "$status" -ne 0 ]
+  [ "$(wc -l <"$tmpdoc")" -eq "$lines_before" ]
+}
+
+@test "a failed check leaves no temp files behind in TMPDIR" {
+  export TMPDIR="$BATS_TEST_TMPDIR/emptytmp"
+  mkdir -p "$TMPDIR"
+  tmpdoc="$BATS_TEST_TMPDIR/nomarkers-tmpdir.md"
+  cp "$DOC" "$tmpdoc"
+  sed -i '/END generated:tier-rows/d' "$tmpdoc"
+  run bash "$GEN" --check "$DEFAULTS" "$tmpdoc"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$TMPDIR")" ]
+}

@@ -21,6 +21,10 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+work="$(mktemp -d)"
+tmp=""
+trap 'rm -rf "$work"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
+
 check=false
 if [ "${1:-}" = --check ]; then
   check=true
@@ -83,14 +87,14 @@ splice() {
   local begin="<!-- BEGIN generated:${name} from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->"
   local end="<!-- END generated:${name} -->"
   local begin_n end_n begin_ln end_ln
-  begin_n="$(grep -cF -- "$begin" "$in" || true)"
-  end_n="$(grep -cF -- "$end" "$in" || true)"
+  begin_n="$(grep -cxF -- "$begin" "$in" || true)"
+  end_n="$(grep -cxF -- "$end" "$in" || true)"
   if [ "$begin_n" -ne 1 ] || [ "$end_n" -ne 1 ]; then
     echo "gen-model-map-doc: region '$name' in $in must have exactly one BEGIN and one END marker (found $begin_n BEGIN, $end_n END)" >&2
     return 1
   fi
-  begin_ln="$(grep -nF -- "$begin" "$in" | cut -d: -f1)"
-  end_ln="$(grep -nF -- "$end" "$in" | cut -d: -f1)"
+  begin_ln="$(grep -nxF -- "$begin" "$in" | cut -d: -f1)"
+  end_ln="$(grep -nxF -- "$end" "$in" | cut -d: -f1)"
   if [ "$begin_ln" -ge "$end_ln" ]; then
     echo "gen-model-map-doc: region '$name' in $in has its END marker before its BEGIN marker" >&2
     return 1
@@ -107,14 +111,13 @@ splice() {
 # freshly rendered from <defaults.json>, on stdout.
 render_doc() {
   local defaults="$1" in="$2" tier_rows pace_downgrades tmp1
-  tier_rows="$(mktemp)"
-  pace_downgrades="$(mktemp)"
-  tmp1="$(mktemp)"
+  tier_rows="$work/tier_rows"
+  pace_downgrades="$work/pace_downgrades"
+  tmp1="$work/tmp1"
   render_tier_rows "$defaults" >"$tier_rows"
   render_pace_downgrades "$defaults" >"$pace_downgrades"
   splice tier-rows "$tier_rows" "$in" >"$tmp1"
   splice pace-downgrades "$pace_downgrades" "$tmp1"
-  rm -f "$tier_rows" "$pace_downgrades" "$tmp1"
 }
 
 # check_model_map_table <defaults.json> <doc> — the hand-written table under
@@ -125,7 +128,7 @@ render_doc() {
 # header is not found, or when zero cells were compared.
 check_model_map_table() {
   local defaults="$1" doc="$2" lut rc=0
-  lut="$(mktemp)"
+  lut="$work/lut"
   jq -r '
     .modelMap
     | to_entries[] as $e
@@ -198,7 +201,6 @@ check_model_map_table() {
       if (mism) exit 1
     }
   ' "$lut" "$doc" || rc=$?
-  rm -f "$lut"
   return "$rc"
 }
 
@@ -217,7 +219,7 @@ check_default_membership() {
 
 if [ "$check" = true ]; then
   fail=0
-  expected="$(mktemp)"
+  expected="$work/expected"
   render_doc "$defaults" "$doc" >"$expected"
   if ! diff -u "$doc" "$expected"; then
     fail=1
@@ -228,11 +230,9 @@ if [ "$check" = true ]; then
     printf '%s\n' "$membership_violations" >&2
     fail=1
   fi
-  rm -f "$expected"
   exit "$fail"
 fi
 
 tmp="$(mktemp "${doc}.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
 render_doc "$defaults" "$doc" >"$tmp"
 cat "$tmp" >"$doc"
