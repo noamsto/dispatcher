@@ -153,6 +153,62 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
+# stub_tmux_frames <wins-body> <panes4-body> [panes3-body] — a tmux stub for
+# reap's reclaim pass: `list-panes` answers the new 4-field
+# `window\tpane\tcmd\tpath` query with <panes4-body> (detected by
+# `pane_current_path` + `window_id` both appearing in the -F format) and the
+# legacy 3-field occupancy query (`_occupants`) with <panes3-body> otherwise.
+# `list-windows -F …@crew_branch…` (the orphan-window report, run on every
+# reap) answers from `$STUB_DIR/wins3.txt` if the test wrote one, else empty —
+# most tests have no orphan to report. `capture-pane -t <pane>` answers from
+# `$STUB_DIR/frames/<pane>` if the test wrote one, else empty (no capture).
+stub_tmux_frames() {
+  STUB_DIR="${STUB_DIR:-$(mktemp -d)}"
+  STUB_LOG="${STUB_LOG:-$STUB_DIR/calls.log}"
+  mkdir -p "$STUB_DIR/frames"
+  _canon_stub_wins_body "$1" >"$STUB_DIR/wins.txt"
+  _canon_stub_panes_body "$2" >"$STUB_DIR/panes4.txt"
+  _canon_stub_panes_body "${3:-}" >"$STUB_DIR/panes.txt"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-windows)
+  case "$*" in
+  *@crew_branch*) [ -f "$STUB_DIR/wins3.txt" ] && cat "$STUB_DIR/wins3.txt" ;;
+  *) cat "$STUB_DIR/wins.txt" ;;
+  esac
+  ;;
+list-panes)
+  case "$*" in
+  *pane_current_path*window_id* | *window_id*pane_current_path*) cat "$STUB_DIR/panes4.txt" ;;
+  *) cat "$STUB_DIR/panes.txt" ;;
+  esac
+  ;;
+capture-pane)
+  pane=""
+  prev=""
+  for a in "$@"; do
+    [ "$prev" = "-t" ] && pane="$a"
+    prev="$a"
+  done
+  [ -f "$STUB_DIR/frames/$pane" ] && cat "$STUB_DIR/frames/$pane"
+  ;;
+display-message) : ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export STUB_DIR STUB_LOG
+  export PATH="$STUB_DIR:$PATH"
+}
+
+# set_frame <pane-id> — write a capture-pane frame (stdin) for stub_tmux_frames.
+set_frame() {
+  mkdir -p "$STUB_DIR/frames"
+  cat >"$STUB_DIR/frames/$1"
+}
+
 # anchor_record_path <wt> — the dispatcher anchor record path for <wt>, as the
 # shared worktree-git lib derives it (#556).
 anchor_record_path() {
@@ -2123,7 +2179,9 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  stub_tmux "" "$(printf '.claude-wrapped %s\n' "$wt_path")"
+  # 4-field panes query, no frame planted: an unreadable/empty capture keeps
+  # too (defensive rule), so this still asserts the same substring.
+  stub_tmux_frames "" "$(printf '@1\t%%1\t.claude-wrapped\t%s\n' "$wt_path")"
   CREW_ID=c1 run_crew status "worker:feat/reap-live#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"an engine is still running there"* ]]
@@ -2149,7 +2207,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  stub_tmux "" "$(printf '.claude-wrapped %s-sibling\n' "$wt_path")"
+  stub_tmux_frames "" "$(printf '@1\t%%1\t.claude-wrapped\t%s-sibling\n' "$wt_path")"
   CREW_ID=c1 run_crew status "worker:feat/reap-sib#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" != *"an engine is still running there"* ]]
@@ -3463,7 +3521,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  stub_tmux "" "$(printf 'claude %s\n' "$wt_path")"
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   CREW_ID=c1 run_crew status "worker:feat/live-engine-me" exited "" "https://example.com/pr/25"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3485,6 +3543,346 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/exited-no-pr — exited but no PR on the bus"* ]]
   run ! grep -q 'remove' "$STUB_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# reap: idle-engine reclaim (#588) — merged/closed PR + terminal-or-pr_open
+# state + a claude engine pane whose capture is provably idle → kill its
+# window, then reclaim the worktree same as an engine-gone reap.
+# ---------------------------------------------------------------------------
+
+gh_stub_state() {
+  cat >"$STUB_DIR/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*state*) printf '%s\n' '$1' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+}
+
+@test "reap: merged + done + idle claude frame is reaped, its window killed" {
+  git commit -q --allow-empty -m init
+  git branch feat/idle-reap
+  wt_path="$BATS_TEST_TMPDIR/idle-reap-wt"
+  git worktree add -q "$wt_path" feat/idle-reap
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-reap#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/idle-reap"* ]]
+  grep -q 'kill-window -t @1' "$STUB_LOG"
+}
+
+@test "reap: merged + done + meter frame is kept — turn in progress" {
+  git commit -q --allow-empty -m init
+  git branch feat/meter-keep
+  wt_path="$BATS_TEST_TMPDIR/meter-keep-wt"
+  git worktree add -q "$wt_path" feat/meter-keep
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+✳ Perusing… (1m 2s · ↓ 3.1k tokens)
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/meter-keep#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"an engine is still running there"* ]]
+  [[ "$output" == *"turn in progress"* ]]
+  run ! grep -q 'remove' "$STUB_LOG"
+}
+
+@test "reap: an open PR with an idle engine frame is kept — PR OPEN" {
+  git commit -q --allow-empty -m init
+  git branch feat/open-pr-idle
+  wt_path="$BATS_TEST_TMPDIR/open-pr-idle-wt"
+  git worktree add -q "$wt_path" feat/open-pr-idle
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state OPEN
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/open-pr-idle#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"PR OPEN"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: merged + idle frame + tracked modification is kept — uncommitted changes" {
+  git commit -q --allow-empty -m init
+  git branch feat/dirty-idle
+  wt_path="$BATS_TEST_TMPDIR/dirty-idle-wt"
+  git worktree add -q "$wt_path" feat/dirty-idle
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo tracked >"$wt_path/tracked.txt"
+  git -C "$wt_path" add tracked.txt
+  git -C "$wt_path" commit -q -m tracked
+  echo dirty >>"$wt_path/tracked.txt"
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/dirty-idle#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"uncommitted changes"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: merged + done with no engine pane is reaped as before" {
+  git commit -q --allow-empty -m init
+  git branch feat/no-engine
+  wt_path="$BATS_TEST_TMPDIR/no-engine-wt"
+  git worktree add -q "$wt_path" feat/no-engine
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tfish\t%s\n' "$wt_path")"
+  CREW_ID=c1 run_crew status "worker:feat/no-engine#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/no-engine"* ]]
+}
+
+@test "reap: --dry-run on an idle claude frame reports it would kill the window" {
+  git commit -q --allow-empty -m init
+  git branch feat/idle-dry
+  wt_path="$BATS_TEST_TMPDIR/idle-dry-wt"
+  git worktree add -q "$wt_path" feat/idle-dry
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-dry#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would kill window @1"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+  run ! grep -q 'remove' "$STUB_LOG"
+}
+
+@test "reap: an idle frame with unsent input in the box is kept" {
+  git commit -q --allow-empty -m init
+  git branch feat/input-box
+  wt_path="$BATS_TEST_TMPDIR/input-box-wt"
+  git worktree add -q "$wt_path" feat/input-box
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯ push it
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/input-box#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"input box"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: a msg posted after done keeps the worktree" {
+  git commit -q --allow-empty -m init
+  git branch feat/later-msg
+  wt_path="$BATS_TEST_TMPDIR/later-msg-wt"
+  git worktree add -q "$wt_path" feat/later-msg
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/later-msg#s1-1" done "" "https://example.com/pr/1"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  later_ts=$(jq -nc 'now*1000|floor + 1000')
+  jq -nc --argjson ts "$later_ts" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/later-msg#s1-1", to:"dispatcher:c1", kind:"msg", body:"hi"}' >>"$log"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"posted after its done"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: an exited state with a live idle engine still keeps — old reason" {
+  git commit -q --allow-empty -m init
+  git branch feat/exited-idle
+  wt_path="$BATS_TEST_TMPDIR/exited-idle-wt"
+  git worktree add -q "$wt_path" feat/exited-idle
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_bin wt
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/exited-idle#s1-1" exited "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/exited-idle — an engine is still running there"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: a pr_open worker whose PR merged and engine is idle is reaped" {
+  git commit -q --allow-empty -m init
+  git branch feat/pr-open-idle
+  wt_path="$BATS_TEST_TMPDIR/pr-open-idle-wt"
+  git worktree add -q "$wt_path" feat/pr-open-idle
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/pr-open-idle#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"pr_open", pr_url:"https://example.com/pr/1"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/pr-open-idle"* ]]
+}
+
+@test "reap: an orphan-stamped window whose branch has no worktree is reported, not killed" {
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  stub_bin gh
+  stub_bin wt
+  stub_tmux_frames "" ""
+  printf '@9\tfeat/gone\t%s/crew\n' "$common" >"$STUB_DIR/wins3.txt"
+  # A non-terminal event so `$log` exists and the reap arm runs far enough to
+  # reach the orphan-window report (its `[ -f "$log" ] || exit 0` guard sits
+  # above everything else); it yields no candidate of its own.
+  CREW_ID=c1 run_crew status "worker:feat/other#s1-1" working
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"window @9 is stamped feat/gone but its worktree is gone — not killed"* ]]
+  run ! grep -q 'kill-window -t @9' "$STUB_LOG"
+}
+
+@test "reap: a live reap.lock.d held by another live pid is skipped" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  log_dir="$(dirname "$log")"
+  CREW_ID=c1 run_crew status "worker:feat/locked-out#s1-1" done "" "https://example.com/pr/1"
+  mkdir -p "$log_dir/reap.lock.d"
+  echo $$ >"$log_dir/reap.lock.d/pid"
+  stub_bin gh
+  stub_bin wt
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"another reap is running — skipped"* ]]
+  run ! grep -q 'pr' "$STUB_LOG"
+}
+
+@test "reap: an idle frame is still classified idle under LC_ALL=C" {
+  git commit -q --allow-empty -m init
+  git branch feat/idle-c-locale
+  wt_path="$BATS_TEST_TMPDIR/idle-c-locale-wt"
+  git worktree add -q "$wt_path" feat/idle-c-locale
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  set_frame %1 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-c-locale#s1-1" done "" "https://example.com/pr/1"
+  LC_ALL=C CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/idle-c-locale"* ]]
+}
+
+@test "reap: an idle frame with a trailing NBSP in the input box is still idle" {
+  git commit -q --allow-empty -m init
+  git branch feat/idle-nbsp
+  wt_path="$BATS_TEST_TMPDIR/idle-nbsp-wt"
+  git worktree add -q "$wt_path" feat/idle-nbsp
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  gh_stub_state MERGED
+  stub_wt_removes
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  printf '  \xe2\x8e\xbf  Done (14 tool uses \xc2\xb7 58.2k tokens \xc2\xb7 1m 9s)\n\xe2\x9c\xbb Churned for 36s \xc2\xb7 done 11:20 AM\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80 reef \xe2\x94\x80\n\xe2\x9d\xaf \xc2\xa0\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n  -- INSERT -- \xe2\x8f\xb5\xe2\x8f\xb5 auto mode on \xc2\xb7 \xe2\x86\x90 for agents\n' >"$STUB_DIR/frames/%1"
+  CREW_ID=c1 run_crew status "worker:feat/idle-nbsp#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/idle-nbsp"* ]]
 }
 
 @test "msg: an oversized JSON body stays parseable JSON" {

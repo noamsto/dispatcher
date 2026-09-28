@@ -430,6 +430,77 @@ _frame_classifier() {
   _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 }
 
+# _pane_idle_reason <capture> — 0 (prints nothing) iff a claude frame is
+# provably idle; else prints a short keep reason and returns 1. Needs
+# _frame_classifier already called. Idle takes positive evidence — an empty
+# input box — so a frame nothing here recognises reads as busy, never idle.
+# The predicates read $engine, unset outside stall-watch, hence the local.
+_pane_idle_reason() {
+  local text="$1" engine=claude tail8 rule_re='^(─)+( [^[:space:]].* (─)+)?[[:space:]]*$'
+  if _is_permission_prompt "$text" || _is_prompt "$text" || _is_quota_session_limit "$text"; then
+    printf '%s' "prompt on screen"
+    return 1
+  fi
+  tail8=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -8 || true)
+  if [ -n "$(_meter_line "$text")" ] || printf '%s\n' "$tail8" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…'; then
+    printf '%s' "turn in progress"
+    return 1
+  fi
+  if _has_subrow "$text"; then
+    printf '%s' "subagent running"
+    return 1
+  fi
+  if printf '%s\n' "$tail8" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)'; then
+    printf '%s' "background shell or monitor still running"
+    return 1
+  fi
+
+  # Positive-evidence input box: the LAST line starting with ❯, whose
+  # previous and next non-empty lines are both rule lines (the worker's
+  # codename may label the top one, e.g. `────── reef ─`).
+  local lines arrow=-1 i=0 l prev="" next="" total after
+  mapfile -t lines <<<"$text"
+  for l in "${lines[@]}"; do
+    case "$l" in
+    ❯*) arrow=$i ;;
+    esac
+    i=$((i + 1))
+  done
+  if [ "$arrow" -lt 0 ]; then
+    printf '%s' "no idle input box on screen"
+    return 1
+  fi
+  i=$((arrow - 1))
+  while [ "$i" -ge 0 ]; do
+    if [ -n "${lines[i]//[[:space:]]/}" ]; then
+      prev="${lines[i]}"
+      break
+    fi
+    i=$((i - 1))
+  done
+  total=${#lines[@]}
+  i=$((arrow + 1))
+  while [ "$i" -lt "$total" ]; do
+    if [ -n "${lines[i]//[[:space:]]/}" ]; then
+      next="${lines[i]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+  if ! [[ "$prev" =~ $rule_re ]] || ! [[ "$next" =~ $rule_re ]]; then
+    printf '%s' "no idle input box on screen"
+    return 1
+  fi
+  after="${lines[arrow]#❯}"
+  after="${after//[$' \t']/}"
+  after="${after//$'\xc2\xa0'/}"
+  if [ -n "$after" ]; then
+    printf '%s' "input box not empty (unsent input or a suggestion)"
+    return 1
+  fi
+  return 0
+}
+
 # _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
 # s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
 # `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
@@ -4937,6 +5008,19 @@ reap)
     ;;
   esac
 
+  # Overlap lock: dispatch's own reap and a `crew stream`-driven reap must
+  # never run concurrently — a `wt remove` racing another one is exactly the
+  # half-done state that leaves a worktree stranded. Placed after the
+  # autosweep block on purpose: its sync mode sets and clears its own EXIT
+  # trap, and installing ours first would have the sweep's `trap - EXIT`
+  # clobber this one.
+  reap_lock="$dir/reap.lock.d"
+  if ! _lock_acquire "$reap_lock" "$$"; then
+    note "another reap is running — skipped"
+    exit 0
+  fi
+  trap '_lock_release "$reap_lock"' EXIT
+
   # The set of states a worker session ends in — shared by the idle-release
   # filter below and the reclaim filter further down so they can't drift
   # apart again (#68): a worker that `exited` (compacted, hit its context
@@ -5028,6 +5112,21 @@ EOF
   # shellcheck source=/dev/null
   . "$wt_git_lib"
 
+  # Orphan windows: report only. A window still stamped for this repo but
+  # whose branch has no worktree left (its worker was reaped, or something
+  # removed the tree without going through reap) is worth a human's eye, but
+  # killing it here could take down a live diagnostic session sitting in it.
+  while IFS=$'\t' read -r owid obranch ocdir; do
+    [ -n "$owid" ] && [ -n "$obranch" ] || continue
+    [ "$ocdir" = "$dir" ] || continue
+    owt=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$obranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    [ -n "$owt" ] && [ -d "$owt" ] && continue
+    note "window $owid is stamped $obranch but its worktree is gone — not killed"
+  done <<EOF
+$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}' 2>/dev/null || true)
+EOF
+
   # Latest status per worker across every crew; keep the ones in a terminal
   # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
@@ -5038,23 +5137,33 @@ EOF
   # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
   # must not win the fold forever, and claims older than $claim_mask_ttl drop
   # out so a prior terminal status can resurface.
+  # pr_open joins the candidate pool for THIS pass only (the idle-release pass
+  # above stays on $reap_terminal_states — a pr_open worker is never released
+  # on time, only ever reclaimed once its PR lands and its engine goes idle).
+  # `later`: some status or msg from that same session postdates its terminal
+  # status — a session that spoke again after `done` is not idle, whatever its
+  # pane looks like.
   candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      map(select(
-          ((.from // "") | startswith("worker:"))
-          and (
-            .kind == "status"
-            or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
-          )))
-      | group_by(.from) | map(
-          (max_by(.ts)) as $latest
-          | {branch: ($latest.from | wid_branch),
-             ts: $latest.ts,
-             state: $latest.body.state,
-             pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
-      | group_by(.branch) | map(sort_by(.ts) | last)
-      | map(select(.state as $st | ($terminal | index($st)) != null))
-      | .[] | [.branch, .state, (.pr_url // "-")] | @tsv' "$log")
+      (map(select(.kind == "msg" or .kind == "status") | {from: (.from // ""), ts})
+        | group_by(.from) | map({key: .[0].from, value: (map(.ts) | max)}) | from_entries) as $last
+      | (map(select(
+              ((.from // "") | startswith("worker:"))
+              and (
+                .kind == "status"
+                or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
+              )))
+          | group_by(.from) | map(
+              (max_by(.ts)) as $latest
+              | {branch: ($latest.from | wid_branch),
+                 session: $latest.from,
+                 ts: $latest.ts,
+                 state: $latest.body.state,
+                 pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+          | group_by(.branch) | map(sort_by(.ts) | last)
+          | map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
+        )
+      | .[] | [.branch, .state, (.pr_url // "-"), (if ($last[.session] // 0) > .ts then "1" else "0" end)] | @tsv' "$log")
   [ -n "$candidates" ] || {
     note "nothing done to reap"
     exit 0
@@ -5062,11 +5171,15 @@ EOF
 
   # Panes running an engine, to tell "finished worker" from "someone is in there
   # right now". Same path-keyed idiom as roster: window names are rewritten by
-  # lazytmux, so the worktree path is the only stable handle.
-  live=$(tmux list-panes -a -F '#{pane_current_command} #{pane_current_path}' 2>/dev/null || true)
+  # lazytmux, so the worktree path is the only stable handle. One 4-field
+  # query drives both the "engine at path" test (built back into
+  # _pane_is_engine_at's 2-field contract, which roster also relies on) and
+  # the idle-reclaim window/pane bookkeeping below.
+  live=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}' 2>/dev/null || true)
+  _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state pr; do
+  while IFS=$'\t' read -r branch state pr later; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
@@ -5089,18 +5202,50 @@ EOF
       ;;
     esac
 
-    engine_live=""
-    while IFS= read -r pane; do
-      if _pane_is_engine_at "$pane" "$wtpath"; then
-        engine_live=1
-        break
-      fi
+    # Every engine pane sitting at this worktree path, window and pane ids
+    # kept alongside the command so eligibility can be judged pane-by-pane.
+    engine_panes=()
+    while IFS=$'\t' read -r pwin ppane pcmd ppath; do
+      [ -n "$pwin" ] || continue
+      _pane_is_engine_at "$pcmd $ppath" "$wtpath" || continue
+      engine_panes+=("$pwin"$'\t'"$ppane"$'\t'"$pcmd")
     done <<PANES
 $live
 PANES
-    if [ -n "$engine_live" ]; then
-      note "keeping $branch — an engine is still running there"
-      continue
+
+    idle_windows=()
+    if [ "${#engine_panes[@]}" -gt 0 ]; then
+      keep_reason=""
+      case "$state" in
+      done | pr_open) ;;
+      *) keep_reason="$state session" ;;
+      esac
+      [ -n "$keep_reason" ] || [ "$later" != 1 ] || keep_reason="session posted after its $state"
+      if [ -z "$keep_reason" ]; then
+        for pane_row in "${engine_panes[@]}"; do
+          IFS=$'\t' read -r ewin epane ecmd <<<"$pane_row"
+          stripped="${ecmd#.}"
+          stripped="${stripped%-wrapped}"
+          if [ "$stripped" != claude ]; then
+            keep_reason="$ecmd has no idle signature"
+            break
+          fi
+          capture=$(tmux capture-pane -p -t "$epane" 2>/dev/null || true)
+          if [ -z "$capture" ]; then
+            keep_reason="empty capture of $epane"
+            break
+          fi
+          if ! idle_reason=$(_pane_idle_reason "$capture"); then
+            keep_reason="$idle_reason"
+            break
+          fi
+          idle_windows+=("$ewin")
+        done
+      fi
+      if [ -n "$keep_reason" ]; then
+        note "keeping $branch — an engine is still running there ($keep_reason)"
+        continue
+      fi
     fi
     # Never remove the worktree the caller is standing in — it would leave the
     # invoking shell (or dispatch itself) on a path that no longer exists.
@@ -5149,6 +5294,22 @@ PANES
     if [ -n "$dirt" ]; then
       note "keeping $branch — uncommitted changes"
       continue
+    fi
+
+    # Kill every idle-engine window recorded above, as a human ending their
+    # own session would — a role pane sharing the window goes with it. Every
+    # gate above has passed by now, so this is the last chance to bail before
+    # actually touching tmux state.
+    if [ "${#idle_windows[@]}" -gt 0 ]; then
+      while IFS= read -r w; do
+        [ -n "$w" ] || continue
+        if [ -n "$dry" ]; then
+          say "would kill window $w ($branch idle engine)"
+        else
+          tmux kill-window -t "$w" 2>/dev/null || true
+          say "killed window $w ($branch idle engine)"
+        fi
+      done < <(printf '%s\n' "${idle_windows[@]}" | sort -u)
     fi
 
     # Kill leftover processes reparented out of the pane but still rooted in this
