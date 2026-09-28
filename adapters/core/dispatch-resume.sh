@@ -248,9 +248,8 @@ _git_protected_dirs() {
         printf '%s\0' "$out"
       done
       printf '%s\0' "$a/.git"
-      # git prints the git dir and common dir resolved, so a symlink on the
-      # spelled path to either — a gitfile's gitdir: target, a git dir's
-      # commondir target — is a hop only visible by walking them as spelled
+      # git prints both dirs resolved; walk a gitfile's gitdir: and the
+      # commondir as spelled so a link on either path is a hop
       gd="$a/.git"
       if [ -f "$a/.git" ]; then
         IFS= read -r -d '' out <"$a/.git" || :
