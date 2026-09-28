@@ -5194,6 +5194,33 @@ EOF
   [ -z "$(weight some-unknown-model)" ]
 }
 
+# Opus is the one rung whose burn class follows effort (#554): low/medium burn
+# at the standard class, high stays premium-4, xhigh/max stay premium and
+# heavier, and a legacy dispatch row with no effort keeps the historical
+# premium-4 class.
+@test "burn map conformance: opus classes by effort, absent effort stays premium" {
+  weight() { # <model> [effort]
+    bash -c 'source /dev/stdin <<<"$(sed -n "/^_burn_weight() {/,/^}/p" "$1")"; _burn_weight "$2" "$3"' _ "$CREW" "$1" "$2"
+  }
+  while read -r model effort expected; do
+    [ -n "$model" ] || continue
+    got="$(weight "$model" "$effort" | tr '\t' ' ')"
+    [ "$got" = "$expected" ] || {
+      printf '_burn_weight %s %s = "%s", expected "%s"\n' "$model" "$effort" "$got" "$expected" >&2
+      return 1
+    }
+  done <<'EOF'
+opus low standard 2
+opus medium standard 2
+opus high premium 4
+opus xhigh premium 6
+opus max premium 8
+claude-opus-5 low standard 2
+EOF
+  # Absent effort keeps the historical premium-4 class (legacy dispatch rows).
+  [ "$(weight opus | tr '\t' ' ')" = "premium 4" ]
+}
+
 # ---------------------------------------------------------------------------
 # watch --crew / stream harness
 # ---------------------------------------------------------------------------

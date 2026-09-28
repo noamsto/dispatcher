@@ -55,11 +55,13 @@ represented as `engines.pi` (month-to-date spend vs an optional monthly
 target, not a quota window) — a pi run on the Flash rungs is roughly $0.5–2
 per Flash run, which is what makes pi the cheap lane to shed claude burn
 onto. Subscription rungs group into three classes:
-**premium** — opus (fable ≈2× opus),
-`gpt-5.6-sol`, `grok-4.7-high`; **standard** — sonnet, `gpt-5.6-terra`,
-`grok-4.7-medium`; **cheap** — haiku, `gpt-5.6-luna`,
-`grok-4.7-low`, `composer-2.5*` (free). Effort multiplies burn
-within a rung (`xhigh`/`max`; codex `ultra` most). **Cursor `-fast` doubles the
+**premium** — opus at `high`+
+(fable ≈2× opus), `gpt-5.6-sol`, `grok-4.7-high`; **standard** — opus at
+`low`/`medium`, sonnet, `gpt-5.6-terra`, `grok-4.7-medium`; **cheap** — haiku,
+`gpt-5.6-luna`, `grok-4.7-low`, `composer-2.5*` (free). Effort multiplies burn
+within a rung (`xhigh`/`max`; codex `ultra` most); opus's class follows effort
+(`low`/`medium` → standard, `high` → premium, `xhigh`/`max` → premium and
+heavier). **Cursor `-fast` doubles the
 token rate on top of that** ($2/M in + $6/M out standard against $4/M + $12/M
 fast on Grok 4.7 and 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
 `-medium-fast` burns like premium `-high`, and `-low-fast` like standard. It is
@@ -74,7 +76,7 @@ review depth.
 | `standard` | **opus** @**medium** → **sonnet** → escalated **opus**; **sonnet** is the budget-shed worker when the pace gate refuses opus | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
 | `trivial`  | **opus** @**low** or **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
 
-On claude `standard`/`trivial`, opus runs at the tier-typical effort (`medium` / `low`), never deep's `high` by habit; raise a standard/trivial opus only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort, not opus at a lower effort. The burn class does not follow effort: opus at `low` still counts as premium (Burn classes).
+On claude `standard`/`trivial`, opus runs at the tier-typical effort (`medium` / `low`), never deep's `high` by habit; raise a standard/trivial opus only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort, not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
@@ -383,9 +385,13 @@ so a refused pi dispatch lands directly on `high` — which matters because
 
 <!-- END generated:pace-downgrades -->
 
-Claude `standard` and `trivial` lead on `opus` as well, so the same ≥70%
-pace gate refuses an `opus` dispatch on those rows too, and the downgrade
-target is the same: `sonnet`, each row's budget-shed rung.
+The table is the configured model→downgrade mapping; opus's effort-aware
+exception lives in `pace_rule_target`, not in the mapping. Claude `standard`
+and `trivial` lead on `opus` as well, but the same ≥70% pace gate refuses an
+`opus` dispatch on those rows only at `high`+ — the tier-typical `low`/`medium`
+opus burns at the standard class and is admitted (Burn classes, above). Where
+it does refuse, the downgrade target is the same: `sonnet`, each row's
+budget-shed rung.
 
 ### Cursor Task-spawn slugs
 

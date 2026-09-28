@@ -554,11 +554,15 @@ _crew_id() {
   fi
 }
 
-# _burn_weight <model> — prints "<class>\t<weight>", or "" for a model this
-# burn table (dispatch-orchestration.md → "Burn classes") does not name.
-# kimi-k3* deliberately falls through to "" — the burn doc does not class it —
-# so the cursor rungs are matched on their exact strings, never on a `*high*`
-# glob that would also swallow kimi-k3-high.
+# _burn_weight <model> [effort] — prints "<class>\t<weight>", or "" for a
+# model this burn table (dispatch-orchestration.md → "Burn classes") does not
+# name. Opus is the one rung whose class follows effort (low/medium burn at
+# the standard class; high stays premium; xhigh/max spend more tokens per turn
+# and weigh more); every other model is classed by name alone, so an absent or
+# unrecognized effort changes nothing for them. kimi-k3* deliberately falls
+# through to "" — the burn doc does not class it — so the cursor rungs are
+# matched on their exact strings, never on a `*high*` glob that would also
+# swallow kimi-k3-high.
 #
 # Cursor prices two independent axes, so the grok rungs are enumerated rather
 # than globbed: the effort suffix sets how many tokens a turn spends, while
@@ -568,10 +572,19 @@ _crew_id() {
 # actually burns like premium.
 _burn_weight() {
   case "$1" in
+  # high, and any absent/unrecognized effort, stay premium-4.
+  *opus*)
+    case "${2:-}" in
+    low | medium) printf 'standard\t2' ;;
+    xhigh) printf 'premium\t6' ;;
+    max) printf 'premium\t8' ;;
+    *) printf 'premium\t4' ;;
+    esac
+    ;;
   composer-2.5*) printf 'free\t0' ;;
   *haiku* | gpt-5.6-luna | *grok-4.[0-9]-low) printf 'cheap\t1' ;;
   *sonnet* | gpt-5.6-terra | *grok-4.[0-9]-medium | *grok-4.[0-9]-low-fast) printf 'standard\t2' ;;
-  *opus* | gpt-5.6-sol | *grok-4.[0-9]-high | *grok-4.[0-9]-medium-fast) printf 'premium\t4' ;;
+  gpt-5.6-sol | *grok-4.[0-9]-high | *grok-4.[0-9]-medium-fast) printf 'premium\t4' ;;
   *grok-4.[0-9]-xhigh) printf 'premium\t6' ;;
   *grok-4.[0-9]-high-fast) printf 'premium\t8' ;;
   *grok-4.[0-9]-xhigh-fast) printf 'premium\t12' ;;
@@ -2721,19 +2734,20 @@ EOF_REPOS
   repo=$(git config --get remote.origin.url 2>/dev/null |
     sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
   repo="${repo:-$(basename "$(git rev-parse --show-toplevel)")}"
-  # jq cannot call _burn_weight, so resolve each distinct model's burn class
-  # in bash first and hand the result in as one lookup object.
-  models=$(jq -s -r '[.[] | select(.kind=="dispatch") | (.model // "")] | unique | .[]' "$log")
+  # jq cannot call _burn_weight; resolve each distinct model+effort here and
+  # key the lookup by both, so opus@low prices below opus@high (its class
+  # follows effort).
+  targets=$(jq -s -r '[.[] | select(.kind=="dispatch") | [(.model // ""), (.effort // "")]] | unique | .[] | @tsv' "$log")
   costmap='{}'
-  while IFS= read -r model; do
+  while IFS=$'\t' read -r model effort; do
     [ -n "$model" ] || continue
-    cw=$(_burn_weight "$model")
+    cw=$(_burn_weight "$model" "$effort")
     [ -n "$cw" ] || continue
     class="${cw%%$'\t'*}"
     weight="${cw#*$'\t'}"
-    costmap=$(printf '%s' "$costmap" | jq -c --arg m "$model" --arg c "$class" --argjson w "$weight" \
-      '. + {($m): [$c, $w]}')
-  done <<<"$models"
+    costmap=$(printf '%s' "$costmap" | jq -c --arg m "$model" --arg e "$effort" --arg c "$class" --argjson w "$weight" \
+      '. + {(($m) + "\t" + ($e)): [$c, $w]}')
+  done <<<"$targets"
   records=$(jq -s --arg repo "$repo" --argjson costmap "$costmap" '
     (map(select(.kind=="dispatch"))) as $disp
     | [ ($disp | map(.branch) | unique)[] as $b
@@ -2775,7 +2789,7 @@ EOF_REPOS
         | ($st | map(select(.body.state=="done" or .body.state=="failed")) | sort_by(.ts) | (.[-1] // null)) as $term
         | (if $term != null then ($term.ts - $t0) else null end) as $wall
         | (($d.shape // null) | if . == "" then null else . end) as $shape
-        | ($costmap[$d.model // ""] // null) as $cw
+        | ($costmap[($d.model // "") + "\t" + ($d.effort // "")] // null) as $cw
         | (null) as $pr_state
         # Split rather than replace. `blocked_count` feeds an append-only,
         # cross-run ratings store whose rows are compared against rows written

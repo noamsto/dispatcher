@@ -44,6 +44,12 @@ pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
+  # Opus's burn class follows effort (crew.sh `_burn_weight`): at low/medium it
+  # is standard-class, not a premium *model* rung to shed. xhigh/max still take
+  # the effort refusal below; the >=95% hard stop is separate.
+  case "$target_agent:$target_model:$target_effort" in
+  claude:*opus*:low | claude:*opus*:medium) model_downgrade="" ;;
+  esac
   case "$target_effort" in
   max | xhigh) effort_downgrade="high" ;;
   esac

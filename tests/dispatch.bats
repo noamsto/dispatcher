@@ -2921,10 +2921,40 @@ assert_gate_silent() { # <engine> <model> [profile]
 
 @test "budget rung gate refuses standard opus and names sonnet" {
   budget_json 80 "$(date +%s)"
-  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "rung claude standard opus"
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "rung claude standard opus"
   [ "$status" -eq 1 ]
   [[ "$output" == *"the premium rung"* ]]
   [[ "$output" == *"sonnet"* ]]
+}
+
+# Opus's burn class follows effort (#554): low/medium burn at the standard
+# class, so the pace gate must not refuse them as a premium model rung, while
+# high+ still refuses. Pinned against a live pace window (>15 points ahead).
+@test "opus at low/medium effort is not pace-refused, but high still is (#554)" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "opus medium not refused"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+
+  budget_json_at claude 77 345600
+  run run_dispatch standard opus --agent claude --effort low --crew-id c1 42 "opus low not refused"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "opus high refused"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+  [[ "$output" == *"sonnet"* ]]
+}
+
+@test "an opus role at low effort is not pace-refused (#554)" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  run run_dispatch standard sonnet --agent claude --roles "reviewer=claude:opus@low" --effort high --crew-id c1 42 "opus role low effort"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "cursor confines effort-suffixed cross-vendor ids to deep" {
