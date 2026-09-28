@@ -5198,12 +5198,14 @@ SCAFFOLD
     # the branch, wrote no reap row and never released the dispatched label
     # (#194). --no-hooks because the window is already gone; no -f, because a
     # genuinely dirty worktree must survive.
-    # Per-call guard (#557): `wt remove` runs git in both contexts below.
+    # Per-call guard (#557): `wt remove` runs git in both contexts below. The
+    # git it spawns itself reads no in-tree attributes and carries _wt_git's
+    # overrides (#578).
     if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
       note "keeping $branch — git config drift"
       continue
     fi
-    wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1 || true
+    _wt_neutral "$common" wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1 || true
     wtleft=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then

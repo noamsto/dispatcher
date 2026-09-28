@@ -129,6 +129,31 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
+# stub_wt_removes_status — like stub_wt_removes, but its `remove` first runs a
+# real `git status --porcelain` in the worktree (as the real wt binary does,
+# confirmed via GIT_TRACE) and logs the env that call saw, so a test can
+# assert what reap's own git carried into wt's git (#578).
+stub_wt_removes_status() {
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = remove ]; then
+  branch="${!#}"
+  wtp=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+  if [ -n "$wtp" ]; then
+    printf 'GIT_ATTR_SOURCE=%s GIT_CONFIG_COUNT=%s\n' "${GIT_ATTR_SOURCE:-}" "${GIT_CONFIG_COUNT:-}" >>"$STUB_LOG"
+    git -C "$wtp" status --porcelain >/dev/null
+    rm -rf "$wtp"
+  fi
+  git worktree prune
+  echo "Branch unmerged; to delete, run wt remove -D" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
 # anchor_record_path <wt> — the dispatcher anchor record path for <wt>, as the
 # shared worktree-git lib derives it (#556).
 anchor_record_path() {
@@ -3030,6 +3055,50 @@ EOF
   [ -d "$wt_path" ]
   [[ "$output" == *"keeping feat/557-a"* ]]
   [[ "$output" == *"filter.x.clean"* ]]
+}
+
+@test "reap: wt remove never runs a baselined worktree-relative filter the worker rewrote (#578)" {
+  # #578: reap's own guard covers the git IT runs, but `wt remove` (kept, not
+  # replaced, for branch bookkeeping) spawns its OWN git that also runs
+  # `git status` in the worktree (confirmed via GIT_TRACE on the real
+  # binary). A filter.x.clean naming a repo-relative program is legitimately
+  # baselined (unlike #557's drifted case), so the guard passes it — that git
+  # must still never run the worker's rewritten copy of the program.
+  mkdir -p tools
+  printf '#!/bin/sh\ncat\n' >tools/conv.sh
+  chmod +x tools/conv.sh
+  printf a >f
+  printf 'f filter=x\n' >.gitattributes
+  git add tools/conv.sh f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git config filter.x.clean tools/conv.sh
+  seed_git_baseline
+  git branch feat/578-a
+  wt_path="$BATS_TEST_TMPDIR/578-a-wt"
+  git worktree add -q "$wt_path" feat/578-a
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf '#!/bin/sh\ntouch %q\ncat\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$wt_path/tools/conv.sh"
+  git -C "$wt_path" commit -qam rewrite
+  rm -f "$BATS_TEST_TMPDIR/SENTINEL"
+  touch -d '+5 seconds' "$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes_status
+  CREW_ID=c1 run_crew status "worker:feat/578-a" done "" "https://example.com/pr/578"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ ! -d "$wt_path" ]
+  run grep -E 'GIT_ATTR_SOURCE=.+ GIT_CONFIG_COUNT=7' "$STUB_LOG"
+  [ "$status" -eq 0 ]
 }
 
 @test "reap: a worker-planted include never runs (#557)" {

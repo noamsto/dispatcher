@@ -27,6 +27,28 @@ add_worktree() { # <name> -> $WT, $ADMIN
   [ "$ADMIN" = "$(realpath -e "$COMMON/worktrees/$1")" ]
 }
 
+# commit_conv_driver <gitattributes-content> — commit a benign tools/conv.sh
+# (cats its arg, or stdin), file `a` (no trailing newline), and .gitattributes
+# with the given content (#578).
+commit_conv_driver() {
+  mkdir -p tools
+  printf '#!/bin/sh\nif [ $# -gt 0 ]; then cat "$1"; else cat; fi\n' >tools/conv.sh
+  chmod +x tools/conv.sh
+  printf a >a
+  printf '%s' "$1" >.gitattributes
+  git add tools/conv.sh a .gitattributes
+  git commit -q -m fixture
+}
+
+# rewrite_conv_and_commit — after add_worktree, rewrite $WT/tools/conv.sh so
+# it touches $SENTINEL before behaving as before, and commit it on the
+# worktree's own branch so `reset --hard HEAD` keeps the rewrite (#578).
+rewrite_conv_and_commit() {
+  printf '#!/bin/sh\ntouch %q\nif [ $# -gt 0 ]; then cat "$1"; else cat; fi\n' "$SENTINEL" >"$WT/tools/conv.sh"
+  git -C "$WT" commit -qam rewrite
+  rm -f "$SENTINEL"
+}
+
 @test "_wt_cfg_pairs lists local exec-capable keys only (#557)" {
   git config filter.X.clean "$HIT"
   git config alias.lg '!sh'
@@ -283,4 +305,75 @@ add_worktree() { # <name> -> $WT, $ADMIN
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
   [[ $stderr == *filter.x.clean* ]]
+}
+
+@test "_wt_git never runs a baselined worktree-relative textconv the worker rewrote (#578)" {
+  commit_conv_driver 'a diff=myd
+'
+  add_worktree w
+  git config diff.myd.textconv tools/conv.sh
+  _wt_cfg_baseline_init "$COMMON"
+  rewrite_conv_and_commit
+  run --separate-stderr _wt_cfg_guard "$COMMON" "$ADMIN"
+  [ "$status" -eq 0 ]
+  echo b >"$WT/a"
+  rm -f "$SENTINEL"
+  run --separate-stderr _wt_git "$ADMIN" "$WT" diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$SENTINEL" ]
+  # Control: plain git in the worktree does run the rewritten driver.
+  git -C "$WT" diff >/dev/null
+  [ -e "$SENTINEL" ]
+}
+
+@test "_wt_git never runs a baselined worktree-relative filter the worker rewrote (#578)" {
+  commit_conv_driver 'a filter=myf
+'
+  add_worktree w
+  git config filter.myf.clean tools/conv.sh
+  git config filter.myf.smudge tools/conv.sh
+  _wt_cfg_baseline_init "$COMMON"
+  rewrite_conv_and_commit
+  # Same-size edit: stat-dirty, forces git to re-hash (and would run clean).
+  printf b >"$WT/a"
+  rm -f "$SENTINEL"
+  run --separate-stderr _wt_status "$ADMIN" "$WT"
+  [ "$status" -eq 0 ]
+  rm -f "$SENTINEL"
+  run --separate-stderr _wt_git "$ADMIN" "$WT" reset -q --hard HEAD
+  [ "$status" -eq 0 ]
+  [ ! -e "$SENTINEL" ]
+  # Control: the same edit against plain git does run the rewritten filter.
+  printf b >"$WT/a"
+  git -C "$WT" reset -q --hard HEAD
+  [ -e "$SENTINEL" ]
+}
+
+@test "_wt_git ignores a worker-planted core.attributesFile (#578)" {
+  commit_conv_driver ''
+  add_worktree w
+  git config diff.myd.textconv tools/conv.sh
+  _wt_cfg_baseline_init "$COMMON"
+  rewrite_conv_and_commit
+  printf 'a diff=myd\n' >"$WT/.evil"
+  git -C "$WT" config core.attributesFile "$WT/.evil"
+  run --separate-stderr _wt_cfg_guard "$COMMON" "$ADMIN"
+  [ "$status" -eq 0 ]
+  echo b >"$WT/a"
+  rm -f "$SENTINEL"
+  run --separate-stderr _wt_git "$ADMIN" "$WT" diff
+  [ "$status" -eq 0 ]
+  [ ! -e "$SENTINEL" ]
+  # Control: plain git honors the planted attributesFile and runs the driver.
+  git -C "$WT" diff >/dev/null
+  [ -e "$SENTINEL" ]
+}
+
+@test "_wt_git refuses when the empty tree cannot be computed (#578)" {
+  add_worktree w
+  _wt_cfg_baseline_init "$COMMON"
+  _wt_empty_tree() { return 1; }
+  run --separate-stderr _wt_git "$ADMIN" "$WT" status --porcelain
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"empty tree"* ]]
 }

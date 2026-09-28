@@ -578,10 +578,17 @@ branch instead; the worktree carries over under `resume: true`.
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`; anchored calls still pass `-c
-  core.fsmonitor=false -c core.hooksPath=/dev/null` and disable the
-  config-hook events they trigger, for worktree-relative baseline values
-  (Husky's `.husky`). Relay a refusal to the human verbatim; never run its
+  remove` and `git branch -D`; anchored calls — and the git that `crew
+  reap`'s `wt remove` spawns, via env (`GIT_CONFIG_COUNT`) — still pass
+  those overrides plus `core.attributesFile=/dev/null`, disable the
+  config-hook events they trigger, and read no in-tree `.gitattributes`
+  (`--attr-source`/`GIT_ATTR_SOURCE` = the empty tree), so a baselined
+  worktree-relative program (Husky's `.husky`, a repo-relative filter or
+  textconv the worker rewrote) never runs there. Cost: that git applies no
+  LFS/eol/encoding attributes — a `--pr` attach that must reset writes LFS
+  pointer files (`git lfs checkout` in the worktree restores them), and
+  status may read a stat-dirty filtered file as modified, so reap keeps the
+  worktree. Relay a refusal to the human verbatim; never run its
   printed `--unset-all` or clear it yourself — only the human clears it: they
   inspect drift (`crew git-baseline`), remove keys they did not set (`git
   config --unset-all`), then run `crew git-baseline --accept` in their own
@@ -601,11 +608,14 @@ branch instead; the worktree carries over under `resume: true`.
   churn every rebuild); a key planted before the baseline existed is
   trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
-  though the guard's refusal lines still reach stderr; and a baselined
-  program still runs on worker-written input — `lfs` on worker content, and
-  a worktree-relative one (`filter.x.clean=./scripts/clean.sh`) is whatever
-  the worker wrote there, since the guard compares config, not the program:
-  keep such programs outside the repo tree (absolute paths).
+  though the guard's refusal lines still reach stderr; the guard
+  compares config, not the program; `$GIT_COMMON_DIR/info/attributes`
+  (outside every worker's tree) still selects drivers in that git; and
+  creating a worktree (`wt switch -c`) runs smudge with the new tree's own
+  attributes, so a baselined relative smudge program runs whatever that
+  tree holds — worker-committed code on a stacked `--base` — in the
+  dispatcher's shell: keep driver programs outside the repo tree (absolute
+  paths).
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Questions you put there are answered in the worker's tally, not on the PR: frame each as "report in your tally: …", and never ask the worker to write context (bench evidence, sibling-PR composition) onto the PR. Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
