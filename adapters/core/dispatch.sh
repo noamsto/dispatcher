@@ -3207,13 +3207,23 @@ fi
 # idle-done is protected by the claim write near `worker_id=` below.
 crew reap --quiet || true
 
-# Blank worktrunk's post-switch *tmux* hook for this one call: we drive tmux
-# ourselves below, and the hook would otherwise open a second, undecorated shell
-# window at the same worktree (#123). Its own `$CLAUDECODE` guard only covers a
-# Claude-launched dispatcher, and setting CLAUDECODE here would leak Claude's
-# identity into a codex/cursor worker. Scoped to `tmux`, so the devshell hook
-# still runs — it materializes .pre-commit-config.yaml, without which the worker
+# The create arm's default-base tree is the merged default branch, not
+# worker/PR-controlled content, so only worktrunk's post-switch *tmux* hook is
+# blanked for that one call: we drive tmux ourselves below, and the hook would
+# otherwise open a second, undecorated shell window at the same worktree
+# (#123). Its own `$CLAUDECODE` guard only covers a Claude-launched dispatcher,
+# and setting CLAUDECODE here would leak Claude's identity into a codex/cursor
+# worker. Scoped to `tmux`, so the operator's other hooks still run — e.g. a
+# devshell hook materializes .pre-commit-config.yaml, without which the worker
 # cannot commit at all.
+#
+# Every other switch_mode lands on a tree a worker or PR author wrote — a
+# resumed branch, a --pr head, a stacked --base parent — so those use
+# `--no-hooks` instead: the operator's hooks run in the dispatcher's own
+# shell, and a devshell hook would evaluate that tree's flake.nix there (#558,
+# DISPATCHER_PROTOCOL.md Trust boundary). Such a worker's own
+# .pre-commit-config.yaml still appears once its devshell (direnv) loads in
+# the worker's session, so nobody has to "restore" the skipped hooks.
 wt_post_switch='post-switch.tmux=""'
 
 # --pr resolves the head ref; the switch itself happens after the gate below, so
@@ -3409,7 +3419,11 @@ fi
 
 case "$switch_mode" in
 create)
-  wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
+  if [ -n "$base_flag" ]; then
+    wt switch -c "$branch" -b "$create_base_oid" -y --no-hooks
+  else
+    wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
+  fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
   # default branch and silently strands the earlier branch's uncommitted work
@@ -3481,20 +3495,20 @@ resume)
 $(tmux list-panes -a -F '#{window_id}	#{pane_current_path}	#{@crew_name}' 2>/dev/null || true)
 WINDOWS
   fi
-  wt switch "$branch" -y --config-set "$wt_post_switch"
+  wt switch "$branch" -y --no-hooks
   branch_short="$(git rev-parse --short "$branch")"
   echo "dispatch: resuming branch $branch at $branch_short"
   ;;
-name) wt switch "$branch" -y --config-set "$wt_post_switch" ;;
+name) wt switch "$branch" -y --no-hooks ;;
 fetch-name)
   # A PR head branch is attacker-named; see _fetch_origin_branch.
   _fetch_origin_branch "$branch" || {
     echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   }
-  wt switch "$branch" -y --config-set "$wt_post_switch"
+  wt switch "$branch" -y --no-hooks
   ;;
-pr-ref) wt switch "pr:$pr_number" -y --config-set "$wt_post_switch" ;;
+pr-ref) wt switch "pr:$pr_number" -y --no-hooks ;;
 esac
 
 sanitized="${branch//\//-}"

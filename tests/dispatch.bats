@@ -3752,6 +3752,74 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
+# stub_wt_operator_hook — wraps whatever $STUB_DIR/wt a fixture already
+# installed with a simulated operator user-level post-switch hook (#558): a
+# real worktrunk hook (e.g. a devshell hook running `nix develop` on the
+# worktree's flake.nix) fires on every `wt switch` unless `--no-hooks` is
+# passed. Must be called AFTER the fixture helper, since fixtures like
+# setup_resume_branch overwrite $STUB_DIR/wt themselves.
+stub_wt_operator_hook() {
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" = --no-hooks ] && no_hooks=1
+done
+[ "\${no_hooks:-}" = 1 ] || touch "$BATS_TEST_TMPDIR/operator-hook-ran"
+exec "$STUB_DIR/wt.orig" "\$@"
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+# #558: a resume switches onto a branch a worker already wrote, so the
+# operator's post-switch hooks (which run in the dispatcher's own shell) must
+# be suppressed with --no-hooks.
+@test "resume: suppresses operator hooks with --no-hooks" {
+  setup_resume_branch feat/42-do-a-thing
+  stub_crew_gate '[]' '[]'
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch feat/42-do-a-thing -y --no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+# #558: --pr attaches to the PR author's head branch, so operator hooks must
+# not run against it.
+@test "--pr path suppresses operator hooks with --no-hooks" {
+  stub_pr_bins eng-7691-foo
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  grep -q '^switch eng-7691-foo -y --no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+# #558: a default-base create's tree is the merged default branch, not
+# worker/PR-controlled content, so the operator's other hooks (e.g. a devshell
+# hook materializing .pre-commit-config.yaml) deliberately still run — only
+# the tmux hook is blanked (it would open a second undecorated window, #123).
+@test "default create: leaves operator hooks running, blanks only the tmux hook" {
+  stub_launch_bins
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch -c feat/42-do-a-thing' "$STUB_LOG"
+  run ! grep -q -- '--no-hooks' "$STUB_LOG"
+  [ -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
+# #558: a stacked --base create branches from a parent ref a worker/PR author
+# wrote, so operator hooks must be suppressed the same as resume/--pr.
+@test "stacked create: suppresses operator hooks with --no-hooks" {
+  setup_stacked_base feat/parent
+  stub_wt_operator_hook
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -q '^switch -c feat/42-implement-thing .*--no-hooks' "$STUB_LOG"
+  [ ! -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+}
+
 # An existing worktree for the branch the --pr path resolves to, so the gate has
 # something to find. headRefOid matches the worktree's actual HEAD so the
 # verification step sees a match (not the concern of these gate tests).
