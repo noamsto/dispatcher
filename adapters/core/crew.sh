@@ -572,8 +572,7 @@ _crew_id() {
 # actually burns like premium.
 _burn_weight() {
   case "$1" in
-  # An absent effort keeps the historical premium-4 class, so legacy dispatch
-  # rows (written before effort-aware burn) price exactly as they did.
+  # high, and any absent/unrecognized effort, stay premium-4.
   *opus*)
     case "${2:-}" in
     low | medium) printf 'standard\t2' ;;
@@ -2735,10 +2734,9 @@ EOF_REPOS
   repo=$(git config --get remote.origin.url 2>/dev/null |
     sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
   repo="${repo:-$(basename "$(git rev-parse --show-toplevel)")}"
-  # jq cannot call _burn_weight, so resolve each distinct model+effort's burn
-  # class in bash first and hand the result in as one lookup object. Keyed by
-  # model AND effort, not model alone: opus's class follows effort, so
-  # opus@low must price below opus@high.
+  # jq cannot call _burn_weight; resolve each distinct model+effort here and
+  # key the lookup by both, so opus@low prices below opus@high (its class
+  # follows effort).
   targets=$(jq -s -r '[.[] | select(.kind=="dispatch") | [(.model // ""), (.effort // "")]] | unique | .[] | @tsv' "$log")
   costmap='{}'
   while IFS=$'\t' read -r model effort; do

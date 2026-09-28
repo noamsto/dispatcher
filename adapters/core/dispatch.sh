@@ -45,9 +45,8 @@ pace_rule_target() {
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   # Opus's burn class follows effort (crew.sh `_burn_weight`): at low/medium it
-  # burns at the standard class, so it is not a premium *model* rung the pace
-  # gate must shed. The xhigh/max effort refusal below and the >=95% hard stop
-  # are untouched. Every other model stays classed by name alone.
+  # is standard-class, not a premium *model* rung to shed. xhigh/max still take
+  # the effort refusal below; the >=95% hard stop is separate.
   case "$target_agent:$target_model:$target_effort" in
   claude:*opus*:low | claude:*opus*:medium) model_downgrade="" ;;
   esac
