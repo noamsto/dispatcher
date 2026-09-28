@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Pre-tool guard: ask before a `gh` post to a public repo carries private
+# Pre-tool guard: deny a `gh` post to a public repo that carries private
 # context — a private repo's `owner/name`, an agent session URL, a scratchpad
 # path, a home-directory path, or a secret betterleaks recognizes. Once posted,
 # GitHub's edit history keeps it public even after the body is fixed.
 #
-# `ask`, not `deny`: whether a name is a leak is a judgment call. Claude Code
-# and cursor prompt; codex has no ask channel, so it gets a deny, and hookyard
-# degrades pi's ask to deny itself.
+# `deny` on every engine, not `ask`: a rejected ask tells the agent only that
+# the user declined, and the rewrite instruction is lost, so the agent stops.
+# A deny hands the reason back to the agent, which rewrites and retries, and
+# the guard re-checks the retry. Whether a name is really a leak is still a
+# judgment call; the reason tells the agent to put it to the user in chat.
 #
 #   engine        event                  command at             verdict shape
-#   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput ask
+#   claude        PreToolUse Bash        tool_input.command     hookSpecificOutput deny
 #   codex         PreToolUse Bash        tool_input.command     hookSpecificOutput deny
 #                 (+ turn_id)
-#   pi(hookyard)  canonical_event        tool_input.command     hookSpecificOutput ask
+#   pi(hookyard)  canonical_event        tool_input.command     hookSpecificOutput deny
 #                 pre_tool Bash
 #   cursor        preToolUse Shell       tool_input.command     permission/user_message/
-#   cursor        beforeShellExecution   command                agent_message ask
+#   cursor        beforeShellExecution   command                agent_message deny
 #
 # Allow is no stdout, exit 0: cursor blocks the call on any non-JSON stdout.
 #
@@ -157,10 +159,10 @@ hits=$(sed '/^$/d' <<<"$hits")
 
 reason="This posts to $target, which is not in your private repos, and the text carries private context:
 $hits
-Rewrite it for an outside reader: drop private repo names and links, session URLs and local paths, and describe the finding so someone without that access can act on it and reproduce it."
+Rewrite it for an outside reader: drop private repo names and links, session URLs and local paths, and describe the finding so someone without that access can act on it and reproduce it.
+Then run the command again; the guard re-checks it. If the flagged text must stay as written, such as a name the user wants public, ask the user in chat instead of retrying."
 
 case $shape in
-cursor) jq -cn --arg r "$reason" '{permission: "ask", user_message: $r, agent_message: $r}' ;;
-codex) jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ;;
-*) jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r}}' ;;
+cursor) jq -cn --arg r "$reason" '{permission: "deny", user_message: $r, agent_message: $r}' ;;
+*) jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}' ;;
 esac

@@ -120,9 +120,10 @@ budget_stop() {
 }
 
 # _mint_leak_check <body> — run public-leak-guard over a minted issue's body as
-# the `gh issue create` it becomes, and refuse on any verdict: the guard asks,
-# and dispatch has nobody to ask. flake.nix bakes the guard's store path; a raw
-# run without PUBLIC_LEAK_GUARD skips the check and says so.
+# the `gh issue create` it becomes, and refuse on any verdict with the guard's
+# reason, so whoever ran dispatch can rewrite the summary. flake.nix bakes the
+# guard's store path; a raw run without PUBLIC_LEAK_GUARD skips the check and
+# says so.
 _mint_leak_check() {
   local guard="${PUBLIC_LEAK_GUARD:-@publicLeakGuard@}" body_file verdict
   if [ ! -r "$guard" ]; then

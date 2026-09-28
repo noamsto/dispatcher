@@ -67,27 +67,34 @@ assert_silent() {
   [ -z "$output" ]
 }
 
-@test "public-leak-guard: asks claude before a private repo name goes public" {
+@test "public-leak-guard: denies claude a post that puts a private repo name in public" {
   run run_guard <<<"$(claude_bash "$LEAK")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
 }
 
-@test "public-leak-guard: denies on codex, which has no ask channel" {
+@test "public-leak-guard: denies on codex" {
   run run_guard <<<"$(codex_bash "$LEAK")"
   assert_verdict deny owner/secret
 }
 
-@test "public-leak-guard: asks through hookyard for pi" {
+@test "public-leak-guard: denies through hookyard for pi" {
   run run_guard <<<"$(pi_bash "$LEAK")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
 }
 
-@test "public-leak-guard: asks in cursor's shape on both shell events" {
+@test "public-leak-guard: denies in cursor's shape on both shell events" {
   for payload in "$(cursor_shell_exec "$LEAK")" "$(cursor_pre_shell "$LEAK")"; do
     run run_guard <<<"$payload"
     [ "$status" -eq 0 ]
-    jq -e '.permission == "ask" and (.agent_message | contains("owner/secret"))' <<<"$output" >/dev/null
+    jq -e '.permission == "deny" and (.agent_message | contains("owner/secret"))' <<<"$output" >/dev/null
   done
+}
+
+@test "public-leak-guard: the deny reason says to rewrite and retry, or ask the user when the text must stay" {
+  run run_guard <<<"$(claude_bash "$LEAK")"
+  assert_verdict deny "Rewrite it for an outside reader"
+  assert_verdict deny "run the command again; the guard re-checks it"
+  assert_verdict deny "ask the user in chat instead of retrying"
 }
 
 @test "public-leak-guard: lets a post to a private repo through" {
@@ -109,8 +116,8 @@ assert_silent() {
 
 @test "public-leak-guard: flags session URLs and home paths" {
   run run_guard <<<"$(claude_bash "gh pr create -R someone/public --body 'https://claude.ai/code/session_abc123 and $HOME/notes'")"
-  assert_verdict ask claude.ai/code/session_abc123
-  assert_verdict ask "$HOME/notes"
+  assert_verdict deny claude.ai/code/session_abc123
+  assert_verdict deny "$HOME/notes"
 }
 
 @test "public-leak-guard: scans a body file's contents, not its path" {
@@ -120,28 +127,28 @@ assert_silent() {
 
   printf 'see owner/secret\n' >"$BATS_TEST_TMPDIR/leak.md"
   run run_guard <<<"$(claude_bash "gh pr create -R someone/public -F $BATS_TEST_TMPDIR/leak.md")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
 }
 
 @test "public-leak-guard: reads gh api fields, inline and from a file" {
   run run_guard <<<"$(claude_bash "gh api repos/someone/public/issues -F title=x -F body='see owner/secret'")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
 
   printf 'see owner/secret\n' >"$BATS_TEST_TMPDIR/body.md"
   run run_guard <<<"$(claude_bash "gh api repos/someone/public/issues/1/comments -F body=@$BATS_TEST_TMPDIR/body.md")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
 }
 
-@test "public-leak-guard: asks before a secret goes public" {
+@test "public-leak-guard: denies a secret going public" {
   run run_guard <<<"$(claude_bash "gh issue comment 1 -R someone/public --body 'token ghp_x'")"
-  assert_verdict ask "secret: github-pat"
+  assert_verdict deny "secret: github-pat"
 }
 
 @test "public-leak-guard: without betterleaks, still checks names and says the scan was skipped" {
   rm "$BIN/betterleaks"
   PATH=$(path_without betterleaks)
   run --separate-stderr run_guard <<<"$(claude_bash "$LEAK")"
-  assert_verdict ask owner/secret
+  assert_verdict deny owner/secret
   [[ $stderr == *"betterleaks not found"* ]]
 }
 
@@ -149,7 +156,7 @@ assert_silent() {
   rm "$XDG_CACHE_HOME/dispatcher/private-repos"
   export CURL_CODE=200
   run --separate-stderr run_guard <<<"$(claude_bash "gh issue create -R someone/public --body 'owner/secret, https://claude.ai/code/session_abc123'")"
-  assert_verdict ask claude.ai/code/session_abc123
+  assert_verdict deny claude.ai/code/session_abc123
   [[ $output != *owner/secret* ]]
   [[ $stderr == *"private names not checked"* ]]
 }
