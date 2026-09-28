@@ -10552,19 +10552,19 @@ STUBEOF
   export GIT_CONFIG_GLOBAL="$T/gc"
 
   git init -q "$T/roots/repo"
-  mkdir -p "$T/roots/other"
+  mkdir -p "$T/roots/repo/other"
   printf '#!/bin/sh\n' >"$T/roots/repo/.git/hooks/pre-commit"
   chmod +x "$T/roots/repo/.git/hooks/pre-commit"
-  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/other/pc"
+  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/repo/other/pc"
 
-  run _add_dir_ok "$T/roots/other"
+  run _add_dir_ok "$T/roots/repo/other"
   [ "$status" -eq 1 ]
   [[ "$output" == *"hard link"* ]]
 
-  rm "$T/roots/other/pc"
-  run _add_dir_ok "$T/roots/other"
+  rm "$T/roots/repo/other/pc"
+  run _add_dir_ok "$T/roots/repo/other"
   [ "$status" -eq 0 ]
-  [ "$output" = "$T/roots/other" ]
+  [ "$output" = "$T/roots/repo/other" ]
 }
 
 @test "add-dir: a hard link to the global gitconfig refuses the grant holding it" {
@@ -10603,13 +10603,13 @@ STUBEOF
   export GIT_CONFIG_GLOBAL="$T/gc"
 
   git init -q "$T/roots/repo"
-  mkdir -p "$T/roots/repo/scripts/githooks" "$T/roots/other"
+  mkdir -p "$T/roots/repo/scripts/githooks" "$T/roots/repo/other"
   printf '#!/bin/sh\n' >"$T/roots/repo/scripts/githooks/pre-commit"
   chmod +x "$T/roots/repo/scripts/githooks/pre-commit"
   ln -s ../../scripts/githooks/pre-commit "$T/roots/repo/.git/hooks/pre-commit"
-  ln "$T/roots/repo/scripts/githooks/pre-commit" "$T/roots/other/x"
+  ln "$T/roots/repo/scripts/githooks/pre-commit" "$T/roots/repo/other/x"
 
-  run _add_dir_ok "$T/roots/other"
+  run _add_dir_ok "$T/roots/repo/other"
   [ "$status" -eq 1 ]
   [[ "$output" == *"hard link"* ]]
 }
