@@ -54,11 +54,34 @@ _symlink_chain_hops() {
   printf '%s\0' "$resolved"
 }
 
+# _git_config_target <base-file> <raw-value> — print, NUL-terminated, the
+# include target <raw-value> names: a `~` or `%(prefix)` value expanded by git
+# itself, any other relative value joined to <base-file>'s dir. Fails closed,
+# silently; the caller words the refusal.
+_git_config_target() {
+  local f="$1" v="$2" x
+  case "$v" in
+  '~'* | '%(prefix)'*)
+    x="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=probe.v GIT_CONFIG_VALUE_0="$v" \
+      git -C / config --type=path --get probe.v && printf x)" || return 1
+    v="${x%x}"
+    v="${v%$'\n'}"
+    ;;
+  esac
+  [[ $v == /* ]] || v="${f%/*}/$v"
+  printf '%s\0' "$v"
+}
+
 # _git_config_files <dir> — print, NUL-terminated, every config file git reads
 # for <dir>, as git spells its origin (a relative origin joined to <dir>;
 # non-file origins skipped), then every include.path/includeIf.*.path target
 # whether or not it exists, since a worker could create it (a relative target
-# joined to its including file's dir). Env overrides are dropped as in
+# joined to its including file's dir). Include values are read raw (not via
+# `--path`, which reports a `:(optional)<missing file>` value as unset): for a
+# `:(optional)` value both the literal form and the form with the prefix
+# stripped are emitted, since git 2.55 reads the former literally while
+# pathname semantics read the latter. Env overrides are dropped as in
 # _git_protected_dirs. Fails closed, printing why.
 _git_config_files() {
   local a="$1" f last="" kv v tf rc
@@ -79,22 +102,37 @@ _git_config_files() {
   done <"$tf"
   rc=0
   env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
-    git -C "$a" config --show-origin -z --path --get-regexp '^include(if\..*)?\.path$' >"$tf" || rc=$?
+    git -C "$a" config --show-origin -z --get-regexp '^include(if\..*)?\.path$' >"$tf" || rc=$?
   # exit 1: no include is set
   if [ "$rc" -gt 1 ]; then
     rm -f "$tf"
     printf >&2 'dispatch: git cannot list the config includes of %s; refusing the grant\n' "$a"
     return 1
   fi
+  rc=0
   while IFS= read -r -d '' f && IFS= read -r -d '' kv; do
     [[ $f == file:* ]] || continue
     f="${f#file:}"
     [[ $f == /* ]] || f="$a/$f"
     v="${kv#*$'\n'}"
-    [[ $v == /* ]] || v="${f%/*}/$v"
-    printf '%s\0' "$v"
+    _git_config_target "$f" "$v" || {
+      rc=1
+      break
+    }
+    while [[ $v == ':(optional)'* ]]; do
+      v="${v#:(optional)}"
+      _git_config_target "$f" "$v" || {
+        rc=1
+        break
+      }
+    done
+    [ "$rc" -eq 0 ] || break
   done <"$tf"
   rm -f "$tf"
+  if [ "$rc" -ne 0 ]; then
+    printf >&2 'dispatch: git cannot list the config includes of %s; refusing the grant\n' "$a"
+    return 1
+  fi
 }
 
 # _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir,

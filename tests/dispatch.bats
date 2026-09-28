@@ -10409,6 +10409,40 @@ STUBEOF
   [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
 }
 
+@test "add-dir: an :(optional) include.path target, missing, is refused in both spellings" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+
+  git init -q "$T/roots/r"
+  git -C "$T/roots/r" config include.path ':(optional)../cfg/opt.inc'
+  git -C "$T/roots/r" config --add include.path ':(optional)~/inc/x'
+  mkdir -p "$T/roots/r/cfg" "$T/roots/r/docs"
+
+  run _add_dir_ok "$T/roots/r/cfg"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+
+  run _add_dir_ok "$T/roots/r/docs"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/r/docs" ]
+
+  run bash -c '. "$GRANT_CHECK_LIB"; _git_config_files "$1" | tr "\0" "\n"' _ "$T/roots/r"
+  [[ "$output" == *"$T/roots/r/.git/:(optional)../cfg/opt.inc"* ]]
+  [[ "$output" == *"$T/roots/r/.git/../cfg/opt.inc"* ]]
+  [[ "$output" == *"$T/roots/r/.git/:(optional)~/inc/x"* ]]
+  [[ "$output" == *"$T/home/inc/x"* ]]
+
+  git -C "$T/roots/r" config --add include.path ':(optional)~nosuchuser581/x'
+  run _add_dir_ok "$T/roots/r/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot list the config includes"* ]]
+}
+
 @test "add-dir: a stowed global gitconfig link is refused, its sibling allowed" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
