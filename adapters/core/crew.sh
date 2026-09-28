@@ -306,6 +306,130 @@ WINS
   printf '%s' "$out"
 }
 
+# _frame_classifier — defines the claude/codex pane-frame predicates and their
+# regexes. Shared by stall-watch and reap; they read the caller's $engine.
+# Bodies stay 2-space indented: tests/adapters.bats byte-compares them against
+# dispatch.sh's --role-watch copies.
+_frame_classifier() {
+  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
+  # bracket expression consumes one BYTE, so a single-character class would
+  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
+  # measured false-positive guard. Hence `+` on the glyph classes and an
+  # alternation rather than a bracket set for `❯`.
+  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
+  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+
+  # The Codex hook-review frame is pasted verbatim in fx_codex_hooks_review.
+  # Every visible line is anchored and the option row must end the pane, so a
+  # task discussing hooks in its transcript cannot satisfy this signature.
+  _is_codex_hook_review_prompt() {
+    local tail_n expected
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
+    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+    [ "$tail_n" = "$expected" ]
+  }
+
+  # _is_permission_prompt — Claude's tool-permission dialog (#435), claude only.
+  # Its footer `Esc to cancel · Tab to amend` is distinct from every
+  # option-select prompt's `Enter to select`/`Enter to confirm`, and the same
+  # geometry anchor applies: the footer must be the pane's LAST non-empty line,
+  # so the dialog scrolled into the transcript (input box last) cannot match. A
+  # numbered option row and `Do you want to proceed?` must sit within the
+  # tail-10 non-empty lines ending at the footer (capture-bounded: the real
+  # subagent frame has the question at depth 5, the `│` reason rows above it).
+  # Deliberately NOT gated on the meter/subrow veto: a subagent raises the
+  # dialog with a live subagent row and background-agent lines painted above it
+  # (the real capture), so the footer anchor is the false-positive guard.
+  _is_permission_prompt() {
+    local tail_n last above
+    [ "$engine" = claude ] || return 1
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Esc to cancel · Tab to amend"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
+    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
+  }
+
+  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
+  # numbered option within the 6 non-empty lines above it. A pane that is not
+  # parked on a prompt ends on its input box, never on transcript text (A3), so
+  # a prompt frame merely scrolling through — this very repo's bats fixtures —
+  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
+  # fixtures become a false-positive source.
+  _is_prompt() {
+    local tail_n last above
+    if [ "$engine" = codex ]; then
+      _is_codex_hook_review_prompt "$1"
+      return
+    fi
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Enter to select"* | *"Enter to confirm"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option"
+  }
+  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
+  # (never alone): _is_prompt already proves the pane is on-screen and shaped
+  # like an option-select frame; this only decides WHICH option-select frame it
+  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
+  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
+  # unlike the pinned fixtures above it, so its exact line count above the
+  # footer is unknown and a too-tight window risks silently degrading to
+  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
+  # search would classify a genuinely different, answerable prompt as `quota:`
+  # merely because this literal phrase happens to be visible somewhere higher
+  # on the same screen (e.g. a worker with this very protocol doc scrolled
+  # into view) — and `quota:` is sticky and escalation-exempt, so that
+  # mislabel would leave a real question unanswered indefinitely.
+  _is_quota_prompt() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
+  }
+  # _is_quota_session_limit — content discriminator for the session-limit
+  # refusal frame: a normal working pane, not an option-select prompt, so
+  # unlike _is_quota_prompt it is not gated behind _is_prompt.
+  # All three anchors must be present: any one alone false-triggers on a worker
+  # that merely has this repo's own docs or fixtures on screen, and quota: is
+  # sticky and escalation-exempt. The tail bound is the same hazard — the real
+  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
+  # queued prompt in the input box can push them out of the window and this
+  # detector silently misses the frame. `uses your weekly limit` sits in a
+  # persistent hint row at depth 3, so it gets the tighter window.
+  _is_quota_session_limit() {
+    local tail_n tail_n6
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
+    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
+    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
+      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
+      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
+  }
+  # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
+  # Claude Code re-invokes the session when the shell completes (#353). Both
+  # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
+  # finished-turn marker and a non-zero `N shell(s)` count (`1 shell still
+  # running` on the turn line, `· 1 shell ·` in the mode line), and no live
+  # spinner/meter (a new turn started under a stale `done` line).
+  # The prompt-suggestion line in the input box is neither anchor, and
+  # _is_prompt needs an `Enter to select` footer, so it never reads as input.
+  _is_bg_wait() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -8 || true)
+    printf '%s\n' "$tail_n" | grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' &&
+      printf '%s\n' "$tail_n" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)' &&
+      ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
+      [ -z "$(_meter_line "$1")" ]
+  }
+  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
+  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+}
+
 # _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
 # s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
 # `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
@@ -3916,14 +4040,7 @@ stall-watch)
     sig_bgwait=0
     ;;
   esac
-  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
-  # bracket expression consumes one BYTE, so a single-character class would
-  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
-  # measured false-positive guard. Hence `+` on the glyph classes and an
-  # alternation rather than a bracket set for `❯`.
-  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
-  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
-  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+  _frame_classifier
 
   # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
   # D0/D3 read the hash, D1/D2 read the text.
@@ -4112,41 +4229,6 @@ BUSLINE
     fi
   }
 
-  # The Codex hook-review frame is pasted verbatim in fx_codex_hooks_review.
-  # Every visible line is anchored and the option row must end the pane, so a
-  # task discussing hooks in its transcript cannot satisfy this signature.
-  _is_codex_hook_review_prompt() {
-    local tail_n expected
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
-    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
-    [ "$tail_n" = "$expected" ]
-  }
-
-  # _is_permission_prompt — Claude's tool-permission dialog (#435), claude only.
-  # Its footer `Esc to cancel · Tab to amend` is distinct from every
-  # option-select prompt's `Enter to select`/`Enter to confirm`, and the same
-  # geometry anchor applies: the footer must be the pane's LAST non-empty line,
-  # so the dialog scrolled into the transcript (input box last) cannot match. A
-  # numbered option row and `Do you want to proceed?` must sit within the
-  # tail-10 non-empty lines ending at the footer (capture-bounded: the real
-  # subagent frame has the question at depth 5, the `│` reason rows above it).
-  # Deliberately NOT gated on the meter/subrow veto: a subagent raises the
-  # dialog with a live subagent row and background-agent lines painted above it
-  # (the real capture), so the footer anchor is the false-positive guard.
-  _is_permission_prompt() {
-    local tail_n last above
-    [ "$engine" = claude ] || return 1
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
-    last=$(printf '%s\n' "$tail_n" | tail -1)
-    case "$last" in
-    *"Esc to cancel · Tab to amend"*) ;;
-    *) return 1 ;;
-    esac
-    above=$(printf '%s\n' "$tail_n" | sed '$d')
-    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
-    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
-  }
-
   # _permission_detail <text> <pane> — human-relay payload for a detected
   # tool-permission dialog (#435). The payload is pane-scraped and therefore
   # attacker-influenceable, so it is STRIPPED before it reaches the bus: ESC/CSI
@@ -4181,77 +4263,6 @@ BUSLINE
     printf '%s%s' "${body:0:$max}" "$suffix"
   }
 
-  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
-  # numbered option within the 6 non-empty lines above it. A pane that is not
-  # parked on a prompt ends on its input box, never on transcript text (A3), so
-  # a prompt frame merely scrolling through — this very repo's bats fixtures —
-  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
-  # fixtures become a false-positive source.
-  _is_prompt() {
-    local tail_n last above
-    if [ "$engine" = codex ]; then
-      _is_codex_hook_review_prompt "$1"
-      return
-    fi
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
-    last=$(printf '%s\n' "$tail_n" | tail -1)
-    case "$last" in
-    *"Enter to select"* | *"Enter to confirm"*) ;;
-    *) return 1 ;;
-    esac
-    above=$(printf '%s\n' "$tail_n" | sed '$d')
-    printf '%s\n' "$above" | grep -qE "$re_option"
-  }
-  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
-  # (never alone): _is_prompt already proves the pane is on-screen and shaped
-  # like an option-select frame; this only decides WHICH option-select frame it
-  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
-  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
-  # unlike the pinned fixtures above it, so its exact line count above the
-  # footer is unknown and a too-tight window risks silently degrading to
-  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
-  # search would classify a genuinely different, answerable prompt as `quota:`
-  # merely because this literal phrase happens to be visible somewhere higher
-  # on the same screen (e.g. a worker with this very protocol doc scrolled
-  # into view) — and `quota:` is sticky and escalation-exempt, so that
-  # mislabel would leave a real question unanswered indefinitely.
-  _is_quota_prompt() {
-    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
-  }
-  # _is_quota_session_limit — content discriminator for the session-limit
-  # refusal frame: a normal working pane, not an option-select prompt, so
-  # unlike _is_quota_prompt it is not gated behind _is_prompt.
-  # All three anchors must be present: any one alone false-triggers on a worker
-  # that merely has this repo's own docs or fixtures on screen, and quota: is
-  # sticky and escalation-exempt. The tail bound is the same hazard — the real
-  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
-  # queued prompt in the input box can push them out of the window and this
-  # detector silently misses the frame. `uses your weekly limit` sits in a
-  # persistent hint row at depth 3, so it gets the tighter window.
-  _is_quota_session_limit() {
-    local tail_n tail_n6
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
-    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
-    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
-      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
-      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
-  }
-  # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
-  # Claude Code re-invokes the session when the shell completes (#353). Both
-  # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
-  # finished-turn marker and a non-zero `N shell(s)` count (`1 shell still
-  # running` on the turn line, `· 1 shell ·` in the mode line), and no live
-  # spinner/meter (a new turn started under a stale `done` line).
-  # The prompt-suggestion line in the input box is neither anchor, and
-  # _is_prompt needs an `Enter to select` footer, so it never reads as input.
-  _is_bg_wait() {
-    local tail_n
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -8 || true)
-    printf '%s\n' "$tail_n" | grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' &&
-      printf '%s\n' "$tail_n" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)' &&
-      ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
-      [ -z "$(_meter_line "$1")" ]
-  }
   # _unread_oldest — ts (ms) of the oldest role:<branch>:* msg to this lead that
   # is past the delivered mark and not answered by a later msg from the lead to
   # that role; empty when none. A sessioned watchdog matches its session id only,
@@ -4274,9 +4285,6 @@ BUSLINE
            | select(any($sent[]; .to == $r.from and .ts > $r.ts) | not)
            | .ts] | min // empty' 2>/dev/null || true
   }
-
-  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
-  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
   start=$(date +%s)
   sleep "$grace"
