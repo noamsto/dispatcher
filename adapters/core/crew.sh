@@ -511,11 +511,9 @@ _frame_classifier() {
 
 # _pane_idle_reason <plain> <colored> — 0 (prints nothing) iff a claude frame
 # is provably idle; else prints a short keep reason and returns 1. Needs
-# _frame_classifier already called. The idle shape is --role-watch's own
-# _claude_idle_box (a dimmed prompt suggestion in the box is ghost text, a
-# real draft is not), and on top of it idle takes positive evidence of a
-# FINISHED turn — the `· done HH:MM` marker in the rows just above the box —
-# so a freshly booted pane, or a frame nothing here recognises, reads as busy.
+# _frame_classifier already called. On top of --role-watch's
+# _claude_idle_box, idle needs a finished turn's `· done HH:MM` marker just
+# above the box, so a freshly booted pane or an unrecognised frame reads busy.
 # The predicates read $engine, unset outside stall-watch, hence the local.
 _pane_idle_reason() {
   local engine=claude tail_n above
@@ -2356,17 +2354,11 @@ stream)
     : >"$reapoutf" || true
   }
 
-  # _stream_reap — fire a background `crew reap` for this stream. Never
-  # awaited and never killed on stream TERM (see _stream_cleanup): a
-  # half-done `wt remove` left mid-flight is worse than a reap line the
-  # stream missed printing. The child stays in the stream's process group, so
-  # only its HUP is ignored — a signal sent to the whole group still reaches
-  # it. It writes to $reapoutf, never to stdout, so its line cannot land in
-  # the middle of a batch line; the main loop prints it once the child is
-  # gone. --no-wait: another stream's or dispatch's own reap already holding
-  # reap.lock.d means a sweep is under way, and this one can wait for the
-  # next cadence rather than stall a child behind it. This function only
-  # avoids piling up a second background reap while our own last one runs.
+  # _stream_reap — a background `crew reap`, never awaited or killed by
+  # _stream_cleanup: an interrupted `wt remove` strands a worktree. It ignores
+  # HUP only; a signal to the whole process group still reaches it. Output goes
+  # to $reapoutf, printed once the child is gone, so it never splits a batch
+  # line. --no-wait: a reap already holding the lock covers this one.
   _stream_reap() {
     [ "$reap_every" -gt 0 ] || return 0
     ! _stream_reap_running || return 0
@@ -2389,8 +2381,7 @@ stream)
 
   # _stream_batch_wants_reap <batch-json> — true when the just-printed batch
   # (one JSON object per line) carries a terminal status, or a pr-watch msg
-  # reporting the PR itself landed. Reacting to the event we already have
-  # beats waiting out the cadence for the common case.
+  # reporting the PR itself landed.
   _stream_batch_wants_reap() {
     jq -e -s 'any(.[]; .events[]? as $e |
         if $e.kind == "status" then
@@ -5174,14 +5165,9 @@ reap)
     ;;
   esac
 
-  # Overlap lock: dispatch's own reap and a `crew stream`-driven reap must
-  # never run concurrently — a `wt remove` racing another one is exactly the
-  # half-done state that leaves a worktree stranded. Placed after the
-  # autosweep block on purpose: its sync mode sets and clears its own EXIT
-  # trap, and installing ours first would have the sweep's `trap - EXIT`
-  # clobber this one. A caller that must not stall (the stream lane) passes
-  # --no-wait; everyone else waits the holder out, bounded, so dispatch's own
-  # reap is not silently dropped just because a stream reap was mid-sweep.
+  # Two reaps racing `wt remove` on one tree strand it. After the autosweep
+  # block because its sync mode clears the EXIT trap. dispatch waits (it reads
+  # branch state right after its reap); the stream passes --no-wait.
   reap_lock="$dir/reap.lock.d"
   waited=0
   until _lock_acquire "$reap_lock" "$$"; do
@@ -5289,10 +5275,7 @@ EOF
   # shellcheck source=/dev/null
   . "$wt_git_lib"
 
-  # Orphan windows: report only. A window still stamped for this repo but
-  # whose branch has no worktree left (its worker was reaped, or something
-  # removed the tree without going through reap) is worth a human's eye, but
-  # killing it here could take down a live diagnostic session sitting in it.
+  # Orphan windows: report only — a human may be using one.
   while IFS=$'\t' read -r owid obranch ocdir; do
     [ -n "$owid" ] && [ -n "$obranch" ] || continue
     [ "$ocdir" = "$dir" ] || continue
@@ -5314,12 +5297,8 @@ EOF
   # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
   # must not win the fold forever, and claims older than $claim_mask_ttl drop
   # out so a prior terminal status can resurface.
-  # pr_open joins the candidate pool for THIS pass only (the idle-release pass
-  # above stays on $reap_terminal_states — a pr_open worker is never released
-  # on time, only ever reclaimed once its PR lands and its engine goes idle).
-  # `later`: some status or msg from ANY session of that branch postdates the
-  # terminal status — a branch that spoke again after `done` (a resumed or
-  # second session included) is not idle, whatever its pane looks like.
+  # pr_open is a candidate here only, never for idle release. `later`: some
+  # session of the branch posted after the terminal status, so it is not idle.
   candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
       (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
@@ -5349,10 +5328,7 @@ EOF
 
   # Panes running an engine, to tell "finished worker" from "someone is in there
   # right now". Same path-keyed idiom as roster: window names are rewritten by
-  # lazytmux, so the worktree path is the only stable handle. One 4-field
-  # query drives both the "engine at path" test (built back into
-  # _pane_is_engine_at's 2-field contract, which roster also relies on) and
-  # the idle-reclaim window/pane bookkeeping below.
+  # lazytmux, so the worktree path is the only stable handle.
   live=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}' 2>/dev/null || true)
   _frame_classifier
 
@@ -5380,8 +5356,6 @@ EOF
       ;;
     esac
 
-    # Every engine pane sitting at this worktree path, window and pane ids
-    # kept alongside the command so eligibility can be judged pane-by-pane.
     engine_panes=()
     while IFS=$'\t' read -r pwin ppane pcmd ppath; do
       [ -n "$pwin" ] || continue
@@ -5479,13 +5453,9 @@ PANES
       continue
     fi
 
-    # Kill every idle-engine window recorded above, as a human ending their
-    # own session would — a role pane sharing the window goes with it. The
-    # PR, gitlink, submodule and dirt gates have passed; the config-drift
-    # guard, the per-pane second sample and the bus re-check below are the
-    # last chance to bail before touching tmux state. The first sample may be
-    # seconds stale by now (gh, git status), so a pane that moved at all, or a
-    # branch that posted since its terminal status, keeps everything.
+    # Kill idle-engine windows, role panes with them. The first sample is
+    # seconds stale by now (gh, git status): a pane that changed at all, or a
+    # branch that posted since, keeps everything.
     if [ "${#idle_windows[@]}" -gt 0 ]; then
       if ! { _wt_cfg_guard "$common" "$admin" && _wt_cfg_guard_cwd "$common"; }; then
         note "keeping $branch — git config drift"
