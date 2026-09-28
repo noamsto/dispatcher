@@ -175,7 +175,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config];
+      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config];
 
       sessionVariables = {
         # Exported, not merely baked into the CLIs. The `dispatcher` slash

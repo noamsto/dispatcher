@@ -1,0 +1,7 @@
+{
+  "profile": "work",
+  "grantRoots": ["/a/git"],
+  "openrouter": {
+    "keyFile": "/run/agenix/a-very-long-key-file-path-that-overflows-eighty-columns/ディレクトリ/and-more"
+  }
+}

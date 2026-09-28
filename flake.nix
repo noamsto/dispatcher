@@ -99,14 +99,26 @@
             # gh + gtrash are for `reap`: it reads PR state via gh and trashes
             # the finished worker's task doc via gtrash so a post-mortem can
             # still recover it. `wt` stays ambient, as in dispatch — reap checks
-            # for it and degrades to a notice when absent.
+            # for it and degrades to a notice when absent. crew-dash is for
+            # `dash`, which delegates to it.
             # dispatch-config (#606) is on PATH so `crew rate` / _burn_weight
             # resolve the burn table out of the box, with no DISPATCH_CONFIG_BIN
             # and no ambient resolver required.
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config crew-dash];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
             text = sub (builtins.readFile ./adapters/core/crew.sh);
+          };
+
+          # crew is deliberately NOT in runtimeInputs: crew lists crew-dash so
+          # its `dash` subcommand can exec this one, and naming crew here would
+          # close that into an eval-time cycle (the dispatch-resume precedent
+          # above). `crew dash` resolves `crew` from CREW_BIN, its own
+          # readlink'd path, instead.
+          crew-dash = pkgs.writeShellApplication {
+            name = "crew-dash";
+            runtimeInputs = (with pkgs; [jq coreutils]) ++ [refresh-budget];
+            text = withConfig (builtins.readFile ./adapters/core/crew-dash.sh);
           };
 
           dispatch = pkgs.writeShellApplication {
@@ -172,7 +184,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
       in {
@@ -237,6 +249,10 @@
         # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
         # role for dispatch.sh, but for the generated doc regions.
         checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+
+        # `nix flake check` only evaluates packages, not builds them — this
+        # makes it build, which runs writeShellApplication's shellcheck.
+        checks.crew-dash = config.packages.crew-dash;
 
         packages = mkPackages null;
 

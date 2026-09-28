@@ -533,6 +533,31 @@ agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
 users get the same fan-out from the engine-neutral `dispatcher` launcher —
 `dispatch` once per ticket or PR.
 
+## Dashboard
+
+```bash
+crew dash          # interactive TUI (falls back to --once off a TTY)
+crew dash --once   # plain text, for piping or tests
+crew dash --json   # the same collected model, as JSON
+```
+
+Four panes, each read from an already-cached or already-run source, never
+probed live: **Settings** — the resolved four-layer tree, each row tagged
+with its origin badge (`default`/`user`/`env`/`🔒 locked`; locked keys come
+from the home-manager module and are read-only here). **Budget** — each
+engine's window(s): used %, pace, resets in, and the lever verdict, from the
+cached `refresh-budget` data (run `refresh-budget` to update it). **Runs** —
+per-crew retro `session_summary` and tagged notes, plus ratings by
+tier/engine/model (n, pr%, merge%, median burn). **Roster** — the active
+crew's live roster and holds.
+
+Interactive keys: `1`–`4`/Tab/←→ switch pane, `j`/`k`/↑/↓ move, PgUp/PgDn,
+`g`/`G` jump to top/bottom, `r` refresh, `q` quit. `NO_COLOR` (or
+`CREW_DASH_COLOR=never`) disables color.
+
+It is read-only: no network or `gh` calls, and it writes nothing — edit
+`~/.config/dispatcher/settings.json` by hand for now.
+
 ---
 
 ## Iterating on the protocols

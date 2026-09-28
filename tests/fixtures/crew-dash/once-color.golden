@@ -1,0 +1,38 @@
+[1m== Settings ==[0m
+layers: default <BASE>
+        user    <USER> (present)
+        locked  <LOCKED>
+engines: ["claude","pi"]                          user
+[1;33mprofile: "work"                                   🔒 locked[0m
+modelMap
+  claude
+    deep
+      default: "opus"                             default
+openrouter
+  monthlyUsd: 20                                  default
+[1;33m  keyFile: "/run/agenix/a-very-long-key-file-path-that-overflows-eighty-columns/ディレクトリ/and-more"  🔒 locked[0m
+repoTrackers
+  noamsto/dispatcher: "github"                    user
+[1;33mgrantRoots: ["/a/git"]                            🔒 locked[0m
+
+[1m== Budget ==[0m
+fetched 10m ago
+[1mclaude (oauth_usage)[0m
+  window  used  pace  resets in  verdict
+  5h       10%     —  2h 0m      —
+  7d       90%   +40  3d 12h     real budget: prefer a cheaper burn class or rotate engines
+[1mcodex (app_server) [pro][0m
+  window  used  pace  resets in  verdict
+  5h       30%     —  1h 0m      —
+cursor: unknown
+pi: unknown
+
+[1m== Runs ==[0m
+no retro notes yet
+
+tier      engine  model           n   pr%  merge%  burn(med)
+deep      claude  opus           2!  100!    100!       1.5!
+standard  codex   gpt-5.6-terra  1!  100!       —          —
+
+[1m== Roster ==[0m
+no active crew

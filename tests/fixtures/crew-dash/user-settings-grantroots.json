@@ -1,0 +1,1 @@
+{ "engines": ["claude", "pi"], "profile": "user-profile", "grantRoots": ["/x"] }

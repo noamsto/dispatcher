@@ -24,7 +24,7 @@ setup_file() {
   nix build --no-link --print-out-paths \
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
-    "$root#reviewer-roster" "$root#permission-check" \
+    "$root#reviewer-roster" "$root#permission-check" "$root#crew-dash" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The module's own eval, through a real `lib.evalModules` (not a bare call
@@ -226,6 +226,7 @@ setup() {
     read -r OUT_PR_WATCH
     read -r OUT_REVIEWER_ROSTER
     read -r OUT_PERMISSION_CHECK
+    read -r OUT_CREW_DASH
   } <"$BATS_FILE_TMPDIR/out-paths"
   {
     read -r OUT_MINIMAL_DISPATCH_CONFIG
@@ -240,7 +241,7 @@ setup() {
   # before any test runs. This just proves every out path came back.
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
-    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" \
+    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" "$OUT_CREW_DASH" \
     "$OUT_MINIMAL_DISPATCH_CONFIG" "$OUT_MINIMAL_DISPATCH" \
     "$OUT_CODEX_DISPATCH_CONFIG" "$OUT_CODEX_DISPATCH"; do
     [ -n "$out" ]
@@ -479,7 +480,7 @@ setup() {
   [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  for pkg in crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config; do
+  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config; do
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
