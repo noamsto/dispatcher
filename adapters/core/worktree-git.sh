@@ -187,9 +187,9 @@ _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<i
 # -c overrides that still matter past the guard: a baselined
 # core.hooksPath=.husky resolves inside the worker's tree. hooksPath does not
 # reach config-defined hooks (hook.<name>.command), so the events these calls
-# trigger are switched off. A baselined value can also name a repo-relative
-# filter/textconv program the worker rewrote (#578); core.attributesFile is
-# not a guarded key, so it is neutralized here too.
+# trigger are switched off. core.attributesFile is not a guarded key, so a
+# worker could point it at its own file and select a driver past
+# --attr-source (#578).
 _wt_neutral_cfg=(
   core.fsmonitor=false core.hooksPath=/dev/null core.attributesFile=/dev/null
   hook.reference-transaction.enabled=false hook.post-checkout.enabled=false
@@ -198,8 +198,7 @@ _wt_neutral_cfg=(
 _wt_empty_tree() { # <git-dir> -> the repo's empty-tree oid (sha1 or sha256)
   git --git-dir="$1" hash-object --no-filters -t tree /dev/null
 }
-_wt_neutral() { # <git-dir> <cmd…> — run <cmd> (a tool that spawns its own
-  # git, e.g. wt) with _wt_neutral_cfg and no in-tree .gitattributes, via env
+_wt_neutral() { # <git-dir> <cmd…> — run a tool that spawns its own git (wt) with _wt_git's overrides, via env
   local gitdir="$1" empty kv key value n=0
   local -a kv_env=()
   shift

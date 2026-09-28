@@ -130,9 +130,8 @@ EOF
 }
 
 # stub_wt_removes_status — like stub_wt_removes, but its `remove` first runs a
-# real `git status --porcelain` in the worktree (as the real wt binary does,
-# confirmed via GIT_TRACE) and logs the env that call saw, so a test can
-# assert what reap's own git carried into wt's git (#578).
+# real `git status --porcelain` in the worktree (as the real wt binary does)
+# and logs the GIT_ATTR_SOURCE/GIT_CONFIG_COUNT that call saw (#578).
 stub_wt_removes_status() {
   cat >"$STUB_DIR/wt" <<'EOF'
 #!/usr/bin/env bash
@@ -3058,12 +3057,9 @@ EOF
 }
 
 @test "reap: wt remove never runs a baselined worktree-relative filter the worker rewrote (#578)" {
-  # #578: reap's own guard covers the git IT runs, but `wt remove` (kept, not
-  # replaced, for branch bookkeeping) spawns its OWN git that also runs
-  # `git status` in the worktree (confirmed via GIT_TRACE on the real
-  # binary). A filter.x.clean naming a repo-relative program is legitimately
-  # baselined (unlike #557's drifted case), so the guard passes it — that git
-  # must still never run the worker's rewritten copy of the program.
+  # `wt remove` spawns its own git, which runs `git status` in the worktree.
+  # A baselined filter.x.clean naming a repo-relative program passes the
+  # guard; that git must still never run the worker's rewritten copy.
   mkdir -p tools
   printf '#!/bin/sh\ncat\n' >tools/conv.sh
   chmod +x tools/conv.sh
