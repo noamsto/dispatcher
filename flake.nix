@@ -123,7 +123,18 @@
             builtins.replaceStrings
             ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@"]
             ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${./adapters/core/worktree-git.sh}"];
+          # The settings resolver (#560), with defaults.json baked in as its base
+          # layer. withConfig bakes its path into the consumers as the default for
+          # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
+          dispatchConfig = pkgs.writeShellApplication {
+            name = "dispatch-config";
+            runtimeInputs = with pkgs; [jq coreutils];
+            text = builtins.replaceStrings ["@defaultsJson@"] ["${./adapters/core/defaults.json}"] (builtins.readFile ./adapters/core/dispatch-config.sh);
+          };
+          withConfig = builtins.replaceStrings ["@dispatchConfig@"] ["${dispatchConfig}/bin/dispatch-config"];
         in rec {
+          dispatch-config = dispatchConfig;
+
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
           # wraps it to post the event.
@@ -151,7 +162,7 @@
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
             runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume];
-            text = sub (builtins.readFile ./adapters/core/dispatch.sh);
+            text = withConfig (sub (builtins.readFile ./adapters/core/dispatch.sh));
           };
 
           # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
@@ -163,13 +174,13 @@
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
             runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
-            text = sub (builtins.readFile ./adapters/core/dispatch-resume.sh);
+            text = withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh));
           };
 
           dispatcher = pkgs.writeShellApplication {
             name = "dispatcher";
             runtimeInputs = (with pkgs; [git jq coreutils diffutils tmux]) ++ [crew];
-            text = sub (builtins.readFile ./adapters/core/dispatcher.sh);
+            text = withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh));
           };
 
           refresh-scores = pkgs.writeShellApplication {
@@ -181,7 +192,7 @@
           refresh-budget = pkgs.writeShellApplication {
             name = "refresh-budget";
             runtimeInputs = with pkgs; [curl jq coreutils];
-            text = builtins.readFile ./adapters/core/refresh-budget.sh;
+            text = withConfig (builtins.readFile ./adapters/core/refresh-budget.sh);
           };
 
           refresh-models = pkgs.writeShellApplication {
@@ -208,7 +219,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
 
