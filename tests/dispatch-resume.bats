@@ -122,6 +122,7 @@ setup_worker_wt() { # [extra header lines...]
   } >"$WT/WORKER_TASK.md"
   export WT
   write_anchor "$WT"
+  seed_git_baseline
 }
 
 @test "refuses outside a worktree carrying a task document" {
@@ -185,6 +186,40 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"config.worktree"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+}
+
+@test "resume refuses on a worker-planted include (#557)" {
+  # #557: a worker's `git config include.path <file>` in the worktree writes
+  # the COMMON config that dispatcher-run git (here, resume's own ls-files
+  # and status calls) reads; a key planted after the baseline was seeded
+  # must refuse resume outright.
+  setup_worker_wt
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  cat >"$BATS_TEST_TMPDIR/include.gitconfig" <<EOF
+[filter "x"]
+	smudge = $BATS_TEST_TMPDIR/hit.sh
+EOF
+  git -C "$TEST_REPO" config include.path "$BATS_TEST_TMPDIR/include.gitconfig"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"include.path"* ]]
+}
+
+@test "resume refuses without a git-config baseline and never records one (#557)" {
+  # #557: only a dispatch records the baseline. Resume runs later, once
+  # workers exist, so a baseline it recorded could trust a worker's key.
+  setup_worker_wt
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no git-config baseline"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
 @test "refuses on a detached HEAD" {

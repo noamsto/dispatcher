@@ -5,6 +5,8 @@ setup() {
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  # A dispatch records it before any worker exists; reap never does (#557).
+  seed_git_baseline
   unset CREW_ID
   # Absent unless a test sets it, so pane-recording stays deterministic
   # regardless of whether bats itself runs inside a tmux pane.
@@ -2985,6 +2987,247 @@ EOF
   [ -d "$wt_path" ]
   [[ "$output" == *"keeping feat/539-c"* ]]
   [[ "$output" == *"config.worktree"* ]]
+}
+
+@test "reap: a worker-planted clean filter never runs (#557)" {
+  # #557: a worker's `git config filter.x.clean <cmd>` in a linked worktree
+  # writes the COMMON config that dispatcher-run git reads. The git-config
+  # baseline (recorded by a dispatch before any worker existed) is
+  # TOFU for the human's own config, so a key planted afterward must refuse
+  # reap's status call rather than let the filter run in the dispatcher shell.
+  git commit -q --allow-empty -m init
+  printf '' >f
+  printf 'f filter=x\n' >.gitattributes
+  git add f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git branch feat/557-a
+  wt_path="$BATS_TEST_TMPDIR/557-a-wt"
+  git worktree add -q "$wt_path" feat/557-a
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  seed_git_baseline
+  git config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
+  echo x >"$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/557-a" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/557-a"* ]]
+  [[ "$output" == *"filter.x.clean"* ]]
+}
+
+@test "reap: a worker-planted include never runs (#557)" {
+  # #557: include.path can smuggle in an arbitrary [filter] block that no -c
+  # list would enumerate directly, so reap must refuse on the include key
+  # itself rather than trying to see through it.
+  git commit -q --allow-empty -m init
+  printf '' >f
+  printf 'f filter=x\n' >.gitattributes
+  git add f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git branch feat/557-b
+  wt_path="$BATS_TEST_TMPDIR/557-b-wt"
+  git worktree add -q "$wt_path" feat/557-b
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  seed_git_baseline
+  cat >"$BATS_TEST_TMPDIR/include.gitconfig" <<EOF
+[filter "x"]
+	clean = $BATS_TEST_TMPDIR/hit.sh
+EOF
+  git config include.path "$BATS_TEST_TMPDIR/include.gitconfig"
+  echo x >"$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/557-b" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/557-b"* ]]
+  [[ "$output" == *"include.path"* ]]
+}
+
+@test "reap: a worker-planted fsmonitor never runs, even through wt remove (#557)" {
+  # #557: even if reap's own guard were somehow bypassed and `wt remove` ran
+  # a real `git status` against the worktree first (as worktrunk does, to
+  # decide whether the branch is safe to delete), that status call must never
+  # see a worker-planted core.fsmonitor either — defense in depth.
+  git commit -q --allow-empty -m init
+  git branch feat/557-c
+  wt_path="$BATS_TEST_TMPDIR/557-c-wt"
+  git worktree add -q "$wt_path" feat/557-c
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  seed_git_baseline
+  git config core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+if [ "\$1" = remove ]; then
+  git -C "$wt_path" status >/dev/null 2>&1
+  branch="\${!#}"
+  wtp=\$(git worktree list --porcelain | awk -v b="refs/heads/\$branch" '/^worktree /{p=\$2} \$0=="branch "b{print p}')
+  [ -n "\$wtp" ] && rm -rf "\$wtp"
+  git worktree prune
+  echo "Branch unmerged; to delete, run wt remove -D" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+  CREW_ID=c1 run_crew status "worker:feat/557-c" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/557-c"* ]]
+  [[ "$output" == *"core.fsmonitor"* ]]
+}
+
+@test "reap: baseline core.hooksPath and credential.helper do not refuse (#557)" {
+  # #557 TOFU: keys already sitting in the human's config when the baseline
+  # is first seeded are the trusted baseline, not a worker's doing — reap
+  # must reap normally even though both are exec-capable keys.
+  git commit -q --allow-empty -m init
+  git config core.hooksPath .husky
+  git config credential.helper store
+  seed_git_baseline
+  baseline="$TEST_REPO/.git/crew/git-config-baseline"
+  grep -q 'core.hookspath' "$baseline"
+  git branch feat/557-d
+  wt_path="$BATS_TEST_TMPDIR/557-d-wt"
+  git worktree add -q "$wt_path" feat/557-d
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/557-d" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/557-d"* ]]
+}
+
+@test "git-baseline never records a missing baseline (#557)" {
+  # #557: only a dispatch records the baseline (TOFU before any worker of the
+  # crew exists); a later review run must not trust whatever is there now.
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"none yet"* ]]
+  [[ "$output" == *"the next dispatch records it"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
+}
+
+@test "git-baseline exits 0 without drift and 1 listing drifted keys (#557)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand=$BATS_TEST_TMPDIR/hit.sh (main checkout, "* ]]
+  before="$(cksum "$TEST_REPO/.git/crew/git-config-baseline")"
+  run run_crew git-baseline extra
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"git-baseline takes no arguments"* ]]
+  [ "$(cksum "$TEST_REPO/.git/crew/git-config-baseline")" = "$before" ]
+}
+
+@test "git-baseline prints worker-controlled bytes escaped (#557)" {
+  # #557: a raw ESC/CR in a key, value or origin could redraw the terminal
+  # and disguise what drifted.
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config filter.x.clean "evil"$'\e[2K\r'"cat"
+  git config "filter.a"$'\e'"[2Kb.smudge" cat
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *filter.x.clean* ]]
+  [[ "$output" == *filter.a* ]]
+  [[ "$output" != *$'\e'* ]]
+  [[ "$output" != *$'\r'* ]]
+}
+
+@test "reap: no baseline keeps the worktree and records none (#557)" {
+  # #557: reap runs once workers exist, so it must never record a baseline.
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git branch feat/557-e
+  wt_path="$BATS_TEST_TMPDIR/557-e-wt"
+  git worktree add -q "$wt_path" feat/557-e
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF2
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/557-e" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/557-e"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
 @test "reap: a live engine pane keeps a terminal, merged-PR worktree" {

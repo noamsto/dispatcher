@@ -2995,7 +2995,7 @@ EOF_REPOS
       if git cat-file -e "$m_commit^{commit}" 2>/dev/null; then
         # `--since` takes approxidate or @<epoch SECONDS>, and silently falls
         # back rather than erroring on a bare 13-digit millisecond value.
-        if [ -n "$(git log --all --since="@$((m_at / 1000))" \
+        if [ -n "$(git log --all --no-show-signature --since="@$((m_at / 1000))" \
           --grep="This reverts commit $m_commit" --max-count=1 2>/dev/null || true)" ]; then
           rev=true
         else
@@ -4685,6 +4685,58 @@ pr-watch)
   _bus_append "$log" "$line"
   printf '%s\n' "$ev"
   ;;
+git-baseline)
+  # Lists drift from the git-config baseline (#557); never records one — only
+  # a dispatch does, before its workers exist. Values are shown %q-escaped so a
+  # planted ESC/CR cannot redraw the terminal.
+  if [ $# -gt 0 ]; then
+    echo "crew: git-baseline takes no arguments" >&2
+    exit 1
+  fi
+
+  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+  # shellcheck source=/dev/null
+  . "$wt_git_lib"
+  baseline_file="$common/crew/git-config-baseline"
+  if [ ! -f "$baseline_file" ]; then
+    echo "git-config baseline $baseline_file: none yet — the next dispatch records it" >&2
+    exit 1
+  fi
+  mapfile -d '' gb_recs <"$baseline_file"
+
+  declare -A gb_base=()
+  for gb_rec in "${gb_recs[@]}"; do gb_base["$gb_rec"]=1; done
+  mapfile -d '' gb_union < <(_wt_cfg_union "$common")
+  wait $! || exit 1
+  gb_drift=()
+  for gb_rec in "${gb_union[@]}"; do
+    [ -n "${gb_base["$gb_rec"]+x}" ] || gb_drift+=("$gb_rec")
+  done
+
+  if [ "${#gb_drift[@]}" -eq 0 ]; then
+    echo "git-config baseline $baseline_file: no drift"
+    exit 0
+  fi
+
+  declare -A gb_wanted=()
+  for gb_rec in "${gb_drift[@]}"; do gb_wanted["$gb_rec"]=1; done
+  for gb_ctx in "$common" "$common"/worktrees/*; do
+    [ -e "$gb_ctx" ] || continue
+    gb_label="main checkout"
+    [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
+    mapfile -d '' gb_listing < <(git --git-dir="$gb_ctx" config --list --show-origin --show-scope -z 2>/dev/null)
+    for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
+      [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
+      gb_rec="${gb_listing[gb_i + 2]}"
+      [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
+      [ -n "${gb_wanted["$gb_rec"]+x}" ] || continue
+      gb_key="${gb_rec%%$'\n'*}"
+      gb_value="${gb_rec#"$gb_key"$'\n'}"
+      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "${gb_listing[gb_i + 1]#file:}"
+    done
+  done
+  exit 1
+  ;;
 reap)
   # Reclaim window + worktree for workers whose PR has landed. No crew filter:
   # the workers worth reaping are precisely the ones from earlier dispatcher
@@ -5102,6 +5154,11 @@ SCAFFOLD
     # the branch, wrote no reap row and never released the dispatched label
     # (#194). --no-hooks because the window is already gone; no -f, because a
     # genuinely dirty worktree must survive.
+    # Per-call guard (#557): `wt remove` runs git in both contexts below.
+    if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
+      note "keeping $branch — git config drift"
+      continue
+    fi
     wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1 || true
     wtleft=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
@@ -5127,7 +5184,11 @@ SCAFFOLD
       if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
-          git branch -D "$branch" >/dev/null 2>&1 || true
+          if _wt_cfg_guard_cwd "$common"; then
+            git branch -D "$branch" >/dev/null 2>&1 || true
+          else
+            note "kept local branch $branch — git config drift"
+          fi
         elif [ -z "$pr_head" ]; then
           note "kept local branch $branch — could not verify the merged PR head"
         else
@@ -5158,7 +5219,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac
