@@ -1,0 +1,334 @@
+{
+  "modelMap": {
+    "claude": {
+      "deep": {
+        "default": "opus",
+        "models": [
+          "opus",
+          "claude-opus-*",
+          "sonnet",
+          "claude-sonnet-*",
+          "fable",
+          "claude-fable-*"
+        ],
+        "expected": "opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*"
+      },
+      "standard": {
+        "default": "opus",
+        "models": [
+          "opus",
+          "claude-opus-*",
+          "sonnet",
+          "claude-sonnet-*"
+        ],
+        "expected": "opus, claude-opus-*, sonnet, or claude-sonnet-*"
+      },
+      "trivial": {
+        "default": "opus",
+        "models": [
+          "opus",
+          "claude-opus-*",
+          "sonnet",
+          "claude-sonnet-*",
+          "haiku",
+          "claude-haiku-*"
+        ],
+        "expected": "opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
+      }
+    },
+    "codex": {
+      "deep": {
+        "default": "gpt-5.6-sol",
+        "models": [
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini"
+        ],
+        "expected": "gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      },
+      "standard": {
+        "default": "gpt-5.6-terra",
+        "models": [
+          "gpt-5.6-terra",
+          "gpt-5.6-luna",
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini"
+        ],
+        "expected": "gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      },
+      "trivial": {
+        "default": "gpt-5.6-luna",
+        "models": [
+          "gpt-5.6-luna",
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.4-mini"
+        ],
+        "expected": "gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini)"
+      }
+    },
+    "cursor": {
+      "deep": {
+        "default": "kimi-k3-high",
+        "models": [
+          "kimi-k3-high",
+          "grok-4.7-medium",
+          "grok-4.7-medium-fast",
+          "grok-4.7-high",
+          "grok-4.7-high-fast",
+          "cursor-grok-4.6-medium",
+          "cursor-grok-4.6-medium-fast",
+          "cursor-grok-4.6-high",
+          "cursor-grok-4.6-high-fast",
+          "composer-2.5",
+          "composer-2.5-fast"
+        ],
+        "regex": [
+          "^(claude|gpt)(-[a-z0-9.-]*)?-(none|low|medium|high|xhigh|max)(-fast)?(\\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\\])?$",
+          "^(claude|gpt)-[a-z0-9.-]*\\[([a-z]+=[a-z0-9.-]+,)*effort=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\\]$"
+        ],
+        "expected": "kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-*/gpt-* id"
+      },
+      "standard": {
+        "default": "grok-4.7-medium",
+        "models": [
+          "grok-4.7-medium",
+          "grok-4.7-medium-fast",
+          "grok-4.7-low",
+          "grok-4.7-low-fast",
+          "cursor-grok-4.6-medium",
+          "cursor-grok-4.6-medium-fast",
+          "cursor-grok-4.6-low",
+          "cursor-grok-4.6-low-fast",
+          "composer-2.5",
+          "composer-2.5-fast"
+        ],
+        "expected": "grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-*), or composer-2.5[-fast]"
+      },
+      "trivial": {
+        "default": "grok-4.7-low",
+        "models": [
+          "grok-4.7-low",
+          "grok-4.7-low-fast",
+          "cursor-grok-4.6-low",
+          "cursor-grok-4.6-low-fast",
+          "composer-2.5",
+          "composer-2.5-fast"
+        ],
+        "expected": "grok-4.7-low[-fast] (or cursor-grok-4.6-low*) or composer-2.5[-fast]"
+      }
+    },
+    "pi": {
+      "deep": {
+        "default": "openrouter/deepseek/deepseek-v4.1-flash",
+        "models": [
+          "openrouter/deepseek/deepseek-v4.1-flash"
+        ],
+        "expected": "openrouter/deepseek/deepseek-v4.1-flash"
+      },
+      "standard": {
+        "default": "openrouter/deepseek/deepseek-v4.1-flash",
+        "models": [
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/deepseek/deepseek-v4-flash",
+          "openrouter/z-ai/glm-5.3-flash",
+          "openrouter/qwen/qwen3.8-flash"
+        ],
+        "expected": "openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash"
+      },
+      "trivial": {
+        "default": "openrouter/deepseek/deepseek-v4-flash",
+        "models": [
+          "openrouter/deepseek/deepseek-v4-flash",
+          "openrouter/deepseek/deepseek-v4.1-flash"
+        ],
+        "expected": "openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash"
+      }
+    }
+  },
+  "escalation": {
+    "claude": {
+      "deep": [
+        {
+          "failed": [
+            "sonnet",
+            "claude-sonnet-*"
+          ],
+          "baseline": "sonnet",
+          "inRow": [
+            "opus",
+            "claude-opus-*"
+          ]
+        },
+        {
+          "failed": [
+            "opus",
+            "claude-opus-*"
+          ],
+          "baseline": "opus",
+          "inRow": [
+            "fable",
+            "claude-fable-*"
+          ]
+        }
+      ],
+      "standard": [
+        {
+          "failed": [
+            "sonnet",
+            "claude-sonnet-*"
+          ],
+          "baseline": "sonnet",
+          "inRow": [
+            "opus",
+            "claude-opus-*"
+          ]
+        }
+      ],
+      "trivial": [
+        {
+          "failed": [
+            "haiku",
+            "claude-haiku-*"
+          ],
+          "baseline": "haiku",
+          "inRow": [
+            "sonnet",
+            "claude-sonnet-*"
+          ]
+        },
+        {
+          "failed": [
+            "sonnet",
+            "claude-sonnet-*"
+          ],
+          "baseline": "sonnet",
+          "inRow": [
+            "opus",
+            "claude-opus-*"
+          ]
+        }
+      ]
+    },
+    "codex": {
+      "deep": [
+        {
+          "failed": [
+            "gpt-5.6-terra"
+          ],
+          "baseline": "terra",
+          "inRow": [
+            "gpt-5.6-sol"
+          ]
+        }
+      ],
+      "standard": [
+        {
+          "failed": [
+            "gpt-5.6-luna"
+          ],
+          "baseline": "luna",
+          "inRow": [
+            "gpt-5.6-terra"
+          ]
+        },
+        {
+          "failed": [
+            "gpt-5.6-terra"
+          ],
+          "baseline": "terra",
+          "outOfRow": [
+            "gpt-5.6-sol"
+          ]
+        }
+      ]
+    },
+    "cursor": {
+      "deep": [
+        {
+          "failed": [
+            "cursor-grok-4.6-medium*"
+          ],
+          "baseline": "medium",
+          "inRow": [
+            "cursor-grok-4.6-high*"
+          ]
+        }
+      ],
+      "standard": [
+        {
+          "failed": [
+            "cursor-grok-4.6-low*"
+          ],
+          "baseline": "low",
+          "inRow": [
+            "cursor-grok-4.6-medium*"
+          ]
+        },
+        {
+          "failed": [
+            "cursor-grok-4.6-medium*"
+          ],
+          "baseline": "medium",
+          "outOfRow": [
+            "cursor-grok-4.6-high",
+            "cursor-grok-4.6-high-fast"
+          ]
+        }
+      ]
+    },
+    "pi": {
+      "standard": [
+        {
+          "failed": [
+            "openrouter/deepseek/deepseek-v4-flash"
+          ],
+          "baseline": "v4-flash",
+          "inRow": [
+            "openrouter/deepseek/deepseek-v4.1-flash"
+          ]
+        }
+      ]
+    }
+  },
+  "paceDowngrades": {
+    "claude": [
+      {
+        "models": [
+          "opus",
+          "claude-opus-*",
+          "fable",
+          "claude-fable-*"
+        ],
+        "to": "sonnet"
+      }
+    ],
+    "codex": [
+      {
+        "models": [
+          "gpt-5.6-sol"
+        ],
+        "to": "gpt-5.6-terra"
+      }
+    ],
+    "cursor": [
+      {
+        "models": [
+          "grok-4.7-high",
+          "grok-4.7-high\\[*"
+        ],
+        "to": "grok-4.7-medium"
+      },
+      {
+        "models": [
+          "cursor-grok-4.6-high",
+          "cursor-grok-4.6-high\\[*"
+        ],
+        "to": "cursor-grok-4.6-medium"
+      }
+    ]
+  }
+}
