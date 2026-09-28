@@ -89,6 +89,11 @@
           trim-trailing-whitespace.enable = true;
         };
 
+        # Fails `nix flake check` on doc drift even without a full checkout run
+        # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
+        # role for dispatch.sh, but for the generated doc regions.
+        checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+
         packages = let
           protocols = ./adapters/core/protocols;
           # @protocolDir@ is the build-time default for the env-overridable
