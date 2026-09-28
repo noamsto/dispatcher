@@ -306,6 +306,237 @@ WINS
   printf '%s' "$out"
 }
 
+# _frame_classifier — defines the claude/codex pane-frame predicates and their
+# regexes. Shared by stall-watch and reap; they read the caller's $engine.
+# Bodies stay 2-space indented: tests/adapters.bats byte-compares them against
+# dispatch.sh's --role-watch copies.
+_frame_classifier() {
+  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
+  # bracket expression consumes one BYTE, so a single-character class would
+  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
+  # measured false-positive guard. Hence `+` on the glyph classes and an
+  # alternation rather than a bracket set for `❯`.
+  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
+  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
+  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+
+  # The Codex hook-review frame is pasted verbatim in fx_codex_hooks_review.
+  # Every visible line is anchored and the option row must end the pane, so a
+  # task discussing hooks in its transcript cannot satisfy this signature.
+  _is_codex_hook_review_prompt() {
+    local tail_n expected
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
+    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
+    [ "$tail_n" = "$expected" ]
+  }
+
+  # _is_permission_prompt — Claude's tool-permission dialog (#435), claude only.
+  # Its footer `Esc to cancel · Tab to amend` is distinct from every
+  # option-select prompt's `Enter to select`/`Enter to confirm`, and the same
+  # geometry anchor applies: the footer must be the pane's LAST non-empty line,
+  # so the dialog scrolled into the transcript (input box last) cannot match. A
+  # numbered option row and `Do you want to proceed?` must sit within the
+  # tail-10 non-empty lines ending at the footer (capture-bounded: the real
+  # subagent frame has the question at depth 5, the `│` reason rows above it).
+  # Deliberately NOT gated on the meter/subrow veto: a subagent raises the
+  # dialog with a live subagent row and background-agent lines painted above it
+  # (the real capture), so the footer anchor is the false-positive guard.
+  _is_permission_prompt() {
+    local tail_n last above
+    [ "$engine" = claude ] || return 1
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Esc to cancel · Tab to amend"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
+    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
+  }
+
+  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
+  # numbered option within the 6 non-empty lines above it. A pane that is not
+  # parked on a prompt ends on its input box, never on transcript text (A3), so
+  # a prompt frame merely scrolling through — this very repo's bats fixtures —
+  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
+  # fixtures become a false-positive source.
+  _is_prompt() {
+    local tail_n last above
+    if [ "$engine" = codex ]; then
+      _is_codex_hook_review_prompt "$1"
+      return
+    fi
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
+    last=$(printf '%s\n' "$tail_n" | tail -1)
+    case "$last" in
+    *"Enter to select"* | *"Enter to confirm"*) ;;
+    *) return 1 ;;
+    esac
+    above=$(printf '%s\n' "$tail_n" | sed '$d')
+    printf '%s\n' "$above" | grep -qE "$re_option"
+  }
+  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
+  # (never alone): _is_prompt already proves the pane is on-screen and shaped
+  # like an option-select frame; this only decides WHICH option-select frame it
+  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
+  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
+  # unlike the pinned fixtures above it, so its exact line count above the
+  # footer is unknown and a too-tight window risks silently degrading to
+  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
+  # search would classify a genuinely different, answerable prompt as `quota:`
+  # merely because this literal phrase happens to be visible somewhere higher
+  # on the same screen (e.g. a worker with this very protocol doc scrolled
+  # into view) — and `quota:` is sticky and escalation-exempt, so that
+  # mislabel would leave a real question unanswered indefinitely.
+  _is_quota_prompt() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
+  }
+  # _is_quota_session_limit — content discriminator for the session-limit
+  # refusal frame: a normal working pane, not an option-select prompt, so
+  # unlike _is_quota_prompt it is not gated behind _is_prompt.
+  # All three anchors must be present: any one alone false-triggers on a worker
+  # that merely has this repo's own docs or fixtures on screen, and quota: is
+  # sticky and escalation-exempt. The tail bound is the same hazard — the real
+  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
+  # queued prompt in the input box can push them out of the window and this
+  # detector silently misses the frame. `uses your weekly limit` sits in a
+  # persistent hint row at depth 3, so it gets the tighter window.
+  _is_quota_session_limit() {
+    local tail_n tail_n6
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
+    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
+    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
+      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
+      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
+  }
+  # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
+  # Claude Code re-invokes the session when the shell completes (#353). Both
+  # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
+  # finished-turn marker and a non-zero `N shell(s)` count (`1 shell still
+  # running` on the turn line, `· 1 shell ·` in the mode line), and no live
+  # spinner/meter (a new turn started under a stale `done` line).
+  # The prompt-suggestion line in the input box is neither anchor, and
+  # _is_prompt needs an `Enter to select` footer, so it never reads as input.
+  _is_bg_wait() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -8 || true)
+    printf '%s\n' "$tail_n" | grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' &&
+      printf '%s\n' "$tail_n" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)' &&
+      ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
+      [ -z "$(_meter_line "$1")" ]
+  }
+  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
+  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
+
+  # SGR/CSI stripping regex, built from a raw ESC byte via ANSI-C quoting —
+  # never `\x1b` as escape text in a regex/awk source literal (a GNU
+  # extension; this repo's shell-reviewer already flags `grep -P` the same
+  # way for the same portability reason). Reused by _box_rows.
+  csi_re=$'\033\\[[0-9;]*m'
+  # The dim-SGR marker claude wraps a `❯`-row prompt suggestion in (ghost
+  # text), vs. a real unsent draft the user typed: nbsp separator + ESC[2m.
+  # Built from a raw ESC byte via ANSI-C quoting, same reasoning as csi_re.
+  _rw_esc=$'\033'
+  _rw_ghost_marker=$'❯\xc2\xa0'"${_rw_esc}[2m"
+
+  # _box_rows <text> <first-row-regex> — the input box of a claude or pi
+  # pane: the LAST two `─` rules in the last 30 non-blank lines (blank
+  # determined on the ANSI-stripped form, so this works identically on a
+  # plain `capture-pane -p` or a colored `capture-pane -e` capture) bound
+  # it, the first row inside must match <first-row-regex> against its
+  # STRIPPED text, at most 12 rows sit inside and 1-5 rows follow the lower
+  # rule. Prints the first inside row VERBATIM (colored, if the input was
+  # colored — this is what lets a caller inspect its SGR attributes without
+  # a separate correlation pass), then up to 7 rows above the upper rule
+  # (stripped). The rule test is a prefix match on the stripped form, not a
+  # character class.
+  _box_rows() {
+    printf '%s\n' "$1" |
+      rx="$2" csi="$csi_re" awk '
+        {
+          stripped = $0
+          gsub(ENVIRON["csi"], "", stripped)
+          if (stripped ~ /^[[:space:]]*$/) next
+          n++
+          raw[n] = $0
+          plain[n] = stripped
+        }
+        END {
+          off = (n > 30) ? n - 30 : 0
+          b = 0; a = 0
+          for (i = n; i > off; i--) if (index(plain[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
+          if (!a || b - a < 1) exit 1
+          if (b - a - 1 > 12 || n - b < 1 || n - b > 5) exit 1
+          if (b - a == 1 && "" !~ ENVIRON["rx"]) exit 1
+          if (b - a > 1 && plain[a + 1] !~ ENVIRON["rx"]) exit 1
+          print (b - a > 1 ? raw[a + 1] : "")
+          for (j = a - 1; j > off && j >= a - 7; j--) print plain[j]
+        }'
+  }
+
+  # _claude_idle_box <text> <colored-text> <own> — positive idle shape of a
+  # claude pane: a box whose first row is `❯` (not a numbered option), status
+  # rows after it (fx_bgwait_*, fx_session_limit_refusal). A live turn keeps
+  # the box drawn, so a meter line, subagent row or `esc to interrupt`
+  # anywhere in the window, or a spinner line in the 7 rows above the box,
+  # vetoes. The spinner check is positional so a transcript line like
+  # `Summary…` cannot wedge an idle pane. `own=1` (the caller's own just-typed
+  # text sitting in the box) counts as idle outright, without inspecting the
+  # `❯` row at all — the escape hatch for the post-type recheck, otherwise the
+  # watcher's own delivered text would defer forever. Otherwise a non-empty
+  # `❯` row is idle only if it is ghost text (a dimmed prompt suggestion,
+  # `_rw_ghost_marker` in the colored `$2` capture) rather than a real unsent
+  # draft; with no colored capture to check, it fails closed (not idle).
+  _claude_idle_box() {
+    local tail_n out row above draft own="${3:-0}" colored_row
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 || true)
+    [ -n "$(_meter_line "$tail_n")" ] && return 1
+    _has_subrow "$tail_n" && return 1
+    printf '%s\n' "$tail_n" | grep -qF 'esc to interrupt' && return 1
+    out=$(_box_rows "$1" '^[[:space:]]*❯') || return 1
+    row=$(printf '%s\n' "$out" | head -1)
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    printf '%s\n' "$row" | grep -qE "$re_option" && return 1
+    printf '%s\n' "$above" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' && return 1
+    [ "$own" = 1 ] && return 0
+    draft=$(printf '%s\n' "$row" | sed -E $'s/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//')
+    [ -n "$draft" ] || return 0
+    [ -n "$2" ] || return 1 # no colored capture available — fail closed
+    colored_row=$(_box_rows "$2" '^[[:space:]]*❯') || return 1
+    colored_row=$(printf '%s\n' "$colored_row" | head -1)
+    printf '%s\n' "$colored_row" | grep -qF "$_rw_ghost_marker"
+  }
+}
+
+# _pane_idle_reason <plain> <colored> — 0 (prints nothing) iff a claude frame
+# is provably idle; else prints a short keep reason and returns 1. Needs
+# _frame_classifier already called. On top of --role-watch's
+# _claude_idle_box, idle needs a finished turn's `· done HH:MM` marker just
+# above the box, so a freshly booted pane or an unrecognised frame reads busy.
+# The predicates read $engine, unset outside stall-watch, hence the local.
+_pane_idle_reason() {
+  local engine=claude tail_n above
+  if _is_permission_prompt "$1" || _is_prompt "$1" || _is_quota_session_limit "$1"; then
+    printf '%s' "prompt on screen"
+    return 1
+  fi
+  tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 || true)
+  if grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)' <<<"$tail_n"; then
+    printf '%s' "background shell or monitor still running"
+    return 1
+  fi
+  if ! _claude_idle_box "$1" "$2" 0; then
+    printf '%s' "live turn, unsent input, or no idle input box"
+    return 1
+  fi
+  above=$(_box_rows "$1" '^[[:space:]]*❯' | tail -n +2)
+  if ! grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' <<<"$above"; then
+    printf '%s' "no finished-turn marker above the input box"
+    return 1
+  fi
+}
+
 # _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
 # s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
 # `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
@@ -1775,7 +2006,7 @@ watch)
   ;;
 stream)
   # stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S]
-  #        [--coalesce S] [--retry S] [--interval S] [--force]
+  #        [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S]
   # stream --status [--crew ID]
   # Wraps `watch` in a long-lived process, so a streaming lane gets pushed
   # batches instead of re-arming a one-shot park every turn. `--crew` is
@@ -1794,6 +2025,7 @@ stream)
   interval=2
   force=""
   statusmode=""
+  reap_every=900
   while [ $# -gt 0 ]; do
     case "$1" in
     --crew)
@@ -1860,6 +2092,14 @@ stream)
       statusmode=1
       shift
       ;;
+    --reap-every)
+      [ -n "${2:-}" ] || {
+        echo "crew: --reap-every needs a value" >&2
+        exit 64
+      }
+      reap_every="$2"
+      shift 2
+      ;;
     *)
       echo "crew: stream: unknown arg '$1'" >&2
       exit 64
@@ -1882,6 +2122,13 @@ stream)
   _stream_posint coalesce "$coalesce"
   _stream_posint retry "$retry"
   _stream_posint interval "$interval"
+  # Non-negative, not positive like the others above: 0 is how the cadence
+  # reap is disabled, not an error.
+  case "$reap_every" in '' | *[!0-9]*)
+    echo "crew: --reap-every must be a non-negative integer number of seconds" >&2
+    exit 64
+    ;;
+  esac
   statesjson=$(printf '%s' "$states" | jq -Rc 'split(",") | map(select(length>0))')
   [ "$statesjson" = "[]" ] && {
     echo "crew: --states must be non-empty" >&2
@@ -2007,6 +2254,11 @@ stream)
   outf="$cdir/stream.out"
   errf="$cdir/stream.err"
   holderrf="$cdir/stream.hold.err"
+  reapoutf="$cdir/stream.reap.out"
+  reaperrf="$cdir/stream.reap.err"
+  # Clears what a reap child that outlived its stream wrote after that stream's
+  # cleanup; a child still running past this point can still write here.
+  rm -f "$reapoutf" "$reaperrf"
   # Initialized before the trap is armed, so a signal landing before the
   # first iteration can't abort the handler on an unbound variable.
   child=""
@@ -2018,6 +2270,12 @@ stream)
   last_hold_ts=0
   last_holderr_key=""
   last_holderr_ts=0
+  last_reaperr_key=""
+  last_reaperr_ts=0
+  # last_reap starts at stream start, not epoch 0, so the first cadence reap
+  # is $reap_every out rather than firing on the very first iteration.
+  reap_child=""
+  last_reap=$(date +%s)
 
   # The handler must disarm itself first — its own closing `exit` would
   # otherwise re-enter it and re-print `$pending` — and must end by exiting
@@ -2050,11 +2308,91 @@ stream)
     elif [ -s "$outf" ]; then
       cat "$outf" || true
     fi
-    rm -f "$outf" "$errf" "$holderrf"
+    if [ -s "$reapoutf" ]; then
+      _stream_reap_print || true
+    fi
+    rm -f "$outf" "$errf" "$holderrf" "$reapoutf" "$reaperrf"
     _lock_release "$lockd"
     exit 0
   }
   trap _stream_cleanup EXIT INT TERM HUP
+
+  # -r, not bare -p: `jobs` here runs in a pipeline subshell, which never
+  # clears the parent's finished-job entries, so `jobs -p` would list an
+  # exited child forever and no reap would ever fire (or flush) again.
+  _stream_reap_running() {
+    [ -n "$reap_child" ] && jobs -rp | grep -qx "$reap_child"
+  }
+
+  # _stream_reap_flush — print what the last background reap left in
+  # $reapoutf, once it has exited (a running child may still be writing).
+  _stream_reap_flush() {
+    [ -s "$reapoutf" ] || return 0
+    ! _stream_reap_running || return 0
+    _stream_reap_print
+  }
+
+  # _stream_reap_print — print and empty $reapoutf. Reap errors share the
+  # suppression scheme of the inner-watch errors below: one line per key,
+  # re-emitted after --heartbeat. Every write is `|| true`: _stream_cleanup
+  # calls this too, and must not abort before releasing the lock.
+  _stream_reap_print() {
+    local rline rkey r_ts
+    while IFS= read -r rline; do
+      [ -n "$rline" ] || continue
+      if [ "$(jq -r '.stream' <<<"$rline" 2>/dev/null || true)" = error ]; then
+        rkey=$(jq -r '"\(.rc):\(.detail)"' <<<"$rline" 2>/dev/null | sed -E 's/[0-9]+/N/g' || true)
+        r_ts=$(jq -nc 'now*1000|floor')
+        if [ "$rkey" = "$last_reaperr_key" ] && [ "$((r_ts - last_reaperr_ts))" -lt "$((heartbeat * 1000))" ]; then
+          continue
+        fi
+        last_reaperr_key="$rkey"
+        last_reaperr_ts="$r_ts"
+      fi
+      printf '%s\n' "$rline" || true
+    done <"$reapoutf"
+    : >"$reapoutf" || true
+  }
+
+  # _stream_reap — a background `crew reap`, never awaited or killed by
+  # _stream_cleanup: an interrupted `wt remove` strands a worktree. It ignores
+  # HUP only; a signal to the whole process group still reaches it. Output goes
+  # to $reapoutf, printed once the child is gone, so it never splits a batch
+  # line. --no-wait: a reap already holding the lock covers this one.
+  _stream_reap() {
+    [ "$reap_every" -gt 0 ] || return 0
+    ! _stream_reap_running || return 0
+    _stream_reap_flush
+    last_reap=$(date +%s)
+    (
+      trap '' HUP
+      rc=0
+      out=$(bash -euo pipefail "$0" reap --quiet --no-wait 2>"$reaperrf" </dev/null) || rc=$?
+      r_ts=$(jq -nc 'now*1000|floor')
+      {
+        [ -z "$out" ] || jq -nc --arg crew "$crew" --arg out "$out" --argjson ts "$r_ts" \
+          '{stream:"reap", crew:$crew, lines:($out | split("\n") | map(select(length>0) | sub("^crew reap: ";""))), ts:$ts}'
+        [ "$rc" -eq 0 ] || jq -nc --arg crew "$crew" --argjson rc "$rc" --arg detail "$(head -n1 "$reaperrf" 2>/dev/null || true)" --argjson ts "$r_ts" \
+          '{stream:"error", crew:$crew, rc:$rc, detail:("reap: " + $detail), ts:$ts}'
+      } >"$reapoutf" || true
+    ) </dev/null &
+    reap_child=$!
+  }
+
+  # _stream_batch_wants_reap <batch-json> — true when the just-printed batch
+  # (one JSON object per line) carries a terminal status, or a pr-watch msg
+  # reporting the PR itself landed.
+  _stream_batch_wants_reap() {
+    jq -e -s 'any(.[]; .events[]? as $e |
+        if $e.kind == "status" then
+          (["done","failed","exited"] | index($e.body.state)) != null
+        elif $e.kind == "msg" and (($e.from // "") | startswith("pr-watch:")) then
+          ($e.body | fromjson? // {}) as $b |
+          ((($b.changed // []) | index("state")) != null)
+            and ((["MERGED","CLOSED"] | index($b.state.state)) != null)
+        else false end
+      )' >/dev/null 2>&1 <<<"$1"
+  }
 
   while :; do
     # Written at the top of every iteration — including the first, right
@@ -2063,6 +2401,7 @@ stream)
     tick_ts=$(jq -nc 'now*1000|floor')
     jq -nc --argjson pid "$$" --argjson ts "$tick_ts" --argjson park "$park" \
       '{pid:$pid, ts:$ts, park:$park}' >"$cdir/stream.tick"
+    _stream_reap_flush
     # Ahead of the inner watch, so a matured hold announces on the batch path
     # too, and at `--park` resolution rather than `--heartbeat` — which is
     # coarser than the longest wait a hold can legally carry.
@@ -2125,6 +2464,10 @@ stream)
       # A gone reader must not abort the loop mid-write (`set -e`): the batch
       # is still consumed and the cursor still advances, only the print fails.
       printf '%s\n' "$pending" || true
+      _stream_reap_flush
+      # React to the event we already have rather than waiting out the
+      # cadence: a terminal status or a PR-merged msg is worth a reap now.
+      _stream_batch_wants_reap "$pending" && _stream_reap
       pending=""
       : >"$outf"
       quiet=0
@@ -2154,6 +2497,13 @@ stream)
         last_err_ts="$e_ts"
       fi
       sleep "$retry"
+    fi
+    # Cadence: every branch above may have consumed anywhere from --interval
+    # to --park+--retry seconds, so the elapsed check belongs here rather
+    # than pinned to one branch.
+    now_s=$(date +%s)
+    if [ "$reap_every" -gt 0 ] && [ "$((now_s - last_reap))" -ge "$reap_every" ]; then
+      _stream_reap
     fi
   done
   ;;
@@ -3916,14 +4266,7 @@ stall-watch)
     sig_bgwait=0
     ;;
   esac
-  # Multibyte-safe BY CONSTRUCTION, not by ambient locale: under LC_ALL=C a
-  # bracket expression consumes one BYTE, so a single-character class would
-  # never match `◯` (U+25EF, 3 bytes) and D2 would silently lose its only
-  # measured false-positive guard. Hence `+` on the glyph classes and an
-  # alternation rather than a bracket set for `❯`.
-  re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
-  re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
-  re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
+  _frame_classifier
 
   # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
   # D0/D3 read the hash, D1/D2 read the text.
@@ -4112,41 +4455,6 @@ BUSLINE
     fi
   }
 
-  # The Codex hook-review frame is pasted verbatim in fx_codex_hooks_review.
-  # Every visible line is anchored and the option row must end the pane, so a
-  # task discussing hooks in its transcript cannot satisfy this signature.
-  _is_codex_hook_review_prompt() {
-    local tail_n expected
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -4 || true)
-    expected=$'Hooks need review\n  1 hook is new or changed.\n  Hooks can run outside the sandbox after you trust them.\n› 1. Review hooks  2. Trust all and continue  3. Continue without trusting'
-    [ "$tail_n" = "$expected" ]
-  }
-
-  # _is_permission_prompt — Claude's tool-permission dialog (#435), claude only.
-  # Its footer `Esc to cancel · Tab to amend` is distinct from every
-  # option-select prompt's `Enter to select`/`Enter to confirm`, and the same
-  # geometry anchor applies: the footer must be the pane's LAST non-empty line,
-  # so the dialog scrolled into the transcript (input box last) cannot match. A
-  # numbered option row and `Do you want to proceed?` must sit within the
-  # tail-10 non-empty lines ending at the footer (capture-bounded: the real
-  # subagent frame has the question at depth 5, the `│` reason rows above it).
-  # Deliberately NOT gated on the meter/subrow veto: a subagent raises the
-  # dialog with a live subagent row and background-agent lines painted above it
-  # (the real capture), so the footer anchor is the false-positive guard.
-  _is_permission_prompt() {
-    local tail_n last above
-    [ "$engine" = claude ] || return 1
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -10 || true)
-    last=$(printf '%s\n' "$tail_n" | tail -1)
-    case "$last" in
-    *"Esc to cancel · Tab to amend"*) ;;
-    *) return 1 ;;
-    esac
-    above=$(printf '%s\n' "$tail_n" | sed '$d')
-    printf '%s\n' "$above" | grep -qE "$re_option" || return 1
-    printf '%s\n' "$above" | grep -qF 'Do you want to proceed?'
-  }
-
   # _permission_detail <text> <pane> — human-relay payload for a detected
   # tool-permission dialog (#435). The payload is pane-scraped and therefore
   # attacker-influenceable, so it is STRIPPED before it reaches the bus: ESC/CSI
@@ -4181,77 +4489,6 @@ BUSLINE
     printf '%s%s' "${body:0:$max}" "$suffix"
   }
 
-  # Geometry anchor: the footer must be the pane's LAST non-empty line, with a
-  # numbered option within the 6 non-empty lines above it. A pane that is not
-  # parked on a prompt ends on its input box, never on transcript text (A3), so
-  # a prompt frame merely scrolling through — this very repo's bats fixtures —
-  # cannot satisfy this. Relaxing it to "the last 10 lines" is exactly how those
-  # fixtures become a false-positive source.
-  _is_prompt() {
-    local tail_n last above
-    if [ "$engine" = codex ]; then
-      _is_codex_hook_review_prompt "$1"
-      return
-    fi
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -7 || true)
-    last=$(printf '%s\n' "$tail_n" | tail -1)
-    case "$last" in
-    *"Enter to select"* | *"Enter to confirm"*) ;;
-    *) return 1 ;;
-    esac
-    above=$(printf '%s\n' "$tail_n" | sed '$d')
-    printf '%s\n' "$above" | grep -qE "$re_option"
-  }
-  # _is_quota_prompt — content discriminator, ALWAYS called alongside _is_prompt
-  # (never alone): _is_prompt already proves the pane is on-screen and shaped
-  # like an option-select frame; this only decides WHICH option-select frame it
-  # is. Searched over the last 12 non-empty lines — wider than _is_prompt's
-  # tail-7 (the real rate-limit frame isn't captured anywhere in this repo yet,
-  # unlike the pinned fixtures above it, so its exact line count above the
-  # footer is unknown and a too-tight window risks silently degrading to
-  # generic `prompt:`) but still bounded, not the whole capture: an unbounded
-  # search would classify a genuinely different, answerable prompt as `quota:`
-  # merely because this literal phrase happens to be visible somewhere higher
-  # on the same screen (e.g. a worker with this very protocol doc scrolled
-  # into view) — and `quota:` is sticky and escalation-exempt, so that
-  # mislabel would leave a real question unanswered indefinitely.
-  _is_quota_prompt() {
-    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 | grep -qF 'Stop and wait for limit to reset'
-  }
-  # _is_quota_session_limit — content discriminator for the session-limit
-  # refusal frame: a normal working pane, not an option-select prompt, so
-  # unlike _is_quota_prompt it is not gated behind _is_prompt.
-  # All three anchors must be present: any one alone false-triggers on a worker
-  # that merely has this repo's own docs or fixtures on screen, and quota: is
-  # sticky and escalation-exempt. The tail bound is the same hazard — the real
-  # frame carries the two transcript anchors at non-empty depth 7-8, so a long
-  # queued prompt in the input box can push them out of the window and this
-  # detector silently misses the frame. `uses your weekly limit` sits in a
-  # persistent hint row at depth 3, so it gets the tighter window.
-  _is_quota_session_limit() {
-    local tail_n tail_n6
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -15 || true)
-    tail_n6=$(printf '%s\n' "$tail_n" | tail -6 || true)
-    printf '%s\n' "$tail_n" | grep -qF "You've hit your session limit" &&
-      printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
-      printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
-  }
-  # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
-  # Claude Code re-invokes the session when the shell completes (#353). Both
-  # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
-  # finished-turn marker and a non-zero `N shell(s)` count (`1 shell still
-  # running` on the turn line, `· 1 shell ·` in the mode line), and no live
-  # spinner/meter (a new turn started under a stale `done` line).
-  # The prompt-suggestion line in the input box is neither anchor, and
-  # _is_prompt needs an `Enter to select` footer, so it never reads as input.
-  _is_bg_wait() {
-    local tail_n
-    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -8 || true)
-    printf '%s\n' "$tail_n" | grep -qE '·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}' &&
-      printf '%s\n' "$tail_n" | grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)' &&
-      ! printf '%s\n' "$tail_n" | grep -qE '^[^[:alnum:]]*[A-Za-z]+…' &&
-      [ -z "$(_meter_line "$1")" ]
-  }
   # _unread_oldest — ts (ms) of the oldest role:<branch>:* msg to this lead that
   # is past the delivered mark and not answered by a later msg from the lead to
   # that role; empty when none. A sessioned watchdog matches its session id only,
@@ -4274,9 +4511,6 @@ BUSLINE
            | select(any($sent[]; .to == $r.from and .ts > $r.ts) | not)
            | .ts] | min // empty' 2>/dev/null || true
   }
-
-  _meter_line() { printf '%s\n' "$1" | grep -E "$re_meter" | tail -1 || true; }
-  _has_subrow() { printf '%s\n' "$1" | grep -qE "$re_subrow"; }
 
   start=$(date +%s)
   sleep "$grace"
@@ -4805,11 +5039,13 @@ reap)
   # time; a time-based sweep would delete live work.
   quiet=""
   dry=""
+  nowait=""
   idle=3600
   while [ $# -gt 0 ]; do
     case "$1" in
     --quiet) quiet=1 ;;
     --dry-run) dry=1 ;;
+    --no-wait) nowait=1 ;;
     --idle)
       [ -n "${2:-}" ] || {
         echo "crew: --idle needs a value in seconds" >&2
@@ -4819,7 +5055,7 @@ reap)
       shift
       ;;
     *)
-      echo "crew: reap takes --quiet, --dry-run and --idle S (got '$1')" >&2
+      echo "crew: reap takes --quiet, --dry-run, --no-wait and --idle S (got '$1')" >&2
       exit 1
       ;;
     esac
@@ -4929,6 +5165,25 @@ reap)
     ;;
   esac
 
+  # Two reaps racing `wt remove` on one tree strand it. After the autosweep
+  # block because its sync mode clears the EXIT trap. dispatch waits (it reads
+  # branch state right after its reap); the stream passes --no-wait.
+  reap_lock="$dir/reap.lock.d"
+  waited=0
+  until _lock_acquire "$reap_lock" "$$"; do
+    if [ -n "$nowait" ]; then
+      note "another reap is running — skipped"
+      exit 0
+    fi
+    if [ "$waited" -ge 120 ]; then
+      note "another reap is still running after 120s — skipped"
+      exit 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  trap '_lock_release "$reap_lock"' EXIT
+
   # The set of states a worker session ends in — shared by the idle-release
   # filter below and the reclaim filter further down so they can't drift
   # apart again (#68): a worker that `exited` (compacted, hit its context
@@ -5020,6 +5275,18 @@ EOF
   # shellcheck source=/dev/null
   . "$wt_git_lib"
 
+  # Orphan windows: report only — a human may be using one.
+  while IFS=$'\t' read -r owid obranch ocdir; do
+    [ -n "$owid" ] && [ -n "$obranch" ] || continue
+    [ "$ocdir" = "$dir" ] || continue
+    owt=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$obranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    [ -n "$owt" ] && [ -d "$owt" ] && continue
+    note "window $owid is stamped $obranch but its worktree is gone — not killed"
+  done <<EOF
+$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}' 2>/dev/null || true)
+EOF
+
   # Latest status per worker across every crew; keep the ones in a terminal
   # state (same set the idle-release pass above uses — see $reap_terminal_states).
   # pr_url is carried forward because the `done` event itself drops it (same
@@ -5030,23 +5297,30 @@ EOF
   # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
   # must not win the fold forever, and claims older than $claim_mask_ttl drop
   # out so a prior terminal status can resurface.
+  # pr_open is a candidate here only, never for idle release. `later`: some
+  # session of the branch posted after the terminal status, so it is not idle.
   candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
       def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      map(select(
-          ((.from // "") | startswith("worker:"))
-          and (
-            .kind == "status"
-            or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
-          )))
-      | group_by(.from) | map(
-          (max_by(.ts)) as $latest
-          | {branch: ($latest.from | wid_branch),
-             ts: $latest.ts,
-             state: $latest.body.state,
-             pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
-      | group_by(.branch) | map(sort_by(.ts) | last)
-      | map(select(.state as $st | ($terminal | index($st)) != null))
-      | .[] | [.branch, .state, (.pr_url // "-")] | @tsv' "$log")
+      (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
+          | {branch: (.from | wid_branch), ts})
+        | group_by(.branch) | map({key: .[0].branch, value: (map(.ts) | max)}) | from_entries) as $last
+      | (map(select(
+              ((.from // "") | startswith("worker:"))
+              and (
+                .kind == "status"
+                or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
+              )))
+          | group_by(.from) | map(
+              (max_by(.ts)) as $latest
+              | {branch: ($latest.from | wid_branch),
+                 session: $latest.from,
+                 ts: $latest.ts,
+                 state: $latest.body.state,
+                 pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+          | group_by(.branch) | map(sort_by(.ts) | last)
+          | map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
+        )
+      | .[] | [.branch, .state, (.pr_url // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log")
   [ -n "$candidates" ] || {
     note "nothing done to reap"
     exit 0
@@ -5055,10 +5329,11 @@ EOF
   # Panes running an engine, to tell "finished worker" from "someone is in there
   # right now". Same path-keyed idiom as roster: window names are rewritten by
   # lazytmux, so the worktree path is the only stable handle.
-  live=$(tmux list-panes -a -F '#{pane_current_command} #{pane_current_path}' 2>/dev/null || true)
+  live=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}' 2>/dev/null || true)
+  _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state pr; do
+  while IFS=$'\t' read -r branch state pr cand_ts later; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
@@ -5081,18 +5356,53 @@ EOF
       ;;
     esac
 
-    engine_live=""
-    while IFS= read -r pane; do
-      if _pane_is_engine_at "$pane" "$wtpath"; then
-        engine_live=1
-        break
-      fi
+    engine_panes=()
+    while IFS=$'\t' read -r pwin ppane pcmd ppath; do
+      [ -n "$pwin" ] || continue
+      _pane_is_engine_at "$pcmd $ppath" "$wtpath" || continue
+      engine_panes+=("$pwin"$'\t'"$ppane"$'\t'"$pcmd")
     done <<PANES
 $live
 PANES
-    if [ -n "$engine_live" ]; then
-      note "keeping $branch — an engine is still running there"
-      continue
+
+    idle_windows=()
+    idle_panes=()
+    idle_frames=()
+    if [ "${#engine_panes[@]}" -gt 0 ]; then
+      keep_reason=""
+      case "$state" in
+      done | pr_open) ;;
+      *) keep_reason="$state session" ;;
+      esac
+      [ -n "$keep_reason" ] || [ "$later" != 1 ] || keep_reason="session posted after its $state"
+      if [ -z "$keep_reason" ]; then
+        for pane_row in "${engine_panes[@]}"; do
+          IFS=$'\t' read -r ewin epane ecmd <<<"$pane_row"
+          stripped="${ecmd#.}"
+          stripped="${stripped%-wrapped}"
+          if [ "$stripped" != claude ]; then
+            keep_reason="$ecmd has no idle signature"
+            break
+          fi
+          capture=$(tmux capture-pane -p -t "$epane" 2>/dev/null || true)
+          if [ -z "$capture" ]; then
+            keep_reason="empty capture of $epane"
+            break
+          fi
+          colored=$(tmux capture-pane -e -p -t "$epane" 2>/dev/null || true)
+          if ! idle_reason=$(_pane_idle_reason "$capture" "$colored"); then
+            keep_reason="$idle_reason"
+            break
+          fi
+          idle_windows+=("$ewin")
+          idle_panes+=("$epane")
+          idle_frames+=("$capture")
+        done
+      fi
+      if [ -n "$keep_reason" ]; then
+        note "keeping $branch — an engine is still running there ($keep_reason)"
+        continue
+      fi
     fi
     # Never remove the worktree the caller is standing in — it would leave the
     # invoking shell (or dispatch itself) on a path that no longer exists.
@@ -5141,6 +5451,45 @@ PANES
     if [ -n "$dirt" ]; then
       note "keeping $branch — uncommitted changes"
       continue
+    fi
+
+    # Kill idle-engine windows, role panes with them. The first sample is
+    # seconds stale by now (gh, git status): a pane that changed at all, or a
+    # branch that posted since, keeps everything.
+    if [ "${#idle_windows[@]}" -gt 0 ]; then
+      if ! { _wt_cfg_guard "$common" "$admin" && _wt_cfg_guard_cwd "$common"; }; then
+        note "keeping $branch — git config drift"
+        continue
+      fi
+      resample=""
+      for i in "${!idle_panes[@]}"; do
+        capture=$(tmux capture-pane -p -t "${idle_panes[i]}" 2>/dev/null || true)
+        colored=$(tmux capture-pane -e -p -t "${idle_panes[i]}" 2>/dev/null || true)
+        if [ "$capture" != "${idle_frames[i]}" ] || ! _pane_idle_reason "$capture" "$colored" >/dev/null; then
+          resample="pane changed between samples"
+          break
+        fi
+      done
+      # Anything but a clean `false` (an unreadable bus included) keeps.
+      if [ -z "$resample" ] && [ "$(jq -n --arg w "worker:$branch" --argjson ts "$cand_ts" '
+          any(inputs; (.kind == "status" or .kind == "msg")
+            and ((.from // "") as $f | $f == $w or ($f | startswith($w + "#")))
+            and .ts > $ts)' "$log" 2>/dev/null || true)" != false ]; then
+        resample="the branch posted since"
+      fi
+      if [ -n "$resample" ]; then
+        note "keeping $branch — $resample"
+        continue
+      fi
+      while IFS= read -r w; do
+        [ -n "$w" ] || continue
+        if [ -n "$dry" ]; then
+          say "would kill window $w ($branch idle engine)"
+        else
+          tmux kill-window -t "$w" 2>/dev/null || true
+          say "killed window $w ($branch idle engine)"
+        fi
+      done < <(printf '%s\n' "${idle_windows[@]}" | sort -u)
     fi
 
     # Kill leftover processes reparented out of the pane but still rooted in this
@@ -5279,7 +5628,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
   exit 1
   ;;
 esac
