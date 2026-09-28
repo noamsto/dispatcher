@@ -427,9 +427,8 @@ _tracker_slug_from_path() {
 # would hide a GitHub slug behind a rewritten local path. https userinfo is
 # discarded and never printed.
 _resolve_tracker() {
-  local url="" rest="" slug="" org="" map="" want="" entry="" key="" val="" which
-  local host="" path="" want_cmp="" key_cmp=""
-  local -a tracker_parts=()
+  local url="" rest="" slug="" org="" want="" val="" which
+  local host="" path="" want_cmp=""
   url="$(git config --get remote.origin.url 2>/dev/null || true)"
   case "$url" in
   https://*)
@@ -472,33 +471,21 @@ _resolve_tracker() {
     org="${slug%%/*}"
     for which in repo org; do
       if [ "$which" = repo ]; then
-        map="${DISPATCH_REPO_TRACKERS:-}"
         want="$slug"
       else
-        map="${DISPATCH_ORG_TRACKERS:-}"
         want="$org"
       fi
-      [ -n "$map" ] || continue
-      # A hand-set map may be one entry per line. `read -ra` stops at the
-      # first newline, which would drop every later entry.
-      map="$(printf '%s' "$map" | tr '\n' ' ')"
       want_cmp="$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')"
-      read -ra tracker_parts <<<"$map"
-      for entry in "${tracker_parts[@]}"; do
-        [ -n "$entry" ] || continue
-        key="${entry%%=*}"
-        val="${entry#*=}"
-        key_cmp="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
-        [ "$key_cmp" = "$want_cmp" ] || continue
-        if [ "$val" = github ]; then
-          printf '%s\n' github
-          return 0
-        fi
-        if [[ $val =~ ^linear:([A-Z][A-Z0-9]*)$ ]]; then
-          printf 'linear %s\n' "${BASH_REMATCH[1]}"
-          return 0
-        fi
-      done
+      val="$(jq -r --arg m "${which}Trackers" --arg k "$want_cmp" '.[$m][$k] // empty' <<<"$settings")"
+      [ -n "$val" ] || continue
+      if [ "$val" = github ]; then
+        printf '%s\n' github
+        return 0
+      fi
+      if [[ $val =~ ^linear:([A-Z][A-Z0-9]*)$ ]]; then
+        printf 'linear %s\n' "${BASH_REMATCH[1]}"
+        return 0
+      fi
     done
   fi
   printf '%s\n' github
@@ -992,9 +979,11 @@ shell_quote() {
 # runs the hook, so an old exit.* whose pane is gone is reclaimed instead
 # (issue #343).
 #
-# The launching process's own DISPATCH_GRANT_ROOTS is pinned the same way, so a
-# lead's `dispatch --spawn-role` validates grants against the roots its
-# dispatcher used, not whatever the pane's (tmux server's) environment holds.
+# The launching process's resolved DISPATCH_GRANT_ROOTS is always pinned — `:`
+# when empty, which every reader takes as no roots — so a lead's
+# `dispatch --spawn-role` validates grants against the roots its dispatcher
+# used, never re-resolving them from the pane's (tmux server's) env or locked
+# layer (#572).
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -1035,11 +1024,7 @@ write_launch_script() {
         printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
       fi
     done
-    if [ -n "${DISPATCH_GRANT_ROOTS:-}" ]; then
-      printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "$DISPATCH_GRANT_ROOTS"
-    else
-      _unset+='-u DISPATCH_GRANT_ROOTS '
-    fi
+    printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "${DISPATCH_GRANT_ROOTS:-:}"
     _file="$(mktemp "$_dir/launch.XXXXXX")"
     printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
   fi
@@ -2681,13 +2666,13 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 }
 
 # Engine gate. An engine must be enabled (on this machine's roster) and
-# available (its CLI installed). The roster is $DISPATCH_ENGINES (exported
-# from programs.dispatcher.engines by home-manager), else the settings files'
-# `engines`; unset in both means every engine, so a non-Nix checkout and the
-# test suite need no extra setup. $DISPATCH_PROFILE no
-# longer gates engines — it is still read below for the work+claude+deep rung.
+# available (its CLI installed). The roster is $DISPATCH_ENGINES when set,
+# else the resolved `engines` setting (the home-manager module's locked layer,
+# then the user file); unset everywhere means every engine, so a non-Nix
+# checkout and the test suite need no extra setup. `profile` no longer gates
+# engines — it is still read below for the work+claude+deep rung.
 _settings_load
-profile="${DISPATCH_PROFILE:-personal}"
+profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 
 check_engine "$agent" "--agent $agent"
 
@@ -3218,7 +3203,9 @@ mkdir -p "$crew_dir"
 
 for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: ${DISPATCH_GRANT_ROOTS:-unset}) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir, not holding a repo's git config file or a symlink into or over its hooks/git dir" >&2
+    roots_now=none
+    [ -z "${DISPATCH_GRANT_ROOTS//:/}" ] || roots_now="$DISPATCH_GRANT_ROOTS"
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: $roots_now) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir, not holding a repo's git config file or a symlink into or over its hooks/git dir" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")

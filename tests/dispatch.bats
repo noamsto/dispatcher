@@ -1580,7 +1580,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"ignoring stale DISPATCHER_CRITICS_DIR"* ]]
-  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS GIT_EDITOR=true" <(launch_log)
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
   run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
@@ -1607,7 +1607,8 @@ _store_protocols() { # <dir> <content>
   unset DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "unset dirs"
   [ "$status" -eq 0 ]
-  grep -qF -- "-u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCH_GRANT_ROOTS DISPATCHER_PROTOCOL_DIR=" <(launch_log)
+  grep -qF -- "-u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR DISPATCHER_PROTOCOL_DIR=" <(launch_log)
+  grep -qF -- "DISPATCH_GRANT_ROOTS=: " <(launch_log)
 }
 
 @test "a raw (unsubstituted) dispatch script leaves unresolved placeholder dirs out of the launch env" {
@@ -1747,6 +1748,23 @@ EOF
   [ "$status" -ne 0 ]
   run grep -c -- 'cursor-agent' "$STUB_LOG"
   [ "$status" -ne 0 ]
+}
+
+@test "profile from the settings file enables the work deep-claude codex MCP" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"profile":"work"}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch deep opus --agent claude --effort high --no-grid --crew-id c1 42 "t"
+  [ "$status" -eq 0 ]
+  grep -F 'claude --name iris ' <(launch_log) | grep -qF 'mcp-codex.json'
+
+  : >"$STUB_LOG"
+  printf '{"profile":"personal"}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch deep opus --agent claude --effort high --no-grid --crew-id c1 43 "t"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name ' <(launch_log))"
+  [ -n "$line" ]
+  [[ "$line" != *mcp-codex.json* ]]
 }
 
 @test "kind=review workers get no default grid" {
@@ -5026,6 +5044,32 @@ point_github_origin() {
   grep -qx 'tracker: linear ENG' "$task"
 }
 
+@test "tracker: an org default from the user settings file" {
+  stub_launch_bins
+  point_github_origin
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"orgTrackers":{"Factify-Inc":"linear:ENG"}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'tracker: linear ENG' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+}
+
+@test "tracker: an env entry overrides the settings file per key" {
+  stub_launch_bins
+  point_github_origin
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"repoTrackers":{"factify-inc/mono":"linear:ENG"}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_REPO_TRACKERS='other/repo=github' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'tracker: linear ENG' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+
+  DISPATCH_REPO_TRACKERS='factify-inc/mono=github' \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 43 "implement thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'tracker: github' "$TEST_REPO/.dispatch-wt/feat-43-implement-thing/WORKER_TASK.md"
+}
+
 @test "tracker: resume of an unrecognised tracker line does not keep or recompute it" {
   setup_resume_branch feat/42-do-a-thing
   git -C "$TEST_REPO" remote set-url origin "https://github.com/factify-inc/mono.git"
@@ -7096,7 +7140,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: --add-dir '$T/x' refused"* ]]
   [[ "$output" == *"DISPATCH_GRANT_ROOTS"* ]]
-  [[ "$output" == *"now: unset"* ]]
+  [[ "$output" == *"now: none"* ]]
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]
 }
@@ -7114,7 +7158,8 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "pin roots unset"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  [[ "$line" == *"-u DISPATCH_GRANT_ROOTS"* ]]
+  [[ "$line" == *"DISPATCH_GRANT_ROOTS=: "* ]]
+  [[ "$line" != *"-u DISPATCH_GRANT_ROOTS"* ]]
 }
 
 @test "add-dir: --spawn-role re-checks the recorded grant against the lead's roots" {
@@ -7129,6 +7174,25 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
   : >"$STUB_LOG"
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" != *"$T/repos/proj"* ]]
+}
+
+@test "add-dir: --spawn-role under a pinned empty root list ignores a tmux-env locked layer" {
+  _spawn_role_fixture
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
+  printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
+  printf '{"grantRoots":["%s/repos"]}\n' "$T" >"$T/locked.json"
+  DISPATCH_LOCKED_SETTINGS="$T/locked.json" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--add-dir $T/repos/proj "* ]]
+
+  : >"$STUB_LOG"
+  DISPATCH_GRANT_ROOTS=: DISPATCH_LOCKED_SETTINGS="$T/locked.json" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"

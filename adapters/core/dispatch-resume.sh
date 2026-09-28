@@ -132,11 +132,7 @@ write_launch_script() {
         printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
       fi
     done
-    if [ -n "${DISPATCH_GRANT_ROOTS:-}" ]; then
-      printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "$DISPATCH_GRANT_ROOTS"
-    else
-      _unset+='-u DISPATCH_GRANT_ROOTS '
-    fi
+    printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "${DISPATCH_GRANT_ROOTS:-:}"
     _file="$(mktemp "$_dir/launch.XXXXXX")"
     printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
   fi
@@ -907,7 +903,7 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   exit 1
 fi
 
-profile="${DISPATCH_PROFILE:-personal}"
+profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 
 mcp_arg=""
 if [ -n "$mcp_profile" ]; then
