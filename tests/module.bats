@@ -643,6 +643,45 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
+# #606: the crew package carries dispatch-config, so `crew rate` resolves its
+# burn table with DISPATCH_CONFIG_BIN unset and nothing on the inherited PATH.
+@test "the crew package resolves its burn table with no dispatch-config on PATH" {
+  repo="$BATS_TEST_TMPDIR/crew-606-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q -b main
+  git -C "$repo" config user.email test@example.com
+  git -C "$repo" config user.name test
+  echo seed >"$repo/seed.txt"
+  git -C "$repo" add seed.txt
+  git -C "$repo" commit -q -m seed
+
+  logf="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"b", engine:"claude", model:"opus", tier:"deep", effort:"high", title:"t"}' >"$logf"
+  jq -nc '{ts:601000, crew_id:"c1", from:"worker:b", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$logf"
+
+  # `crew rate` sweeps the bus of the cwd, so run inside the fixture repo.
+  cd "$repo"
+  # PATH=/nonexistent so the only resolver available is the one the wrapper's
+  # own runtimeInputs put on PATH; -u DISPATCH_CONFIG_BIN so nothing exported
+  # can stand in for it. XDG_CONFIG_HOME/HOME are isolated so a host settings
+  # file's burnClasses override cannot flip the asserted class (dispatch-config
+  # merges ${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json).
+  run --separate-stderr env -u DISPATCH_CONFIG_BIN -u _BURN_SETTINGS \
+    PATH=/nonexistent XDG_DATA_HOME="$BATS_TEST_TMPDIR/data" \
+    XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" HOME="$BATS_TEST_TMPDIR/home" \
+    "$OUT_CREW/bin/crew" rate
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"dispatch-config unavailable"* ]]
+
+  # The class is the real one the baked table assigns opus@high, not the
+  # null an empty settings resolve would leave behind.
+  run jq -s -c 'group_by(.run_id) | map(max_by(.swept_at)) | .[0].cost_class' \
+    "$BATS_TEST_TMPDIR/data/crew/ratings.jsonl"
+  [ "$status" -eq 0 ]
+  [ "$output" = '"premium"' ]
+}
+
 # --- Integration: the module's baked dispatch-config/dispatch, run for real ---
 
 @test "a module install with engines left unset resolves the user settings file's engines" {
