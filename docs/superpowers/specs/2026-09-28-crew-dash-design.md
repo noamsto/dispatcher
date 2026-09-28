@@ -13,44 +13,60 @@ lever lines `refresh-budget` prints only right after a live probe, `crew retro
 side, and the lever verdicts cannot be re-read at all without re-probing (a
 network call against a rate-limited endpoint).
 
-## Decision: toolkit — bash, no new toolchain
+## Decision: toolkit — Go + Bubble Tea/Lipgloss/Bubbles (owner direction)
 
-|                                  | Go + Bubble Tea/Lipgloss                                                                                                                                         | bash (chosen)                                                                                                                                                                                                                                              |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Packaging                        | new toolchain: `go.mod`/`go.sum`, `buildGoModule` + a `vendorHash` to refresh on every dep bump, Go in the devshell and CI                                       | one more `writeShellApplication`, identical to the 11 CLIs already in the flake                                                                                                                                                                            |
-| Test story                       | golden `View()` frames in `go test`; but the data sources are bash CLIs, so "fixture files → `--once` output" needs a second harness (bats) or a two-hop fixture | bats end to end: fixture files → the real `dispatch-config`/`refresh-budget`/`crew` → `crew dash --once` golden; interactive frames captured from a private tmux server at 80×24 and after `resize-window` (the suite already drives private tmux servers) |
-| Width correctness                | `lipgloss.Width` handles wide glyphs                                                                                                                             | autowrap disabled while the TUI owns the screen (`\e[?7l`) so an over-long line is clipped by the terminal, never wrapped; plus a width-aware truncate (see below). No vertical borders, so there is no border to bleed                                    |
-| Next step: edit a user-layer key | `textinput` + a confirm view                                                                                                                                     | a cursor already exists on settings rows (below); edit = `e` on a row → a one-line prompt in the status row (`read -e -i`) → `jq setpath` into `settings.json`, validated by re-running `dispatch-config`                                                  |
+The first slice chose bash (no new toolchain). The owner overrode that: the
+dashboard is meant to become a serious TUI — collapsible trees, filtering,
+gauges, sortable tables, drill-downs, a live bus tail, and later actions and
+user-layer editing — and that is Bubble Tea's territory, with lipgloss/ansi
+width math, `bubbles` widgets (help, textinput, progress, key) and golden
+`View()` frames. The cost is accepted: a Go module in the flake
+(`buildGoModule` + `vendorHash`), Go in the devshell, and `gofmt` in treefmt.
 
-The flake is described as a "shell-based agent-orchestration harness"; every
-data source is a bash CLI emitting JSON, so the dashboard is a presentation
-layer over JSON — jq does the shaping, bash only paints. Go would buy width math
-and golden-frame ergonomics at the price of a second language and a hash to
-maintain; the clip-don't-wrap terminal mode removes the failure the width math
-exists to prevent. Revisit if the edit slice grows forms beyond one-line values.
+What carries over unchanged: the data layer (`dispatch-config --layers`,
+`refresh-budget --report --json`, retro `rows`, rate `burn_median` — already
+landed), the `crew dash` delegation in `crew.sh`, the model JSON shape of
+`--json`, and the `--once` text format (its golden stays the contract). The
+bash `crew-dash.sh` is deleted.
 
 ## Shape
 
-- New script `adapters/core/crew-dash.sh`, packaged as `crew-dash`
-  (`writeShellApplication`, `withConfig` so it gets the baked `dispatch-config`).
-- `crew dash [args]` in `crew.sh` execs `crew-dash`, passing its own path as
-  `CREW_BIN` so crew-dash calls back into the same `crew` build. `crew`'s
-  `runtimeInputs` gains `crew-dash`; `crew-dash` does **not** list `crew` (that
-  would be an eval cycle — the `dispatch-resume` precedent) and resolves
-  `${CREW_BIN:-crew}` instead. `crew-dash` lists `refresh-budget` and `jq`,
-  `coreutils`, `ncurses` (for `tput`).
-- Added to the `default` symlinkJoin, so a standalone `crew-dash` works too.
-
-```
-crew dash            # interactive when stdin and stdout are TTYs; otherwise as --once
-crew dash --once     # all four panes as plain text, then exit
-crew dash --json     # the collected model (the same document both renderers read)
-```
-
-`NO_COLOR` (any non-empty value) disables all SGR in both modes; `--once` to a
-non-TTY emits no SGR either.
+- Go module `dash/` (`module github.com/noamsto/dispatcher/dash`, `go 1.24.2` per `go mod tidy`),
+  on the **v1** Charm APIs: `github.com/charmbracelet/bubbletea` v1.3.x,
+  `lipgloss` v1.1.x, `bubbles` v1.x, `x/ansi` (not the `charm.land/…/v2`
+  modules), binary `crew-dash`:
+  - `dash/main.go` — flags (`--once`, `--json`, none), mode selection
+    (interactive only when stdin and stdout are TTYs; otherwise `--once`).
+  - `dash/internal/data` — the read-only data layer: `Snapshot` (settings rows +
+    layers + warnings, budget report, retro, ratings, roster crews, `Now`), a
+    `Runner` interface (`Run(ctx, name, args...) (stdout, stderr []byte, err)`)
+    with an exec implementation, `Collect(ctx, Runner, Config) Snapshot`
+    (per-source degrade to `{error}`, stderr of a successful source → that
+    pane's warnings), the bus reader (`EventsPath` via `git rev-parse
+--path-format=absolute --git-common-dir`, `RecentEvents(branch, n)`), and
+    JSON types matching the CLIs' `--json` contracts.
+  - `dash/internal/once` — the `--once` renderer (pure: `Snapshot → string`,
+    colour on/off as before: `CREW_DASH_COLOR`, `NO_COLOR`, TTY).
+  - `dash/internal/ui` — the Bubble Tea program: root model (tabs, help bar,
+    size, snapshot, refresh), one sub-model per view in its own file.
+- Clock: `Snapshot.Now` is `$CREW_DASH_NOW` (epoch seconds) when set, else
+  `time.Now()`; the TUI's age tick advances from it. Bats and Go goldens pin
+  it, replacing the bash build's `date` shim.
+- Resolution: `crew` from `$CREW_BIN` (executable → exec; else `bash
+"$CREW_BIN"`), else `crew` on PATH; `dispatch-config` from
+  `$DISPATCH_CONFIG_BIN`, else the path baked at build (`-ldflags -X
+main.dispatchConfigBin=…`), else `dispatch-config` on PATH; `refresh-budget`
+  and `git` from PATH.
+- Flake: `crew-dash = pkgs.buildGoModule { src = ./dash; vendorHash = …;
+ldflags bake the locked-layer-aware dispatch-config; postInstall
+wrapProgram --prefix PATH [refresh-budget git] }`, so `nix build` runs `go
+test ./...` (doCheck) and `checks.crew-dash` makes `nix flake check` build
+  and test it. `crew` keeps `crew-dash` in runtimeInputs (no cycle: crew-dash
+  does not list crew). Devshell gains `go`; treefmt gains `gofmt`.
 
 ## Data sources (read-only; no gh, no network)
+
+(As accepted in the first slice; now implemented in Go.)
 
 One collector builds a single JSON model; both renderers read only that model.
 Each source failure degrades its pane to a one-line `unavailable: <stderr first
@@ -127,7 +143,9 @@ The task asks for median burn; `rate` reports the mean `cost_proxy` (`cost_hours
 Add `burn_median: agg(k; n; median of cost_proxy / 3600000)` beside it, JSON
 only — the table columns do not change.
 
-## Panes
+## `--once` text (format unchanged from the first slice)
+
+The plain renderer keeps the accepted pane text exactly, so `tests/fixtures/crew-dash/once.golden` stays the contract; `--once` sections are headed `== Settings ==` etc. and never truncate.
 
 **1 Settings.** The `--show-origin` tree, one row per leaf (a node is a leaf
 only when its keys are exactly `origin` and `value` and `.origin` is a string —
@@ -162,55 +180,114 @@ empty retro store prints `no retro notes yet`. (b) Ratings table by
 tier/engine/model  age  pr`, and any outstanding holds. No live crew: `no active
 crew`.
 
-## Rendering
+## Interactive TUI
 
-- `--once`: sections `== Settings ==` etc., no truncation (piping), deterministic
-  order. A test clock: every "age"/"in" is computed by the collector from the
-  source's absolute timestamps against `date +%s` — including roster ages, which
-  `crew roster` computes with jq's `now`; the collector ignores its `age_s` and
-  recomputes from `ts` — so the existing bats `date` shim pins every figure.
-- Locale: `crew-dash` exports `LC_ALL=C.UTF-8` (built into glibc ≥2.35 without a
-  locale archive, and present on macOS), so `${#s}`, `wc -L` and the
-  char-by-char trim are UTF-8 aware and never split a code point.
-- Interactive: alternate screen, cursor hidden, autowrap off; restored on every
-  exit path (`trap … EXIT INT TERM`). Row 1: tab bar (`1 Settings  2 Budget  3
-Runs  4 Roster`, active tab reversed). Row `LINES`: status (`r refresh · tab/1-4
-pane · j/k scroll · q quit · refreshed HH:MM:SS`). Rows 2..LINES-1: the active
-  pane's lines from its scroll offset. Every painted line is truncated to
-  `COLUMNS` display cells (ASCII fast path; a line holding non-ASCII is measured
-  with `wc -L`, and trimmed char by char until it fits, `…` last), then padded
-  with an erase-to-EOL. Minimum 40×10; below it, a single `terminal too small`
-  line.
-- Keys: `q`/Ctrl-C quit; `r` re-collect all sources; `1`–`4`, Tab, ←/→ switch
-  pane; `j`/`k`/↓/↑ move (the cursor on Settings, scroll elsewhere); PgDn/PgUp,
-  `g`/`G`. Resize: `trap WINCH` sets a flag; the key loop reads with a 1s
-  timeout and repaints when the flag is set. No timer-driven re-collection.
+Follows the charm-tui skill: every inner size derived from
+`GetHorizontalFrameSize`/`GetVerticalFrameSize` and measured chrome
+(`lipgloss.Height` of tab bar and help bar), `max(0, …)` on every derived
+dimension, `ansi.Truncate` on every string the dashboard does not control,
+`MaxWidth`/`MaxHeight` on every sized box, no `len()` for column math, and
+`View()` returns `""` until the first `WindowSizeMsg`.
+
+**Chrome.** Row 1: tab bar `Settings │ Budget │ Runs │ Roster`, active tab
+highlighted. Bottom: `bubbles/help` bound to one `KeyMap` (short help; `?`
+toggles full help), plus a status segment `refreshed HH:MM:SS` and the active
+filter. Body: the active view, given an explicit width and height.
+
+**Global keys.** `1`–`4`, `tab`/`shift+tab` switch view; `r` re-collects the
+snapshot (async `tea.Cmd`, spinner-free: status reads `refreshing…`); `?`
+help; `q`/`ctrl+c` quit (in a text input only `esc`/`ctrl+c` escape it).
+
+**Settings.** A collapsible tree built from the `--show-origin` rows: branch
+nodes (`▸`/`▾`) collapse and expand with `enter`/`space`/`←`/`→`; `j`/`k`/`↑`/`↓`
+move a cursor; `g`/`G` top/bottom. Each leaf: `key: value` (compact JSON,
+truncated) and a right-aligned provenance badge with a distinct style per
+origin — default (faint), user (cyan), env (magenta), locked (bold yellow with
+`🔒`). `/` opens a `textinput` filter: a leaf matches when its dot-path or its
+value contains the query (case-insensitive); matching leaves and their
+ancestors are shown expanded; `esc` clears. Header: the three layer paths and
+any warnings. Under `NO_COLOR` the lipgloss profile is ASCII; locked stays
+distinct by `🔒` and bold.
+
+**Budget.** `fetched <age> ago` (+ `stale` past 2h). Per engine a header
+(`claude (oauth_usage) [plan]`); per window a row: name, a `bubbles/progress`
+gauge (static `ViewAs`, width from the remaining space, min 10), `used%`,
+`pace +N/-N/—`, `resets in`, and the verdict (truncated; `enter` on a window
+shows the full verdict in a detail pane). Gauge colour by used %: <85 normal,
+85–95 warning, ≥95 danger. Pi: spend/target line and the projection. Null
+engine: `unknown`.
+
+**Runs.** Two sections, `f` switches focus. (a) Ratings table by {tier,
+engine, model}: `n  pr%  success  burn(med)` where success = merge% (merged
+among settled), rendered with the rate markers (`—`, `(k)`, `!`); `s` cycles
+the sort column, `o` flips the order; default sort tier/engine/model. (b) Runs
+list from retro `rows`, newest `t0` first: run rows `branch  tier/engine/model
+outcome  tags`, dispatcher rows `crew <id>  session_summary (truncated)  tags`.
+`enter` opens a detail view of that row (every note `seam · tag` + full detail
+wrapped to the width, scrollable); `esc` returns.
+
+**Roster.** Live. On start the model watches the directory of the bus log
+(`fsnotify`; if the watcher cannot be created, a 2s poll of the file's size and
+mtime) and, on a change (debounced 300ms), re-runs only the roster sources
+(`crew crews`, `crew roster`, `crew hold list`). A 1s tick re-renders ages (it
+never re-collects). Table: codename in its recorded tmux colour (`colourNN` →
+`lipgloss.Color("NN")`), state, `tier/engine/model`, detail (truncated), age,
+PR. Holds listed below. `enter` on a worker shows its recent events: the last
+20 bus events whose `from` is exactly `worker:<branch>` or starts with
+`worker:<branch>#` (ts, kind, state /
+detail, or msg `to` + body), control/bidi characters stripped. No live crew:
+`no active crew`.
+
+## Seams for actions and editing (not built here)
+
+- Reads are all behind `data.Runner`; writes will be a separate
+  `data.Writer` (e.g. `SetUserKey(path, value)` writing
+  `settings.json` then re-validating through `dispatch-config`, or `crew
+reply`), so no view shells out.
+- Each view exposes `Selection() data.Selection` — a tagged union of the
+  focused entity (`SettingRow{Path, Origin, Editable}`, `Worker{Crew, Branch,
+Session}`, `Run{…}`). An actions layer is a table `(key, Selection kind) →
+tea.Cmd` consulted by the root model for keys no view consumed; the command
+  performs the write and returns `refreshMsg`. Editing a user key adds one
+  `textinput` modal to the settings view bound to `SettingRow.Editable`.
+- Nothing of that is added now; the PR states it.
+
+## Tests
+
+- `data`: collector over a fake `Runner` (every source ok; each source failing
+  → only its pane degrades; retro empty stdout → empty model; stderr warnings;
+  older crew without `rows` → no crash), settings-tree leaf rule, bus reader.
+- `once`: golden over snapshot fixtures (the existing `once.golden` content),
+  colour on/off.
+- `ui`: golden `View()` frames at 80×24 and 120×40 for each view (lipgloss
+  forced to the ASCII profile for readable goldens), a resize test (80×24 →
+  60×20 → 120×40: every frame has exactly `height` lines, each ≤ `width`
+  cells by `ansi.StringWidth`), update tests per view (tab switching, tree
+  collapse/expand, filter, cursor clamp, sort cycling, drill-in/out, roster
+  refresh on a bus-change msg, age tick), and a distinct-style test (each
+  origin's badge renders differently under TrueColor).
+- `nix build .#crew-dash` runs all Go tests; `checks.crew-dash` puts them in
+  `nix flake check`.
+- `tests/crew-dash.bats` keeps the end-to-end contract through the real CLIs:
+  it uses a prebuilt `$CREW_DASH_BIN` when set (e.g. `nix build
+.#crew-dash`, works offline), else builds once with `go build` in
+  `setup_file` and keeps the
+  existing `--once` golden / `--json` / degraded / warnings / retro /
+  backslash / large-value / older-crew / delegation / usage tests; the bash
+  truncation and tmux frame tests move into Go.
 
 ## Acceptance mapping
 
-- Golden `--once` over fixtures: base `defaults.json` fixture + user
-  `settings.json` + a locked file (`DISPATCH_LOCKED_SETTINGS`), one key set in all
-  three (locked wins, 🔒); a budget cache with claude 7d at 90% with ~50%
-  elapsed (ahead of pace, verdict shown); an empty retro store; a ratings store
-  with two groups. Plus: `NO_COLOR` absent/present, `--json` shape, a failing
-  source degrades one pane.
-- Interactive: tmux private server, `crew dash` in an 80×24 window,
-  `capture-pane`. Because autowrap is off, "every line ≤80 cells" alone cannot
-  fail, so the fixture includes a deliberately over-long locked row (🔒 plus a
-  long value with a CJK/wide character) and the test asserts _our_ truncation:
-  the row ends in `…` inside the 80 cells, and the row below it is the next
-  settings row (not a wrapped tail). Tab bar on row 1, status on row 24.
-  `resize-window -x 60 -y 20` → the same assertions at 60 cells, status on row 20. `q` restores the main screen. Unit-level: the truncate helper over ASCII,
-  🔒 and CJK strings at an exact width.
-- Unit tests for the new `refresh-budget --report [--json]`, retro `rows`, rate
-  `burn_median`.
-- Flake: `crew-dash` package, in `default`, plus `checks.crew-dash` pointing at
-  it — `nix flake check` only evaluates `packages`, so without the check nothing
-  builds it (and `writeShellApplication`'s build-time shellcheck never runs).
-  CI's `shellcheck adapters/core/*.sh` covers the source.
-- README "Dashboard" section.
+- Golden `--once` over fixture settings/budget/retro/ratings (all three layers,
+  a locked key, an ahead-of-pace engine, an empty retro store):
+  `bats tests/crew-dash.bats` (real CLIs) and `go test ./internal/once`.
+- Interactive 80×24 and resize without bleed: `go test ./internal/ui` golden
+  frames + resize test; charm-tui-reviewer and go-reviewer at review.
+- Packaged in the flake; `nix flake check` builds and tests it; shellcheck
+  clean on shell.
+- README "Dashboard" section updated for the new keys and views.
 
 ## Out of scope
 
-Editing any settings file (the `editable` field and the cursor are the only
-preparation). Background refresh. Cross-repo retro. Any `gh` call.
+Any write (settings edit, reply, reap, attach). Cross-repo retro. Any `gh`
+call.
