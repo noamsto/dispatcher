@@ -3042,6 +3042,10 @@ EOF_REPOS
                 cost_hours: (
                   ($n | map(.cost_proxy) | map(select(. != null))) as $vals
                   | agg(($vals|length); $ncount; (($vals | mean) | if . == null then null else . / 3600000 end))
+                ),
+                burn_median: (
+                  ($n | map(.cost_proxy) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; (($vals | median) | if . == null then null else . / 3600000 end))
                 )
               }
           )
@@ -3613,7 +3617,7 @@ retro)
                             and ((.to // "") | startswith("retro:"))
                             and ((.from // "") | startswith("worker:"))))
                | sort_by(.ts) | map(.body | body_obj) | map(select(. != null))) as $seam
-        | { branch: $b, engine: ($d.engine // "—"), model: ($d.model // "—"),
+        | { branch: $b, crew: ($d.crew_id // null), engine: ($d.engine // "—"), model: ($d.model // "—"),
             tier: ($d.tier // "—"),
             # Type-guarded for the same reason as body_obj: a status whose body
             # is not an object, or whose state is not a scalar, must cost this
@@ -3632,6 +3636,7 @@ retro)
                          and ((.from // "") | startswith("dispatcher:"))))
             | group_by(.to)
             | map({ branch: ("dispatcher:" + (.[0].to | ltrimstr("retro:"))),
+                    crew: (.[0].to | ltrimstr("retro:")),
                     engine: "—", model: "—", tier: "—", outcome: "—",
                     t0: (map(.ts) | min), is_run: false,
                     notes: (sort_by(.ts) | map(.body | body_obj)
@@ -3671,7 +3676,13 @@ retro)
     | (($groups | map(select(.known)) | sort_by(. as $g | $vocab | index($g.tag)))
        + ($groups | map(select(.known | not)) | sort_by(.tag))) as $sorted
     | ($sorted | map(select(.known | not)) | map(.tag)) as $unknown
-    | if $want_json then { tags: $sorted, unknown: $unknown }
+    | if $want_json then
+        { tags: $sorted, unknown: $unknown,
+          rows: ($rows | map({
+              kind: (if .is_run then "run" else "dispatcher" end),
+              crew, branch, engine, model, tier, outcome, t0,
+              notes: (.notes | map({seam, tag, detail}))
+            })) }
       elif $want_report then
         ["tag", "hits", "runs", "engines", "nondone", "sample"] as $headers
         | [true, false, false, true, false, true] as $left
