@@ -2,8 +2,8 @@ package ui
 
 import "testing"
 
-// TestColorForcedAscii matches finding 8: the interactive TUI must honor
-// CREW_DASH_COLOR=never the same way it already honors NO_COLOR (the README
+// TestColorForcedAscii checks that the interactive TUI honors
+// CREW_DASH_COLOR=never the same way it honors NO_COLOR (the README
 // promises both), while CREW_DASH_COLOR=always has no TUI effect (that
 // override is --once's colorEnabled in main.go, not the interactive path).
 func TestColorForcedAscii(t *testing.T) {

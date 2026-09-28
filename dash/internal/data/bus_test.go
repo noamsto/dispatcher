@@ -18,10 +18,10 @@ func TestEventsPath(t *testing.T) {
 	}
 }
 
-// TestRecentEventsFiltersExactAndPrefix guards the plan's exact contract:
-// RecentEvents(path, "feat/x", 20) returns only events whose from is exactly
-// "worker:feat/x" or starts with "worker:feat/x#" — "worker:feat/x-y#s1"
-// must NOT match — oldest-first, tolerating a torn last line.
+// TestRecentEventsFiltersExactAndPrefix checks that RecentEvents(path,
+// "feat/x", 20) returns only events whose from is exactly "worker:feat/x" or
+// starts with "worker:feat/x#" — "worker:feat/x-y#s1" must NOT match —
+// oldest-first, tolerating a torn last line.
 func TestRecentEventsFiltersExactAndPrefix(t *testing.T) {
 	events, err := RecentEvents("testdata/events.jsonl", "feat/x", 20)
 	if err != nil {

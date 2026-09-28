@@ -27,8 +27,8 @@ func loadSnapshot(t *testing.T) data.Snapshot {
 }
 
 // loadManySnapshot reads a fixture with 3 crews and 18 workers plus holds —
-// enough to overflow a roster frame's height, for the windowing tests and
-// golden frames finding 6 pins.
+// enough to overflow a roster frame's height, for the roster windowing
+// tests and golden frames.
 func loadManySnapshot(t *testing.T) data.Snapshot {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/snapshot-many.json")
@@ -50,10 +50,6 @@ func fixedNow(snap data.Snapshot) func() time.Time {
 
 func keyRune(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
-}
-
-func keyStr(s string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
 func keyType(t tea.KeyType) tea.KeyMsg {

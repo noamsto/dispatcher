@@ -6,7 +6,7 @@ import "github.com/charmbracelet/lipgloss"
 // dashboard lives, so a color or emphasis change never drifts between views.
 // NO_COLOR is handled by ui.Run calling lipgloss.SetColorProfile(termenv.Ascii)
 // once at startup — never in here, and never at package-init time, so tests
-// can force whatever profile they need (see charm-tui skill).
+// can force whatever profile they need.
 var (
 	tabActiveStyle   = lipgloss.NewStyle().Bold(true).Underline(true)
 	tabInactiveStyle = lipgloss.NewStyle().Faint(true)
@@ -21,9 +21,9 @@ var (
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	warnStyle   = lipgloss.NewStyle().Faint(true)
 
-	// Badge styles: one distinct rendering per settings origin (spec
-	// §Settings) — default faint, user cyan, env magenta, locked bold
-	// yellow with a lock glyph the only emoji on screen.
+	// Badge styles: one distinct rendering per settings origin — default
+	// faint, user cyan, env magenta, locked bold yellow with a lock glyph
+	// the only emoji on screen.
 	badgeDefaultStyle = lipgloss.NewStyle().Faint(true)
 	badgeUserStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	badgeEnvStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
@@ -67,8 +67,8 @@ func badgeStyle(origin string) lipgloss.Style {
 	}
 }
 
-// gaugeColor picks a progress-bar solid-fill color by the spec's 85/95
-// thresholds (§Budget): <85 normal, 85-95 warning, >=95 danger.
+// gaugeColor picks a progress-bar solid-fill color by used-pct tier: <85
+// normal, 85-95 warning, >=95 danger.
 func gaugeColor(usedPct float64) string {
 	switch {
 	case usedPct >= 95:

@@ -48,9 +48,8 @@ func TestRenderMatchesColorGolden(t *testing.T) {
 	}
 }
 
-// TestBackslashNotDoubled guards the once-shows-a-backslash-once-escaped
-// bats regression (#10): a settings value with one literal backslash must
-// render as the single json-escaped "a\\b", never doubled.
+// TestBackslashNotDoubled checks that a settings value with one literal
+// backslash renders as the single json-escaped "a\\b", never doubled.
 func TestBackslashNotDoubled(t *testing.T) {
 	snap := loadSnapshot(t)
 	snap.Settings.Rows = []data.SettingRow{
@@ -67,8 +66,8 @@ func TestBackslashNotDoubled(t *testing.T) {
 	}
 }
 
-// TestLargeValueDoesNotPanic guards the ARG_MAX-adjacent bats regression
-// (#11): a very large settings value must still render all four sections.
+// TestLargeValueDoesNotPanic checks that a very large settings value
+// (ARG_MAX-adjacent) still renders all four sections.
 func TestLargeValueDoesNotPanic(t *testing.T) {
 	snap := loadSnapshot(t)
 	big := make([]byte, 300000)
@@ -90,8 +89,8 @@ func TestLargeValueDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestCJKNotTruncated guards bats regression #7: --once never truncates a
-// long locked value, CJK included.
+// TestCJKNotTruncated checks that --once never truncates a long locked
+// value, CJK included.
 func TestCJKNotTruncated(t *testing.T) {
 	snap := loadSnapshot(t)
 	needle := "ディレクトリ/and-more"
@@ -100,7 +99,7 @@ func TestCJKNotTruncated(t *testing.T) {
 	}
 }
 
-// TestRosterCrewErrorShown matches finding 2: a per-crew roster/hold source
+// TestRosterCrewErrorShown checks that a per-crew roster/hold source
 // failure surfaces as "unavailable: <error>" under that crew's heading,
 // instead of an empty worker list indistinguishable from an idle crew.
 func TestRosterCrewErrorShown(t *testing.T) {
@@ -113,9 +112,9 @@ func TestRosterCrewErrorShown(t *testing.T) {
 	}
 }
 
-// TestRosterHoldsErrorShownWorkersStillRender matches the WorkersError/
-// HoldsError split: a holds-only failure must still render the crew's
-// worker table under --once, alongside a "holds unavailable: <err>" line.
+// TestRosterHoldsErrorShownWorkersStillRender checks that a holds-only
+// failure still renders the crew's worker table under --once, alongside a
+// "holds unavailable: <err>" line.
 func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
 	snap := loadSnapshot(t)
 	msg := "hold boom"
@@ -135,8 +134,8 @@ func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
 	}
 }
 
-// TestRosterPRURLInjectionIsCleaned matches fix 2: a worker's raw "pr_url"
-// field must not carry a terminal escape or bidi override into the
+// TestRosterPRURLInjectionIsCleaned checks that a worker's raw "pr_url"
+// field does not carry a terminal escape or bidi override into the
 // rendered pr column under --once.
 func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
 	snap := loadSnapshot(t)
@@ -155,7 +154,7 @@ func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestTagsLineInjectionIsCleaned matches fix 3: a retro note's Tag must not
+// TestTagsLineInjectionIsCleaned checks that a retro note's Tag does not
 // carry a raw terminal escape or bidi override into the "tags:" line
 // tagstrDash formats under --once.
 func TestTagsLineInjectionIsCleaned(t *testing.T) {
@@ -179,8 +178,8 @@ func TestTagsLineInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestRunsPaneRatingsWrongShapeIsUnavailable matches finding 3: a wrong-shape
-// (but valid) Ratings payload must decode-fail, not silently render as "no
+// TestRunsPaneRatingsWrongShapeIsUnavailable checks that a wrong-shape (but
+// valid) Ratings payload decode-fails, rather than silently rendering as "no
 // runs swept for this repo yet". Unmarshaling into data.RunsSection directly
 // exercises the same decode path Collect uses.
 func TestRunsPaneRatingsWrongShapeIsUnavailable(t *testing.T) {

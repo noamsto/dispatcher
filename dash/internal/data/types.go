@@ -152,7 +152,7 @@ type RatingGroup struct {
 }
 
 // RetroReport mirrors crew retro --report --json. Tags is kept raw (no view
-// reads it in G1); Rows is fully typed since it is exactly the shape a view
+// reads it yet); Rows is fully typed since it is exactly the shape a view
 // reads and nothing more.
 type RetroReport struct {
 	Tags    json.RawMessage `json:"tags"`

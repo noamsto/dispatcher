@@ -65,7 +65,7 @@ func TestRosterSourceError(t *testing.T) {
 	}
 }
 
-// TestRosterCrewErrorShown matches finding 2: a per-crew roster/hold source
+// TestRosterCrewErrorShown checks that a per-crew roster/hold source
 // failure surfaces as "unavailable: <error>" under that crew's heading,
 // instead of an empty worker list indistinguishable from an idle crew.
 func TestRosterCrewErrorShown(t *testing.T) {
@@ -79,10 +79,9 @@ func TestRosterCrewErrorShown(t *testing.T) {
 	}
 }
 
-// TestRosterHoldsErrorShownWorkersStillRender matches the WorkersError/
-// HoldsError split: a holds-only failure must still render the crew's
-// worker table, alongside a "holds unavailable: <err>" line in place of the
-// hold lines.
+// TestRosterHoldsErrorShownWorkersStillRender checks that a holds-only
+// failure still renders the crew's worker table, alongside a "holds
+// unavailable: <err>" line in place of the hold lines.
 func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "hold boom"
@@ -97,9 +96,9 @@ func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
 	}
 }
 
-// TestRosterFlatSkipsWorkersErrorCrew matches finding: the roster cursor
-// list must contain only workers that tableView actually renders. A crew
-// with WorkersError set — even one carrying a (malformed/legacy) non-empty
+// TestRosterFlatSkipsWorkersErrorCrew checks that the roster cursor list
+// contains only workers that tableView actually renders. A crew with
+// WorkersError set — even one carrying a (malformed/legacy) non-empty
 // Workers slice — must contribute nothing to v.flat, so "enter" can never
 // target a hidden row.
 func TestRosterFlatSkipsWorkersErrorCrew(t *testing.T) {
@@ -135,11 +134,11 @@ func TestRosterFlatSkipsWorkersErrorCrew(t *testing.T) {
 	}
 }
 
-// TestRosterStateInjectionIsCleaned matches finding 5: a worker's raw
-// "state" field must not carry a terminal escape or bidi override from
-// untrusted bus data into the rendered table. The Ascii color profile makes
-// the rendered frame itself style-free, so any surviving ESC/U+202E must
-// have come from the (uncleaned) data.
+// TestRosterStateInjectionIsCleaned checks that a worker's raw "state"
+// field does not carry a terminal escape or bidi override from untrusted
+// bus data into the rendered table. The Ascii color profile makes the
+// rendered frame itself style-free, so any surviving ESC/U+202E must have
+// come from the (uncleaned) data.
 func TestRosterStateInjectionIsCleaned(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)
@@ -157,8 +156,8 @@ func TestRosterStateInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestRosterPRURLInjectionIsCleaned matches fix 2: a worker's raw "pr_url"
-// field must not carry a terminal escape or bidi override into the
+// TestRosterPRURLInjectionIsCleaned checks that a worker's raw "pr_url"
+// field does not carry a terminal escape or bidi override into the
 // rendered pr column. The Ascii color profile makes the rendered frame
 // itself style-free, so any surviving ESC/U+202E must have come from the
 // (uncleaned) data.
@@ -179,8 +178,8 @@ func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestRosterEventKindInjectionIsCleaned covers the MEDIUM half of finding 5:
-// eventLine concatenates an event's "kind" raw.
+// TestRosterEventKindInjectionIsCleaned checks eventLine, which
+// concatenates an event's "kind" raw.
 func TestRosterEventKindInjectionIsCleaned(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)
@@ -205,13 +204,12 @@ func TestRosterEventKindInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestRosterDetailEventsWindowFits80x12 matches finding 6's detail-view half
-// (frame size) and the follow-up finding that the detail pane must be
-// scrollable and start at the newest event: RecentEvents is oldest-first, so
-// a top-anchored, unscrollable view clips exactly the events a user drilling
-// in wants to see. 20 events at height 12 must fit the frame exactly, start
-// scrolled to the newest event (last visible, first not), and let `g`
-// scroll back to the oldest.
+// TestRosterDetailEventsWindowFits80x12 checks that the detail pane is
+// scrollable and starts at the newest event: RecentEvents is oldest-first,
+// so a top-anchored, unscrollable view would clip exactly the events a user
+// drilling in wants to see. 20 events at height 12 must fit the frame
+// exactly, start scrolled to the newest event (last visible, first not),
+// and let `g` scroll back to the oldest.
 func TestRosterDetailEventsWindowFits80x12(t *testing.T) {
 	v := newTestRosterView(t)
 	events := make([]data.Event, 20)

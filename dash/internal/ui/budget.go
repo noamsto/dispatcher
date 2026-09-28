@@ -113,8 +113,7 @@ func (v budgetView) Keys() []key.Binding {
 
 func (v budgetView) Selection() data.Selection {
 	// No data.Selection variant exists yet for an engine/window (only
-	// SettingRow/Worker/Run) — the seam described in the spec's actions
-	// section has nothing to bind to here until one is added.
+	// SettingRow/Worker/Run) — nothing to bind to here until one is added.
 	return nil
 }
 
@@ -190,8 +189,8 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 }
 
 // windowLine lays out one window row: name, gauge, used%, pace, resets-in,
-// verdict (truncated) — column widths per spec §Budget; the gauge takes
-// what's left after the fixed columns, floored at 10.
+// verdict (truncated); the gauge takes what's left after the fixed columns,
+// floored at 10.
 func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
 	const nameW, usedW, paceW, resetsW = 6, 5, 4, 8
 	prefix := "  "
@@ -260,8 +259,8 @@ func (v budgetView) detailView(w int) string {
 	header := headerStyle.Render(win.Key + " — full verdict")
 	// This is the one place the dashboard deliberately wraps instead of
 	// clipping, since it is the verdict's own full-text detail; ansi.Wrap is
-	// display-width-aware and hard-breaks a word longer than w (charm-tui
-	// skill, trap 4 — len() undercounts multi-byte runes).
+	// display-width-aware and hard-breaks a word longer than w — len()
+	// undercounts multi-byte runes.
 	wrapped := strings.Split(ansi.Wrap(verdict, max0(w), ""), "\n")
 	lines := append([]string{truncateLine(header, w), ""}, wrapped...)
 	lines = append(lines, "", "esc back")

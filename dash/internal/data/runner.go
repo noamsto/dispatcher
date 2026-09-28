@@ -30,9 +30,9 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 
 type exitCoder interface{ ExitCode() int }
 
-// exitCode extracts the process exit code from a Run error, the way the
-// bash collector reads $?: 0 when err is nil, 127 when the program could not
-// even be started (matching a shell's "command not found").
+// exitCode extracts the process exit code from a Run error: 0 when err is
+// nil, 127 when the program could not even be started (matching a shell's
+// "command not found").
 func exitCode(err error) int {
 	if err == nil {
 		return 0

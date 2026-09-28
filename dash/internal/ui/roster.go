@@ -170,8 +170,8 @@ func (v rosterView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.detailEvents = msg.events
 		v.detailErr = msg.err
 		// RecentEvents is oldest-first; start scrolled to the newest event
-		// rather than the oldest (finding: a user drilling in wants to land
-		// on what just happened, not what happened first).
+		// rather than the oldest — a user drilling in wants to land on what
+		// just happened, not what happened first.
 		v.detailCursor = max0(len(msg.events) - 1)
 		return v, nil
 
@@ -269,7 +269,7 @@ func (v rosterView) View(w, h int) string {
 // hold lines) to h the same way runs.go's ratingsLines/rowsLines do: the
 // chrome (live-off note) is never scrolled, and windowOffset keeps the
 // cursor's worker row on-screen instead of letting normalizeFrame silently
-// clip rows past h (charm-tui skill, trap 9).
+// clip rows past h.
 func (v rosterView) tableView(w, h int) string {
 	var top []string
 	if v.deps.watcher == nil && v.deps.liveOffNote != "" {
@@ -351,10 +351,8 @@ func padCell(s string, w int, left bool) string {
 // Column caps for the worker table (name/state/tier/detail/pr): fixed, not
 // derived from the terminal width, so six columns plus five 2-space gaps
 // plus the 2-cell cursor prefix always sums under 80 — the narrowest
-// golden width — instead of the final truncateLine cutting off whichever
-// column lands past the edge (originally age/pr, silently, since detail
-// alone was capped at 40). age gets its own smaller cap since reltime's
-// output is always short.
+// golden width. age gets its own smaller cap since reltime's output is
+// always short.
 const (
 	rosterNameCap   = 8
 	rosterStateCap  = 8
@@ -431,7 +429,7 @@ func strField(w map[string]any, key string) (string, bool) {
 
 // tmuxColorStyle renders a codename in its recorded tmux colour ("colour137"
 // -> lipgloss.Color("137")); a missing or malformed field is the default
-// style (spec §Roster).
+// style.
 func tmuxColorStyle(w map[string]any) lipgloss.Style {
 	s, ok := strField(w, "tmux")
 	if !ok {

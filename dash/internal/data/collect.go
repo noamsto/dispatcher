@@ -42,11 +42,11 @@ type sourceResult struct {
 	Error    *string
 }
 
-// runSource runs one JSON-emitting source and classifies its result exactly
-// as the bash collector's run_src did: rc 0 with parseable JSON stdout is
-// success (stderr lines become warnings); retro's "no events.jsonl at all"
-// case (rc 0, empty stdout) reads as the empty report, not a failure;
-// anything else degrades to {error: first stderr line or "exit <rc>"}.
+// runSource runs one JSON-emitting source and classifies its result: rc 0
+// with parseable JSON stdout is success (stderr lines become warnings);
+// retro's "no events.jsonl at all" case (rc 0, empty stdout) reads as the
+// empty report, not a failure; anything else degrades to {error: first
+// stderr line or "exit <rc>"}.
 func runSource(ctx context.Context, r Runner, cmdName string, args []string, retroEmptyOK bool) sourceResult {
 	out, errb, err := r.Run(ctx, cmdName, args...)
 	rc := exitCode(err)

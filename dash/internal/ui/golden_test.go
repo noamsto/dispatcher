@@ -103,8 +103,8 @@ func TestGoldenRoster120x40(t *testing.T) {
 	checkGolden(t, "roster_120x40.golden", goldenFrameFull(t, 3, 120, 40))
 }
 
-// TestGoldenRosterMany80x24 and TestGoldenRosterManyEnd80x24 pin finding 6's
-// fix: tableView must window its body to h instead of letting normalizeFrame
+// TestGoldenRosterMany80x24 and TestGoldenRosterManyEnd80x24 check that
+// tableView windows its body to h instead of letting normalizeFrame
 // silently clip rows past it. The "many" fixture (3 crews, 18 workers,
 // holds) overflows a 24-row frame, so the cursor-at-top and
 // cursor-at-last-worker frames necessarily differ.

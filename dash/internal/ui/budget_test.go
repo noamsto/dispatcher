@@ -73,10 +73,10 @@ func TestBudgetVerdictTruncatedAt80FullInDetail(t *testing.T) {
 	}
 }
 
-// TestBudgetDetailWrapsMultiByteAndLongWord matches finding 7: the detail
-// pane's verdict wrap must be display-width-aware (a len()-based wrapper
-// undercounts multi-byte runes) and must hard-break a word longer than the
-// width, never letting a rendered line exceed it.
+// TestBudgetDetailWrapsMultiByteAndLongWord checks that the detail pane's
+// verdict wrap is display-width-aware (a len()-based wrapper undercounts
+// multi-byte runes) and hard-breaks a word longer than the width, never
+// letting a rendered line exceed it.
 func TestBudgetDetailWrapsMultiByteAndLongWord(t *testing.T) {
 	v := newTestBudgetView(t)
 	verdict := "日本語のテキストが混じった長い説明文です。 " + strings.Repeat("x", 120) + " tail"

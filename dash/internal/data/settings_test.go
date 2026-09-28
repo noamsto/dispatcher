@@ -26,16 +26,11 @@ func TestLeavesFlattensInDocumentOrder(t *testing.T) {
 	}
 }
 
-// TestUserObjectHoldingValueOriginStaysABranch guards the leaf rule's
-// documented edge case: a user-authored object that itself has keys named
-// "value" and "origin" is NOT a leaf unless .origin is a string — dispatch
-// --show-origin tags it recursively, so its "origin" is an object there.
+// TestUserObjectHoldingValueOriginStaysABranch checks the leaf rule's edge
+// case: a user-authored object that itself has keys named "value" and
+// "origin" is NOT a leaf unless .origin is a string — dispatch --show-origin
+// tags it recursively, so its "origin" is an object there.
 func TestUserObjectHoldingValueOriginStaysABranch(t *testing.T) {
-	// A user config value of {"value": "hello", "origin": "custom"} makes
-	// dispatch-config recurse into it (it's an object) and tag ITS two
-	// leaves, so "weird" ends up with exactly the keys "value"/"origin" too
-	// — but weird.origin is now an object (from that recursive tagging),
-	// not a string, so weird itself must still read as a branch.
 	raw := json.RawMessage(`{
 		"weird": {
 			"value": {"value": "hello", "origin": "user"},

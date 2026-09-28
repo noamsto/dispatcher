@@ -79,9 +79,8 @@ func run() int {
 	return 0
 }
 
-// parseArgs mirrors the bash `case "$#:${1:-}"` dispatch: no args leaves
-// mode empty (decided by the caller from the ttys), --once/--json pick a
-// mode, anything else is a usage error.
+// parseArgs: no args leaves mode empty (decided by the caller from the
+// ttys), --once/--json pick a mode, anything else is a usage error.
 func parseArgs(args []string) (mode string, ok bool) {
 	switch len(args) {
 	case 0:

@@ -237,8 +237,8 @@ func TestRunsSourceErrors(t *testing.T) {
 	}
 }
 
-// TestRunsRatingsWrongShapeIsUnavailable matches finding 3: a wrong-shape
-// (but valid) Ratings payload must decode-fail, not silently render as "no
+// TestRunsRatingsWrongShapeIsUnavailable checks that a wrong-shape (but
+// valid) Ratings payload decode-fails, rather than silently rendering as "no
 // runs swept". Unmarshaling into data.RunsSection directly (rather than
 // setting RatingsError by hand) exercises the same decode path Collect uses.
 func TestRunsRatingsWrongShapeIsUnavailable(t *testing.T) {
@@ -260,8 +260,8 @@ func TestRunsRatingsWrongShapeIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestRunsRowTagInjectionIsCleaned matches fix 3: a retro note's Tag must
-// not carry a raw terminal escape or bidi override into the aggregated tag
+// TestRunsRowTagInjectionIsCleaned checks that a retro note's Tag does not
+// carry a raw terminal escape or bidi override into the aggregated tag
 // summary tagCounts renders on the "Runs (newest first)" row list. The
 // Ascii color profile makes the rendered frame itself style-free, so any
 // surviving ESC/U+202E must have come from the (uncleaned) data.
@@ -282,11 +282,11 @@ func TestRunsRowTagInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-// TestRunsNoteSeamInjectionIsCleaned matches finding 5: a retro note's Seam
-// (and Tag) must not carry a raw terminal escape or bidi override from
-// untrusted bus data into the rendered detail pane. The Ascii color profile
-// makes the rendered frame itself style-free, so any surviving ESC/U+202E
-// must have come from the (uncleaned) data.
+// TestRunsNoteSeamInjectionIsCleaned checks that a retro note's Seam (and
+// Tag) does not carry a raw terminal escape or bidi override from untrusted
+// bus data into the rendered detail pane. The Ascii color profile makes the
+// rendered frame itself style-free, so any surviving ESC/U+202E must have
+// come from the (uncleaned) data.
 func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.Ascii)

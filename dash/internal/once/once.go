@@ -21,8 +21,8 @@ type line struct {
 	text  string
 }
 
-// Render is the pure Snapshot → string renderer. color adds the same SGR
-// bash's `once` mode used: bold headings, bold-yellow locked settings rows.
+// Render is the pure Snapshot → string renderer. color adds SGR styling:
+// bold headings, bold-yellow locked settings rows.
 func Render(snap data.Snapshot, color bool) string {
 	var b strings.Builder
 	for _, l := range onceLines(snap) {

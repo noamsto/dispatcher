@@ -232,10 +232,9 @@ EOF
 @test "--once shows a backslash in a settings value once-escaped, not doubled" {
   # repoTrackers is user-only (no locked/default layer contests it), so this
   # value survives unchanged. It's one literal backslash; tojson re-escapes
-  # it as the 6 chars "a\\b" (quote a backslash backslash b quote). The old
-  # @tsv-based renderer doubled it to "a\\\\b". grep -F, not [[ == glob ]]
-  # (which treats \\ as an escaped single backslash), so the backslash
-  # counts stay exact.
+  # it as the 6 chars "a\\b" (quote a backslash backslash b quote). grep -F,
+  # not [[ == glob ]] (which treats \\ as an escaped single backslash), so
+  # the backslash counts stay exact.
   jq -n '{repoTrackers: {"noamsto/dispatcher": "a\\b"}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]

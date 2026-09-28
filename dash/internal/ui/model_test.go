@@ -190,8 +190,8 @@ func TestResizeAllViewsExactFrame(t *testing.T) {
 }
 
 // TestResizeRunsRosterWithContentExactFrame is TestResizeAllViewsExactFrame
-// but over the G3 fixture (populated ratings/retro rows, live roster,
-// holds) — the mostly-empty G1/G2 snapshot never exercises the widest
+// but over the full fixture (populated ratings/retro rows, live roster,
+// holds) — the mostly-empty snapshot fixture never exercises the widest
 // content (long detail/pr cells, the ratings table, the detail panes) at a
 // degenerate width like 20x5, which is exactly where a fixed-width column
 // budget (roster.go) or a wrap/window computation (runs.go detail) is most

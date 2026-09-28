@@ -13,8 +13,8 @@ import (
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
-// sortColumns is the ratings table's sort-cycle order and display labels
-// (spec §Runs): tier -> engine -> model -> n -> pr% -> success -> burn.
+// sortColumns is the ratings table's sort-cycle order and display labels:
+// tier -> engine -> model -> n -> pr% -> success -> burn.
 var sortColumns = []string{"tier", "engine", "model", "n", "pr%", "success", "burn"}
 
 // sortRatingsNatural stably sorts an already-decoded RatingsGroups slice
@@ -352,9 +352,9 @@ func (v runsView) rowsLines(w, h int) []string {
 	return out
 }
 
-// rowLine renders one retro row per spec §Runs: a run row is "branch
-// tier/engine/model outcome tags"; a dispatcher row is "crew <id>
-// <session_summary detail> tags(other notes)".
+// rowLine renders one retro row: a run row is "branch tier/engine/model
+// outcome tags"; a dispatcher row is "crew <id> <session_summary detail>
+// tags(other notes)".
 func rowLine(r data.RetroRow) string {
 	if r.Kind == "dispatcher" {
 		crew := ""

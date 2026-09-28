@@ -177,7 +177,7 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
         {
           source: "oauth_usage",
           # The oauth usage payload carries no plan/subscription key (verified
-          # live — see the #201 spec), so the tier is unknowable: null.
+          # live), so the tier is unknowable: null.
           plan_type: null,
           # `//` treats false as empty, so it cannot default a boolean: test
           # presence explicitly. Missing spend_limit_reached -> assume reached
@@ -401,7 +401,7 @@ probe_codex() {
           + (if $r.secondary != null and $r.secondary.usedPercent != null then {(wname($r.secondary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.secondary.usedPercent, resets_at: $r.secondary.resetsAt}} else {} end)
         ),
         # Absolute-limit signals alongside the relative percent windows, so
-        # dispatch can gate on exhaustion no percent window expresses (#201).
+        # dispatch can gate on exhaustion no percent window expresses.
         # ordinaryUsageAllowed is top-level on the response; the rest sit under
         # rateLimits. jq indexes a missing/null sub-object to null, so each
         # field degrades to null rather than failing the probe. The boolean

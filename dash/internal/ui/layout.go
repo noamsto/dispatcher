@@ -7,8 +7,7 @@ import (
 )
 
 // layout.go holds the dimension math shared across views, so every view
-// derives sizes from these instead of re-deriving its own -N tax (charm-tui
-// skill, trap 1/6).
+// derives sizes from these instead of re-deriving its own -N tax.
 
 // clamp bounds v to [lo, hi]. Callers pass hi < lo when there is no room;
 // clamp returns lo in that case (an empty/degenerate range), never a value
@@ -137,7 +136,7 @@ func padRow(cells []string, widths []int, left []bool) string {
 // exactly w cells with no further padding needed. Both are plain (unstyled)
 // — callers style the returned pieces' *content* and concatenate the
 // results; they never re-render an already-styled string, so no style
-// layer nests inside another (charm-tui skill trap 5).
+// layer nests inside another.
 func alignRight(left, badge string, w int) (leftOut, badgeOut string) {
 	w = max0(w)
 	badgeOut = truncateLine(badge, w)

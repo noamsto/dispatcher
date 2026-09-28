@@ -84,9 +84,8 @@ func TestCollectAllSourcesOK(t *testing.T) {
 	}
 }
 
-// TestEachSourceDegradesAlone matches the spec's collector contract: a
-// failing source degrades only its own pane; every other pane still
-// collects normally.
+// TestEachSourceDegradesAlone checks that a failing source degrades only its
+// own pane; every other pane still collects normally.
 func TestEachSourceDegradesAlone(t *testing.T) {
 	cases := []struct {
 		name string
@@ -170,9 +169,9 @@ func TestRetroEmptyStdoutIsEmptyReportNotFailure(t *testing.T) {
 	}
 }
 
-// TestRetroReportWithoutRowsField matches bats test 12: an older crew build
-// whose retro --report --json carries no "rows" field must not panic and
-// must fold to zero rows, not an error.
+// TestRetroReportWithoutRowsField checks that an older crew build whose
+// retro --report --json carries no "rows" field does not panic and folds to
+// zero rows, not an error.
 func TestRetroReportWithoutRowsField(t *testing.T) {
 	r := allOKRunner(t)
 	r.Responses["crew retro --report --json"] = FakeResponse{Stdout: []byte(`{"tags":[],"unknown":[]}`)}
@@ -239,9 +238,9 @@ func readCapturedSnapshot(t *testing.T) []byte {
 	return b
 }
 
-// TestSettingsLayersUnmarshalFailureWarns matches finding 4: a --layers
-// response that is valid JSON but fails to unmarshal into Layers must not be
-// dropped silently — it appends a "layers: <err>" warning instead.
+// TestSettingsLayersUnmarshalFailureWarns checks that a --layers response
+// that is valid JSON but fails to unmarshal into Layers is not dropped
+// silently — it appends a "layers: <err>" warning instead.
 func TestSettingsLayersUnmarshalFailureWarns(t *testing.T) {
 	r := allOKRunner(t)
 	r.Responses["dispatch-config --layers"] = FakeResponse{Stdout: []byte(`{"base": 123}`)}
@@ -263,8 +262,8 @@ func TestSettingsLayersUnmarshalFailureWarns(t *testing.T) {
 	}
 }
 
-// TestRosterPerCrewFailureSetsError matches finding 2: `crew crews` reports
-// one alive crew, but `crew roster <id>` itself fails — that must surface as
+// TestRosterPerCrewFailureSetsError checks that `crew crews` reporting one
+// alive crew, but `crew roster <id>` itself failing, surfaces as
 // RosterCrew.Error, not an empty (indistinguishable-from-idle) worker list.
 func TestRosterPerCrewFailureSetsError(t *testing.T) {
 	r := allOKRunner(t)
@@ -287,8 +286,8 @@ func TestRosterPerCrewFailureSetsError(t *testing.T) {
 	}
 }
 
-// TestRosterPerCrewUnparseableJSONSetsError covers the "unparseable JSON"
-// half of finding 2: rc 0 but a body that isn't a JSON array.
+// TestRosterPerCrewUnparseableJSONSetsError checks the "unparseable JSON"
+// case: rc 0 but a body that isn't a JSON array.
 func TestRosterPerCrewUnparseableJSONSetsError(t *testing.T) {
 	r := allOKRunner(t)
 	r.Responses["crew crews"] = FakeResponse{
@@ -334,9 +333,9 @@ func TestRosterHoldsFailureIsIndependentOfWorkers(t *testing.T) {
 	}
 }
 
-// TestRatingsWrongShapeSetsError matches finding 3: `rate --report --json`
-// exits 0 with valid-but-wrong-shape JSON (an object instead of the
-// documented array) — that must not silently render as "no runs swept".
+// TestRatingsWrongShapeSetsError checks that `rate --report --json` exiting
+// 0 with valid-but-wrong-shape JSON (an object instead of the documented
+// array) does not silently render as "no runs swept".
 func TestRatingsWrongShapeSetsError(t *testing.T) {
 	r := allOKRunner(t)
 	r.Responses["crew rate --report --json"] = FakeResponse{Stdout: []byte(`{"groups":[]}`)}
