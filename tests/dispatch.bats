@@ -2088,6 +2088,29 @@ pi_budget_json() { # <pct> <elapsed_s> <remaining_s>
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
+@test ">=95% window with a past resets_at does not gate; future and null still do" {
+  stub_launch_bins
+  # Already reset: the cache predates the window's rollover, so the engine is
+  # not exhausted (#548).
+  budget_json_at claude 97 -3600
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "past reset"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+
+  # Still in the future: refuses, as before.
+  budget_json_at claude 97 3600
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "future reset"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude quota exhausted"* ]]
+
+  # Null resets_at: no usable deadline, still refuses.
+  budget_json 97 "$(date +%s)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 "null reset"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude quota exhausted"* ]]
+}
+
 @test "budget gate passes below the threshold" {
   stub_launch_bins
   budget_json 94 "$(date +%s)"

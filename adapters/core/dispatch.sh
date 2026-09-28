@@ -2779,7 +2779,9 @@ fi
 
 # Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
 # cache is advisory data from refresh-budget — fail open when it is missing,
-# stale (>2h), or silent on this engine ("unknown" is never "exhausted").
+# stale (>2h), or silent on this engine ("unknown" is never "exhausted"). A
+# window whose resets_at has already passed does not gate (the cache can
+# predate the reset); a null resets_at still does.
 # --ignore-budget is the manual escape hatch (e.g. credits cover the overage).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
@@ -2789,7 +2791,8 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
     if .fetched_epoch < $stale_before then empty
     elif .engines[$e] == null then empty
     else .engines[$e].windows | to_entries[]
-      | select(.value.used_pct >= 95)
+      | select(.value.used_pct >= 95
+               and (.value.resets_at == null or .value.resets_at > $now))
       | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
     end' "$budget_file" 2>/dev/null || true)
   if [ -n "$exhausted" ]; then

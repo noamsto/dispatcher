@@ -467,12 +467,18 @@ main() {
     # >=95% is a hold candidate; each engine gets exactly one gating window
     # (precedence: no usable deadline, then no nominal length, then latest
     # resets_at) and every sibling >=95% window on that engine defers to it.
+    # A window whose resets_at has already passed does not gate at all (the
+    # cache can predate the reset), matching the dispatch >=95% stop; a
+    # null resets_at still gates (rule 1) because no deadline is usable.
     # Ties within a rule break on sorted key for a deterministic pick.
     def gating($windows):
-      ($windows | to_entries | map(select(.value.used_pct >= 95)) | sort_by(.key)) as $cands |
+      ($windows | to_entries
+        | map(select(.value.used_pct >= 95
+                     and (.value.resets_at == null or .value.resets_at > $now)))
+        | sort_by(.key)) as $cands |
       if ($cands | length) == 0 then null
       else
-        ($cands | map(select(.value.resets_at == null or .value.resets_at <= $now))) as $unreset |
+        ($cands | map(select(.value.resets_at == null))) as $unreset |
         ($cands | map(select(wsecs(.key; .value) == null))) as $unsized |
         if ($unreset | length) > 0 then {key: $unreset[0].key, rule: 1}
         elif ($unsized | length) > 0 then {key: $unsized[0].key, rule: 2}
@@ -499,6 +505,7 @@ main() {
           elif $fam == "month" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
           else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
           end)
+       elif $gate == null then "not binding: window has already reset"
        elif $k != $gate.key then "not binding: \($e) is gated until \($gate.key) resets"
        elif $gate.rule == 1 then "not holdable: no reset time, hand the task back"
        elif $gate.rule == 2 then "not holdable: window has no nominal length, hand the task back"
