@@ -29,8 +29,6 @@ var (
 	badgeEnvStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	badgeLockedStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 
-	detailStyle = lipgloss.NewStyle()
-
 	staleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 
 	gaugeNormalColor  = "#2ecc71"

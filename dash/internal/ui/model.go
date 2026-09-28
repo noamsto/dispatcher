@@ -52,25 +52,39 @@ type Model struct {
 
 // NewModel builds the root model from an initial Snapshot. collect re-runs
 // the whole collection (bound to "r"); now stamps "refreshed HH:MM:SS" and
-// is injected so tests get a deterministic clock.
-func NewModel(snapshot data.Snapshot, collect func() data.Snapshot, now func() time.Time) Model {
+// is injected so tests get a deterministic clock; roster carries the
+// Roster tab's live-refresh seams (watcher, events path, roster-only
+// re-collect — see roster.go), already resolved/started by ui.Run.
+func NewModel(snapshot data.Snapshot, collect func() data.Snapshot, now func() time.Time, roster rosterDeps) Model {
 	h := help.New()
 	m := Model{
 		collect: collect,
 		now:     now,
 		keys:    DefaultKeyMap(),
 		help:    h,
+		// Seeded from the initial Snapshot's own collection time (not
+		// now()) — main.go already collected it before ui.Run starts, so
+		// the footer should read that moment, not "just started".
+		refreshedAt:  time.Unix(snapshot.Now, 0).In(now().Location()),
+		hasRefreshed: true,
 	}
 	m.views = [4]view{
 		newSettingsView(snapshot),
 		newBudgetView(snapshot),
 		newRunsView(snapshot),
-		newRosterView(snapshot),
+		newRosterView(snapshot, roster, now),
 	}
 	return m
 }
 
+// Init starts the roster view's background watcher/ticker loop (see
+// roster.go's rosterView.Init) — the only view with startup Cmds, so the
+// root doesn't carry a general per-view Init in the shared `view` interface
+// for the sake of one caller.
 func (m Model) Init() tea.Cmd {
+	if rv, ok := m.views[3].(rosterView); ok {
+		return rv.Init()
+	}
 	return nil
 }
 
@@ -90,6 +104,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.views[i] = nv
 		}
 		return m, nil
+
+	case rosterMsg:
+		// The roster view's background watcher/ticker loop must keep
+		// running (and its results must land) regardless of which tab is
+		// active — route straight to views[3] rather than m.active.
+		nv, cmd := m.views[3].Update(msg)
+		m.views[3] = nv
+		return m, cmd
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -165,14 +187,20 @@ func (m Model) View() string {
 	return strings.Join(all, "\n")
 }
 
+// renderTabs marks the active tab with a leading "▸ " (and a blank "  " on
+// every inactive one, so no tab's width shifts when the active one
+// changes) — color alone is invisible under NO_COLOR/ASCII, where
+// tabActiveStyle's bold+underline survives as no visual difference at all.
 func (m Model) renderTabs() string {
 	parts := make([]string, len(tabTitles))
 	for i, t := range tabTitles {
 		st := tabInactiveStyle
+		marker := "  "
 		if i == m.active {
 			st = tabActiveStyle
+			marker = "▸ "
 		}
-		parts[i] = st.Render(t)
+		parts[i] = st.Render(marker + t)
 	}
 	line := strings.Join(parts, tabSepStyle.Render(" │ "))
 	return truncateLine(line, m.width)

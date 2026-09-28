@@ -1,0 +1,40 @@
+  Settings │   Budget │ ▸ Runs │   Roster
+Ratings — sort: tier ▲
+  tier      engine  model              n     pr%   success  burn(med)
+› deep      claude  opus               8     100   87.5(7)        2.3
+  standard  codex   gpt-5.6-terra     2!    100!         —          —
+  trivial   pi      pi-mini        4(3)!  75(3)!  66.7(3)!    0.8(3)!
+Runs (newest first)
+  feat/584-crew-dash  deep/claude/opus  merged  gate_thrash x2, other
+  crew c1  Landed the budget gauges after two review rounds.  misrouted
+  fix/123-widget  standard/codex/gpt-5.6-terra  abandoned  spec_too_thin
+  crew c2  Quiet run, no issues.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-4 views • tab next view • r refresh • ? help • q quit • f focus • s sort • o order • j/k move …  refreshed 14:13:20

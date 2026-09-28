@@ -126,7 +126,7 @@
             version = "0.1.0";
             src = ./dash;
             subPackages = ["."];
-            vendorHash = "sha256-Ra+nrzRFULkNenvotJUpqO6AF9sz3hTgo0qaBvTSO5c=";
+            vendorHash = "sha256-0HYob9awE9cJYU/7J6WF7o6D6i4gmPMN0kyFuCpgpFA=";
             ldflags = ["-s" "-w" "-X main.dispatchConfigBin=${dispatchConfig}/bin/dispatch-config"];
             nativeBuildInputs = [pkgs.makeWrapper];
             postInstall = ''

@@ -14,13 +14,51 @@ import (
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
-// Run starts the interactive dashboard. collect re-collects a fresh
-// Snapshot, bound to "r" and the roster bus watcher.
-func Run(initial data.Snapshot, collect func() data.Snapshot) error {
+// Deps bundles everything Run needs beyond the initial Snapshot: the full
+// re-collect (bound to "r"), the roster-only re-collect the live bus
+// watcher triggers, and the bus log path RecentEvents/the watcher read —
+// resolved once by the caller (main.go), since resolving it needs a
+// Runner/Config this package doesn't own. EventsPathErr explains an empty
+// EventsPath in the Roster view's status note.
+type Deps struct {
+	Snapshot      data.Snapshot
+	Collect       func() data.Snapshot
+	CollectRoster func() data.RosterSection
+	EventsPath    string
+	EventsPathErr error
+}
+
+// Run starts the interactive dashboard. It resolves the roster's live bus
+// watcher itself, outside the Bubble Tea model, so it can be reliably
+// closed exactly once after Program.Run returns regardless of which key
+// quit the program — the model never owns watcher lifecycle.
+func Run(deps Deps) error {
 	if os.Getenv("NO_COLOR") != "" {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
-	m := NewModel(initial, collect, time.Now)
+
+	var watcher busWatcher
+	liveOff := ""
+	if deps.EventsPath != "" {
+		watcher = newBusWatcher(deps.EventsPath, nil)
+	} else {
+		reason := "bus log path unavailable"
+		if deps.EventsPathErr != nil {
+			reason = deps.EventsPathErr.Error()
+		}
+		liveOff = "live refresh off: " + reason
+	}
+
+	roster := rosterDeps{
+		eventsPath:  deps.EventsPath,
+		watcher:     watcher,
+		liveOffNote: liveOff,
+		collect:     deps.CollectRoster,
+	}
+	m := NewModel(deps.Snapshot, deps.Collect, time.Now, roster)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	if watcher != nil {
+		watcher.Close()
+	}
 	return err
 }

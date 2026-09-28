@@ -1,0 +1,5 @@
+{"ts": 1789999100000, "kind": "dispatch", "from": null, "to": null, "crew_id": "c1", "branch": "feat/584-crew-dash"}
+{"ts": 1789999300000, "kind": "status", "from": "worker:feat/584-crew-dash#s1", "to": "dispatcher:c1", "body": {"state": "working"}}
+{"ts": 1789999600000, "kind": "status", "from": "worker:feat/584-crew-dash#s1", "to": "dispatcher:c1", "body": {"state": "blocked", "detail": "waiting on review"}}
+{"ts": 1789999700000, "kind": "msg", "from": "worker:feat/584-crew-dash#s1", "to": "dispatcher:c1", "body": "picking back up"}
+{"ts": 1789999900000, "kind": "status", "from": "worker:feat/584-crew-dash#s1", "to": "dispatcher:c1", "body": {"state": "working"}}

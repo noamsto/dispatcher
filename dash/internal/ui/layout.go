@@ -72,6 +72,63 @@ func normalizeFrame(s string, h, w int) []string {
 	return out
 }
 
+// windowOffset centers a viewport of h rows around cursor within total,
+// clamped to [0, max(0, total-h)] — shared by every cursor-navigable list
+// (the runs/roster tables below; the settings tree inlines the same math
+// since it predates this helper).
+func windowOffset(cursor, total, h int) int {
+	if total <= h {
+		return 0
+	}
+	return clamp(cursor-h/2, 0, total-h)
+}
+
+// tableWidths and padRow lay out a simple space-gapped table (header +
+// rows), the display-width-aware TUI counterpart of the once renderer's
+// rune-counted jq `pad_row`/table width helpers.
+func tableWidths(rows [][]string) []int {
+	if len(rows) == 0 {
+		return nil
+	}
+	widths := make([]int, len(rows[0]))
+	for _, row := range rows {
+		for c, cell := range row {
+			if c >= len(widths) {
+				continue
+			}
+			if wd := ansi.StringWidth(cell); wd > widths[c] {
+				widths[c] = wd
+			}
+		}
+	}
+	return widths
+}
+
+// padRow pads cells to widths; left[c] controls left- vs right-alignment;
+// the last cell never trails with padding.
+func padRow(cells []string, widths []int, left []bool) string {
+	end := len(cells) - 1
+	parts := make([]string, len(cells))
+	for c, cell := range cells {
+		p := 0
+		if c < len(widths) {
+			p = widths[c] - ansi.StringWidth(cell)
+		}
+		if p < 0 {
+			p = 0
+		}
+		switch {
+		case c < len(left) && !left[c]:
+			parts[c] = strings.Repeat(" ", p) + cell
+		case c == end:
+			parts[c] = cell
+		default:
+			parts[c] = cell + strings.Repeat(" ", p)
+		}
+	}
+	return strings.Join(parts, "  ")
+}
+
 // alignRight lays left out against a right-aligned badge within width w
 // (display cells): left is truncated then padded to fill the remaining
 // room (one gap column reserved when there is a badge), badge is truncated

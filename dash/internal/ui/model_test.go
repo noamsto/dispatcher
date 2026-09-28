@@ -12,8 +12,7 @@ import (
 
 func newTestModel(t *testing.T) Model {
 	t.Helper()
-	snap := loadSnapshot(t)
-	return NewModel(snap, func() data.Snapshot { return snap }, fixedNow(snap))
+	return testModel(loadSnapshot(t))
 }
 
 func TestViewEmptyBeforeWindowSize(t *testing.T) {
@@ -86,7 +85,7 @@ func TestRefreshReplacesSnapshot(t *testing.T) {
 		calls++
 		return other
 	}
-	m := sized(NewModel(snap, collect, fixedNow(snap)), 80, 24)
+	m := sized(NewModel(snap, collect, fixedNow(snap), rosterDeps{}), 80, 24)
 
 	nm, cmd := m.Update(keyRune('r'))
 	m = nm.(Model)
@@ -175,6 +174,34 @@ func TestResizeAllViewsExactFrame(t *testing.T) {
 	for view := 0; view < 4; view++ {
 		for _, sz := range sizes {
 			m := sized(newTestModel(t), sz[0], sz[1])
+			m.active = view
+			out := m.View()
+			lines := strings.Split(out, "\n")
+			if len(lines) != sz[1] {
+				t.Fatalf("view %d at %dx%d: got %d lines, want %d", view, sz[0], sz[1], len(lines), sz[1])
+			}
+			for i, l := range lines {
+				if w := ansi.StringWidth(l); w > sz[0] {
+					t.Fatalf("view %d at %dx%d: line %d width %d > %d: %q", view, sz[0], sz[1], i, w, sz[0], l)
+				}
+			}
+		}
+	}
+}
+
+// TestResizeRunsRosterWithContentExactFrame is TestResizeAllViewsExactFrame
+// but over the G3 fixture (populated ratings/retro rows, live roster,
+// holds) — the mostly-empty G1/G2 snapshot never exercises the widest
+// content (long detail/pr cells, the ratings table, the detail panes) at a
+// degenerate width like 20x5, which is exactly where a fixed-width column
+// budget (roster.go) or a wrap/window computation (runs.go detail) is most
+// likely to break.
+func TestResizeRunsRosterWithContentExactFrame(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	sizes := [][2]int{{80, 24}, {60, 20}, {120, 40}, {20, 5}}
+	for view := 2; view <= 3; view++ {
+		for _, sz := range sizes {
+			m := sized(testModel(snap), sz[0], sz[1])
 			m.active = view
 			out := m.View()
 			lines := strings.Split(out, "\n")

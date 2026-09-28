@@ -44,6 +44,13 @@ func keyType(t tea.KeyType) tea.KeyMsg {
 	return tea.KeyMsg{Type: t}
 }
 
+// testModel builds a root Model with no live roster refresh (no watcher, no
+// roster collect) — the default for tests that don't specifically exercise
+// roster live-refresh wiring (see roster_test.go for those).
+func testModel(snap data.Snapshot) Model {
+	return NewModel(snap, func() data.Snapshot { return snap }, fixedNow(snap), rosterDeps{})
+}
+
 func sized(m Model, w, h int) Model {
 	nm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return nm.(Model)

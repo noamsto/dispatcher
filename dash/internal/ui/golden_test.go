@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 )
@@ -55,4 +56,47 @@ func TestGoldenBudget80x24(t *testing.T) {
 
 func TestGoldenBudget120x40(t *testing.T) {
 	checkGolden(t, "budget_120x40.golden", goldenFrame(t, 1, 120, 40))
+}
+
+func goldenFrameFull(t *testing.T, active, w, h int) string {
+	t.Helper()
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	m := sized(testModel(snap), w, h)
+	m.active = active
+	return m.View()
+}
+
+func TestGoldenRuns80x24(t *testing.T) {
+	checkGolden(t, "runs_80x24.golden", goldenFrameFull(t, 2, 80, 24))
+}
+
+func TestGoldenRuns120x40(t *testing.T) {
+	checkGolden(t, "runs_120x40.golden", goldenFrameFull(t, 2, 120, 40))
+}
+
+func TestGoldenRunsDetail80x24(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	m := sized(testModel(snap), 80, 24)
+	m.active = 2
+	nm, _ := m.Update(keyRune('f'))
+	m = nm.(Model)
+	nm, _ = m.Update(keyType(tea.KeyEnter))
+	m = nm.(Model)
+	checkGolden(t, "runs_detail_80x24.golden", m.View())
+}
+
+func TestGoldenRoster80x24(t *testing.T) {
+	checkGolden(t, "roster_80x24.golden", goldenFrameFull(t, 3, 80, 24))
+}
+
+func TestGoldenRoster120x40(t *testing.T) {
+	checkGolden(t, "roster_120x40.golden", goldenFrameFull(t, 3, 120, 40))
 }

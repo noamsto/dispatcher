@@ -59,7 +59,18 @@ func run() int {
 		fmt.Print(once.Render(collect(), colorEnabled()))
 		return 0
 	case "interactive":
-		if err := ui.Run(collect(), collect); err != nil {
+		eventsPath, eventsErr := data.EventsPath(context.Background(), data.ExecRunner{}, cfg.Git)
+		collectRoster := func() data.RosterSection {
+			return data.CollectRoster(context.Background(), data.ExecRunner{}, cfg)
+		}
+		deps := ui.Deps{
+			Snapshot:      collect(),
+			Collect:       collect,
+			CollectRoster: collectRoster,
+			EventsPath:    eventsPath,
+			EventsPathErr: eventsErr,
+		}
+		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
 			return 1
 		}
