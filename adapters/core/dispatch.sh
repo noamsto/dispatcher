@@ -2807,12 +2807,10 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   exit 1
 fi
 
-# Budget gate: refuse to add load to an engine whose quota is ~exhausted. The
-# cache is advisory data from refresh-budget — fail open when it is missing,
-# stale (>2h), or silent on this engine ("unknown" is never "exhausted"). A
-# window whose resets_at has already passed does not gate (the cache can
-# predate the reset); a null resets_at still does.
-# --ignore-budget is the manual escape hatch (e.g. credits cover the overage).
+# Lead budget gate. budget_stop owns the >=95% predicate and its cache rules
+# (fail open when stale/missing/silent; skip a window already past resets_at);
+# the blocks below add the claude-blind warning and the codex absolute-limit
+# gate. --ignore-budget is the manual escape hatch (e.g. credits cover it).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 budget_stop "$agent"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
