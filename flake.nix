@@ -32,11 +32,9 @@
         config,
         ...
       }: let
-        # mkPackages builds a system's package set with `lockedSettings` (a
-        # writeText'd JSON file, or null) baked into dispatch-config. The
-        # home-manager module (nix/hm-module.nix) calls this with its
-        # generated locked-settings file; `packages` and
-        # `legacyPackages.mkPackages` below just expose it per-system.
+        # The package set with `lockedSettings` (a JSON file, or null for none)
+        # baked into dispatch-config as its locked layer. nix/hm-module.nix
+        # calls it with the file it generates.
         mkPackages = lockedSettings: let
           protocols = ./adapters/core/protocols;
           # @protocolDir@ is the build-time default for the env-overridable

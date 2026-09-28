@@ -456,10 +456,7 @@ setup() {
 
 @test "the module's config body evaluates, and wires the protocol dir for real" {
   # `nix flake check` reports homeManagerModules as UNCHECKED, so an eval error
-  # here would otherwise surface only in a consumer's rebuild. setup_file's
-  # mkResult forces sessionVariables/file/activation/xdgConfigFile, not just
-  # the options -- that's what actually catches a typo'd option, a bad
-  # importJSON path, or a broken interpolation.
+  # here would otherwise surface only in a consumer's rebuild.
   run jq -e '.full.sessionVariables.DISPATCHER_PROTOCOL_DIR | endswith("/adapters/core/protocols")' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.sessionVariables.DISPATCHER_REVIEWERS_DIR | endswith("/adapters/core/reviewers")' "$EVAL"

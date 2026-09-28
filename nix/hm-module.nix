@@ -13,11 +13,9 @@ self: {
   # `github` or `linear:TEAM`. TEAM is `[A-Z][A-Z0-9]*`.
   trackerValue = lib.types.strMatching "github|linear:[A-Z][A-Z0-9]*";
 
-  # The locked settings layer baked into dispatch-config and every CLI that
-  # resolves settings through it (#572/#574/#576): always profile+grantRoots,
-  # the rest only when this module actually sets them, so an unset option
-  # leaves the key for the (out-of-store) user settings file or the base
-  # default to govern.
+  # The locked settings layer baked into dispatch-config: always
+  # profile+grantRoots, the rest only when set here, so an unset option leaves
+  # the key to the out-of-store user settings file or the base default.
   openrouterLocked = lib.filterAttrs (_: v: v != null) {
     inherit (cfg.openrouter) keyFile;
     monthlyUsd = cfg.openrouter.monthlyTarget;
