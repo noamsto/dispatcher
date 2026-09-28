@@ -466,7 +466,8 @@ holds.
 
 The dispatcher itself can run on any engine in the machine-local
 `dispatch --engines` roster — `dispatcher --agent claude|codex|cursor|pi`.
-Orchestrator defaults — bump this table when a model ships:
+Orchestrator defaults — sourced from `orchestratorDefaults` in
+`adapters/core/defaults.json`; bump that when a model ships:
 
 | engine | model | effort |
 | ------ | ----- | ------ |
@@ -475,10 +476,12 @@ Orchestrator defaults — bump this table when a model ships:
 | cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, grok-4.7-*) |
 | pi | **`openrouter/deepseek/deepseek-v4.1-flash`** | **high** through `--thinking` |
 
-All four rows are pinned in `dispatcher.sh`, claude included — `/model` and
-`/effort` persist across sessions, so an unpinned claude dispatcher would inherit
-whatever a previous cheap session left set and judge the whole fan-out on it.
-`--model` / `--effort` still override per launch.
+All four rows are pinned in `adapters/core/defaults.json` →
+`orchestratorDefaults`, claude included — `dispatcher.sh` only reads them via
+`orch_default`, so no model literal remains there. `/model` and `/effort`
+persist across sessions, so an unpinned claude dispatcher would inherit whatever
+a previous cheap session left set and judge the whole fan-out on it. `--model` /
+`--effort` still override per launch.
 
 Claude and pi bake `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
 inject it as the first prompt. The judging rubric
