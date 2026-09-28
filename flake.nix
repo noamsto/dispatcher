@@ -67,8 +67,8 @@
           skills = ./adapters/core/skills;
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${./adapters/core/worktree-git.sh}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${./adapters/core/worktree-git.sh}" "${./adapters/core/grant-check.sh}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
@@ -163,8 +163,8 @@
 
           permission-check = pkgs.writeShellApplication {
             name = "permission-check";
-            runtimeInputs = with pkgs; [jq coreutils gnused tmux git procps];
-            text = sub (builtins.readFile ./adapters/core/permission-check.sh);
+            runtimeInputs = with pkgs; [jq coreutils findutils gnused tmux git procps];
+            text = withConfig (sub (builtins.readFile ./adapters/core/permission-check.sh));
           };
 
           default = pkgs.symlinkJoin {

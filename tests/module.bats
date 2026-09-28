@@ -319,6 +319,18 @@ setup() {
   [ "$output" = "0" ]
 }
 
+@test "the grant-check lib placeholder is substituted in dispatch, dispatch-resume and permission-check" {
+  # The --add-dir grant validator (#536) is a sourced shared lib; an
+  # unsubstituted token is not a readable path, so any of the three would
+  # abort under `set -e` the moment they source it.
+  run grep -c '@grantCheckLib@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  run grep -c '@grantCheckLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  [ "$output" = "0" ]
+  run grep -c '@grantCheckLib@' "$OUT_PERMISSION_CHECK/bin/permission-check"
+  [ "$output" = "0" ]
+}
+
 @test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
   run grep -c '@protocolRev@' "$OUT_DISPATCH/bin/dispatch"
   [ "$output" = "0" ]
@@ -618,7 +630,8 @@ setup() {
 
 @test "built consumers bake the settings resolver" {
   for bin in "$OUT_DISPATCH/bin/dispatch" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" \
-    "$OUT_DISPATCHER/bin/dispatcher" "$OUT_REFRESH_BUDGET/bin/refresh-budget"; do
+    "$OUT_DISPATCHER/bin/dispatcher" "$OUT_REFRESH_BUDGET/bin/refresh-budget" \
+    "$OUT_PERMISSION_CHECK/bin/permission-check"; do
     run grep -c '@dispatchConfig@' "$bin"
     [ "$output" = "0" ]
     run grep -q '/bin/dispatch-config' "$bin"

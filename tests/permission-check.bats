@@ -31,6 +31,15 @@ setup() {
   ps_table
   worktrees
 
+  # A canonical DISPATCH_GRANT_ROOTS and a HOME that is no ancestor of GRANT or
+  # WT: grant_ok re-validates grants with the shared _add_dir_ok, which scans
+  # $HOME for secrets dirs and reads git config from it, so both must be
+  # hermetic, and a grant is only ever reachable through a configured root.
+  export DISPATCH_GRANT_ROOTS="$GRANT" GIT_CONFIG_GLOBAL=/dev/null
+  mkdir -p "$PANE_HOME"
+  export HOME="$PANE_HOME"
+  export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/xdg"
+
   mkdir -p "$CREW/leads/${BRANCH%/*}" "$CREW/artifacts/$BRANCH" "$CREW/grants/${BRANCH%/*}"
   printf 'claude %s\n' "$SID" >"$CREW/leads/$BRANCH"
   printf '%s\n' "$GRANT" >"$CREW/grants/$BRANCH"
@@ -888,6 +897,111 @@ try() {
   printf 'add_dir: %s\n' "$BATS_TEST_TMPDIR/other" >"$WT/WORKER_TASK.md"
   try "cat $BATS_TEST_TMPDIR/other/f"
   assert_refused "path: not under an allowed root"
+}
+
+# --- #536: grant_ok re-validates grants with dispatch's own validator -------
+# grant_ok calls the shared _add_dir_ok: a .git or .claude entry inside the
+# grant, a grant overlapping a repo's hooks/git dir or config files, and a
+# grant outside $DISPATCH_GRANT_ROOTS (falling back to the settings resolver)
+# are refused the same way --add-dir refuses them.
+
+@test "permission-check: a grant holding a .git goes to the human (.git/hooks)" {
+  git init -q "$GRANT"
+  printf 'x\n' >"$GRANT/.git/hooks/pre-commit"
+  try "cat $GRANT/.git/hooks/pre-commit"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a grant with core.hooksPath=.husky goes to the human" {
+  git init -q "$GRANT"
+  git -C "$GRANT" config core.hooksPath .husky
+  mkdir "$GRANT/.husky"
+  printf 'x\n' >"$GRANT/.husky/pre-commit"
+  try "cat $GRANT/.husky/pre-commit"
+  # the grant is the repo root, so the .git containment scan refuses it before
+  # the hooksPath overlap is even checked
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a .claude/settings.json under a grant goes to the human" {
+  mkdir "$GRANT/.claude"
+  printf '{}\n' >"$GRANT/.claude/settings.json"
+  try "cat $GRANT/.claude/settings.json"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a grant overlapping a hooks dir without an inner .git goes to the human" {
+  R="$BATS_TEST_TMPDIR/r"
+  git init -q "$R"
+  git -C "$R" config core.hooksPath sub/hooks
+  mkdir -p "$R/sub/hooks"
+  printf 'x\n' >"$R/sub/hooks/x"
+  printf '%s\n' "$R/sub" >"$CREW/grants/$BRANCH"
+  export DISPATCH_GRANT_ROOTS="$R"
+  try "cat $R/sub/hooks/x"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: Edit and Write dialogs on protected grant paths go to the human" {
+  local header path
+  # a clean file in a valid grant: the Bash frame is the control, so only the
+  # header can refuse the Edit/Write frames on the same path (the frame is
+  # checked before the pending calls this loop piles up)
+  try "cat $GRANT/notes.md"
+  assert_allowed
+  for header in "Edit file" "Write file"; do
+    FRAME_HEADER="$header" frame "cat $GRANT/notes.md"
+    check
+    assert_refused "frame:"
+  done
+  # the protected paths below also invalidate the grant itself
+  mkdir -p "$GRANT/.git/hooks" "$GRANT/.husky" "$GRANT/.claude"
+  printf 'x\n' >"$GRANT/.git/hooks/pre-commit"
+  printf 'x\n' >"$GRANT/.husky/pre-commit"
+  printf '{}\n' >"$GRANT/.claude/settings.json"
+  for header in "Edit file" "Write file"; do
+    for path in "$GRANT/.git/hooks/pre-commit" "$GRANT/.husky/pre-commit" "$GRANT/.claude/settings.json"; do
+      # Edit/Write dialogs never match the frame's "Bash command" header, so
+      # the checker already answers human before any grant check runs
+      pending_bash "cat $path"
+      FRAME_HEADER="$header" frame "cat $path"
+      check
+      assert_human
+    done
+  done
+}
+
+@test "permission-check: a grant outside DISPATCH_GRANT_ROOTS is dropped" {
+  export DISPATCH_GRANT_ROOTS="$RO"
+  try "cat $GRANT/notes.md"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: a grant reachable only through the locked settings' grantRoots is allowed" {
+  unset DISPATCH_GRANT_ROOTS
+  jq -n --arg r "$GRANT" '{grantRoots: [$r]}' >"$BATS_TEST_TMPDIR/locked.json"
+  export DISPATCH_LOCKED_SETTINGS="$BATS_TEST_TMPDIR/locked.json"
+  try "cat $GRANT/notes.md"
+  assert_allowed
+}
+
+@test "permission-check: no locked settings and no env grantRoots drops the grant" {
+  unset DISPATCH_GRANT_ROOTS
+  try "cat $GRANT/notes.md"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: grantRoots in the user settings layer alone drops the grant" {
+  unset DISPATCH_GRANT_ROOTS
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n --arg r "$GRANT" '{grantRoots: [$r]}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  try "cat $GRANT/notes.md"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: cd into a grant then a relative cat is allowed" {
+  try "cd $GRANT && cat notes.md"
+  assert_allowed
 }
 
 @test "permission-check: grep -r in the worktree goes to the human" {

@@ -9822,14 +9822,11 @@ _escalation_seed_spoof() {
 }
 
 @test "add-dir: _add_dir_ok fail-closed when find exits 1 (no findutils)" {
-  # Unit test: extract _add_dir_ok from dispatch.sh, stub find to exit 1,
+  # Unit test: source _add_dir_ok from the shared grant-check lib, stub find to exit 1,
   # and verify the grant is refused with the wire message. Red on main
   # because main silently ignores the find failure (process substitution
   # loses the exit status).
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
 
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
@@ -9857,10 +9854,7 @@ STUBEOF
   # "$h/$s" ]" guard skips every iteration), and the stubbed find fails only
   # the new #503 embedded-repo scan. Proves the #503 find call is fail-closed
   # in its own right, distinct from the secrets-dir scan above.
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
 
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
@@ -9883,10 +9877,7 @@ STUBEOF
 }
 
 @test "add-dir: a newline inside a secrets-dir link's name or target does not split or truncate its hops" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   crew_dir="$T/crew"
@@ -9913,10 +9904,7 @@ STUBEOF
 }
 
 @test "add-dir: a relative core.hooksPath refuses the hooks dir, a hooksPath resolved outside the grant root does not block a same-shaped dir" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -9953,10 +9941,7 @@ STUBEOF
 }
 
 @test "add-dir: an absolute core.hooksPath refuses itself, an ancestor and a subdir inside it, allows a sibling" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -9979,10 +9964,7 @@ STUBEOF
 }
 
 @test "add-dir: a hooksPath through a symlink refuses a grant holding the link and one inside its final target" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10010,10 +9992,7 @@ STUBEOF
 }
 
 @test "add-dir: a submodule's .git/modules entry is refused, a dir inside its checked-out worktree is allowed" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10045,10 +10024,7 @@ STUBEOF
 }
 
 @test "add-dir: a separate git dir placed inside the worktree is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10063,10 +10039,7 @@ STUBEOF
 }
 
 @test "add-dir: a global core.hooksPath refuses it and a subdir inside it, allows a sibling" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10091,10 +10064,7 @@ STUBEOF
 }
 
 @test "add-dir: _add_dir_ok fails closed when git cannot resolve a broken .git file" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10110,10 +10080,7 @@ STUBEOF
 }
 
 @test "add-dir: a symlink on a gitfile's spelled gitdir path refuses a grant holding the link" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10141,10 +10108,7 @@ STUBEOF
 }
 
 @test "add-dir: a grant-held link retargeting a commondir spelled through it is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10175,10 +10139,7 @@ STUBEOF
 }
 
 @test "add-dir: a grant-held link over a symlink on a gitfile's or commondir's spelled path outside the grant is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10220,10 +10181,7 @@ STUBEOF
 }
 
 @test "add-dir: a link inside a grant to a repo's core.hooksPath dir is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10242,10 +10200,7 @@ STUBEOF
 }
 
 @test "add-dir: a link climbing out of a grant back into the repo root is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10263,10 +10218,7 @@ STUBEOF
 }
 
 @test "add-dir: symlinks unrelated to git hooks, dirs or config are allowed inside a grant" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10292,10 +10244,7 @@ STUBEOF
 }
 
 @test "add-dir: a grant holding an include.path target, present or missing, or its symlinked dir is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10332,10 +10281,7 @@ STUBEOF
 }
 
 @test "add-dir: a stowed global gitconfig link is refused, its sibling allowed" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10357,10 +10303,7 @@ STUBEOF
 }
 
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10377,10 +10320,7 @@ STUBEOF
 }
 
 @test "add-dir: a symlink to / inside a grant is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10397,10 +10337,7 @@ STUBEOF
 }
 
 @test "add-dir: a grant inside the worktree holding the gitfile its symlinked .git points at is refused" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10422,10 +10359,7 @@ STUBEOF
 }
 
 @test "add-dir: GIT_CONFIG in the caller's env does not hide a global core.hooksPath" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10443,10 +10377,7 @@ STUBEOF
 }
 
 @test "add-dir: GIT_DIR in the caller's env does not redirect a containing repo's hooks lookup" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10466,10 +10397,7 @@ STUBEOF
 }
 
 @test "add-dir: _add_dir_ok fails closed when git cannot read the global config" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
@@ -10486,10 +10414,7 @@ STUBEOF
 }
 
 @test "add-dir: _add_dir_ok fails closed when a hooks path holds a newline" {
-  eval "$(sed -n '/^_symlink_chain_hops() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_protected_dirs() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_git_config_files() {/,/^}/p' "$DISPATCH")"
-  eval "$(sed -n '/^_add_dir_ok() {/,/^}/p' "$DISPATCH")"
+  . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
   HOME="$T/home"
   mkdir -p "$HOME"
