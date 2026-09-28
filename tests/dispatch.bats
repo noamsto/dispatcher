@@ -2957,6 +2957,100 @@ assert_gate_silent() { # <engine> <model> [profile]
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+# Captured from the gate on main (pre-#605), over every claude/codex/cursor
+# model and effort it handles. Columns low,medium,high,xhigh,max: MODEL =
+# premium-rung refusal, EFFORT = premium-effort refusal, ALLOW = launched.
+@test "pace decisions hold across every claude/codex/cursor model and effort (#605)" {
+  stub_launch_bins
+  n=1000
+  while IFS='|' read -r agent model decisions; do
+    case "$agent" in '' | '#'*) continue ;; esac
+    for effort in low medium high xhigh max; do
+      expected="${decisions%%,*}"
+      decisions="${decisions#*,}"
+      n=$((n + 1))
+      budget_json_at "$agent" 77 345600
+      run run_dispatch deep "$model" --agent "$agent" --effort "$effort" --no-grid --ignore-map --crew-id c1 "$n" "pace-table-$n"
+      case "$output" in
+      *"the premium rung"*) got=MODEL ;;
+      *"premium effort"*) got=EFFORT ;;
+      *) got=ALLOW ;;
+      esac
+      [ "$got" = "$expected" ] || {
+        echo "pace decision drifted for $agent $model @ $effort: expected $expected, got $got" >&2
+        echo "$output" >&2
+        return 1
+      }
+      if [ "$expected" = ALLOW ]; then [ "$status" -eq 0 ]; else [ "$status" -eq 1 ]; fi
+    done
+  done <<'TABLE'
+claude|opus|ALLOW,ALLOW,MODEL,MODEL,MODEL
+claude|claude-opus-5|ALLOW,ALLOW,MODEL,MODEL,MODEL
+claude|fable|MODEL,MODEL,MODEL,MODEL,MODEL
+claude|claude-fable-5-1|MODEL,MODEL,MODEL,MODEL,MODEL
+claude|sonnet|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+claude|haiku|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+codex|gpt-5.6-sol|MODEL,MODEL,MODEL,MODEL,MODEL
+codex|gpt-5.6-terra|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+codex|gpt-5.6-luna|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|grok-4.7-high|MODEL,MODEL,MODEL,MODEL,MODEL
+cursor|grok-4.7-medium|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|grok-4.7-low|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|cursor-grok-4.6-high|MODEL,MODEL,MODEL,MODEL,MODEL
+cursor|cursor-grok-4.6-medium|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|composer-2.5|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|grok-4.7-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
+cursor|cursor-grok-4.6-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
+TABLE
+}
+
+# An edit to burnClasses must move the gate: a user-layer override raising
+# opus's low entry to the premium weight refuses it.
+@test "pace gate follows a burnClasses edit rather than a hardcoded opus rule (#605)" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{burnClasses: [
+    {match: "*opus*", byEffort: {
+      low: {class: "premium", weight: 6},
+      medium: {class: "standard", weight: 2},
+      default: {class: "premium", weight: 4}}},
+    {match: "*sonnet*", class: "standard", weight: 2}]}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort low --crew-id c1 42 "burnClasses override low"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort medium --crew-id c1 42 "burnClasses override medium"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+# burnClasses weights are JSON numbers, not integers: 2.0 must compare equal to
+# sonnet's 2 (exempt opus low), 2.5 heavier (refuse).
+@test "pace gate compares fractional burnClasses weights numerically (#605)" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{burnClasses: [
+    {match: "*opus*", byEffort: {
+      low: {class: "standard", weight: 2.0},
+      medium: {class: "standard", weight: 2.5},
+      default: {class: "premium", weight: 4}}},
+    {match: "*sonnet*", class: "standard", weight: 2}]}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort low --crew-id c1 42 "fractional weight equal"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+  [[ "$output" != *"integer expected"* ]]
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort medium --crew-id c1 42 "fractional weight heavier"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+}
+
 @test "cursor confines effort-suffixed cross-vendor ids to deep" {
   # claude-*/gpt-* effort-suffixed ids are cursor arguments only on deep —
   # standard/trivial reject them (dispatch-orchestration.md "Tier map").

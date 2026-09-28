@@ -41,15 +41,22 @@ valid_role_model() {
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's month) is materially ahead of pace.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" rung_pct win used_pct ahead pace_notice pace_clause
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
-  # Opus's burn class follows effort (crew.sh `_burn_weight`): at low/medium it
-  # is standard-class, not a premium *model* rung to shed. xhigh/max still take
-  # the effort refusal below; the >=95% hard stop is separate.
-  case "$target_agent:$target_model:$target_effort" in
-  claude:*opus*:low | claude:*opus*:medium) model_downgrade="" ;;
-  esac
+  # Only shed a rung when the downgrade burns less (defaults.json
+  # `burnClasses`): opus at low/medium matches sonnet's weight.
+  if [ -n "$model_downgrade" ]; then
+    model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
+    downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
+    # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
+    # fractional layer value (2.0) would make bash's integer test error and
+    # read false, flipping the decision.
+    if [ -n "$model_weight" ] && [ -n "$downgrade_weight" ] &&
+      jq -en --argjson a "$model_weight" --argjson b "$downgrade_weight" '$a <= $b' >/dev/null; then
+      model_downgrade=""
+    fi
+  fi
   case "$target_effort" in
   max | xhigh) effort_downgrade="high" ;;
   esac
@@ -681,6 +688,34 @@ _pace_downgrade() {
       return 0
     fi
   done < <(jq -r --arg a "$1" '.paceDowngrades[$a] // [] | .[] | "\(.to)\t\(.models[])"' <<<"$settings")
+}
+
+# _pace_burn_weight <model> <effort> — the burn weight defaults.json's
+# `burnClasses` assigns <model> at <effort>, or "" when the table does not name
+# it. Same first-match glob and byEffort default fallback crew.sh's
+# `_burn_weight` uses.
+_pace_burn_weight() {
+  local rules pat wgt byeffort
+  rules="$(jq -r '.burnClasses // [] | .[] |
+    [.match,
+     (.weight | tostring),
+     (if has("byEffort") then (.byEffort | tojson) else "" end)]
+    | join("\u001f")' <<<"$settings")"
+  while IFS=$'\x1f' read -r pat wgt byeffort; do
+    [ -n "$pat" ] || continue
+    # shellcheck disable=SC2254 # $pat is a glob pattern, matched literally on purpose
+    case "$1" in
+    $pat)
+      if [ -n "$byeffort" ]; then
+        jq -r --arg e "$2" '.[$e] // .default | .weight | tostring' <<<"$byeffort"
+      else
+        printf '%s' "$wgt"
+      fi
+      return 0
+      ;;
+    esac
+  done <<<"$rules"
+  printf ''
 }
 
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
