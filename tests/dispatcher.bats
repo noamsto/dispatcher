@@ -166,6 +166,19 @@ teardown() {
   done
 }
 
+@test "orchestrator defaults are data: a settings override changes the launch" {
+  # #575: the per-engine model/effort pins live in defaults.json's
+  # orchestratorDefaults, so a ladder bump edits defaults.json and not this
+  # launcher. A user layer must be able to refine them.
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"orchestratorDefaults":{"claude":{"model":"sonnet","effort":"medium"}}}\n' \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  run grep -F -- '--model sonnet --effort medium' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
 @test "--model overrides the pi launcher default" {
   DISPATCH_PROFILE=personal CREW_ID=c1 run run_launcher --agent pi --model openrouter/deepseek/deepseek-v4-flash
   [ "$status" -eq 0 ]

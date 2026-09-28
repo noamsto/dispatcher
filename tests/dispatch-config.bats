@@ -212,6 +212,69 @@ locked_settings() {
   [[ "$stderr" == *"paceDowngrades.claude[0].models must be an array of strings"* ]]
 }
 
+@test "a malformed burnClasses table is refused, naming the layer and the path" {
+  user_settings '{"burnClasses":{"claude":{"model":"opus"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): burnClasses must be an array"* ]]
+
+  user_settings '{"burnClasses":[{"class":"premium","weight":4}]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"burnClasses[0].match must be a string"* ]]
+
+  user_settings '{"burnClasses":[{"match":"*opus*","class":"premium"}]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"burnClasses[0].weight must be a number"* ]]
+
+  user_settings '{"burnClasses":[{"match":"*opus*","class":"premium","weight":4,"byEffort":{"default":{"class":"premium","weight":4}}}]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"burnClasses[0] must be exactly one of class or byEffort"* ]]
+
+  user_settings '{"burnClasses":[{"match":"*opus*","byEffort":{"high":{"class":"premium","weight":4}}}]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"burnClasses[0].byEffort must be a default entry"* ]]
+
+  user_settings '{"burnClasses":[{"match":"*opus*","byEffort":{"default":{"class":"premium","weight":"4"}}}]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"burnClasses[0].byEffort.default.weight must be a number"* ]]
+}
+
+@test "a malformed orchestratorDefaults is refused, naming the layer and the path" {
+  user_settings '{"orchestratorDefaults":"x"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): orchestratorDefaults must be an object"* ]]
+
+  user_settings '{"orchestratorDefaults":{"claude":"opus"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"orchestratorDefaults.claude must be an object"* ]]
+
+  user_settings '{"orchestratorDefaults":{"claude":{"effort":"high"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"orchestratorDefaults.claude.model must be a string"* ]]
+
+  user_settings '{"orchestratorDefaults":{"claude":{"model":"opus","effort":1}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"orchestratorDefaults.claude.effort must be a string"* ]]
+}
+
+@test "a well-shaped partial burnClasses / orchestratorDefaults layer is accepted" {
+  user_settings '{"burnClasses":[{"match":"*opus*","byEffort":{"low":{"class":"standard","weight":2},"default":{"class":"premium","weight":4}}}],"orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4-flash"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.orchestratorDefaults.pi.model == "openrouter/deepseek/deepseek-v4-flash"' <<<"$output"
+  # user overrides only the model; the base effort survives the deep merge.
+  jq -e '.orchestratorDefaults.pi.effort == "high"' <<<"$output"
+}
+
 @test "a malformed base defaults file is refused, naming the base layer" {
   local bad="$BATS_TEST_TMPDIR/bad-defaults.json"
   printf '%s\n' '{"modelMap":{"claude":{"deep":{"models":"x"}}}}' >"$bad"
@@ -245,7 +308,7 @@ EOF
   chmod +x "$shim/jq"
   PATH="$shim:$PATH" run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades shapes"* ]]
+  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults shapes"* ]]
 }
 
 @test "a whitespace-only DISPATCH_ENGINES contributes no engines layer" {

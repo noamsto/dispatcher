@@ -786,42 +786,60 @@ _crew_id() {
 }
 
 # _burn_weight <model> [effort] — prints "<class>\t<weight>", or "" for a
-# model this burn table (dispatch-orchestration.md → "Burn classes") does not
-# name. Opus is the one rung whose class follows effort (low/medium burn at
-# the standard class; high stays premium; xhigh/max spend more tokens per turn
-# and weigh more); every other model is classed by name alone, so an absent or
-# unrecognized effort changes nothing for them. kimi-k3* deliberately falls
-# through to "" — the burn doc does not class it — so the cursor rungs are
-# matched on their exact strings, never on a `*high*` glob that would also
+# model the burn table (defaults.json → "burnClasses", rendered in
+# dispatch-orchestration.md → "Burn classes") does not name. Each rule is a
+# shell glob matched in order, first match wins. Opus is the one rung whose
+# class follows effort (low/medium burn at the standard class; high stays
+# premium; xhigh/max spend more tokens per turn and weigh more), so its rule
+# carries a `byEffort` map with a `default` for an absent or unrecognized
+# effort; every other model is classed by name alone. kimi-k3* deliberately
+# falls through to "" — the burn doc does not class it — so the cursor rungs
+# are matched on their exact globs, never on a `*high*` glob that would also
 # swallow kimi-k3-high.
 #
 # Cursor prices two independent axes, so the grok rungs are enumerated rather
-# than globbed: the effort suffix sets how many tokens a turn spends, while
+# than collapsed: the effort suffix sets how many tokens a turn spends, while
 # `-fast` doubles what each token costs (docs: grok 4.6 and 4.7 are $2/M in + $6/M out
 # standard against $4/M + $12/M fast; 4.5 charges 3x on output). Reading `-fast`
 # as the cheap lane put `-medium-fast` in the same class as sonnet while it
 # actually burns like premium.
+#
+# The table is data, resolved through dispatch-config so a user or locked layer
+# can refine it; crew.sh carries no second copy. A caller pricing many models
+# can preload $_BURN_SETTINGS to skip the per-model resolve.
 _burn_weight() {
-  case "$1" in
-  # high, and any absent/unrecognized effort, stay premium-4.
-  *opus*)
-    case "${2:-}" in
-    low | medium) printf 'standard\t2' ;;
-    xhigh) printf 'premium\t6' ;;
-    max) printf 'premium\t8' ;;
-    *) printf 'premium\t4' ;;
+  local model="$1" effort="${2:-}" rules settings="${_BURN_SETTINGS:-}"
+  if [ -z "$settings" ] && command -v "${DISPATCH_CONFIG_BIN:-dispatch-config}" >/dev/null 2>&1; then
+    settings="$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null)" || settings=""
+  fi
+  [ -n "$settings" ] || {
+    printf ''
+    return 0
+  }
+  # \x1f, not a tab: tab is IFS-whitespace, so `read` would collapse the empty
+  # class/weight fields a byEffort rule leaves.
+  rules="$(jq -r '.burnClasses // [] | .[] |
+    [.match,
+     (if has("class") then .class else "" end),
+     (if has("weight") then (.weight | tostring) else "" end),
+     (if has("byEffort") then (.byEffort | tojson) else "" end)]
+    | join("\u001f")' <<<"$settings")"
+  local pat cls wgt byeffort
+  while IFS=$'\x1f' read -r pat cls wgt byeffort; do
+    [ -n "$pat" ] || continue
+    # shellcheck disable=SC2254 # $pat is a glob pattern, matched literally on purpose
+    case "$model" in
+    $pat)
+      if [ -n "$byeffort" ]; then
+        jq -r --arg e "$effort" '.[$e] // .default | "\(.class)\t\(.weight)"' <<<"$byeffort"
+      else
+        printf '%s\t%s' "$cls" "$wgt"
+      fi
+      return 0
+      ;;
     esac
-    ;;
-  composer-2.5*) printf 'free\t0' ;;
-  *haiku* | gpt-5.6-luna | *grok-4.[0-9]-low) printf 'cheap\t1' ;;
-  *sonnet* | gpt-5.6-terra | *grok-4.[0-9]-medium | *grok-4.[0-9]-low-fast) printf 'standard\t2' ;;
-  gpt-5.6-sol | *grok-4.[0-9]-high | *grok-4.[0-9]-medium-fast) printf 'premium\t4' ;;
-  *grok-4.[0-9]-xhigh) printf 'premium\t6' ;;
-  *grok-4.[0-9]-high-fast) printf 'premium\t8' ;;
-  *grok-4.[0-9]-xhigh-fast) printf 'premium\t12' ;;
-  claude-fable-5 | *fable*) printf 'fable\t8' ;;
-  *) printf '' ;;
-  esac
+  done <<<"$rules"
+  printf ''
 }
 
 # _gh_json <gh args…> — print gh's JSON on success, print NOTHING on any
@@ -3103,6 +3121,15 @@ EOF_REPOS
   # key the lookup by both, so opus@low prices below opus@high (its class
   # follows effort).
   targets=$(jq -s -r '[.[] | select(.kind=="dispatch") | [(.model // ""), (.effort // "")]] | unique | .[] | @tsv' "$log")
+  # Resolve the burn table once. _burn_weight runs in a command substitution
+  # per model, so without this each row would fork dispatch-config afresh.
+  _BURN_SETTINGS="$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null || true)"
+  # Without a resolver the table is empty, which per-row looks exactly like a
+  # legitimately unclassed model — say so once instead of reporting a clean run
+  # of null cost classes.
+  if [ -z "$_BURN_SETTINGS" ]; then
+    echo "crew rate: could not resolve settings (dispatch-config unavailable) — every model will read as unclassed; set DISPATCH_CONFIG_BIN or install dispatch-config beside crew" >&2
+  fi
   costmap='{}'
   while IFS=$'\t' read -r model effort; do
     [ -n "$model" ] || continue

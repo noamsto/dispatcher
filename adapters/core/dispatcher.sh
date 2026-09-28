@@ -123,6 +123,11 @@ esac
 settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
 
+# Orchestrator model/effort defaults are data (defaults.json →
+# "orchestratorDefaults"), so a ladder bump edits defaults.json and not this
+# launcher. --model/--effort still override per launch.
+orch_default() { jq -r --arg a "$agent" --arg k "$1" '.orchestratorDefaults[$a][$k] // empty' <<<"$settings"; }
+
 # Engine gate. Enabled (this machine's roster) and available (CLI installed).
 # Unset $DISPATCH_ENGINES means every engine. Duplicated from dispatch.sh on
 # purpose: adapters/core has no shared library, each script bakes standalone.
@@ -247,7 +252,7 @@ claude)
   # session was toggled to. high, not xhigh — same reason codex holds at high
   # below: blocked workers wait on a bounded ~2h in-band window.
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
-    --model "${model:-opus}" --effort "${effort:-high}"
+    --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
@@ -261,15 +266,15 @@ codex | cursor)
     # interactive /fast toggle persists locally and would otherwise leak into
     # the unattended dispatcher at 2.5x cost.
     codex --profile worker \
-      -m "${model:-gpt-5.6-sol}" \
-      -c "model_reasoning_effort=\"${effort:-high}\"" \
+      -m "${model:-$(orch_default model)}" \
+      -c "model_reasoning_effort=\"${effort:-$(orch_default effort)}\"" \
       -c 'service_tier="default"' \
       --dangerously-bypass-approvals-and-sandbox "$prompt"
   else
     # kimi-k3-high: third-family model, strong agentic tool use. --effort is
     # accepted-and-ignored (cursor encodes effort in the model id).
     [ -n "$effort" ] && echo "dispatcher: --effort is ignored for cursor (effort lives in the model id)" >&2
-    cursor-agent --model "${model:-kimi-k3-high}" \
+    cursor-agent --model "${model:-$(orch_default model)}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
   ;;
@@ -281,10 +286,9 @@ pi)
   # orchestrator runs in the dispatcher repo, and global ~/.pi/agent config
   # (auth, packages) still loads.
   # See dispatch-orchestration.md → "Orchestrator engines".
-  pi_default='openrouter/deepseek/deepseek-v4.1-flash'
   set -- --name "$session_name" \
-    --model "${model:-$pi_default}" \
-    --thinking "${effort:-high}" \
+    --model "${model:-$(orch_default model)}" \
+    --thinking "${effort:-$(orch_default effort)}" \
     --no-approve \
     --append-system-prompt "$protocol"
   [ -n "$task" ] && set -- "$@" "$task"

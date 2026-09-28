@@ -63,10 +63,10 @@ check_no_blank_engines() {
 }
 
 # check_model_shapes <json> <file> <layer> — die, naming <file> and <layer>
-# and the JSON path, when the layer's modelMap / escalation / paceDowngrades
-# holds a wrong-shaped leaf. Only shapes present in the layer are checked, so a
-# layer that refines a single row stays valid and the merge of well-shaped
-# layers is well-shaped.
+# and the JSON path, when the layer's modelMap / escalation / paceDowngrades /
+# burnClasses / orchestratorDefaults holds a wrong-shaped leaf. Only shapes
+# present in the layer are checked, so a layer that refines a single row stays
+# valid and the merge of well-shaped layers is well-shaped.
 check_model_shapes() {
   local violations path what
   violations=$(jq -r '
@@ -118,12 +118,51 @@ check_model_shapes() {
            end)
         ) end
       ) end;
+    def burnclasses($b):
+      if ($b|type) != "array" then err("burnClasses"; "an array")
+      else ($b | to_entries[] |
+        .key as $i | .value as $row |
+        (if ($row|type) != "object" then err("burnClasses[\($i)]"; "an object")
+         else
+          (if (($row|has("match"))|not) or (($row.match|type) != "string") then err("burnClasses[\($i)].match"; "a string") else empty end),
+          (if (($row|has("class")) and ($row|has("byEffort"))) or ((($row|has("class"))|not) and (($row|has("byEffort"))|not)) then err("burnClasses[\($i)]"; "exactly one of class or byEffort") else empty end),
+          (if ($row|has("class")) then
+             (if (($row.class|type) != "string") then err("burnClasses[\($i)].class"; "a string") else empty end),
+             (if (($row|has("weight"))|not) or (($row.weight|type) != "number") then err("burnClasses[\($i)].weight"; "a number") else empty end)
+           else empty end),
+          (if ($row|has("byEffort")) then
+             (if ($row.byEffort|type) != "object" then err("burnClasses[\($i)].byEffort"; "an object")
+              else
+               (if (($row.byEffort|has("default"))|not) then err("burnClasses[\($i)].byEffort"; "a default entry") else empty end),
+               ($row.byEffort | to_entries[] |
+                 .key as $e | .value as $v |
+                 (if ($v|type) != "object" then err("burnClasses[\($i)].byEffort.\($e)"; "an object")
+                  else
+                   (if (($v|has("class"))|not) or (($v.class|type) != "string") then err("burnClasses[\($i)].byEffort.\($e).class"; "a string") else empty end),
+                   (if (($v|has("weight"))|not) or (($v.weight|type) != "number") then err("burnClasses[\($i)].byEffort.\($e).weight"; "a number") else empty end)
+                  end)
+               )
+              end)
+           else empty end)
+         end)
+      ) end;
+    def orchestratordefaults($o):
+      if ($o|type) != "object" then err("orchestratorDefaults"; "an object")
+      else ($o | to_entries[] |
+        if (.value|type) != "object" then err("orchestratorDefaults.\(.key)"; "an object")
+        else
+         (if ((.value|has("model"))|not) or ((.value.model|type) != "string") then err("orchestratorDefaults.\(.key).model"; "a string") else empty end),
+         (if (.value|has("effort")) and ((.value.effort|type) != "string") then err("orchestratorDefaults.\(.key).effort"; "a string") else empty end)
+        end
+      ) end;
     . as $r
     | (if ($r|has("modelMap")) then modelmap($r.modelMap) else empty end),
       (if ($r|has("escalation")) then escalation($r.escalation) else empty end),
-      (if ($r|has("paceDowngrades")) then pace($r.paceDowngrades) else empty end)
+      (if ($r|has("paceDowngrades")) then pace($r.paceDowngrades) else empty end),
+      (if ($r|has("burnClasses")) then burnclasses($r.burnClasses) else empty end),
+      (if ($r|has("orchestratorDefaults")) then orchestratordefaults($r.orchestratorDefaults) else empty end)
   ' <<<"$1") ||
-    die "$2 ($3 layer): could not validate the modelMap / escalation / paceDowngrades shapes"
+    die "$2 ($3 layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults shapes"
   while IFS=$'\t' read -r path what; do
     [ -n "$path" ] || continue
     die "$2 ($3 layer): $path must be $what"
