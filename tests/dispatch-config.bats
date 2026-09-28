@@ -166,6 +166,88 @@ locked_settings() {
   [[ "$stderr" == *openrouter* ]]
 }
 
+@test "a malformed modelMap row is refused, naming the user layer and the path" {
+  user_settings '{"modelMap":{"claude":{"deep":{"models":"x"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): modelMap.claude.deep.models must be an array of strings"* ]]
+
+  user_settings '{"modelMap":{"claude":{"deep":{"default":1}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"modelMap.claude.deep.default must be a string"* ]]
+
+  user_settings '{"modelMap":{"claude":"x"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"modelMap.claude must be an object"* ]]
+}
+
+@test "a malformed escalation rule is refused, naming the locked layer and the path" {
+  locked_settings '{"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["opus"],"outOfRow":["fable"]}]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$LOCKED_FILE (locked layer): escalation.claude.deep[0] must be exactly one of inRow or outOfRow"* ]]
+
+  locked_settings '{"escalation":{"claude":{"deep":[{"failed":"sonnet","baseline":"sonnet","inRow":["opus"]}]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"escalation.claude.deep[0].failed must be an array of strings"* ]]
+}
+
+@test "a paceDowngrades object is refused, not silently skipped" {
+  user_settings '{"paceDowngrades":{"claude":{"models":["opus"],"to":"sonnet"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): paceDowngrades.claude must be an array"* ]]
+
+  user_settings '{"paceDowngrades":{"claude":[{"models":["opus"]}]}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"paceDowngrades.claude[0].to must be a string"* ]]
+
+  user_settings '{"paceDowngrades":{"claude":[{"models":"opus","to":"sonnet"}]}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"paceDowngrades.claude[0].models must be an array of strings"* ]]
+}
+
+@test "a malformed base defaults file is refused, naming the base layer" {
+  local bad="$BATS_TEST_TMPDIR/bad-defaults.json"
+  printf '%s\n' '{"modelMap":{"claude":{"deep":{"models":"x"}}}}' >"$bad"
+  local baked="$BATS_TEST_TMPDIR/baked-bad-defaults.sh"
+  sed -e "s|@lockedSettings@|$BATS_TEST_TMPDIR/nope.json|" -e "s|@defaultsJson@|$bad|" "$CONFIG" >"$baked"
+  chmod +x "$baked"
+  run --separate-stderr "$baked"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$bad (base layer): modelMap.claude.deep.models must be an array of strings"* ]]
+}
+
+@test "a well-shaped partial modelMap / escalation / paceDowngrades layer is accepted" {
+  user_settings '{"modelMap":{"cursor":{"deep":{"regex":["^x$"]}}},"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["opus"]}]}},"paceDowngrades":{"claude":[{"models":["opus"],"to":"sonnet"}]}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.modelMap.cursor.deep.regex == ["^x$"]' <<<"$output"
+  jq -e '.paceDowngrades.claude == [{"models":["opus"],"to":"sonnet"}]' <<<"$output"
+}
+
+@test "a jq failure during shape validation fails closed, naming the layer" {
+  local shim="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$shim"
+  local real_jq="$(command -v jq)"
+  cat >"$shim/jq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in *modelMap*) echo "jq: validation query failed" >&2; exit 3 ;; esac
+done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$shim/jq"
+  PATH="$shim:$PATH" run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades shapes"* ]]
+}
+
 @test "a whitespace-only DISPATCH_ENGINES contributes no engines layer" {
   DISPATCH_ENGINES=" " run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
