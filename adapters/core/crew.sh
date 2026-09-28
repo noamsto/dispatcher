@@ -4686,11 +4686,25 @@ pr-watch)
   printf '%s\n' "$ev"
   ;;
 git-baseline)
-  # Lists drift from the git-config baseline (#557); never records one — only
-  # a dispatch does, before its workers exist. Values are shown %q-escaped so a
-  # planted ESC/CR cannot redraw the terminal.
-  if [ $# -gt 0 ]; then
-    echo "crew: git-baseline takes no arguments" >&2
+  # Lists — or, with --accept, merges into — the exec-capable git-config
+  # baseline _wt_cfg_guard enforces (#557, #585). Only a dispatch records one
+  # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
+  # terminal, and --accept writes exactly the pairs this run printed: each
+  # context is read once, and a pair is shown and collected in one step.
+  if [ $# -gt 1 ]; then
+    echo "usage: crew git-baseline [--accept]" >&2
+    exit 1
+  fi
+  case "${1:-}" in
+  "") accept= ;;
+  --accept) accept=1 ;;
+  *)
+    echo "usage: crew git-baseline [--accept]" >&2
+    exit 1
+    ;;
+  esac
+  if [ -n "$accept" ] && [ ! -t 0 ]; then
+    echo "crew: git-baseline --accept needs your own terminal (not Claude Code's ! prefix)" >&2
     exit 1
   fi
 
@@ -4698,44 +4712,81 @@ git-baseline)
   # shellcheck source=/dev/null
   . "$wt_git_lib"
   baseline_file="$common/crew/git-config-baseline"
-  if [ ! -f "$baseline_file" ]; then
-    echo "git-config baseline $baseline_file: none yet — the next dispatch records it" >&2
+  gb_recs=()
+  if [ -f "$baseline_file" ]; then
+    mapfile -d '' gb_recs <"$baseline_file"
+  elif [ -z "$accept" ]; then
+    echo "git-config baseline $baseline_file: none yet — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
     exit 1
   fi
-  mapfile -d '' gb_recs <"$baseline_file"
 
-  declare -A gb_base=()
-  for gb_rec in "${gb_recs[@]}"; do gb_base["$gb_rec"]=1; done
-  mapfile -d '' gb_union < <(_wt_cfg_union "$common")
-  wait $! || exit 1
-  gb_drift=()
-  for gb_rec in "${gb_union[@]}"; do
-    [ -n "${gb_base["$gb_rec"]+x}" ] || gb_drift+=("$gb_rec")
+  declare -A gb_base=() gb_seen=()
+  for gb_rec in "${gb_recs[@]}"; do [ -z "$gb_rec" ] || gb_base["$gb_rec"]=1; done
+
+  gb_ctxs=("$common")
+  for gb_head in "$common"/worktrees/*/HEAD; do
+    [ -f "$gb_head" ] && gb_ctxs+=("${gb_head%/HEAD}")
   done
 
-  if [ "${#gb_drift[@]}" -eq 0 ]; then
-    echo "git-config baseline $baseline_file: no drift"
-    exit 0
-  fi
-
-  declare -A gb_wanted=()
-  for gb_rec in "${gb_drift[@]}"; do gb_wanted["$gb_rec"]=1; done
-  for gb_ctx in "$common" "$common"/worktrees/*; do
-    [ -e "$gb_ctx" ] || continue
+  # Each context is read exactly once; a pair is added to gb_shown in the same
+  # step it is printed, so what's written on --accept is exactly what a human
+  # saw (#585) — never a second, possibly-drifted read.
+  gb_shown=()
+  for gb_ctx in "${gb_ctxs[@]}"; do
     gb_label="main checkout"
     [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
-    mapfile -d '' gb_listing < <(git --git-dir="$gb_ctx" config --list --show-origin --show-scope -z 2>/dev/null)
+    mapfile -d '' gb_listing < <(git --git-dir="$gb_ctx" config --list --show-origin --show-scope -z)
+    if ! wait $!; then
+      echo "crew: cannot list the git config of $gb_ctx" >&2
+      exit 1
+    fi
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
       [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
       gb_rec="${gb_listing[gb_i + 2]}"
       [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
-      [ -n "${gb_wanted["$gb_rec"]+x}" ] || continue
       gb_key="${gb_rec%%$'\n'*}"
       gb_value="${gb_rec#"$gb_key"$'\n'}"
-      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "${gb_listing[gb_i + 1]#file:}"
+      _wt_cfg_exec "$gb_key" "$gb_value" || continue
+      [ -z "${gb_base["$gb_rec"]+x}" ] || continue
+      gb_origin="${gb_listing[gb_i + 1]#file:}"
+      [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
+      gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
+      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "$gb_origin"
+      gb_shown+=("$gb_rec")
     done
   done
-  exit 1
+
+  if [ "${#gb_shown[@]}" -eq 0 ] && [ -f "$baseline_file" ]; then
+    echo "git-config baseline $baseline_file: no drift"
+    exit 0
+  fi
+  if [ -z "$accept" ]; then
+    exit 1
+  fi
+
+  if [ "${#gb_shown[@]}" -eq 0 ]; then
+    echo "no exec-capable git config yet — yes records an empty baseline"
+  fi
+  printf 'Accept these into the baseline %s? type yes: ' "$baseline_file"
+  read -r gb_answer
+  if [ "$gb_answer" != yes ]; then
+    echo "crew: baseline unchanged" >&2
+    exit 1
+  fi
+
+  mkdir -p -- "$dir" || exit 1
+  gb_tmp="$(mktemp "$baseline_file.XXXXXX")" || exit 1
+  # Merge, never replace: git-hooks.nix writes core.hooksPath relative from
+  # the main checkout and absolute from a linked worktree, so a replace would
+  # flip-flop. Empty records are dropped; an empty gb_recs+gb_shown union
+  # writes nothing, so a first accept with nothing to show is a 0-byte file.
+  if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}"; do
+    [ -z "$gb_rec" ] || printf '%s\0' "$gb_rec"
+  done | LC_ALL=C sort -z -u >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
+    rm -f -- "$gb_tmp"
+    exit 1
+  fi
+  echo "git-config baseline $baseline_file: accepted"
   ;;
 reap)
   # Reclaim window + worktree for workers whose PR has landed. No crew filter:
@@ -5219,7 +5270,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

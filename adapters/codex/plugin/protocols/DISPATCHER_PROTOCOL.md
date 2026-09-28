@@ -582,14 +582,19 @@ branch instead; the worktree carries over under `resume: true`.
   core.fsmonitor=false -c core.hooksPath=/dev/null` and disable the
   config-hook events they trigger, for worktree-relative baseline values
   (Husky's `.husky`). Relay a refusal to the human verbatim; never run its
-  printed `--unset-all` or clear it yourself — only the human does: they
-  inspect the listed keys (`crew git-baseline` lists drift), remove any they
-  did not set (`git config --unset-all`), then re-baseline by deleting
-  `<git-common-dir>/crew/git-config-baseline` so the next dispatch records it
-  again — **re-baselining accepts everything present at that moment, so
-  inspect first**. Trust-on-first-use: only a `dispatch` records the
-  baseline, as the union over the main checkout and every linked worktree's
-  context — resume, reap and `crew git-baseline` never do.
+  printed `--unset-all` or clear it yourself — only the human clears it: they
+  inspect drift (`crew git-baseline`), remove keys they did not set (`git
+  config --unset-all`), then run `crew git-baseline --accept` in their own
+  terminal, which merges exactly the pairs it showed after a typed `yes`.
+  The tty + `yes` check is a procedural gate against accidental or
+  agent-initiated accepts, not an unbypassable boundary — never run
+  `--accept` yourself or drive it through a pty/tmux. Deleting
+  `<git-common-dir>/crew/git-config-baseline` is the fallback; the next
+  dispatch re-records it and **accepts everything present at that moment**.
+  Trust-on-first-use: only a `dispatch` records the baseline unasked, as the
+  union over the main checkout and every linked worktree's context — resume
+  and reap never do, and `crew git-baseline` writes only on the human's
+  `--accept`.
   Residual: no protection for the human's own interactive git between
   dispatcher runs (the refusal is the warning); `--global`/system config is
   unchecked (its scope is named in the call text, and nix store paths there

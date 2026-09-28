@@ -3159,6 +3159,53 @@ EOF
   [[ "$output" == *"reaped feat/557-d"* ]]
 }
 
+@test "git-baseline --accept refuses without a tty (#585)" {
+  # --accept exists for a human eyeballing a diff of newly-seen exec-capable
+  # keys and widening the baseline on purpose; run non-interactively (no tty
+  # on stdin) it must refuse rather than silently widen the baseline to
+  # whatever config happens to be sitting there.
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  before=$(cksum "$B")
+  run run_crew git-baseline --accept </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"own terminal"* ]]
+  [ "$(cksum "$B")" = "$before" ]
+
+  rm "$B"
+  run run_crew git-baseline --accept </dev/null
+  [ "$status" -eq 1 ]
+  [ ! -e "$B" ]
+}
+
+# crew_tty <answer> <crew args...> — run crew on a real pty (a private tmux
+# server) and type <answer> at its `type yes` prompt; sets $status/$output.
+crew_tty() {
+  local answer="$1" sock="tty-$BATS_TEST_NUMBER" out="$BATS_TEST_TMPDIR/tty.out"
+  local rc="$BATS_TEST_TMPDIR/tty.rc" script="$BATS_TEST_TMPDIR/tty.sh" i
+  shift
+  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
+  rm -f "$out" "$rc"
+  printf 'bash -euo pipefail %q' "$CREW" >"$script"
+  printf ' %q' "$@" >>"$script"
+  printf ' >%q 2>&1\necho $? >%q\n' "$out" "$rc" >>"$script"
+  "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -x 200 -y 50 -c "$PWD" "bash $script"
+  for ((i = 0; i < 100; i++)); do
+    if [ -e "$rc" ] || grep -q 'type yes' "$out" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys -l "$answer"
+  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys Enter
+  for ((i = 0; i < 100; i++)); do
+    if [ -s "$rc" ]; then break; fi
+    sleep 0.1
+  done
+  "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
+  status="$(cat "$rc")"
+  output="$(cat "$out")"
+}
+
 @test "git-baseline never records a missing baseline (#557)" {
   # #557: only a dispatch records the baseline (TOFU before any worker of the
   # crew exists); a later review run must not trust whatever is there now.
@@ -3169,6 +3216,7 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"none yet"* ]]
   [[ "$output" == *"the next dispatch records it"* ]]
+  [[ "$output" == *"crew git-baseline --accept"* ]]
   [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
@@ -3185,7 +3233,11 @@ EOF
   before="$(cksum "$TEST_REPO/.git/crew/git-config-baseline")"
   run run_crew git-baseline extra
   [ "$status" -eq 1 ]
-  [[ "$output" == *"git-baseline takes no arguments"* ]]
+  [[ "$output" == *"git-baseline [--accept]"* ]]
+  [ "$(cksum "$TEST_REPO/.git/crew/git-config-baseline")" = "$before" ]
+  run run_crew git-baseline --accept extra
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"git-baseline [--accept]"* ]]
   [ "$(cksum "$TEST_REPO/.git/crew/git-config-baseline")" = "$before" ]
 }
 
@@ -3202,6 +3254,100 @@ EOF
   [[ "$output" == *filter.a* ]]
   [[ "$output" != *$'\e'* ]]
   [[ "$output" != *$'\r'* ]]
+}
+
+@test "git-baseline --accept merges into the baseline (#585)" {
+  # git-hooks.nix writes core.hooksPath relative from the main checkout and
+  # absolute from a linked worktree; a replacing accept flip-flops forever.
+  git commit -q --allow-empty -m init
+  git config core.hooksPath .git/hooks
+  seed_git_baseline
+  git config core.hooksPath "$TEST_REPO/.git/hooks"
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"core.hookspath=$TEST_REPO/.git/hooks"* ]]
+  git config core.hooksPath .git/hooks
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}
+
+@test "git-baseline --accept without a baseline shows every pair, records on yes (#585)" {
+  git commit -q --allow-empty -m init
+  rm "$TEST_REPO/.git/crew/git-config-baseline"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  crew_tty no git-baseline --accept
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.sshcommand=* ]]
+  [ ! -e "$B" ]
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *core.sshcommand=* ]]
+  grep -q core.sshcommand "$B"
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+}
+
+@test "git-baseline --accept with no pairs writes an empty baseline (#585)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  rm "$B"
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [ -f "$B" ]
+  [ ! -s "$B" ]
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}
+
+@test "git-baseline --accept repairs a lone-NUL baseline (#585)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  printf '\0' >"$B"
+  git config core.sshCommand x
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$B"
+  for rec in "${recs[@]}"; do
+    [ -n "$rec" ]
+  done
+  printf '%s\n' "${recs[@]}" | grep -qx core.sshcommand
+  [[ " ${recs[*]} " == *"core.sshcommand"$'\n'"x"* ]]
+}
+
+@test "git-baseline --accept writes only displayed pairs (#585)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  git worktree add -q "$BATS_TEST_TMPDIR/w" -b w
+  REAL_GIT="$(command -v git)"
+  CTR="$BATS_TEST_TMPDIR/ctr"
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  cat >"$BATS_TEST_TMPDIR/shim/git" <<EOF
+#!/usr/bin/env bash
+"$REAL_GIT" "\$@"; rc=\$?
+case " \$* " in *" config --list "*)
+  n=\$(( \$(cat "$CTR" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$CTR"
+  "$REAL_GIT" -C "$TEST_REPO" config core.fsmonitor "/evil\$n" ;;
+esac
+exit \$rc
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/shim/git"
+  export PATH="$BATS_TEST_TMPDIR/shim:$PATH"
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  last=$(cat "$CTR")
+  mapfile -d '' recs <"$B"
+  seen_fsmonitor=0
+  planted="core.fsmonitor"$'\n'"/evil$last"
+  for rec in "${recs[@]}"; do
+    [[ $rec == core.fsmonitor$'\n'* ]] || continue
+    seen_fsmonitor=1
+    [[ "$output" == *"core.fsmonitor=${rec#*$'\n'}"* ]]
+    [ "$rec" != "$planted" ]
+  done
+  [ "$seen_fsmonitor" -eq 1 ]
 }
 
 @test "reap: no baseline keeps the worktree and records none (#557)" {

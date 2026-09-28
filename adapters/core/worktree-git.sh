@@ -45,9 +45,19 @@ _wt_exec_keys=(
   'tar.*.command' 'sendemail.smtpserver' 'sendemail.*cmd'
   'lfs.customtransfer.*.path' 'lfs.extension.*.clean' 'lfs.extension.*.smudge'
 )
+_wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair exec-capable
+  local entry
+  for entry in "${_wt_exec_keys[@]}"; do
+    # shellcheck disable=SC2053 # the table holds globs, matched unquoted
+    if [[ $1 == ${entry%% *} ]] && { [[ $entry != *' '* ]] || [[ $2 == ${entry#* } ]]; }; then
+      return 0
+    fi
+  done
+  return 1
+}
 _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktree pairs
   local -a recs
-  local i scope key value entry
+  local i scope key value
   # Listing config never runs a configured program.
   mapfile -d '' recs < <(git --git-dir="$1" config --list --show-scope -z)
   wait $! || return 1
@@ -58,13 +68,7 @@ _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktr
     key="${recs[i + 1]%%$'\n'*}"
     value="${recs[i + 1]#"$key"}"
     value="${value#$'\n'}"
-    for entry in "${_wt_exec_keys[@]}"; do
-      # shellcheck disable=SC2053 # the table holds globs, matched unquoted
-      if [[ $key == ${entry%% *} ]] && { [[ $entry != *' '* ]] || [[ $value == ${entry#* } ]]; }; then
-        printf '%s\n%s\0' "$key" "$value"
-        break
-      fi
-    done
+    if _wt_cfg_exec "$key" "$value"; then printf '%s\n%s\0' "$key" "$value"; fi
   done | LC_ALL=C sort -z -u
 }
 _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admin dir
@@ -109,12 +113,12 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
   if [ ! -f "$file" ]; then
-    echo "refusing git: no git-config baseline at $file — the next dispatch records it" >&2
+    echo "refusing git: no git-config baseline at $file — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
     return 1
   fi
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
-    base["$rec"]=1
+    [ -z "$rec" ] || base["$rec"]=1
   done
   mapfile -d '' pairs < <(_wt_cfg_pairs "$gitdir")
   if ! wait $!; then
@@ -145,7 +149,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     done
     [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
   done
-  printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set, then delete %q — the next dispatch re-records the baseline and accepts EVERYTHING present then, so inspect first\n" "$file" >&2
+  printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: \`crew git-baseline --accept\` (deleting %q instead re-records EVERYTHING present at the next dispatch)\n" "$file" >&2
   return 1
 }
 _wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir the caller's cwd resolves to
