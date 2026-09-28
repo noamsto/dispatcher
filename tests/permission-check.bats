@@ -32,9 +32,9 @@ setup() {
   worktrees
 
   # A canonical DISPATCH_GRANT_ROOTS and a HOME that is no ancestor of GRANT or
-  # WT: grant_ok's future parity with dispatch.sh's _add_dir_ok scans $HOME for
-  # secrets dirs and reads git config from it, so both must be hermetic, and a
-  # grant is only ever reachable through a configured root.
+  # WT: grant_ok re-validates grants with the shared _add_dir_ok, which scans
+  # $HOME for secrets dirs and reads git config from it, so both must be
+  # hermetic, and a grant is only ever reachable through a configured root.
   export DISPATCH_GRANT_ROOTS="$GRANT" GIT_CONFIG_GLOBAL=/dev/null
   mkdir -p "$PANE_HOME"
   export HOME="$PANE_HOME"
@@ -900,12 +900,10 @@ try() {
 }
 
 # --- #536: grant_ok re-validates grants with dispatch's own validator -------
-# grant_ok is meant to gain parity with dispatch.sh's _add_dir_ok: a .git or
-# .claude entry inside the grant, a grant overlapping a repo's hooks/git dir
-# or config files, and a grant outside $DISPATCH_GRANT_ROOTS (falling back to
-# the settings resolver) must all be refused the same way --add-dir refuses
-# them. These pin that future behavior; several fail against today's weaker
-# grant_ok.
+# grant_ok calls the shared _add_dir_ok: a .git or .claude entry inside the
+# grant, a grant overlapping a repo's hooks/git dir or config files, and a
+# grant outside $DISPATCH_GRANT_ROOTS (falling back to the settings resolver)
+# are refused the same way --add-dir refuses them.
 
 @test "permission-check: a grant holding a .git goes to the human (.git/hooks)" {
   git init -q "$GRANT"
@@ -945,11 +943,22 @@ try() {
 }
 
 @test "permission-check: Edit and Write dialogs on protected grant paths go to the human" {
+  local header path
+  # a clean file in a valid grant: the Bash frame is the control, so only the
+  # header can refuse the Edit/Write frames on the same path (the frame is
+  # checked before the pending calls this loop piles up)
+  try "cat $GRANT/notes.md"
+  assert_allowed
+  for header in "Edit file" "Write file"; do
+    FRAME_HEADER="$header" frame "cat $GRANT/notes.md"
+    check
+    assert_refused "frame:"
+  done
+  # the protected paths below also invalidate the grant itself
   mkdir -p "$GRANT/.git/hooks" "$GRANT/.husky" "$GRANT/.claude"
   printf 'x\n' >"$GRANT/.git/hooks/pre-commit"
   printf 'x\n' >"$GRANT/.husky/pre-commit"
   printf '{}\n' >"$GRANT/.claude/settings.json"
-  local header path
   for header in "Edit file" "Write file"; do
     for path in "$GRANT/.git/hooks/pre-commit" "$GRANT/.husky/pre-commit" "$GRANT/.claude/settings.json"; do
       # Edit/Write dialogs never match the frame's "Bash command" header, so
