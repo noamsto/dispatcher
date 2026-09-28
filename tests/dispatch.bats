@@ -11006,6 +11006,107 @@ STUBEOF
   [[ "$output" == *"cannot stat $T/roots/outside/f; refusing the grant"* ]]
 }
 
+@test "add-dir: several grant-held symlinks to one outside dir are deduped yet still refuse a hard link" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/roots/stash/nested" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/roots/stash/gc"
+  ln -s ../stash "$T/roots/grant/d"
+  ln -s ../stash "$T/roots/grant/e"
+  ln -s ../stash/nested "$T/roots/grant/n"
+
+  run _add_dir_ok "$T/roots/grant"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+
+  rm "$T/roots/stash/gc"
+  cp "$HOME/.gitconfig" "$T/roots/stash/gc"
+  run _add_dir_ok "$T/roots/grant"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/grant" ]
+}
+
+@test "add-dir: a mount between nested outside dirs does not hide a hard link from the batched scan" {
+  command -v unshare >/dev/null || skip "unshare is not installed"
+  unshare -rm true 2>/dev/null || skip "no unprivileged mount namespace"
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/hidden" "$T/roots/outside" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/hidden/gc"
+  # the grant holds a symlink to the outside dir A and one to A/c/d, a dir on
+  # A's own device but behind a different-device tmpfs mount at A/c: a -xdev
+  # scan of A cannot reach it, so the batched scan must still scan A/c/d
+  ln -s ../outside "$T/roots/grant/a"
+  ln -s ../outside/c/d "$T/roots/grant/b"
+
+  run unshare -rm bash -c '
+    set -e
+    mkdir -p "$0/outside/c" || exit 2
+    mount -t tmpfs tmpfs "$0/outside/c" || exit 2
+    mkdir -p "$0/outside/c/d" || exit 2
+    mount --bind "$1" "$0/outside/c/d" || exit 2
+    . "$2" || exit 2
+    _add_dir_ok "$3"
+  ' "$T/roots" "$T/hidden" "$GRANT_CHECK_LIB" "$T/roots/grant"
+  [ "$status" -eq 2 ] && skip "cannot set up a private mount namespace here"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+}
+
+@test "add-dir: a newline in a nested outside path does not hide a hard link from the batched scan" {
+  command -v unshare >/dev/null || skip "unshare is not installed"
+  unshare -rm true 2>/dev/null || skip "no unprivileged mount namespace"
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
+
+  printf '[user]\n\tname = x\n' >"$HOME/.gitconfig"
+  mkdir -p "$T/hidden" "$T/roots/outside" "$T/roots/grant"
+  ln "$HOME/.gitconfig" "$T/hidden/gc"
+  # A and A/c<newline>x/d share A's device but are separated by a
+  # different-device tmpfs at A/c<newline>x; the dedup walk must split the
+  # relative path on / without a line-based read that stops at the newline
+  ln -s ../outside "$T/roots/grant/a"
+  ln -s "../outside/c"$'\n'"x/d" "$T/roots/grant/b"
+
+  run unshare -rm bash -c '
+    set -e
+    nl="$4"
+    d="$0/outside/c${nl}x"
+    mkdir -p "$0/outside/c" || exit 2
+    mkdir -p "$d" || exit 2
+    mount -t tmpfs tmpfs "$d" || exit 2
+    mkdir -p "$d/d" || exit 2
+    mount --bind "$1" "$d/d" || exit 2
+    . "$2" || exit 2
+    _add_dir_ok "$3"
+  ' "$T/roots" "$T/hidden" "$GRANT_CHECK_LIB" "$T/roots/grant" $'\n'
+  [ "$status" -eq 2 ] && skip "cannot set up a private mount namespace here"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hard link"* ]]
+}
+
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
