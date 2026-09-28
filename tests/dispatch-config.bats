@@ -231,6 +231,23 @@ locked_settings() {
   jq -e '.paceDowngrades.claude == [{"models":["opus"],"to":"sonnet"}]' <<<"$output"
 }
 
+@test "a jq failure during shape validation fails closed, naming the layer" {
+  local shim="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$shim"
+  local real_jq="$(command -v jq)"
+  cat >"$shim/jq" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in *modelMap*) echo "jq: validation query failed" >&2; exit 3 ;; esac
+done
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$shim/jq"
+  PATH="$shim:$PATH" run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades shapes"* ]]
+}
+
 @test "a whitespace-only DISPATCH_ENGINES contributes no engines layer" {
   DISPATCH_ENGINES=" " run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

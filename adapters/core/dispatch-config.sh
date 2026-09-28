@@ -68,11 +68,8 @@ check_no_blank_engines() {
 # layer that refines a single row stays valid, and a merge of well-shaped
 # layers is well-shaped (objects merge, arrays and scalars replace whole).
 check_model_shapes() {
-  local path what
-  while IFS=$'\t' read -r path what; do
-    [ -n "$path" ] || continue
-    die "$2 ($3 layer): $path must be $what"
-  done < <(jq -r '
+  local violations path what
+  violations=$(jq -r '
     def string_array: type == "array" and all(.[]; type == "string");
     def err($p; $w): "\($p)\t\($w)";
     def modelmap($m):
@@ -125,7 +122,12 @@ check_model_shapes() {
     | (if ($r|has("modelMap")) then modelmap($r.modelMap) else empty end),
       (if ($r|has("escalation")) then escalation($r.escalation) else empty end),
       (if ($r|has("paceDowngrades")) then pace($r.paceDowngrades) else empty end)
-  ' <<<"$1")
+  ' <<<"$1") ||
+    die "$2 ($3 layer): could not validate the modelMap / escalation / paceDowngrades shapes"
+  while IFS=$'\t' read -r path what; do
+    [ -n "$path" ] || continue
+    die "$2 ($3 layer): $path must be $what"
+  done <<<"$violations"
 }
 
 # strip <json> <path> — drop the keys only the locked and env layers may set.
