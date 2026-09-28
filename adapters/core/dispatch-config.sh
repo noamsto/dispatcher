@@ -78,8 +78,13 @@ fi
 
 env_layer=$(jq -cn '
   def from_env($var; $p; f): ($ENV[$var] // "") as $v | if $v == "" then . else setpath($p; $v | f) end;
+  def from_env_nonempty($var; $p; f):
+    ($ENV[$var] // "") as $v
+    | if $v == "" then .
+      else ($v | f) as $r | if ($r | length) > 0 then setpath($p; $r) else . end
+      end;
   {}
-  | from_env("DISPATCH_ENGINES"; ["engines"]; [splits("\\s+")] | map(select(. != "")))
+  | from_env_nonempty("DISPATCH_ENGINES"; ["engines"]; [splits("\\s+")] | map(select(. != "")))
   | from_env("DISPATCH_GRANT_ROOTS"; ["grantRoots"]; split(":") | map(select(. != "")))
   | from_env("DISPATCH_OPENROUTER_MONTHLY_USD"; ["openrouter", "monthlyUsd"]; .)
   | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)')
@@ -97,8 +102,9 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
     end;
   [inputs] as [$base, $user, $locked, $env]
   | $base * $user * $locked * $env
-  | need(["engines"]; "an array of strings"; string_array)
+  | need(["engines"]; "a non-empty array of strings"; string_array and length > 0)
   | need(["grantRoots"]; "an array of strings without \":\""; string_array and all(.[]; contains(":") | not))
+  | need(["openrouter"]; "an object"; type == "object")
   | need(["openrouter", "keyFile"]; "a string"; type == "string")
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'

@@ -582,6 +582,16 @@ _glob_match() {
   return 1
 }
 
+# _exact_match <model> — true when <model> equals one of the lines on stdin,
+# one per line.
+_exact_match() {
+  local x
+  while IFS= read -r x; do
+    if [ "$x" = "$1" ]; then return 0; fi
+  done
+  return 1
+}
+
 # _model_in_row <agent> <tier> <model> — true when modelMap's row admits
 # <model> by a `models` glob or a `regex` ERE; a missing row admits nothing.
 _model_in_row() {
@@ -618,7 +628,7 @@ _escalation_hop() {
   [ -n "$rule" ] || return 0
   if {
     read -r baseline
-    if [ "$5" = inRow ]; then _glob_match "$4"; else grep -qxF -- "$4"; fi
+    if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
   } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
     printf '%s' "$baseline"
   fi

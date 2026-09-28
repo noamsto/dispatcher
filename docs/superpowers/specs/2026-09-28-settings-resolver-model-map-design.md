@@ -168,7 +168,9 @@ string-concatenation artifact on ids no engine accepts, so the fixture excludes
 them; re-joining
 `DISPATCH_ENGINES` / `DISPATCH_GRANT_ROOTS` changes only whitespace / empty
 segments, which the old consumers already ignored. An empty `engines` array in a
-file still means "every engine", through the unchanged `${DISPATCH_ENGINES:-$ENGINES_ALL}`.
+file is refused by the resolver (review round 1): through the unchanged
+`${DISPATCH_ENGINES:-$ENGINES_ALL}` it would otherwise mean "every engine",
+the opposite of what a file emptying the roster intends.
 
 ## Doc drift: generate, plus one check
 

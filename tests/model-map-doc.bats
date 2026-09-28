@@ -34,3 +34,30 @@ teardown() {
   run bash "$GEN" --check "$DEFAULTS" "$tmpdoc"
   [ "$status" -eq 1 ]
 }
+
+@test "doc check fails when the tier-rows markers are missing" {
+  tmpdoc="$BATS_TEST_TMPDIR/nomarkers.md"
+  cp "$DOC" "$tmpdoc"
+  sed -i '/BEGIN generated:tier-rows\|END generated:tier-rows/d' "$tmpdoc"
+  run bash "$GEN" --check "$DEFAULTS" "$tmpdoc"
+  [ "$status" -eq 1 ]
+}
+
+@test "doc check fails when a row's default is not in its models" {
+  tmpdefaults="$BATS_TEST_TMPDIR/bad-default.json"
+  jq '.modelMap.pi.deep.default = "not-a-listed-model"' "$DEFAULTS" >"$tmpdefaults"
+  run bash "$GEN" --check "$tmpdefaults" "$DOC"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not-a-listed-model"* ]]
+}
+
+@test "write mode leaves no stray temp file when defaults.json is broken" {
+  tmpdefaults="$BATS_TEST_TMPDIR/broken.json"
+  printf 'not json' >"$tmpdefaults"
+  tmpdoc="$BATS_TEST_TMPDIR/writeme.md"
+  cp "$DOC" "$tmpdoc"
+  run bash "$GEN" "$tmpdefaults" "$tmpdoc"
+  [ "$status" -ne 0 ]
+  run bash -c "ls \"$BATS_TEST_TMPDIR\"/writeme.md.*"
+  [ "$status" -ne 0 ]
+}

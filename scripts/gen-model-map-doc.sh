@@ -31,9 +31,12 @@ defaults="${1:-$root/adapters/core/defaults.json}"
 doc="${2:-$root/adapters/core/protocols/dispatch-orchestration.md}"
 
 # render_tier_rows <defaults.json> — the "| engine | tier | typical launch
-# model | the gate accepts |" table, one row per engine x tier in data order.
+# model | the gate admits |" table, one row per engine x tier in data order;
+# the last column is the row's `models` (globs backticked, the literal-bracket
+# escape `\[` shown as `[`), plus a note when the row also admits ids by
+# `regex`.
 render_tier_rows() {
-  printf '| engine | tier | typical launch model | the gate accepts |\n'
+  printf '| engine | tier | typical launch model | the gate admits |\n'
   printf '| --- | --- | --- | --- |\n'
   jq -r '
     .modelMap
@@ -41,7 +44,11 @@ render_tier_rows() {
     | .key as $engine
     | .value
     | to_entries[]
-    | "| \($engine) | `\(.key)` | `\(.value.default)` | \(.value.expected | split("*") | join("\\*")) |"
+    | .key as $tier
+    | .value as $row
+    | ([$row.models[] | "`" + (split("\\[") | join("[")) + "`"] | join(", ")) as $models
+    | ($models + (if ($row.regex // [] | length) > 0 then ", plus ids matching the row'\''s regex" else "" end)) as $admits
+    | "| \($engine) | `\($tier)` | `\($row.default)` | \($admits) |"
   ' "$1"
 }
 
@@ -69,11 +76,25 @@ render_pace_downgrades() {
 
 # splice <name> <content-file> <in-file> — everything between the BEGIN/END
 # markers for <name> in <in-file> is replaced by <content-file>'s lines,
-# printed to stdout.
+# printed to stdout. Fails when <in-file> does not have exactly one BEGIN and
+# one END marker for <name>, in that order.
 splice() {
   local name="$1" content="$2" in="$3"
   local begin="<!-- BEGIN generated:${name} from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->"
   local end="<!-- END generated:${name} -->"
+  local begin_n end_n begin_ln end_ln
+  begin_n="$(grep -cF -- "$begin" "$in" || true)"
+  end_n="$(grep -cF -- "$end" "$in" || true)"
+  if [ "$begin_n" -ne 1 ] || [ "$end_n" -ne 1 ]; then
+    echo "gen-model-map-doc: region '$name' in $in must have exactly one BEGIN and one END marker (found $begin_n BEGIN, $end_n END)" >&2
+    return 1
+  fi
+  begin_ln="$(grep -nF -- "$begin" "$in" | cut -d: -f1)"
+  end_ln="$(grep -nF -- "$end" "$in" | cut -d: -f1)"
+  if [ "$begin_ln" -ge "$end_ln" ]; then
+    echo "gen-model-map-doc: region '$name' in $in has its END marker before its BEGIN marker" >&2
+    return 1
+  fi
   awk -v begin="$begin" -v end="$end" -v content="$content" '
     $0 == begin { print; print ""; while ((getline line < content) > 0) print line; print ""; skip = 1; next }
     $0 == end   { skip = 0 }
@@ -99,8 +120,9 @@ render_doc() {
 # check_model_map_table <defaults.json> <doc> — the hand-written table under
 # "## Model map": for its `deep`/`standard`/`trivial` rows, the first
 # `**…**` token of each engine column (backticks stripped) must equal that
-# engine/tier's `default` in defaults.json. Prints every mismatch; returns
-# non-zero if any were found.
+# engine/tier's `default` in defaults.json. Prints every mismatch; also fails,
+# naming the problem, when the "## Model map" heading or its `Tier` table
+# header is not found, or when zero cells were compared.
 check_model_map_table() {
   local defaults="$1" doc="$2" lut rc=0
   lut="$(mktemp)"
@@ -152,6 +174,7 @@ check_model_map_table() {
           gsub(/^[ \t]+|[ \t]+$/, "", tok)
           eng = colengine[j]
           want = lut[eng, tier]
+          compared++
           if (tok != want) {
             printf "Model map table mismatch: %s/%s: doc has %s, defaults.json default is %s\n", eng, tier, tok, want
             mism = 1
@@ -159,10 +182,37 @@ check_model_map_table() {
         }
       }
     }
-    END { if (mism) exit 1 }
+    END {
+      if (!in_section) {
+        print "check_model_map_table: \"## Model map\" heading not found in " ARGV[2] > "/dev/stderr"
+        exit 1
+      }
+      if (!found_header) {
+        print "check_model_map_table: Tier table header not found under \"## Model map\" in " ARGV[2] > "/dev/stderr"
+        exit 1
+      }
+      if (compared == 0) {
+        print "check_model_map_table: no cells were compared in " ARGV[2] > "/dev/stderr"
+        exit 1
+      }
+      if (mism) exit 1
+    }
   ' "$lut" "$doc" || rc=$?
   rm -f "$lut"
   return "$rc"
+}
+
+# check_default_membership <defaults.json> — for every modelMap row, print a
+# violation when its `default` is not exactly one of its own `models`.
+check_default_membership() {
+  jq -r '
+    .modelMap
+    | to_entries[] as $e
+    | ($e.value | to_entries[]) as $t
+    | $t.value as $row
+    | select(($row.models // []) | index($row.default) == null)
+    | "Model map default membership: \($e.key)/\($t.key): default \($row.default) is not in its models"
+  ' "$1"
 }
 
 if [ "$check" = true ]; then
@@ -173,11 +223,16 @@ if [ "$check" = true ]; then
     fail=1
   fi
   check_model_map_table "$defaults" "$doc" || fail=1
+  membership_violations="$(check_default_membership "$defaults")"
+  if [ -n "$membership_violations" ]; then
+    printf '%s\n' "$membership_violations" >&2
+    fail=1
+  fi
   rm -f "$expected"
   exit "$fail"
 fi
 
 tmp="$(mktemp "${doc}.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
 render_doc "$defaults" "$doc" >"$tmp"
-chmod --reference="$doc" "$tmp"
-mv "$tmp" "$doc"
+cat "$tmp" >"$doc"

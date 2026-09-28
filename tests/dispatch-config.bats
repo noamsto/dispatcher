@@ -143,3 +143,30 @@ locked_settings() {
   [ "$status" -eq 2 ]
   [[ "$stderr" == *usage:* ]]
 }
+
+@test "engines must be a non-empty array of strings" {
+  user_settings '{"engines":[]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *engines* ]]
+}
+
+@test "openrouter must be an object" {
+  user_settings '{"openrouter":"x"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *openrouter* ]]
+}
+
+@test "a non-object locked openrouter is refused" {
+  locked_settings '{"openrouter":[]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *openrouter* ]]
+}
+
+@test "a whitespace-only DISPATCH_ENGINES enables nothing, same as unset" {
+  DISPATCH_ENGINES=" " run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c .engines <<<"$output")" = "$(jq -c .engines "$DEFAULTS")" ]
+}

@@ -217,9 +217,11 @@ Read `replanned` together with `rework_count`: it distinguishes ordinary mechani
 anything — no issue, no branch, no worktree, no window. It checks per-engine id
 _shape_, not membership of the table above, so a model bump needs no
 `dispatch.sh` edit — true for this gate; the Tier map gate below reads its
-rows from `adapters/core/defaults.json`, so a ladder bump is a
-`defaults.json` edit plus a rebuild, with `scripts/gen-adapters.sh`
-regenerating the tables (see "Tier map" below):
+rows from `adapters/core/defaults.json`, so a ladder bump is an edit to the
+row's `models` and its refusal text `expected` in `defaults.json` (plus
+`escalation` / `paceDowngrades` when a rung moves), followed by a rebuild,
+with `scripts/gen-adapters.sh` regenerating the tables (see "Tier map"
+below):
 
 - **claude** — an alias (`opus`, `sonnet`, `haiku`, `fable`) or a full
   `claude-*` id. An effort suffix is rejected: `claude-opus-5-high` is a
@@ -297,38 +299,34 @@ codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
 `composer-2.5-fast` on every tier, plus an effort-suffixed or bracketed
 cross-vendor `claude-*`/`gpt-*` id (the shape the Model gate's cursor arm
 already recognizes) on `deep` only. Pi accepts its tier's Model-map worker plus
-the rotation alternatives named there, on every profile: `deep`
-takes `openrouter/deepseek/deepseek-v4.1-flash`; `standard` takes
-`openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4-flash`,
-`openrouter/z-ai/glm-5.3-flash`, or `openrouter/qwen/qwen3.8-flash`; `trivial`
-takes `openrouter/deepseek/deepseek-v4-flash` or
-`openrouter/deepseek/deepseek-v4.1-flash`.
+the rotation alternatives named there, on every profile — see the generated
+table below for the per-tier lists.
 
 The table below is generated from `adapters/core/defaults.json`: for each
 engine × tier it lists the map's `default` (typical launch) model and
-everything the gate accepts at that row.
+everything the gate admits at that row.
 
 <!-- BEGIN generated:tier-rows from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
-| engine | tier | typical launch model | the gate accepts |
+| engine | tier | typical launch model | the gate admits |
 | --- | --- | --- | --- |
-| claude | `deep` | `opus` | opus, claude-opus-\*, sonnet, claude-sonnet-\*, fable, or claude-fable-\* |
-| claude | `standard` | `opus` | opus, claude-opus-\*, sonnet, or claude-sonnet-\* |
-| claude | `trivial` | `opus` | opus, claude-opus-\*, sonnet, claude-sonnet-\*, haiku, or claude-haiku-\* |
-| codex | `deep` | `gpt-5.6-sol` | gpt-5.6-sol, gpt-5.6-terra, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini) |
-| codex | `standard` | `gpt-5.6-terra` | gpt-5.6-terra, gpt-5.6-luna, or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini) |
-| codex | `trivial` | `gpt-5.6-luna` | gpt-5.6-luna or a legacy generation (gpt-5.5, gpt-5.4, gpt-5.4-mini) |
-| cursor | `deep` | `kimi-k3-high` | kimi-k3-high, grok-4.7-medium[-fast], grok-4.7-high[-fast] (or cursor-grok-4.6-\*), composer-2.5[-fast], or an effort-suffixed/bracketed claude-\*/gpt-\* id |
-| cursor | `standard` | `grok-4.7-medium` | grok-4.7-medium[-fast], grok-4.7-low[-fast] (or cursor-grok-4.6-\*), or composer-2.5[-fast] |
-| cursor | `trivial` | `grok-4.7-low` | grok-4.7-low[-fast] (or cursor-grok-4.6-low\*) or composer-2.5[-fast] |
-| pi | `deep` | `openrouter/deepseek/deepseek-v4.1-flash` | openrouter/deepseek/deepseek-v4.1-flash |
-| pi | `standard` | `openrouter/deepseek/deepseek-v4.1-flash` | openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash |
-| pi | `trivial` | `openrouter/deepseek/deepseek-v4-flash` | openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash |
+| claude | `deep` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `fable`, `claude-fable-*` |
+| claude | `standard` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*` |
+| claude | `trivial` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
+| codex | `deep` | `gpt-5.6-sol` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
+| codex | `standard` | `gpt-5.6-terra` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
+| codex | `trivial` | `gpt-5.6-luna` | `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
+| cursor | `deep` | `kimi-k3-high` | `kimi-k3-high`, `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-high`, `grok-4.7-high-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-high`, `cursor-grok-4.6-high-fast`, `composer-2.5`, `composer-2.5-fast`, plus ids matching the row's regex |
+| cursor | `standard` | `grok-4.7-medium` | `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
+| cursor | `trivial` | `grok-4.7-low` | `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
+| pi | `deep` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash` |
+| pi | `standard` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4-flash`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/qwen/qwen3.8-flash` |
+| pi | `trivial` | `openrouter/deepseek/deepseek-v4-flash` | `openrouter/deepseek/deepseek-v4-flash`, `openrouter/deepseek/deepseek-v4.1-flash` |
 
 <!-- END generated:tier-rows -->
 
-Reject with the tier, the model given, the row's expected model(s) (rendered
-from the Model map / Burn classes above), and `--ignore-map`.
+Reject with the tier, the model given, the row's expected model(s) (its
+`expected` text in `adapters/core/defaults.json`), and `--ignore-map`.
 
 **Override.** `--ignore-map` skips this gate for the dispatched model and is
 **silent when set** — mirroring `--ignore-budget` exactly, not

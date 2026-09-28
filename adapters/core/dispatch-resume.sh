@@ -755,9 +755,10 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" "dispatch resume"
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
 
-# _settings_load, _glob_match and _escalation_hop: duplicated from dispatch.sh
-# (standalone build), parity-tested. See dispatch.sh for their contracts: the
-# settings come from dispatch-config, the escalation rules from defaults.json.
+# _settings_load, _glob_match, _exact_match and _escalation_hop: duplicated
+# from dispatch.sh (standalone build), parity-tested. See dispatch.sh for
+# their contracts: the settings come from dispatch-config, the escalation
+# rules from defaults.json.
 _settings_load() {
   settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
   [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
@@ -769,6 +770,14 @@ _glob_match() {
   while IFS= read -r glob; do
     # shellcheck disable=SC2053 # the unquoted RHS is the glob
     if [[ $1 == $glob ]]; then return 0; fi
+  done
+  return 1
+}
+
+_exact_match() {
+  local x
+  while IFS= read -r x; do
+    if [ "$x" = "$1" ]; then return 0; fi
   done
   return 1
 }
@@ -785,7 +794,7 @@ _escalation_hop() {
   [ -n "$rule" ] || return 0
   if {
     read -r baseline
-    if [ "$5" = inRow ]; then _glob_match "$4"; else grep -qxF -- "$4"; fi
+    if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
   } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
     printf '%s' "$baseline"
   fi

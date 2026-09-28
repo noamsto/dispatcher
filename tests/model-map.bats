@@ -9,7 +9,7 @@ setup() {
   RESUME="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
   FIXTURES="$BATS_TEST_DIRNAME/fixtures/model-map"
   settings="$("$DISPATCH_CONFIG_BIN")"
-  for fn in _glob_match _model_in_row _row_expected _escalation_hop _pace_downgrade; do
+  for fn in _glob_match _exact_match _model_in_row _row_expected _escalation_hop _pace_downgrade; do
     eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
   done
 }
@@ -140,6 +140,24 @@ EOF
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "model map: the settings helpers are byte-identical between dispatch.sh and dispatch-resume.sh" {
   for fn in _settings_load _glob_match _escalation_hop; do
+    a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
+    b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
+    [ -n "$a" ]
+    [ "$a" = "$b" ]
+  done
+}
+
+@test "model map: outOfRow escalation compares exactly, not as a grep -F pattern" {
+  eval "$(sed -n "/^_exact_match() {/,/^}/p" "$DISPATCH")"
+  [ -z "$(_escalation_hop codex standard gpt-5.6-terra $'x\ngpt-5.6-sol' outOfRow)" ]
+  [ -z "$(_escalation_hop codex standard gpt-5.6-terra $'gpt-5.6-sol\n' outOfRow)" ]
+  [ "$(_escalation_hop codex standard gpt-5.6-terra gpt-5.6-sol outOfRow)" = terra ]
+}
+
+# dispatch-resume.sh is a standalone build, so it carries its own copy of
+# _exact_match too.
+@test "model map: the settings helpers (including _exact_match) are byte-identical between dispatch.sh and dispatch-resume.sh" {
+  for fn in _settings_load _glob_match _exact_match _escalation_hop; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
     [ -n "$a" ]
