@@ -422,3 +422,17 @@ setup() {
   [ "$(jq '.reviewers | length' <<<"$output")" -eq "$want" ]
   [ "$(jq '[.reviewers[] | select(.source != "harness")] | length' <<<"$output")" -eq 0 ]
 }
+
+@test "built consumers bake the settings resolver" {
+  for bin in "$OUT_DISPATCH/bin/dispatch" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" \
+    "$OUT_DISPATCHER/bin/dispatcher" "$OUT_REFRESH_BUDGET/bin/refresh-budget"; do
+    run grep -c '@dispatchConfig@' "$bin"
+    [ "$output" = "0" ]
+    run grep -q '/bin/dispatch-config' "$bin"
+    [ "$status" -eq 0 ]
+  done
+
+  run env -u DISPATCH_CONFIG_BIN -u DISPATCH_ENGINES -u DISPATCH_LOCKED_SETTINGS \
+    XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/cfg" "$OUT_DISPATCH/bin/dispatch" --engines
+  [ "$status" -eq 0 ]
+}

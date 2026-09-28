@@ -118,6 +118,11 @@ claude | codex | cursor | pi) ;;
   ;;
 esac
 
+# DISPATCH_ENGINES may come from the settings resolver (dispatch-config) when
+# unset in the environment — see dispatch-config.sh for the layer order.
+settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+[ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
+
 # Engine gate. Enabled (this machine's roster) and available (CLI installed).
 # Unset $DISPATCH_ENGINES means every engine. Duplicated from dispatch.sh on
 # purpose: adapters/core has no shared library, each script bakes standalone.

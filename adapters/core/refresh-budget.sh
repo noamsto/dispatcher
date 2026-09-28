@@ -45,6 +45,13 @@ STALE_AFTER_S=7200
 
 warn() { printf 'refresh-budget: %s\n' "$*" >&2; }
 
+# DISPATCH_OPENROUTER_MONTHLY_USD / DISPATCH_OPENROUTER_KEY_FILE may come from
+# the settings resolver (dispatch-config) when unset in the environment — see
+# dispatch-config.sh for the layer order.
+settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+[[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
+[[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
+
 # probe_claude — print the claude engine object via the OAuth usage endpoint,
 # falling back to a fresh statusline dump; return 1 when neither works.
 probe_claude() {

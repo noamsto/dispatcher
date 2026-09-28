@@ -351,3 +351,18 @@ _store_launcher_dirs() {
   [ "$status" -eq 0 ]
   grep -qx 'claude env /opt/protocols UNSET UNSET UNSET' "$STUB_LOG"
 }
+
+@test "a user-layer engine roster applies when the env roster is unset" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"engines":["claude","pi"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_launcher --agent codex
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--agent codex is not enabled here (enabled: claude pi)"* ]]
+}
+
+@test "the env roster outranks the user layer" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"engines":["claude","pi"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_ENGINES="claude codex pi" CREW_ID=c1 run run_launcher --agent codex
+  [ "$status" -eq 0 ]
+}
