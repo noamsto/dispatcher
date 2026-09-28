@@ -537,8 +537,8 @@ _add_dir_ok() {
     # between stops the -xdev descent. _hrep keeps the first link that reached
     # each dir for the refusal message.
     local -A _hdev=() _hrep=()
-    local -a _hscan=() _hcomps=()
-    local _hi _hdir _hanc _hhit _hrel _hwalk _hreach _hc
+    local -a _hscan=()
+    local _hi _hdir _hanc _hhit _hrel _hwalk _hreach _hc _hrest
     for _hi in "${!_hdirs[@]}"; do
       _hdir="${_hdirs[_hi]}"
       [ -n "${_hrep[$_hdir]+x}" ] || _hrep[$_hdir]="${_hlinks[_hi]}"
@@ -558,13 +558,18 @@ _add_dir_ok() {
         _hrel="${_hdir#"$_hanc"/}"
         _hwalk="$_hanc"
         _hreach=1
-        IFS=/ read -ra _hcomps <<<"$_hrel"
-        for _hc in "${_hcomps[@]}"; do
+        # split on / with parameter expansion, never a line-based read, so a
+        # component holding a newline stays one component
+        _hrest="$_hrel"
+        while :; do
+          _hc="${_hrest%%/*}"
           _hwalk="$_hwalk/$_hc"
           if [ "$(stat -L -c %d -- "$_hwalk" 2>/dev/null)" != "${_hdev[$_hanc]}" ]; then
             _hreach=""
             break
           fi
+          [ "$_hrest" = "$_hc" ] && break
+          _hrest="${_hrest#*/}"
         done
         if [ -n "$_hreach" ]; then
           _hhit=1
