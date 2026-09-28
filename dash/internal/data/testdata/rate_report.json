@@ -1,0 +1,150 @@
+[
+  {
+    "engine": "claude",
+    "model": "opus",
+    "tier": "deep",
+    "n": {
+      "value": 2,
+      "k": 2,
+      "n": 2
+    },
+    "inc": 0,
+    "run": 0,
+    "pend": 0,
+    "pr_pct": {
+      "value": 100,
+      "k": 2,
+      "n": 2
+    },
+    "merge_pct": {
+      "value": 100,
+      "k": 2,
+      "n": 2
+    },
+    "ttpr_ms": {
+      "value": 100,
+      "k": 2,
+      "n": 2
+    },
+    "ttmerge_ms": {
+      "value": 200,
+      "k": 2,
+      "n": 2
+    },
+    "rework": {
+      "value": 0,
+      "k": 2,
+      "n": 2
+    },
+    "high": {
+      "value": null,
+      "k": 0,
+      "n": 2
+    },
+    "rounds": {
+      "value": 0,
+      "k": 2,
+      "n": 2
+    },
+    "blocked": {
+      "value": 0,
+      "k": 2,
+      "n": 2
+    },
+    "ci1_pct": {
+      "value": 100,
+      "k": 2,
+      "n": 2
+    },
+    "notes": {
+      "value": 0,
+      "k": 2,
+      "n": 2
+    },
+    "rev": 0,
+    "cost_hours": {
+      "value": 1.5,
+      "k": 2,
+      "n": 2
+    },
+    "burn_median": {
+      "value": 1.5,
+      "k": 2,
+      "n": 2
+    }
+  },
+  {
+    "engine": "codex",
+    "model": "gpt-5.6-terra",
+    "tier": "standard",
+    "n": {
+      "value": 1,
+      "k": 1,
+      "n": 1
+    },
+    "inc": 0,
+    "run": 0,
+    "pend": 1,
+    "pr_pct": {
+      "value": 100,
+      "k": 1,
+      "n": 1
+    },
+    "merge_pct": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    },
+    "ttpr_ms": {
+      "value": 100,
+      "k": 1,
+      "n": 1
+    },
+    "ttmerge_ms": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    },
+    "rework": {
+      "value": 0,
+      "k": 1,
+      "n": 1
+    },
+    "high": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    },
+    "rounds": {
+      "value": 0,
+      "k": 1,
+      "n": 1
+    },
+    "blocked": {
+      "value": 0,
+      "k": 1,
+      "n": 1
+    },
+    "ci1_pct": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    },
+    "notes": {
+      "value": 0,
+      "k": 1,
+      "n": 1
+    },
+    "rev": 0,
+    "cost_hours": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    },
+    "burn_median": {
+      "value": null,
+      "k": 0,
+      "n": 1
+    }
+  }
+]

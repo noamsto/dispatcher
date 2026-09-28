@@ -1,8 +1,19 @@
 bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
+# setup_file — build the Go binary once for the whole suite. $CREW_DASH_BIN,
+# when the caller already set it (e.g. `nix build .#crew-dash`), is used as
+# is and works offline; otherwise `go build` produces one into
+# $BATS_FILE_TMPDIR, which every test's setup() below points CREW_DASH_BIN at.
+setup_file() {
+  if [ -z "${CREW_DASH_BIN:-}" ]; then
+    (cd "$BATS_TEST_DIRNAME/../dash" && go build -o "$BATS_FILE_TMPDIR/crew-dash" .)
+  fi
+}
+
 setup() {
   load helpers
-  SCRIPT="$BATS_TEST_DIRNAME/../adapters/core/crew-dash.sh"
+  CREW_DASH_BIN="${CREW_DASH_BIN:-$BATS_FILE_TMPDIR/crew-dash}"
+  export CREW_DASH_BIN
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   FIXTURES="$BATS_TEST_DIRNAME/fixtures/crew-dash"
   setup_repo
@@ -25,6 +36,9 @@ EOF
 
   SHIM_NOW=1790000000
   export SHIM_NOW
+  # The Go binary reads its own clock from CREW_DASH_NOW (refresh-budget and
+  # crew roster still go through the date shim above for theirs).
+  export CREW_DASH_NOW=1790000000
   cat >"$STUB_DIR/date" <<EOF
 #!/usr/bin/env bash
 if [[ -n "\${SHIM_NOW:-}" && "\$#" -eq 1 && "\$1" == "+%s" ]]; then
@@ -66,109 +80,7 @@ EOF
 }
 
 teardown() {
-  "$REAL_TMUX" -L dash kill-server 2>/dev/null || true
   teardown_repo
-}
-
-# _dash_launcher — write a script that sets up the same environment as the
-# other tests (STUB_DIR on PATH, XDG_*, dispatch-config/locked-settings,
-# SHIM_NOW, NO_COLOR unset) and execs crew-dash.sh from the test repo. Prints
-# its path. Used only by the real-tmux interactive tests below.
-_dash_launcher() {
-  local out="$BATS_TEST_TMPDIR/dash-launch.sh"
-  cat >"$out" <<EOF
-#!/usr/bin/env bash
-export PATH="$PATH"
-export XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
-export XDG_DATA_HOME="$XDG_DATA_HOME"
-export DISPATCH_CONFIG_BIN="$DISPATCH_CONFIG_BIN"
-export DISPATCH_LOCKED_SETTINGS="$DISPATCH_LOCKED_SETTINGS"
-export SHIM_NOW="$SHIM_NOW"
-unset NO_COLOR
-cd "$TEST_REPO"
-exec bash "$SCRIPT"
-EOF
-  chmod +x "$out"
-  printf '%s' "$out"
-}
-
-# _dash_wait_ready <sock> <target> — poll capture-pane until the status line
-# (last line, starting " r refresh") shows up, i.e. the first frame painted.
-# Leaves the last capture in $DASH_CAP.
-_dash_wait_ready() {
-  local sock="$1" target="$2" tries=0
-  while [ "$tries" -lt 50 ]; do
-    DASH_CAP="$("$REAL_TMUX" -L "$sock" capture-pane -p -t "$target")"
-    case "$(printf '%s\n' "$DASH_CAP" | tail -n1)" in
-    " r refresh"*) return 0 ;;
-    esac
-    tries=$((tries + 1))
-    sleep 0.2
-  done
-  return 1
-}
-
-# _dash_wait_contains <sock> <target> <needle> — poll until a capture
-# contains $needle anywhere. Leaves the last capture in $DASH_CAP.
-_dash_wait_contains() {
-  local sock="$1" target="$2" needle="$3" tries=0
-  while [ "$tries" -lt 50 ]; do
-    DASH_CAP="$("$REAL_TMUX" -L "$sock" capture-pane -p -t "$target")"
-    case "$DASH_CAP" in
-    *"$needle"*) return 0 ;;
-    esac
-    tries=$((tries + 1))
-    sleep 0.2
-  done
-  return 1
-}
-
-# _dash_wait_lines <sock> <target> <n> — poll until a capture has exactly $n
-# lines and looks like a settled frame (status line last). Leaves the last
-# capture in $DASH_CAP.
-_dash_wait_lines() {
-  local sock="$1" target="$2" n="$3" tries=0
-  while [ "$tries" -lt 50 ]; do
-    DASH_CAP="$("$REAL_TMUX" -L "$sock" capture-pane -p -t "$target")"
-    if [ "$(printf '%s\n' "$DASH_CAP" | wc -l)" -eq "$n" ]; then
-      case "$(printf '%s\n' "$DASH_CAP" | tail -n1)" in
-      " r refresh"*) return 0 ;;
-      esac
-    fi
-    tries=$((tries + 1))
-    sleep 0.2
-  done
-  return 1
-}
-
-# _dash_wait_row_ellipsis <sock> <target> <needle> — poll until the line
-# containing $needle, right-trimmed, ends in "…". A resize's repaint lands up
-# to ~1s after the WINCH (the key-read loop's timeout), so a single capture
-# right after resize-window can still show the pre-resize frame cropped by
-# tmux to the new pane size — which trivially has the right line/col counts
-# without proving a real repaint happened; this polls past that window.
-# Leaves the last capture in $DASH_CAP.
-_dash_wait_row_ellipsis() {
-  local sock="$1" target="$2" needle="$3" tries=0 line trimmed
-  while [ "$tries" -lt 50 ]; do
-    DASH_CAP="$("$REAL_TMUX" -L "$sock" capture-pane -p -t "$target")"
-    line="$(printf '%s\n' "$DASH_CAP" | grep -F "$needle" | head -1)"
-    if [ -n "$line" ]; then
-      trimmed="$(_rtrim "$line")"
-      case "$trimmed" in
-      *…) return 0 ;;
-      esac
-    fi
-    tries=$((tries + 1))
-    sleep 0.2
-  done
-  return 1
-}
-
-# _rtrim <text> — trailing whitespace stripped.
-_rtrim() {
-  local s="$1"
-  printf '%s' "${s%"${s##*[![:space:]]}"}"
 }
 
 # normalize_golden — the layer paths live under $BATS_TEST_TMPDIR (unique per
@@ -186,7 +98,7 @@ normalize_golden() {
 # ---------------------------------------------------------------------------
 
 @test "--once with NO_COLOR matches the golden" {
-  NO_COLOR=1 run bash "$SCRIPT" --once
+  NO_COLOR=1 run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   diff <(printf '%s\n' "$output" | normalize_golden) "$FIXTURES/once.golden"
 }
@@ -196,11 +108,11 @@ normalize_golden() {
 # ---------------------------------------------------------------------------
 
 @test "--once to a pipe carries no color by default; CREW_DASH_COLOR=always matches the color golden" {
-  run bash -c "bash '$SCRIPT' --once | cat"
+  run bash -c "'$CREW_DASH_BIN' --once | cat"
   [ "$status" -eq 0 ]
   [[ "$output" != *$'\e['* ]]
 
-  CREW_DASH_COLOR=always run bash "$SCRIPT" --once
+  CREW_DASH_COLOR=always run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   diff <(printf '%s\n' "$output" | normalize_golden) "$FIXTURES/once-color.golden"
   [[ "$output" == *$'\e[1;33m'* ]]
@@ -211,7 +123,7 @@ normalize_golden() {
 # ---------------------------------------------------------------------------
 
 @test "--json shape: settings origin/editable, layers, top-level keys" {
-  run bash "$SCRIPT" --json
+  run "$CREW_DASH_BIN" --json
   [ "$status" -eq 0 ]
   json_out="$output"
 
@@ -233,7 +145,7 @@ normalize_golden() {
 # ---------------------------------------------------------------------------
 
 @test "a broken dispatch-config degrades only the settings pane" {
-  DISPATCH_CONFIG_BIN=false run bash "$SCRIPT" --once
+  DISPATCH_CONFIG_BIN=false run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   settings_section="$(printf '%s\n' "$output" | sed -n '/== Settings ==/,/== Budget ==/p')"
   [[ "$settings_section" == *"unavailable: exit 1"* ]]
@@ -247,7 +159,7 @@ normalize_golden() {
 
 @test "a stripped grantRoots key surfaces as a settings warning, never on stderr" {
   cp "$FIXTURES/user-settings-grantroots.json" "$XDG_CONFIG_HOME/dispatcher/settings.json"
-  run --separate-stderr bash "$SCRIPT" --once
+  run --separate-stderr "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"warning: dispatch-config: ignoring grantRoots from "* ]]
   [ -z "$stderr" ]
@@ -265,7 +177,7 @@ normalize_golden() {
   jq -nc '{ts: 5000, crew_id: "c1", from: "dispatcher:c1", to: "retro:c1", kind: "msg", body: ("{\"seam\":\"drained\",\"tag\":\"misrouted\",\"detail\":\"trivial\"}")}' >>"$logf"
   jq -nc '{ts: 5100, crew_id: "c1", from: "dispatcher:c1", to: "retro:c1", kind: "msg", body: ("{\"seam\":\"drained\",\"tag\":\"session_summary\",\"detail\":\"khaki: deep/claude/opus done\"}")}' >>"$logf"
 
-  run bash "$SCRIPT" --once
+  run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"crew c1"* ]]
   [[ "$output" == *"summary: khaki: deep/claude/opus done"* ]]
@@ -281,7 +193,7 @@ normalize_golden() {
 # ---------------------------------------------------------------------------
 
 @test "--once never truncates a long locked value" {
-  run bash "$SCRIPT" --once
+  run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"ディレクトリ/and-more"* ]]
 }
@@ -308,7 +220,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 @test "an unknown argument exits 2 with usage" {
-  run --separate-stderr bash "$SCRIPT" --bogus
+  run --separate-stderr "$CREW_DASH_BIN" --bogus
   [ "$status" -eq 2 ]
   [[ "$stderr" == "usage: crew dash [--once | --json]" ]]
 }
@@ -325,7 +237,7 @@ EOF
   # (which treats \\ as an escaped single backslash), so the backslash
   # counts stay exact.
   jq -n '{repoTrackers: {"noamsto/dispatcher": "a\\b"}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
-  run bash "$SCRIPT" --once
+  run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   grep -qF 'noamsto/dispatcher: "a\\b"' <<<"$output"
   ! grep -qF 'noamsto/dispatcher: "a\\\\b"' <<<"$output"
@@ -339,7 +251,7 @@ EOF
   bigfile="$BATS_TEST_TMPDIR/big.txt"
   head -c 300000 /dev/zero | tr '\0' 'a' >"$bigfile"
   jq -n --rawfile big "$bigfile" '{profile: $big}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
-  run bash "$SCRIPT" --once
+  run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"== Settings =="* ]]
   [[ "$output" == *"== Budget =="* ]]
@@ -360,105 +272,8 @@ retro) echo '{"tags":[],"unknown":[]}' ;;
 esac
 EOF
   chmod +x "$STUB_DIR/crew"
-  run bash "$SCRIPT" --once
+  run "$CREW_DASH_BIN" --once
   [ "$status" -eq 0 ]
   [[ "$output" == *"no retro notes yet"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# 13. trunc() unit checks (no tty, no collector)
-# ---------------------------------------------------------------------------
-
-@test "trunc: ascii, locked-emoji, CJK, short and exact-fit widths" {
-  input=$'10\tabcdefghijkl\n6\t🔒 locked-row\n7\tディレクトリ\n10\tshort\n6\tディレ\n'
-  run env CREW_DASH_TRUNC_TEST=1 bash "$SCRIPT" <<<"$input"
-  [ "$status" -eq 0 ]
-  mapfile -t lines <<<"$output"
-  [ "${lines[0]}" = "abcdefghi…" ]
-  [ "${lines[1]}" = "🔒 lo…" ]
-  [ "${lines[2]}" = "ディレ…" ]
-  [ "${lines[3]}" = "short" ]
-  [ "${lines[4]}" = "ディレ" ]
-}
-
-# ---------------------------------------------------------------------------
-# 14. Interactive: first frame at 80x24
-# ---------------------------------------------------------------------------
-
-@test "interactive renders at 80x24 with truncation, not wrap" {
-  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
-  launcher="$(_dash_launcher)"
-  "$REAL_TMUX" -L dash -f /dev/null new-session -d -s d -x 80 -y 24 "$launcher"
-  "$REAL_TMUX" -L dash set-option -t d remain-on-exit on
-  _dash_wait_ready dash d
-
-  [ "$(printf '%s\n' "$DASH_CAP" | wc -l)" -eq 24 ]
-  [[ "$(printf '%s\n' "$DASH_CAP" | sed -n '1p')" == *"1 Settings"* ]]
-
-  maxw="$(printf '%s\n' "$DASH_CAP" | LC_ALL=C.UTF-8 wc -L)"
-  [ "$maxw" -le 80 ]
-
-  kf_num="$(printf '%s\n' "$DASH_CAP" | grep -n 'keyFile:' | head -1 | cut -d: -f1)"
-  [ -n "$kf_num" ]
-  kf_line="$(printf '%s\n' "$DASH_CAP" | sed -n "${kf_num}p")"
-  trimmed="$(_rtrim "$kf_line")"
-  case "$trimmed" in
-  *…) ;;
-  *)
-    echo "keyFile line does not end with an ellipsis: [$trimmed]" >&2
-    return 1
-    ;;
-  esac
-  next_num=$((kf_num + 1))
-  next_line="$(printf '%s\n' "$DASH_CAP" | sed -n "${next_num}p")"
-  [[ "$next_line" == *"repoTrackers"* ]]
-
-  [[ "$(printf '%s\n' "$DASH_CAP" | sed -n '24p')" == " r refresh"* ]]
-}
-
-# ---------------------------------------------------------------------------
-# 15. Interactive: pane switch + resize
-# ---------------------------------------------------------------------------
-
-@test "switching pane and resizing repaints within the new size" {
-  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
-  launcher="$(_dash_launcher)"
-  "$REAL_TMUX" -L dash -f /dev/null new-session -d -s d -x 80 -y 24 "$launcher"
-  "$REAL_TMUX" -L dash set-option -t d remain-on-exit on
-  _dash_wait_ready dash d
-
-  "$REAL_TMUX" -L dash send-keys -t d 2
-  _dash_wait_contains dash d "claude (oauth_usage)"
-
-  "$REAL_TMUX" -L dash resize-window -t d -x 60 -y 20
-  _dash_wait_lines dash d 20
-  _dash_wait_row_ellipsis dash d "3d 12h"
-
-  [ "$(printf '%s\n' "$DASH_CAP" | wc -l)" -eq 20 ]
-  maxw="$(printf '%s\n' "$DASH_CAP" | LC_ALL=C.UTF-8 wc -L)"
-  [ "$maxw" -le 60 ]
-}
-
-# ---------------------------------------------------------------------------
-# 16. Interactive: quit
-# ---------------------------------------------------------------------------
-
-@test "q exits cleanly and leaves the alternate screen" {
-  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
-  launcher="$(_dash_launcher)"
-  "$REAL_TMUX" -L dash -f /dev/null new-session -d -s d -x 80 -y 24 "$launcher"
-  "$REAL_TMUX" -L dash set-option -t d remain-on-exit on
-  _dash_wait_ready dash d
-
-  "$REAL_TMUX" -L dash send-keys -t d q
-
-  tries=0
-  status_out=""
-  while [ "$tries" -lt 50 ]; do
-    status_out="$("$REAL_TMUX" -L dash display -p -t d '#{pane_dead} #{pane_dead_status}')"
-    [ "$status_out" = "1 0" ] && break
-    tries=$((tries + 1))
-    sleep 0.2
-  done
-  [ "$status_out" = "1 0" ]
-}

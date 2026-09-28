@@ -1,0 +1,313 @@
+{
+  "now": 1790000000,
+  "settings": {
+    "layers": {
+      "base": "<BASE>",
+      "user": {
+        "path": "<USER>",
+        "present": true
+      },
+      "locked": "<LOCKED>"
+    },
+    "rows": [
+      {
+        "path": [
+          "engines"
+        ],
+        "value": [
+          "claude",
+          "pi"
+        ],
+        "origin": "user",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "profile"
+        ],
+        "value": "work",
+        "origin": "locked",
+        "locked_only": false,
+        "editable": false
+      },
+      {
+        "path": [
+          "modelMap",
+          "claude",
+          "deep",
+          "default"
+        ],
+        "value": "opus",
+        "origin": "base",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "openrouter",
+          "monthlyUsd"
+        ],
+        "value": 20,
+        "origin": "base",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "openrouter",
+          "keyFile"
+        ],
+        "value": "/run/agenix/a-very-long-key-file-path-that-overflows-eighty-columns/ディレクトリ/and-more",
+        "origin": "locked",
+        "locked_only": true,
+        "editable": false
+      },
+      {
+        "path": [
+          "repoTrackers",
+          "noamsto/dispatcher"
+        ],
+        "value": "github",
+        "origin": "user",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "grantRoots"
+        ],
+        "value": [
+          "/a/git"
+        ],
+        "origin": "locked",
+        "locked_only": true,
+        "editable": false
+      }
+    ],
+    "warnings": [],
+    "error": null
+  },
+  "budget": {
+    "report": {
+      "fetched_epoch": 1789999400,
+      "engines": {
+        "claude": {
+          "source": "oauth_usage",
+          "plan_type": null,
+          "credits_cover": false,
+          "spend_usd": null,
+          "target_usd": null,
+          "elapsed_pct": null,
+          "projected_month_end_usd": null,
+          "windows": [
+            {
+              "key": "5h",
+              "used_pct": 10,
+              "resets_at": 1790007200,
+              "resets_in_s": 7200,
+              "ahead_pts": null,
+              "verdict": null
+            },
+            {
+              "key": "7d",
+              "used_pct": 90,
+              "resets_at": 1790302400,
+              "resets_in_s": 302400,
+              "ahead_pts": 40,
+              "verdict": "real budget: prefer a cheaper burn class or rotate engines"
+            }
+          ],
+          "projection": null
+        },
+        "codex": {
+          "source": "app_server",
+          "plan_type": "pro",
+          "credits_cover": null,
+          "spend_usd": null,
+          "target_usd": null,
+          "elapsed_pct": null,
+          "projected_month_end_usd": null,
+          "windows": [
+            {
+              "key": "5h",
+              "used_pct": 30,
+              "resets_at": 1790003600,
+              "resets_in_s": 3600,
+              "ahead_pts": null,
+              "verdict": null
+            }
+          ],
+          "projection": null
+        },
+        "cursor": null,
+        "pi": null
+      }
+    },
+    "warnings": [],
+    "error": null
+  },
+  "runs": {
+    "retro": {
+      "tags": [],
+      "unknown": [],
+      "rows": []
+    },
+    "retro_error": null,
+    "ratings": [
+      {
+        "engine": "claude",
+        "model": "opus",
+        "tier": "deep",
+        "n": {
+          "value": 2,
+          "k": 2,
+          "n": 2
+        },
+        "inc": 0,
+        "run": 0,
+        "pend": 0,
+        "pr_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "merge_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "ttpr_ms": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "ttmerge_ms": {
+          "value": 200,
+          "k": 2,
+          "n": 2
+        },
+        "rework": {
+          "value": 0,
+          "k": 2,
+          "n": 2
+        },
+        "high": {
+          "value": null,
+          "k": 0,
+          "n": 2
+        },
+        "rounds": {
+          "value": 0,
+          "k": 2,
+          "n": 2
+        },
+        "blocked": {
+          "value": 0,
+          "k": 2,
+          "n": 2
+        },
+        "ci1_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "notes": {
+          "value": 0,
+          "k": 2,
+          "n": 2
+        },
+        "rev": 0,
+        "cost_hours": {
+          "value": 1.5,
+          "k": 2,
+          "n": 2
+        },
+        "burn_median": {
+          "value": 1.5,
+          "k": 2,
+          "n": 2
+        }
+      },
+      {
+        "engine": "codex",
+        "model": "gpt-5.6-terra",
+        "tier": "standard",
+        "n": {
+          "value": 1,
+          "k": 1,
+          "n": 1
+        },
+        "inc": 0,
+        "run": 0,
+        "pend": 1,
+        "pr_pct": {
+          "value": 100,
+          "k": 1,
+          "n": 1
+        },
+        "merge_pct": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        },
+        "ttpr_ms": {
+          "value": 100,
+          "k": 1,
+          "n": 1
+        },
+        "ttmerge_ms": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        },
+        "rework": {
+          "value": 0,
+          "k": 1,
+          "n": 1
+        },
+        "high": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        },
+        "rounds": {
+          "value": 0,
+          "k": 1,
+          "n": 1
+        },
+        "blocked": {
+          "value": 0,
+          "k": 1,
+          "n": 1
+        },
+        "ci1_pct": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        },
+        "notes": {
+          "value": 0,
+          "k": 1,
+          "n": 1
+        },
+        "rev": 0,
+        "cost_hours": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        },
+        "burn_median": {
+          "value": null,
+          "k": 0,
+          "n": 1
+        }
+      }
+    ],
+    "ratings_error": null
+  },
+  "roster": {
+    "crews": [],
+    "error": null
+  }
+}

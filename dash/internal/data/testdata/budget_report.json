@@ -1,0 +1,55 @@
+{
+  "fetched_epoch": 1789999400,
+  "engines": {
+    "claude": {
+      "source": "oauth_usage",
+      "plan_type": null,
+      "credits_cover": false,
+      "spend_usd": null,
+      "target_usd": null,
+      "elapsed_pct": null,
+      "projected_month_end_usd": null,
+      "windows": [
+        {
+          "key": "5h",
+          "used_pct": 10,
+          "resets_at": 1790007200,
+          "resets_in_s": 7200,
+          "ahead_pts": null,
+          "verdict": null
+        },
+        {
+          "key": "7d",
+          "used_pct": 90,
+          "resets_at": 1790302400,
+          "resets_in_s": 302400,
+          "ahead_pts": 40,
+          "verdict": "real budget: prefer a cheaper burn class or rotate engines"
+        }
+      ],
+      "projection": null
+    },
+    "codex": {
+      "source": "app_server",
+      "plan_type": "pro",
+      "credits_cover": null,
+      "spend_usd": null,
+      "target_usd": null,
+      "elapsed_pct": null,
+      "projected_month_end_usd": null,
+      "windows": [
+        {
+          "key": "5h",
+          "used_pct": 30,
+          "resets_at": 1790003600,
+          "resets_in_s": 3600,
+          "ahead_pts": null,
+          "verdict": null
+        }
+      ],
+      "projection": null
+    },
+    "cursor": null,
+    "pi": null
+  }
+}
