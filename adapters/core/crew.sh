@@ -4686,11 +4686,9 @@ pr-watch)
   printf '%s\n' "$ev"
   ;;
 git-baseline)
-  # Review for the exec-capable git-config baseline _wt_cfg_guard enforces
-  # (#557). Never records a missing one: only a dispatch does, before any
-  # worker of the crew exists. Values ARE shown here — a human run, they need
-  # to see what drifted — %q-escaped, so a planted ESC/CR cannot redraw the
-  # terminal.
+  # Lists drift from the git-config baseline (#557); never records one — only
+  # a dispatch does, before its workers exist. Values are shown %q-escaped so a
+  # planted ESC/CR cannot redraw the terminal.
   if [ $# -gt 0 ]; then
     echo "crew: git-baseline takes no arguments" >&2
     exit 1
