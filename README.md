@@ -248,53 +248,82 @@ programs.dispatcher = {
     monthlyTarget = 50;
     keyFile = "/run/agenix/openrouter";
   };
+  userSettings = "/home/me/nix-config/home/ai/dispatcher/settings.json";
 };
 ```
 
 That puts `crew`, `dispatch`, `dispatcher`, `refresh-scores`, `refresh-budget`,
-`refresh-models` and `pr-watch` on `PATH`, exports `DISPATCH_PROFILE`,
-`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
-`DISPATCH_ORG_TRACKERS`, `DISPATCHER_PROTOCOL_DIR`,
-`DISPATCHER_REVIEWERS_DIR`, `DISPATCHER_CRITICS_DIR`,
-`DISPATCHER_SKILLS_DIR`, `DISPATCH_OPENROUTER_MONTHLY_USD` and
-`DISPATCH_OPENROUTER_KEY_FILE`, installs the Codex plugin and writes the
-Cursor rule, commands, skills and rosters when those engines are included in
-`engines`.
+`refresh-models`, `pr-watch` and `dispatch-config` on `PATH`, exports only the
+four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
+`DISPATCHER_CRITICS_DIR` and `DISPATCHER_SKILLS_DIR` session variables,
+installs the Codex plugin and writes the Cursor rule, commands, skills and
+rosters when those engines are included in `engines`. The settings above
+(`profile`, `engines`, `grantRoots`, `repoTrackers`, `orgTrackers`,
+`openrouter`) are not exported as `DISPATCH_*`: they go into a locked settings
+file baked into `dispatch-config` and every CLI that resolves through it
+(`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
+locked-layer path is exported to go stale. `userSettings` symlinks
+`${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json` out of the store to a
+file you manage — above, a git-tracked file in a nix-config repo. The module
+does not create the target.
 
 ### Settings
 
 `dispatch-config` resolves the module's settings as one JSON tree from four
 layers, each overriding the last: **base** (`adapters/core/defaults.json`,
 baked in at build), **user**
-(`${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json`, optional),
-**locked** (the file named by `$DISPATCH_LOCKED_SETTINGS`, optional), and
-**env** (`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`,
-`DISPATCH_OPENROUTER_MONTHLY_USD`, `DISPATCH_OPENROUTER_KEY_FILE`).
-`dispatch-config --show-origin` shows which layer set each value; the module
-does not install it yet, so run it as `nix run .#dispatch-config --
---show-origin` from a checkout.
+(`${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json`, optional — this is
+what `programs.dispatcher.userSettings` symlinks to), **locked** (a
+home-manager install bakes its generated JSON file directly into the binary;
+a plain checkout or `nix run .#dispatch-config` instead honours the file
+named by `$DISPATCH_LOCKED_SETTINGS`, optional), and **env** (`DISPATCH_PROFILE`,
+`DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
+`DISPATCH_ORG_TRACKERS`, `DISPATCH_OPENROUTER_MONTHLY_USD`,
+`DISPATCH_OPENROUTER_KEY_FILE`) — all per-launch overrides, never exported by
+the module. `dispatch-config --show-origin` shows which layer set each value.
+A baked build ignores `$DISPATCH_LOCKED_SETTINGS` (a stderr notice if it names
+another file); a raw-source run or the flake's plain `packages` output honours
+it as the dev/test override it always was.
 `grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
 are honoured only from the locked layer or the environment — a copy in the
 base or user layer is dropped with a warning. The model map itself lives in
 `adapters/core/defaults.json`: edit it, then run `scripts/gen-adapters.sh` to
 regenerate the Tier map's doc tables and the adapter mirrors.
 
-`repoTrackers` and `orgTrackers` say where a repo's work is tracked. `dispatch`
-stamps that on every fresh task (`tracker: linear ENG` or `tracker: github`)
-and a worker reads the stamp. Precedence is the per-repo entry, then the
-origin org's default, then `github`. With the block above,
-`factify-inc/mono = "linear:ENG"` and the org default
-`factify-inc = "linear:ENG"`, so `factify-inc/mono` resolves to `linear:ENG`.
-Another repo in that org with no per-repo entry resolves to `linear:ENG` from
-the org default. A value is `github` or `linear:TEAM`. Both maps export as
-space-separated `key=value` lists (`factify-inc/mono=linear:ENG`,
-`factify-inc=linear:ENG`); an empty map exports an empty string.
+`engines` defaults to unset (`null`): Nix can't see what an out-of-store user
+settings file enables, so an unset `engines` leaves the key out of the locked
+layer entirely (the user file's `engines` governs, or — absent that too — all
+four engines at runtime, still gated on what's installed) and installs the
+codex and cursor artifacts regardless. Upgrading from a version that defaulted
+to `["claude" "pi"]`: set `programs.dispatcher.engines` explicitly to keep that
+roster and avoid the new cursor `home.file` entries colliding with any
+hand-managed `~/.cursor` files.
+
+`repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
+settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case
+insensitive) rather than env vars. `dispatch` stamps that on every fresh task
+(`tracker: linear ENG` or `tracker: github`) and a worker reads the stamp.
+Precedence is the per-repo entry, then the origin org's default, then
+`github`. With the block above, `factify-inc/mono = "linear:ENG"` and the org
+default `factify-inc = "linear:ENG"`, so `factify-inc/mono` resolves to
+`linear:ENG`. Another repo in that org with no per-repo entry resolves to
+`linear:ENG` from the org default. The maps merge per key across layers, not
+whole-map replace: a Nix-set entry wins for its own key, while a user-file (or
+env) entry for any other repo or org still applies. Without a rebuild, set
+`DISPATCH_REPO_TRACKERS` / `DISPATCH_ORG_TRACKERS` as whitespace-separated
+`key=value` pairs (`factify-inc/mono=linear:ENG factify-inc=linear:ENG`); a
+repeated key is last-wins, and an empty var contributes nothing.
 
 `dispatch --add-dir` grants a dir only when it resolves inside a `grantRoots`
 entry; unset or empty (the default) refuses every `--add-dir`. This is
 breaking for anyone already using `--add-dir` — set `grantRoots` to keep it
-working. A changed value only reaches `dispatch` from a fresh login shell or
-tmux server (#303).
+working. Unlike the env-exported settings this replaced, a Nix-set `grantRoots`
+is baked into the binaries at build time and takes effect on the next rebuild,
+no fresh login shell or tmux server required (#303) — the remaining caveat is
+a long-lived tmux server or login shell that still holds a previous
+generation's exported `DISPATCH_*` value: that stale env overrides every layer
+until it's unset (`tmux set-environment -gu DISPATCH_ENGINES` and similarly for
+any other `DISPATCH_*` var, in every shell) or the server/shell restarts.
 
 `openrouter.monthlyTarget` sets a monthly USD spend target for pi
 (OpenRouter, usage-priced). `refresh-budget` measures month-to-date spend
