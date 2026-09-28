@@ -34,11 +34,8 @@ fi
 defaults="${1:-$root/adapters/core/defaults.json}"
 doc="${2:-$root/adapters/core/protocols/dispatch-orchestration.md}"
 
-# render_tier_rows <defaults.json> — the "| engine | tier | typical launch
-# model | the gate admits |" table, one row per engine x tier in data order;
-# the last column is the row's `models` (globs backticked, the literal-bracket
-# escape `\[` shown as `[`), plus a note when the row also admits ids by
-# `regex`.
+# render_tier_rows <defaults.json> — one row per engine x tier in data order;
+# the literal-bracket glob escape `\[` is shown as `[`.
 render_tier_rows() {
   printf '| engine | tier | typical launch model | the gate admits |\n'
   printf '| --- | --- | --- | --- |\n'
@@ -56,10 +53,8 @@ render_tier_rows() {
   ' "$1"
 }
 
-# render_pace_downgrades <defaults.json> — the "| engine | premium |
-# downgrade target |" table, one row per paceDowngrades entry (globs
-# backticked, the literal-bracket escape `\[` shown as `[`); an engine in
-# modelMap with no paceDowngrades entry (pi) gets a fixed effort-only row.
+# render_pace_downgrades <defaults.json> — one row per paceDowngrades entry;
+# an engine with none (pi) is refused on effort only, so it gets a fixed row.
 render_pace_downgrades() {
   printf '| engine | premium | downgrade target |\n'
   printf '| --- | --- | --- |\n'
