@@ -10,6 +10,16 @@
 # flake.nix; raw-source runs (bats) point $WORKTREE_GIT_LIB at this file.
 # Sourced, never executed — the shebang keeps the CI shellcheck glob happy.
 
+# _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
+# genuine crew dir, branch and gitdir, keyed by <wt>'s own realpath. One shared
+# definition for dispatch (writer), dispatch-resume (reader) and crew reap
+# (pruner), so the key format can never drift between them.
+_worktree_anchor_path() {
+  local key
+  key="$(printf %s "$(realpath -e -- "$1")" | sha256sum | cut -c1-64)"
+  printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
+}
+
 _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<id>
   local common="$1" wt_git gitdir_file back admin_dir
   wt_git="$(realpath -m -- "$2/.git")"

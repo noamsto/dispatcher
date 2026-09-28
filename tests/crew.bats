@@ -127,6 +127,22 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
+# anchor_record_path <wt> — the dispatcher anchor record path for <wt>, as the
+# shared worktree-git lib derives it (#556).
+anchor_record_path() {
+  printf '%s/crew/worktrees/%s\n' "$XDG_DATA_HOME" \
+    "$(printf %s "$(realpath -e "$1")" | sha256sum | cut -c1-64)"
+}
+
+# write_anchor_record <wt> — plant the record `dispatch` would have written for
+# a worktree, so reap has something to prune.
+write_anchor_record() {
+  local path
+  path="$(anchor_record_path "$1")"
+  mkdir -p "$(dirname "$path")"
+  printf 'record\n' >"$path"
+}
+
 @test "id: honours CREW_ID when set" {
   CREW_ID=1720800000-12345 run run_crew id
   [ "$status" -eq 0 ]
@@ -2380,6 +2396,120 @@ EOF
   jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
   [ ! -d "$wt_path" ]
   run ! git show-ref --verify --quiet refs/heads/feat/squash-me
+}
+
+@test "reap: a merged worker's anchor record is pruned (#556)" {
+  git commit -q --allow-empty -m init
+  git branch feat/anchor-me
+  wt_path="$BATS_TEST_TMPDIR/anchor-wt"
+  git worktree add -q "$wt_path" feat/anchor-me
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "anchor-me work"
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
+  [ -e "$anchor" ]
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/anchor-me)" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/anchor-me" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/anchor-me (MERGED)"* ]]
+  [ ! -e "$anchor" ]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: a kept worker's anchor record survives (#556)" {
+  git commit -q --allow-empty -m init
+  git branch feat/anchor-kept
+  wt_path="$BATS_TEST_TMPDIR/anchor-kept-wt"
+  git worktree add -q "$wt_path" feat/anchor-kept
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "anchor-kept work"
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'OPEN' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/anchor-kept" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/anchor-kept — PR OPEN"* ]]
+  [ -e "$anchor" ]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: --dry-run names the anchor record it would prune and removes nothing (#556)" {
+  git commit -q --allow-empty -m init
+  git branch feat/anchor-dry
+  wt_path="$BATS_TEST_TMPDIR/anchor-dry-wt"
+  git worktree add -q "$wt_path" feat/anchor-dry
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "anchor-dry work"
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/anchor-dry)" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/anchor-dry" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would reap feat/anchor-dry (MERGED) @ $wt_path"* ]]
+  [[ "$output" == *"would prune record $anchor"* ]]
+  [ -e "$anchor" ]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: a leftover anchor with no worktree is not an error (#556)" {
+  git commit -q --allow-empty -m init
+  # Simulates a record a pre-#556 reap left behind: the worktree is already
+  # gone, but the keyed record survives. reap must neither fail nor invent a
+  # reclaim for a worktree it cannot see.
+  ghost="$BATS_TEST_TMPDIR/ghost-wt"
+  anchor="$(printf '%s/crew/worktrees/%s\n' "$XDG_DATA_HOME" \
+    "$(printf %s "$ghost" | sha256sum | cut -c1-64)")"
+  mkdir -p "$(dirname "$anchor")"
+  printf 'record\n' >"$anchor"
+  stub_tmux "" ""
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/ghost" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [ -e "$anchor" ]
 }
 
 @test "reap: a merged branch whose local tip diverges from the PR head is kept" {

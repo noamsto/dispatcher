@@ -575,14 +575,27 @@ _assert_resume_bound() {
   done
 }
 
-# _worktree_anchor_path is the format contract between dispatch (writer) and
-# dispatch-resume (reader); a drift here would make resume verify against a
-# path dispatch never wrote to.
-@test "_worktree_anchor_path is byte-identical between dispatch.sh and dispatch-resume.sh" {
-  a="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
-  b="$(sed -n "/^_worktree_anchor_path() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
-  [ -n "$a" ]
-  [ "$a" = "$b" ]
+# _worktree_anchor_path lives once in the shared worktree-git lib, so dispatch
+# (writer), dispatch-resume (reader) and crew reap (pruner) cannot drift. This
+# pins the key format directly against the lib.
+@test "_worktree_anchor_path derives the sha256(realpath) key from the shared lib" {
+  # shellcheck source=/dev/null
+  . "$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
+  wt="$TEST_REPO/anchor-wt"
+  mkdir -p "$wt"
+  key="$(printf %s "$(realpath -e "$wt")" | sha256sum | cut -c1-64)"
+  [ "$(_worktree_anchor_path "$wt")" = "$XDG_DATA_HOME/crew/worktrees/$key" ]
+}
+
+@test "_worktree_anchor_path is defined only in the shared worktree-git lib" {
+  # The single definition is the anti-drift guarantee the byte-identical test
+  # used to supply; a stray copy in either dispatcher script would fork it again.
+  run grep -q '^_worktree_anchor_path() {' "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
+  [ "$status" -ne 0 ]
+  run grep -q '^_worktree_anchor_path() {' "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
+  [ "$status" -ne 0 ]
+  run grep -q '^_worktree_anchor_path() {' "$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
+  [ "$status" -eq 0 ]
 }
 
 # The lead-session helpers are duplicated for the same reason; one test diffs

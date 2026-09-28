@@ -33,15 +33,6 @@ _uuid() {
   printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
 }
 
-# _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
-# genuine crew dir, branch and gitdir, keyed by <wt>'s own realpath. Duplicated
-# from dispatch.sh (standalone build); parity-tested.
-_worktree_anchor_path() {
-  local key
-  key="$(printf %s "$(realpath -e -- "$1")" | sha256sum | cut -c1-64)"
-  printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
-}
-
 # Unconditional, unlike the advisory hint lib: without it resume must abort,
 # never fall back to discovery in the worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"

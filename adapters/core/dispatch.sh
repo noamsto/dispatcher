@@ -1136,15 +1136,6 @@ _record_protocol_dirs() {
   )
 }
 
-# _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
-# genuine crew dir, branch and gitdir, keyed by <wt>'s own realpath. Duplicated
-# in dispatch-resume.sh (standalone build); parity-tested.
-_worktree_anchor_path() {
-  local key
-  key="$(printf %s "$(realpath -e -- "$1")" | sha256sum | cut -c1-64)"
-  printf '%s/crew/worktrees/%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}" "$key"
-}
-
 # _record_worktree_anchor <worktree> <admin-dir> — write the record `dispatch
 # resume` checks its git discovery against (#518).
 _record_worktree_anchor() {
