@@ -10743,6 +10743,175 @@ STUBEOF
   [ "$output" = "$T/roots/grant" ]
 }
 
+@test "add-dir: a hooks-dir find failure refuses the grant (_hook_entries fail-closed)" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/docs"
+
+  # Fail only the hooks-dir scan (-mindepth), so the earlier secrets-dir and
+  # embedded-repo scans still succeed and this case pins _hook_entries alone.
+  export REAL_FIND="$(command -v find)"
+  stub_bin find
+  cat >"$STUB_DIR/find" <<'STUBEOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  if [ "$a" = "-mindepth" ]; then exit 1; fi
+done
+exec "$REAL_FIND" "$@"
+STUBEOF
+  chmod +x "$STUB_DIR/find"
+
+  run _add_dir_ok "$T/roots/repo/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"find failed scanning hooks dir"* ]]
+}
+
+@test "add-dir: a stat --printf failure over the protected files refuses the grant" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/docs"
+
+  # The link-count probe only: the stat -L %d and %d:%i probes still run.
+  export REAL_STAT="$(command -v stat)"
+  stub_bin stat
+  cat >"$STUB_DIR/stat" <<'STUBEOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in "%h "*) exit 1;; esac
+done
+exec "$REAL_STAT" "$@"
+STUBEOF
+  chmod +x "$STUB_DIR/stat"
+
+  run _add_dir_ok "$T/roots/repo/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot stat the git hooks and config files"* ]]
+}
+
+@test "add-dir: a _hard_link_in stat failure refuses the grant" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/other"
+  printf '#!/bin/sh\n' >"$T/roots/repo/.git/hooks/pre-commit"
+  chmod +x "$T/roots/repo/.git/hooks/pre-commit"
+  # A second link to the hook outside the grant makes it a protected file
+  # with _links +1, so _hard_link_in is entered to scan the grant.
+  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/copy"
+
+  export REAL_STAT="$(command -v stat)"
+  stub_bin stat
+  cat >"$STUB_DIR/stat" <<'STUBEOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in "%d") exit 1;; esac
+done
+exec "$REAL_STAT" "$@"
+STUBEOF
+  chmod +x "$STUB_DIR/stat"
+
+  run _add_dir_ok "$T/roots/repo/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot stat $T/roots/repo/other; refusing the grant"* ]]
+}
+
+@test "add-dir: a _hard_link_in find failure refuses the grant" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/other"
+  printf '#!/bin/sh\n' >"$T/roots/repo/.git/hooks/pre-commit"
+  chmod +x "$T/roots/repo/.git/hooks/pre-commit"
+  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/copy"
+
+  # Fail only the hard-link scan (-xdev -links), not the hooks-dir scan,
+  # which also probes -links for the hook's second link.
+  export REAL_FIND="$(command -v find)"
+  stub_bin find
+  cat >"$STUB_DIR/find" <<'STUBEOF'
+#!/usr/bin/env bash
+xdev=""; links=""
+for a in "$@"; do
+  [ "$a" = "-xdev" ] && xdev=1
+  [ "$a" = "-links" ] && links=1
+done
+[ -n "$xdev" ] && [ -n "$links" ] && exit 1
+exec "$REAL_FIND" "$@"
+STUBEOF
+  chmod +x "$STUB_DIR/find"
+
+  run _add_dir_ok "$T/roots/repo/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"find failed scanning $T/roots/repo/other for hard links"* ]]
+}
+
+@test "add-dir: a stat -L failure on a grant-held link target refuses the grant" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/repo"
+  mkdir -p "$T/roots/repo/other" "$T/roots/outside"
+  printf '#!/bin/sh\n' >"$T/roots/repo/.git/hooks/pre-commit"
+  chmod +x "$T/roots/repo/.git/hooks/pre-commit"
+  ln "$T/roots/repo/.git/hooks/pre-commit" "$T/roots/copy"
+  # A grant-held symlink to a regular file outside the grant: the target's
+  # (dev:ino) is compared against the protected files, so it is stat'd.
+  printf 'data\n' >"$T/roots/outside/f"
+  ln -s "$T/roots/outside/f" "$T/roots/repo/other/l"
+
+  # Fail only the link-target probe (%d:%i), not the %h link-count probe.
+  export REAL_STAT="$(command -v stat)"
+  stub_bin stat
+  cat >"$STUB_DIR/stat" <<'STUBEOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in "%d:%i") exit 1;; esac
+done
+exec "$REAL_STAT" "$@"
+STUBEOF
+  chmod +x "$STUB_DIR/stat"
+
+  run _add_dir_ok "$T/roots/repo/other"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot stat $T/roots/outside/f; refusing the grant"* ]]
+}
+
 @test "add-dir: a grant holding a not-yet-existing GIT_CONFIG_GLOBAL candidate is refused" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
