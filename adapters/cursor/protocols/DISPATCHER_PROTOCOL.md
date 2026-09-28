@@ -105,7 +105,9 @@ Start from the tier-typical rung — `trivial`→`low`, `standard`→`medium`,
 from `required` and departs on the doc you wrote (see "Plan-depth" above).
 This holds for the model too: claude opus on `standard` starts at `medium`
 and on `trivial` at `low`; it must not carry deep's `high` down with it. When
-the pace gate refuses opus, shed to `sonnet` (at the same effort), not to a
+the pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn at
+the standard class and are not refused), shed to `sonnet` (at the same effort),
+not to a
 cheaper opus effort.
 
 - **Raise toward `xhigh`** when: the hard part lives inside one turn of

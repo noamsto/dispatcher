@@ -68,17 +68,17 @@ set_view() { printf '%s' "$1" >"$GH_VIEW"; }      # next `gh pr view` response
 set_runs() { printf '%s' "$1" >"$GH_RUNS"; }       # next `gh api .../actions/runs` response
 set_threads() { printf '%s' "$1" >"$GH_THREADS"; } # next `gh api graphql` response
 
-# seed_dispatch <branch> <ts_ms> [engine] [model] [tier] — a dispatch event
-# with an explicit ts, so branch-reuse and CI-window fixtures control run
+# seed_dispatch <branch> <ts_ms> [engine] [model] [tier] [effort] — a dispatch
+# event with an explicit ts, so branch-reuse and CI-window fixtures control run
 # ordering exactly (crew.sh has no `dispatch` subcommand of its own — dispatch
 # events are written by dispatch.sh, so tests seed them directly, same as
-# tests/crew.bats does).
+# tests/crew.bats does). effort defaults to "medium".
 seed_dispatch() {
   local logf
   logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$logf")"
-  jq -nc --arg b "$1" --argjson ts "$2" --arg e "${3:-claude}" --arg m "${4:-sonnet}" --arg t "${5:-standard}" \
-    '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:$b, engine:$e, model:$m, tier:$t, effort:"medium", title:"t"}' >>"$logf"
+  jq -nc --arg b "$1" --argjson ts "$2" --arg e "${3:-claude}" --arg m "${4:-sonnet}" --arg t "${5:-standard}" --arg ef "${6:-medium}" \
+    '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:$b, engine:$e, model:$m, tier:$t, effort:$ef, title:"t"}' >>"$logf"
 }
 
 # seed_status <from> <ts_ms> <state> [pr_url] — a status event with an
@@ -719,9 +719,11 @@ EOF
 }
 
 @test "cost: a known model's proxy is weight times wall clock; kimi-k3-high is null" {
-  seed_dispatch cost-opus 1000 claude opus deep
+  # opus at high keeps the premium class (its low/medium rungs are the
+  # effort-aware standard-class cases pinned in the sibling test below).
+  seed_dispatch cost-opus 1000 claude opus deep high
   seed_status worker:cost-opus 601000 done
-  seed_dispatch cost-kimi 1000 cursor kimi-k3-high deep
+  seed_dispatch cost-kimi 1000 cursor kimi-k3-high deep high
   seed_status worker:cost-kimi 601000 done
   run run_crew rate
   [ "$status" -eq 0 ]
@@ -730,6 +732,23 @@ EOF
   [ "$output" = "premium 2400000" ]
   run jq -r 'map(select(.branch=="cost-kimi"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
   [ "$output" = "null null" ]
+}
+
+# Opus's proxy follows its effort (#554): the costmap is keyed by model+effort,
+# so opus@low (standard 2) prices at half of opus@high (premium 4) on the same
+# wall clock — the bug the old name-only classing charged identically.
+@test "cost: opus at low effort prices below opus at high effort (#554)" {
+  seed_dispatch cost-opus-low 1000 claude opus standard low
+  seed_status worker:cost-opus-low 601000 done
+  seed_dispatch cost-opus-high 1000 claude opus deep high
+  seed_status worker:cost-opus-high 601000 done
+  run run_crew rate
+  [ "$status" -eq 0 ]
+  rows="$(store_rows)"
+  run jq -r 'map(select(.branch=="cost-opus-low"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
+  [ "$output" = "standard 1200000" ]
+  run jq -r 'map(select(.branch=="cost-opus-high"))[0] | "\(.cost_class) \(.cost_proxy)"' <<<"$rows"
+  [ "$output" = "premium 2400000" ]
 }
 
 @test "cost: cursor-grok rungs get their burn class's weight, same wall clock as the opus case above" {
