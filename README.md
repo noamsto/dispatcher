@@ -96,7 +96,10 @@ Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
-time-based sweep would delete live work. Reaping a finished run also files its
+time-based sweep would delete live work. A finished claude worker whose PR landed
+is reclaimed even while its engine idles at the prompt, but only on a provably idle
+frame; `crew stream` reaps on its own every `--reap-every` seconds (default 900) and
+after terminal batches, so a quiet crew still cleans up. Reaping a finished run also files its
 outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with
 `crew rate --report`); `CREW_RATE_AUTOSWEEP=0` disables it. That sweep runs
 detached, so its outcome (started, skipped because another sweep held the lock,
