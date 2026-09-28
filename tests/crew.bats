@@ -6681,6 +6681,9 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
 @test "stream: a no-op reap is silent" {
   start_stream --crew c1 --reap-every 1 --park 1 --interval 1
   sleep 3
+  # A no-op reap still creates its per-child pair; with the tracked child gone
+  # the flush drops it, so at most the in-flight pair may remain (#602 review).
+  [ "$(find "$(crew_dir c1)" -maxdepth 1 -name 'stream.reap.out.*' | wc -l)" -le 1 ]
   run ! has_reap_line
   stop_stream
 }
@@ -6700,6 +6703,65 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   [ "$status" -eq 0 ]
   # Rate-limited like the inner-watch errors: one cause, one line per heartbeat.
   [ "$(grep -c '"detail":"reap: ' "$STREAM_OUT")" -eq 1 ]
+}
+
+# #602: a reap child the stream spawned outlives the stream, so its late write
+# must not clobber a newer stream's reap output. The hook stands in for `crew
+# reap` (no real reap): A's child blocks on a release file, A is force-stopped,
+# then B reaps. On base both share stream.reap.out; per-child files keep them apart.
+@test "stream: a reap child that outlives its stream cannot clobber the next stream's reap output" {
+  git commit -q --allow-empty -m init
+  STREAM_CREW="$BATS_TEST_TMPDIR/crew-copy.sh"
+  cp "$CREW" "$STREAM_CREW"
+  # Prepend a hook point: only `reap` is diverted, so the stream loop itself
+  # runs unmodified, and a nested `reap` re-enters the copy and hits the hook.
+  copy="$BATS_TEST_TMPDIR/crew-copy.hooked.sh"
+  {
+    printf '%s\n' \
+      'if [ "${1:-}" = reap ] && [ -n "${CREW_TEST_REAP_HOOK:-}" ]; then' \
+      '  bash "$CREW_TEST_REAP_HOOK" "$@"; exit $?' \
+      'fi'
+    cat "$STREAM_CREW"
+  } >"$copy"
+  mv -f "$copy" "$STREAM_CREW"
+
+  hook="$BATS_TEST_TMPDIR/reap-hook.sh"
+  cat >"$hook" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${REAP_TEST_STARTED:-}" ] && : >"$REAP_TEST_STARTED"
+if [ -n "${REAP_TEST_RELEASE:-}" ]; then
+  while [ ! -e "$REAP_TEST_RELEASE" ]; do sleep 0.05; done
+fi
+printf 'reaped %s\n' "${REAP_TEST_LABEL:-unknown}"
+EOF
+  chmod +x "$hook"
+  export CREW_TEST_REAP_HOOK="$hook"
+
+  # Stream A: its reap child blocks until released, so it outlives A.
+  release="$BATS_TEST_TMPDIR/release-a"
+  export REAP_TEST_STARTED="$BATS_TEST_TMPDIR/started-a" \
+    REAP_TEST_RELEASE="$release" REAP_TEST_LABEL="feat/a"
+  start_stream --crew c1 --reap-every 1 --park 1 --interval 1
+  poll_for 100 test -e "$REAP_TEST_STARTED"
+  stop_stream
+
+  # Stream B: reaps promptly and flushes its own line.
+  unset REAP_TEST_RELEASE
+  export REAP_TEST_STARTED="$BATS_TEST_TMPDIR/started-b" REAP_TEST_LABEL="feat/b"
+  start_stream --crew c1 --reap-every 1 --park 1 --interval 1
+  poll_for 150 grep -q 'reaped feat/b' "$STREAM_OUT"
+
+  # Release A's outlived child, then give B's loop time to flush whatever
+  # landed in the file it reads.
+  : >"$release"
+  sleep 3
+
+  # B printed its own reap and must never surface A's.
+  run grep -q 'reaped feat/b' "$STREAM_OUT"
+  [ "$status" -eq 0 ]
+  run grep -q 'reaped feat/a' "$STREAM_OUT"
+  [ "$status" -ne 0 ]
+  stop_stream
 }
 
 @test "identity: a recorded name another live worker now holds is not reused" {
