@@ -51,7 +51,11 @@ pace_rule_target() {
   if [ -n "$model_downgrade" ]; then
     model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
     downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
-    if [ -n "$model_weight" ] && [ -n "$downgrade_weight" ] && [ "$model_weight" -le "$downgrade_weight" ]; then
+    # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
+    # fractional layer value (2.0) would make bash's integer test error and
+    # read false, flipping the decision.
+    if [ -n "$model_weight" ] && [ -n "$downgrade_weight" ] &&
+      jq -en --argjson a "$model_weight" --argjson b "$downgrade_weight" '$a <= $b' >/dev/null; then
       model_downgrade=""
     fi
   fi

@@ -3002,6 +3002,8 @@ cursor|grok-4.7-low|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
 cursor|cursor-grok-4.6-high|MODEL,MODEL,MODEL,MODEL,MODEL
 cursor|cursor-grok-4.6-medium|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
 cursor|composer-2.5|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|grok-4.7-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
+cursor|cursor-grok-4.6-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 TABLE
 }
 
@@ -3027,6 +3029,31 @@ TABLE
   run run_dispatch deep opus --agent claude --effort medium --crew-id c1 42 "burnClasses override medium"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+# burnClasses weights are JSON numbers, not integers: a fractional layer value
+# must still compare numerically. 2.0 <= sonnet's 2 exempts opus low; 2.5 > 2
+# refuses it. An integer `[ -le ]` would error on both and flip low to refused.
+@test "pace gate compares fractional burnClasses weights numerically (#605)" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{burnClasses: [
+    {match: "*opus*", byEffort: {
+      low: {class: "standard", weight: 2.0},
+      medium: {class: "standard", weight: 2.5},
+      default: {class: "premium", weight: 4}}},
+    {match: "*sonnet*", class: "standard", weight: 2}]}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort low --crew-id c1 42 "fractional weight equal"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+  [[ "$output" != *"integer expected"* ]]
+
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort medium --crew-id c1 42 "fractional weight heavier"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
 }
 
 @test "cursor confines effort-suffixed cross-vendor ids to deep" {
