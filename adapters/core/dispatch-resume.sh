@@ -748,7 +748,7 @@ _anchor_mismatch() { # $1=label $2=discovered $3=recorded
 
 # Anchored crew dir is now trusted; refuse a drifted config before it reaches
 # the launch script (#557).
-_wt_cfg_guard "${_crew_dir_real%/crew}" || exit 1
+_wt_cfg_guard_cwd "${_crew_dir_real%/crew}" || exit 1
 
 # Header reader. `cut -d' ' -f2-` keeps values containing spaces (title), and
 # -m1 pins the first occurrence so a value echoed inside the ## Task body

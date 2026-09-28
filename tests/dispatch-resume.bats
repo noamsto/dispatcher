@@ -188,6 +188,20 @@ EOF
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
 }
 
+@test "resume guards the worktree's config.worktree at entry (#585)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" config extensions.worktreeConfig true
+  seed_git_baseline
+  git -C "$WT" config --worktree core.fsmonitor /evil
+  before="$(cksum "$WT/WORKER_TASK.md")"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.fsmonitor* ]]
+  [[ "$output" != *"could not read the index"* ]]
+  [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
+}
+
 @test "resume refuses on a worker-planted include (#557)" {
   # #557: a worker's `git config include.path <file>` in the worktree writes
   # the COMMON config that dispatcher-run git (here, resume's own ls-files

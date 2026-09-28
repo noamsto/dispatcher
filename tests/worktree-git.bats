@@ -80,7 +80,8 @@ add_worktree() { # <name> -> $WT, $ADMIN
   [[ $stderr == *"(from $COMMON/config)"* ]]
   [[ $stderr == *"--unset-all filter.x.clean"* ]]
   [[ $stderr == *"list drift with \`crew git-baseline\`"* ]]
-  [[ $stderr == *"then delete $BASELINE"*"so inspect first"* ]]
+  [[ $stderr == *"crew git-baseline --accept"* ]]
+  [[ $stderr == *"deleting $BASELINE instead"* ]]
   [[ $stderr != *planted-value* ]]
 }
 
@@ -89,7 +90,7 @@ add_worktree() { # <name> -> $WT, $ADMIN
   git config filter.x.clean cat
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
-  [[ $stderr == *"then delete $BASELINE"* ]]
+  [[ $stderr == *"deleting $BASELINE instead"* ]]
   rm "$BASELINE"
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
@@ -97,6 +98,19 @@ add_worktree() { # <name> -> $WT, $ADMIN
   _wt_cfg_baseline_init "$COMMON"
   grep -q filter.x.clean "$BASELINE"
   _wt_cfg_guard "$COMMON"
+}
+
+@test "guard skips empty baseline records (#585)" {
+  mkdir -p "$COMMON/crew"
+  printf '\0' >"$BASELINE"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr != *"bad array subscript"* ]]
+  printf 'core.fsmonitor\nx\0\0' >"$BASELINE"
+  git config core.fsmonitor x
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr != *"bad array subscript"* ]]
 }
 
 @test "guard refuses include.path and the exec key it pulls in (#557)" {
