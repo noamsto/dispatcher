@@ -72,7 +72,7 @@ Deslop the **comment prose you wrote** (not the code — the code is not yours):
 **P1 — peek before you post.** Immediately before the `gh api …/reviews` call below, peek the bus: `crew inbox "$CREW_WORKER_ID" --since <seen-cursor>` — same seen-cursor rules as `WORKER_PROTOCOL.md`'s **Checkpoint-peek**. On first arrival at P1, initialize a P1 re-run count of 0; this is separate from, and does not consume, the block→await cycle cap in "Report to the bus".
 
 - **Work-changing directive, P1 re-run count still 0:** do not post; re-stamp `working`; increment the count to 1; re-run **Dispatch reviewers directly**, **Verify adversarially**, and the deslop pass above; return to P1.
-- **Work-changing directive, P1 re-run count already 1:** block→await, per `WORKER_PROTOCOL.md`'s "Report to the bus". On reply, incorporate the answer into the review body/comments you are about to post and proceed to post — never a further reviewer-batch re-run, whatever the reply says. On timeout, follow the blocked→failed path without posting.
+- **Work-changing directive, P1 re-run count already 1:** block→await, per `WORKER_PROTOCOL.md`'s "Report to the bus". On reply, fold any new or changed finding into the review you are about to post, send everything else to the tally's `notes`, and proceed to post — never a further reviewer-batch re-run, whatever the reply says. On timeout, follow the blocked→failed path without posting.
 - **Conflicting or unclear directive:** block→await immediately, same reply/timeout handling as above.
 - **Verified no-op / acknowledgement:** advance the cursor and proceed to post.
 
@@ -80,11 +80,25 @@ Then post **one** review event — not N comment spams:
 
 ```bash
 gh api "repos/{owner}/{repo}/pulls/$pr/reviews" \
-  -f event=COMMENT -f body='<one-line tally + any non-line-local finding>' \
+  -f event=COMMENT -f body='<body, per the contract below>' \
   -f 'comments[][path]=<path>' -F 'comments[][line]=<line>' -f 'comments[][body]=<what → fix>'
 ```
 
-`event=COMMENT` always. **Never `REQUEST_CHANGES`** — an unattended worker's review is advisory and must not block a human's merge.
+**Review body contract.** The body carries the verdict and the surviving findings, and nothing else:
+
+- **Approve** (zero survivors): one line — `LGTM — no findings.` Add at most one more line for a single action the author must take (`Resolve the moot thread on guards.go:42.`).
+- **Comment** (survivors): a one-line verdict, then one bullet per non-line-local finding, `what is wrong → the fix`:
+
+  ```
+  1 should-fix, 1 clarity.
+  - `Parse` and `ParseStrict` now disagree on empty input → route both through `parseEmpty`.
+  ```
+
+- **Inline comments** hold every line-local finding, each `what → fix` in at most three sentences.
+
+Everything else goes to the dispatcher in the tally, never on the PR: checks that passed, refuted or dropped findings and how they were refuted, reviewer or roster names, gaps, preambles ("independent review"), composition with sibling PRs (unless it is a finding the author must act on), and answers to the dispatcher's questions (in the task doc's `## Task` or a reply) — those go in the tally's `notes`.
+
+`event=COMMENT` unless approving (below). **Never `REQUEST_CHANGES`** — an unattended worker's review is advisory and must not block a human's merge.
 
 ## Approve only on zero survivors
 
@@ -106,11 +120,13 @@ Post the tally as one message to the dispatcher, then terminate at `done` — a 
 
 ```bash
 crew msg "$CREW_WORKER_ID" "dispatcher:$CREW_ID" \
-  '{"pr":<N>,"lane":"<inline|fan-out>","reviewers":["…"],"findings":{"blocker":0,"should-fix":0,"clarity":0},"approved":<true|false>,"review_url":"<url>","gaps":["…"]}'
+  '{"pr":<N>,"lane":"<inline|fan-out>","reviewers":["…"],"findings":{"blocker":0,"should-fix":0,"clarity":0},"approved":<true|false>,"review_url":"<url>","gaps":["…"],"notes":["…"]}'
 crew status "$CREW_WORKER_ID" done "reviewed PR <N> — <review_url>" "<pr_url>"
 ```
 
 Map reviewer severities onto the tally as CRITICAL → `blocker`, HIGH → `should-fix`, MEDIUM → `clarity`.
+
+`notes` carries one short string per answer to a question in the task doc's `## Task`, plus anything the dispatcher needs that the contract keeps off the PR; `[]` when there is none.
 
 The url slot carries the **PR** url, not the review url: `crew reap` feeds it to `gh pr view` to decide whether this worktree can be reclaimed, and a `#pullrequestreview-…` fragment is not a PR reference. The review url rides in the detail and in the tally.
 
