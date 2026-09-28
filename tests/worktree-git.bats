@@ -79,8 +79,24 @@ add_worktree() { # <name> -> $WT, $ADMIN
   [[ $stderr == *filter.x.clean* ]]
   [[ $stderr == *"(from $COMMON/config)"* ]]
   [[ $stderr == *"--unset-all filter.x.clean"* ]]
-  [[ $stderr == *"crew git-baseline --accept"* ]]
+  [[ $stderr == *"list drift with \`crew git-baseline\`"* ]]
+  [[ $stderr == *"then delete $BASELINE"*"so inspect first"* ]]
   [[ $stderr != *planted-value* ]]
+}
+
+@test "deleting the baseline is the recovery: the next dispatch re-records and the guard passes (#557)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config filter.x.clean cat
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"then delete $BASELINE"* ]]
+  rm "$BASELINE"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"no git-config baseline at $BASELINE — the next dispatch records it"* ]]
+  _wt_cfg_baseline_init "$COMMON"
+  grep -q filter.x.clean "$BASELINE"
+  _wt_cfg_guard "$COMMON"
 }
 
 @test "guard refuses include.path and the exec key it pulls in (#557)" {
@@ -146,8 +162,7 @@ add_worktree() { # <name> -> $WT, $ADMIN
   add_worktree w
   run --separate-stderr _wt_git "$ADMIN" "$WT" status --porcelain
   [ "$status" -eq 1 ]
-  [[ $stderr == *"no git-config baseline at $BASELINE"* ]]
-  [[ $stderr == *"crew git-baseline --accept"* ]]
+  [[ $stderr == *"no git-config baseline at $BASELINE — the next dispatch records it"* ]]
   [ ! -e "$BASELINE" ]
   [ ! -e "$COMMON/crew" ]
 }

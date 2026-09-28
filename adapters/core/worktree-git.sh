@@ -109,7 +109,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
   if [ ! -f "$file" ]; then
-    echo "refusing git: no git-config baseline at $file — a dispatch records it, or run \`crew git-baseline --accept\` from a real terminal" >&2
+    echo "refusing git: no git-config baseline at $file — the next dispatch records it" >&2
     return 1
   fi
   mapfile -d '' pairs <"$file" || return 1
@@ -145,7 +145,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     done
     [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
   done
-  echo "  or, if it is yours, accept it from a real terminal: crew git-baseline --accept" >&2
+  printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set, then delete %q — the next dispatch re-records the baseline and accepts EVERYTHING present then, so inspect first\n" "$file" >&2
   return 1
 }
 _wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir the caller's cwd resolves to

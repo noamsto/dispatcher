@@ -3159,50 +3159,6 @@ EOF
   [[ "$output" == *"reaped feat/557-d"* ]]
 }
 
-@test "git-baseline --accept refuses without a tty (#557)" {
-  # #557: --accept exists for a human eyeballing a diff of newly-seen
-  # exec-capable keys and widening the baseline on purpose; run
-  # non-interactively (no tty on stdin) it must refuse rather than silently
-  # widen the baseline to whatever config happens to be sitting there.
-  git commit -q --allow-empty -m init
-  seed_git_baseline
-  baseline="$TEST_REPO/.git/crew/git-config-baseline"
-  [ -f "$baseline" ]
-  before="$(cksum "$baseline")"
-  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
-  run run_crew git-baseline --accept </dev/null
-  [ "$status" -ne 0 ]
-  after="$(cksum "$baseline" 2>/dev/null || true)"
-  [ "$before" = "$after" ]
-}
-
-# crew_tty <answer> <crew args...> — run crew on a real pty (a private tmux
-# server) and type <answer> at its `type yes` prompt; sets $status/$output.
-crew_tty() {
-  local answer="$1" sock="tty-$BATS_TEST_NUMBER" out="$BATS_TEST_TMPDIR/tty.out"
-  local rc="$BATS_TEST_TMPDIR/tty.rc" script="$BATS_TEST_TMPDIR/tty.sh" i
-  shift
-  [ -n "$REAL_TMUX" ] || skip "tmux not installed"
-  rm -f "$out" "$rc"
-  printf 'bash -euo pipefail %q' "$CREW" >"$script"
-  printf ' %q' "$@" >>"$script"
-  printf ' >%q 2>&1\necho $? >%q\n' "$out" "$rc" >>"$script"
-  "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -x 200 -y 50 -c "$PWD" "bash $script"
-  for ((i = 0; i < 100; i++)); do
-    if [ -e "$rc" ] || grep -q 'type yes' "$out" 2>/dev/null; then break; fi
-    sleep 0.1
-  done
-  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys -l "$answer"
-  [ -e "$rc" ] || "$REAL_TMUX" -L "$sock" send-keys Enter
-  for ((i = 0; i < 100; i++)); do
-    if [ -s "$rc" ]; then break; fi
-    sleep 0.1
-  done
-  "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
-  status="$(cat "$rc")"
-  output="$(cat "$out")"
-}
-
 @test "git-baseline never records a missing baseline (#557)" {
   # #557: only a dispatch records the baseline (TOFU before any worker of the
   # crew exists); a later review run must not trust whatever is there now.
@@ -3212,7 +3168,7 @@ crew_tty() {
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" == *"none yet"* ]]
-  [[ "$output" == *"crew git-baseline --accept"* ]]
+  [[ "$output" == *"the next dispatch records it"* ]]
   [ ! -e "$TEST_REPO/.git/crew/git-config-baseline" ]
 }
 
@@ -3226,11 +3182,16 @@ crew_tty() {
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" == *"core.sshcommand=$BATS_TEST_TMPDIR/hit.sh (main checkout, "* ]]
+  before="$(cksum "$TEST_REPO/.git/crew/git-config-baseline")"
+  run run_crew git-baseline extra
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"git-baseline takes no arguments"* ]]
+  [ "$(cksum "$TEST_REPO/.git/crew/git-config-baseline")" = "$before" ]
 }
 
 @test "git-baseline prints worker-controlled bytes escaped (#557)" {
-  # #557: a raw ESC/CR in a key, value or origin could redraw the lines above
-  # the `type yes` prompt and disguise what the human accepts.
+  # #557: a raw ESC/CR in a key, value or origin could redraw the terminal
+  # and disguise what drifted.
   git commit -q --allow-empty -m init
   seed_git_baseline
   git config filter.x.clean "evil"$'\e[2K\r'"cat"
@@ -3241,39 +3202,6 @@ crew_tty() {
   [[ "$output" == *filter.a* ]]
   [[ "$output" != *$'\e'* ]]
   [[ "$output" != *$'\r'* ]]
-}
-
-@test "git-baseline --accept merges into the baseline (#557)" {
-  # #557: git-hooks.nix writes core.hooksPath relative from the main checkout
-  # and absolute from a linked worktree; a replacing accept flip-flops forever.
-  git commit -q --allow-empty -m init
-  git config core.hooksPath .git/hooks
-  seed_git_baseline
-  git config core.hooksPath "$TEST_REPO/.git/hooks"
-  crew_tty yes git-baseline --accept
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"core.hookspath=$TEST_REPO/.git/hooks"* ]]
-  git config core.hooksPath .git/hooks
-  run run_crew git-baseline
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"no drift"* ]]
-}
-
-@test "git-baseline --accept without a baseline shows every pair, records on yes (#557)" {
-  git commit -q --allow-empty -m init
-  rm "$TEST_REPO/.git/crew/git-config-baseline"
-  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
-  baseline="$TEST_REPO/.git/crew/git-config-baseline"
-  crew_tty no git-baseline --accept
-  [ "$status" -eq 1 ]
-  [[ "$output" == *core.sshcommand=* ]]
-  [ ! -e "$baseline" ]
-  crew_tty yes git-baseline --accept
-  [ "$status" -eq 0 ]
-  [[ "$output" == *core.sshcommand=* ]]
-  grep -q core.sshcommand "$baseline"
-  run run_crew git-baseline
-  [ "$status" -eq 0 ]
 }
 
 @test "reap: no baseline keeps the worktree and records none (#557)" {

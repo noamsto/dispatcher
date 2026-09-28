@@ -4686,21 +4686,13 @@ pr-watch)
   printf '%s\n' "$ev"
   ;;
 git-baseline)
-  # Review/accept for the exec-capable git-config baseline _wt_cfg_guard
-  # enforces (#557). Never records a missing one unasked: only a dispatch
-  # does, before any worker of the crew exists. Values ARE shown here — a
-  # human run, they need to see what they would accept — %q-escaped, so a
-  # planted ESC/CR cannot redraw the lines above the prompt.
-  case "${1:-}" in
-  "") accept= ;;
-  --accept) accept=1 ;;
-  *)
-    echo "crew: git-baseline [--accept]" >&2
-    exit 1
-    ;;
-  esac
-  if [ -n "$accept" ] && [ ! -t 0 ]; then
-    echo "crew: git-baseline --accept needs an interactive terminal (not Claude Code's ! prefix) — run it in your own shell" >&2
+  # Review for the exec-capable git-config baseline _wt_cfg_guard enforces
+  # (#557). Never records a missing one: only a dispatch does, before any
+  # worker of the crew exists. Values ARE shown here — a human run, they need
+  # to see what drifted — %q-escaped, so a planted ESC/CR cannot redraw the
+  # terminal.
+  if [ $# -gt 0 ]; then
+    echo "crew: git-baseline takes no arguments" >&2
     exit 1
   fi
 
@@ -4708,13 +4700,11 @@ git-baseline)
   # shellcheck source=/dev/null
   . "$wt_git_lib"
   baseline_file="$common/crew/git-config-baseline"
-  gb_recs=()
-  if [ -f "$baseline_file" ]; then
-    mapfile -d '' gb_recs <"$baseline_file"
-  elif [ -z "$accept" ]; then
-    echo "git-config baseline $baseline_file: none yet — a dispatch records it, or run crew git-baseline --accept from a real terminal" >&2
+  if [ ! -f "$baseline_file" ]; then
+    echo "git-config baseline $baseline_file: none yet — the next dispatch records it" >&2
     exit 1
   fi
+  mapfile -d '' gb_recs <"$baseline_file"
 
   declare -A gb_base=()
   for gb_rec in "${gb_recs[@]}"; do gb_base["$gb_rec"]=1; done
@@ -4725,7 +4715,7 @@ git-baseline)
     [ -n "${gb_base["$gb_rec"]+x}" ] || gb_drift+=("$gb_rec")
   done
 
-  if [ "${#gb_drift[@]}" -eq 0 ] && [ -f "$baseline_file" ]; then
+  if [ "${#gb_drift[@]}" -eq 0 ]; then
     echo "git-config baseline $baseline_file: no drift"
     exit 0
   fi
@@ -4747,27 +4737,7 @@ git-baseline)
       printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "${gb_listing[gb_i + 1]#file:}"
     done
   done
-
-  [ -n "$accept" ] || exit 1
-
-  printf 'Accept these into the baseline? type yes: '
-  read -r gb_answer
-  if [ "$gb_answer" != yes ]; then
-    echo "crew: baseline unchanged" >&2
-    exit 1
-  fi
-  mkdir -p -- "$dir" || exit 1
-  gb_tmp="$(mktemp "$dir/git-config-baseline.XXXXXX")" || exit 1
-  # Merge the set that was shown, not a fresh union, into the old baseline: a
-  # key planted while the human read the prompt must not ride in on their yes,
-  # and replacing would drop a pair that differs by context (git-hooks.nix
-  # writes core.hooksPath relative from the main checkout, absolute from a
-  # linked worktree), so accepts would flip-flop.
-  if ! printf '%s\0' "${gb_recs[@]}" "${gb_union[@]}" | LC_ALL=C sort -z -u >"$gb_tmp" ||
-    ! mv -f -- "$gb_tmp" "$baseline_file"; then
-    rm -f -- "$gb_tmp"
-    exit 1
-  fi
+  exit 1
   ;;
 reap)
   # Reclaim window + worktree for workers whose PR has landed. No crew filter:
@@ -5251,7 +5221,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline | reap [--quiet] [--dry-run] [--idle S]" >&2
   exit 1
   ;;
 esac

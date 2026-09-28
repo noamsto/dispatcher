@@ -575,13 +575,14 @@ branch instead; the worktree carries over under `resume: true`.
   core.fsmonitor=false -c core.hooksPath=/dev/null` and disable the
   config-hook events they trigger, for worktree-relative baseline values
   (Husky's `.husky`). Relay a refusal to the human verbatim; never run its
-  printed `--unset-all` or accept it yourself — only the human clears it, by
-  removing the key or running `crew git-baseline --accept` in their own
-  terminal (tty and typed `yes` required, so neither a worker nor Claude
-  Code's `!` prefix can; it merges the pairs it showed into the baseline).
-  Trust-on-first-use: only a `dispatch` records the baseline, as the union
-  over the main checkout and every linked worktree's context — resume, reap
-  and `crew git-baseline` never do; `crew git-baseline` alone lists drift.
+  printed `--unset-all` or clear it yourself — only the human does: they
+  inspect the listed keys (`crew git-baseline` lists drift), remove any they
+  did not set (`git config --unset-all`), then re-baseline by deleting
+  `<git-common-dir>/crew/git-config-baseline` so the next dispatch records it
+  again — **re-baselining accepts everything present at that moment, so
+  inspect first**. Trust-on-first-use: only a `dispatch` records the
+  baseline, as the union over the main checkout and every linked worktree's
+  context — resume, reap and `crew git-baseline` never do.
   Residual: no protection for the human's own interactive git between
   dispatcher runs (the refusal is the warning); `--global`/system config is
   unchecked (its scope is named in the call text, and nix store paths there
