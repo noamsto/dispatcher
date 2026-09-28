@@ -8,8 +8,8 @@ import "encoding/json"
 
 // Snapshot is the whole model both the --once and --json renderers read.
 // Its top-level JSON keys (now, settings, budget, runs, roster) and the
-// settings/budget/runs row shapes are the contract the bash crew-dash.sh
-// build produced; the once golden and the bats suite pin it.
+// settings/budget/runs row shapes are the contract the once golden and the
+// bats suite pin.
 type Snapshot struct {
 	Now      int64           `json:"now"`
 	Settings SettingsSection `json:"settings"`
@@ -87,12 +87,68 @@ type Window struct {
 // RunsSection combines retro notes and rate ratings. Ratings is kept as raw
 // JSON (the full rate --report --json array, every aggregate column) since
 // the once/ui renderers read only a few of its fields but the --json
-// contract must not drop the rest.
+// contract must not drop the rest. RatingsGroups is that same array decoded
+// into the typed shape both renderers read; it is derived (never itself
+// marshaled) so a wrong-shape-but-valid Ratings payload can't silently
+// render as "no runs swept" — UnmarshalJSON and Collect both route through
+// decodeRatings, which sets RatingsError on a decode failure.
 type RunsSection struct {
-	Retro        *RetroReport    `json:"retro"`
-	RetroError   *string         `json:"retro_error"`
-	Ratings      json.RawMessage `json:"ratings"`
-	RatingsError *string         `json:"ratings_error"`
+	Retro         *RetroReport    `json:"retro"`
+	RetroError    *string         `json:"retro_error"`
+	Ratings       json.RawMessage `json:"ratings"`
+	RatingsGroups []RatingGroup   `json:"-"`
+	RatingsError  *string         `json:"ratings_error"`
+}
+
+// UnmarshalJSON lets any Snapshot reconstructed from JSON (test fixtures,
+// once.golden's source, a live bus snapshot) decode RatingsGroups the same
+// way Collect does, instead of leaving it for each renderer to parse (and
+// potentially ignore errors from) independently.
+func (r *RunsSection) UnmarshalJSON(b []byte) error {
+	type alias RunsSection
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*r = RunsSection(a)
+	r.decodeRatings()
+	return nil
+}
+
+// decodeRatings parses Ratings into RatingsGroups, setting RatingsError on a
+// parse failure. A RatingsError already set (the rate source itself failed)
+// is left alone.
+func (r *RunsSection) decodeRatings() {
+	if r.RatingsError != nil {
+		return
+	}
+	if len(r.Ratings) == 0 {
+		return
+	}
+	var groups []RatingGroup
+	if err := json.Unmarshal(r.Ratings, &groups); err != nil {
+		msg := "unparseable crew rate output: " + err.Error()
+		r.RatingsError = &msg
+		return
+	}
+	r.RatingsGroups = groups
+}
+
+// Agg mirrors `rate --report --json`'s {value,k,n} aggregate shape.
+type Agg struct {
+	Value *float64 `json:"value"`
+	K     int      `json:"k"`
+	N     int      `json:"n"`
+}
+
+type RatingGroup struct {
+	Tier       string `json:"tier"`
+	Engine     string `json:"engine"`
+	Model      string `json:"model"`
+	N          Agg    `json:"n"`
+	PrPct      Agg    `json:"pr_pct"`
+	MergePct   Agg    `json:"merge_pct"`
+	BurnMedian Agg    `json:"burn_median"`
 }
 
 // RetroReport mirrors crew retro --report --json. Tags is kept raw (no view
@@ -129,9 +185,13 @@ type RosterSection struct {
 
 // RosterCrew keeps workers/holds as raw maps (pass-through: crew roster and
 // crew hold list --json carry fields no view reads yet, e.g. sessions,
-// prev_state, task.spec). The collector adds "age_s" to each worker.
+// prev_state, task.spec). The collector adds "age_s" to each worker. Error
+// is set when `crew roster <id>` or `crew hold list --crew <id>` itself
+// fails (non-zero exit or unparseable JSON) — otherwise that per-crew
+// failure would be indistinguishable from a genuinely idle crew.
 type RosterCrew struct {
 	ID      string           `json:"id"`
 	Workers []map[string]any `json:"workers"`
 	Holds   []map[string]any `json:"holds"`
+	Error   *string          `json:"error"`
 }

@@ -1,0 +1,24 @@
+  Settings │   Budget │   Runs │ ▸ Roster
+crew c1
+  name  state    tier/engine/model   detail          age  pr
+› c1w0  working  deep/claude/opus    doing task 0 …  1m   https://githu…
+  c1w1  blocked  standard/codex/gp…  doing task 1 …  2m   —
+  c1w2  idle     deep/claude/opus    doing task 2 …  3m   —
+  c1w3  working  standard/codex/gp…  doing task 3 …  4m   —
+  c1w4  blocked  deep/claude/opus    doing task 4 …  5m   https://githu…
+  c1w5  idle     standard/codex/gp…  doing task 5 …  6m   —
+  c1w6  working  deep/claude/opus    doing task 6 …  7m   —
+  hold c1h0: claude 7d until 2026-09-25T02:13:20Z — hold task 0 for c1
+  hold c1h1: claude 7d until 2026-09-25T02:13:20Z — hold task 1 for c1
+crew c2
+  name  state    tier/engine/model   detail          age  pr
+  c2w0  working  deep/claude/opus    doing task 0 …  1m   https://githu…
+  c2w1  blocked  standard/codex/gp…  doing task 1 …  2m   —
+  c2w2  idle     deep/claude/opus    doing task 2 …  3m   —
+  c2w3  working  standard/codex/gp…  doing task 3 …  4m   —
+  c2w4  blocked  deep/claude/opus    doing task 4 …  5m   https://githu…
+  c2w5  idle     standard/codex/gp…  doing task 5 …  6m   —
+crew c3
+  name  state    tier/engine/model   detail          age  pr
+  c3w0  working  deep/claude/opus    doing task 0 …  1m   https://githu…
+1-4 views • tab next view • r refresh • ? help • q quit …  refreshed 14:13:20

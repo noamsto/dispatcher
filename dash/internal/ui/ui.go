@@ -33,7 +33,7 @@ type Deps struct {
 // closed exactly once after Program.Run returns regardless of which key
 // quit the program — the model never owns watcher lifecycle.
 func Run(deps Deps) error {
-	if os.Getenv("NO_COLOR") != "" {
+	if colorForcedAscii(os.Getenv) {
 		lipgloss.SetColorProfile(termenv.Ascii)
 	}
 
@@ -61,4 +61,12 @@ func Run(deps Deps) error {
 		watcher.Close()
 	}
 	return err
+}
+
+// colorForcedAscii decides whether the interactive TUI must force the Ascii
+// color profile. CREW_DASH_COLOR=always has no effect here (unlike --once's
+// colorEnabled in main.go): the TUI otherwise auto-detects color support,
+// and forcing it on would fight lipgloss's own terminal detection.
+func colorForcedAscii(getenv func(string) string) bool {
+	return getenv("NO_COLOR") != "" || getenv("CREW_DASH_COLOR") == "never"
 }

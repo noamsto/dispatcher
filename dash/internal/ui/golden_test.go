@@ -4,10 +4,12 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -99,4 +101,53 @@ func TestGoldenRoster80x24(t *testing.T) {
 
 func TestGoldenRoster120x40(t *testing.T) {
 	checkGolden(t, "roster_120x40.golden", goldenFrameFull(t, 3, 120, 40))
+}
+
+// TestGoldenRosterMany80x24 and TestGoldenRosterManyEnd80x24 pin finding 6's
+// fix: tableView must window its body to h instead of letting normalizeFrame
+// silently clip rows past it. The "many" fixture (3 crews, 18 workers,
+// holds) overflows a 24-row frame, so the cursor-at-top and
+// cursor-at-last-worker frames necessarily differ.
+func TestGoldenRosterMany80x24(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadManySnapshot(t)
+	m := sized(testModel(snap), 80, 24)
+	m.active = 3
+	checkGolden(t, "roster_many_80x24.golden", m.View())
+}
+
+func TestGoldenRosterManyEnd80x24(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadManySnapshot(t)
+	m := sized(testModel(snap), 80, 24)
+	m.active = 3
+	nm, _ := m.Update(keyRune('G'))
+	m = nm.(Model)
+	out := m.View()
+	checkGolden(t, "roster_many_end_80x24.golden", out)
+
+	lines := strings.Split(out, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("frame has %d lines, want 24", len(lines))
+	}
+	for _, l := range lines {
+		if w := ansi.StringWidth(l); w > 80 {
+			t.Errorf("line %q is %d cells wide, want <= 80", l, w)
+		}
+	}
+	var cursorVisible bool
+	for _, l := range lines {
+		if strings.Contains(l, "›") {
+			cursorVisible = true
+		}
+	}
+	if !cursorVisible {
+		t.Errorf("cursor marker › not visible after moving to the last worker:\n%s", out)
+	}
 }

@@ -99,3 +99,38 @@ func TestCJKNotTruncated(t *testing.T) {
 		t.Errorf("expected untruncated CJK value %q in output", needle)
 	}
 }
+
+// TestRosterCrewErrorShown matches finding 2: a per-crew roster/hold source
+// failure surfaces as "unavailable: <error>" under that crew's heading,
+// instead of an empty worker list indistinguishable from an idle crew.
+func TestRosterCrewErrorShown(t *testing.T) {
+	snap := loadSnapshot(t)
+	msg := "boom"
+	snap.Roster.Crews = []data.RosterCrew{{ID: "c1", Error: &msg}}
+	got := Render(snap, false)
+	if !strings.Contains(got, "unavailable: boom") {
+		t.Errorf("crew roster failure should read unavailable: boom:\n%s", got)
+	}
+}
+
+// TestRunsPaneRatingsWrongShapeIsUnavailable matches finding 3: a wrong-shape
+// (but valid) Ratings payload must decode-fail, not silently render as "no
+// runs swept for this repo yet". Unmarshaling into data.RunsSection directly
+// exercises the same decode path Collect uses.
+func TestRunsPaneRatingsWrongShapeIsUnavailable(t *testing.T) {
+	var runs data.RunsSection
+	raw := []byte(`{"retro":null,"retro_error":null,"ratings":{"groups":[]},"ratings_error":null}`)
+	if err := json.Unmarshal(raw, &runs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if runs.RatingsError == nil {
+		t.Fatalf("expected the RunsSection decode itself to set RatingsError")
+	}
+
+	snap := loadSnapshot(t)
+	snap.Runs = runs
+	got := Render(snap, false)
+	if !strings.Contains(got, "unavailable: unparseable crew rate output:") {
+		t.Errorf("wrong-shape ratings should read unavailable: unparseable crew rate output: ...:\n%s", got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -236,6 +237,92 @@ func readCapturedSnapshot(t *testing.T) []byte {
 		t.Fatalf("reading captured snapshot.json: %v", err)
 	}
 	return b
+}
+
+// TestSettingsLayersUnmarshalFailureWarns matches finding 4: a --layers
+// response that is valid JSON but fails to unmarshal into Layers must not be
+// dropped silently — it appends a "layers: <err>" warning instead.
+func TestSettingsLayersUnmarshalFailureWarns(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["dispatch-config --layers"] = FakeResponse{Stdout: []byte(`{"base": 123}`)}
+	snap := Collect(context.Background(), r, baseConfig())
+	if snap.Settings.Error != nil {
+		t.Fatalf("Settings.Error = %v, want nil", *snap.Settings.Error)
+	}
+	if snap.Settings.Layers != nil {
+		t.Errorf("Layers = %+v, want nil on unmarshal failure", snap.Settings.Layers)
+	}
+	var found bool
+	for _, w := range snap.Settings.Warnings {
+		if strings.HasPrefix(w, "layers: ") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Warnings = %v, want a \"layers: ...\" warning", snap.Settings.Warnings)
+	}
+}
+
+// TestRosterPerCrewFailureSetsError matches finding 2: `crew crews` reports
+// one alive crew, but `crew roster <id>` itself fails — that must surface as
+// RosterCrew.Error, not an empty (indistinguishable-from-idle) worker list.
+func TestRosterPerCrewFailureSetsError(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
+	}
+	r.Responses["crew roster c1"] = FakeResponse{Stderr: []byte("boom\n"), Err: FakeExitError{Code: 1}}
+	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+	snap := Collect(context.Background(), r, baseConfig())
+
+	if len(snap.Roster.Crews) != 1 {
+		t.Fatalf("expected 1 crew, got %d", len(snap.Roster.Crews))
+	}
+	c := snap.Roster.Crews[0]
+	if c.Error == nil || *c.Error != "boom" {
+		t.Errorf("Crew.Error = %v, want \"boom\"", c.Error)
+	}
+	if len(c.Workers) != 0 {
+		t.Errorf("Workers = %+v, want empty on a roster failure", c.Workers)
+	}
+}
+
+// TestRosterPerCrewUnparseableJSONSetsError covers the "unparseable JSON"
+// half of finding 2: rc 0 but a body that isn't a JSON array.
+func TestRosterPerCrewUnparseableJSONSetsError(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\n"),
+	}
+	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte("not json")}
+	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+	snap := Collect(context.Background(), r, baseConfig())
+
+	if len(snap.Roster.Crews) != 1 {
+		t.Fatalf("expected 1 crew, got %d", len(snap.Roster.Crews))
+	}
+	if snap.Roster.Crews[0].Error == nil {
+		t.Errorf("expected Crew.Error to be set for unparseable roster JSON")
+	}
+}
+
+// TestRatingsWrongShapeSetsError matches finding 3: `rate --report --json`
+// exits 0 with valid-but-wrong-shape JSON (an object instead of the
+// documented array) — that must not silently render as "no runs swept".
+func TestRatingsWrongShapeSetsError(t *testing.T) {
+	r := allOKRunner(t)
+	r.Responses["crew rate --report --json"] = FakeResponse{Stdout: []byte(`{"groups":[]}`)}
+	snap := Collect(context.Background(), r, baseConfig())
+
+	if snap.Runs.RatingsError == nil {
+		t.Fatal("expected RatingsError to be set for wrong-shape ratings JSON")
+	}
+	if !strings.HasPrefix(*snap.Runs.RatingsError, "unparseable crew rate output:") {
+		t.Errorf("RatingsError = %q, want prefix \"unparseable crew rate output:\"", *snap.Runs.RatingsError)
+	}
+	if len(snap.Runs.RatingsGroups) != 0 {
+		t.Errorf("RatingsGroups = %+v, want empty on a decode failure", snap.Runs.RatingsGroups)
+	}
 }
 
 func jsonEqual(t *testing.T, a, b any) bool {

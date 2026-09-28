@@ -98,6 +98,7 @@ type rosterView struct {
 	detailLoading bool
 	detailEvents  []data.Event
 	detailErr     string
+	detailCursor  int // index into detailEvents — RecentEvents is oldest-first, so this starts at the last (newest) event
 }
 
 func newRosterView(snap data.Snapshot, deps rosterDeps, now func() time.Time) rosterView {
@@ -165,6 +166,10 @@ func (v rosterView) Update(msg tea.Msg) (view, tea.Cmd) {
 		v.detailLoading = false
 		v.detailEvents = msg.events
 		v.detailErr = msg.err
+		// RecentEvents is oldest-first; start scrolled to the newest event
+		// rather than the oldest (finding: a user drilling in wants to land
+		// on what just happened, not what happened first).
+		v.detailCursor = max0(len(msg.events) - 1)
 		return v, nil
 
 	case tea.KeyMsg:
@@ -209,15 +214,28 @@ func (v rosterView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 }
 
 func (v rosterView) handleDetailKey(msg tea.KeyMsg) (view, tea.Cmd) {
-	if msg.String() == "esc" {
+	switch msg.String() {
+	case "esc":
 		v.detail = false
+	case "j", "down":
+		v.detailCursor = clamp(v.detailCursor+1, 0, len(v.detailEvents)-1)
+	case "k", "up":
+		v.detailCursor = clamp(v.detailCursor-1, 0, len(v.detailEvents)-1)
+	case "g":
+		v.detailCursor = 0
+	case "G":
+		v.detailCursor = max0(len(v.detailEvents) - 1)
 	}
 	return v, nil
 }
 
 func (v rosterView) Keys() []key.Binding {
 	if v.detail {
-		return []key.Binding{key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))}
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "scroll")),
+			key.NewBinding(key.WithKeys("g", "G"), key.WithHelp("g/G", "top/bottom")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
+		}
 	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
@@ -239,53 +257,75 @@ func (v rosterView) Capturing() bool { return false }
 
 func (v rosterView) View(w, h int) string {
 	if v.detail {
-		return strings.Join(normalizeFrame(v.detailView(w), h, w), "\n")
+		return strings.Join(normalizeFrame(v.detailView(w, h), h, w), "\n")
 	}
-	return strings.Join(normalizeFrame(v.tableView(w), h, w), "\n")
+	return strings.Join(normalizeFrame(v.tableView(w, h), h, w), "\n")
 }
 
-func (v rosterView) tableView(w int) string {
-	var lines []string
+// tableView windows its body (crew headings, table headers, worker rows and
+// hold lines) to h the same way runs.go's ratingsLines/rowsLines do: the
+// chrome (live-off note) is never scrolled, and windowOffset keeps the
+// cursor's worker row on-screen instead of letting normalizeFrame silently
+// clip rows past h (charm-tui skill, trap 9).
+func (v rosterView) tableView(w, h int) string {
+	var top []string
 	if v.deps.watcher == nil && v.deps.liveOffNote != "" {
-		lines = append(lines, truncateLine(warnStyle.Render(v.deps.liveOffNote), w))
+		top = append(top, truncateLine(warnStyle.Render(v.deps.liveOffNote), w))
 	}
 	if v.err != nil {
-		lines = append(lines, truncateLine("unavailable: "+*v.err, w))
-		return strings.Join(lines, "\n")
+		top = append(top, truncateLine("unavailable: "+*v.err, w))
+		return strings.Join(top, "\n")
 	}
 	if len(v.crews) == 0 {
-		lines = append(lines, truncateLine("no active crew", w))
-		return strings.Join(lines, "\n")
+		top = append(top, truncateLine("no active crew", w))
+		return strings.Join(top, "\n")
 	}
 
 	headers := []string{"name", "state", "tier/engine/model", "detail", "age", "pr"}
 	left := []bool{true, true, true, true, true, true}
+	var body []string
+	cursorLine := 0
 	flatIdx := 0
 	for _, c := range v.crews {
-		lines = append(lines, truncateLine(headerStyle.Render("crew "+c.ID), w))
+		body = append(body, truncateLine(headerStyle.Render("crew "+c.ID), w))
+		if c.Error != nil {
+			body = append(body, truncateLine("  unavailable: "+*c.Error, w))
+			continue
+		}
 		if len(c.Workers) > 0 {
 			rows := make([][]string, len(c.Workers))
 			for i, wm := range c.Workers {
 				rows[i] = rosterWorkerCells(wm, v.now())
 			}
 			widths := tableWidths(append([][]string{headers}, rows...))
-			lines = append(lines, truncateLine("  "+padRow(headers, widths, left), w))
+			body = append(body, truncateLine("  "+padRow(headers, widths, left), w))
 			for i, r := range rows {
 				prefix := "  "
 				if flatIdx == v.cursor {
 					prefix = cursorStyle.Render("›") + " "
+					cursorLine = len(body)
 				}
 				name := tmuxColorStyle(c.Workers[i]).Render(padCell(r[0], widths[0], true))
 				rest := padRow(r[1:], widths[1:], left[1:])
-				lines = append(lines, truncateLine(prefix+name+"  "+rest, w))
+				body = append(body, truncateLine(prefix+name+"  "+rest, w))
 				flatIdx++
 			}
 		}
-		for _, h := range c.Holds {
-			lines = append(lines, truncateLine("  "+holdLine(h), w))
+		for _, hd := range c.Holds {
+			body = append(body, truncateLine("  "+holdLine(hd), w))
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	bodyH := max0(h - len(top))
+	total := len(body)
+	offset := windowOffset(cursorLine, total, bodyH)
+	end := offset + bodyH
+	if end > total {
+		end = total
+	}
+	out := append([]string{}, top...)
+	out = append(out, body[offset:end]...)
+	return strings.Join(out, "\n")
 }
 
 // padCell pads s to w display cells (never trimming — callers truncate
@@ -367,7 +407,7 @@ func rosterWorkerCells(w map[string]any, now time.Time) []string {
 	}
 	return []string{
 		truncateLine(cleanText(name), rosterNameCap),
-		truncateLine(state, rosterStateCap),
+		truncateLine(cleanText(state), rosterStateCap),
 		truncateLine(tier+"/"+engine+"/"+model, rosterTierCap),
 		truncateLine(detail, rosterDetailCap),
 		truncateLine(reltime(ageS), rosterAgeCap),
@@ -418,21 +458,37 @@ func holdLine(h map[string]any) string {
 	return "hold " + id + ": " + engine + " " + window + " until " + isoUTC(int64(resetsAt)) + " — " + cleanText(title)
 }
 
-func (v rosterView) detailView(w int) string {
-	lines := []string{truncateLine(headerStyle.Render("recent events"), w)}
+// detailView windows the event list to h the same way tableView windows the
+// worker table: the header is never scrolled, and the body is clipped by
+// windowOffset (centered on detailCursor) instead of by normalizeFrame
+// silently dropping rows past h. detailCursor starts at the newest event
+// (RecentEvents is oldest-first) and is moved by j/k/g/G in handleDetailKey.
+func (v rosterView) detailView(w, h int) string {
+	header := []string{truncateLine(headerStyle.Render("recent events"), w)}
+	var body []string
 	switch {
 	case v.detailLoading:
-		lines = append(lines, truncateLine("loading…", w))
+		body = append(body, truncateLine("loading…", w))
 	case v.detailErr != "":
-		lines = append(lines, truncateLine("unavailable: "+v.detailErr, w))
+		body = append(body, truncateLine("unavailable: "+v.detailErr, w))
 	case len(v.detailEvents) == 0:
-		lines = append(lines, truncateLine("no recent events", w))
+		body = append(body, truncateLine("no recent events", w))
 	default:
 		for _, ev := range v.detailEvents {
-			lines = append(lines, truncateLine(eventLine(ev), w))
+			body = append(body, truncateLine(eventLine(ev), w))
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	bodyH := max0(h - len(header))
+	total := len(body)
+	offset := windowOffset(v.detailCursor, total, bodyH)
+	end := offset + bodyH
+	if end > total {
+		end = total
+	}
+	out := append([]string{}, header...)
+	out = append(out, body[offset:end]...)
+	return strings.Join(out, "\n")
 }
 
 func eventLine(ev data.Event) string {
@@ -442,7 +498,7 @@ func eventLine(ev data.Event) string {
 	}
 	t := time.UnixMilli(int64(ts)).UTC().Format("15:04:05")
 	kind, _ := ev["kind"].(string)
-	return t + "  " + kind + "  " + cleanText(eventDetail(ev))
+	return t + "  " + cleanText(kind) + "  " + cleanText(eventDetail(ev))
 }
 
 // eventDetail renders a status event as "state: detail" (or just "state")

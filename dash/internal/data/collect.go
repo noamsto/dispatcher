@@ -106,6 +106,8 @@ func collectSettings(ctx context.Context, r Runner, cfg Config) SettingsSection 
 		var layers Layers
 		if err := json.Unmarshal(layersRes.Data, &layers); err == nil {
 			sec.Layers = &layers
+		} else {
+			sec.Warnings = append(sec.Warnings, "layers: "+err.Error())
 		}
 	}
 	if showOrigin.Error != nil {
@@ -174,6 +176,7 @@ func collectRuns(ctx context.Context, r Runner, cfg Config) RunsSection {
 	rateRes := runSource(ctx, r, cfg.Crew[0], crewArgs(cfg, "rate", "--report", "--json"), false)
 	sec.RatingsError = rateRes.Error
 	sec.Ratings = rateRes.Data
+	sec.decodeRatings()
 	return sec
 }
 
@@ -199,31 +202,46 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 
 	crews := []RosterCrew{}
 	for _, id := range aliveCrewIDs(out) {
-		wOut, _, wErr := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "roster", id)...)
-		workers := []map[string]any{}
-		if wErr == nil {
-			var parsed []map[string]any
-			if json.Unmarshal(wOut, &parsed) == nil {
-				workers = parsed
-			}
+		workers, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id))
+		if workers == nil {
+			workers = []map[string]any{}
 		}
 		for _, w := range workers {
 			ts, _ := w["ts"].(float64)
 			w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
 		}
 
-		hOut, _, hErr := r.Run(ctx, cfg.Crew[0], crewArgs(cfg, "hold", "list", "--crew", id, "--json")...)
-		holds := []map[string]any{}
-		if hErr == nil {
-			var parsed []map[string]any
-			if json.Unmarshal(hOut, &parsed) == nil {
-				holds = parsed
-			}
+		holds, hErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "hold", "list", "--crew", id, "--json"))
+		if holds == nil {
+			holds = []map[string]any{}
 		}
 
-		crews = append(crews, RosterCrew{ID: id, Workers: workers, Holds: holds})
+		crewErr := wErr
+		if crewErr == nil {
+			crewErr = hErr
+		}
+
+		crews = append(crews, RosterCrew{ID: id, Workers: workers, Holds: holds, Error: crewErr})
 	}
 	return RosterSection{Crews: crews, Error: nil}
+}
+
+// fetchRosterList runs one per-crew roster/hold source and classifies it the
+// same way runSource does: rc != 0 or unparseable JSON is a failure
+// (nil, error message); the parsed rows otherwise.
+func fetchRosterList(ctx context.Context, r Runner, cfg Config, args []string) ([]map[string]any, *string) {
+	out, errb, err := r.Run(ctx, cfg.Crew[0], args...)
+	rc := exitCode(err)
+	if rc != 0 {
+		msg := firstLineOrExit(errb, rc)
+		return nil, &msg
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		msg := err.Error()
+		return nil, &msg
+	}
+	return parsed, nil
 }
 
 // firstLineOrExit mirrors `${first_err:-exit $rc}` over `head -n1`: the

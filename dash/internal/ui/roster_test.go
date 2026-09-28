@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
@@ -60,6 +62,114 @@ func TestRosterSourceError(t *testing.T) {
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: exit 1") {
 		t.Fatalf("roster error should read unavailable: exit 1:\n%s", out)
+	}
+}
+
+// TestRosterCrewErrorShown matches finding 2: a per-crew roster/hold source
+// failure surfaces as "unavailable: <error>" under that crew's heading,
+// instead of an empty worker list indistinguishable from an idle crew.
+func TestRosterCrewErrorShown(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	msg := "boom"
+	snap.Roster.Crews[0].Error = &msg
+	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	out := v.View(80, 24)
+	if !strings.Contains(out, "unavailable: boom") {
+		t.Fatalf("crew roster failure should read unavailable: boom:\n%s", out)
+	}
+}
+
+// TestRosterStateInjectionIsCleaned matches finding 5: a worker's raw
+// "state" field must not carry a terminal escape or bidi override from
+// untrusted bus data into the rendered table. The Ascii color profile makes
+// the rendered frame itself style-free, so any surviving ESC/U+202E must
+// have come from the (uncleaned) data.
+func TestRosterStateInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Roster.Crews[0].Workers[0]["state"] = "\x1b]0;pwned\x07working‮"
+	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	out := v.View(80, 24)
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("rendered roster table contains a raw ESC from an injected state:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("rendered roster table contains U+202E from an injected state:\n%q", out)
+	}
+}
+
+// TestRosterEventKindInjectionIsCleaned covers the MEDIUM half of finding 5:
+// eventLine concatenates an event's "kind" raw.
+func TestRosterEventKindInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	deps := rosterDeps{eventsPath: "testdata/events.jsonl"}
+	v := newRosterView(loadFullSnapshot(t), deps, fixedRosterNow(t))
+	nv, cmd := v.Update(keyType(tea.KeyEnter))
+	v = nv.(rosterView)
+	msg := cmd().(recentEventsMsg)
+	for i := range msg.events {
+		msg.events[i]["kind"] = "status\x1b[31m‮"
+	}
+	nv, _ = v.Update(msg)
+	v = nv.(rosterView)
+	out := v.View(80, 24)
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("rendered event detail contains a raw ESC from an injected kind:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("rendered event detail contains U+202E from an injected kind:\n%q", out)
+	}
+}
+
+// TestRosterDetailEventsWindowFits80x12 matches finding 6's detail-view half
+// (frame size) and the follow-up finding that the detail pane must be
+// scrollable and start at the newest event: RecentEvents is oldest-first, so
+// a top-anchored, unscrollable view clips exactly the events a user drilling
+// in wants to see. 20 events at height 12 must fit the frame exactly, start
+// scrolled to the newest event (last visible, first not), and let `g`
+// scroll back to the oldest.
+func TestRosterDetailEventsWindowFits80x12(t *testing.T) {
+	v := newTestRosterView(t)
+	events := make([]data.Event, 20)
+	for i := range events {
+		events[i] = data.Event{
+			"ts":   float64(1789999000000 + i*1000),
+			"kind": "status",
+			"body": map[string]any{"state": "evt" + strconv.Itoa(i)},
+		}
+	}
+	nv, _ := v.Update(recentEventsMsg{events: events})
+	v = nv.(rosterView)
+	v.detail = true
+
+	out := v.View(80, 12)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 12 {
+		t.Fatalf("frame has %d lines, want 12", len(lines))
+	}
+	for _, l := range lines {
+		if w := ansi.StringWidth(l); w > 80 {
+			t.Errorf("line %q is %d cells wide, want <= 80", l, w)
+		}
+	}
+	if !strings.Contains(out, "evt19") {
+		t.Errorf("newest event (evt19) should be visible initially:\n%s", out)
+	}
+	if strings.Contains(out, "evt0") {
+		t.Errorf("oldest event (evt0) should not be visible initially:\n%s", out)
+	}
+
+	nv, _ = v.Update(keyRune('g'))
+	v = nv.(rosterView)
+	out = v.View(80, 12)
+	if !strings.Contains(out, "evt0") {
+		t.Errorf("oldest event (evt0) should be visible after g:\n%s", out)
 	}
 }
 

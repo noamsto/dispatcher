@@ -559,7 +559,8 @@ read from an already-cached or already-run source, never probed live:
 
 Keys: `1`–`4` or `tab` switch views, `j`/`k`/`g`/`G` move, `enter`/`esc` open
 and close details, `r` re-collects, `?` shows every binding, `q` quits.
-`NO_COLOR` (or `CREW_DASH_COLOR=never`) disables colour.
+`NO_COLOR` or `CREW_DASH_COLOR=never` disables colour; `--once` also honours
+`CREW_DASH_COLOR=always`.
 
 It is read-only: no network or `gh` calls, and it writes nothing — edit
 `~/.config/dispatcher/settings.json` by hand for now.

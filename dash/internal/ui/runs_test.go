@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
@@ -85,7 +87,7 @@ func TestRunsSortCyclingAndOrder(t *testing.T) {
 
 func TestRunsRatingsMarkers(t *testing.T) {
 	v := newTestRunsView(t)
-	byTier := map[string]ratingGroup{}
+	byTier := map[string]data.RatingGroup{}
 	for _, g := range v.ratings {
 		byTier[g.Tier] = g
 	}
@@ -208,6 +210,7 @@ func TestRunsEmptyStates(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	snap.Runs.Retro.Rows = nil
 	snap.Runs.Ratings = nil
+	snap.Runs.RatingsGroups = nil
 	v := newRunsView(snap)
 	out := v.View(80, 24)
 	if !strings.Contains(out, "no retro notes yet") {
@@ -231,5 +234,59 @@ func TestRunsSourceErrors(t *testing.T) {
 	}
 	if !strings.Contains(out, "unavailable: exit 2") {
 		t.Errorf("ratings error should read unavailable: exit 2:\n%s", out)
+	}
+}
+
+// TestRunsRatingsWrongShapeIsUnavailable matches finding 3: a wrong-shape
+// (but valid) Ratings payload must decode-fail, not silently render as "no
+// runs swept". Unmarshaling into data.RunsSection directly (rather than
+// setting RatingsError by hand) exercises the same decode path Collect uses.
+func TestRunsRatingsWrongShapeIsUnavailable(t *testing.T) {
+	var runs data.RunsSection
+	raw := []byte(`{"retro":null,"retro_error":null,"ratings":{"groups":[]},"ratings_error":null}`)
+	if err := json.Unmarshal(raw, &runs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if runs.RatingsError == nil {
+		t.Fatalf("expected the RunsSection decode itself to set RatingsError")
+	}
+
+	snap := loadFullSnapshot(t)
+	snap.Runs = runs
+	v := newRunsView(snap)
+	out := v.View(80, 24)
+	if !strings.Contains(out, "unavailable: unparseable crew rate output:") {
+		t.Fatalf("wrong-shape ratings should read unavailable: unparseable crew rate output: ...:\n%s", out)
+	}
+}
+
+// TestRunsNoteSeamInjectionIsCleaned matches finding 5: a retro note's Seam
+// (and Tag) must not carry a raw terminal escape or bidi override from
+// untrusted bus data into the rendered detail pane. The Ascii color profile
+// makes the rendered frame itself style-free, so any surviving ESC/U+202E
+// must have come from the (uncleaned) data.
+func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	for i := range snap.Runs.Retro.Rows {
+		for j := range snap.Runs.Retro.Rows[i].Notes {
+			snap.Runs.Retro.Rows[i].Notes[j].Seam = "\x1b]0;pwned\x07seam‮"
+			snap.Runs.Retro.Rows[i].Notes[j].Tag = "tag\x1b[31m‮"
+		}
+	}
+	v := newRunsView(snap)
+	nv, _ := v.Update(keyRune('f'))
+	v = nv.(runsView)
+	nv, _ = v.Update(keyType(tea.KeyEnter))
+	v = nv.(runsView)
+	out := v.View(80, 24)
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("rendered detail pane contains a raw ESC from an injected note:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("rendered detail pane contains U+202E from an injected note:\n%q", out)
 	}
 }

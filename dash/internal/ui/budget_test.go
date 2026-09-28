@@ -73,6 +73,34 @@ func TestBudgetVerdictTruncatedAt80FullInDetail(t *testing.T) {
 	}
 }
 
+// TestBudgetDetailWrapsMultiByteAndLongWord matches finding 7: the detail
+// pane's verdict wrap must be display-width-aware (a len()-based wrapper
+// undercounts multi-byte runes) and must hard-break a word longer than the
+// width, never letting a rendered line exceed it.
+func TestBudgetDetailWrapsMultiByteAndLongWord(t *testing.T) {
+	v := newTestBudgetView(t)
+	verdict := "日本語のテキストが混じった長い説明文です。 " + strings.Repeat("x", 120) + " tail"
+	v.report.Engines["claude"].Windows[0].Verdict = &verdict
+	v.cursor = 0
+	nv, _ := v.Update(keyType(tea.KeyEnter))
+	v = nv.(budgetView)
+	if !v.detail {
+		t.Fatalf("enter did not open detail")
+	}
+	// detailView directly, not View: View's normalizeFrame belt-and-suspenders
+	// truncates every line to w regardless, which would mask exactly the
+	// overflow this test exists to catch.
+	out := v.detailView(80)
+	for _, line := range strings.Split(out, "\n") {
+		if w := ansi.StringWidth(line); w > 80 {
+			t.Errorf("detail line %q is %d cells wide, want <= 80", line, w)
+		}
+	}
+	if !strings.Contains(out, "日本語") {
+		t.Errorf("detail pane missing multi-byte verdict text:\n%s", out)
+	}
+}
+
 func TestBudgetUnknownEngines(t *testing.T) {
 	v := newTestBudgetView(t)
 	out := v.View(80, 24)

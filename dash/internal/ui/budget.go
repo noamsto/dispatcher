@@ -258,33 +258,12 @@ func (v budgetView) detailView(w int) string {
 		verdict = *win.Verdict
 	}
 	header := headerStyle.Render(win.Key + " — full verdict")
-	wrapped := wrapText(verdict, max0(w))
+	// This is the one place the dashboard deliberately wraps instead of
+	// clipping, since it is the verdict's own full-text detail; ansi.Wrap is
+	// display-width-aware and hard-breaks a word longer than w (charm-tui
+	// skill, trap 4 — len() undercounts multi-byte runes).
+	wrapped := strings.Split(ansi.Wrap(verdict, max0(w), ""), "\n")
 	lines := append([]string{truncateLine(header, w), ""}, wrapped...)
 	lines = append(lines, "", "esc back")
 	return strings.Join(lines, "\n")
-}
-
-// wrapText greedily wraps s to at most w display cells per line (no
-// truncation — this is the one place the dashboard deliberately wraps
-// instead of clipping, since it is the verdict's own full-text detail).
-func wrapText(s string, w int) []string {
-	if w <= 0 {
-		return []string{s}
-	}
-	words := strings.Fields(s)
-	if len(words) == 0 {
-		return []string{""}
-	}
-	var out []string
-	cur := words[0]
-	for _, word := range words[1:] {
-		if len(cur)+1+len(word) > w {
-			out = append(out, cur)
-			cur = word
-			continue
-		}
-		cur += " " + word
-	}
-	out = append(out, cur)
-	return out
 }

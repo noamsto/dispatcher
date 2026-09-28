@@ -1,6 +1,6 @@
-// Package once renders a data.Snapshot as the plain "--once" text: the same
-// four "== Pane ==" sections bash's crew-dash.sh produced, byte for byte —
-// tests/fixtures/crew-dash/once.golden is the contract.
+// Package once renders a data.Snapshot as the plain "--once" text: the four
+// "== Pane ==" sections tests/fixtures/crew-dash/once.golden pins, byte for
+// byte.
 package once
 
 import (
@@ -376,32 +376,12 @@ func crewNotesLines(g crewGroup) []line {
 	return out
 }
 
-type agg struct {
-	Value *float64 `json:"value"`
-	K     int      `json:"k"`
-	N     int      `json:"n"`
-}
-
-type ratingGroup struct {
-	Tier       string `json:"tier"`
-	Engine     string `json:"engine"`
-	Model      string `json:"model"`
-	N          agg    `json:"n"`
-	PrPct      agg    `json:"pr_pct"`
-	MergePct   agg    `json:"merge_pct"`
-	BurnMedian agg    `json:"burn_median"`
-}
-
-func ratingsTable(raw json.RawMessage) []line {
-	var groups []ratingGroup
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &groups)
-	}
+func ratingsTable(groups []data.RatingGroup) []line {
 	if len(groups) == 0 {
 		return []line{{style: "n", text: "no runs swept for this repo yet"}}
 	}
 
-	sorted := append([]ratingGroup{}, groups...)
+	sorted := append([]data.RatingGroup{}, groups...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := sorted[i], sorted[j]
 		if a.Tier != b.Tier {
@@ -460,7 +440,7 @@ func runsPane(snap data.Snapshot) []line {
 	if r.RatingsError != nil {
 		partB = []line{{style: "n", text: "unavailable: " + *r.RatingsError}}
 	} else {
-		partB = ratingsTable(r.Ratings)
+		partB = ratingsTable(r.RatingsGroups)
 	}
 
 	out := append([]line{}, partA...)
@@ -514,11 +494,15 @@ func workerCells(w map[string]any) []string {
 	if s, ok := strField(w, "pr_url"); ok {
 		prURL = s
 	}
-	return []string{cleanText(name), state, tier + "/" + engine + "/" + model, reltime(ageS), prURL}
+	return []string{cleanText(name), cleanText(state), tier + "/" + engine + "/" + model, reltime(ageS), prURL}
 }
 
 func rosterCrewLines(c data.RosterCrew) []line {
 	out := []line{{style: "h", text: "crew " + c.ID}}
+	if c.Error != nil {
+		out = append(out, line{style: "n", text: "  unavailable: " + *c.Error})
+		return out
+	}
 	if len(c.Workers) > 0 {
 		headers := []string{"name", "state", "tier/engine/model", "age", "pr"}
 		wrows := make([][]string, 0, len(c.Workers))

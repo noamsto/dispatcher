@@ -26,6 +26,22 @@ func loadSnapshot(t *testing.T) data.Snapshot {
 	return snap
 }
 
+// loadManySnapshot reads a fixture with 3 crews and 18 workers plus holds —
+// enough to overflow a roster frame's height, for the windowing tests and
+// golden frames finding 6 pins.
+func loadManySnapshot(t *testing.T) data.Snapshot {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/snapshot-many.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var snap data.Snapshot
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	return snap
+}
+
 // fixedNow returns a clock frozen at the fixture's Now (as a fake "now" for
 // status-stamp determinism in tests).
 func fixedNow(snap data.Snapshot) func() time.Time {

@@ -129,9 +129,9 @@ func resolveNow() int64 {
 	return time.Now().Unix()
 }
 
-// resolveCrew mirrors crew-dash.sh's crew_cmd resolution: $CREW_BIN
-// executable → exec it directly; set but not executable → run it through
-// bash; unset → "crew" on PATH.
+// resolveCrew resolves the crew binary to exec: $CREW_BIN executable → exec
+// it directly; set but not executable → run it through bash; unset → "crew"
+// on PATH.
 func resolveCrew() []string {
 	bin := os.Getenv("CREW_BIN")
 	if bin == "" {

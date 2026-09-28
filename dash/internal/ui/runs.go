@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -18,33 +17,13 @@ import (
 // (spec §Runs): tier -> engine -> model -> n -> pr% -> success -> burn.
 var sortColumns = []string{"tier", "engine", "model", "n", "pr%", "success", "burn"}
 
-// agg mirrors `rate --report --json`'s {value,k,n} aggregate shape (the same
-// contract internal/once's ratingGroup reads, duplicated here since once's
-// type is unexported and the ui package renders it interactively instead of
-// as a fixed-width jq table).
-type agg struct {
-	Value *float64 `json:"value"`
-	K     int      `json:"k"`
-	N     int      `json:"n"`
-}
-
-type ratingGroup struct {
-	Tier       string `json:"tier"`
-	Engine     string `json:"engine"`
-	Model      string `json:"model"`
-	N          agg    `json:"n"`
-	PrPct      agg    `json:"pr_pct"`
-	MergePct   agg    `json:"merge_pct"`
-	BurnMedian agg    `json:"burn_median"`
-}
-
-func parseRatings(raw json.RawMessage) []ratingGroup {
-	var groups []ratingGroup
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &groups)
-	}
-	sort.SliceStable(groups, func(i, j int) bool {
-		a, b := groups[i], groups[j]
+// sortRatingsNatural stably sorts an already-decoded RatingsGroups slice
+// tier/engine/model ascending — the base order lessRatings' ties fall back
+// to.
+func sortRatingsNatural(groups []data.RatingGroup) []data.RatingGroup {
+	sorted := append([]data.RatingGroup{}, groups...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i], sorted[j]
 		if a.Tier != b.Tier {
 			return a.Tier < b.Tier
 		}
@@ -53,10 +32,10 @@ func parseRatings(raw json.RawMessage) []ratingGroup {
 		}
 		return a.Model < b.Model
 	})
-	return groups
+	return sorted
 }
 
-func aggValue(a agg) float64 {
+func aggValue(a data.Agg) float64 {
 	if a.Value == nil {
 		return math.Inf(-1)
 	}
@@ -66,7 +45,7 @@ func aggValue(a agg) float64 {
 // lessRatings compares only the named column; ties fall back to the stable
 // sort's input order, which is always the tier/engine/model-sorted natural
 // slice — so cycling to "engine" or "model" still reads sensibly on ties.
-func lessRatings(a, b ratingGroup, col string) bool {
+func lessRatings(a, b data.RatingGroup, col string) bool {
 	switch col {
 	case "tier":
 		return a.Tier < b.Tier
@@ -90,8 +69,8 @@ func lessRatings(a, b ratingGroup, col string) bool {
 // ("b"), `f`-focus-switched, each scrolling in its own share of the height;
 // `enter` on a list row drills into a scrollable note detail.
 type runsView struct {
-	ratingsNatural []ratingGroup // tier/engine/model ascending — the sort base
-	ratings        []ratingGroup // ratingsNatural, stably re-sorted per sortCol/desc
+	ratingsNatural []data.RatingGroup // tier/engine/model ascending — the sort base
+	ratings        []data.RatingGroup // ratingsNatural, stably re-sorted per sortCol/desc
 	ratingsErr     *string
 
 	rows     []data.RetroRow // newest t0 first
@@ -117,7 +96,7 @@ func newRunsView(snap data.Snapshot) runsView {
 func (v *runsView) load(snap data.Snapshot) {
 	v.ratingsErr = snap.Runs.RatingsError
 	if v.ratingsErr == nil {
-		v.ratingsNatural = parseRatings(snap.Runs.Ratings)
+		v.ratingsNatural = sortRatingsNatural(snap.Runs.RatingsGroups)
 	} else {
 		v.ratingsNatural = nil
 	}
@@ -137,7 +116,7 @@ func (v *runsView) load(snap data.Snapshot) {
 // applySort stably re-sorts ratingsNatural by the current column/direction:
 // the reversed-argument trick keeps ties in natural order either way.
 func (v *runsView) applySort() {
-	sorted := append([]ratingGroup{}, v.ratingsNatural...)
+	sorted := append([]data.RatingGroup{}, v.ratingsNatural...)
 	col := sortColumns[v.sortCol]
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if v.desc {
@@ -449,7 +428,7 @@ func (v runsView) detailView(w, h int) string {
 	starts := make([]int, len(row.Notes))
 	for i, n := range row.Notes {
 		starts[i] = len(lines)
-		lines = append(lines, cursorStyle.Render(n.Seam+" · "+n.Tag))
+		lines = append(lines, cursorStyle.Render(cleanText(n.Seam)+" · "+cleanText(n.Tag)))
 		wrapped := ansi.Wrap(cleanText(n.Detail), max0(w), "")
 		if wrapped == "" {
 			wrapped = " "

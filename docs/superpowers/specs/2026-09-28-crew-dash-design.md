@@ -31,7 +31,8 @@ bash `crew-dash.sh` is deleted.
 
 ## Shape
 
-- Go module `dash/` (`module github.com/noamsto/dispatcher/dash`, `go 1.24.2` per `go mod tidy`),
+- Go module `dash/` (`module github.com/noamsto/dispatcher/dash`, the go line
+  `go mod tidy` pins in `dash/go.mod` (1.26.0)),
   on the **v1** Charm APIs: `github.com/charmbracelet/bubbletea` v1.3.x,
   `lipgloss` v1.1.x, `bubbles` v1.x, `x/ansi` (not the `charm.land/…/v2`
   modules), binary `crew-dash`:
