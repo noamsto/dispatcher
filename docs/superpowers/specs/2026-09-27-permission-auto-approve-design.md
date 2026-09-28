@@ -348,7 +348,9 @@ Tokenised by the checker's own lexer; anything it cannot lex → human.
   canonicalised. Roots: the worktree, the branch's artifacts dir, each grant in
   `<crew_dir>/grants/<branch>` re-validated as `dispatch`'s `_add_dir_ok` does,
   and the immutable protocol/skills/reviewers/critics dirs. A grant or root
-  that is missing, a symlink, or fails validation is dropped. `WORKER_TASK.md`
+  that is missing, a symlink, or fails validation is dropped. The validator is
+  that same `_add_dir_ok`, from the shared lib `adapters/core/grant-check.sh`,
+  run only for grants the command's operands touch. `WORKER_TASK.md`
   `add_dir:` lines are never read. The worktree root itself is dropped if it
   is a symlink, `/`, or `$HOME` or an ancestor of it.
 - Every component below the root is checked with `lstat`: none may be a

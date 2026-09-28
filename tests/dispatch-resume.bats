@@ -567,11 +567,28 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _symlink_chain_hops _git_config_files _git_protected_dirs _add_dir_ok _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
     [ "$a" = "$b" ]
+  done
+}
+
+# _symlink_chain_hops, _git_config_files, _git_protected_dirs and _add_dir_ok
+# live once in the shared grant-check lib, so dispatch, dispatch-resume and
+# permission-check cannot drift. This pins the single-definition guarantee
+# the byte-identical test used to supply for these four.
+@test "the grant-check functions are defined only in the shared grant-check lib" {
+  for fn in _symlink_chain_hops _git_config_files _git_protected_dirs _add_dir_ok; do
+    run grep -q "^${fn}() {" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
+    [ "$status" -ne 0 ]
+    run grep -q "^${fn}() {" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
+    [ "$status" -ne 0 ]
+    run grep -q "^${fn}() {" "$BATS_TEST_DIRNAME/../adapters/core/permission-check.sh"
+    [ "$status" -ne 0 ]
+    run grep -q "^${fn}() {" "$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
+    [ "$status" -eq 0 ]
   done
 }
 

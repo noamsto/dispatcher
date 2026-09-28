@@ -21,6 +21,8 @@ unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR
 # Raw-source consumers carry the unsubstituted @dispatchConfig@; point them at
 # the repo copy of the resolver (every test file lives in tests/).
 export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
+# Same idiom, for the shared --add-dir grant validator lib.
+export GRANT_CHECK_LIB="$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
 # The host's ~/.config/dispatcher/settings.json must never reach a test.
 export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
 # A host's locked settings would override what each test sets up.

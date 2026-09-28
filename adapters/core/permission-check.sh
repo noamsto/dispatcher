@@ -13,6 +13,11 @@
 # must be a read of an allowed root in a grammar small enough to check
 # completely. See docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md.
 #
+# Only the Bash read commands in that grammar are ever approved: Edit and
+# Write dialogs never match the frame, so they always go to the human. Grants
+# are re-validated with dispatch's own validator, so a .git, .claude, hooks
+# dir or git config that appeared inside a grant after it was issued drops it.
+#
 # With --pane the checker trusts no caller-given worktree: it takes the one
 # worktree git lists for the branch, in the repo that owns the crew dir
 # (<git-common-dir>/crew), and requires the pane to be running the lead's
@@ -37,6 +42,12 @@ export LC_ALL=C
 
 decided=0
 trap '[ "$decided" = 1 ] || { printf "human: internal error\n"; exit 1; }' EXIT
+
+# dispatch's --add-dir grant validator, sourced after the trap so a missing
+# lib ends as an internal error.
+grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
+# shellcheck source=/dev/null
+. "$grant_check_lib"
 
 usage() {
   decided=1
@@ -593,23 +604,42 @@ secret_path() {
   return 1
 }
 
-# grant_ok <line> <canonical-home> — dispatch.sh's _add_dir_ok, plus: not a
-# symlink and spelled cleanly. Prints the grant's canonical dir.
+# grant_ok <line> — re-validated with dispatch's own _add_dir_ok from the
+# shared grant-check lib, plus: not a symlink and spelled cleanly. Prints the
+# grant's canonical dir.
 grant_ok() {
-  local p h=$2 c s r
   [[ $1 != *[[:cntrl:]]* ]] && lex_clean "$1" || return 1
   [ -d "$1" ] && [ ! -L "$1" ] || return 1
-  p=$(realpath -e -- "$1") || return 1
-  [ "$p" != / ] || return 1
-  [[ "$h/" != "$p/"* ]] || return 1
-  c=$(realpath -m -- "$CREW_DIR")
-  [[ "$p/" != "$c/"* && "$c/" != "$p/"* ]] || return 1
-  for s in .ssh .gnupg .aws .config .claude .codex .kube .docker .password-store .local/share/keyrings; do
-    for r in "$h/$s" "$(realpath -m -- "$h/$s")"; do
-      [[ "$p/" != "$r/"* && "$r/" != "$p/"* ]] || return 1
+  crew_dir=$CREW_DIR _add_dir_ok "$1"
+}
+
+# grant_roots — _add_dir_ok grants only inside $DISPATCH_GRANT_ROOTS; when env
+# leaves it empty, fill it (unexported) from the settings resolver as dispatch
+# does. A resolver that fails grants nothing.
+grant_roots() {
+  local v
+  [ -z "${DISPATCH_GRANT_ROOTS:-}" ] || return 0
+  if ! v=$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" | jq -r '.grantRoots // [] | join(":")'); then v=; fi
+  DISPATCH_GRANT_ROOTS=$v
+}
+
+# wanted <line> — some path operand, made absolute against BASE as path_check
+# does, is the grant <line> or lies under it, as spelled or canonicalised.
+# path_check only matches root prefixes, so a grant no operand touches can
+# never match: skipping its costly validation changes no decision.
+wanted() {
+  local p r c
+  c=$(realpath -e -- "$1" 2>/dev/null) || c=$1
+  for p in "${P_PATH[@]}"; do
+    if [[ $p != /* ]]; then
+      [ -n "$BASE" ] || continue
+      p=$BASE/$p
+    fi
+    for r in "$1" "$c"; do
+      [[ $p != "$r" && $p != "$r"/* ]] || return 0
     done
   done
-  printf '%s\n' "$p"
+  return 1
 }
 
 # add_root <spelled> <canonical> <immutable> — a spelled form that is not clean
@@ -623,9 +653,10 @@ add_root() {
 }
 
 # roots — spec "Path rules", the allowed roots, each dropped when it fails its
-# check: the worktree, the branch's artifacts dir, each grant, and the
-# immutable dirs (the store dirs this build ships, and --ro-root in tests).
-# WORKER_TASK.md is never read: the worker edits it.
+# check: the worktree, the branch's artifacts dir, each grant the command's
+# operands touch (validated only then), and the immutable dirs (the store dirs
+# this build ships, and --ro-root in tests). WORKER_TASK.md is never read: the
+# worker edits it. Runs after grammar_check has set BASE and P_PATH.
 roots() {
   local h c d line grants="$CREW_DIR/grants/$BRANCH"
   R_SPELLED=() R_CANON=() R_IMM=()
@@ -644,7 +675,8 @@ roots() {
   if branch_dirs_ok "$CREW_DIR/grants" 0 && regular_file "$grants"; then
     while IFS= read -r line || [ -n "$line" ]; do
       [ -n "$line" ] || continue
-      c=$(grant_ok "$line" "$h") || continue
+      wanted "$line" || continue
+      c=$(grant_ok "$line") || continue
       add_root "$line" "$c" 0
     done <"$grants"
   fi
@@ -773,6 +805,7 @@ verdict() {
 main() {
   local frame id
   parse_args "$@"
+  grant_roots
   [ -z "$PANE" ] || pane_worktree
   decide
   frame=$CAPTURE id=$T_ID
