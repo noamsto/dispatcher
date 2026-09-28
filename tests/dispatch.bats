@@ -872,6 +872,7 @@ _env_of() {
   [ "$status" -eq 0 ]
   grep -qxF -- "set-window-option -t %1 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
   grep -qxF -- 'set-window-option -t %1 @crew_branch feat/42-window-anchor' "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t %1 @crew_id c1' "$STUB_LOG"
 }
 
 @test "a grid lead's @crew_name stays the bare codename" {
@@ -8068,6 +8069,7 @@ display-message)
 show-options)
   case "${*: -1}" in
   @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) [ -e "$STUB_DIR/no_crew_id" ] || printf '%s\n' c1 ;;
   esac
   ;;
 capture-pane)
@@ -8120,6 +8122,14 @@ _rw_start() {
 _rw_stop() {
   touch "$STUB_DIR/stop"
   wait "$RW_PID" 2>/dev/null || true
+}
+
+# _rw_post <from> — append one msg to events.jsonl addressed to role:feat/9-x:reviewer.
+_rw_post() {
+  local common
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc --arg from "$1" '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:$from, to:"role:feat/9-x:reviewer", body:"go"}' >>"$common/crew/events.jsonl"
 }
 
 _rw_sends() { grep -cE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" || true; }
@@ -8714,6 +8724,95 @@ _rw_wait_captures() {
   _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_sends)" -eq 0 ]
+}
+
+@test "role-watch: sender: a different-session lead delivers once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  _rw_post worker:feat/9-x#s9-9
+  _rw_wait_deliveries 1
+  sleep 0.4
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+}
+
+@test "role-watch: sender: the lead's dispatcher delivers once" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  _rw_post dispatcher:c1
+  _rw_wait_deliveries 1
+  sleep 0.4
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+}
+
+@test "role-watch: sender: foreign senders are dropped with a report and no delivery" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  local sender
+  for sender in \
+    'worker:feat/8-other#s1-1' \
+    'role:feat/8-other:reviewer' \
+    'dispatcher:c2' \
+    'role:feat/9-x:plan-critic' \
+    'worker:feat/9-x#y#s1-1'; do
+    _rw_post "$sender"
+  done
+  sleep 1.0
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 0 ]
+  for sender in \
+    'worker:feat/8-other#s1-1' \
+    'role:feat/8-other:reviewer' \
+    'dispatcher:c2' \
+    'role:feat/9-x:plan-critic' \
+    'worker:feat/9-x#y#s1-1'; do
+    [ "$(grep '^msg role:feat/9-x:reviewer dispatcher:c1 .*role_watch_drop' "$STUB_LOG" | grep -cF "$sender" || true)" -eq 1 ] || { echo "expected 1 drop log line for sender $sender"; return 1; }
+  done
+}
+
+@test "role-watch: sender: no @crew_id skips the drop post but lead still delivers" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  touch "$STUB_DIR/no_crew_id"
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  _rw_post dispatcher:c1
+  sleep 0.6
+  [ "$(_rw_deliveries)" -eq 0 ]
+  run ! grep -q 'role_watch_drop' "$STUB_LOG"
+  _rw_post worker:feat/9-x#s1-1
+  _rw_wait_deliveries 1
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+}
+
+@test "role-watch: sender: a drop post returning from the dispatcher does not idle a working role" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude
+  _rw_wait_deliveries 1
+  local common
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"dispatcher:c1", body:"{\"event\":\"role_watch_drop\"}"}' >>"$common/crew/events.jsonl"
+  sleep 1.0
+  _rw_stop
+  grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
+  run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {

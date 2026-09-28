@@ -968,9 +968,11 @@ grid_lead_format() {
 agent_color="$(crew identity "$branch" | jq -r .tmux)"
 tmux set-window-option -t "$win" @crew_name "$agent_name"
 # --spawn-role finds its crew dir and branch here, not via git discovery, which
-# the worker's env and worktree .git steer (#496).
+# the worker's env and worktree .git steer (#496); the role watcher anchors its
+# dispatcher on @crew_id.
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
+tmux set-window-option -t "$win" @crew_id "$crew_id"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

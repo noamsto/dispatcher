@@ -990,6 +990,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$status" -eq 0 ]
   grep -qxF -- "set-window-option -t @4 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
   grep -qxF -- 'set-window-option -t @4 @crew_branch feat/7-a-thing' "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t @4 @crew_id c1' "$STUB_LOG"
   mapfile -t lines <"$rec"
   [ "${#lines[@]}" -eq 5 ]
   [ "${lines[0]}" = "$DISPATCHER_PROTOCOL_DIR" ]
@@ -1005,6 +1006,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$status" -eq 0 ]
   grep -qxF -- "set-window-option -t %99 @crew_dir $TEST_REPO/.git/crew" "$STUB_LOG"
   grep -qxF -- 'set-window-option -t %99 @crew_branch feat/7-a-thing' "$STUB_LOG"
+  grep -qxF -- 'set-window-option -t %99 @crew_id c1' "$STUB_LOG"
 }
 
 @test "resume refuses a symlinked protocol-dirs record before launching" {
