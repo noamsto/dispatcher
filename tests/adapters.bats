@@ -3028,6 +3028,7 @@ $hits"
       '**Belongs to this task?**' \
       '**Fits in this run?**' \
       'not a fence' \
+      'unless the task doc states a fence explicitly' \
       'deferred only for lack of a review round' \
       'the repo owner pre-approved these issues, so do not ask first' \
       '`#N — short title`' \
