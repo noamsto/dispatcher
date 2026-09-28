@@ -2335,7 +2335,6 @@ stream)
   # own pair and is never read here.
   _stream_reap_flush() {
     [ -n "$reap_child_out" ] || return 0
-    [ -s "$reap_child_out" ] || return 0
     ! _stream_reap_running || return 0
     _stream_reap_print "$reap_child_out"
     rm -f "$reap_child_out" "$reap_child_err"

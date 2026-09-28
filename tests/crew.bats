@@ -6681,6 +6681,9 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
 @test "stream: a no-op reap is silent" {
   start_stream --crew c1 --reap-every 1 --park 1 --interval 1
   sleep 3
+  # A no-op reap still creates its per-child pair; with the tracked child gone
+  # the flush drops it, so at most the in-flight pair may remain (#602 review).
+  [ "$(find "$(crew_dir c1)" -maxdepth 1 -name 'stream.reap.out.*' | wc -l)" -le 1 ]
   run ! has_reap_line
   stop_stream
 }
