@@ -62,6 +62,72 @@ check_no_blank_engines() {
   fi
 }
 
+# check_model_shapes <json> <file> <layer> — die, naming <file> and <layer>
+# and the JSON path, when the layer's modelMap / escalation / paceDowngrades
+# holds a wrong-shaped leaf. Only shapes present in the layer are checked, so a
+# layer that refines a single row stays valid, and a merge of well-shaped
+# layers is well-shaped (objects merge, arrays and scalars replace whole).
+check_model_shapes() {
+  local path what
+  while IFS=$'\t' read -r path what; do
+    [ -n "$path" ] || continue
+    die "$2 ($3 layer): $path must be $what"
+  done < <(jq -r '
+    def string_array: type == "array" and all(.[]; type == "string");
+    def err($p; $w): "\($p)\t\($w)";
+    def modelmap($m):
+      if ($m|type) != "object" then err("modelMap"; "an object")
+      else ($m | to_entries[] |
+        if (.value|type) != "object" then err("modelMap.\(.key)"; "an object")
+        else (.key as $a | .value | to_entries[] |
+          if (.value|type) != "object" then err("modelMap.\($a).\(.key)"; "an object")
+          else (.key as $t | .value as $row |
+            (if ($row|has("default")) and (($row.default|type) != "string") then err("modelMap.\($a).\($t).default"; "a string") else empty end),
+            (if ($row|has("expected")) and (($row.expected|type) != "string") then err("modelMap.\($a).\($t).expected"; "a string") else empty end),
+            (if ($row|has("models")) and (($row.models|string_array)|not) then err("modelMap.\($a).\($t).models"; "an array of strings") else empty end),
+            (if ($row|has("regex")) and (($row.regex|string_array)|not) then err("modelMap.\($a).\($t).regex"; "an array of strings") else empty end)
+          ) end
+        ) end
+      ) end;
+    def escalation($e):
+      if ($e|type) != "object" then err("escalation"; "an object")
+      else ($e | to_entries[] |
+        if (.value|type) != "object" then err("escalation.\(.key)"; "an object")
+        else (.key as $a | .value | to_entries[] |
+          if (.value|type) != "array" then err("escalation.\($a).\(.key)"; "an array")
+          else (.key as $t | .value | to_entries[] |
+            .key as $i | .value as $row |
+            (if ($row|type) != "object" then err("escalation.\($a).\($t)[\($i)]"; "an object")
+             else
+              (if (($row|has("failed"))|not) or (($row.failed|string_array)|not) then err("escalation.\($a).\($t)[\($i)].failed"; "an array of strings") else empty end),
+              (if (($row|has("baseline"))|not) or (($row.baseline|type) != "string") then err("escalation.\($a).\($t)[\($i)].baseline"; "a string") else empty end),
+              (if (($row|has("inRow")) and ($row|has("outOfRow"))) or ((($row|has("inRow"))|not) and (($row|has("outOfRow"))|not)) then err("escalation.\($a).\($t)[\($i)]"; "exactly one of inRow or outOfRow") else empty end),
+              (if ($row|has("inRow")) and (($row.inRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].inRow"; "an array of strings") else empty end),
+              (if ($row|has("outOfRow")) and (($row.outOfRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].outOfRow"; "an array of strings") else empty end)
+             end)
+          ) end
+        ) end
+      ) end;
+    def pace($d):
+      if ($d|type) != "object" then err("paceDowngrades"; "an object")
+      else ($d | to_entries[] |
+        if (.value|type) != "array" then err("paceDowngrades.\(.key)"; "an array")
+        else (.key as $a | .value | to_entries[] |
+          .key as $i | .value as $row |
+          (if ($row|type) != "object" then err("paceDowngrades.\($a)[\($i)]"; "an object")
+           else
+            (if (($row|has("models"))|not) or (($row.models|string_array)|not) then err("paceDowngrades.\($a)[\($i)].models"; "an array of strings") else empty end),
+            (if (($row|has("to"))|not) or (($row.to|type) != "string") then err("paceDowngrades.\($a)[\($i)].to"; "a string") else empty end)
+           end)
+        ) end
+      ) end;
+    . as $r
+    | (if ($r|has("modelMap")) then modelmap($r.modelMap) else empty end),
+      (if ($r|has("escalation")) then escalation($r.escalation) else empty end),
+      (if ($r|has("paceDowngrades")) then pace($r.paceDowngrades) else empty end)
+  ' <<<"$1")
+}
+
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
@@ -78,6 +144,7 @@ if [[ $base_file == @* ]]; then
   base_file="$(dirname "${BASH_SOURCE[0]}")/defaults.json"
 fi
 base=$(layer "$base_file")
+check_model_shapes "$base" "$base_file" base
 base=$(strip "$base" "$base_file")
 
 user_file="${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json"
@@ -85,6 +152,7 @@ user='{}'
 if [[ -e $user_file ]]; then
   user=$(layer "$user_file")
   check_no_blank_engines "$user" "$user_file"
+  check_model_shapes "$user" "$user_file" user
   user=$(strip "$user" "$user_file")
 fi
 
@@ -99,6 +167,7 @@ if [[ -n $locked_file ]]; then
   [[ -r $locked_file ]] || die "$locked_file is not readable"
   locked=$(layer "$locked_file")
   check_no_blank_engines "$locked" "$locked_file"
+  check_model_shapes "$locked" "$locked_file" locked
 fi
 
 env_layer=$(jq -cn '
