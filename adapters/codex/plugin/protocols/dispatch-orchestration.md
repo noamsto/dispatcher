@@ -385,9 +385,13 @@ so a refused pi dispatch lands directly on `high` — which matters because
 
 <!-- END generated:pace-downgrades -->
 
-Claude `standard` and `trivial` lead on `opus` as well, so the same ≥70%
-pace gate refuses an `opus` dispatch on those rows too, and the downgrade
-target is the same: `sonnet`, each row's budget-shed rung.
+The table is the configured model→downgrade mapping; opus's effort-aware
+exception lives in `pace_rule_target`, not in the mapping. Claude `standard`
+and `trivial` lead on `opus` as well, but the same ≥70% pace gate refuses an
+`opus` dispatch on those rows only at `high`+ — the tier-typical `low`/`medium`
+opus burns at the standard class and is admitted (Burn classes, above). Where
+it does refuse, the downgrade target is the same: `sonnet`, each row's
+budget-shed rung.
 
 ### Cursor Task-spawn slugs
 
