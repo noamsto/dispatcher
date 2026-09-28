@@ -214,8 +214,7 @@ sizing a pi fan-out, not just once at session start.
   second branch to keep in sync. When `resets_at` is null, pace isn't
   computable and the gate falls back to the flat `>=70` rule it's always had.
   Either way it names the lower model or effort alternative. `xhigh` and
-  `max` are premium effort (to `high` and `xhigh` respectively); `high` is
-  not. The check covers every lead, eager role, and final lazy-role override. See
+  `max` are premium effort (both to `high`); `high` is not. The check covers every lead, eager role, and final lazy-role override. See
   `dispatch-orchestration.md` → "Tier map". pi's pace window is `month`, not
   `7d`: its length is the calendar month (`starts_at`→`resets_at`), not a
   fixed 604800s, but the same ≥70%-and->15-points math runs against

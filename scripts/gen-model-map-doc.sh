@@ -63,7 +63,7 @@ render_pace_downgrades() {
     | ($root.modelMap | keys_unsorted[]) as $engine
     | ($root.paceDowngrades[$engine] // null) as $entries
     | if $entries == null then
-        "| \($engine) | — (effort only: `max`→`xhigh`→`high`) | — |"
+        "| \($engine) | — (effort only: `max`/`xhigh`→`high`) | — |"
       else
         ($entries[]
           | "| \($engine) | "

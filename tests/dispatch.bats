@@ -3178,6 +3178,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   run run_dispatch deep sonnet --effort max --crew-id c1 42 "null effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (max)"* ]]
+  [[ "$output" == *"use high instead"* ]]
   [[ "$output" != *"ahead of pace"* ]]
 }
 
@@ -3304,7 +3305,7 @@ assert_gate_silent() { # <engine> <model> [profile]
   [ "$status" -eq 1 ]
   [[ "$output" == *"pi month is at 80% and 50 points ahead of pace"* ]]
   [[ "$output" == *"premium effort (max)"* ]]
-  [[ "$output" == *"use xhigh instead"* ]]
+  [[ "$output" == *"use high instead"* ]]
 
   pi_budget_json 80 777600 1814400
   run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "pi pace allows high"
