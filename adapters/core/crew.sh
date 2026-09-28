@@ -2256,9 +2256,12 @@ stream)
   holderrf="$cdir/stream.hold.err"
   reapoutf="$cdir/stream.reap.out"
   reaperrf="$cdir/stream.reap.err"
-  # Clears what a reap child that outlived its stream wrote after that stream's
-  # cleanup; a child still running past this point can still write here.
-  rm -f "$reapoutf" "$reaperrf"
+  # Each background reap writes its own `$reapoutf.<pid>`/`$reaperrf.<pid>`
+  # pair, so a child that outlives its stream can neither truncate a newer
+  # stream's output nor supply its error detail. These base names are swept
+  # with any pair a previous stream's outlived child left behind; a child
+  # still running past this point can still write its own pair.
+  rm -f "$reapoutf" "$reaperrf" "$reapoutf".* "$reaperrf".*
   # Initialized before the trap is armed, so a signal landing before the
   # first iteration can't abort the handler on an unbound variable.
   child=""
@@ -2275,6 +2278,8 @@ stream)
   # last_reap starts at stream start, not epoch 0, so the first cadence reap
   # is $reap_every out rather than firing on the very first iteration.
   reap_child=""
+  reap_child_out=""
+  reap_child_err=""
   last_reap=$(date +%s)
 
   # The handler must disarm itself first — its own closing `exit` would
@@ -2308,10 +2313,10 @@ stream)
     elif [ -s "$outf" ]; then
       cat "$outf" || true
     fi
-    if [ -s "$reapoutf" ]; then
-      _stream_reap_print || true
+    if [ -n "$reap_child_out" ] && [ -s "$reap_child_out" ]; then
+      _stream_reap_print "$reap_child_out" || true
     fi
-    rm -f "$outf" "$errf" "$holderrf" "$reapoutf" "$reaperrf"
+    rm -f "$outf" "$errf" "$holderrf" "$reapoutf" "$reaperrf" "$reapoutf".* "$reaperrf".*
     _lock_release "$lockd"
     exit 0
   }
@@ -2324,20 +2329,25 @@ stream)
     [ -n "$reap_child" ] && jobs -rp | grep -qx "$reap_child"
   }
 
-  # _stream_reap_flush — print what the last background reap left in
-  # $reapoutf, once it has exited (a running child may still be writing).
+  # _stream_reap_flush — print what the tracked background reap left in its own
+  # $reap_child_out, once that child has exited (a running child may still be
+  # writing), then drop its pair. Another stream's outlived child writes to its
+  # own pair and is never read here.
   _stream_reap_flush() {
-    [ -s "$reapoutf" ] || return 0
+    [ -n "$reap_child_out" ] || return 0
+    [ -s "$reap_child_out" ] || return 0
     ! _stream_reap_running || return 0
-    _stream_reap_print
+    _stream_reap_print "$reap_child_out"
+    rm -f "$reap_child_out" "$reap_child_err"
   }
 
-  # _stream_reap_print — print and empty $reapoutf. Reap errors share the
-  # suppression scheme of the inner-watch errors below: one line per key,
-  # re-emitted after --heartbeat. Every write is `|| true`: _stream_cleanup
-  # calls this too, and must not abort before releasing the lock.
+  # _stream_reap_print <file> — print and empty one reap output file. Reap
+  # errors share the suppression scheme of the inner-watch errors below: one
+  # line per key, re-emitted after --heartbeat. Every write is `|| true`:
+  # _stream_cleanup calls this too, and must not abort before releasing the lock.
   _stream_reap_print() {
-    local rline rkey r_ts
+    local rf="$1" rline rkey r_ts
+    [ -s "$rf" ] || return 0
     while IFS= read -r rline; do
       [ -n "$rline" ] || continue
       if [ "$(jq -r '.stream' <<<"$rline" 2>/dev/null || true)" = error ]; then
@@ -2350,15 +2360,17 @@ stream)
         last_reaperr_ts="$r_ts"
       fi
       printf '%s\n' "$rline" || true
-    done <"$reapoutf"
-    : >"$reapoutf" || true
+    done <"$rf"
+    : >"$rf" || true
   }
 
   # _stream_reap — a background `crew reap`, never awaited or killed by
   # _stream_cleanup: an interrupted `wt remove` strands a worktree. It ignores
   # HUP only; a signal to the whole process group still reaches it. Output goes
-  # to $reapoutf, printed once the child is gone, so it never splits a batch
-  # line. --no-wait: a reap already holding the lock covers this one.
+  # to a per-child `$reapoutf.$BASHPID` (the child's own pid, not the stream's
+  # `$$`), printed once this stream's tracked child is gone, so a child that
+  # outlives the stream cannot clobber the next one. --no-wait: a reap already
+  # holding the lock covers this one.
   _stream_reap() {
     [ "$reap_every" -gt 0 ] || return 0
     ! _stream_reap_running || return 0
@@ -2367,16 +2379,22 @@ stream)
     (
       trap '' HUP
       rc=0
-      out=$(bash -euo pipefail "$0" reap --quiet --no-wait 2>"$reaperrf" </dev/null) || rc=$?
+      child_out="$reapoutf.$BASHPID"
+      child_err="$reaperrf.$BASHPID"
+      out=$(bash -euo pipefail "$0" reap --quiet --no-wait 2>"$child_err" </dev/null) || rc=$?
       r_ts=$(jq -nc 'now*1000|floor')
       {
         [ -z "$out" ] || jq -nc --arg crew "$crew" --arg out "$out" --argjson ts "$r_ts" \
           '{stream:"reap", crew:$crew, lines:($out | split("\n") | map(select(length>0) | sub("^crew reap: ";""))), ts:$ts}'
-        [ "$rc" -eq 0 ] || jq -nc --arg crew "$crew" --argjson rc "$rc" --arg detail "$(head -n1 "$reaperrf" 2>/dev/null || true)" --argjson ts "$r_ts" \
+        [ "$rc" -eq 0 ] || jq -nc --arg crew "$crew" --argjson rc "$rc" --arg detail "$(head -n1 "$child_err" 2>/dev/null || true)" --argjson ts "$r_ts" \
           '{stream:"error", crew:$crew, rc:$rc, detail:("reap: " + $detail), ts:$ts}'
-      } >"$reapoutf" || true
+      } >"$child_out" || true
     ) </dev/null &
     reap_child=$!
+    # $BASHPID inside the subshell is the subshell's own pid, which is $! here,
+    # so these name exactly the pair the child writes.
+    reap_child_out="$reapoutf.$reap_child"
+    reap_child_err="$reaperrf.$reap_child"
   }
 
   # _stream_batch_wants_reap <batch-json> — true when the just-printed batch
