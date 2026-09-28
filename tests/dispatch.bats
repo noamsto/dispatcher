@@ -2957,12 +2957,9 @@ assert_gate_silent() { # <engine> <model> [profile]
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-# #605: pace_rule_target derives opus's effort-dependent burn class from
-# defaults.json's burnClasses instead of hardcoding it. This table was captured
-# by running the gate on main before the refactor, over every claude/codex/cursor
-# model and effort the gate handles, and must stay identical after it. Columns
-# are low,medium,high,xhigh,max: MODEL = premium-rung refusal, EFFORT = premium
-# effort refusal, ALLOW = launched.
+# Captured from the gate on main (pre-#605), over every claude/codex/cursor
+# model and effort it handles. Columns low,medium,high,xhigh,max: MODEL =
+# premium-rung refusal, EFFORT = premium-effort refusal, ALLOW = launched.
 @test "pace decisions hold across every claude/codex/cursor model and effort (#605)" {
   stub_launch_bins
   n=1000
@@ -3007,9 +3004,8 @@ cursor|cursor-grok-4.6-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 TABLE
 }
 
-# The complement of the table above: an edit to burnClasses must move the gate.
-# Overriding opus's low-effort entry to the premium weight in the user settings
-# layer refuses it, where the old hardcoded case kept allowing it.
+# An edit to burnClasses must move the gate: a user-layer override raising
+# opus's low entry to the premium weight refuses it.
 @test "pace gate follows a burnClasses edit rather than a hardcoded opus rule (#605)" {
   stub_launch_bins
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
@@ -3031,9 +3027,8 @@ TABLE
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-# burnClasses weights are JSON numbers, not integers: a fractional layer value
-# must still compare numerically. 2.0 <= sonnet's 2 exempts opus low; 2.5 > 2
-# refuses it. An integer `[ -le ]` would error on both and flip low to refused.
+# burnClasses weights are JSON numbers, not integers: 2.0 must compare equal to
+# sonnet's 2 (exempt opus low), 2.5 heavier (refuse).
 @test "pace gate compares fractional burnClasses weights numerically (#605)" {
   stub_launch_bins
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
@@ -10991,5 +10986,3 @@ STUBEOF
   [ "$status" -eq 0 ]
   [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-t")" = "$T/roots/proj" ]
 }
-
-

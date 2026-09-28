@@ -44,10 +44,8 @@ pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
-  # A rung is only worth shedding when the downgrade actually burns less
-  # (defaults.json `burnClasses`, crew.sh `_burn_weight`): opus at low/medium
-  # burns at sonnet's weight, so refusing it would buy nothing. xhigh/max still
-  # take the effort refusal below; the >=95% hard stop is separate.
+  # Only shed a rung when the downgrade burns less (defaults.json
+  # `burnClasses`): opus at low/medium matches sonnet's weight.
   if [ -n "$model_downgrade" ]; then
     model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
     downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
@@ -695,8 +693,7 @@ _pace_downgrade() {
 # _pace_burn_weight <model> <effort> — the burn weight defaults.json's
 # `burnClasses` assigns <model> at <effort>, or "" when the table does not name
 # it. Same first-match glob and byEffort default fallback crew.sh's
-# `_burn_weight` uses, so a pace refusal sheds a rung only when the downgrade
-# actually burns less.
+# `_burn_weight` uses.
 _pace_burn_weight() {
   local rules pat wgt byeffort
   rules="$(jq -r '.burnClasses // [] | .[] |
