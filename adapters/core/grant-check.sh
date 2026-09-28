@@ -487,6 +487,7 @@ _add_dir_ok() {
     printf >&2 'dispatch: cannot resolve the symlinks in %s; refusing the grant\n' "$p"
     return 1
   fi
+  local -a _hdirs=() _hlinks=()
   for _li in "${!_links[@]}"; do
     # the trailing slash makes a link to / compare as /
     _lt="${_lres[_li]%/}/"
@@ -513,11 +514,10 @@ _add_dir_ok() {
     fi
     [ "${#_hino[@]}" -gt 0 ] || continue
     if [ -d "${_lres[_li]}" ]; then
-      _hard_link_in "${_lres[_li]}" || return 1
-      if [ -n "$_hl" ]; then
-        printf >&2 'dispatch: %s holds symlink %s to %s, which holds hard link %s to git hooks or config file %s; grant a dir without it\n' "$p" "${_links[_li]}" "${_lres[_li]}" "$_hl" "$_hown"
-        return 1
-      fi
+      # defer the dir scan so links sharing or nesting an outside dir cost one
+      # find, not one each (see the batched scan after this loop)
+      _hdirs+=("${_lres[_li]}")
+      _hlinks+=("${_links[_li]}")
     elif [ -f "${_lres[_li]}" ]; then
       if ! _hk="$(stat -L --printf '%d:%i' -- "${_lres[_li]}")"; then
         printf >&2 'dispatch: cannot stat %s; refusing the grant\n' "${_lres[_li]}"
@@ -529,5 +529,42 @@ _add_dir_ok() {
       fi
     fi
   done
+  if [ "${#_hdirs[@]}" -gt 0 ]; then
+    # One find per outside dir instead of one per symlink. A dir nested in
+    # another on the same device is reached by that dir's own -xdev scan, so it
+    # is dropped; a dir shared by several links is scanned once. _hrep keeps
+    # the first link that reached each dir for the refusal message.
+    local -A _hdev=() _hrep=()
+    local -a _hscan=()
+    local _hi _hdir _hanc _hhit
+    for _hi in "${!_hdirs[@]}"; do
+      _hdir="${_hdirs[_hi]}"
+      [ -n "${_hrep[$_hdir]+x}" ] || _hrep[$_hdir]="${_hlinks[_hi]}"
+    done
+    for _hdir in "${!_hrep[@]}"; do
+      # an unstattable dir keeps an empty device, so it is never deduped away
+      # and _hard_link_in still fails closed on it
+      _hdev[$_hdir]="$(stat -L -c %d -- "$_hdir" 2>/dev/null)" || _hdev[$_hdir]=""
+    done
+    for _hdir in "${!_hrep[@]}"; do
+      _hhit=""
+      for _hanc in "${!_hrep[@]}"; do
+        [ "$_hanc" != "$_hdir" ] || continue
+        [[ "${_hdir}/" == "${_hanc}/"* ]] || continue
+        if [ -n "${_hdev[$_hdir]}" ] && [ "${_hdev[$_hdir]}" = "${_hdev[$_hanc]}" ]; then
+          _hhit=1
+          break
+        fi
+      done
+      [ -n "$_hhit" ] || _hscan+=("$_hdir")
+    done
+    for _hdir in "${_hscan[@]}"; do
+      _hard_link_in "$_hdir" || return 1
+      if [ -n "$_hl" ]; then
+        printf >&2 'dispatch: %s holds symlink %s to %s, which holds hard link %s to git hooks or config file %s; grant a dir without it\n' "$p" "${_hrep[$_hdir]}" "$_hdir" "$_hl" "$_hown"
+        return 1
+      fi
+    done
+  fi
   printf '%s\n' "$p"
 }
