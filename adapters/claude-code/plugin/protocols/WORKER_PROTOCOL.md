@@ -624,7 +624,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
    | Tier | claude | codex | cursor | pi |
    | --- | --- | --- | --- | --- |
    | `deep` | opus → sonnet → escalated opus | sol → terra → escalated sol | kimi-k3-high → grok-4.7-medium → escalated grok-4.7-high | v4.1-flash lead + grid roles |
-   | `standard` | opus → sonnet → escalated opus | terra → luna → escalated terra | grok-4.7-medium → grok-4.7-low → escalated medium | v4.1-flash lead + grid roles |
+   | `standard` | sonnet → sonnet → escalated opus | terra → luna → escalated terra | grok-4.7-medium → grok-4.7-low → escalated medium | v4.1-flash lead + grid roles |
    | `trivial` | no delegation | no delegation | no delegation | no delegation |
 
    - **claude** — spawn execute subagents with the Agent tool's `model: sonnet` by default; escalate with `model: opus` (or the plan's `implement: opus` tag). No per-spawn effort parameter.

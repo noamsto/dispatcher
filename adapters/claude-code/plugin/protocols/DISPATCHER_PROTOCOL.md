@@ -11,17 +11,17 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 | Signal                                                                                                                   | tier       | model                                    |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
 | Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑Fable to escalate |
-| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — opus @medium (sonnet under budget) |
-| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — opus @low\|sonnet\|haiku |
+| Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — sonnet @medium, ↑opus to escalate |
+| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet\|haiku, ↑opus to escalate |
 
-**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`opus`, or `sonnet` when the budget sheds); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
+**Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`, with `opus` as the escalation); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
 why — an underpowered worker can escalate via the bus. **One-rung escalation:**
 when a worker ends `failed`, the dispatcher reads the bus for that signal and
 accepts the next rung of the same engine's execute ladder on a retry — without
 `--ignore-map`. The tier stays unchanged, but the escalated model may be from
 outside the tier's normal row (e.g. codex `standard gpt-5.6-sol` after a failed
 `standard gpt-5.6-terra`); an in-row hop, such as claude `standard opus` after
-a failed `standard sonnet`, is already accepted by the row and only recorded.
+a failed `standard sonnet` (or `trivial opus` after a failed `trivial sonnet`), is already accepted by the row and only recorded.
 A failed claude `standard`/`trivial` opus has no rung above it in the row —
 re-dispatch at `deep` (where fable is admitted), not `standard fable`.
 Only one rung: a two-rung jump or a third attempt still needs
@@ -103,12 +103,12 @@ that just needed the worker to think longer before writing.
 Start from the tier-typical rung — `trivial`→`low`, `standard`→`medium`,
 `deep`→`high` — then depart from it on signals, the same way `--plan` starts
 from `required` and departs on the doc you wrote (see "Plan-depth" above).
-This holds for the model too: claude opus on `standard` starts at `medium`
-and on `trivial` at `low`; it must not carry deep's `high` down with it. When
-the pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn at
-the standard class and are not refused), shed to `sonnet` (at the same effort),
-not to a
-cheaper opus effort.
+This holds for the model too: claude sonnet leads `standard` at `medium` and
+`trivial` at `low`, and an opus escalation on those rows keeps the same
+tier-typical effort; it must not carry deep's `high` down with it. When the
+pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn at the
+standard class and are not refused), shed to `sonnet` (at the same effort),
+not to a cheaper opus effort.
 
 - **Raise toward `xhigh`** when: the hard part lives inside one turn of
   reasoning — a subtle invariant, an ordering/concurrency argument, a
@@ -1233,7 +1233,7 @@ amber -> pr: "#124"
 
 1. **Never implement.** You don't edit code, run the gate, or open PRs — that's the worker. If you catch yourself coding, stop and dispatch it.
 2. **One change = one worker = one branch/worktree/PR.** A change is normally one issue. Bundle several issues into one dispatch with `--also-closes` (see **Tracker**) only when all four hold: (1) the issues would conflict — same function or same lines, not merely the same file; (2) each would get the same tier on its own; (3) the combined diff still fits that tier's review; (4) neither is likely to block the other from merging. If any fails, keep them separate: run them one after another, or stack them with `--base` when one depends on the other.
-3. **Judge cost.** Don't run a sprawling feature on haiku, and when the budget is tight shed trivial/standard opus work to sonnet. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
+3. **Judge cost.** Don't run a sprawling feature on haiku, and trivial/standard lead on sonnet, and opus is the escalation — reach for it only after a sonnet failure or a real signal, and shed it back to sonnet when the budget is tight. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
 4. **Escalations surface in the roster/inbox**, not silently — if a worker `failed` or stalled, decide: re-dispatch (smaller, or a stronger model), intervene, or drop it.
 5. **Cleanup is automatic, and gated on the PR.** Every `dispatch` first runs `crew reap --quiet`, and `crew stream` runs it too: every `--reap-every` seconds (default 900; `0` turns stream-driven reaps off) and after any batch carrying a terminal status or a `pr-watch` change to MERGED/CLOSED. A reap reclaims the window + worktree of a finished worker (`done`, `failed`, `exited`, or `pr_open`) whose PR is merged or closed. A worker with an open PR, uncommitted changes, or a session that is not finished is kept. A live engine in the worktree keeps it too, unless all of these hold. The worker's latest word is `done` (or `pr_open`), and nothing on its branch has posted since. Every engine pane there is claude, showing a provably idle frame on two samples: a finished-turn marker (`· done HH:MM`) right above an empty input box, where a dimmed prompt suggestion still counts as empty. It also shows no live turn, subagent, prompt, or background shell or monitor. Reap then kills that window, role panes included, and reclaims the worktree. Anything else is kept, and `crew reap --dry-run` names the reason. A grid window with non-claude role panes has no idle signature, so it is kept too. A `done` worker kept this way still gets its window released after `--idle`; a `pr_open` worker never idle-releases, so it stays until its engine exits or you close the pane. The window is killed before `wt remove`, so a failure after that point leaves the worktree without its window: run `crew reap` without `--quiet` to see why. A reap waits for another running reap to finish rather than overlap it. The stream's reaps skip instead (`--no-wait`). A stream reap that did something prints one `{"stream":"reap",…}` line (see the claude lane under "Read the bus"). `crew reap` also lists windows still stamped with a branch whose worktree is gone, without killing them. Like every keep, that list shows only without `--quiet`. Run `crew reap` by hand (add `--dry-run` to see the plan) to have the keeps explained, e.g. before asking why a finished worker's window is still around. The same `reap` also files each finished run's outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with `crew rate --report`); set `CREW_RATE_AUTOSWEEP=0` to disable it. The sweep runs detached and logs its start, skips and exit code to `~/.local/share/crew/autosweep.log`; if the store looks stale, read that log, or run `crew rate --sweep-all` to backfill every repo with a crew bus under `$HOME` (`--root DIR`, repeatable, replaces that default) plus any repo swept before.
 6. **Never print a secret — rule 7 of `WORKER_PROTOCOL.md` binds you too.** Dispatchers diagnose environment problems, which is where a variable dump leaks: no reading secret files; no bare `env`/`printenv`; no dumping builtin — bare `set` (fish and bash/POSIX), fish `set -S`/`set --show`, `declare -p`/`-x`, bare `declare`/`typeset`, `export -p`, `typeset -p`, `/proc/*/environ`, `tmux show-environment` (a pipe filter does not make a dump safe). Check presence only (`set -q NAME`, or `[ -n "${NAME:-}" ] && echo set || echo unset`) or run the consuming tool and read its error.

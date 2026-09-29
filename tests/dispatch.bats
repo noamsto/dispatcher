@@ -2900,6 +2900,12 @@ assert_gate_silent() { # <engine> <model> [profile]
 
 @test "claude standard and trivial accept opus; fable stays deep-only" {
   stub_launch_bins
+  run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet lead"
+  [ "$status" -eq 0 ]
+
+  run run_dispatch trivial sonnet --agent claude --effort low --crew-id c1 42 "tier claude trivial sonnet lead"
+  [ "$status" -eq 0 ]
+
   run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "tier claude standard opus accepted"
   [ "$status" -eq 0 ]
 
@@ -9756,6 +9762,15 @@ _escalation_seed_spoof() {
   stub_launch_bins
   _escalation_seed "feat/42-do-a-thing" sonnet trivial
   run run_dispatch trivial opus --effort high --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
+}
+
+@test "escalation: standard sonnet→opus is an in-row hop (record only)" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  run run_dispatch standard opus --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
