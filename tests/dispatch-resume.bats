@@ -1890,6 +1890,19 @@ record_lead() {
   grep -qx 'title: a thing' "$WT/WORKER_TASK.md"
 }
 
+@test "resume keeps every stamped Closes line of a bundled task (#615)" {
+  setup_worker_wt 'Closes #8' 'Closes #9'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  run grep '^Closes ' "$WT/WORKER_TASK.md"
+  [ "${lines[0]}" = 'Closes #7' ]
+  [ "${lines[1]}" = 'Closes #8' ]
+  [ "${lines[2]}" = 'Closes #9' ]
+  [ "${#lines[@]}" -eq 3 ]
+}
+
 @test "stamps resume: true when the header has no resume field yet (#112)" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

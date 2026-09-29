@@ -2379,6 +2379,33 @@ EOF
   run ! git show-ref --verify --quiet refs/heads/feat/42-reap-me
 }
 
+@test "reap: releases the dispatched label from every issue a bundled PR closes (#615)" {
+  git commit -q --allow-empty -m init
+  git branch feat/42-reap-bundle
+  wt_path="$BATS_TEST_TMPDIR/reap-bundle-wt"
+  git worktree add -q "$wt_path" feat/42-reap-bundle
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' 42 43 44 ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/42-reap-bundle)" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/42-reap-bundle" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/42-reap-bundle"* ]]
+  grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+  grep -q 'issue edit 43 --remove-label dispatched' "$STUB_LOG"
+  grep -q 'issue edit 44 --remove-label dispatched' "$STUB_LOG"
+}
+
 @test "reap: a dispatched label-removal failure does not abort the sweep" {
   git commit -q --allow-empty -m init
   git branch feat/43-reap-me

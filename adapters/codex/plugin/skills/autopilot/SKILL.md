@@ -213,7 +213,7 @@ Spawn one reviewer subagent per matched roster entry, its resolved `brief` as th
 1. Push the branch: `git push -u origin <branch>`
 2. Create the PR: `gh pr create --assignee @me --title "..." --body "..."`, adding `--base "$stacked_base"` when the **Base ref** snippet set `stacked_base` (run it in the same call as `gh pr create`); with no `stacked_base`, omit `--base`
    - Title: concise, under 70 chars
-   - Body: follows `WORKER_PROTOCOL.md`'s "PR body contract" — closes line, `## Summary`, `## Testing` (one line per command + result); a collapsed `<details><summary>Agent ledger</summary>` block holding the recurrence ledger and the acceptance ledger, appended when ledger data already exists (at create time, or by the first `gh pr edit` that has it). Harness diagnostics stay in `REVIEW_NOTES.md`, never the visible body.
+   - Body: follows `WORKER_PROTOCOL.md`'s "PR body contract" — closes line(s), `## Summary`, `## Testing` (one line per command + result); a collapsed `<details><summary>Agent ledger</summary>` block holding the recurrence ledger and the acceptance ledger, appended when ledger data already exists (at create time, or by the first `gh pr edit` that has it). Harness diagnostics stay in `REVIEW_NOTES.md`, never the visible body.
    - Reference the Linear ticket (e.g., "Closes PL-344")
 
 ## Step 8: Watch Loop
