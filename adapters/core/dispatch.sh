@@ -403,32 +403,34 @@ _also_closes_token() {
   printf '%s' "$canon"
 }
 
-# _bundle_recorded <branch> <primary> <fallback> — the extras a previous
-# dispatch on <branch> bundled, one per line; returns 1 when the bus cannot be
-# read. The source is the newest dispatch row that carries a bundle: a later
-# --pr/--review dispatch onto the same head writes one without. With
-# <fallback> set and no dispatch row on <branch> at all, the run died between
-# claiming and writing that row, so its claim-issue rows are the record — only
-# the newest run's: a rolled-back run leaves its rows too. A run writes the
-# primary's row first, so that run is the newest primary row's pid from its ts
-# on; a row without both reads as no record rather than a guess.
+# _bundle_recorded <branch> — the extras a previous dispatch on <branch>
+# bundled, one per line; returns 1 when the bus cannot be read. The source is
+# the newest dispatch row that carries a bundle: a later --pr/--review dispatch
+# onto the same head writes one without. Claim rows are no record: a
+# rolled-back run leaves them too.
 _bundle_recorded() {
   local events="$crew_dir/events.jsonl"
   [ -f "$events" ] || return 0
-  jq -nrR --arg b "$1" --arg p "$2" --arg fallback "$3" '
+  jq -nrR --arg b "$1" '
+    [inputs | fromjson? | objects | select(.branch == $b and .kind == "dispatch")
+      | select((.also_closes | arrays | length) > 0)]
+    | last | (.also_closes // [])[] | tostring' "$events"
+}
+
+# _bundle_orphans <branch> <primary> — when <branch> has no dispatch row at all,
+# the issues other than <primary> that its claim-issue rows name, one per line:
+# a run died between claiming and recording its bundle, and which of them were
+# its bundle rather than a rolled-back attempt's is not knowable. Returns 1 when
+# the bus cannot be read.
+_bundle_orphans() {
+  local events="$crew_dir/events.jsonl"
+  [ -f "$events" ] || return 0
+  jq -nrR --arg b "$1" --arg p "$2" '
     [inputs | fromjson? | objects | select(.branch == $b)] as $rows
-    | [$rows[] | select(.kind == "dispatch")] as $d
-    | if ($d | length) > 0 then
-        [$d[] | select((.also_closes | arrays | length) > 0)] | last | (.also_closes // [])[] | tostring
-      elif $fallback != "" then
-        [$rows[] | select(.kind == "claim-issue")] as $c
-        | ([$c[] | select((.issue | tostring) == $p)] | last) as $head
-        | if ($head.pid | type) == "number" and ($head.ts | type) == "number" then
-            [$c[] | select(.pid == $head.pid and (.ts | type) == "number" and .ts >= $head.ts)
-              | .issue | tostring | select(. != $p)]
-            | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end) | .[]
-          else empty end
-      else empty end' "$events"
+    | if any($rows[]; .kind == "dispatch") then empty else
+        [$rows[] | select(.kind == "claim-issue") | .issue | tostring | select(. != $p)]
+        | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end) | .[]
+      end' "$events"
 }
 
 # _bundle_carry <primary> — on a same-branch re-dispatch, carry the previous
@@ -436,7 +438,7 @@ _bundle_recorded() {
 # explicit set drops. The branch is resolved Linear-first, as the identity
 # block below does.
 _bundle_carry() {
-  local primary="$1" carry_branch recorded tok canon labels=() bundle=()
+  local primary="$1" carry_branch recorded orphans="" tok canon labels=() bundle=()
   if [ -n "$linear_id" ]; then
     carry_branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
   else
@@ -444,14 +446,17 @@ _bundle_carry() {
   fi
   git show-ref --verify --quiet "refs/heads/$carry_branch" || return 0
   if [ "${#also_closes_raw[@]}" -gt 0 ]; then
-    recorded="$(_bundle_recorded "$carry_branch" "$primary" "$gh_issue")" || return 0
+    recorded="$(_bundle_recorded "$carry_branch")" || return 0
+    if [ -n "$gh_issue" ]; then
+      orphans="$(_bundle_orphans "$carry_branch" "$primary")" || return 0
+    fi
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       case " ${also_closes[*]} $primary " in
       *" $tok "*) ;;
       *) labels+=("$(_also_closes_label "$(_evidence_text "$tok")")") ;;
       esac
-    done <<<"$recorded"
+    done <<<"$recorded${orphans:+$'\n'$orphans}"
     [ "${#labels[@]}" -gt 0 ] || return 0
     if [ -n "$gh_issue" ]; then
       echo "dispatch: warning: dropping ${labels[*]} from this branch's bundle — its 'dispatched' label stays; remove it by hand" >&2
@@ -460,10 +465,18 @@ _bundle_carry() {
     fi
     return 0
   fi
-  recorded="$(_bundle_recorded "$carry_branch" "$primary" "$gh_issue")" || {
+  if ! recorded="$(_bundle_recorded "$carry_branch")" ||
+    { [ -n "$gh_issue" ] && ! orphans="$(_bundle_orphans "$carry_branch" "$primary")"; }; then
     echo "dispatch: could not read the crew bus to carry --also-closes for $carry_branch — pass --also-closes explicitly" >&2
     exit 1
-  }
+  fi
+  if [ -n "$orphans" ]; then
+    while IFS= read -r tok; do
+      labels+=("$(_also_closes_label "$(_evidence_text "$tok")")")
+    done <<<"$orphans"
+    echo "dispatch: $carry_branch has claim rows for ${labels[*]} but no dispatch row recording its bundle (an earlier dispatch died before writing one) — re-pass the extras that belong to this change with --also-closes" >&2
+    exit 1
+  fi
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
     if canon="$(_also_closes_token "$tok" "$primary" ${bundle[@]+"${bundle[@]}"})"; then
@@ -483,7 +496,9 @@ _bundle_carry() {
 # nothing to undo. Records in $claim_had_label whether the label was already
 # there, and queues its note in $claim_notes. A labelled extra is a resume only
 # when this branch exists and its recorded bundle names the extra; an
-# unreadable bus grants nothing, leaving the evidence checks to fail closed.
+# unreadable bus grants nothing, leaving the evidence checks to fail closed. A
+# bundled extra never gets a feat/<extra>-* branch of its own, so one refuses
+# before the exemption is weighed.
 _claim_check_extra() {
   local n="$1" labels recorded existing evidence
   labels="$(gh issue view "$n" --json labels --jq '.labels[].name')" || {
@@ -495,16 +510,16 @@ _claim_check_extra() {
     return 0
   fi
   claim_had_label+=(1)
-  if git show-ref --verify --quiet "refs/heads/$branch" &&
-    recorded="$(_bundle_recorded "$branch" "$gh_issue" "$gh_issue")" &&
-    printf '%s\n' "$recorded" | grep -qxF "$n"; then
-    claim_notes+=("dispatch: issue #$n is already claimed, but it is part of this branch's bundle (branch $branch exists) — proceeding onto it as a resume.")
-    return 0
-  fi
   existing="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$n-*" 2>/dev/null | head -1)"
   if [ -n "$existing" ]; then
     echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
     exit 1
+  fi
+  if git show-ref --verify --quiet "refs/heads/$branch" &&
+    recorded="$(_bundle_recorded "$branch")" &&
+    printf '%s\n' "$recorded" | grep -qxF "$n"; then
+    claim_notes+=("dispatch: issue #$n is already claimed, but it is part of this branch's bundle (branch $branch exists) — proceeding onto it as a resume.")
+    return 0
   fi
   evidence="$(_claim_evidence "$n")"
   if [ -n "$evidence" ]; then
@@ -3275,8 +3290,8 @@ if [ -n "$gh_issue" ]; then
   # dispatcher that sees the label must also see a claimant. A failed label write
   # below therefore leaves the row behind. As claimant evidence it is inert: its
   # pid exits with this dispatcher, and any later reuse of that pid belongs to a
-  # process that started after the row's ts (#322). The branch's bundle record
-  # reads these rows too, which is why it takes only the newest run's.
+  # process that started after the row's ts (#322). Such leftovers are why a
+  # branch's bundle is read from its dispatch row, never from these rows.
   # A bundle claims all or nothing: a failed label rolls back the ones this run
   # added, plus the failed issue itself (the server may have applied it before
   # the call failed), and leaves an issue that was labelled before (a resume or

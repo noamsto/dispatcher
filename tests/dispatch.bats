@@ -11500,6 +11500,19 @@ also_closes_log() {
   assert_claim_refused "feat/43-y"
 }
 
+@test "also-closes: a rolled-back run on a branch with no dispatch row grants no exemption (#615)" {
+  setup_bundle_resume
+  git -C "$TEST_REPO" branch feat/43-y
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":200}'
+  seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":200}'
+  seed_claim_row '{"ts":9,"crew_id":"c9","kind":"claim-issue","issue":"43","branch":"feat/43-y","pid":300}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  [[ "$output" == *"#43"* ]]
+  [[ "$output" != *"part of this branch's bundle"* ]]
+  assert_claim_refused "feat/43-y"
+}
+
 @test "also-closes: a labelled extra with no record on an existing branch falls through to the evidence" {
   setup_bundle_resume
   git -C "$TEST_REPO" branch feat/43-y
@@ -11552,38 +11565,38 @@ setup_bundle_resume() {
   grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
 }
 
-@test "also-closes: with no dispatch row for the branch, the claim rows are carried" {
-  setup_bundle_resume
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"carrying --also-closes #43"* ]]
-  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
-  [ "$output" = $'Closes #42\nCloses #43' ]
-}
-
-@test "also-closes: the claim-row fallback carries only the newest run's extras" {
+@test "also-closes: a branch with bundle claim rows but no dispatch row refuses instead of dropping them" {
   setup_bundle_resume
   printf 'dispatched' >"$STUB_DIR/labels_44"
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1001}'
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1001}'
-  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1002}'
-  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":1002}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":200}'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"carrying --also-closes #44 from"* ]]
-  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
-  [ "$output" = $'Closes #42\nCloses #44' ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"#43 #44"* ]]
+  [[ "$output" == *"no dispatch row"* ]]
+  [[ "$output" == *"--also-closes"* ]]
+  run ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
-@test "also-closes: the claim-row fallback carries nothing when the newest primary row has no pid" {
+@test "also-closes: an explicit set re-passed after the no-dispatch-row refusal claims both extras" {
   setup_bundle_resume
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing"}'
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  [[ "$output" != *"carrying"* ]]
-  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  printf 'dispatched' >"$STUB_DIR/labels_44"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":100}'
+  seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":200}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes 44 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"part of this branch's bundle"* ]]
+  [[ "$output" == *"issue #43 carries a stale 'dispatched' claim"* ]]
+  [[ "$output" == *"issue #44 carries a stale 'dispatched' claim"* ]]
+  grep -q 'issue edit 43 --add-label dispatched' "$STUB_LOG"
+  grep -q 'issue edit 44 --add-label dispatched' "$STUB_LOG"
+  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  [ "$output" = $'Closes #42\nCloses #43\nCloses #44' ]
 }
 
 @test "also-closes: an unreadable crew bus fails the carry closed" {
