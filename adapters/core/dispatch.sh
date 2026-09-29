@@ -474,7 +474,7 @@ _bundle_carry() {
     while IFS= read -r tok; do
       labels+=("$(_also_closes_label "$(_evidence_text "$tok")")")
     done <<<"$orphans"
-    echo "dispatch: $carry_branch has claim rows for ${labels[*]} but no dispatch row recording its bundle (an earlier dispatch died before writing one) — re-pass the extras that belong to this change with --also-closes" >&2
+    echo "dispatch: $carry_branch has claim rows for ${labels[*]} but no dispatch row recording its bundle (an earlier dispatch died before writing one) — re-pass the extras that belong to this change with --also-closes, or, if none belong, delete $carry_branch (no worker has run on it) and remove their 'dispatched' labels by hand" >&2
     exit 1
   fi
   while IFS= read -r tok; do

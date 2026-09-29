@@ -11490,19 +11490,19 @@ also_closes_log() {
 
 @test "also-closes: a claim row a rolled-back run left does not exempt a labelled extra" {
   setup_bundle_resume
-  git -C "$TEST_REPO" branch feat/43-y
+  git -C "$TEST_REPO" push -q origin main:refs/heads/feat/43-y
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
   seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
   [[ "$output" == *"#43"* ]]
   [[ "$output" != *"part of this branch's bundle"* ]]
-  assert_claim_refused "feat/43-y"
+  assert_claim_refused "origin branch feat/43-y"
 }
 
 @test "also-closes: a rolled-back run on a branch with no dispatch row grants no exemption (#615)" {
   setup_bundle_resume
-  git -C "$TEST_REPO" branch feat/43-y
+  git -C "$TEST_REPO" push -q origin main:refs/heads/feat/43-y
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":100}'
   seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":200}'
   seed_claim_row '{"ts":5,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":200}'
@@ -11510,15 +11510,25 @@ also_closes_log() {
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
   [[ "$output" == *"#43"* ]]
   [[ "$output" != *"part of this branch's bundle"* ]]
-  assert_claim_refused "feat/43-y"
+  assert_claim_refused "origin branch feat/43-y"
+}
+
+@test "also-closes: a local branch of the extra's own refuses even when the bundle records it (#615)" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  git -C "$TEST_REPO" branch feat/43-y
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [[ "$output" == *"#43"* ]]
+  [[ "$output" != *"part of this branch's bundle"* ]]
+  assert_claim_refused "local branch feat/43-y"
 }
 
 @test "also-closes: a labelled extra with no record on an existing branch falls through to the evidence" {
   setup_bundle_resume
-  git -C "$TEST_REPO" branch feat/43-y
+  git -C "$TEST_REPO" push -q origin main:refs/heads/feat/43-y
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
   [[ "$output" == *"#43"* ]]
-  assert_claim_refused "feat/43-y"
+  assert_claim_refused "origin branch feat/43-y"
 }
 
 @test "also-closes: a Linear bundle stamps every Closes line and never touches gh" {
