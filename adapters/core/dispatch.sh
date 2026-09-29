@@ -408,7 +408,10 @@ _also_closes_token() {
 # read. The source is the newest dispatch row that carries a bundle: a later
 # --pr/--review dispatch onto the same head writes one without. With
 # <fallback> set and no dispatch row on <branch> at all, the run died between
-# claiming and writing that row, so its claim-issue rows are the record.
+# claiming and writing that row, so its claim-issue rows are the record — only
+# the newest run's: a rolled-back run leaves its rows too. A run writes the
+# primary's row first, so that run is the newest primary row's pid from its ts
+# on; a row without both reads as no record rather than a guess.
 _bundle_recorded() {
   local events="$crew_dir/events.jsonl"
   [ -f "$events" ] || return 0
@@ -418,8 +421,13 @@ _bundle_recorded() {
     | if ($d | length) > 0 then
         [$d[] | select((.also_closes | arrays | length) > 0)] | last | (.also_closes // [])[] | tostring
       elif $fallback != "" then
-        [$rows[] | select(.kind == "claim-issue") | .issue | tostring | select(. != $p)]
-        | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end) | .[]
+        [$rows[] | select(.kind == "claim-issue")] as $c
+        | ([$c[] | select((.issue | tostring) == $p)] | last) as $head
+        | if ($head.pid | type) == "number" and ($head.ts | type) == "number" then
+            [$c[] | select(.pid == $head.pid and (.ts | type) == "number" and .ts >= $head.ts)
+              | .issue | tostring | select(. != $p)]
+            | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end) | .[]
+          else empty end
       else empty end' "$events"
 }
 
@@ -436,7 +444,7 @@ _bundle_carry() {
   fi
   git show-ref --verify --quiet "refs/heads/$carry_branch" || return 0
   if [ "${#also_closes_raw[@]}" -gt 0 ]; then
-    recorded="$(_bundle_recorded "$carry_branch" "$primary" "")" || return 0
+    recorded="$(_bundle_recorded "$carry_branch" "$primary" "$gh_issue")" || return 0
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       case " ${also_closes[*]} $primary " in
@@ -470,22 +478,14 @@ _bundle_carry() {
   also_closes=("${bundle[@]}")
 }
 
-# _bundle_claim_row <issue> — 0 when a claim-issue row records <issue> on
-# $branch, i.e. this branch's own earlier run claimed it into its bundle.
-_bundle_claim_row() {
-  local events="$crew_dir/events.jsonl" out
-  [ -f "$events" ] || return 1
-  out="$(jq -nrR --arg i "$1" --arg b "$branch" 'first(inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i) and .branch == $b)) | "y"' "$events")" || return 1
-  [ -n "$out" ]
-}
-
 # _claim_check_extra <issue> — the claim gate's check for one --also-closes
 # extra, run for every issue before any is labelled so a refusal leaves
 # nothing to undo. Records in $claim_had_label whether the label was already
 # there, and queues its note in $claim_notes. A labelled extra is a resume only
-# when this branch exists and its own claim row names the extra.
+# when this branch exists and its recorded bundle names the extra; an
+# unreadable bus grants nothing, leaving the evidence checks to fail closed.
 _claim_check_extra() {
-  local n="$1" labels existing evidence
+  local n="$1" labels recorded existing evidence
   labels="$(gh issue view "$n" --json labels --jq '.labels[].name')" || {
     echo "dispatch: could not read labels for issue #$n" >&2
     exit 1
@@ -495,7 +495,9 @@ _claim_check_extra() {
     return 0
   fi
   claim_had_label+=(1)
-  if git show-ref --verify --quiet "refs/heads/$branch" && _bundle_claim_row "$n"; then
+  if git show-ref --verify --quiet "refs/heads/$branch" &&
+    recorded="$(_bundle_recorded "$branch" "$gh_issue" "$gh_issue")" &&
+    printf '%s\n' "$recorded" | grep -qxF "$n"; then
     claim_notes+=("dispatch: issue #$n is already claimed, but it is part of this branch's bundle (branch $branch exists) — proceeding onto it as a resume.")
     return 0
   fi
@@ -3271,12 +3273,14 @@ if [ -n "$gh_issue" ]; then
   # so every failure in between would strand an unreleasable label (#73).
   # Written before the label so a row exists whenever the label does — a racing
   # dispatcher that sees the label must also see a claimant. A failed label write
-  # below therefore leaves the row behind, but it is inert: its pid exits with
-  # this dispatcher, and any later reuse of that pid belongs to a process that
-  # started after the row's ts, so it never reads as claimant evidence (#322).
+  # below therefore leaves the row behind. As claimant evidence it is inert: its
+  # pid exits with this dispatcher, and any later reuse of that pid belongs to a
+  # process that started after the row's ts (#322). The branch's bundle record
+  # reads these rows too, which is why it takes only the newest run's.
   # A bundle claims all or nothing: a failed label rolls back the ones this run
-  # added, and leaves an issue that was labelled before (a resume or a healed
-  # stale claim) as it found it.
+  # added, plus the failed issue itself (the server may have applied it before
+  # the call failed), and leaves an issue that was labelled before (a resume or
+  # a healed stale claim) as it found it.
   claim_issues=("$gh_issue" ${also_closes[@]+"${also_closes[@]}"})
   claim_added=()
   for claim_i in "${!claim_issues[@]}"; do
@@ -3286,6 +3290,7 @@ if [ -n "$gh_issue" ]; then
     _bus_append "$crew_dir/events.jsonl" "$line"
     if ! gh issue edit "$claim_n" --add-label dispatched; then
       echo "dispatch: could not claim issue #$claim_n (adding the 'dispatched' label failed)" >&2
+      [ -n "${claim_had_label[$claim_i]}" ] || gh issue edit "$claim_n" --remove-label dispatched >/dev/null 2>&1 || true
       claim_undone=()
       for claim_m in ${claim_added[@]+"${claim_added[@]}"}; do
         if gh issue edit "$claim_m" --remove-label dispatched >/dev/null 2>&1; then

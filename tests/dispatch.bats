@@ -11262,8 +11262,9 @@ STUBEOF
 
 # stub_gh_multi — a per-issue gh stub: `issue view <N>` prints
 # $STUB_DIR/labels_<N> (absent = no labels) and fails when fail_view_<N>
-# exists; `issue edit <N> --add-label` fails when fail_add_<N> exists. Every
-# call is logged; everything else succeeds. Install it after stub_launch_bins /
+# exists; `issue edit <N> --add-label` fails when fail_add_<N> exists, and
+# `--remove-label` when fail_remove_<N> does. Every call is logged; everything
+# else succeeds. Install it after stub_launch_bins /
 # setup_resume_branch, which overwrite $STUB_DIR/gh.
 stub_gh_multi() {
   cat >"$STUB_DIR/gh" <<'EOF'
@@ -11277,6 +11278,9 @@ issue\ view\ *)
   ;;
 issue\ edit\ *)
   if [ "${4:-}" = --add-label ] && [ -e "$STUB_DIR/fail_add_$3" ]; then
+    exit 1
+  fi
+  if [ "${4:-}" = --remove-label ] && [ -e "$STUB_DIR/fail_remove_$3" ]; then
     exit 1
   fi
   ;;
@@ -11412,8 +11416,30 @@ also_closes_log() {
   [[ "$output" == *"could not claim issue #44"* ]]
   grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
   grep -q 'issue edit 43 --remove-label dispatched' "$STUB_LOG"
+  grep -q 'issue edit 44 --remove-label dispatched' "$STUB_LOG"
   run ! grep -q '^reap' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "also-closes: a failed claim on an issue that already carried the label leaves it" {
+  stub_launch_bins
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_44"
+  touch "$STUB_DIR/fail_add_44"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes 44 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not claim issue #44"* ]]
+  grep -q 'issue edit 43 --remove-label dispatched' "$STUB_LOG"
+  run ! grep -q 'issue edit 44 --remove-label' "$STUB_LOG"
+}
+
+@test "also-closes: a rollback that cannot remove a label says to remove it by hand" {
+  stub_launch_bins
+  stub_gh_multi
+  touch "$STUB_DIR/fail_add_43" "$STUB_DIR/fail_remove_42"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not remove the 'dispatched' label from issue #42 — remove it by hand"* ]]
 }
 
 @test "also-closes: rollback spares an issue that already carried the label" {
@@ -11460,6 +11486,26 @@ also_closes_log() {
   wait "$live_pid" 2>/dev/null || true
   [[ "$output" == *"#43"* ]]
   assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+@test "also-closes: a claim row a rolled-back run left does not exempt a labelled extra" {
+  setup_bundle_resume
+  git -C "$TEST_REPO" branch feat/43-y
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  [[ "$output" == *"#43"* ]]
+  [[ "$output" != *"part of this branch's bundle"* ]]
+  assert_claim_refused "feat/43-y"
+}
+
+@test "also-closes: a labelled extra with no record on an existing branch falls through to the evidence" {
+  setup_bundle_resume
+  git -C "$TEST_REPO" branch feat/43-y
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  [[ "$output" == *"#43"* ]]
+  assert_claim_refused "feat/43-y"
 }
 
 @test "also-closes: a Linear bundle stamps every Closes line and never touches gh" {
@@ -11517,6 +11563,50 @@ setup_bundle_resume() {
   [ "$output" = $'Closes #42\nCloses #43' ]
 }
 
+@test "also-closes: the claim-row fallback carries only the newest run's extras" {
+  setup_bundle_resume
+  printf 'dispatched' >"$STUB_DIR/labels_44"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1001}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1001}'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1002}'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":1002}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"carrying --also-closes #44 from"* ]]
+  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  [ "$output" = $'Closes #42\nCloses #44' ]
+}
+
+@test "also-closes: the claim-row fallback carries nothing when the newest primary row has no pid" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing"}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [[ "$output" != *"carrying"* ]]
+  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: an unreadable crew bus fails the carry closed" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  chmod 000 "$TEST_REPO/.git/crew/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  chmod 644 "$TEST_REPO/.git/crew/events.jsonl"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not read the crew bus to carry --also-closes"* ]]
+  run ! grep -q 'add-label' "$STUB_LOG"
+}
+
+@test "also-closes: a foreign token in the recorded bundle is not carried, the rest is" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":["ENG-5",43]}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not carrying a recorded --also-closes"* ]]
+  grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
 @test "also-closes: claim rows are not carried when a plain dispatch row exists" {
   setup_bundle_resume
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
@@ -11547,6 +11637,17 @@ setup_bundle_resume() {
   [[ "$output" == *"dropping #44"* ]]
   grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
   run ! grep -q 'Closes #44' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: an explicit set warns about a dropped extra that only claim rows record" {
+  setup_bundle_resume
+  printf 'dispatched' >"$STUB_DIR/labels_44"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropping #44"* ]]
 }
 
 @test "also-closes: the both-token form keeps the Linear branch and Closes line" {
