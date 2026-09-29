@@ -1,0 +1,6 @@
+{
+  "engines": ["claude", "codex"],
+  "profile": "personal",
+  "modelMap": { "claude": { "deep": { "default": "opus" } } },
+  "openrouter": { "monthlyUsd": 20 }
+}

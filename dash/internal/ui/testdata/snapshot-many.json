@@ -1,0 +1,622 @@
+{
+  "now": 1790000000,
+  "settings": {
+    "layers": {
+      "base": "<BASE>",
+      "user": {
+        "path": "<USER>",
+        "present": true
+      },
+      "locked": "<LOCKED>"
+    },
+    "rows": [
+      {
+        "path": [
+          "engines"
+        ],
+        "value": [
+          "claude",
+          "pi"
+        ],
+        "origin": "user",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "profile"
+        ],
+        "value": "work",
+        "origin": "locked",
+        "locked_only": false,
+        "editable": false
+      }
+    ],
+    "warnings": [],
+    "error": null
+  },
+  "budget": {
+    "report": {
+      "fetched_epoch": 1789999400,
+      "engines": {
+        "claude": {
+          "source": "oauth_usage",
+          "plan_type": null,
+          "credits_cover": false,
+          "spend_usd": null,
+          "target_usd": null,
+          "elapsed_pct": null,
+          "projected_month_end_usd": null,
+          "windows": [
+            {
+              "key": "5h",
+              "used_pct": 10,
+              "resets_at": 1790007200,
+              "resets_in_s": 7200,
+              "ahead_pts": null,
+              "verdict": null
+            }
+          ],
+          "projection": null
+        },
+        "codex": null,
+        "cursor": null,
+        "pi": null
+      }
+    },
+    "warnings": [],
+    "error": null
+  },
+  "runs": {
+    "retro": {
+      "tags": [],
+      "unknown": [],
+      "rows": [
+        {
+          "kind": "run",
+          "crew": "c1",
+          "branch": "feat/584-crew-dash",
+          "engine": "claude",
+          "model": "opus",
+          "tier": "deep",
+          "outcome": "merged",
+          "t0": 1789999500000,
+          "notes": [
+            {
+              "seam": "review",
+              "tag": "gate_thrash",
+              "detail": "Review gate flapped twice before settling."
+            },
+            {
+              "seam": "review",
+              "tag": "gate_thrash",
+              "detail": "Second thrash, same gate, different reviewer this time."
+            },
+            {
+              "seam": "other",
+              "tag": "other",
+              "detail": "This is a deliberately long detail line meant to exercise the detail pane's word-wrap logic across more than eighty columns of terminal width so the golden frame actually shows wrapped continuation lines instead of a single truncated row."
+            }
+          ]
+        },
+        {
+          "kind": "dispatcher",
+          "crew": "c1",
+          "branch": "dispatcher:c1",
+          "engine": "—",
+          "model": "—",
+          "tier": "—",
+          "outcome": "—",
+          "t0": 1789998000000,
+          "notes": [
+            {
+              "seam": "session",
+              "tag": "session_summary",
+              "detail": "Landed the budget gauges after two review rounds."
+            },
+            {
+              "seam": "dispatch",
+              "tag": "misrouted",
+              "detail": "First routed to codex; retried on claude."
+            }
+          ]
+        },
+        {
+          "kind": "run",
+          "crew": "c2",
+          "branch": "fix/123-widget",
+          "engine": "codex",
+          "model": "gpt-5.6-terra",
+          "tier": "standard",
+          "outcome": "abandoned",
+          "t0": 1789992000000,
+          "notes": [
+            {
+              "seam": "plan",
+              "tag": "spec_too_thin",
+              "detail": "Spec lacked acceptance criteria."
+            }
+          ]
+        },
+        {
+          "kind": "dispatcher",
+          "crew": "c2",
+          "branch": "dispatcher:c2",
+          "engine": "—",
+          "model": "—",
+          "tier": "—",
+          "outcome": "—",
+          "t0": 1789990000000,
+          "notes": [
+            {
+              "seam": "session",
+              "tag": "session_summary",
+              "detail": "Quiet run, no issues."
+            }
+          ]
+        }
+      ]
+    },
+    "retro_error": null,
+    "ratings": [
+      {
+        "tier": "trivial",
+        "engine": "pi",
+        "model": "pi-mini",
+        "n": {
+          "value": 4,
+          "k": 3,
+          "n": 4
+        },
+        "pr_pct": {
+          "value": 75,
+          "k": 3,
+          "n": 4
+        },
+        "merge_pct": {
+          "value": 66.7,
+          "k": 3,
+          "n": 4
+        },
+        "burn_median": {
+          "value": 0.8,
+          "k": 3,
+          "n": 4
+        }
+      },
+      {
+        "tier": "standard",
+        "engine": "codex",
+        "model": "gpt-5.6-terra",
+        "n": {
+          "value": 2,
+          "k": 2,
+          "n": 2
+        },
+        "pr_pct": {
+          "value": 100,
+          "k": 2,
+          "n": 2
+        },
+        "merge_pct": {
+          "value": null,
+          "k": 0,
+          "n": 2
+        },
+        "burn_median": {
+          "value": null,
+          "k": 0,
+          "n": 2
+        }
+      },
+      {
+        "tier": "deep",
+        "engine": "claude",
+        "model": "opus",
+        "n": {
+          "value": 8,
+          "k": 8,
+          "n": 8
+        },
+        "pr_pct": {
+          "value": 100,
+          "k": 8,
+          "n": 8
+        },
+        "merge_pct": {
+          "value": 87.5,
+          "k": 7,
+          "n": 8
+        },
+        "burn_median": {
+          "value": 2.3,
+          "k": 8,
+          "n": 8
+        }
+      }
+    ],
+    "ratings_error": null
+  },
+  "roster": {
+    "crews": [
+      {
+        "id": "c1",
+        "workers": [
+          {
+            "from": "worker:many-c1-0#s1",
+            "branch": "feat/many-c1-0",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 0 for c1",
+            "source": null,
+            "ts": 1789999900000,
+            "age_s": 100,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/900",
+            "title": "Task 0",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c1w0",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-1#s1",
+            "branch": "feat/many-c1-1",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 1 for c1",
+            "source": null,
+            "ts": 1789999840000,
+            "age_s": 160,
+            "pr_url": null,
+            "title": "Task 1",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c1w1",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-2#s1",
+            "branch": "feat/many-c1-2",
+            "session": "s1",
+            "state": "idle",
+            "detail": "doing task 2 for c1",
+            "source": null,
+            "ts": 1789999780000,
+            "age_s": 220,
+            "pr_url": null,
+            "title": "Task 2",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c1w2",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-3#s1",
+            "branch": "feat/many-c1-3",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 3 for c1",
+            "source": null,
+            "ts": 1789999720000,
+            "age_s": 280,
+            "pr_url": null,
+            "title": "Task 3",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c1w3",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-4#s1",
+            "branch": "feat/many-c1-4",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 4 for c1",
+            "source": null,
+            "ts": 1789999660000,
+            "age_s": 340,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/904",
+            "title": "Task 4",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c1w4",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-5#s1",
+            "branch": "feat/many-c1-5",
+            "session": "s1",
+            "state": "idle",
+            "detail": "doing task 5 for c1",
+            "source": null,
+            "ts": 1789999600000,
+            "age_s": 400,
+            "pr_url": null,
+            "title": "Task 5",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c1w5",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c1-6#s1",
+            "branch": "feat/many-c1-6",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 6 for c1",
+            "source": null,
+            "ts": 1789999540000,
+            "age_s": 460,
+            "pr_url": null,
+            "title": "Task 6",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c1w6",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          }
+        ],
+        "holds": [
+          {
+            "id": "c1h0",
+            "wait": {
+              "engine": "claude",
+              "window": "7d",
+              "resets_at": 1790302400
+            },
+            "task": {
+              "title": "hold task 0 for c1"
+            }
+          },
+          {
+            "id": "c1h1",
+            "wait": {
+              "engine": "claude",
+              "window": "7d",
+              "resets_at": 1790302400
+            },
+            "task": {
+              "title": "hold task 1 for c1"
+            }
+          }
+        ]
+      },
+      {
+        "id": "c2",
+        "workers": [
+          {
+            "from": "worker:many-c2-0#s1",
+            "branch": "feat/many-c2-0",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 0 for c2",
+            "source": null,
+            "ts": 1789999900000,
+            "age_s": 100,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/900",
+            "title": "Task 0",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c2w0",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c2-1#s1",
+            "branch": "feat/many-c2-1",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 1 for c2",
+            "source": null,
+            "ts": 1789999840000,
+            "age_s": 160,
+            "pr_url": null,
+            "title": "Task 1",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c2w1",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c2-2#s1",
+            "branch": "feat/many-c2-2",
+            "session": "s1",
+            "state": "idle",
+            "detail": "doing task 2 for c2",
+            "source": null,
+            "ts": 1789999780000,
+            "age_s": 220,
+            "pr_url": null,
+            "title": "Task 2",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c2w2",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c2-3#s1",
+            "branch": "feat/many-c2-3",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 3 for c2",
+            "source": null,
+            "ts": 1789999720000,
+            "age_s": 280,
+            "pr_url": null,
+            "title": "Task 3",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c2w3",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c2-4#s1",
+            "branch": "feat/many-c2-4",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 4 for c2",
+            "source": null,
+            "ts": 1789999660000,
+            "age_s": 340,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/904",
+            "title": "Task 4",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c2w4",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c2-5#s1",
+            "branch": "feat/many-c2-5",
+            "session": "s1",
+            "state": "idle",
+            "detail": "doing task 5 for c2",
+            "source": null,
+            "ts": 1789999600000,
+            "age_s": 400,
+            "pr_url": null,
+            "title": "Task 5",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c2w5",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          }
+        ],
+        "holds": []
+      },
+      {
+        "id": "c3",
+        "workers": [
+          {
+            "from": "worker:many-c3-0#s1",
+            "branch": "feat/many-c3-0",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 0 for c3",
+            "source": null,
+            "ts": 1789999900000,
+            "age_s": 100,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/900",
+            "title": "Task 0",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c3w0",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c3-1#s1",
+            "branch": "feat/many-c3-1",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 1 for c3",
+            "source": null,
+            "ts": 1789999840000,
+            "age_s": 160,
+            "pr_url": null,
+            "title": "Task 1",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c3w1",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c3-2#s1",
+            "branch": "feat/many-c3-2",
+            "session": "s1",
+            "state": "idle",
+            "detail": "doing task 2 for c3",
+            "source": null,
+            "ts": 1789999780000,
+            "age_s": 220,
+            "pr_url": null,
+            "title": "Task 2",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c3w2",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c3-3#s1",
+            "branch": "feat/many-c3-3",
+            "session": "s1",
+            "state": "working",
+            "detail": "doing task 3 for c3",
+            "source": null,
+            "ts": 1789999720000,
+            "age_s": 280,
+            "pr_url": null,
+            "title": "Task 3",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "c3w3",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:many-c3-4#s1",
+            "branch": "feat/many-c3-4",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "doing task 4 for c3",
+            "source": null,
+            "ts": 1789999660000,
+            "age_s": 340,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/904",
+            "title": "Task 4",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "c3w4",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          }
+        ],
+        "holds": [
+          {
+            "id": "c3h0",
+            "wait": {
+              "engine": "claude",
+              "window": "7d",
+              "resets_at": 1790302400
+            },
+            "task": {
+              "title": "hold task 0 for c3"
+            }
+          }
+        ]
+      }
+    ],
+    "error": null
+  }
+}

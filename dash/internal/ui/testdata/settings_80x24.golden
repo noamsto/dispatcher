@@ -1,0 +1,24 @@
+▸ Settings │   Budget │   Runs │   Roster
+layers: default <BASE>
+        user    <USER> (present)
+        locked  <LOCKED>
+› engines: ["claude","pi"]                                                  user
+  profile: "work"                                                      🔒 locked
+  ▾ modelMap                                                                    
+    ▾ claude                                                                    
+      ▾ deep                                                                    
+        default: "opus"                                                  default
+  ▾ openrouter                                                                  
+    monthlyUsd: 20                                                       default
+    keyFile: "/run/agenix/a-very-long-key-file-path-that-overflows-ei… 🔒 locked
+  ▾ repoTrackers                                                                
+    noamsto/dispatcher: "github"                                            user
+  grantRoots: ["/a/git"]                                               🔒 locked
+
+
+
+
+
+
+
+1-4 views • tab next view • r refresh • ? help • q quit …  refreshed 14:13:20

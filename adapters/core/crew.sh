@@ -1106,6 +1106,10 @@ if [ "$sub" = pi-agent-dir ]; then
   _pi_agent_dir
   exit 0
 fi
+# dash needs no repo either — it degrades every repo-scoped pane on its own.
+if [ "$sub" = dash ]; then
+  CREW_BIN=$(readlink -f "$0") exec crew-dash "$@"
+fi
 
 # repo-keyed bus dir; --path-format=absolute so main-checkout and worktrees
 # resolve to a byte-identical path (load-bearing — see #29).
@@ -3042,6 +3046,10 @@ EOF_REPOS
                 cost_hours: (
                   ($n | map(.cost_proxy) | map(select(. != null))) as $vals
                   | agg(($vals|length); $ncount; (($vals | mean) | if . == null then null else . / 3600000 end))
+                ),
+                burn_median: (
+                  ($n | map(.cost_proxy) | map(select(. != null))) as $vals
+                  | agg(($vals|length); $ncount; (($vals | median) | if . == null then null else . / 3600000 end))
                 )
               }
           )
@@ -3613,7 +3621,7 @@ retro)
                             and ((.to // "") | startswith("retro:"))
                             and ((.from // "") | startswith("worker:"))))
                | sort_by(.ts) | map(.body | body_obj) | map(select(. != null))) as $seam
-        | { branch: $b, engine: ($d.engine // "—"), model: ($d.model // "—"),
+        | { branch: $b, crew: ($d.crew_id // null), engine: ($d.engine // "—"), model: ($d.model // "—"),
             tier: ($d.tier // "—"),
             # Type-guarded for the same reason as body_obj: a status whose body
             # is not an object, or whose state is not a scalar, must cost this
@@ -3632,6 +3640,7 @@ retro)
                          and ((.from // "") | startswith("dispatcher:"))))
             | group_by(.to)
             | map({ branch: ("dispatcher:" + (.[0].to | ltrimstr("retro:"))),
+                    crew: (.[0].to | ltrimstr("retro:")),
                     engine: "—", model: "—", tier: "—", outcome: "—",
                     t0: (map(.ts) | min), is_run: false,
                     notes: (sort_by(.ts) | map(.body | body_obj)
@@ -3671,7 +3680,13 @@ retro)
     | (($groups | map(select(.known)) | sort_by(. as $g | $vocab | index($g.tag)))
        + ($groups | map(select(.known | not)) | sort_by(.tag))) as $sorted
     | ($sorted | map(select(.known | not)) | map(.tag)) as $unknown
-    | if $want_json then { tags: $sorted, unknown: $unknown }
+    | if $want_json then
+        { tags: $sorted, unknown: $unknown,
+          rows: ($rows | map({
+              kind: (if .is_run then "run" else "dispatcher" end),
+              crew, branch, engine, model, tier, outcome, t0,
+              notes: (.notes | map({seam, tag, detail}))
+            })) }
       elif $want_report then
         ["tag", "hits", "runs", "engines", "nondone", "sample"] as $headers
         | [true, false, false, true, false, true] as $left
@@ -5670,7 +5685,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
   exit 1
   ;;
 esac

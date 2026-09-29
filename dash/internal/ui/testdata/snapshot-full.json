@@ -1,0 +1,217 @@
+{
+  "now": 1790000000,
+  "settings": {
+    "layers": {
+      "base": "<BASE>",
+      "user": {
+        "path": "<USER>",
+        "present": true
+      },
+      "locked": "<LOCKED>"
+    },
+    "rows": [
+      {
+        "path": [
+          "engines"
+        ],
+        "value": [
+          "claude",
+          "pi"
+        ],
+        "origin": "user",
+        "locked_only": false,
+        "editable": true
+      },
+      {
+        "path": [
+          "profile"
+        ],
+        "value": "work",
+        "origin": "locked",
+        "locked_only": false,
+        "editable": false
+      }
+    ],
+    "warnings": [],
+    "error": null
+  },
+  "budget": {
+    "report": {
+      "fetched_epoch": 1789999400,
+      "engines": {
+        "claude": {
+          "source": "oauth_usage",
+          "plan_type": null,
+          "credits_cover": false,
+          "spend_usd": null,
+          "target_usd": null,
+          "elapsed_pct": null,
+          "projected_month_end_usd": null,
+          "windows": [
+            {
+              "key": "5h",
+              "used_pct": 10,
+              "resets_at": 1790007200,
+              "resets_in_s": 7200,
+              "ahead_pts": null,
+              "verdict": null
+            }
+          ],
+          "projection": null
+        },
+        "codex": null,
+        "cursor": null,
+        "pi": null
+      }
+    },
+    "warnings": [],
+    "error": null
+  },
+  "runs": {
+    "retro": {
+      "tags": [],
+      "unknown": [],
+      "rows": [
+        {
+          "kind": "run",
+          "crew": "c1",
+          "branch": "feat/584-crew-dash",
+          "engine": "claude",
+          "model": "opus",
+          "tier": "deep",
+          "outcome": "merged",
+          "t0": 1789999500000,
+          "notes": [
+            {"seam": "review", "tag": "gate_thrash", "detail": "Review gate flapped twice before settling."},
+            {"seam": "review", "tag": "gate_thrash", "detail": "Second thrash, same gate, different reviewer this time."},
+            {"seam": "other", "tag": "other", "detail": "This is a deliberately long detail line meant to exercise the detail pane's word-wrap logic across more than eighty columns of terminal width so the golden frame actually shows wrapped continuation lines instead of a single truncated row."}
+          ]
+        },
+        {
+          "kind": "dispatcher",
+          "crew": "c1",
+          "branch": "dispatcher:c1",
+          "engine": "—",
+          "model": "—",
+          "tier": "—",
+          "outcome": "—",
+          "t0": 1789998000000,
+          "notes": [
+            {"seam": "session", "tag": "session_summary", "detail": "Landed the budget gauges after two review rounds."},
+            {"seam": "dispatch", "tag": "misrouted", "detail": "First routed to codex; retried on claude."}
+          ]
+        },
+        {
+          "kind": "run",
+          "crew": "c2",
+          "branch": "fix/123-widget",
+          "engine": "codex",
+          "model": "gpt-5.6-terra",
+          "tier": "standard",
+          "outcome": "abandoned",
+          "t0": 1789992000000,
+          "notes": [
+            {"seam": "plan", "tag": "spec_too_thin", "detail": "Spec lacked acceptance criteria."}
+          ]
+        },
+        {
+          "kind": "dispatcher",
+          "crew": "c2",
+          "branch": "dispatcher:c2",
+          "engine": "—",
+          "model": "—",
+          "tier": "—",
+          "outcome": "—",
+          "t0": 1789990000000,
+          "notes": [
+            {"seam": "session", "tag": "session_summary", "detail": "Quiet run, no issues."}
+          ]
+        }
+      ]
+    },
+    "retro_error": null,
+    "ratings": [
+      {
+        "tier": "trivial",
+        "engine": "pi",
+        "model": "pi-mini",
+        "n": {"value": 4, "k": 3, "n": 4},
+        "pr_pct": {"value": 75, "k": 3, "n": 4},
+        "merge_pct": {"value": 66.7, "k": 3, "n": 4},
+        "burn_median": {"value": 0.8, "k": 3, "n": 4}
+      },
+      {
+        "tier": "standard",
+        "engine": "codex",
+        "model": "gpt-5.6-terra",
+        "n": {"value": 2, "k": 2, "n": 2},
+        "pr_pct": {"value": 100, "k": 2, "n": 2},
+        "merge_pct": {"value": null, "k": 0, "n": 2},
+        "burn_median": {"value": null, "k": 0, "n": 2}
+      },
+      {
+        "tier": "deep",
+        "engine": "claude",
+        "model": "opus",
+        "n": {"value": 8, "k": 8, "n": 8},
+        "pr_pct": {"value": 100, "k": 8, "n": 8},
+        "merge_pct": {"value": 87.5, "k": 7, "n": 8},
+        "burn_median": {"value": 2.3, "k": 8, "n": 8}
+      }
+    ],
+    "ratings_error": null
+  },
+  "roster": {
+    "crews": [
+      {
+        "id": "c1",
+        "workers": [
+          {
+            "from": "worker:feat/584-crew-dash#s1",
+            "branch": "feat/584-crew-dash",
+            "session": "s1",
+            "state": "working",
+            "detail": "writing golden tests",
+            "source": null,
+            "ts": 1789999900000,
+            "age_s": 100,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/999",
+            "title": "Runs+Roster views",
+            "engine": "claude",
+            "model": "opus",
+            "tier": "deep",
+            "name": "sage",
+            "color": "#00ffaa",
+            "tmux": "colour137"
+          },
+          {
+            "from": "worker:fix/123-widget#s1",
+            "branch": "fix/123-widget",
+            "session": "s1",
+            "state": "blocked",
+            "detail": "waiting on codex budget window to reset before continuing this really quite long diagnostic detail line that should get truncated in the roster table view",
+            "source": "watchdog",
+            "ts": 1789996400000,
+            "age_s": 3600,
+            "pr_url": null,
+            "title": "Widget fix",
+            "engine": "codex",
+            "model": "gpt-5.6-terra",
+            "tier": "standard",
+            "name": "coral",
+            "color": "#ff6600",
+            "tmux": "colour61"
+          }
+        ],
+        "holds": [
+          {
+            "id": "h1",
+            "wait": {"engine": "claude", "window": "7d", "resets_at": 1790302400},
+            "task": {"title": "Resume after 7d window resets"}
+          }
+        ]
+      }
+    ],
+    "error": null
+  }
+}

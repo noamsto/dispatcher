@@ -29,13 +29,19 @@
 #
 # --show-origin prints the same tree with every leaf replaced by
 # {"value": …, "origin": "base|user|locked|env"}.
+#
+# --layers prints the file layers' paths and presence, reading no contents:
+# {"base": …, "user": {"path": …, "present": …}, "locked": … or null}.
 set -euo pipefail
 
 show_origin=false
+layers=false
 if [[ $# -eq 1 && $1 == --show-origin ]]; then
   show_origin=true
+elif [[ $# -eq 1 && $1 == --layers ]]; then
+  layers=true
 elif [[ $# -ne 0 ]]; then
-  echo "usage: dispatch-config [--show-origin]" >&2
+  echo "usage: dispatch-config [--show-origin | --layers]" >&2
   exit 2
 fi
 
@@ -184,11 +190,26 @@ base_file="@defaultsJson@"
 if [[ $base_file == @* ]]; then
   base_file="$(dirname "${BASH_SOURCE[0]}")/defaults.json"
 fi
+
+user_file="${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json"
+
+locked_file="@lockedSettings@"
+if [[ $locked_file == @* ]]; then
+  locked_file="${DISPATCH_LOCKED_SETTINGS:-}"
+elif [[ -n ${DISPATCH_LOCKED_SETTINGS:-} && $DISPATCH_LOCKED_SETTINGS != "$locked_file" ]]; then
+  echo "dispatch-config: ignoring DISPATCH_LOCKED_SETTINGS — this build bakes $locked_file" >&2
+fi
+
+if [[ $layers == true ]]; then
+  jq -n --arg b "$base_file" --arg u "$user_file" --argjson p "$([[ -e $user_file ]] && echo true || echo false)" --arg l "$locked_file" \
+    '{base: $b, user: {path: $u, present: $p}, locked: (if $l == "" then null else $l end)}'
+  exit 0
+fi
+
 base=$(layer "$base_file")
 check_model_shapes "$base" "$base_file" base
 base=$(strip "$base" "$base_file")
 
-user_file="${XDG_CONFIG_HOME:-$HOME/.config}/dispatcher/settings.json"
 user='{}'
 if [[ -e $user_file ]]; then
   user=$(layer "$user_file")
@@ -197,12 +218,6 @@ if [[ -e $user_file ]]; then
   user=$(strip "$user" "$user_file")
 fi
 
-locked_file="@lockedSettings@"
-if [[ $locked_file == @* ]]; then
-  locked_file="${DISPATCH_LOCKED_SETTINGS:-}"
-elif [[ -n ${DISPATCH_LOCKED_SETTINGS:-} && $DISPATCH_LOCKED_SETTINGS != "$locked_file" ]]; then
-  echo "dispatch-config: ignoring DISPATCH_LOCKED_SETTINGS — this build bakes $locked_file" >&2
-fi
 locked='{}'
 if [[ -n $locked_file ]]; then
   [[ -r $locked_file ]] || die "$locked_file is not readable"

@@ -438,3 +438,33 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"$missing"* ]]
 }
+
+@test "--layers reports base, user absence, and no locked file" {
+  run --separate-stderr "$CONFIG" --layers
+  [ "$status" -eq 0 ]
+  jq -e '(.base | endswith("/adapters/core/defaults.json")) and .user.present == false and (.user.path | endswith("/dispatcher/settings.json")) and .locked == null' <<<"$output"
+}
+
+@test "--layers reports user presence and the locked path" {
+  user_settings '{"engines":["claude"]}'
+  locked_settings '{"engines":["codex"]}'
+  run --separate-stderr "$CONFIG" --layers
+  [ "$status" -eq 0 ]
+  jq -e --arg l "$LOCKED_FILE" '.user.present == true and .locked == $l' <<<"$output"
+}
+
+@test "--layers reads no layer contents, so a malformed user file doesn't fail" {
+  user_settings '{'
+  run --separate-stderr "$CONFIG" --layers
+  [ "$status" -eq 0 ]
+}
+
+@test "--layers and --show-origin together exit 2 with usage" {
+  run --separate-stderr "$CONFIG" --layers --show-origin
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *usage:* ]]
+
+  run --separate-stderr "$CONFIG" --show-origin --layers
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *usage:* ]]
+}

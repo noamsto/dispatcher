@@ -1,0 +1,5 @@
+{
+  "engines": ["claude", "pi"],
+  "profile": "user-profile",
+  "repoTrackers": { "noamsto/dispatcher": "github" }
+}

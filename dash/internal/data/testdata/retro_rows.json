@@ -1,0 +1,36 @@
+{
+  "tags": [
+    {"tag": "misrouted", "known": true, "hits": 1, "runs": 0, "engines": [], "nondone_pct": null, "details": ["trivial"]},
+    {"tag": "gate_thrash", "known": true, "hits": 1, "runs": 1, "engines": ["claude"], "nondone_pct": 0, "details": ["circled build"]}
+  ],
+  "unknown": [],
+  "rows": [
+    {
+      "kind": "run",
+      "crew": "c1",
+      "branch": "feat/x",
+      "engine": "claude",
+      "model": "opus",
+      "tier": "deep",
+      "outcome": "done",
+      "t0": 1000,
+      "notes": [
+        {"seam": "execute", "tag": "gate_thrash", "detail": "circled build"}
+      ]
+    },
+    {
+      "kind": "dispatcher",
+      "crew": "c1",
+      "branch": "dispatcher:c1",
+      "engine": "—",
+      "model": "—",
+      "tier": "—",
+      "outcome": "—",
+      "t0": 5000,
+      "notes": [
+        {"seam": "drained", "tag": "misrouted", "detail": "trivial"},
+        {"seam": "drained", "tag": "session_summary", "detail": "khaki: deep/claude/opus done"}
+      ]
+    }
+  ]
+}

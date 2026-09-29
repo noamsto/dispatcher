@@ -1,0 +1,45 @@
+{
+  "engines": {
+    "value": [
+      "claude",
+      "pi"
+    ],
+    "origin": "user"
+  },
+  "profile": {
+    "value": "work",
+    "origin": "locked"
+  },
+  "modelMap": {
+    "claude": {
+      "deep": {
+        "default": {
+          "value": "opus",
+          "origin": "base"
+        }
+      }
+    }
+  },
+  "openrouter": {
+    "monthlyUsd": {
+      "value": 20,
+      "origin": "base"
+    },
+    "keyFile": {
+      "value": "/run/agenix/a-very-long-key-file-path-that-overflows-eighty-columns/ディレクトリ/and-more",
+      "origin": "locked"
+    }
+  },
+  "repoTrackers": {
+    "noamsto/dispatcher": {
+      "value": "github",
+      "origin": "user"
+    }
+  },
+  "grantRoots": {
+    "value": [
+      "/a/git"
+    ],
+    "origin": "locked"
+  }
+}

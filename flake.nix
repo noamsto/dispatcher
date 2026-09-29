@@ -99,14 +99,39 @@
             # gh + gtrash are for `reap`: it reads PR state via gh and trashes
             # the finished worker's task doc via gtrash so a post-mortem can
             # still recover it. `wt` stays ambient, as in dispatch — reap checks
-            # for it and degrades to a notice when absent.
+            # for it and degrades to a notice when absent. crew-dash is for
+            # `dash`, which delegates to it.
             # dispatch-config (#606) is on PATH so `crew rate` / _burn_weight
             # resolve the burn table out of the box, with no DISPATCH_CONFIG_BIN
             # and no ambient resolver required.
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config crew-dash];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
             text = sub (builtins.readFile ./adapters/core/crew.sh);
+          };
+
+          # crew is deliberately NOT a runtime input of crew-dash: crew lists
+          # crew-dash so its `dash` subcommand can exec this one, and naming
+          # crew here would close that into an eval-time cycle (the
+          # dispatch-resume precedent above). `crew dash` resolves `crew` from
+          # CREW_BIN, its own readlink'd path, instead. buildGoModule names the
+          # binary after the module path's last element ("dash"), so
+          # postInstall renames it before wrapping.
+          crew-dash = pkgs.buildGoModule {
+            # `name`, not just pname/version: the hm module installs it into
+            # home.packages, and tests/module.bats checks p.name literally —
+            # buildGoModule would otherwise default it to "crew-dash-0.1.0".
+            name = "crew-dash";
+            pname = "crew-dash";
+            version = "0.1.0";
+            src = ./dash;
+            vendorHash = "sha256-0HYob9awE9cJYU/7J6WF7o6D6i4gmPMN0kyFuCpgpFA=";
+            ldflags = ["-s" "-w" "-X main.dispatchConfigBin=${dispatchConfig}/bin/dispatch-config"];
+            nativeBuildInputs = [pkgs.makeWrapper];
+            postInstall = ''
+              mv $out/bin/dash $out/bin/crew-dash
+              wrapProgram $out/bin/crew-dash --prefix PATH : ${pkgs.lib.makeBinPath [refresh-budget pkgs.git]}
+            '';
           };
 
           dispatch = pkgs.writeShellApplication {
@@ -172,7 +197,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
       in {
@@ -201,6 +226,7 @@
               enable = true;
               indent_size = 2;
             };
+            gofmt.enable = true;
           };
         };
 
@@ -227,16 +253,27 @@
             # are instructions a model reads, so their bytes are content), and
             # it would deadlock CI's drift gate, which regenerates the adapters
             # and asserts no diff.
-            excludes = ["\\.bats$" "^adapters/"];
+            #
+            # ^dash/.*/testdata/: golden ui View() frames are width-padded on
+            # purpose and carry trailing spaces as part of the fixture.
+            excludes = ["\\.bats$" "^adapters/" "^dash/.*/testdata/"];
           };
           check-merge-conflicts.enable = true;
-          trim-trailing-whitespace.enable = true;
+          trim-trailing-whitespace = {
+            enable = true;
+            # Same padded-goldens reason as prettier's exclude above.
+            excludes = ["^dash/.*/testdata/"];
+          };
         };
 
         # Fails `nix flake check` on doc drift even without a full checkout run
         # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
         # role for dispatch.sh, but for the generated doc regions.
         checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+
+        # `nix flake check` only evaluates packages, not builds them — this
+        # makes it build, which runs buildGoModule's `go test ./...` (doCheck).
+        checks.crew-dash = config.packages.crew-dash;
 
         packages = mkPackages null;
 
@@ -260,6 +297,7 @@
               pkgs.git
               pkgs.tmux
               pkgs.gh
+              pkgs.go
               # mawk, nawk, and (on Linux) BusyBox awk: tests/secret-read-guard.bats
               # runs the credential-read rule under each awk implementation.
               # BusyBox is wrapped as busybox-awk because busybox on PATH would

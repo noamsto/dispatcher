@@ -1,0 +1,24 @@
+  Settings │   Budget │ ▸ Runs │   Roster
+feat/584-crew-dash  deep/claude/opus  merged  2026-09-21T14:05:00Z
+
+review · gate_thrash
+Review gate flapped twice before settling.
+
+review · gate_thrash
+Second thrash, same gate, different reviewer this time.
+
+other · other
+This is a deliberately long detail line meant to exercise the detail pane's 
+word-wrap logic across more than eighty columns of terminal width so the golden
+frame actually shows wrapped continuation lines instead of a single truncated
+row.
+
+
+
+
+
+
+
+
+
+1-4 views • tab next view • r refresh • ? help • q quit …  refreshed 14:13:20

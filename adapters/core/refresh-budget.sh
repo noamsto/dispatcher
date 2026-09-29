@@ -8,6 +8,11 @@
 # session start — no daemon. Every probe degrades to null on failure: a
 # missing engine entry is "unknown", never "exhausted".
 #
+# --report renders the cached file's lever/summary output with no probing at
+# all — no curl/codex/tmux/dispatch-config call. --report --json emits the
+# same per-window figures (plus pi's openrouter fields) as one JSON document
+# instead. Both exit 1 when no cache exists yet.
+#
 #   claude — GET /api/oauth/usage with the access token from
 #     ~/.claude/.credentials.json (stays local, never printed). Fallback 1: a
 #     statusline-dumped rate_limits payload at $XDG_DATA_HOME/crew/claude-
@@ -45,12 +50,110 @@ STALE_AFTER_S=7200
 
 warn() { printf 'refresh-budget: %s\n' "$*" >&2; }
 
-# DISPATCH_OPENROUTER_MONTHLY_USD / DISPATCH_OPENROUTER_KEY_FILE may come from
-# the settings resolver (dispatch-config) when unset in the environment — see
-# dispatch-config.sh for the layer order.
-settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
-[[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
-[[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
+usage() {
+  printf 'usage: refresh-budget [--report [--json]]\n' >&2
+  exit 2
+}
+
+report_mode=false
+json_mode=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --report)
+    report_mode=true
+    shift
+    ;;
+  --json)
+    json_mode=true
+    shift
+    ;;
+  *) usage ;;
+  esac
+done
+[[ $json_mode == false || $report_mode == true ]] || usage
+
+# Shared by report() (the lever/summary render, on both the fresh-probe path
+# and --report) and report_json(). wsecs covers only the windows with a known
+# nominal length — codex's 1d/unknown/other buckets have none, so no pace can
+# be computed for them. A window carrying starts_at (pi's calendar `month`,
+# which has no fixed length) supplies its own.
+# shellcheck disable=SC2016  # jq's own $vars, not bash expansions
+JQ_DEFS='
+  def reltime: . as $s
+    | ($s / 86400 | floor) as $d
+    | (($s % 86400) / 3600 | floor) as $h
+    | (($s % 3600) / 60 | floor) as $m
+    | if $d > 0 then "\($d)d \($h)h"
+      elif $h > 0 then "\($h)h \($m)m"
+      else "\($m)m" end;
+  def wsecs($k; $w): if $w.starts_at != null and $w.resets_at != null then ($w.resets_at - $w.starts_at)
+    elif $k == "5h" then 18000
+    elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then 604800
+    else null end;
+  def elapsed_pct($resets_at; $L): (100 * ($L - ($resets_at - $now)) / $L) as $x
+    | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+  def usd: (. * 100 | round) as $c
+    | "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)";
+  # >=95% is a hold candidate; each engine gets exactly one gating window
+  # (precedence: no usable deadline, then no nominal length, then latest
+  # resets_at) and every sibling >=95% window on that engine defers to it.
+  # A window whose resets_at has already passed does not gate at all (the
+  # cache can predate the reset), matching the dispatch >=95% stop; a
+  # null resets_at still gates (rule 1) because no deadline is usable.
+  # Ties within a rule break on sorted key for a deterministic pick.
+  def gating($windows):
+    ($windows | to_entries
+      | map(select(.value.used_pct >= 95
+                   and (.value.resets_at == null or .value.resets_at > $now)))
+      | sort_by(.key)) as $cands |
+    if ($cands | length) == 0 then null
+    else
+      ($cands | map(select(.value.resets_at == null))) as $unreset |
+      ($cands | map(select(wsecs(.key; .value) == null))) as $unsized |
+      if ($unreset | length) > 0 then {key: $unreset[0].key, rule: 1}
+      elif ($unsized | length) > 0 then {key: $unsized[0].key, rule: 2}
+      else ($cands | sort_by([-.value.resets_at, .key]))[0] as $g | {key: $g.key, rule: 3}
+      end
+    end;
+  # window_rows — every non-null engine crossed with every one of its
+  # windows, with the figures both the text lever and --report --json need:
+  # fam/L/rem/ahead per window, and advice (the lever verdict text) only once
+  # a window is at or above the 85% floor — a lower window still carries
+  # ahead (json wants it unconditionally) but never advice.
+  def window_rows:
+    .engines | to_entries[] | select(.value != null) | .key as $e |
+    .value.windows as $windows |
+    (gating($windows)) as $gate |
+    $windows | to_entries[] |
+    .key as $k | .value as $w |
+    (if $k == "5h" then "5h" elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then "7d"
+     elif $k == "month" then "month" else "other" end) as $fam |
+    (wsecs($k; $w)) as $L |
+    (if $w.resets_at != null and $w.resets_at > $now then ($w.resets_at - $now) else null end) as $rem |
+    (if ($fam == "7d" or $fam == "month") and $rem != null then (($w.used_pct - elapsed_pct($w.resets_at; $L)) | round) else null end) as $ahead |
+    (if $w.used_pct < 85 then null
+     elif $w.used_pct < 95 then
+       (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
+        elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
+        elif $fam == "month" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
+        else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+        end)
+     elif $gate == null then "not binding: window has already reset"
+     elif $k != $gate.key then "not binding: \($e) is gated until \($gate.key) resets"
+     elif $gate.rule == 1 then "not holdable: no reset time, hand the task back"
+     elif $gate.rule == 2 then "not holdable: window has no nominal length, hand the task back"
+     elif elapsed_pct($w.resets_at; $L) >= 85 then "binding window; holdable: inside the window'"'"'s last 15%, wait past the reset"
+     else "binding window; not holdable: \($rem | reltime) is outside the window'"'"'s last 15%, hand the task back"
+     end) as $advice |
+    {e: $e, k: $k, w: $w, fam: $fam, L: $L, rem: $rem, ahead: $ahead, advice: $advice};
+  # projection_line — the pi/openrouter over-target lever line, or null; the
+  # one string text and json both print, so they cannot disagree.
+  def projection_line($e; $v):
+    if $v.source == "openrouter_key" and $v.projected_month_end_usd != null and $v.target_usd != null
+       and $v.projected_month_end_usd > $v.target_usd then
+      "\($e) projected $\($v.projected_month_end_usd | usd) at month end, over the $\($v.target_usd | usd) monthly target — size \($e) fan-out down"
+    else null end;
+'
 
 # probe_claude — print the claude engine object via the OAuth usage endpoint,
 # falling back to a fresh statusline dump; return 1 when neither works.
@@ -74,7 +177,7 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
         {
           source: "oauth_usage",
           # The oauth usage payload carries no plan/subscription key (verified
-          # live — see the #201 spec), so the tier is unknowable: null.
+          # live), so the tier is unknowable: null.
           plan_type: null,
           # `//` treats false as empty, so it cannot default a boolean: test
           # presence explicitly. Missing spend_limit_reached -> assume reached
@@ -298,7 +401,7 @@ probe_codex() {
           + (if $r.secondary != null and $r.secondary.usedPercent != null then {(wname($r.secondary.windowDurationMins | if . != null then . * 60 else null end)): {used_pct: $r.secondary.usedPercent, resets_at: $r.secondary.resetsAt}} else {} end)
         ),
         # Absolute-limit signals alongside the relative percent windows, so
-        # dispatch can gate on exhaustion no percent window expresses (#201).
+        # dispatch can gate on exhaustion no percent window expresses.
         # ordinaryUsageAllowed is top-level on the response; the rest sit under
         # rateLimits. jq indexes a missing/null sub-object to null, so each
         # field degrades to null rather than failing the probe. The boolean
@@ -402,7 +505,106 @@ probe_pi() {
   printf '%s\n' "$out"
 }
 
+# report — render $OUT as budget-lever warnings plus a one-line summary per
+# engine. Shared by `main` (right after a fresh probe+write) and `--report`
+# (reading a pre-existing cache with no probing at all).
+report() {
+  local now
+  now=$(date +%s)
+  jq -r --argjson now "$now" "$JQ_DEFS"'
+    (
+      window_rows | select(.w.used_pct >= 85) |
+      (if .rem == null then ""
+       else " (resets in \(.rem | reltime)" + (if .ahead != null then ", \(.ahead) points ahead of pace" else "" end) + ")"
+       end) as $paren |
+      "\(.e) \(.k) at \(.w.used_pct)%\($paren) — \(.advice)"
+    ),
+    (
+      .engines | to_entries[] | select(.value != null and .value.source == "openrouter_key") |
+      .key as $e | .value as $v |
+      projection_line($e; $v) | select(. != null)
+    )
+  ' "$OUT" |
+    while IFS= read -r line; do
+      warn "budget lever: $line"
+    done || true
+
+  jq -r --argjson now "$now" "$JQ_DEFS"'
+    .engines | to_entries[] | .key as $e |
+    if .value == null then "\($e): unknown"
+    elif .value.source == "openrouter_key" then
+      .value as $v |
+      (if $v.projected_month_end_usd != null then "projected $\($v.projected_month_end_usd | usd) at month end" else "too early to project" end) as $proj |
+      (if $v.resets_at != null then
+         " (resets \($v.resets_at | todateiso8601)" +
+         (if $v.resets_at > $now then ", in \(($v.resets_at - $now) | reltime)" else "" end) +
+         ")"
+       else "" end) as $reset |
+      (if $v.target_usd != null then
+         "\($e): openrouter $\($v.spend_usd | usd) of $\($v.target_usd | usd) monthly target (\($v.windows.month.used_pct)% used, \($v.elapsed_pct)% of month elapsed, \($proj))"
+       else
+         "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
+       end) + $reset
+    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) + ([.value.windows | to_entries[] |
+        "\(.key) \(.value.used_pct)% used" +
+        (if .value.resets_at then
+           " (resets \(.value.resets_at | todateiso8601)" +
+           (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
+           ")"
+         else "" end)
+      ] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)
+    end
+  ' "$OUT"
+}
+
+# report_json — the --report --json rendering: one document over $OUT with
+# the same per-window figures (resets_in_s/ahead_pts/verdict) the text lever
+# uses, plus pi's openrouter fields and its shared projection string, so text
+# and json can never disagree.
+report_json() {
+  local now
+  now=$(date +%s)
+  jq --argjson now "$now" "$JQ_DEFS"'
+    [ window_rows ] as $rows |
+    {
+      fetched_epoch,
+      engines: (.engines | to_entries | map(
+        .key as $e |
+        .value = (
+          if .value == null then null
+          else
+            .value as $v |
+            {
+              source: $v.source,
+              plan_type: $v.plan_type,
+              credits_cover: $v.credits_cover,
+              spend_usd: ($v.spend_usd // null),
+              target_usd: ($v.target_usd // null),
+              elapsed_pct: ($v.elapsed_pct // null),
+              projected_month_end_usd: ($v.projected_month_end_usd // null),
+              windows: [$rows[] | select(.e == $e) | {
+                key: .k, used_pct: .w.used_pct, resets_at: .w.resets_at,
+                resets_in_s: .rem, ahead_pts: .ahead, verdict: .advice
+              }],
+              projection: projection_line($e; $v)
+            }
+          end
+        )
+      ) | from_entries)
+    }
+  ' "$OUT"
+}
+
 main() {
+  # DISPATCH_OPENROUTER_MONTHLY_USD / DISPATCH_OPENROUTER_KEY_FILE may come
+  # from the settings resolver (dispatch-config) when unset in the
+  # environment — see dispatch-config.sh for the layer order. Probe-path
+  # only: --report never needs a target/key, so it never calls out for one.
+  local settings
+  settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
+  [[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
+  [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
+
   local claude='null' codex='null' pi='null' probe
   if probe=$(probe_claude); then
     claude=$probe
@@ -443,121 +645,20 @@ main() {
 
   printf '%s\n' "$OUT"
 
-  # Shared by both jq programs below. wsecs covers only the windows with a
-  # known nominal length — codex's 1d/unknown/other buckets have none, so no
-  # pace can be computed for them. The pace figure uses gate 2's formula
-  # (without its floor and threshold, which are the gate's business), so the
-  # two renderers never disagree on a number. A window carrying starts_at
-  # (pi's calendar `month`, which has no fixed length) supplies its own.
-  local now jq_time_defs
-  now=$(date +%s)
-  # shellcheck disable=SC2016  # jq's own $vars, not bash expansions
-  jq_time_defs='
-    def reltime: . as $s
-      | ($s / 86400 | floor) as $d
-      | (($s % 86400) / 3600 | floor) as $h
-      | (($s % 3600) / 60 | floor) as $m
-      | if $d > 0 then "\($d)d \($h)h"
-        elif $h > 0 then "\($h)h \($m)m"
-        else "\($m)m" end;
-    def wsecs($k; $w): if $w.starts_at != null and $w.resets_at != null then ($w.resets_at - $w.starts_at)
-      elif $k == "5h" then 18000
-      elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then 604800
-      else null end;
-    def elapsed_pct($resets_at; $L): (100 * ($L - ($resets_at - $now)) / $L) as $x
-      | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
-    def usd: (. * 100 | round) as $c
-      | "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)";
-  '
-
-  jq -r --argjson now "$now" "$jq_time_defs"'
-    # >=95% is a hold candidate; each engine gets exactly one gating window
-    # (precedence: no usable deadline, then no nominal length, then latest
-    # resets_at) and every sibling >=95% window on that engine defers to it.
-    # A window whose resets_at has already passed does not gate at all (the
-    # cache can predate the reset), matching the dispatch >=95% stop; a
-    # null resets_at still gates (rule 1) because no deadline is usable.
-    # Ties within a rule break on sorted key for a deterministic pick.
-    def gating($windows):
-      ($windows | to_entries
-        | map(select(.value.used_pct >= 95
-                     and (.value.resets_at == null or .value.resets_at > $now)))
-        | sort_by(.key)) as $cands |
-      if ($cands | length) == 0 then null
-      else
-        ($cands | map(select(.value.resets_at == null))) as $unreset |
-        ($cands | map(select(wsecs(.key; .value) == null))) as $unsized |
-        if ($unreset | length) > 0 then {key: $unreset[0].key, rule: 1}
-        elif ($unsized | length) > 0 then {key: $unsized[0].key, rule: 2}
-        else ($cands | sort_by([-.value.resets_at, .key]))[0] as $g | {key: $g.key, rule: 3}
-        end
-      end;
-    (
-      .engines | to_entries[] | select(.value != null) | .key as $e |
-      .value.windows as $windows |
-      (gating($windows)) as $gate |
-      $windows | to_entries[] | select(.value.used_pct >= 85) |
-      .key as $k | .value as $w |
-      (if $k == "5h" then "5h" elif ($k == "7d" or $k == "7d_opus" or $k == "7d_sonnet") then "7d"
-       elif $k == "month" then "month" else "other" end) as $fam |
-      (wsecs($k; $w)) as $L |
-      (if $w.resets_at != null and $w.resets_at > $now then ($w.resets_at - $now) else null end) as $rem |
-      (if ($fam == "7d" or $fam == "month") and $rem != null then (($w.used_pct - elapsed_pct($w.resets_at; $L)) | round) else null end) as $ahead |
-      (if $rem == null then ""
-       else " (resets in \($rem | reltime)" + (if $ahead != null then ", \($ahead) points ahead of pace" else "" end) + ")"
-       end) as $paren |
-      (if $w.used_pct < 95 then
-         (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
-          elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
-          elif $fam == "month" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
-          else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
-          end)
-       elif $gate == null then "not binding: window has already reset"
-       elif $k != $gate.key then "not binding: \($e) is gated until \($gate.key) resets"
-       elif $gate.rule == 1 then "not holdable: no reset time, hand the task back"
-       elif $gate.rule == 2 then "not holdable: window has no nominal length, hand the task back"
-       elif elapsed_pct($w.resets_at; $L) >= 85 then "binding window; holdable: inside the window'"'"'s last 15%, wait past the reset"
-       else "binding window; not holdable: \($rem | reltime) is outside the window'"'"'s last 15%, hand the task back"
-       end) as $advice |
-      "\($e) \($k) at \($w.used_pct)%\($paren) — \($advice)"
-    ),
-    (
-      .engines | to_entries[] | select(.value != null and .value.source == "openrouter_key") |
-      .key as $e | .value as $v |
-      select($v.projected_month_end_usd != null and $v.target_usd != null and $v.projected_month_end_usd > $v.target_usd) |
-      "\($e) projected $\($v.projected_month_end_usd | usd) at month end, over the $\($v.target_usd | usd) monthly target — size \($e) fan-out down"
-    )
-  ' "$OUT" |
-    while IFS= read -r line; do
-      warn "budget lever: $line"
-    done || true
-
-  jq -r --argjson now "$now" "$jq_time_defs"'
-    .engines | to_entries[] | .key as $e |
-    if .value == null then "\($e): unknown"
-    elif .value.source == "openrouter_key" then
-      .value as $v |
-      (if $v.projected_month_end_usd != null then "projected $\($v.projected_month_end_usd | usd) at month end" else "too early to project" end) as $proj |
-      (if $v.resets_at != null then
-         " (resets \($v.resets_at | todateiso8601)" +
-         (if $v.resets_at > $now then ", in \(($v.resets_at - $now) | reltime)" else "" end) +
-         ")"
-       else "" end) as $reset |
-      (if $v.target_usd != null then
-         "\($e): openrouter $\($v.spend_usd | usd) of $\($v.target_usd | usd) monthly target (\($v.windows.month.used_pct)% used, \($v.elapsed_pct)% of month elapsed, \($proj))"
-       else
-         "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
-       end) + $reset
-    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) + ([.value.windows | to_entries[] |
-        "\(.key) \(.value.used_pct)% used" +
-        (if .value.resets_at then
-           " (resets \(.value.resets_at | todateiso8601)" +
-           (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
-           ")"
-         else "" end)
-      ] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)
-    end
-  ' "$OUT"
+  report
 }
+
+if [[ $report_mode == true ]]; then
+  [[ -f $OUT ]] || {
+    warn "no cached budget at $OUT — run refresh-budget"
+    exit 1
+  }
+  if [[ $json_mode == true ]]; then
+    report_json
+  else
+    report
+  fi
+  exit 0
+fi
 
 main "$@"

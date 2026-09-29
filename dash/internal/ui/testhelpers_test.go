@@ -1,0 +1,69 @@
+package ui
+
+import (
+	"encoding/json"
+	"os"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/noamsto/dispatcher/dash/internal/data"
+)
+
+// loadSnapshot reads the shared fixture (also used by internal/once's golden
+// tests) into a data.Snapshot.
+func loadSnapshot(t *testing.T) data.Snapshot {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/snapshot.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var snap data.Snapshot
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	return snap
+}
+
+// loadManySnapshot reads a fixture with 3 crews and 18 workers plus holds —
+// enough to overflow a roster frame's height, for the roster windowing
+// tests and golden frames.
+func loadManySnapshot(t *testing.T) data.Snapshot {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/snapshot-many.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var snap data.Snapshot
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	return snap
+}
+
+// fixedNow returns a clock frozen at the fixture's Now (as a fake "now" for
+// status-stamp determinism in tests).
+func fixedNow(snap data.Snapshot) func() time.Time {
+	return func() time.Time { return time.Unix(snap.Now, 0).UTC() }
+}
+
+func keyRune(r rune) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+}
+
+func keyType(t tea.KeyType) tea.KeyMsg {
+	return tea.KeyMsg{Type: t}
+}
+
+// testModel builds a root Model with no live roster refresh (no watcher, no
+// roster collect) — the default for tests that don't specifically exercise
+// roster live-refresh wiring (see roster_test.go for those).
+func testModel(snap data.Snapshot) Model {
+	return NewModel(snap, func() data.Snapshot { return snap }, fixedNow(snap), rosterDeps{})
+}
+
+func sized(m Model, w, h int) Model {
+	nm, _ := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return nm.(Model)
+}

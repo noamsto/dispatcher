@@ -1,0 +1,6 @@
+{"ts": 1000, "kind": "dispatch", "from": null, "to": null, "crew_id": "c1", "branch": "feat/x"}
+{"ts": 1100, "kind": "status", "from": "worker:feat/x#s1", "to": "dispatcher:c1", "body": {"state": "working"}}
+{"ts": 1200, "kind": "status", "from": "worker:feat/x-y#s1", "to": "dispatcher:c1", "body": {"state": "working"}}
+{"ts": 1300, "kind": "msg", "from": "worker:feat/x#s1", "to": "retro:c1", "body": "{}"}
+{"ts": 1400, "kind": "status", "from": "worker:feat/x#s1", "to": "dispatcher:c1", "body": {"state": "done"}}
+{"ts": 1500, "kind": "status", "from"

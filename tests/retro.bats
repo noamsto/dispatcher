@@ -538,6 +538,49 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
 }
 
 # ---------------------------------------------------------------------------
+# --json rows
+# ---------------------------------------------------------------------------
+
+@test "--json rows: one run row and one dispatcher row, each shaped and ordered" {
+  seed_dispatch feat/rows 1000
+  seed_msg 'worker:feat/rows#s1' retro:c1 1200 '{"seam":"execute","tag":"gate_thrash","detail":"circled build"}'
+  seed_status 'worker:feat/rows#s1' 1400 done
+  seed_msg dispatcher:c1 retro:c1 5100 '{"seam":"drained","tag":"session_summary","detail":"one worker, one thrash"}'
+  seed_msg dispatcher:c1 retro:c1 5000 '{"seam":"drained","tag":"misrouted","detail":"trivial, but the diff touched auth"}'
+
+  run run_crew retro --report --json
+  [ "$status" -eq 0 ]
+  retro_json="$output"
+
+  run jq -e '.rows | length == 2' <<<"$retro_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.rows[0] == {
+    kind: "run", crew: "c1", branch: "feat/rows", engine: "claude", model: "sonnet",
+    tier: "standard", outcome: "done", t0: 1000,
+    notes: [{seam: "execute", tag: "gate_thrash", detail: "circled build"}]
+  }' <<<"$retro_json"
+  [ "$status" -eq 0 ]
+
+  run jq -e '.rows[1] == {
+    kind: "dispatcher", crew: "c1", branch: "dispatcher:c1",
+    engine: "—", model: "—", tier: "—", outcome: "—", t0: 5000,
+    notes: [
+      {seam: "drained", tag: "misrouted", detail: "trivial, but the diff touched auth"},
+      {seam: "drained", tag: "session_summary", detail: "one worker, one thrash"}
+    ]
+  }' <<<"$retro_json"
+  [ "$status" -eq 0 ]
+
+  # .tags/.unknown keep their existing meaning alongside the new field.
+  run jq -e '(.tags | map({key: .tag, value: .}) | from_entries) as $t
+             | $t.gate_thrash.hits == 1 and $t.gate_thrash.runs == 1
+               and $t.misrouted.runs == 0 and $t.session_summary.runs == 0
+               and .unknown == []' <<<"$retro_json"
+  [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
 # Flags
 # ---------------------------------------------------------------------------
 

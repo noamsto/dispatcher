@@ -820,6 +820,24 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "--report --json: burn_median is the group's median cost_proxy in hours, null when every row is null" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"b1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":3600000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"b2","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":7200000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"b3","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":36000000,"swept_at":1}
+{"repo":"acme/widgets","run_id":"b4","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"b5","engine":"claude","model":"sonnet","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":null,"swept_at":1}
+EOF
+  run run_crew rate --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '.[0].engine == "claude" and .[0].model == "opus"
+               and .[0].burn_median == {value: 2, k: 3, n: 3}
+             and .[1].engine == "claude" and .[1].model == "sonnet"
+               and .[1].burn_median.k == 0 and .[1].burn_median.value == null' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 # ---------------------------------------------------------------------------
 # crew watch
 # ---------------------------------------------------------------------------

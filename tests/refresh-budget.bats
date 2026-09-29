@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 setup() {
   load helpers
   SCRIPT="$BATS_TEST_DIRNAME/../adapters/core/refresh-budget.sh"
@@ -964,4 +966,186 @@ EOF
   run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
   ! grep -q openrouter "$STUB_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# --report / --report --json (render-only, no probing)
+# ---------------------------------------------------------------------------
+
+@test "--report renders the cached lever with no probing" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  SHIM_NOW=1700000000
+  export SHIM_NOW
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": {
+      "source": "oauth_usage",
+      "plan_type": null,
+      "credits_cover": true,
+      "windows": {
+        "7d": {"used_pct": 90, "resets_at": $((SHIM_NOW + 302400))},
+        "5h": {"used_pct": 10, "resets_at": $((SHIM_NOW + 5000))}
+      }
+    },
+    "codex": null,
+    "cursor": null,
+    "pi": null
+  }
+}
+EOF
+  run --separate-stderr bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"claude: "* ]]
+  [ "$stderr" = "refresh-budget: budget lever: claude 7d at 90% (resets in 3d 12h, 40 points ahead of pace) — real budget: prefer a cheaper burn class or rotate engines" ]
+  [ ! -s "$STUB_LOG" ]
+  [[ "$output" != *"engine-budget.json"* ]]
+}
+
+@test "--report --json carries ahead_pts, resets_in_s, and verdict per window" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  SHIM_NOW=1700000000
+  export SHIM_NOW
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": {
+      "source": "oauth_usage",
+      "plan_type": null,
+      "credits_cover": true,
+      "windows": {
+        "7d": {"used_pct": 90, "resets_at": $((SHIM_NOW + 302400))},
+        "5h": {"used_pct": 10, "resets_at": $((SHIM_NOW + 5000))}
+      }
+    },
+    "codex": null,
+    "cursor": null,
+    "pi": null
+  }
+}
+EOF
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  json_out="$output"
+  run jq -e '.engines.claude.windows[] | select(.key=="7d") | .ahead_pts == 40 and .resets_in_s == 302400 and (.verdict | startswith("real budget"))' <<<"$json_out"
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.claude.windows[] | select(.key=="5h") | .verdict == null and .ahead_pts == null' <<<"$json_out"
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.cursor == null' <<<"$json_out"
+  [ "$status" -eq 0 ]
+  run jq -e --argjson fe "$SHIM_NOW" '.fetched_epoch == $fe' <<<"$json_out"
+  [ "$status" -eq 0 ]
+}
+
+@test "--report --json matches the text lever's pi projection line, and is null under target" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  SHIM_NOW=1700000000
+  export SHIM_NOW
+  start_epoch=$((SHIM_NOW - 900000))
+  reset_epoch=$((SHIM_NOW + 1800000))
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": null,
+    "codex": null,
+    "cursor": null,
+    "pi": {
+      "source": "openrouter_key",
+      "plan_type": null,
+      "credits_cover": null,
+      "spend_usd": 10,
+      "target_usd": 50,
+      "elapsed_pct": 5,
+      "projected_month_end_usd": 200,
+      "key_limit_usd": null,
+      "key_limit_remaining_usd": null,
+      "starts_at": $start_epoch,
+      "resets_at": $reset_epoch,
+      "windows": {
+        "month": {"used_pct": 20, "starts_at": $start_epoch, "resets_at": $reset_epoch}
+      }
+    }
+  }
+}
+EOF
+  run --separate-stderr bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+  [ "$stderr" = "refresh-budget: budget lever: pi projected \$200.00 at month end, over the \$50.00 monthly target — size pi fan-out down" ]
+  lever_line="${stderr#refresh-budget: budget lever: }"
+
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  run jq -e --arg p "$lever_line" '
+    .engines.pi.spend_usd == 10 and .engines.pi.target_usd == 50 and
+    .engines.pi.elapsed_pct == 5 and .engines.pi.projected_month_end_usd == 200 and
+    .engines.pi.projection == $p
+  ' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  # Under target: no projection line, and the json field is null.
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": null,
+    "codex": null,
+    "cursor": null,
+    "pi": {
+      "source": "openrouter_key",
+      "plan_type": null,
+      "credits_cover": null,
+      "spend_usd": 10,
+      "target_usd": 50,
+      "elapsed_pct": 30,
+      "projected_month_end_usd": 30,
+      "key_limit_usd": null,
+      "key_limit_remaining_usd": null,
+      "starts_at": $start_epoch,
+      "resets_at": $reset_epoch,
+      "windows": {
+        "month": {"used_pct": 20, "starts_at": $start_epoch, "resets_at": $reset_epoch}
+      }
+    }
+  }
+}
+EOF
+  run --separate-stderr bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.pi.projection == null' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "--report with no cached budget exits 1" {
+  run --separate-stderr bash "$SCRIPT" --report
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"no cached budget at"* ]]
+}
+
+@test "--report skips the settings call, even when dispatch-config is broken" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<'EOF'
+{"fetched_at":"2026-01-01T00:00:00Z","fetched_epoch":1700000000,"engines":{"claude":null,"codex":null,"cursor":null,"pi":null}}
+EOF
+  DISPATCH_CONFIG_BIN=false run bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+}
+
+@test "--report usage: --json alone or an unknown flag exits 2" {
+  run --separate-stderr bash "$SCRIPT" --json
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == usage:* ]]
+
+  run --separate-stderr bash "$SCRIPT" --bogus
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == usage:* ]]
 }

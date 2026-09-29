@@ -533,6 +533,38 @@ agent teams (`TaskCreate`, `SendMessage`, `teammateMode`). Codex and cursor
 users get the same fan-out from the engine-neutral `dispatcher` launcher —
 `dispatch` once per ticket or PR.
 
+## Dashboard
+
+```bash
+crew dash          # interactive TUI (Bubble Tea); falls back to --once off a TTY
+crew dash --once   # plain text, for piping or tests
+crew dash --json   # the collected model, as JSON
+```
+
+`crew dash` execs `crew-dash`, a Go binary under `dash/`. Four views, each
+read from an already-cached or already-run source, never probed live:
+
+- **Settings** — the resolved layer tree, collapsible, each leaf tagged with
+  its origin: `default`, `user`, `env` or `🔒 locked` (locked keys come from
+  the home-manager module). `/` filters by key path or value.
+- **Budget** — a gauge per engine window with used %, pace (points ahead of
+  the window's elapsed share), resets-in and the lever verdict, from the
+  cached `refresh-budget` data (run `refresh-budget` to update it).
+- **Runs** — ratings by tier/engine/model (n, pr%, success, median burn;
+  `s` cycles the sort column, `o` flips it) and the retro rows: session
+  summaries and each run's tagged notes. `f` moves focus, `enter` opens a
+  run's notes.
+- **Roster** — the live crew, refreshed as the crew bus log changes; `enter`
+  shows a worker's recent bus events.
+
+Keys: `1`–`4` or `tab` switch views, `j`/`k`/`g`/`G` move, `enter`/`esc` open
+and close details, `r` re-collects, `?` shows every binding, `q` quits.
+`NO_COLOR` or `CREW_DASH_COLOR=never` disables colour; `--once` also honours
+`CREW_DASH_COLOR=always`.
+
+It is read-only: no network or `gh` calls, and it writes nothing — edit
+`~/.config/dispatcher/settings.json` by hand for now.
+
 ---
 
 ## Iterating on the protocols
