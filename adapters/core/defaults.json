@@ -14,7 +14,7 @@
         "expected": "opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*"
       },
       "standard": {
-        "default": "opus",
+        "default": "sonnet",
         "models": [
           "opus",
           "claude-opus-*",
@@ -24,7 +24,7 @@
         "expected": "opus, claude-opus-*, sonnet, or claude-sonnet-*"
       },
       "trivial": {
-        "default": "opus",
+        "default": "sonnet",
         "models": [
           "opus",
           "claude-opus-*",

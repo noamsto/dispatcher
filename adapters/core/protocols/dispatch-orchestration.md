@@ -16,8 +16,8 @@ flowchart TD
     ENG -->|"PR review/finish, eval + measurement, distinct 3rd perspective"| CURSOR["Cursor"]
     ENG -->|"DeepSeek / independent model family"| PI["pi"]
 
-    CLAUDE --> OPUS["opus — deep/standard/trivial"]
-    CLAUDE --> SONNET["sonnet — budget-shed rung for standard/trivial"]
+    CLAUDE --> OPUS["opus — deep; escalation rung for standard/trivial"]
+    CLAUDE --> SONNET["sonnet — standard/trivial lead"]
     CLAUDE --> HAIKU["haiku — truly trivial"]
     CODEX --> GH["codex · deep → model map"]
     CODEX --> GM["codex · standard → model map"]
@@ -73,10 +73,10 @@ review depth.
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
 | `deep`     | **opus** → **sonnet** → escalated **opus**; use **`claude-fable-5-1`** only for genuinely hard, well-specified long-horizon work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **opus** @**medium** → **sonnet** → escalated **opus**; **sonnet** is the budget-shed worker when the pace gate refuses opus | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
-| `trivial`  | **opus** @**low** or **sonnet** (or **haiku**) — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
+| `standard` | **sonnet** @**medium** → **sonnet** → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
+| `trivial`  | **sonnet** @**low** (or **haiku**, whose failure escalates to sonnet) → escalated **opus** @**low** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
 
-On claude `standard`/`trivial`, opus runs at the tier-typical effort (`medium` / `low`), never deep's `high` by habit; raise a standard/trivial opus only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort, not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
+On claude `standard`/`trivial`, sonnet leads at the tier-typical effort (`medium` / `low`), and an opus escalation runs at that same effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort, not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
@@ -313,8 +313,8 @@ everything the gate admits at that row.
 | engine | tier | typical launch model | the gate admits |
 | --- | --- | --- | --- |
 | claude | `deep` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `fable`, `claude-fable-*` |
-| claude | `standard` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*` |
-| claude | `trivial` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
+| claude | `standard` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*` |
+| claude | `trivial` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
 | codex | `deep` | `gpt-5.6-sol` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
 | codex | `standard` | `gpt-5.6-terra` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
 | codex | `trivial` | `gpt-5.6-luna` | `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
@@ -387,11 +387,11 @@ so a refused pi dispatch lands directly on `high` — which matters because
 
 The table is the configured model→downgrade mapping; opus's effort-aware
 exception lives in `pace_rule_target`, not in the mapping. Claude `standard`
-and `trivial` lead on `opus` as well, but the same ≥70% pace gate refuses an
-`opus` dispatch on those rows only at `high`+ — the tier-typical `low`/`medium`
-opus burns at the standard class and is admitted (Burn classes, above). Where
-it does refuse, the downgrade target is the same: `sonnet`, each row's
-budget-shed rung.
+and `trivial` lead on `sonnet`, so the ≥70% pace gate only touches those rows
+when `opus` is used as the escalation, and refuses it only at `high`+ — the
+tier-typical `low`/`medium` opus burns at the standard class and is admitted
+(Burn classes, above). Where it does refuse, the downgrade target is the same:
+`sonnet`.
 
 ### Cursor Task-spawn slugs
 
