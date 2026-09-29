@@ -11256,3 +11256,304 @@ STUBEOF
   [ "$status" -eq 0 ]
   [ "$(cat "$TEST_REPO/.git/crew/grants/feat/42-t")" = "$T/roots/proj" ]
 }
+
+# --also-closes: one worker/PR closes several issues that are the same change.
+# Every extra gets the claim label, the claim row and a `Closes` line.
+
+# stub_gh_multi — a per-issue gh stub: `issue view <N>` prints
+# $STUB_DIR/labels_<N> (absent = no labels) and fails when fail_view_<N>
+# exists; `issue edit <N> --add-label` fails when fail_add_<N> exists. Every
+# call is logged; everything else succeeds. Install it after stub_launch_bins /
+# setup_resume_branch, which overwrite $STUB_DIR/gh.
+stub_gh_multi() {
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+repo\ view\ *) printf '%s\n' "${STUB_DEFAULT_BRANCH:-main}" ;;
+issue\ view\ *)
+  [ ! -e "$STUB_DIR/fail_view_$3" ] || exit 1
+  [ ! -f "$STUB_DIR/labels_$3" ] || cat "$STUB_DIR/labels_$3"
+  ;;
+issue\ edit\ *)
+  if [ "${4:-}" = --add-label ] && [ -e "$STUB_DIR/fail_add_$3" ]; then
+    exit 1
+  fi
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+}
+
+assert_also_closes_refused() { # <message-substring>
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$1"* ]]
+  run ! grep -qE '^(issue|label) ' "$STUB_LOG"
+}
+
+also_closes_log() {
+  printf '%s' "$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+}
+
+@test "also-closes: refused with --pr" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 --pr 12 --also-closes 43 "title"
+  [[ "$output" == *"--also-closes"* ]]
+  assert_also_closes_refused "--pr"
+}
+
+@test "also-closes: refused with --review, naming --review" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 --review --pr 12 --also-closes 43 "title"
+  [[ "$output" == *"--also-closes"* ]]
+  assert_also_closes_refused "--review"
+}
+
+@test "also-closes: refused with --parent" {
+  mint_spec
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 --parent 7 --also-closes 43 "title"
+  [[ "$output" == *"--also-closes"* ]]
+  assert_also_closes_refused "--parent"
+}
+
+@test "also-closes: refused without a primary issue (mint mode)" {
+  mint_spec
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 --also-closes 43 "title"
+  assert_also_closes_refused "needs a primary issue number or Linear id"
+}
+
+@test "also-closes: refused mixing a GitHub primary with a Linear extra" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes ENG-5 "title"
+  assert_also_closes_refused "ENG-5"
+}
+
+@test "also-closes: refused mixing a Linear primary with a numeric extra" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-5 --also-closes 43 "title"
+  assert_also_closes_refused "43"
+}
+
+@test "also-closes: refused when the extra is the primary" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 42 "title"
+  assert_also_closes_refused "#42"
+}
+
+@test "also-closes: refused when the extra canonicalises to the primary" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes '#042' "title"
+  assert_also_closes_refused "#42"
+}
+
+@test "also-closes: refused on a duplicate extra" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes 43 "title"
+  assert_also_closes_refused "#43"
+}
+
+@test "also-closes: refused on a token that is not an issue number or Linear id" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes foo "title"
+  assert_also_closes_refused "'foo' is not an issue number or Linear id"
+}
+
+@test "also-closes: refused with an empty value" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes '' "title"
+  assert_also_closes_refused "--also-closes needs an issue number or Linear id"
+}
+
+@test "also-closes: refused when both a Linear id and an issue number are given" {
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-9 42 --also-closes ENG-10 "title"
+  [[ "$output" == *"#42"* ]]
+  assert_also_closes_refused "ENG-9"
+}
+
+@test "also-closes: claims every issue before reap, stamps each Closes line and the dispatch row" {
+  stub_launch_bins
+  stub_gh_multi
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes '#44' "title"
+  [ "$status" -eq 0 ]
+  reap_line=$(grep -n '^reap --quiet' "$STUB_LOG" | head -1 | cut -d: -f1)
+  switch_line=$(grep -n 'switch -c' "$STUB_LOG" | head -1 | cut -d: -f1)
+  [ -n "$reap_line" ]
+  [ -n "$switch_line" ]
+  for n in 42 43 44; do
+    claim_line=$(grep -n "issue edit $n --add-label dispatched" "$STUB_LOG" | head -1 | cut -d: -f1)
+    [ -n "$claim_line" ]
+    [ "$claim_line" -lt "$reap_line" ]
+    [ "$claim_line" -lt "$switch_line" ]
+  done
+  grep -q 'switch -c feat/42-title' "$STUB_LOG"
+  log="$(also_closes_log)"
+  run jq -r 'select(.kind=="claim-issue") | "\(.issue) \(.branch)"' "$log"
+  [ "$output" = $'42 feat/42-title\n43 feat/42-title\n44 feat/42-title' ]
+  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-title/WORKER_TASK.md"
+  [ "$output" = $'Closes #42\nCloses #43\nCloses #44' ]
+  run jq -c 'select(.kind=="dispatch") | .also_closes' "$log"
+  [ "$output" = '[43,44]' ]
+}
+
+@test "also-closes: an extra claimed by another crew refuses the whole dispatch before any claim" {
+  stub_launch_bins
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_43"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/43-other"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"#43"* ]]
+  [[ "$output" == *"already claimed"* ]]
+  run ! grep -q 'add-label' "$STUB_LOG"
+  run ! grep -q '^reap' "$STUB_LOG"
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+  [ ! -d "$TEST_REPO/.dispatch-wt" ]
+}
+
+@test "also-closes: a failed claim rolls back the labels this run added" {
+  stub_launch_bins
+  stub_gh_multi
+  touch "$STUB_DIR/fail_add_44"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes 44 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not claim issue #44"* ]]
+  grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+  grep -q 'issue edit 43 --remove-label dispatched' "$STUB_LOG"
+  run ! grep -q '^reap' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "also-closes: rollback spares an issue that already carried the label" {
+  stub_launch_bins
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_43"
+  touch "$STUB_DIR/fail_add_44"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 --also-closes 44 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not claim issue #44"* ]]
+  grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+  run ! grep -q 'issue edit 43 --remove-label' "$STUB_LOG"
+}
+
+@test "also-closes: an extra whose labels cannot be read refuses before any claim" {
+  stub_launch_bins
+  stub_gh_multi
+  touch "$STUB_DIR/fail_view_45"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 45 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not read labels for issue #45"* ]]
+  run ! grep -q 'add-label' "$STUB_LOG"
+}
+
+@test "also-closes: a bundled dispatch row is claim evidence for the extra it also closes" {
+  stub_launch_bins
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_43"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/9-x","also_closes":[43]}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 43 "title"
+  [[ "$output" == *"feat/9-x"* ]]
+  assert_claim_refused "also closes"
+}
+
+@test "also-closes: an extra with a live claimant is refused" {
+  stub_launch_bins
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_43"
+  spawn_claimant
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_claim_row "{\"ts\":$now_ms,\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"43\",\"branch\":\"feat/43-other\",\"pid\":$live_pid}"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [[ "$output" == *"#43"* ]]
+  assert_claim_refused "dispatch in progress (pid $live_pid)"
+}
+
+@test "also-closes: a Linear bundle stamps every Closes line and never touches gh" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-5 --also-closes ENG-6 --also-closes ENG-7 "linear thing"
+  [ "$status" -eq 0 ]
+  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/eng-5-linear-thing/WORKER_TASK.md"
+  [ "$output" = $'Closes ENG-5\nCloses ENG-6\nCloses ENG-7' ]
+  run ! grep -q '^issue' "$STUB_LOG"
+  run ! grep -q '^label' "$STUB_LOG"
+  run jq -c 'select(.kind=="dispatch") | .also_closes' "$(also_closes_log)"
+  [ "$output" = '["ENG-6","ENG-7"]' ]
+}
+
+# setup_bundle_resume — an interrupted bundled run on feat/42-do-a-thing: the
+# branch and its worktree exist and both issues still carry the label.
+setup_bundle_resume() {
+  setup_resume_branch feat/42-do-a-thing
+  stub_gh_multi
+  printf 'dispatched' >"$STUB_DIR/labels_42"
+  printf 'dispatched' >"$STUB_DIR/labels_43"
+}
+
+@test "also-closes: a same-branch re-dispatch carries the previous bundle" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"carrying --also-closes #43"* ]]
+  grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  grep -q 'issue edit 43 --add-label dispatched' "$STUB_LOG"
+  run jq -sc '[.[] | select(.kind=="dispatch")] | last | .also_closes' "$(also_closes_log)"
+  [ "$output" = '[43]' ]
+}
+
+@test "also-closes: the carry survives a later dispatch row without a bundle" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","task_kind":"review"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: with no dispatch row for the branch, the claim rows are carried" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"42","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"carrying --also-closes #43"* ]]
+  run grep '^Closes ' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  [ "$output" = $'Closes #42\nCloses #43' ]
+}
+
+@test "also-closes: claim rows are not carried when a plain dispatch row exists" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: nothing is carried when the branch does not exist" {
+  stub_launch_bins
+  stub_gh_multi
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"carrying"* ]]
+  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: an explicit set replaces the carried one and warns about the dropped extra" {
+  setup_bundle_resume
+  printf 'dispatched' >"$STUB_DIR/labels_44"
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43,44]}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"44","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 43 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropping #44"* ]]
+  grep -qx 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  run ! grep -q 'Closes #44' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
+@test "also-closes: the both-token form keeps the Linear branch and Closes line" {
+  stub_launch_bins
+  stub_gh_multi
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-9 42 "title"
+  [ "$status" -eq 0 ]
+  grep -q 'switch -c eng-9-title' "$STUB_LOG"
+  grep -qx 'Closes ENG-9' "$TEST_REPO/.dispatch-wt/eng-9-title/WORKER_TASK.md"
+}

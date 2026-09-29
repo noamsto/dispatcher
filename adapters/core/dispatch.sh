@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--also-closes N|ID]... [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -226,6 +226,16 @@ _claim_evidence() {
     echo "dispatch row for $(_evidence_text "$out")"
     return 0
   fi
+  # A bundled issue's branch is named for its primary, so only the row's
+  # also_closes names it.
+  out="$(jq -nrR --arg i "$issue" 'first(inputs | fromjson? | objects | select(.kind=="dispatch" and any((.also_closes | arrays)[]?; tostring == $i)) | (.branch // "?") | tostring) // empty' "$events")" || {
+    echo "events log unreadable"
+    return 0
+  }
+  if [ -n "$out" ]; then
+    echo "dispatch row for $(_evidence_text "$out") (also closes #$issue)"
+    return 0
+  fi
   # Any claim row's dispatcher may still be between claiming and writing its
   # branch. A pid alone is not proof (#322): the log is never pruned, so a pid
   # the kernel later reused by an unrelated process would false-refuse forever,
@@ -343,6 +353,164 @@ _ps_elapsed_s() {
 # Branch names in evidence text come from the remote or the bus: strip control
 # characters and cap the length before they reach a terminal.
 _evidence_text() { printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-120; }
+
+# How a bundle token reads in a Closes line or a message: #N or the Linear id.
+_also_closes_label() {
+  case "$1" in
+  *[!0-9]*) printf '%s' "$1" ;;
+  *) printf '#%s' "$1" ;;
+  esac
+}
+
+# _also_closes_token <token> <primary> [<earlier extra>...] — print the
+# canonical form of an --also-closes token, or print why it is refused and
+# return 1. Numbers canonicalise like the primary; Linear ids are kept as given,
+# as the primary is. An extra must be on the primary's tracker, since one PR
+# body closes them all.
+_also_closes_token() {
+  local tok="$1" primary="$2" canon prior
+  shift 2
+  if [[ $tok =~ ^[A-Z]{2,}-[0-9]+$ ]]; then
+    canon="$tok"
+    if [[ ! $primary =~ [^0-9] ]]; then
+      printf "Linear id %s cannot join GitHub issue #%s's bundle" "$tok" "$primary"
+      return 1
+    fi
+  elif [[ $tok =~ ^#?[0-9]+$ ]]; then
+    canon="$(_canonical_number "$tok")"
+    if [ -z "$canon" ]; then
+      printf "issue number must be a positive integer (got '%s')" "$tok"
+      return 1
+    fi
+    if [[ $primary =~ [^0-9] ]]; then
+      printf "GitHub issue #%s cannot join Linear %s's bundle" "$canon" "$primary"
+      return 1
+    fi
+  else
+    printf "'%s' is not an issue number or Linear id" "$tok"
+    return 1
+  fi
+  if [ "$canon" = "$primary" ]; then
+    printf '%s is the primary issue' "$(_also_closes_label "$canon")"
+    return 1
+  fi
+  for prior in "$@"; do
+    if [ "$canon" = "$prior" ]; then
+      printf '%s is given twice' "$(_also_closes_label "$canon")"
+      return 1
+    fi
+  done
+  printf '%s' "$canon"
+}
+
+# _bundle_recorded <branch> <primary> <fallback> — the extras a previous
+# dispatch on <branch> bundled, one per line; returns 1 when the bus cannot be
+# read. The source is the newest dispatch row that carries a bundle: a later
+# --pr/--review dispatch onto the same head writes one without. With
+# <fallback> set and no dispatch row on <branch> at all, the run died between
+# claiming and writing that row, so its claim-issue rows are the record.
+_bundle_recorded() {
+  local events="$crew_dir/events.jsonl"
+  [ -f "$events" ] || return 0
+  jq -nrR --arg b "$1" --arg p "$2" --arg fallback "$3" '
+    [inputs | fromjson? | objects | select(.branch == $b)] as $rows
+    | [$rows[] | select(.kind == "dispatch")] as $d
+    | if ($d | length) > 0 then
+        [$d[] | select((.also_closes | arrays | length) > 0)] | last | (.also_closes // [])[] | tostring
+      elif $fallback != "" then
+        [$rows[] | select(.kind == "claim-issue") | .issue | tostring | select(. != $p)]
+        | reduce .[] as $x ([]; if any(.[]; . == $x) then . else . + [$x] end) | .[]
+      else empty end' "$events"
+}
+
+# _bundle_carry <primary> — on a same-branch re-dispatch, carry the previous
+# run's bundle when no --also-closes was given, or warn about the extras an
+# explicit set drops. The branch is resolved Linear-first, as the identity
+# block below does.
+_bundle_carry() {
+  local primary="$1" carry_branch recorded tok canon labels=() bundle=()
+  if [ -n "$linear_id" ]; then
+    carry_branch="$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug"
+  else
+    carry_branch="feat/$gh_issue-$slug"
+  fi
+  git show-ref --verify --quiet "refs/heads/$carry_branch" || return 0
+  if [ "${#also_closes_raw[@]}" -gt 0 ]; then
+    recorded="$(_bundle_recorded "$carry_branch" "$primary" "")" || return 0
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      case " ${also_closes[*]} $primary " in
+      *" $tok "*) ;;
+      *) labels+=("$(_also_closes_label "$(_evidence_text "$tok")")") ;;
+      esac
+    done <<<"$recorded"
+    [ "${#labels[@]}" -gt 0 ] || return 0
+    if [ -n "$gh_issue" ]; then
+      echo "dispatch: warning: dropping ${labels[*]} from this branch's bundle — its 'dispatched' label stays; remove it by hand" >&2
+    else
+      echo "dispatch: warning: dropping ${labels[*]} from this branch's bundle" >&2
+    fi
+    return 0
+  fi
+  recorded="$(_bundle_recorded "$carry_branch" "$primary" "$gh_issue")" || {
+    echo "dispatch: could not read the crew bus to carry --also-closes for $carry_branch — pass --also-closes explicitly" >&2
+    exit 1
+  }
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    if canon="$(_also_closes_token "$tok" "$primary" ${bundle[@]+"${bundle[@]}"})"; then
+      bundle+=("$canon")
+      labels+=("$(_also_closes_label "$canon")")
+    else
+      echo "dispatch: warning: not carrying a recorded --also-closes for $carry_branch — $(_evidence_text "$canon")" >&2
+    fi
+  done <<<"$recorded"
+  [ "${#bundle[@]}" -gt 0 ] || return 0
+  echo "dispatch: carrying --also-closes ${labels[*]} from the previous dispatch on $carry_branch" >&2
+  also_closes=("${bundle[@]}")
+}
+
+# _bundle_claim_row <issue> — 0 when a claim-issue row records <issue> on
+# $branch, i.e. this branch's own earlier run claimed it into its bundle.
+_bundle_claim_row() {
+  local events="$crew_dir/events.jsonl" out
+  [ -f "$events" ] || return 1
+  out="$(jq -nrR --arg i "$1" --arg b "$branch" 'first(inputs | fromjson? | objects | select(.kind=="claim-issue" and ((.issue | tostring) == $i) and .branch == $b)) | "y"' "$events")" || return 1
+  [ -n "$out" ]
+}
+
+# _claim_check_extra <issue> — the claim gate's check for one --also-closes
+# extra, run for every issue before any is labelled so a refusal leaves
+# nothing to undo. Records in $claim_had_label whether the label was already
+# there, and queues its note in $claim_notes. A labelled extra is a resume only
+# when this branch exists and its own claim row names the extra.
+_claim_check_extra() {
+  local n="$1" labels existing evidence
+  labels="$(gh issue view "$n" --json labels --jq '.labels[].name')" || {
+    echo "dispatch: could not read labels for issue #$n" >&2
+    exit 1
+  }
+  if ! printf '%s\n' "$labels" | grep -qx dispatched; then
+    claim_had_label+=("")
+    return 0
+  fi
+  claim_had_label+=(1)
+  if git show-ref --verify --quiet "refs/heads/$branch" && _bundle_claim_row "$n"; then
+    claim_notes+=("dispatch: issue #$n is already claimed, but it is part of this branch's bundle (branch $branch exists) — proceeding onto it as a resume.")
+    return 0
+  fi
+  existing="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$n-*" 2>/dev/null | head -1)"
+  if [ -n "$existing" ]; then
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    exit 1
+  fi
+  evidence="$(_claim_evidence "$n")"
+  if [ -n "$evidence" ]; then
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; $evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    exit 1
+  fi
+  claim_notes+=("dispatch: issue #$n carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$n-*) — re-claiming.")
+}
 
 # Post a best-effort context comment on a dispatched GitHub issue. The
 # `dispatched` label stays the claim semaphore; this comment is history only
@@ -2122,6 +2290,8 @@ gh_issue=""
 pr_number=""
 pr_body=""
 parent_issue=""
+also_closes_raw=()
+also_closes=()
 base_ref=""
 base_flag=""
 add_dir_flags=()
@@ -2265,6 +2435,14 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --also-closes)
+    [ -n "${2:-}" ] || {
+      echo "dispatch: --also-closes needs an issue number or Linear id" >&2
+      exit 1
+    }
+    also_closes_raw+=("$2")
+    shift 2
+    ;;
   --review)
     kind=review
     shift
@@ -2360,6 +2538,39 @@ if [ -n "$parent_issue" ]; then
     echo "dispatch: --parent only applies to a minted issue — drop it, or drop the Linear id, issue token or --pr" >&2
     exit 1
   fi
+fi
+
+# --also-closes bundles extra issues onto one issue dispatch's branch and PR.
+# Checked in this order so a review dispatch is named for --review, not the
+# --pr it also carries.
+if [ "${#also_closes_raw[@]}" -gt 0 ]; then
+  also_conflict=""
+  if [ "$kind" = review ]; then
+    also_conflict=--review
+  elif [ -n "$pr_number" ]; then
+    also_conflict=--pr
+  elif [ -n "$parent_issue" ]; then
+    also_conflict=--parent
+  fi
+  if [ -n "$also_conflict" ]; then
+    echo "dispatch: --also-closes cannot combine with $also_conflict — it bundles issues onto an existing issue's dispatch" >&2
+    exit 1
+  fi
+  if [ -n "$linear_id" ] && [ -n "$gh_issue" ]; then
+    echo "dispatch: --also-closes needs one primary — got both Linear id $linear_id and issue #$gh_issue" >&2
+    exit 1
+  fi
+  if [ -z "$linear_id" ] && [ -z "$gh_issue" ]; then
+    echo "dispatch: --also-closes needs a primary issue number or Linear id" >&2
+    exit 1
+  fi
+  for also_tok in "${also_closes_raw[@]}"; do
+    also_canon="$(_also_closes_token "$also_tok" "${gh_issue:-$linear_id}" ${also_closes[@]+"${also_closes[@]}"})" || {
+      echo "dispatch: --also-closes: $also_canon" >&2
+      exit 1
+    }
+    also_closes+=("$also_canon")
+  done
 fi
 
 # Reject before scaffolding: without a PR there is no head to attach to, and a
@@ -2947,6 +3158,13 @@ if [ -n "$gh_issue" ]; then
   branch="feat/$gh_issue-$slug"
 fi
 
+# A re-dispatch onto an existing branch keeps the bundle its first run claimed:
+# the extras are labelled already, and dropping them silently would leave the
+# PR without their Closes lines. Before the claim gate, which claims them.
+if [ -n "$gh_issue$linear_id" ] && { [ -z "$gh_issue" ] || [ -z "$linear_id" ]; }; then
+  _bundle_carry "${gh_issue:-$linear_id}"
+fi
+
 # A numeric --base is a PR to stack on: resolved to its head branch before the
 # claim gate and mint mode's `gh issue create`, so a refused PR (merged, closed,
 # fork head) never strands a `dispatched` label or mints an orphan issue.
@@ -3010,14 +3228,19 @@ if [ -n "$gh_issue" ]; then
     echo "dispatch: could not read labels for issue #$gh_issue" >&2
     exit 1
   }
+  # Every issue of a bundle is checked before any is labelled, and the notes
+  # wait with them: a later refusal would make a printed "re-claiming" a lie.
+  claim_notes=()
+  claim_had_label=("")
   # Resume exemption (#73): a claimed issue still dispatches when the branch it
   # resolves to already exists — that is the interrupted run being continued, not
   # a second crew forking. Keyed on the exact branch, so a reworded dispatch
   # resolves to a name that does not exist and is still refused. Who is live on
   # that branch stays the occupancy gate's call, as for every other dispatch.
   if printf '%s\n' "$issue_labels" | grep -qx dispatched; then
+    claim_had_label=(1)
     if git show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume." >&2
+      claim_notes+=("dispatch: issue #$gh_issue is already claimed, but branch $branch exists — proceeding onto it as a resume.")
     else
       existing_branch="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$gh_issue-*" 2>/dev/null | head -1)"
       if [ -n "$existing_branch" ] && [ "$existing_branch" != "$branch" ]; then
@@ -3033,9 +3256,13 @@ if [ -n "$gh_issue" ]; then
         echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
         exit 1
       fi
-      echo "dispatch: issue #$gh_issue carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$gh_issue-*) — re-claiming." >&2
+      claim_notes+=("dispatch: issue #$gh_issue carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$gh_issue-*) — re-claiming.")
     fi
   fi
+  for claim_n in ${also_closes[@]+"${also_closes[@]}"}; do
+    _claim_check_extra "$claim_n"
+  done
+  [ "${#claim_notes[@]}" -eq 0 ] || printf '%s\n' "${claim_notes[@]}" >&2
   # The exemption skips the refusal only. --add-label is idempotent and runs on
   # both paths, which is what makes a reap-driven resume->create downgrade below
   # harmless: whichever mode this run ends in, the issue is labelled.
@@ -3047,13 +3274,31 @@ if [ -n "$gh_issue" ]; then
   # below therefore leaves the row behind, but it is inert: its pid exits with
   # this dispatcher, and any later reuse of that pid belongs to a process that
   # started after the row's ts, so it never reads as claimant evidence (#322).
-  line=$(jq -nc --arg crew "$crew_id" --arg issue "$gh_issue" --arg branch "$branch" --arg pid "$$" \
-    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
-  _bus_append "$crew_dir/events.jsonl" "$line"
-  gh issue edit "$gh_issue" --add-label dispatched || {
-    echo "dispatch: could not claim issue #$gh_issue (adding the 'dispatched' label failed)" >&2
-    exit 1
-  }
+  # A bundle claims all or nothing: a failed label rolls back the ones this run
+  # added, and leaves an issue that was labelled before (a resume or a healed
+  # stale claim) as it found it.
+  claim_issues=("$gh_issue" ${also_closes[@]+"${also_closes[@]}"})
+  claim_added=()
+  for claim_i in "${!claim_issues[@]}"; do
+    claim_n="${claim_issues[$claim_i]}"
+    line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
+    _bus_append "$crew_dir/events.jsonl" "$line"
+    if ! gh issue edit "$claim_n" --add-label dispatched; then
+      echo "dispatch: could not claim issue #$claim_n (adding the 'dispatched' label failed)" >&2
+      claim_undone=()
+      for claim_m in ${claim_added[@]+"${claim_added[@]}"}; do
+        if gh issue edit "$claim_m" --remove-label dispatched >/dev/null 2>&1; then
+          claim_undone+=("#$claim_m")
+        else
+          echo "dispatch: could not remove the 'dispatched' label from issue #$claim_m — remove it by hand" >&2
+        fi
+      done
+      [ "${#claim_undone[@]}" -eq 0 ] || echo "dispatch: rolled back the 'dispatched' label this run added to ${claim_undone[*]}" >&2
+      exit 1
+    fi
+    [ -n "${claim_had_label[$claim_i]}" ] || claim_added+=("$claim_n")
+  done
 fi
 
 # Reclaim workers whose PR already landed, before adding another one. Cheapest
@@ -3578,8 +3823,10 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
+  --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth} + $ident
-   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
+   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
+   + if ($also_closes | length) > 0 then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
@@ -3725,6 +3972,9 @@ _record_worktree_anchor "$wt_path" "$wt_admin"
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
   printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\n' \
     "$mcp_profile" "$plan_val" "$title" "$closes"
+  for also_tok in ${also_closes[@]+"${also_closes[@]}"}; do
+    printf 'Closes %s\n' "$(_also_closes_label "$also_tok")"
+  done
   [ -n "$tracker_stamp" ] && printf 'tracker: %s\n' "$tracker_stamp"
   printf 'dispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
     "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"

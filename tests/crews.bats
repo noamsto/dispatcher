@@ -393,6 +393,24 @@ _seed_claim_issue_num() {
   grep -qF 'issue edit 83 --remove-label dispatched' "$STUB_LOG"
 }
 
+# A bundled dispatch (--also-closes) writes one claim-issue row per issue, all
+# on the primary's branch. adopt's release logic groups by issue, not branch,
+# so a dead crew's bundle must release every issue it claimed, not just one.
+@test "adopt: releases every claim of a bundled branch (#615)" {
+  (exit 0) & dead_pid=$!
+  wait "$dead_pid" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead_pid"
+  _seed_claim_issue c-dead 42 feat/42-bundle 100
+  _seed_claim_issue c-dead 43 feat/42-bundle 100
+  stub_bin gh
+  stub_bin tmux
+  run --separate-stderr run_crew adopt c-dead "$$"
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-dead" ]
+  grep -qF 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
+  grep -qF 'issue edit 43 --remove-label dispatched' "$STUB_LOG"
+}
+
 # A claim row proves only that a crew once took a claim, never that adopting
 # it may release someone else's. The newest-per-issue filter runs across ALL
 # crews before the crew_id filter, so a live sibling's own claim must never
