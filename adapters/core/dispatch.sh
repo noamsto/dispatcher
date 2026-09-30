@@ -2962,6 +2962,19 @@ if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ]; }
   fi
 fi
 
+# pi absolute-limit gate (#639): the OpenRouter key's own credit limit is
+# exhausted, so the worker would die on its first turn. Lead only (role
+# targets: #636); same escape and fail-open rules as the codex gate.
+if [ -z "$ignore_budget" ] && [ "$agent" = pi ] && [ -f "$budget_file" ]; then
+  pi_abs=$(jq -r --argjson stale_before "$stale_before" '
+    if .fetched_epoch < $stale_before then empty
+    else .engines.pi.limit_reached.reason // empty end' "$budget_file" 2>/dev/null || true)
+  if [ -n "$pi_abs" ]; then
+    echo "dispatch: pi quota exhausted (absolute limit: $pi_abs) — pick another engine, raise the key's credit limit, or pass --ignore-budget" >&2
+    exit 1
+  fi
+fi
+
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
 # half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
 # from the tier. Each spec is `name`, `name=<model>`, or `name=<agent>:<model>`;

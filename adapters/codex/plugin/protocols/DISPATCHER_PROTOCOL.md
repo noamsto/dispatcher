@@ -168,12 +168,17 @@ per-engine subscription quota to
 `${XDG_DATA_HOME:-~/.local/share}/crew/engine-budget.json`. Run it once at
 session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
-Pi/OpenRouter is usage-priced, but once a key is configured it does carry a
-cache entry: `engines.pi` holds month-to-date spend (`spend_usd`) against an
+Pi/OpenRouter is usage-priced, but once a key is found it does carry a
+cache entry (key sources, first hit wins: `DISPATCH_OPENROUTER_KEY_FILE`,
+exclusive when set; `OPENROUTER_API_KEY`; then pi's own OpenRouter login in
+its auth store, read-only): `engines.pi` holds month-to-date spend (`spend_usd`) against an
 optional configured monthly target (`target_usd`) and a burn-rate projection
 (`projected_month_end_usd`), over the UTC calendar month. `null` still means
 unknown, never free or unlimited. No target set means the spend is recorded
-but purely informational — no `month` window, no gate. Because the gates
+but purely informational — no `month` window and no soft gate. Separately, a
+key whose own credit limit is set and exhausted (`limit_remaining <= 0`) sets
+`engines.pi.limit_reached`, a hard wall: `dispatch --agent pi` (lead only) is
+refused, `--ignore-budget` overrides, like the codex absolute limit. Because the gates
 below fail open on a cache older than ~2h, run `refresh-budget` right before
 sizing a pi fan-out, not just once at session start.
 Cursor's entry is plan usage, not spend: `engines.cursor` holds a `month`

@@ -44,9 +44,13 @@
 #     quota to probe — only a spend-vs-target check). Key resolution:
 #     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
 #     unreadable or empty file is unknown, never a fallback), else
-#     OPENROUTER_API_KEY;
-#     ~/.pi/agent/auth.json is never read. The key goes to curl through -K -
-#     on stdin only, never argv, and is never printed or cached. spend_usd is
+#     OPENROUTER_API_KEY, else (last resort) pi's own login: .openrouter.access
+#     in ${PI_CODING_AGENT_DIR:-~/.pi/agent}/auth.json, read-only, accepted
+#     only when it looks like an sk-or-v1- key. The parent key `openrouter` is
+#     owner-described, not code-verified. The key goes to curl through -K -
+#     on stdin only, never argv, and is never printed or cached. A key whose
+#     credit limit is set and exhausted (limit_remaining <= 0) sets
+#     engines.pi.limit_reached, which gates `dispatch --agent pi`. spend_usd is
 #     the per-key current-UTC-month figure (data.usage_monthly); the target
 #     comes from DISPATCH_OPENROUTER_MONTHLY_USD. No key -> engines.pi is
 #     null (informational, never blocking).
@@ -507,7 +511,7 @@ header = \"Cookie: WorkosCursorSessionToken=$account::$token\"") || return 4
 # source — an unreadable file or an empty first line leaves `or_key` empty
 # rather than falling back to OPENROUTER_API_KEY, since spend is per key and
 # the wrong key would pace pi against the wrong spend. Otherwise reads
-# OPENROUTER_API_KEY. ~/.pi/agent/auth.json is never read.
+# OPENROUTER_API_KEY, else pi's auth store (read-only, last fallback).
 _or_key() {
   or_key=""
   if [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]]; then
@@ -519,7 +523,19 @@ _or_key() {
     fi
   else
     or_key="${OPENROUTER_API_KEY:-}"
+    [[ -n $or_key ]] || _or_key_from_pi
   fi
+}
+
+# _or_key_from_pi — pi's OpenRouter login into the caller's `or_key` local.
+# `.openrouter.access` is owner-described; anything that is not an sk-or-v1-
+# key (OAuth token, junk, missing file or field) leaves or_key empty.
+_or_key_from_pi() {
+  local auth="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json" v
+  [[ -r $auth ]] || return 0
+  v=$(jq -r '.openrouter.access // empty | strings' "$auth" 2>/dev/null) || return 0
+  [[ $v =~ ^sk-or-v1-[A-Za-z0-9]+$ ]] && or_key=$v
+  return 0
 }
 
 # _or_target — print the validated DISPATCH_OPENROUTER_MONTHLY_USD, or the
@@ -578,6 +594,10 @@ probe_pi() {
         projected_month_end_usd: $projected,
         key_limit_usd: .data.limit,
         key_limit_remaining_usd: .data.limit_remaining,
+        limit_reached: (
+          if (.data.limit | type) == "number" and (.data.limit_remaining | type) == "number" and .data.limit_remaining <= 0
+          then {reason: "OpenRouter key credit limit reached ($\(.data.limit) limit, $\(.data.limit_remaining) remaining)"}
+          else null end),
         starts_at: $start,
         resets_at: $next,
         windows: (if $target != null then {month: {used_pct: $used_pct, starts_at: $start, resets_at: $next}} else {} end)
@@ -625,7 +645,7 @@ report() {
          "\($e): openrouter $\($v.spend_usd | usd) of $\($v.target_usd | usd) monthly target (\($v.windows.month.used_pct)% used, \($v.elapsed_pct)% of month elapsed, \($proj))"
        else
          "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
-       end) + $reset
+       end) + $reset + (if $v.limit_reached != null then " — LIMIT REACHED: \($v.limit_reached.reason)" else "" end)
     else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) +
       (if .value.unlimited == true then "unlimited" else ([.value.windows | to_entries[] |
         "\(.key) \(.value.used_pct)% used" +
@@ -714,7 +734,7 @@ main() {
   if [[ $rc -eq 0 ]]; then
     pi=$pi_probe
   elif [[ $rc -eq 2 ]]; then
-    warn "pi spend unknown — set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile (DISPATCH_OPENROUTER_KEY_FILE)"
+    warn "pi spend unknown — set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile (DISPATCH_OPENROUTER_KEY_FILE), or log pi in to OpenRouter"
   elif [[ $rc -eq 3 ]]; then
     warn "pi spend unknown — DISPATCH_OPENROUTER_KEY_FILE ($DISPATCH_OPENROUTER_KEY_FILE) is unreadable or empty"
   else
