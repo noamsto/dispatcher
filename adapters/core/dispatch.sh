@@ -2930,7 +2930,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
-# Codex/cursor absolute-limit gate. An engine can be authoritative-exhausted
+# Codex/cursor/pi absolute-limit gate. An engine can be authoritative-exhausted
 # while every percent window is below 95% (or no window exists). Codex (#201):
 # the backend denies ordinary usage, names a rate-limit-reached reason, marks
 # spend control reached, or reports a zeroed individual spend limit. Cursor
@@ -2938,14 +2938,16 @@ fi
 # month window (e.g. team plans, where the window is the overall figure);
 # refresh-budget writes the reason, and a limit whose resets_at has passed no
 # longer holds. Refuse on any of them, same severity and escape as the >=95%
-# stop. Missing or stale data (older cache without limit_reached) fails open,
-# like the rest of the budget gate.
-if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ]; } && [ -f "$budget_file" ]; then
+# stop. Pi (#639): the OpenRouter key's own credit limit is exhausted (lead
+# only; role targets: #636). Missing or stale data (older cache without
+# limit_reached) fails open, like the rest of the budget gate.
+if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ] || [ "$agent" = pi ]; } && [ -f "$budget_file" ]; then
   abs_limit=$(jq -r --arg e "$agent" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
     if .fetched_epoch < $stale_before then empty
     elif .engines[$e] == null then empty
     else .engines[$e].limit_reached as $l
-      | if $e == "cursor" then
+      | if $e == "pi" then $l.reason // empty
+        elif $e == "cursor" then
           if $l == null or ($l.resets_at != null and $l.resets_at <= $now) then empty
           else $l.reason // "limit reached" end
         else ($l // {}) as $l
@@ -2958,19 +2960,6 @@ if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ]; }
     end' "$budget_file" 2>/dev/null || true)
   if [ -n "$abs_limit" ]; then
     echo "dispatch: $agent quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
-    exit 1
-  fi
-fi
-
-# pi absolute-limit gate (#639): the OpenRouter key's own credit limit is
-# exhausted, so the worker would die on its first turn. Lead only (role
-# targets: #636); same escape and fail-open rules as the codex gate.
-if [ -z "$ignore_budget" ] && [ "$agent" = pi ] && [ -f "$budget_file" ]; then
-  pi_abs=$(jq -r --argjson stale_before "$stale_before" '
-    if .fetched_epoch < $stale_before then empty
-    else .engines.pi.limit_reached.reason // empty end' "$budget_file" 2>/dev/null || true)
-  if [ -n "$pi_abs" ]; then
-    echo "dispatch: pi quota exhausted (absolute limit: $pi_abs) — pick another engine, raise the key's credit limit, or pass --ignore-budget" >&2
     exit 1
   fi
 fi
