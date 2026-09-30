@@ -173,6 +173,72 @@ rewrite_conv_and_commit() {
   _wt_cfg_guard "$COMMON"
 }
 
+# The value git-hooks.nix writes from a linked worktree (#628).
+hookspath_abs() { printf '%s/hooks' "$(git -C "${1:-.}" rev-parse --path-format=absolute --git-common-dir)"; }
+
+@test "guard accepts a relative .git/hooks when the absolute spelling is baselined (#628)" {
+  add_worktree w
+  git config core.hooksPath "$(hookspath_abs "$WT")"
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath .git/hooks
+  _wt_cfg_guard "$COMMON"
+  _wt_cfg_guard "$COMMON" "$ADMIN"
+  (cd "$WT" && _wt_cfg_guard_cwd "$COMMON")
+  _wt_git "$ADMIN" "$WT" status --porcelain >/dev/null
+}
+
+@test "guard accepts the absolute spelling when relative .git/hooks is baselined (#628)" {
+  add_worktree w
+  git config core.hooksPath .git/hooks
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath "$(hookspath_abs "$WT")"
+  _wt_cfg_guard "$COMMON"
+  _wt_cfg_guard "$COMMON" "$ADMIN"
+  (cd "$WT" && _wt_cfg_guard_cwd "$COMMON")
+  _wt_git "$ADMIN" "$WT" status --porcelain >/dev/null
+}
+
+@test "guard still refuses a core.hooksPath naming a different dir (#628)" {
+  git config core.hooksPath "$(hookspath_abs)"
+  _wt_cfg_baseline_init "$COMMON"
+  for v in "$BATS_TEST_TMPDIR/hooks" .husky .git/../evil ./.git/hooks .git//hooks .git/hooks/ .git/hooks-evil; do
+    git config core.hooksPath "$v"
+    run --separate-stderr _wt_cfg_guard "$COMMON"
+    [ "$status" -eq 1 ]
+    [[ $stderr == *core.hookspath* ]]
+  done
+  rm -f "$BASELINE"
+  git config core.hooksPath "$(realpath "$TEST_REPO")/.husky"
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath .husky
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+}
+
+@test "a symlinked-prefix absolute baseline does not match relative .git/hooks (#628)" {
+  ln -s "$TEST_REPO" "$BATS_TEST_TMPDIR/link"
+  git config core.hooksPath "$BATS_TEST_TMPDIR/link/.git/hooks"
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath .git/hooks
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+}
+
+@test "_wt_cfg_canon maps only a plain .git/ relative core.hookspath under a .git common (#628)" {
+  _wt_cfg_canon /r/.git $'core.hookspath\n.git/hooks' out
+  [ "$out" = $'core.hookspath\n/r/.git/hooks' ]
+  _wt_cfg_canon /r/gd $'core.hookspath\n.git/hooks' out
+  [ "$out" = $'core.hookspath\n.git/hooks' ]
+  _wt_cfg_canon "" $'core.hookspath\n.git/hooks' out
+  [ "$out" = $'core.hookspath\n.git/hooks' ]
+  _wt_cfg_canon /r/.git $'core.hookspath\n/x/hooks' out
+  [ "$out" = $'core.hookspath\n/x/hooks' ]
+  _wt_cfg_canon /r/.git $'core.fsmonitor\n.git/hooks' out
+  [ "$out" = $'core.fsmonitor\n.git/hooks' ]
+  _wt_cfg_canon /r/.git $'core.hookspath\n.git/hooks/../x' out
+  [ "$out" = $'core.hookspath\n.git/hooks/../x' ]
+}
+
 @test "_wt_git refuses an admin dir not shaped <common>/worktrees/<id> (#557)" {
   add_worktree w
   _wt_cfg_baseline_init "$COMMON"

@@ -3407,6 +3407,27 @@ crew_tty() {
   [ "$(cksum "$TEST_REPO/.git/crew/git-config-baseline")" = "$before" ]
 }
 
+@test "git-baseline treats relative and absolute .git/hooks as one baselined dir (#628)" {
+  git commit -q --allow-empty -m init
+  abs="$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
+  git config core.hooksPath "$abs"
+  seed_git_baseline
+  git config core.hooksPath .git/hooks
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  git config core.hooksPath .git/hooks
+  seed_git_baseline
+  git config core.hooksPath "$abs"
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  git config core.hooksPath .git/hooks-evil
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.hookspath=.git/hooks-evil (main checkout, "* ]]
+}
+
 @test "git-baseline prints worker-controlled bytes escaped (#557)" {
   # #557: a raw ESC/CR in a key, value or origin could redraw the terminal
   # and disguise what drifted.
@@ -3423,16 +3444,17 @@ crew_tty() {
 }
 
 @test "git-baseline --accept merges into the baseline (#585)" {
-  # git-hooks.nix writes core.hooksPath relative from the main checkout and
-  # absolute from a linked worktree; a replacing accept flip-flops forever.
+  # The run shows only the drift; a replacing accept would drop the pairs
+  # already accepted.
   git commit -q --allow-empty -m init
   git config core.hooksPath .git/hooks
   seed_git_baseline
-  git config core.hooksPath "$TEST_REPO/.git/hooks"
+  git config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
   crew_tty yes git-baseline --accept
   [ "$status" -eq 0 ]
-  [[ "$output" == *"core.hookspath=$TEST_REPO/.git/hooks"* ]]
-  git config core.hooksPath .git/hooks
+  [[ "$output" == *"core.sshcommand=$BATS_TEST_TMPDIR/hit.sh"* ]]
+  [[ "$output" != *core.hookspath* ]]
+  grep -q core.hookspath "$TEST_REPO/.git/crew/git-config-baseline"
   run run_crew git-baseline
   [ "$status" -eq 0 ]
   [[ "$output" == *"no drift"* ]]

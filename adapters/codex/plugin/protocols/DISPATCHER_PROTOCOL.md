@@ -597,7 +597,11 @@ branch instead; the worktree carries over under `resume: true`.
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`; anchored calls — and, via `GIT_CONFIG_COUNT`,
+  remove` and `git branch -D`. Values compare literally, except that a plain
+  relative `core.hooksPath` under `.git/` equals its absolute spelling from the
+  main checkout's root (git-hooks.nix writes one from the main checkout, the
+  other from a linked worktree); no other root, and no `.`/`..`/empty-component
+  spelling, counts. Anchored calls — and, via `GIT_CONFIG_COUNT`,
   the git that `crew reap`'s `wt remove` spawns, and `dispatch`'s own `wt
   switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and

@@ -57,6 +57,21 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
   done
   return 1
 }
+# git-hooks.nix spells the shared core.hooksPath `.git/hooks` from the main
+# checkout and `<main-root>/.git/hooks` from a linked worktree (#628), so a
+# plain relative `.git/…` value compares as its absolute spelling. `.`, `..`
+# and empty components are refused, not normalised: `..` collapsing is
+# unsound across symlinks. Only `.git/` counts — a linked worktree resolves a
+# relative hooksPath under its `.git` gitfile, where no hooks exist, while
+# `.husky` would name a worker-editable dir. Anchored git overrides
+# core.hooksPath anyway (_wt_neutral_cfg).
+_wt_cfg_canon() { # <common-realpath> <rec> <var> — set <var> to <rec>, a plain `.git/…` relative core.hookspath made absolute
+  local common="$1" value="${2#core.hookspath$'\n'}"
+  printf -v "$3" '%s' "$2"
+  [[ $2 == core.hookspath$'\n'* && $common == /*/.git ]] || return 0
+  [[ $value == .git/?* && /$value/ != *//* && /$value/ != */./* && /$value/ != */../* ]] || return 0
+  printf -v "$3" 'core.hookspath\n%s/%s' "${common%/.git}" "$value"
+}
 _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktree pairs
   local -a recs
   local i scope key value
@@ -110,7 +125,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   echo "git-config baseline: recorded $file: $keys" >&2
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key origin found i
+  local common="$1" gitdir="${2:-$1}" file rec key origin found i real canon
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -118,9 +133,12 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     echo "refusing git: no git-config baseline at $file — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
     return 1
   fi
+  real="$(realpath -e -- "$common")" || real=
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
-    [ -z "$rec" ] || base["$rec"]=1
+    [ -n "$rec" ] || continue
+    _wt_cfg_canon "$real" "$rec" canon
+    base["$canon"]=1
   done
   mapfile -d '' pairs < <(_wt_cfg_pairs "$gitdir")
   if ! wait $!; then
@@ -128,7 +146,8 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     return 1
   fi
   for rec in "${pairs[@]}"; do
-    [ -z "${base["$rec"]+x}" ] || continue
+    _wt_cfg_canon "$real" "$rec" canon
+    [ -z "${base["$canon"]+x}" ] || continue
     key="${rec%%$'\n'*}"
     [ -n "${seen["$key"]+x}" ] || drift+=("$key")
     seen["$key"]=1
