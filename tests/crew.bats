@@ -3409,6 +3409,7 @@ crew_tty() {
 
 @test "git-baseline treats relative and absolute .git/hooks as one baselined dir (#628)" {
   git commit -q --allow-empty -m init
+  git worktree add -q "$BATS_TEST_TMPDIR/w" -b w
   abs="$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
   git config core.hooksPath "$abs"
   seed_git_baseline
