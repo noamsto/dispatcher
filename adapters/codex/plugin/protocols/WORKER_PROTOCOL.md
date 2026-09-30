@@ -229,7 +229,9 @@ the unavailable-gate block on pi.
    `--from` restricts the wait to that one role, so another role's reply (or a
    stale one) can neither release the wait early nor be consumed by it; the
    role's `role_exited` msg is posted from the same id, so it returns from
-   `--from` too. This is **the** way to wait on a role verdict: never hand-roll
+   `--from` too. So does the watcher's `assignment_unsubmitted` or
+   `assignment_deferred` event — a line carrying `event`, not `verdict`, is never
+   a verdict; see "Assignment events" below. This is **the** way to wait on a role verdict: never hand-roll
    a poll loop over `events.jsonl` or the bus log, and never set a tool timeout
    above 600s.
 
@@ -248,14 +250,37 @@ the unavailable-gate block on pi.
      from the assignment the role is on. Still no verdict after the third:
      `tmux kill-pane -t <pane>`, then the died-role path below.
    - `idle` with no verdict (the assignment was never picked up, or the verdict
-     went astray) → re-send the step 2 assignment once and run one more cycle;
-     `idle` again → `tmux kill-pane -t <pane>`, then the died-role path below.
+     went astray) → first `tmux capture-pane -p -t <pane>` and apply "Assignment
+     events" below: if the assignment text sits in the input box, **do not
+     re-send — that pastes a second copy onto it.** Only when the box is empty
+     and no `assignment_unsubmitted` or `assignment_deferred` event explains it,
+     re-send the step 2 assignment once and run one more cycle; `idle` again →
+     `tmux kill-pane -t <pane>`, then the died-role path below.
    - `exited`, or no such pane → the died-role path below (respawn once, else
      fall back / the pi unavailable gate). `dispatch --spawn-role` does nothing
      while a live pane for the role exists, which is why a stalled pane is
      killed first. After a successful respawn, re-send the step 2 assignment to
      the new pane (it never sees the old one); that re-send starts a fresh
      budget (3 `working` cycles, one `idle` re-send).
+   **Assignment events.** The role-pane watcher posts these from the role's id (an
+   await returns them as if they were the role's reply; `crew inbox` shows the
+   same msgs). They describe the typed assignment, never the review itself:
+   - `assignment_deferred` — the watcher still has the assignment queued and
+     will type it itself once the pane is back at an idle input box. **Never
+     press Enter and never re-send:** the watcher would later clear the box and
+     paste it again, running the assignment twice. Clear whatever holds the pane
+     (a dialog is the dispatcher's to answer) and await again under the `working`
+     budget.
+   - `assignment_unsubmitted` — the text was typed but the watcher could not
+     see a turn start, and it has stopped typing. `tmux capture-pane -p -t
+     <pane>` **right before acting**, then: still an idle input box holding the
+     assignment text → submit it with `tmux send-keys -t <pane> Enter`; never
+     when the tail shows a dialog (`Do you want to proceed?`, `Enter to
+     select`/`Enter to confirm`, a numbered option row) or a live turn. To
+     re-send instead, `C-u` the box first — re-sending without clearing queues a
+     second copy that runs after your Enter. A `could not confirm` detail with an
+     empty or unrecognised box: do not re-send; await again under the `working`
+     budget, then `tmux kill-pane -t <pane>` and the died-role path.
 4. **Ingest** with receiving-code-review discipline. `accept` → proceed.
    `revise` → fix the real findings, rewrite the artifact, re-assign **once** (the
    plan/review cap of 2 is unchanged). `reject` → escalate in the PR body.

@@ -1540,12 +1540,17 @@ watch_role_prompts() {
 # authentication — the bus sender is self-asserted.
 #
 # It sends keys ONLY to a pane whose capture is positively an idle input box
-# (claude, pi); anything else — a permission dialog, an option-select or quota
-# prompt, a live turn, an unrecognised frame, or an engine with no recognised
-# idle frame (codex, cursor) — defers to the next tick. After --defer-notice
+# (claude, pi, codex, cursor); anything else — a permission dialog, an option-select or quota
+# prompt, a live turn, or an unrecognised frame — defers to the next tick. After --defer-notice
 # seconds (default 60) of deferral it tells the lead once with an
 # `assignment_deferred` msg, so a role that never receives its assignment is not
 # mistaken for one that is working.
+#
+# A sent Enter is verified, not assumed: the assignment is dropped from
+# the queue only once a later capture no longer shows it in the input box. If it
+# is still there, only Enter is re-sent (`--submit-retries N`, default 3, with
+# backoff), never the text. When that runs out, an `assignment_unsubmitted` msg
+# goes to the lead and dispatcher and the text is left in place.
 if [ "${1:-}" = "--role-watch" ]; then
   role="${2:-}"
   [ -n "$role" ] || {
@@ -1558,12 +1563,14 @@ if [ "${1:-}" = "--role-watch" ]; then
   engine=claude
   interval=2
   defer_notice=60
+  submit_retries=3
   while [ $# -gt 0 ]; do
     case "$1" in
     --pane) watch_pane="${2:-}"; shift 2 ;;
     --branch) watch_branch="${2:-}"; shift 2 ;;
     --engine) engine="${2:-}"; shift 2 ;;
     --defer-notice) defer_notice="${2:-}"; shift 2 ;;
+    --submit-retries) submit_retries="${2:-}"; shift 2 ;;
     --interval) interval="${2:-}"; shift 2 ;;
     *)
       echo "dispatch: --role-watch: unexpected argument '$1'" >&2
@@ -1573,6 +1580,10 @@ if [ "${1:-}" = "--role-watch" ]; then
   done
   [ -n "$watch_pane" ] || {
     echo "dispatch: --role-watch needs --pane <id>" >&2
+    exit 1
+  }
+  [[ $submit_retries =~ ^[0-9]+$ ]] || {
+    echo "dispatch: --role-watch: --submit-retries must be a non-negative integer, got $submit_retries" >&2
     exit 1
   }
   watch_branch="${watch_branch:-$(git branch --show-current)}"
@@ -1772,15 +1783,30 @@ if [ "${1:-}" = "--role-watch" ]; then
   # _meter_line/_has_subrow/"esc to interrupt" checks. Uses index()/gsub()
   # on the bare glyph, never a quantifier directly on it, so this stays
   # correct under LC_ALL=C (see _box_rows's own comment on the same trap).
+  # The editor's scroll indicators (`↑ N more` / `↓ N more`, real capture, pi
+  # 0.99.1, drawn once a paste is taller than the editor) are rule-borne text but
+  # not a live-turn label. Any other rule text, such as a vim mode suffix, still
+  # vetoes.
   _pi_live_turn() {
     printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | awk '
       {
         if (index($0, "─") != 1) next
         line = $0
         gsub(/─/, "", line)
+        gsub(/↑ [0-9]+ more/, "", line)
+        gsub(/↓ [0-9]+ more/, "", line)
         if (line !~ /^[[:space:]]*$/) { found = 1; exit }
       }
       END { exit (found ? 0 : 1) }'
+  }
+
+  # _pi_working_label <text> — POSITIVE live-turn evidence: a rule carrying the
+  # `Working` status text or a braille spinner glyph (real capture, pi 0.87.1).
+  # `_pi_live_turn` is the wider fail-closed veto ("any rule text means not
+  # idle"), which is right before a paste but is not proof that a turn started.
+  _pi_working_label() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 |
+      LC_ALL=C grep -qE $'^\xe2\x94\x80.*(Working|\xe2[\xa0-\xa3][\x80-\xbf])'
   }
 
   # _pi_idle_box <text> — positive idle shape of a pi pane, from a real capture
@@ -1920,6 +1946,93 @@ if [ "${1:-}" = "--role-watch" ]; then
     esac
   }
 
+  # _role_submit_state <text> <assignment> <colored> — classify the pane after
+  # an Enter, printing one of:
+  #   held       the assignment's own text still sits in an idle input box, so
+  #              the Enter did not submit it (only this state is ever re-Entered)
+  #   submitted  a turn visibly started (a live turn), or an idle box that is
+  #              empty (or ghost text only) — the text left the box
+  #   dialog     a permission/option prompt: it hides the box and does not prove
+  #              OUR turn started. Never dequeued, never sent Enter, never
+  #              escalated (the dispatcher owns the dialog)
+  #   unknown    anything else (incl. a cursor usage-limit frame) — never
+  #              dequeued, never sent Enter, escalated after a few ticks
+  # codex and cursor match the exact composer text. claude and pi cannot
+  # reconstruct a wrapped or scrolled box from a capture, so `held` there is an
+  # idle box whose visible editor row is a slice of "Assignment: <text>"; any
+  # other non-empty row (a human draft, a suggestion, an extension dialog) is
+  # `unknown`.
+  _role_submit_state() {
+    local text="$1" assignment="$2" colored="$3" out row tail_n full="Assignment: $2"
+    if _is_permission_prompt "$text" || _is_prompt "$text"; then
+      echo dialog
+      return 0
+    fi
+    if [ "$engine" = cursor ] && _is_quota_cursor_limit "$text"; then
+      echo unknown
+      return 0
+    fi
+    case "$engine" in
+    codex)
+      if _codex_composer "$text" "$full"; then
+        echo held
+      elif printf '%s\n' "$text" | grep -qF 'esc to interrupt' ||
+        printf '%s\n' "$text" | grep -qE '^[[:space:]]*[•·] Working \(' ||
+        _codex_idle_box "$text"; then
+        echo submitted
+      else
+        echo unknown
+      fi
+      ;;
+    cursor)
+      if _cursor_composer "$text" "$full"; then
+        echo held
+      elif printf '%s\n' "$text" | grep -qF 'ctrl+c to stop' ||
+        printf '%s\n' "$text" | grep -qE 'Thinking[[:space:]]+[0-9]+ tokens' ||
+        _cursor_idle_box "$text"; then
+        echo submitted
+      else
+        echo unknown
+      fi
+      ;;
+    claude)
+      tail_n=$(printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -30 || true)
+      if [ -n "$(_meter_line "$tail_n")" ] || _has_subrow "$tail_n" ||
+        printf '%s\n' "$tail_n" | grep -qF 'esc to interrupt'; then
+        echo submitted
+      elif _claude_idle_box "$text" "$colored" 0; then
+        echo submitted
+      elif out=$(_box_rows "$text" '^[[:space:]]*❯') &&
+        printf '%s\n' "$out" | tail -n +2 | grep -qE '^[^[:alnum:]]*[A-Za-z]+…'; then
+        echo submitted # a spinner row above the box: a live turn
+      elif _claude_idle_box "$text" "$colored" 1; then
+        row=$(printf '%s\n' "$out" | head -1 | sed -E $'s/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//; s/[[:space:]]+$//')
+        if [ -n "$row" ] && { [[ $full == *"$row"* ]] || [[ $row == '[Pasted text'* ]]; }; then echo held; else echo unknown; fi
+      else
+        echo unknown
+      fi
+      ;;
+    pi)
+      if _pi_working_label "$text"; then
+        echo submitted
+      elif _pi_idle_box "$text"; then
+        out=$(_box_rows "$text" '.*') || out=""
+        row=$(printf '%s\n' "$out" | head -1 | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+        if [ -z "$row" ]; then
+          echo submitted
+        elif [[ $full == *"$row"* ]]; then
+          echo held
+        else
+          echo unknown
+        fi
+      else
+        echo unknown
+      fi
+      ;;
+    *) echo unknown ;;
+    esac
+  }
+
   # tmux send-keys would interpret control bytes as terminal input. Assignments
   # are ordinary single-line turns, so refuse every C0 byte before typing.
   _role_assignment_safe() {
@@ -1928,6 +2041,22 @@ if [ "${1:-}" = "--role-watch" ]; then
     *[[:cntrl:]]*) return 1 ;;
     *) return 0 ;;
     esac
+  }
+
+  # _rw_escalate <detail> — tell the assignment's sender, the lead and the
+  # dispatcher (each once) that the typed assignment was not seen to start a
+  # turn, so the lead stops awaiting a verdict blind. The text stays in the pane.
+  _rw_escalate() {
+    local note to sent=" "
+    escalated=1
+    note="$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" --arg d "$1" \
+      '{role:$r,event:"assignment_unsubmitted",pane:$p,engine:$e,detail:("assignment typed but not submitted: " + $d + "; left in place, not re-pasted — capture the pane and, only if it is still an idle input box holding the text, submit it with Enter — or clear the box (C-u) before re-sending")}')"
+    for to in "$inflight_from" "$lead_worker" "${w_crew:+dispatcher:$w_crew}"; do
+      [ -n "$to" ] || continue
+      case "$sent" in *" $to "*) continue ;; esac
+      sent="$sent$to "
+      crew msg "$role_id" "$to" "$note" 2>/dev/null || true
+    done
   }
 
   # Assignments wait here until the pane is ready; one is delivered per tick so
@@ -1946,8 +2075,29 @@ if [ "${1:-}" = "--role-watch" ]; then
   # with C-u before the retry. `pending` lives in this process only, capped
   # at `pending_max` (oldest dropped silently once full); the watcher exits
   # with its pane.
+  #
+  # Enter is not proof of submission: the assignment moves to `inflight`
+  # and is only dropped once a later capture shows it gone from the input box
+  # (`_role_submit_state`). While it is still held, only Enter is re-sent —
+  # never the paste, which would duplicate the text — up to `submit_retries`
+  # times, waiting 2, 4, 8… ticks between. A frame that is neither held nor
+  # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks, or
+  # once the retries run out, it is escalated once (`assignment_unsubmitted`)
+  # and left in place: nothing else is typed until the box clears.
+  # `pending_from` runs parallel to `pending` so the escalation reaches the
+  # sender of the assignment that stalled.
   pending=()
+  pending_from=()
   pending_max=50
+  inflight=""
+  inflight_from=""
+  lead_worker=""
+  submitting=0
+  submit_tries=0
+  unknown_ticks=0
+  unknown_max=5
+  escalated=0
+  verdict_seen=0
   cooldown=0
   unsent=0
   lead_id=""
@@ -1975,9 +2125,15 @@ if [ "${1:-}" = "--role-watch" ]; then
             body="$(printf '%s' "$ev" | jq -r '.body // ""')"
             [ -n "$body" ] || continue
             lead_id="$from"
-            [ "${#pending[@]}" -lt "$pending_max" ] || pending=("${pending[@]:1}")
+            [[ $from != worker:* ]] || lead_worker="$from"
+            [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); }
             pending+=("$body")
+            pending_from+=("$from")
             watch_set_state working
+          elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
+            # The role answered while its assignment is still being verified; its
+            # own assignment_unsubmitted posts (from the same id) are not a verdict.
+            case "$ev" in *assignment_unsubmitted*) ;; *) verdict_seen=1 ;; esac
           elif [[ $to != dispatcher:* ]] && [ "${#pending[@]}" -eq 0 ]; then
             # A verdict from the role — it is idle again. The watcher's own
             # drop posts go to dispatcher:* and must not idle a working role.
@@ -1988,7 +2144,41 @@ if [ "${1:-}" = "--role-watch" ]; then
         since="${next:-$since}"
       fi
     fi
-    if [ "${#pending[@]}" -eq 0 ]; then
+    if [ "$submitting" -eq 1 ] && [ "$cooldown" -gt 0 ]; then
+      cooldown=$((cooldown - 1))
+    elif [ "$submitting" -eq 1 ]; then
+      frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
+      frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
+      case "$(_role_submit_state "$frame" "$inflight" "$frame_e")" in
+      submitted)
+        inflight=""
+        submitting=0
+        submit_tries=0
+        unknown_ticks=0
+        escalated=0
+        cooldown=1
+        [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ] && watch_set_state idle
+        verdict_seen=0
+        ;;
+      dialog) ;;
+      held)
+        unknown_ticks=0
+        if [ "$submit_tries" -lt "$submit_retries" ]; then
+          tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+          submit_tries=$((submit_tries + 1))
+          cooldown=$((1 << submit_tries))
+        elif [ "$escalated" -eq 0 ]; then
+          _rw_escalate "still in the input box after $submit_retries Enter retries"
+        fi
+        ;;
+      *)
+        unknown_ticks=$((unknown_ticks + 1))
+        if [ "$unknown_ticks" -ge "$unknown_max" ] && [ "$escalated" -eq 0 ]; then
+          _rw_escalate "could not confirm the submit: the pane matches no recognised frame"
+        fi
+        ;;
+      esac
+    elif [ "${#pending[@]}" -eq 0 ]; then
       deferred_since=0
       deferred_told=0
     elif [ "$cooldown" -gt 0 ]; then
@@ -2005,7 +2195,14 @@ if [ "${1:-}" = "--role-watch" ]; then
             frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
             if _role_assignment_confirmed "$frame" "${pending[0]}" "$frame_e"; then
               tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
+              inflight="${pending[0]}"
+              inflight_from="${pending_from[0]}"
               pending=("${pending[@]:1}")
+              pending_from=("${pending_from[@]:1}")
+              submitting=1
+              submit_tries=0
+              unknown_ticks=0
+              escalated=0
               unsent=0
               cooldown=1
               deferred_since=0

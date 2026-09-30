@@ -42,7 +42,10 @@ the pane border (`@crew_state`: `idle` while you wait, `working` while you run).
 
 An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
 artifact to read, the question, the seam, and for a review the roster or its skip reason. Handle it, post your verdict, and
-end your turn again; the watcher wakes you for the next one.
+end your turn again; the watcher wakes you for the next one. The watcher checks
+that the text it typed was submitted, re-sending Enter (never the text) if not;
+if your assignment is still sitting unsent, it tells the lead, who submits it
+with a bare Enter rather than pasting it again.
 
 The watcher types only msgs from your lead (`worker:<branch>#s…`, any session
 number — a resumed lead still reaches you) or your crew's dispatcher
