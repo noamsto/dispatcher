@@ -199,7 +199,6 @@ _wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir 
     [ "$rec" != core.hookspath$'\n'.git/hooks ] || return 0
   done
   R="$(realpath -e -- "$1")" || R=
-  # Work-tree commands chdir into core.worktree first; rev-parse does not.
   rc=0
   git config --get core.worktree >/dev/null || rc=$?
   case $rc in
