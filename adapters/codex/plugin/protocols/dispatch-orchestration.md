@@ -340,11 +340,12 @@ decision".
 **Budget-aware launch refusal.** Layered above (checked after) the Tier map
 gate itself, so an off-row model is rejected by the Tier map check first,
 regardless of budget. `dispatch` refuses the premium rung for an engine when
-its pace window — `7d`, or pi's calendar-month `month` window — is **both**
-≥70% used **and** more than 15 points ahead of pace — `used_pct` minus the
+its pace window — `7d`, or the `month` window (pi's calendar month or cursor's
+billing cycle) — is **both** ≥70% used **and** more than 15 points ahead of
+pace — `used_pct` minus the
 window's elapsed fraction, `elapsed = clamp(100 * (L - (resets_at - now)) /
 L, 0, 100)` where `L` is `604800` for `7d`, or `resets_at - starts_at` (the
-calendar month's own length) for pi's `month`. Because `used_pct` tops out
+month's own length) for either `month`. Because `used_pct` tops out
 at 100 the inequality can't fire once elapsed reaches 85%, so a window
 inside its own last 15% (~25h on `7d`) stops refusing on its own — that's the
 near-reset exemption, not a second rule to keep in sync. A null `resets_at`
@@ -357,9 +358,9 @@ matching model or effort refusal for that one launch target and leaves the ≥95
 agent can actually reach for, since `--ignore-budget` reads as spend
 authorization to the auto-mode classifier and a dispatcher agent can't pass
 it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
-remains the human's spend decision. Codex carries a codex-only sibling: the
-window-independent absolute-limit stop from `limit_reached` (#201), described
-in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
+remains the human's spend decision. Codex and cursor carry a sibling: the
+window-independent absolute-limit stop from `limit_reached` (#201, #629), lead
+only, described in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
 
 The same rule applies independently to every lead and eager role target, and
 to a lazy role after its persisted values and CLI overrides resolve. Premium
@@ -371,7 +372,9 @@ rung in one burn class — so only effort is ever refused for it. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
-`xhigh` rung to land on in between.
+`xhigh` rung to land on in between. Cursor is the reverse: it has a premium
+model rung (`grok-4.7-high`) but no effort knob — `--effort` is
+accepted-and-ignored — so its effort is never refused, only the model rung.
 
 <!-- BEGIN generated:pace-downgrades from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
