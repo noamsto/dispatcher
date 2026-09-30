@@ -44,11 +44,16 @@
 #     quota to probe — only a spend-vs-target check). Key resolution:
 #     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
 #     unreadable or empty file is unknown, never a fallback), else
-#     OPENROUTER_API_KEY;
-#     ~/.pi/agent/auth.json is never read. The key goes to curl through -K -
-#     on stdin only, never argv, and is never printed or cached. spend_usd is
+#     OPENROUTER_API_KEY, else (last resort) pi's own login: .openrouter.access
+#     in ${PI_CODING_AGENT_DIR:-~/.pi/agent}/auth.json (owner-confirmed shape),
+#     read-only, used only when .openrouter.type is "oauth" and the value
+#     looks like an sk-or-v1- key. The key goes to curl through -K -
+#     on stdin only, never argv, and is never printed or cached. A key whose
+#     credit limit is set and exhausted (limit_remaining <= 0) sets
+#     engines.pi.limit_reached, which gates `dispatch --agent pi`. spend_usd is
 #     the per-key current-UTC-month figure (data.usage_monthly); the target
-#     comes from DISPATCH_OPENROUTER_MONTHLY_USD. No key -> engines.pi is
+#     comes from DISPATCH_OPENROUTER_MONTHLY_USD, else a positive key `limit`
+#     whose limit_reset is "monthly" (target_source key_limit). No key -> engines.pi is
 #     null (informational, never blocking).
 set -euo pipefail
 
@@ -507,7 +512,7 @@ header = \"Cookie: WorkosCursorSessionToken=$account::$token\"") || return 4
 # source — an unreadable file or an empty first line leaves `or_key` empty
 # rather than falling back to OPENROUTER_API_KEY, since spend is per key and
 # the wrong key would pace pi against the wrong spend. Otherwise reads
-# OPENROUTER_API_KEY. ~/.pi/agent/auth.json is never read.
+# OPENROUTER_API_KEY, else pi's auth store (read-only, last fallback).
 _or_key() {
   or_key=""
   if [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]]; then
@@ -519,7 +524,19 @@ _or_key() {
     fi
   else
     or_key="${OPENROUTER_API_KEY:-}"
+    [[ -n $or_key ]] || _or_key_from_pi
   fi
+}
+
+# _or_key_from_pi — pi's OpenRouter login into the caller's `or_key` local.
+# Owner-confirmed shape: {"openrouter": {"type": "oauth", "access": "sk-or-v1-..."}}.
+# Anything else (other type, junk, missing file or field) leaves or_key empty.
+_or_key_from_pi() {
+  local auth="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json" v
+  [[ -r $auth ]] || return 0
+  v=$(jq -r 'select(.openrouter.type == "oauth") | .openrouter.access // empty | strings' "$auth" 2>/dev/null) || return 0
+  [[ $v =~ ^sk-or-v1-[A-Za-z0-9]+$ ]] && or_key=$v
+  return 0
 }
 
 # _or_target — print the validated DISPATCH_OPENROUTER_MONTHLY_USD, or the
@@ -559,7 +576,11 @@ probe_pi() {
   # months vary in length; December is rolled to next January explicitly
   # rather than relying on mktime's month-overflow normalization.
   out=$(jq -e --argjson now "$now" --argjson target "$target" '
-    (.data.usage_monthly) as $spend
+    (.data.limit_reset) as $reset
+    | (if $target != null then $target
+       elif (.data.limit | type) == "number" and .data.limit > 0 and $reset == "monthly" then .data.limit
+       else null end) as $tgt
+    | (.data.usage_monthly) as $spend
     | (if ($spend | type) != "number" then error("bad shape: usage_monthly missing or non-numeric") else . end)
     | ($now | gmtime) as $g
     | ($g[0]) as $y | ($g[1]) as $m
@@ -569,18 +590,24 @@ probe_pi() {
     | ($next - $start) as $L
     | (((100 * $elapsed_s / $L) * 10 | round) / 10) as $elapsed_pct
     | (if $elapsed_s < 86400 then null else (($spend / ($elapsed_s / $L) * 100 | round) / 100) end) as $projected
-    | (if $target != null then ((($spend / $target * 100) * 10 | round) / 10) else null end) as $used_pct
+    | (if $tgt != null then ((($spend / $tgt * 100) * 10 | round) / 10) else null end) as $used_pct
     | {
         source: "openrouter_key",
         spend_usd: $spend,
-        target_usd: $target,
+        target_usd: $tgt,
+        target_source: (if $target != null then "config" elif $tgt != null then "key_limit" else null end),
         elapsed_pct: $elapsed_pct,
         projected_month_end_usd: $projected,
         key_limit_usd: .data.limit,
         key_limit_remaining_usd: .data.limit_remaining,
+        limit_reset: $reset,
+        limit_reached: (
+          if (.data.limit | type) == "number" and (.data.limit_remaining | type) == "number" and .data.limit_remaining <= 0
+          then {reason: "OpenRouter key credit limit reached ($\(.data.limit) limit, $\(.data.limit_remaining) remaining)"}
+          else null end),
         starts_at: $start,
         resets_at: $next,
-        windows: (if $target != null then {month: {used_pct: $used_pct, starts_at: $start, resets_at: $next}} else {} end)
+        windows: (if $tgt != null then {month: {used_pct: $used_pct, starts_at: $start, resets_at: $next}} else {} end)
       }
   ' <<<"$resp" 2>/dev/null) || return 1
   printf '%s\n' "$out"
@@ -622,10 +649,10 @@ report() {
          ")"
        else "" end) as $reset |
       (if $v.target_usd != null then
-         "\($e): openrouter $\($v.spend_usd | usd) of $\($v.target_usd | usd) monthly target (\($v.windows.month.used_pct)% used, \($v.elapsed_pct)% of month elapsed, \($proj))"
+         "\($e): openrouter $\($v.spend_usd | usd) of $\($v.target_usd | usd) monthly target\(if $v.target_source == "key_limit" then " (key limit)" else "" end) (\($v.windows.month.used_pct)% used, \($v.elapsed_pct)% of month elapsed, \($proj))"
        else
          "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
-       end) + $reset
+       end) + $reset + (if $v.limit_reset != null then " [key limit resets: \($v.limit_reset)]" else "" end) + (if $v.limit_reached != null then " — LIMIT REACHED: \($v.limit_reached.reason)" else "" end)
     else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) +
       (if .value.unlimited == true then "unlimited" else ([.value.windows | to_entries[] |
         "\(.key) \(.value.used_pct)% used" +
@@ -669,6 +696,9 @@ report_json() {
                 key: .k, used_pct: .w.used_pct, resets_at: .w.resets_at,
                 resets_in_s: .rem, ahead_pts: .ahead, verdict: .advice
               }],
+              target_source: ($v.target_source // null),
+              limit_reset: ($v.limit_reset // null),
+              limit_reached: ($v.limit_reached // null),
               projection: projection_line($e; $v)
             }
           end
@@ -714,7 +744,7 @@ main() {
   if [[ $rc -eq 0 ]]; then
     pi=$pi_probe
   elif [[ $rc -eq 2 ]]; then
-    warn "pi spend unknown — set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile (DISPATCH_OPENROUTER_KEY_FILE)"
+    warn "pi spend unknown — set OPENROUTER_API_KEY or programs.dispatcher.openrouter.keyFile (DISPATCH_OPENROUTER_KEY_FILE), or log pi in to OpenRouter"
   elif [[ $rc -eq 3 ]]; then
     warn "pi spend unknown — DISPATCH_OPENROUTER_KEY_FILE ($DISPATCH_OPENROUTER_KEY_FILE) is unreadable or empty"
   else

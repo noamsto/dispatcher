@@ -3274,6 +3274,32 @@ TABLE
   [[ "$output" != *"quota exhausted"* ]]
 }
 
+pi_limit_json() { # <limit_reached jq literal>
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null, pi: {source: "openrouter_key", windows: {}, limit_reached: '"$1"'}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "pi absolute limit refuses, and --ignore-budget bypasses it" {
+  pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi abs limit"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pi quota exhausted (absolute limit: OpenRouter key credit limit reached)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 --ignore-budget 42 "pi abs limit bypass"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "pi without limit_reached passes the absolute-limit gate" {
+  pi_limit_json 'null'
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi abs healthy"
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
 @test "a legacy codex cache without limit_reached still passes" {
   stub_launch_bins
   mkdir -p "$XDG_DATA_HOME/crew"
