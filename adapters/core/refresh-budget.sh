@@ -30,10 +30,9 @@
 #     through curl -K - on stdin only. Probed only when cursor-agent is on
 #     PATH; cursor-agent itself is never executed. Linux token:
 #     ${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json, first of .accessToken,
-#     .access_token, .token — the field name is UNVERIFIED (a permission
-#     boundary forbade inspecting the real file or cursor-agent's bundle), so
-#     a miss degrades to null; whether cursor-agent honours XDG_CONFIG_HOME
-#     is unverified too. macOS token: `security find-generic-password -s
+#     .access_token, .token — the field name is UNVERIFIED, so a miss
+#     degrades to null; whether cursor-agent honours XDG_CONFIG_HOME is
+#     unverified too. macOS token: `security find-generic-password -s
 #     cursor-access-token -a cursor-user -w` (read-only; may raise a GUI ACL
 #     prompt for an item another binary created — bounded by timeout 10,
 #     then null). Account id: cli-config.json (Linux: next to auth.json;
