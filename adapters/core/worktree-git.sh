@@ -64,8 +64,9 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
 # from a cwd _wt_cfg_guard_cwd asks git's own `--git-path hooks` whether the
-# spellings agree. Admin-dir contexts pin core.hooksPath=/dev/null
-# (_wt_neutral_cfg).
+# spellings resolve to one dir. Any core.worktree turns the equivalence off:
+# work-tree commands resolve the value there, which rev-parse does not show.
+# Admin-dir contexts pin core.hooksPath=/dev/null (_wt_neutral_cfg).
 _wt_cfg_canon() { # <R> <rec> <var> — set <var> to <rec>, the exact relative `.git/hooks` core.hookspath made `<R>/hooks`
   printf -v "$3" '%s' "$2"
   [[ $2 == core.hookspath$'\n'.git/hooks && -n $1 ]] || return 0
@@ -198,13 +199,32 @@ _wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir 
     [ "$rec" != core.hookspath$'\n'.git/hooks ] || return 0
   done
   R="$(realpath -e -- "$1")" || R=
+  # Work-tree commands chdir into core.worktree first; rev-parse does not.
+  rc=0
+  git config --get core.worktree >/dev/null || rc=$?
+  case $rc in
+  0)
+    printf 'refusing git: core.hooksPath .git/hooks in %q resolves under core.worktree, not against the baselined %q\n' "$PWD" "$R/hooks" >&2
+    printf '  set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+    return 1
+    ;;
+  1) ;;
+  *)
+    printf 'refusing git: cannot read core.worktree in %q\n' "$PWD" >&2
+    return 1
+    ;;
+  esac
   if h="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)"; then
-    [ "$h" != "$R/hooks" ] || return 0
+    [ "$h" != "$(realpath -m -- "$R/hooks")" ] || return 0
     printf 'refusing git: core.hooksPath .git/hooks in %q names %q, not the baselined %q\n' "$PWD" "$h" "$R/hooks" >&2
   else
     printf 'refusing git: core.hooksPath .git/hooks in %q names no hooks dir git can use, not the baselined %q\n' "$PWD" "$R/hooks" >&2
   fi
-  printf '  run from the main checkout, or set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+  if [ -n "$R" ] && [ "$(realpath -e -- "$own")" = "$R" ]; then
+    printf '  run from the main checkout, or set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+  else
+    printf '  set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+  fi
   return 1
 }
 

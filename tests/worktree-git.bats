@@ -325,6 +325,49 @@ guard_cwd_refuses() {
   guard_cwd_refuses "$TEST_REPO/sub"
 }
 
+@test "guard_cwd refuses relative .git/hooks under core.worktree from the main top level (#628)" {
+  hooks_rel_setup
+  W="$BATS_TEST_TMPDIR/worker"
+  plant_hook "$W/.git/hooks"
+  cp "$W/.git/hooks/reference-transaction" "$W/.git/hooks/post-checkout"
+  git config core.worktree "$W"
+  git config core.hooksPath .git/hooks
+  cd "$TEST_REPO"
+  run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
+  # Work-tree commands chdir into core.worktree and run $W/.git/hooks.
+  if [ "$status" -eq 0 ]; then git checkout -q -b probe; fi
+  [ ! -e "$SENTINEL" ]
+  [ "$status" -eq 1 ]
+  [[ $stderr == 'refusing git: '*core.worktree* ]]
+  [[ $stderr == *"git config core.hooksPath $(printf %q "$(realpath "$COMMON")/hooks")"* ]]
+}
+
+@test "guard_cwd accepts relative .git/hooks when the baselined hooks dir is a symlink (#628)" {
+  git config core.hooksPath "$(hookspath_abs)"
+  _wt_cfg_baseline_init "$COMMON"
+  mv "$COMMON/hooks" "$BATS_TEST_TMPDIR/realhooks"
+  ln -s "$BATS_TEST_TMPDIR/realhooks" "$COMMON/hooks"
+  git config core.hooksPath .git/hooks
+  cd "$TEST_REPO"
+  _wt_cfg_guard_cwd "$COMMON"
+}
+
+@test "guard_cwd advises the main checkout only from its own context (#628)" {
+  hooks_rel_setup w
+  cd "$WT"
+  run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr != *"run from the main checkout"* ]]
+  [[ $stderr == *"set the absolute spelling: git config core.hooksPath"* ]]
+  cd "$TEST_REPO"
+  git config core.bare true
+  mkdir sub
+  cd sub
+  run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"run from the main checkout, or set the absolute spelling: git config core.hooksPath"* ]]
+}
+
 @test "guard_cwd accepts relative .git/hooks from a worktree whose .git links to the common dir (#628)" {
   hooks_rel_setup w
   rm "$WT/.git"
