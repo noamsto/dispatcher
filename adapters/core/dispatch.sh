@@ -117,8 +117,7 @@ pace_rule_target() {
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
       echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      # sonnet is only admitted at `high` (the sonnet cap above), so an opus
-      # xhigh/max refusal must name `sonnet at high`, not imply the same effort.
+      # sonnet's ceiling is `high` (the cap above), so name the effort too.
       model_downgrade_label="$model_downgrade"
       if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
         model_downgrade_label="$model_downgrade at $effort_downgrade"
