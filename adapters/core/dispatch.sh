@@ -1680,6 +1680,17 @@ if [ "${1:-}" = "--role-watch" ]; then
     printf '%s\n' "$above" | grep -qE "$re_option"
   }
 
+  # _is_quota_cursor_limit — byte-identical to crew.sh's stall-watch copy
+  # (tests/adapters.bats pins the pair). A cursor pane parked on the monthly
+  # usage-limit frame must not receive a typed assignment; the check is gated
+  # to cursor because the anchors can appear in a claude or pi pane's tail
+  # (e.g. a worker reading this repo's docs) without it being a refusal frame.
+  _is_quota_cursor_limit() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 || true)
+    printf '%s\n' "$tail_n" | grep -qF "You've reached your monthly usage limit" &&
+      printf '%s\n' "$tail_n" | grep -qF 'spendLimitHit: true'
+  }
   # _box_rows <text> <first-row-regex> — the input box of a claude or pi
   # pane: the LAST two `─` rules in the last 30 non-blank lines (blank
   # determined on the ANSI-stripped form, so this works identically on a
@@ -1881,6 +1892,7 @@ if [ "${1:-}" = "--role-watch" ]; then
     [ -n "$1" ] || return 1
     _is_permission_prompt "$1" && return 1
     _is_prompt "$1" && return 1
+    [ "$engine" = cursor ] && _is_quota_cursor_limit "$1" && return 1
     case "$engine" in
     claude) _claude_idle_box "$1" "$2" "$3" ;;
     codex) _codex_idle_box "$1" ;;

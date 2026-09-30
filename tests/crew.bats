@@ -4557,6 +4557,53 @@ Enter to confirm
 EOF
 }
 
+# fx_cursor_monthly_limit — captured today from a dead cursor-agent worker pane
+# (#630), sanitised: a generic path and branch, same structure. The lines above
+# and below were ordinary UI chrome.
+fx_cursor_monthly_limit() {
+  frame_file cursor_monthly_limit <<'EOF'
+  Grok 4.7 256K Low                                   Run Everything -- INSERT --
+  ~/src/.worktrees/example/fix-some-branch · fix/some-branch · #123
+
+  Error: You've reached your monthly usage limit
+  Request higher limits to continue using Cursor
+  fallbackModel:
+  spendLimitHit: true
+  chatMessage:
+EOF
+}
+
+# fx_cursor_monthly_limit_distant — the same two anchors pushed above
+# _is_quota_cursor_limit's tail window, with a normal cursor idle frame at the
+# bottom. Mirrors the claude distant-text fixtures: guards against classifying
+# a worker that merely has the frame in scrollback as quota: (sticky and
+# escalation-exempt).
+fx_cursor_monthly_limit_distant() {
+  frame_file cursor_monthly_limit_distant <<'EOF'
+  Error: You've reached your monthly usage limit
+  Request higher limits to continue using Cursor
+  fallbackModel:
+  spendLimitHit: true
+  chatMessage:
+line 1 filler
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+  Cursor Agent
+  v1.0.0-abc
+  → Plan, search, build anything
+  ~/src/.worktrees/example/fix-some-branch · fix/some-branch · #123
+EOF
+}
+
 # The REAL tool-permission dialog (#435), captured verbatim from a live worker
 # pane by the dispatcher on 2026-09-26: crew 1790450482-1903888, worker coral on
 # #443, pane %78 (82x36), Claude Code 2.1.283 — a subagent (the shell-reviewer)
@@ -5593,6 +5640,51 @@ EOF
   run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == prompt:* ]]
+}
+
+@test "stall-watch: D1b posts blocked/quota: on cursor's monthly usage-limit frame" {
+  p=$(fx_cursor_monthly_limit)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine cursor \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|quota: cursor monthly usage limit"* ]]
+}
+
+@test "stall-watch: a cursor monthly-limit quota: episode NEVER escalates" {
+  # GONE ends the run on sample exhaustion, not a --max-life race (#169).
+  p=$(fx_cursor_monthly_limit)
+  stall_sampler "$p" "$p" "$p" "$p" "$p" "$p" "$p" "$p" GONE
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine cursor \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 2 --max-life 20
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: cursor monthly-limit text far up-screen is not quota:" {
+  p=$(fx_cursor_monthly_limit_distant)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine cursor \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: the cursor monthly-limit frame does not quota: a claude pane" {
+  # The detector is gated behind cursor's signature row, so claude never calls
+  # _is_quota_cursor_limit even when the frame is on screen.
+  p=$(fx_cursor_monthly_limit)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'quota:' || true"
+  [ "$output" = "0" ]
 }
 
 @test "stall-watch: D1's rate-limit quota: transitions cleanly to D1b's session-limit quota: and back" {

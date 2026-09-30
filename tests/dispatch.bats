@@ -8127,6 +8127,42 @@ rw_frame_cursor_ask_hook_settled() {
 EOF
 }
 
+# Cursor monthly usage-limit refusal frame (#630), sanitised to a generic path
+# and branch. A valid idle composer sits below the anchors, so the base gate
+# (before the cursor quota check) would type the assignment: the test is red on
+# base and passes only with the detector.
+rw_frame_cursor_monthly_limit() {
+  cat <<'EOF'
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+  Error: You've reached your monthly usage limit
+  Request higher limits to continue using Cursor
+  fallbackModel:
+  spendLimitHit: true
+  chatMessage:
+
+  → Plan, search, build anything
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/src/.worktrees/example/fix-some-branch · fix/some-branch · #123
+  fix-some-branch · main
+EOF
+}
+
+# A claude idle frame whose tail also carries the two cursor anchors. The
+# cursor detector must not fire on another engine's pane: a claude role pane
+# reading this repo's own docs could otherwise defer forever.
+rw_frame_claude_with_cursor_anchors() {
+  {
+    printf '%s\n' "  Error: You've reached your monthly usage limit"
+    printf '%s\n' '  spendLimitHit: true'
+    rw_frame_idle
+  }
+}
+
 # Derived watcher-state frames, deliberately non-real captures. The
 # implementation may confirm only its exact injected payload after re-capture.
 rw_frame_codex_after_assignment() { rw_frame_codex_idle_empty | sed 's/› Ask Codex to do anything/› Assignment: go/'; }
@@ -8472,6 +8508,26 @@ _rw_wait_captures() {
     run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
     rm -f "$common/crew/events.jsonl"
   done
+}
+
+@test "role-watch: a cursor monthly-limit frame receives no keys" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_monthly_limit
+  _rw_start cursor
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ] || { echo "never captured"; return 1; }
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: the cursor quota check does not gate a claude pane" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_claude_with_cursor_anchors
+  _rw_start claude
+  _rw_wait_sends 1
+  sleep 0.8
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
 }
 
 @test "role-watch: an idle claude input box receives the assignment" {
