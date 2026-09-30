@@ -224,6 +224,35 @@ hookspath_abs() { printf '%s/hooks' "$(git -C "${1:-.}" rev-parse --path-format=
   [ "$status" -eq 1 ]
 }
 
+@test "guard_cwd refuses relative .git/hooks from a worktree whose .git is a directory (#628)" {
+  add_worktree w
+  git config core.hooksPath "$(hookspath_abs "$WT")"
+  _wt_cfg_baseline_init "$COMMON"
+  rm "$WT/.git"
+  mkdir "$WT/.git"
+  printf 'ref: refs/heads/w\n' >"$WT/.git/HEAD"
+  realpath "$COMMON" >"$WT/.git/commondir"
+  git config core.hooksPath .git/hooks
+  [ "$(git -C "$WT" rev-parse --absolute-git-dir)" = "$(realpath "$WT")/.git" ]
+  [ "$(git -C "$WT" config --get core.hooksPath)" = .git/hooks ]
+  _wt_cfg_guard "$COMMON"
+  cd "$WT"
+  run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *core.hookspath* ]]
+}
+
+@test "core.worktree disables the hooksPath equivalence (#628)" {
+  git config core.hooksPath "$(hookspath_abs)"
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir "$BATS_TEST_TMPDIR/elsewhere"
+  git config core.worktree "$BATS_TEST_TMPDIR/elsewhere"
+  git config core.hooksPath .git/hooks
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *core.hookspath* ]]
+}
+
 @test "_wt_cfg_canon maps only a plain .git/ relative core.hookspath under a .git common (#628)" {
   _wt_cfg_canon /r/.git $'core.hookspath\n.git/hooks' out
   [ "$out" = $'core.hookspath\n/r/.git/hooks' ]

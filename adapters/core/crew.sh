@@ -5022,13 +5022,7 @@ git-baseline)
   fi
 
   declare -A gb_base=() gb_seen=()
-  gb_real="$(realpath -e -- "$common")" || gb_real=
   gb_canon=
-  for gb_rec in "${gb_recs[@]}"; do
-    [ -n "$gb_rec" ] || continue
-    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
-    gb_base["$gb_canon"]=1
-  done
 
   gb_ctxs=("$common")
   for gb_head in "$common"/worktrees/*/HEAD; do
@@ -5044,6 +5038,13 @@ git-baseline)
       echo "crew: cannot list the git config of $gb_ctx" >&2
       exit 1
     fi
+    gb_root="$(_wt_cfg_canon_root "$common" "$gb_ctx")"
+    gb_base=()
+    for gb_rec in "${gb_recs[@]}"; do
+      [ -n "$gb_rec" ] || continue
+      _wt_cfg_canon "$gb_root" "$gb_rec" gb_canon
+      gb_base["$gb_canon"]=1
+    done
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
       [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
       gb_rec="${gb_listing[gb_i + 2]}"
@@ -5051,7 +5052,7 @@ git-baseline)
       gb_key="${gb_rec%%$'\n'*}"
       gb_value="${gb_rec#"$gb_key"$'\n'}"
       _wt_cfg_exec "$gb_key" "$gb_value" || continue
-      _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
+      _wt_cfg_canon "$gb_root" "$gb_rec" gb_canon
       [ -z "${gb_base["$gb_canon"]+x}" ] || continue
       gb_origin="${gb_listing[gb_i + 1]#file:}"
       [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue

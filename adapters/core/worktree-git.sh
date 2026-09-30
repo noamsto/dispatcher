@@ -58,14 +58,25 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
   return 1
 }
 # git-hooks.nix spells the shared core.hooksPath `.git/hooks` from the main
-# checkout and `<main-root>/.git/hooks` from a linked worktree (#628), so a
-# plain relative `.git/…` value compares as its absolute spelling. `.`, `..`
-# and empty components are refused, not normalised: `..` collapsing is
-# unsound across symlinks. Only `.git/` counts — a linked worktree resolves a
-# relative hooksPath under its `.git` gitfile, where no hooks exist, while
-# `.husky` would name a worker-editable dir. Anchored git overrides
-# core.hooksPath anyway (_wt_neutral_cfg).
-_wt_cfg_canon() { # <common-realpath> <rec> <var> — set <var> to <rec>, a plain `.git/…` relative core.hookspath made absolute
+# checkout and `<main-root>/.git/hooks` from a linked worktree (#628). git
+# resolves a relative value against the context's work tree, so `.git/…`
+# names <common>/… only from the common dir itself, and from a genuine admin
+# dir <common>/worktrees/<id> it sits under that worktree's `.git` gitfile.
+# Any other context — a worker-made `<wt>/.git` directory whose commondir
+# names the common dir — compares literally, as does one with core.worktree
+# set, which moves the work tree the value resolves against.
+_wt_cfg_canon_root() { # <common> <git-dir> -> realpath of <common> when a relative core.hookspath read in <git-dir> resolves under it; else nothing
+  local real gd
+  real="$(realpath -e -- "$1")" && gd="$(realpath -e -- "$2")" || return 0
+  [[ $gd == "$real" || ($gd == "$real"/worktrees/* && ${gd#"$real"/worktrees/} != */*) ]] || return 0
+  git --git-dir="$gd" config --get core.worktree >/dev/null && return 0
+  printf '%s\n' "$real"
+}
+# `.`, `..` and empty components are refused, not normalised: `..` collapsing
+# is unsound across symlinks. Only `.git/` counts — `.husky` would name a
+# worker-editable dir. Anchored git overrides core.hooksPath anyway
+# (_wt_neutral_cfg).
+_wt_cfg_canon() { # <_wt_cfg_canon_root> <rec> <var> — set <var> to <rec>, a plain `.git/…` relative core.hookspath made absolute
   local common="$1" value="${2#core.hookspath$'\n'}"
   printf -v "$3" '%s' "$2"
   [[ $2 == core.hookspath$'\n'* && $common == /*/.git ]] || return 0
@@ -133,7 +144,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     echo "refusing git: no git-config baseline at $file — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
     return 1
   fi
-  real="$(realpath -e -- "$common")" || real=
+  real="$(_wt_cfg_canon_root "$common" "$gitdir")"
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
     [ -n "$rec" ] || continue

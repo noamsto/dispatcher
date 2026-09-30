@@ -600,8 +600,9 @@ branch instead; the worktree carries over under `resume: true`.
   remove` and `git branch -D`. Values compare literally, except that a plain
   relative `core.hooksPath` under `.git/` equals its absolute spelling from the
   main checkout's root (git-hooks.nix writes one from the main checkout, the
-  other from a linked worktree); no other root, and no `.`/`..`/empty-component
-  spelling, counts. Anchored calls — and, via `GIT_CONFIG_COUNT`,
+  other from a linked worktree) when read in the common dir or a genuine
+  `worktrees/<id>` admin dir without `core.worktree`; no other context or root,
+  and no `.`/`..`/empty-component spelling, counts. Anchored calls — and, via `GIT_CONFIG_COUNT`,
   the git that `crew reap`'s `wt remove` spawns, and `dispatch`'s own `wt
   switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
