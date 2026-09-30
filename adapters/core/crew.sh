@@ -4613,7 +4613,6 @@ BUSLINE
   d2_at=0
   d1b_hits=0
   d1b_at=0
-  d1b_kind=""
   d3_at=0
   d4_at=0
   d4_since=0
@@ -4862,36 +4861,27 @@ BUSLINE
     # re_meter nor re_subrow, so D2 reads it as "no active turn" and resets.
     # Without this block it falls through to D3 quiet:, which escalates (#93).
     # Both frames are verified and require no prompt geometry; each engine
-    # enables only its own signature, so one hit counter covers both. d1b_kind
-    # remembers which frame was posted so a mid-episode flip reclassifies
-    # instead of staying mislabeled.
-    d1b_kind_this=""
+    # enables only its own signature, so one hit counter and one post branch.
+    d1b_kind=""
     if [ "$suppressed" = 0 ]; then
       if [ "$sig_session_limit" = 1 ] && _is_quota_session_limit "$text"; then
-        d1b_kind_this=session
+        d1b_kind=session
       elif [ "$sig_cursor_limit" = 1 ] && _is_quota_cursor_limit "$text"; then
-        d1b_kind_this=cursor
+        d1b_kind=cursor
       fi
     fi
-    if [ -n "$d1b_kind_this" ]; then
-      if [ "$d1b_at" != 0 ] && [ "$d1b_kind_this" != "$d1b_kind" ]; then
-        _post_clear "quota:"
-        d1b_at=0
-        d1b_hits=0
-      fi
+    if [ -n "$d1b_kind" ]; then
       d1b_hits=$((d1b_hits + 1))
       if [ "$d1b_hits" -ge 2 ] && [ "$d1b_at" = 0 ]; then
-        case "$d1b_kind_this" in
+        case "$d1b_kind" in
         session)
           if _post_blocked "quota:" "quota: session limit — do not re-dispatch; wait for the reset shown in pane $pane, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"; then
             d1b_at="$now"
-            d1b_kind=session
           fi
           ;;
         cursor)
           if _post_blocked "quota:" "quota: cursor monthly usage limit — do not re-dispatch; the limit resets on the Cursor billing cycle, not on a retry, so pane $pane stays parked until then"; then
             d1b_at="$now"
-            d1b_kind=cursor
           fi
           ;;
         esac
@@ -4902,7 +4892,6 @@ BUSLINE
         d1b_at=0
       fi
       d1b_hits=0
-      d1b_kind=""
     fi
 
     # ---- D3: quiet pane ---------------------------------------------------
