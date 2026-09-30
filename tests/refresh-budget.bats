@@ -1686,7 +1686,7 @@ write_pi_auth() {
   or_key_fixture 10
   dir="$BATS_TEST_TMPDIR/piagent"
   mkdir -p "$dir"
-  printf '%s\n' '{"openrouter":{"access":"sk-or-v1-TESTSENTINELDIR"}}' >"$dir/auth.json"
+  printf '%s\n' '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELDIR"}}' >"$dir/auth.json"
   PI_CODING_AGENT_DIR="$dir" SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELDIR run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
@@ -1694,7 +1694,7 @@ write_pi_auth() {
 
 @test "OPENROUTER_API_KEY wins over pi's auth store" {
   or_key_fixture 10
-  write_pi_auth '{"openrouter":{"access":"sk-or-v1-TESTSENTINELPI"}}'
+  write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
   OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELENV SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELENV \
     run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1703,7 +1703,7 @@ write_pi_auth() {
 
 @test "the key file is exclusive: pi's auth store is not consulted" {
   or_key_fixture 10
-  write_pi_auth '{"openrouter":{"access":"sk-or-v1-TESTSENTINELPI"}}'
+  write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
   keyfile="$BATS_TEST_TMPDIR/missing-key"
   DISPATCH_OPENROUTER_KEY_FILE="$keyfile" run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1714,7 +1714,7 @@ write_pi_auth() {
 
 @test "a pi auth store without a usable key leaves pi unknown" {
   or_key_fixture 10
-  for body in '{"openrouter":{"access":"not-a-key"}}' 'not json' '{"openrouter":{}}' '{"other":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"access":"sk-or-v1-bad key"}}'; do
+  for body in '{"openrouter":{"type":"oauth","access":"not-a-key"}}' 'not json' '{"openrouter":{"type":"api_key","access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{}}' '{"other":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"type":"oauth","access":"sk-or-v1-bad key"}}'; do
     write_pi_auth "$body"
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]
@@ -1742,5 +1742,44 @@ write_pi_auth() {
     [ "$status" -eq 0 ]
     run jq '.engines.pi.limit_reached' "$XDG_DATA_HOME/crew/engine-budget.json"
     [ "$output" = "null" ]
+  done
+}
+
+@test "a monthly key limit becomes the target when no config target is set" {
+  jq -n '{data: {usage_monthly: 10, limit: 40, limit_remaining: 30, limit_reset: "monthly"}}' >"$FIXTURE_DIR/or_key.json"
+  OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"of \$40.00 monthly target (key limit)"* ]]
+  [[ "$output" == *"[key limit resets: monthly]"* ]]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq -r '[.engines.pi.target_usd, .engines.pi.target_source, .engines.pi.limit_reset, (.engines.pi.windows.month.used_pct)] | @tsv' "$cache"
+  [ "$output" = "$(printf '40\tkey_limit\tmonthly\t25')" ]
+}
+
+@test "a configured target overrides the key limit" {
+  jq -n '{data: {usage_monthly: 10, limit: 40, limit_remaining: 30, limit_reset: "monthly"}}' >"$FIXTURE_DIR/or_key.json"
+  DISPATCH_OPENROUTER_MONTHLY_USD=50 OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq -r '[.engines.pi.target_usd, .engines.pi.target_source] | @tsv' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "$(printf '50\tconfig')" ]
+}
+
+@test "a non-monthly or null limit_reset sets no target" {
+  for reset in '"weekly"' '"daily"' 'null'; do
+    jq -n --argjson r "$reset" '{data: {usage_monthly: 10, limit: 40, limit_remaining: 30, limit_reset: $r}}' >"$FIXTURE_DIR/or_key.json"
+    OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run jq -r '[(.engines.pi.target_usd | tostring), (.engines.pi.target_source | tostring), (.engines.pi.windows | length | tostring)] | @tsv' "$XDG_DATA_HOME/crew/engine-budget.json"
+    [ "$output" = "$(printf 'null\tnull\t0')" ]
+  done
+}
+
+@test "limit_remaining <= 0 trips limit_reached whatever the reset type" {
+  for reset in '"monthly"' '"weekly"' 'null'; do
+    jq -n --argjson r "$reset" '{data: {usage_monthly: 10, limit: 10, limit_remaining: 0, limit_reset: $r}}' >"$FIXTURE_DIR/or_key.json"
+    OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run jq -e '.engines.pi.limit_reached.reason != null' "$XDG_DATA_HOME/crew/engine-budget.json"
+    [ "$status" -eq 0 ]
   done
 }
