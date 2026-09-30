@@ -3405,7 +3405,7 @@ TABLE
 @test "cursor pace gate never refuses premium effort on a cursor role" {
   stub_launch_bins
   cursor_month_json 80 432000 2160000
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort xhigh --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor role xhigh effort ignored"
+  DISPATCH_PROFILE=personal run run_dispatch deep opus --effort xhigh --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor role xhigh effort ignored"
   [ "$status" -eq 0 ]
   [[ "$output" != *"premium effort"* ]]
   run grep -F -- 'cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model grok-4.7-medium' <(launch_log)
