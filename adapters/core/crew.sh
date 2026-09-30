@@ -410,6 +410,20 @@ _frame_classifier() {
       printf '%s\n' "$tail_n" | grep -qF '/upgrade to increase your usage limit' &&
       printf '%s\n' "$tail_n6" | grep -qF 'uses your weekly limit'
   }
+  # _is_quota_cursor_limit — content discriminator for cursor's monthly
+  # usage-limit refusal frame: a normal working pane (no option-select
+  # geometry), so like _is_quota_session_limit it is not gated behind
+  # _is_prompt. Both anchors must sit in the tail window: either alone
+  # false-triggers on a worker that merely has this repo's own docs or a
+  # fixture on screen, and quota: is sticky and escalation-exempt. The real
+  # frame carries the error line at non-empty depth 5 and `spendLimitHit:` at
+  # depth 2.
+  _is_quota_cursor_limit() {
+    local tail_n
+    tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -12 || true)
+    printf '%s\n' "$tail_n" | grep -qF "You've reached your monthly usage limit" &&
+      printf '%s\n' "$tail_n" | grep -qF 'spendLimitHit: true'
+  }
   # _is_bg_wait — a FINISHED turn parked on a background shell: healthy, since
   # Claude Code re-invokes the session when the shell completes (#353). Both
   # anchors are required within the last 8 non-empty lines: the `· done HH:MM`
@@ -4139,8 +4153,10 @@ stall-watch)
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
   #                  geometry — see _is_quota_prompt)
-  #   D1b quota:     session-limit refusal frame — normal status bar, no
-  #                  option-select prompt, 2 samples (see _is_quota_session_limit)
+  #   D1b quota:     quota refusal frame — claude's session-limit refusal or
+  #                  cursor's monthly usage limit; normal status bar, no
+  #                  option-select prompt, 2 samples (see _is_quota_session_limit
+  #                  and _is_quota_cursor_limit)
   #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
   #   D3 quiet:      byte-identical pane for --idle
   #   D4 load:       host 1m load above the core count for --load seconds —
@@ -4300,26 +4316,37 @@ stall-watch)
   # Signature table. Enabling an engine is DATA, not logic: capture its prompt
   # and meter frames on a work-profile host, pin them as fixtures, add a row.
   # Codex's single verified hook-review frame is deliberately narrower than
-  # Claude's prompt geometry. cursor gets frame-free detectors (D0/D3) only —
-  # a cursor footer that permanently contained an `Enter to select`-like string
-  # would pin every cursor worker at `blocked` forever.
+  # Claude's prompt geometry. cursor gets frame-free detectors (D0/D3) plus its
+  # one verified refusal frame (D1b, see _is_quota_cursor_limit) — a cursor
+  # footer that permanently contained an `Enter to select`-like string would pin
+  # every cursor worker at `blocked` forever, so its prompt signatures stay off.
   case "$engine" in
   claude)
     sig_prompt=1
     sig_meter=1
     sig_session_limit=1
+    sig_cursor_limit=0
     sig_bgwait=1
     ;;
   codex)
     sig_prompt=1
     sig_meter=0
     sig_session_limit=0
+    sig_cursor_limit=0
+    sig_bgwait=0
+    ;;
+  cursor)
+    sig_prompt=0
+    sig_meter=0
+    sig_session_limit=0
+    sig_cursor_limit=1
     sig_bgwait=0
     ;;
   *)
     sig_prompt=0
     sig_meter=0
     sig_session_limit=0
+    sig_cursor_limit=0
     sig_bgwait=0
     ;;
   esac
@@ -4586,6 +4613,7 @@ BUSLINE
   d2_at=0
   d1b_hits=0
   d1b_at=0
+  d1b_kind=""
   d3_at=0
   d4_at=0
   d4_since=0
@@ -4828,18 +4856,45 @@ BUSLINE
       fi
     fi
 
-    # ---- D1b: session-limit refusal ----------------------------------------
+    # ---- D1b: quota refusal (session limit / cursor monthly usage limit) ---
     # A second quota: frame, and its own detector because it satisfies neither
     # of the two above: no option-select geometry for D1, and it matches neither
     # re_meter nor re_subrow, so D2 reads it as "no active turn" and resets.
     # Without this block it falls through to D3 quiet:, which escalates (#93).
-    # The frame is verified for Claude only and requires no prompt geometry.
-    if [ "$suppressed" = 0 ] && [ "$sig_session_limit" = 1 ] && _is_quota_session_limit "$text"; then
+    # Both frames are verified and require no prompt geometry; each engine
+    # enables only its own signature, so one hit counter covers both. d1b_kind
+    # remembers which frame was posted so a mid-episode flip reclassifies
+    # instead of staying mislabeled.
+    d1b_kind_this=""
+    if [ "$suppressed" = 0 ]; then
+      if [ "$sig_session_limit" = 1 ] && _is_quota_session_limit "$text"; then
+        d1b_kind_this=session
+      elif [ "$sig_cursor_limit" = 1 ] && _is_quota_cursor_limit "$text"; then
+        d1b_kind_this=cursor
+      fi
+    fi
+    if [ -n "$d1b_kind_this" ]; then
+      if [ "$d1b_at" != 0 ] && [ "$d1b_kind_this" != "$d1b_kind" ]; then
+        _post_clear "quota:"
+        d1b_at=0
+        d1b_hits=0
+      fi
       d1b_hits=$((d1b_hits + 1))
       if [ "$d1b_hits" -ge 2 ] && [ "$d1b_at" = 0 ]; then
-        if _post_blocked "quota:" "quota: session limit — do not re-dispatch; wait for the reset shown in pane $pane, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"; then
-          d1b_at="$now"
-        fi
+        case "$d1b_kind_this" in
+        session)
+          if _post_blocked "quota:" "quota: session limit — do not re-dispatch; wait for the reset shown in pane $pane, or a human can run /low-priority there (spends weekly budget) — Esc/Enter will not submit a queued prompt while the limit holds"; then
+            d1b_at="$now"
+            d1b_kind=session
+          fi
+          ;;
+        cursor)
+          if _post_blocked "quota:" "quota: cursor monthly usage limit — do not re-dispatch; the limit resets on the Cursor billing cycle, not on a retry, so pane $pane stays parked until then"; then
+            d1b_at="$now"
+            d1b_kind=cursor
+          fi
+          ;;
+        esac
       fi
     else
       if [ "$d1b_at" != 0 ]; then
@@ -4847,6 +4902,7 @@ BUSLINE
         d1b_at=0
       fi
       d1b_hits=0
+      d1b_kind=""
     fi
 
     # ---- D3: quiet pane ---------------------------------------------------

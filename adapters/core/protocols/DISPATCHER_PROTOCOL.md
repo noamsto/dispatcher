@@ -1078,10 +1078,14 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
    sample. The glance **is** the guard: "kill and re-dispatch" as an unconditional
    instruction turns every false positive into destroyed work.
 
-Pane scraping only tells the truth for an engine that streams, and only claude has
-verified frame signatures. **codex and cursor get liveness coverage, not prompt
+Pane scraping only tells the truth for an engine that streams, and claude has the
+full verified frame set. **codex and cursor get liveness coverage, not prompt
 coverage** — `stalled:` and `quiet:` only, by decision, until someone pastes a real
-capture of their frames.
+capture of their prompt frames. The one exception is cursor's monthly usage-limit
+refusal (the `Error: You've reached your monthly usage limit` line together with
+`spendLimitHit: true`): like claude's session-limit refusal it is a normal working
+pane rather than a prompt, so cursor gets `quota:` coverage for that one verified
+frame (D1b, two samples).
 
 A `msg` from `pr-watch:<N>` is the other watchdog: `crew pr-watch <N>` parks
 (detached, like `stall-watch`) until that PR's head SHA, reviews, review threads,

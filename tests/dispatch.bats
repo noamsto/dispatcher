@@ -8061,6 +8061,21 @@ rw_frame_cursor_ask_hook_settled() {
 EOF
 }
 
+# Cursor monthly usage-limit refusal frame (#630), sanitised to a generic path
+# and branch. Not an idle box: a role pane parked on it must receive no keys.
+rw_frame_cursor_monthly_limit() {
+  cat <<'EOF'
+  Grok 4.7 256K Low                                   Run Everything -- INSERT --
+  ~/src/.worktrees/example/fix-some-branch · fix/some-branch · #123
+
+  Error: You've reached your monthly usage limit
+  Request higher limits to continue using Cursor
+  fallbackModel:
+  spendLimitHit: true
+  chatMessage:
+EOF
+}
+
 # Derived watcher-state frames, deliberately non-real captures. The
 # implementation may confirm only its exact injected payload after re-capture.
 rw_frame_codex_after_assignment() { rw_frame_codex_idle_empty | sed 's/› Ask Codex to do anything/› Assignment: go/'; }
@@ -8406,6 +8421,16 @@ _rw_wait_captures() {
     run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
     rm -f "$common/crew/events.jsonl"
   done
+}
+
+@test "role-watch: a cursor monthly-limit frame receives no keys" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_monthly_limit
+  _rw_start cursor
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ] || { echo "never captured"; return 1; }
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
 @test "role-watch: an idle claude input box receives the assignment" {
