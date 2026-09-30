@@ -52,7 +52,8 @@
 #     credit limit is set and exhausted (limit_remaining <= 0) sets
 #     engines.pi.limit_reached, which gates `dispatch --agent pi`. spend_usd is
 #     the per-key current-UTC-month figure (data.usage_monthly); the target
-#     comes from DISPATCH_OPENROUTER_MONTHLY_USD. No key -> engines.pi is
+#     comes from DISPATCH_OPENROUTER_MONTHLY_USD, else a positive key `limit`
+#     whose limit_reset is "monthly" (target_source key_limit). No key -> engines.pi is
 #     null (informational, never blocking).
 set -euo pipefail
 
@@ -695,6 +696,9 @@ report_json() {
                 key: .k, used_pct: .w.used_pct, resets_at: .w.resets_at,
                 resets_in_s: .rem, ahead_pts: .ahead, verdict: .advice
               }],
+              target_source: ($v.target_source // null),
+              limit_reset: ($v.limit_reset // null),
+              limit_reached: ($v.limit_reached // null),
               projection: projection_line($e; $v)
             }
           end

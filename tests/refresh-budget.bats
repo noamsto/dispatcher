@@ -1762,6 +1762,20 @@ write_pi_auth() {
   [ "$status" -eq 0 ]
   run jq -r '[.engines.pi.target_usd, .engines.pi.target_source] | @tsv' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "$(printf '50\tconfig')" ]
+  [[ "$(bash "$SCRIPT" --report 2>&1)" != *"(key limit)"* ]]
+  run bash "$SCRIPT" --report --json
+  run jq -r '.engines.pi | [.target_source, .limit_reset] | @tsv' <<<"$output"
+  [ "$output" = "$(printf 'config\tmonthly')" ]
+}
+
+@test "a monthly reset with a null or non-positive limit sets no target" {
+  for lim in null 0 -5; do
+    jq -n --argjson l "$lim" '{data: {usage_monthly: 10, limit: $l, limit_remaining: 5, limit_reset: "monthly"}}' >"$FIXTURE_DIR/or_key.json"
+    OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run jq -r '.engines.pi.target_usd | tostring' "$XDG_DATA_HOME/crew/engine-budget.json"
+    [ "$output" = "null" ]
+  done
 }
 
 @test "a non-monthly or null limit_reset sets no target" {
