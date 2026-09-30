@@ -38,6 +38,35 @@ valid_role_model() {
   esac
 }
 
+# claude_sonnet_cap <agent> <model> <effort> — true when a claude launch asks
+# for sonnet at `xhigh`/`max`. Sonnet 5.5 there costs more and scores below
+# opus 5.5 (dispatch-orchestration.md "Tier map"), so dispatch refuses it.
+claude_sonnet_cap() {
+  [ "$1" = claude ] || return 1
+  case "$2" in
+  sonnet | claude-sonnet-*) ;;
+  *) return 1 ;;
+  esac
+  case "$3" in
+  xhigh | max) return 0 ;;
+  esac
+  return 1
+}
+
+# refuse_claude_sonnet_cap <agent> <model> <effort> [<role>] — refuse (exit 1)
+# a capped claude sonnet launch unless --ignore-map (the human's model
+# decision) is set. Names opus at medium (high on deep) as the alternative.
+refuse_claude_sonnet_cap() {
+  claude_sonnet_cap "$1" "$2" "$3" || return 0
+  [ -z "${ignore_map:-}" ] || return 0
+  if [ -n "${4:-}" ]; then
+    echo "dispatch: role '$4' uses claude sonnet at $3, which is refused — sonnet 5.5 at xhigh/max costs more and scores below opus 5.5; use opus at medium (or high on deep), or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+  else
+    echo "dispatch: claude sonnet at $3 is refused — sonnet 5.5 at xhigh/max costs more and scores below opus 5.5; use opus at medium (or high on deep), or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+  fi
+  exit 1
+}
+
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's month) is materially ahead of pace.
 pace_rule_target() {
@@ -88,7 +117,13 @@ pace_rule_target() {
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
       echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      # sonnet is only admitted at `high` (the sonnet cap above), so an opus
+      # xhigh/max refusal must name `sonnet at high`, not imply the same effort.
+      model_downgrade_label="$model_downgrade"
+      if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
+        model_downgrade_label="$model_downgrade at $effort_downgrade"
+      fi
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -2025,12 +2060,14 @@ if [ "${1:-}" = "--spawn-role" ]; then
   spawn_effort=""
   spawn_effort_explicit=""
   ignore_budget=""
+  ignore_map=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --agent) spawn_agent="${2:-}"; shift 2 ;;
     --model) spawn_model="${2:-}"; shift 2 ;;
     --effort) spawn_effort="${2:-}"; spawn_effort_explicit=1; shift 2 ;;
     --ignore-budget) ignore_budget=1; shift ;;
+    --ignore-map) ignore_map=1; shift ;;
     *)
       echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
       exit 1
@@ -2135,6 +2172,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: role '$role' uses --agent $spawn_agent, which does not support --effort ultra" >&2
     exit 1
   fi
+  refuse_claude_sonnet_cap "$spawn_agent" "$spawn_model" "$effort" "$role"
   check_engine "$spawn_agent" "role '$role' uses --agent $spawn_agent"
   existing="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{?@crew_exited,exited,live}' | awk -F'|' -v r="$role" '$2 == r && $3 != "exited" {print $1; exit}')"
   if [ -n "$existing" ]; then
@@ -2858,6 +2896,7 @@ if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; the
   echo "dispatch: --effort ultra is codex-only; $agent tops out at max" >&2
   exit 1
 fi
+refuse_claude_sonnet_cap "$agent" "$model" "$effort"
 if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
@@ -3024,6 +3063,7 @@ if [ -n "$grid_roles" ]; then
       echo "dispatch: role '$role' uses --agent $role_agent, which does not support --effort ultra" >&2
       exit 1
     fi
+    refuse_claude_sonnet_cap "$role_agent" "$role_model" "$role_effort" "$role"
     check_engine "$role_agent" "role '$role' uses --agent $role_agent"
     role_names+=("$role")
     role_agents+=("$role_agent")
