@@ -10,9 +10,9 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 
 | Signal                                                                                                                   | tier       | model                                    |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
-| Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑Fable to escalate |
+| Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑opus @xhigh → Fable (last resort) |
 | Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — sonnet @medium, ↑opus to escalate |
-| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet\|haiku, ↑opus to escalate |
+| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet @low, ↑opus @low to escalate |
 
 **Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`, with `opus` as the escalation); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
 why — an underpowered worker can escalate via the bus. **One-rung escalation:**
@@ -23,8 +23,10 @@ outside the tier's normal row (e.g. codex `standard gpt-5.6-sol` after a failed
 `standard gpt-5.6-terra`); an in-row hop, such as claude `standard opus` after
 a failed `standard sonnet` (or `trivial opus` after a failed `trivial sonnet`), is already accepted by the row and only recorded.
 A failed claude `standard`/`trivial` opus has no rung above it in the row —
-re-dispatch at `deep` (where fable is admitted), not `standard fable`.
-Only one rung: a two-rung jump or a third attempt still needs
+re-dispatch at `deep` (where fable is admitted), not `standard fable`. On `deep`,
+fable is the last-resort escalation only after opus @`xhigh` has failed on
+genuinely hard, well-specified architecture/complex-bug work — never the lead
+choice. Only one rung: a two-rung jump or a third attempt still needs
 `--ignore-map` — any retry or in-row hop after the first failure counts as an
 attempt, and the branch's latest terminal status must still be `failed` at the
 same tier (a failure that was later resumed and finished no longer escalates). The pace-rule gate still applies — a premium rung near the 7d
@@ -48,6 +50,9 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   is not a claude ticket — most tasks have _some_ ambiguity; only route here when
   the ambiguity is the hard part. Whatever engine you are running on, watch for
   self-similarity bias: do not let "X is what I am" become "X is the fit."
+  Route security-adjacent claude work to **opus** at the tier-typical effort,
+  not `sonnet` — Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking
+  disabled.
 - codex leans: large mechanical refactors, wide-but-shallow multi-file sweeps,
   or a deliberate second-engine perspective on a hard problem.
 - cursor leans: **reviewing or finishing an existing PR** (`--pr N`, with or
@@ -105,10 +110,13 @@ Start from the tier-typical rung — `trivial`→`low`, `standard`→`medium`,
 from `required` and departs on the doc you wrote (see "Plan-depth" above).
 This holds for the model too: claude sonnet leads `standard` at `medium` and
 `trivial` at `low`, and an opus escalation on those rows keeps the same
-tier-typical effort; it must not carry deep's `high` down with it. When the
-pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn at the
-standard class and are not refused), shed to `sonnet` (at the same effort),
-not to a cheaper opus effort.
+tier-typical effort; it must not carry deep's `high` down with it. On sonnet
+the ceiling is `high`: `dispatch` refuses sonnet at `xhigh`/`max`, and the next
+step past sonnet@`high` is opus@`medium` (standard) — never sonnet `xhigh`/`max`.
+When the pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn
+at the standard class and are not refused), shed to `sonnet` at the same effort,
+or to `sonnet at high` when the refused effort was `xhigh`/`max`, not to a
+cheaper opus effort.
 
 - **Raise toward `xhigh`** when: the hard part lives inside one turn of
   reasoning — a subtle invariant, an ordering/concurrency argument, a
@@ -139,6 +147,10 @@ Ladder: `low|medium|high|xhigh|max` on claude/codex/pi, plus codex-only `ultra`
 `low`, never `ultra`). Session `ultra` already orchestrates — do not choose
 `ultra` expecting a second harness execute-subagent layer on top; see
 `dispatch-orchestration.md` and `WORKER_PROTOCOL.md` rule 1.
+
+On the claude 5.5 models, `max` is poor value: opus `max` buys roughly +2
+index points for ~+73% cost over `xhigh`, and sonnet `max` regresses from
+`xhigh` — treat `xhigh` as the practical top.
 
 **External standings are a hint, not a ranking.** `refresh-scores` caches LMArena
 standings (plus OpenRouter/Artificial Analysis indices when keyed) to

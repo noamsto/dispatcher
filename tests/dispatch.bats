@@ -1977,19 +1977,63 @@ EOF
 
 @test "an eager role without an effort suffix inherits the lead effort" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles 'reviewer=claude:sonnet' --effort max --crew-id c1 42 "inherited role effort"
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles 'reviewer=claude:sonnet' --effort high --crew-id c1 42 "inherited role effort"
   [ "$status" -eq 0 ]
-  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' <(launch_log)
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort high' <(launch_log)
   [ "$status" -eq 0 ]
 }
 
 @test "an ultra codex lead may give claude and pi roles non-ultra effort" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:sonnet@max,critic=pi:openrouter/deepseek/deepseek-v4-flash@high" --effort ultra --crew-id c1 42 "ultra lead roles"
+  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-sol --agent codex --ignore-map --roles "reviewer=claude:opus@max,critic=pi:openrouter/deepseek/deepseek-v4-flash@high" --effort ultra --crew-id c1 42 "ultra lead roles"
   [ "$status" -eq 0 ]
-  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort max' <(launch_log)
+  run grep -F -- 'claude --name iris-reviewer --model opus --effort max' <(launch_log)
   [ "$status" -eq 0 ]
   run grep -F -- '--thinking high' <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
+@test "claude sonnet at xhigh/max is refused before scaffolding, naming opus" {
+  for model in sonnet claude-sonnet-5-5; do
+    for effort in xhigh max; do
+      run run_dispatch standard "$model" --agent claude --effort "$effort" --crew-id c1 "sonnet cap"
+      [ "$status" -eq 1 ]
+      [[ "$output" == *"sonnet at $effort is refused"* ]]
+      [[ "$output" == *"opus at medium"* ]]
+      [[ "$output" == *"--ignore-map"* ]]
+    done
+  done
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+
+  stub_launch_bins
+  run run_dispatch standard sonnet --agent claude --effort xhigh --ignore-map --crew-id c1 42 "sonnet cap ignored"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "claude sonnet at high and below, and deep opus at xhigh, still launch" {
+  stub_launch_bins
+  for effort in low medium high; do
+    run run_dispatch standard sonnet --agent claude --effort "$effort" --crew-id c1 42 "sonnet $effort"
+    [ "$status" -eq 0 ]
+  done
+  run run_dispatch deep opus --agent claude --effort xhigh --crew-id c1 42 "deep opus xhigh"
+  [ "$status" -eq 0 ]
+}
+
+@test "a claude sonnet role at xhigh/max is refused; --ignore-map bypasses" {
+  for spec in 'reviewer=claude:sonnet@xhigh' 'reviewer=claude:sonnet@max'; do
+    run run_dispatch standard sonnet --agent claude --roles "$spec" --effort high --crew-id c1 "role sonnet cap"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"role 'reviewer' uses claude sonnet at"* ]]
+    [[ "$output" == *"opus at medium"* ]]
+  done
+  if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
+
+  stub_launch_bins
+  run run_dispatch standard sonnet --agent claude --roles 'reviewer=claude:sonnet@xhigh' --ignore-map --effort high --crew-id c1 42 "role sonnet cap ignored"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'claude --name iris-reviewer --model sonnet --effort xhigh' <(launch_log)
   [ "$status" -eq 0 ]
 }
 
@@ -3295,7 +3339,7 @@ TABLE
 @test "pace gate refuses premium effort, but allows high and --ignore-budget" {
   stub_launch_bins
   budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "effort refuses"
+  run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "effort refuses"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (xhigh)"* ]]
   [[ "$output" == *"use high instead"* ]]
@@ -3306,25 +3350,33 @@ TABLE
   grep -q 'send-keys' "$STUB_LOG"
 
   budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --effort xhigh --ignore-budget --crew-id c1 42 "ignore effort"
+  run run_dispatch deep sonnet --effort xhigh --ignore-map --ignore-budget --crew-id c1 42 "ignore effort"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "pace refusal of opus at xhigh names sonnet at high" {
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort xhigh --crew-id c1 42 "pace opus xhigh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+  [[ "$output" == *"sonnet at high"* ]]
 }
 
 @test "pace gate effort escape is exact and null reset still refuses" {
   stub_launch_bins
   budget_json_at claude 77 345600
-  DISPATCH_IGNORE_RUNG=xhigh run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "exact effort"
+  DISPATCH_IGNORE_RUNG=xhigh run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "exact effort"
   [ "$status" -eq 0 ]
   [[ "$output" == *"effort refusal skipped"* ]]
 
   budget_json_at claude 77 345600
-  DISPATCH_IGNORE_RUNG=max run run_dispatch deep sonnet --effort xhigh --crew-id c1 42 "mismatched effort"
+  DISPATCH_IGNORE_RUNG=max run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "mismatched effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort"* ]]
 
   budget_json_at claude 90 null
-  run run_dispatch deep sonnet --effort max --crew-id c1 42 "null effort"
+  run run_dispatch deep sonnet --effort max --ignore-map --crew-id c1 42 "null effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (max)"* ]]
   [[ "$output" == *"use high instead"* ]]
@@ -3333,13 +3385,13 @@ TABLE
 
 @test "pace gate checks explicit and inherited eager role effort before panes" {
   budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --roles 'reviewer@xhigh' --effort high --crew-id c1 42 "explicit role effort"
+  run run_dispatch deep sonnet --roles 'reviewer@xhigh' --effort high --ignore-map --crew-id c1 42 "explicit role effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (xhigh)"* ]]
   if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
 
   budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --roles reviewer --effort max --crew-id c1 42 "inherited role effort"
+  run run_dispatch deep sonnet --roles reviewer --effort max --ignore-map --crew-id c1 42 "inherited role effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (max)"* ]]
   if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
@@ -6568,6 +6620,20 @@ _write_dirs_record() {
   [ "$output" = "pi:openrouter/deepseek/deepseek-v4.1-flash:max" ]
 }
 
+@test "grid: --spawn-role refuses a persisted claude sonnet@xhigh; --ignore-map bypasses" {
+  _spawn_role_fixture
+  printf '{"reviewer":{"agent":"claude","model":"sonnet","effort":"xhigh"}}\n' >"$roles_dir/roles.json"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' uses claude sonnet at xhigh"* ]]
+  [[ "$output" == *"opus at medium"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+
+  run run_dispatch --spawn-role reviewer --ignore-map
+  [ "$status" -eq 0 ]
+  grep -q 'split-window' "$STUB_LOG"
+}
+
 @test "grid: --spawn-role gives the role pane the lead's CREW_WORKER_ID and CREW_ID" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer
@@ -9347,13 +9413,13 @@ EOF
   printf '{"reviewer":{"agent":"claude","model":"sonnet","effort":"high"}}\n' >"$roles"
   budget_json_at claude 77 345600
 
-  run run_dispatch --spawn-role reviewer --effort xhigh
+  run run_dispatch --spawn-role reviewer --effort xhigh --ignore-map
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort (xhigh)"* ]]
   run grep -c -- 'split-window' "$STUB_LOG"
   [ "$output" -eq 0 ]
 
-  run run_dispatch --spawn-role reviewer --effort xhigh --ignore-budget
+  run run_dispatch --spawn-role reviewer --effort xhigh --ignore-map --ignore-budget
   [ "$status" -eq 0 ]
   run grep -q -- 'split-window' "$STUB_LOG"
   [ "$status" -eq 0 ]
