@@ -57,6 +57,21 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
   done
   return 1
 }
+# git-hooks.nix spells the shared core.hooksPath `.git/hooks` from the main
+# checkout and `<common>/hooks` from a linked worktree (#628). Only that exact
+# relative string maps to `<R>/hooks`, R the realpath of the caller's anchored
+# <common>: any other spelling (`.husky`, `./.git/hooks`) may name a
+# worker-editable dir. git resolves a relative value against a context the
+# worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
+# from a cwd _wt_cfg_guard_cwd asks git's own `--git-path hooks` whether the
+# spellings resolve to one dir. Any core.worktree turns the equivalence off:
+# work-tree commands resolve the value there, which rev-parse does not show.
+# Admin-dir contexts pin core.hooksPath=/dev/null (_wt_neutral_cfg).
+_wt_cfg_canon() { # <R> <rec> <var> — set <var> to <rec>, the exact relative `.git/hooks` core.hookspath made `<R>/hooks`
+  printf -v "$3" '%s' "$2"
+  [[ $2 == core.hookspath$'\n'.git/hooks && -n $1 ]] || return 0
+  printf -v "$3" 'core.hookspath\n%s/hooks' "$1"
+}
 _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktree pairs
   local -a recs
   local i scope key value
@@ -110,7 +125,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   echo "git-config baseline: recorded $file: $keys" >&2
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key origin found i
+  local common="$1" gitdir="${2:-$1}" file rec key origin found i R canon
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -118,9 +133,12 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     echo "refusing git: no git-config baseline at $file — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
     return 1
   fi
+  R="$(realpath -e -- "$common")" || R=
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
-    [ -z "$rec" ] || base["$rec"]=1
+    [ -n "$rec" ] || continue
+    _wt_cfg_canon "$R" "$rec" canon
+    base["$canon"]=1
   done
   mapfile -d '' pairs < <(_wt_cfg_pairs "$gitdir")
   if ! wait $!; then
@@ -128,7 +146,8 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     return 1
   fi
   for rec in "${pairs[@]}"; do
-    [ -z "${base["$rec"]+x}" ] || continue
+    _wt_cfg_canon "$R" "$rec" canon
+    [ -z "${base["$canon"]+x}" ] || continue
     key="${rec%%$'\n'*}"
     [ -n "${seen["$key"]+x}" ] || drift+=("$key")
     seen["$key"]=1
@@ -155,14 +174,57 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   return 1
 }
 _wt_cfg_guard_cwd() { # <common> — _wt_cfg_guard for <common> and the git dir the caller's cwd resolves to
-  local own
+  local own v rc=0 rec R h
+  local -a recs
   _wt_cfg_guard "$1" || return 1
   # A linked worktree's cwd adds its config.worktree to what plain git reads.
   own="$(git rev-parse --absolute-git-dir)" || {
     echo "refusing git: cannot resolve the git dir of $PWD" >&2
     return 1
   }
-  [ "$own" = "$1" ] || _wt_cfg_guard "$1" "$own"
+  if [ "$own" != "$1" ]; then _wt_cfg_guard "$1" "$own" || return 1; fi
+  # The guards took a relative .git/hooks as <R>/hooks; from here git must too.
+  v="$(git config --get core.hooksPath)" || rc=$?
+  case $rc in
+  0) ;;
+  1) return 0 ;;
+  *)
+    printf 'refusing git: cannot read core.hooksPath in %q\n' "$PWD" >&2
+    return 1
+    ;;
+  esac
+  [ "$v" = .git/hooks ] || return 0
+  mapfile -d '' recs <"$1/crew/git-config-baseline" || return 1
+  for rec in "${recs[@]}"; do
+    [ "$rec" != core.hookspath$'\n'.git/hooks ] || return 0
+  done
+  R="$(realpath -e -- "$1")" || R=
+  rc=0
+  git config --get core.worktree >/dev/null || rc=$?
+  case $rc in
+  0)
+    printf 'refusing git: core.hooksPath .git/hooks in %q resolves under core.worktree, not against the baselined %q\n' "$PWD" "$R/hooks" >&2
+    printf '  set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+    return 1
+    ;;
+  1) ;;
+  *)
+    printf 'refusing git: cannot read core.worktree in %q\n' "$PWD" >&2
+    return 1
+    ;;
+  esac
+  if h="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)"; then
+    [ "$h" != "$(realpath -m -- "$R/hooks")" ] || return 0
+    printf 'refusing git: core.hooksPath .git/hooks in %q names %q, not the baselined %q\n' "$PWD" "$h" "$R/hooks" >&2
+  else
+    printf 'refusing git: core.hooksPath .git/hooks in %q names no hooks dir git can use, not the baselined %q\n' "$PWD" "$R/hooks" >&2
+  fi
+  if [ -n "$R" ] && [ "$(realpath -e -- "$own")" = "$R" ]; then
+    printf '  run from the main checkout, or set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+  else
+    printf '  set the absolute spelling: git config core.hooksPath %q\n' "$R/hooks" >&2
+  fi
+  return 1
 }
 
 _wt_admin_dir() { # <common-dir> <worktree> -> realpath of <common>/worktrees/<id>

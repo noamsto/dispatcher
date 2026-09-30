@@ -639,9 +639,16 @@ branch instead; the worktree carries over under `resume: true`.
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`; anchored calls — and, via `GIT_CONFIG_COUNT`,
-  the git that `crew reap`'s `wt remove` spawns, and `dispatch`'s own `wt
-  switch` for every switch but a default create — pass `core.fsmonitor=false`,
+  remove` and `git branch -D`. Values compare literally, except that the exact
+  relative `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix
+  writes one from the main checkout, the other from a linked worktree). From a
+  cwd, that relative spelling against an absolute-only baseline passes only
+  where git itself resolves hooks to the resolved `<common>/hooks` (`git
+  rev-parse --git-path hooks`) and no `core.worktree` is set, so a dispatcher
+  run from a linked worktree refuses: set `core.hooksPath` to the absolute
+  `<common>/hooks`. Anchored calls — and, via
+  `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
+  `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
   `submodule.recurse=false`, disable the config-hook events they trigger (the
   set is `_wt_neutral_cfg` in `worktree-git.sh`), and read no in-tree

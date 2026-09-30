@@ -5067,7 +5067,13 @@ git-baseline)
   fi
 
   declare -A gb_base=() gb_seen=()
-  for gb_rec in "${gb_recs[@]}"; do [ -z "$gb_rec" ] || gb_base["$gb_rec"]=1; done
+  gb_canon=
+  gb_real="$(realpath -e -- "$common")" || gb_real=
+  for gb_rec in "${gb_recs[@]}"; do
+    [ -n "$gb_rec" ] || continue
+    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
+    gb_base["$gb_canon"]=1
+  done
 
   gb_ctxs=("$common")
   for gb_head in "$common"/worktrees/*/HEAD; do
@@ -5090,7 +5096,8 @@ git-baseline)
       gb_key="${gb_rec%%$'\n'*}"
       gb_value="${gb_rec#"$gb_key"$'\n'}"
       _wt_cfg_exec "$gb_key" "$gb_value" || continue
-      [ -z "${gb_base["$gb_rec"]+x}" ] || continue
+      _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
+      [ -z "${gb_base["$gb_canon"]+x}" ] || continue
       gb_origin="${gb_listing[gb_i + 1]#file:}"
       [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
       gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
@@ -5119,10 +5126,9 @@ git-baseline)
 
   mkdir -p -- "$dir" || exit 1
   gb_tmp="$(mktemp "$baseline_file.XXXXXX")" || exit 1
-  # Merge, never replace: git-hooks.nix writes core.hooksPath relative from
-  # the main checkout and absolute from a linked worktree, so a replace would
-  # flip-flop. An empty set writes a 0-byte file, never a lone NUL (an empty
-  # record).
+  # Merge, never replace: this run shows only the drift, so a replace would
+  # drop every pair already accepted. An empty set writes a 0-byte file, never
+  # a lone NUL (an empty record).
   if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}"; do
     [ -z "$gb_rec" ] || printf '%s\0' "$gb_rec"
   done | LC_ALL=C sort -z -u >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
