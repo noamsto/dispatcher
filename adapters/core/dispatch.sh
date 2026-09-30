@@ -68,7 +68,7 @@ refuse_claude_sonnet_cap() {
 }
 
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
-# when its fresh pace window (7d, or pi's month) is materially ahead of pace.
+# when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
@@ -86,8 +86,9 @@ pace_rule_target() {
       model_downgrade=""
     fi
   fi
+  # cursor's --effort is accepted and ignored, so there is no effort to shed.
   case "$target_effort" in
-  max | xhigh) effort_downgrade="high" ;;
+  max | xhigh) [ "$target_agent" = cursor ] || effort_downgrade="high" ;;
   esac
   [ -n "$model_downgrade$effort_downgrade" ] || return 0
   rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
@@ -2915,8 +2916,9 @@ fi
 
 # Lead budget gate. budget_stop owns the >=95% predicate and its cache rules
 # (fail open when stale/missing/silent; skip a window already past resets_at);
-# the blocks below add the claude-blind warning and the codex absolute-limit
-# gate. --ignore-budget is the manual escape hatch (e.g. credits cover it).
+# the blocks below add the claude-blind warning and the codex/cursor
+# absolute-limit gate. --ignore-budget is the manual escape hatch (e.g. credits
+# cover it).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 budget_stop "$agent"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
@@ -2928,26 +2930,34 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
-# Codex absolute-limit gate (#201): a codex response can be authoritative-
-# exhausted while every percent window is below 95% (or no window exists) —
+# Codex/cursor absolute-limit gate. An engine can be authoritative-exhausted
+# while every percent window is below 95% (or no window exists). Codex (#201):
 # the backend denies ordinary usage, names a rate-limit-reached reason, marks
-# spend control reached, or reports a zeroed individual spend limit. Refuse
-# codex on any of them, same severity and escape as the >=95% stop. Missing
-# or stale data (older cache without limit_reached) fails open, like the rest
-# of the budget gate.
-if [ -z "$ignore_budget" ] && [ "$agent" = codex ] && [ -f "$budget_file" ]; then
-  codex_abs=$(jq -r --argjson stale_before "$stale_before" --argjson now "$now_ts" '
+# spend control reached, or reports a zeroed individual spend limit. Cursor
+# (#629): a plan pool at 100% or a spent on-demand budget can sit under a <95%
+# month window (e.g. team plans, where the window is the overall figure);
+# refresh-budget writes the reason, and a limit whose resets_at has passed no
+# longer holds. Refuse on any of them, same severity and escape as the >=95%
+# stop. Missing or stale data (older cache without limit_reached) fails open,
+# like the rest of the budget gate.
+if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ]; } && [ -f "$budget_file" ]; then
+  abs_limit=$(jq -r --arg e "$agent" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
     if .fetched_epoch < $stale_before then empty
-    elif .engines.codex == null then empty
-    else (.engines.codex.limit_reached // {}) as $l
-      | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
-        elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
-        elif $l.spend_control_reached == true then "spend control reached"
-        elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
-        else empty end
+    elif .engines[$e] == null then empty
+    else .engines[$e].limit_reached as $l
+      | if $e == "cursor" then
+          if $l == null or ($l.resets_at != null and $l.resets_at <= $now) then empty
+          else $l.reason // "limit reached" end
+        else ($l // {}) as $l
+          | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
+            elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
+            elif $l.spend_control_reached == true then "spend control reached"
+            elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
+            else empty end
+        end
     end' "$budget_file" 2>/dev/null || true)
-  if [ -n "$codex_abs" ]; then
-    echo "dispatch: codex quota exhausted (absolute limit: $codex_abs) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+  if [ -n "$abs_limit" ]; then
+    echo "dispatch: $agent quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
     exit 1
   fi
 fi

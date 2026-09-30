@@ -2142,6 +2142,32 @@ pi_budget_json() { # <pct> <elapsed_s> <remaining_s>
     >"$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+# Write a fresh cursor cache whose limit_reached block is the caller's jq
+# literal (spliced into the jq program, like codex_limit_json above), with an
+# EMPTY windows map so the >=95% stop is inert and only the #629 absolute-limit
+# gate can fire.
+cursor_limit_json() { # <limit_reached jq literal>
+  local lr="$1"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "usage_summary", windows: {}, limit_reached: '"$lr"'}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+# Write a fresh cursor cache with a billing-cycle "month" window at <pct>
+# spanning [now-<elapsed_s>, now+<remaining_s>] and no limit_reached. Parallel
+# to pi_budget_json() above.
+cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
+  local pct="$1" elapsed="$2" remaining="$3" now
+  now="$(date +%s)"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson pct "$pct" --argjson epoch "$now" \
+    --argjson starts "$((now - elapsed))" --argjson resets "$((now + remaining))" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null,
+        cursor: {source: "usage_summary", windows: {month: {used_pct: $pct, starts_at: $starts, resets_at: $resets}}, limit_reached: null}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "refuses to dispatch on an engine at >=95% with a fresh budget cache" {
   budget_json 97 "$(date +%s)"
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
@@ -2899,8 +2925,8 @@ assert_gate_silent() { # <engine> <model> [profile]
 }
 
 @test "budget rung gate also matches a bracketed premium cursor id" {
-  # Pins the case pattern itself, not live cursor budget data (cursor's
-  # cache is always null today — see the dispatch.sh comment above this arm).
+  # Pins the case pattern itself with a synthetic 7d window, not a live cursor
+  # month window (see the cursor pace tests for that).
   mkdir -p "$XDG_DATA_HOME/crew"
   jq -n --argjson epoch "$(date +%s)" \
     '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "t", windows: {"7d": {used_pct: 80, resets_at: null}}}}}' \
@@ -3010,6 +3036,7 @@ assert_gate_silent() { # <engine> <model> [profile]
 # Captured from the gate on main (pre-#605), over every claude/codex/cursor
 # model and effort it handles. Columns low,medium,high,xhigh,max: MODEL =
 # premium-rung refusal, EFFORT = premium-effort refusal, ALLOW = launched.
+# Cursor never takes EFFORT (#629): its --effort is accepted and ignored.
 @test "pace decisions hold across every claude/codex/cursor model and effort (#605)" {
   stub_launch_bins
   n=1000
@@ -3044,11 +3071,11 @@ codex|gpt-5.6-sol|MODEL,MODEL,MODEL,MODEL,MODEL
 codex|gpt-5.6-terra|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
 codex|gpt-5.6-luna|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
 cursor|grok-4.7-high|MODEL,MODEL,MODEL,MODEL,MODEL
-cursor|grok-4.7-medium|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
-cursor|grok-4.7-low|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|grok-4.7-medium|ALLOW,ALLOW,ALLOW,ALLOW,ALLOW
+cursor|grok-4.7-low|ALLOW,ALLOW,ALLOW,ALLOW,ALLOW
 cursor|cursor-grok-4.6-high|MODEL,MODEL,MODEL,MODEL,MODEL
-cursor|cursor-grok-4.6-medium|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
-cursor|composer-2.5|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
+cursor|cursor-grok-4.6-medium|ALLOW,ALLOW,ALLOW,ALLOW,ALLOW
+cursor|composer-2.5|ALLOW,ALLOW,ALLOW,ALLOW,ALLOW
 cursor|grok-4.7-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 cursor|cursor-grok-4.6-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 TABLE
@@ -3276,6 +3303,157 @@ TABLE
   DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "stale abs limit"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "cursor absolute limit refuses on a plan pool at 100% with no window" {
+  cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs plan full"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor quota exhausted (absolute limit: plan usage at 100%)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "cursor absolute limit refuses on a spent on-demand budget before its reset" {
+  cursor_limit_json "{reason: \"on-demand limit reached\", resets_at: $(($(date +%s) + 86400))}"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs on-demand spent"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor quota exhausted (absolute limit: on-demand limit reached)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+}
+
+@test "--ignore-budget bypasses the cursor absolute-limit gate" {
+  stub_launch_bins
+  cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --ignore-budget --crew-id c1 42 "cursor abs ignore budget"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a stale cursor cache with an absolute limit fails open" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(($(date +%s) - 10000))" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "usage_summary", windows: {}, limit_reached: {reason: "plan usage at 100%", resets_at: null}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs stale"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a cursor absolute limit already past its resets_at fails open" {
+  stub_launch_bins
+  cursor_limit_json "{reason: \"plan usage at 100%\", resets_at: $(($(date +%s) - 60))}"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs past reset"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "an unknown cursor quota (engines.cursor null) does not refuse" {
+  stub_launch_bins
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson epoch "$(date +%s)" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs unknown"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a healthy cursor month window with no limit_reached passes" {
+  stub_launch_bins
+  cursor_month_json 40 777600 1814400
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs healthy"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "the cursor absolute limit is scoped to cursor, and codex's to codex" {
+  stub_launch_bins
+  cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "cursor limit claude lead"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "cursor limit codex lead"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "codex limit cursor lead"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+}
+
+@test "a cursor role is not refused by the cursor absolute limit (lead only)" {
+  # The absolute-limit gate covers the lead only, same documented gap as
+  # codex: a cursor role goes through the >=95% stop alone, and windows is {}.
+  stub_launch_bins
+  cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor limit cursor role"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  run grep -F -- 'cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model grok-4.7-medium' <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
+@test "cursor budget stop fires at >=95% on the billing-cycle month window" {
+  cursor_month_json 97 777600 1814400
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor month hard stop"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor quota exhausted (month at 97%"* ]]
+}
+
+@test "cursor pace gate sizes the month from starts_at to resets_at" {
+  stub_launch_bins
+  write_cursor_models_cache "$(date +%s)"
+  # 80% used, 5 days into a 30-day cycle: 63 points ahead of pace.
+  cursor_month_json 80 432000 2160000
+  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-high --agent cursor --effort high --crew-id c1 42 "cursor pace early in cycle"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cursor month is at 80% and 63 points ahead of pace"* ]]
+  [[ "$output" == *"grok-4.7-medium"* ]]
+
+  # 25 days in, 5 left: about -3 ahead. A 7d default length would read this as
+  # ~51 ahead, so passing proves the length comes from the window's own span.
+  cursor_month_json 80 2160000 432000
+  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-high --agent cursor --effort high --crew-id c1 42 "cursor pace late in cycle"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"points ahead of pace"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+# cursor has no --effort knob (accepted and ignored), so the premium effort
+# refusal never applies to a cursor target; the model rung still does.
+
+@test "cursor pace gate never refuses premium effort on a cursor lead" {
+  stub_launch_bins
+  cursor_month_json 80 432000 2160000
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort xhigh --crew-id c1 42 "cursor xhigh effort ignored"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"premium effort"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "cursor pace gate still refuses the premium model rung at xhigh, without an effort refusal" {
+  write_cursor_models_cache "$(date +%s)"
+  cursor_month_json 80 432000 2160000
+  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-high --agent cursor --effort xhigh --crew-id c1 42 "cursor rung at xhigh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung (grok-4.7-high) is refused"* ]]
+  [[ "$output" != *"premium effort"* ]]
+}
+
+@test "cursor pace gate never refuses premium effort on a cursor role" {
+  stub_launch_bins
+  cursor_month_json 80 432000 2160000
+  DISPATCH_PROFILE=personal run run_dispatch deep opus --effort xhigh --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor role xhigh effort ignored"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"premium effort"* ]]
+  run grep -F -- 'cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model grok-4.7-medium' <(launch_log)
+  [ "$status" -eq 0 ]
 }
 
 @test "a 5h spike with 7d low does not trigger the budget rung gate" {

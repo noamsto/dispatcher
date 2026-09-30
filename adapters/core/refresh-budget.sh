@@ -25,11 +25,21 @@
 #     way it is).
 #   codex  — `codex app-server --stdio` JSON-RPC account/rateLimits/read
 #     (experimental API; any failure -> null).
-#   cursor — always null. Probed cursor-agent 2026.07: `status` is auth-only,
-#     `about` shows the tier string but no numbers, and no usage/quota
-#     subcommand exists. Plan usage is dashboard-only; the Enterprise Admin
-#     API reports org-wide consumption events (admin key required), never a
-#     member's remaining allowance.
+#   cursor — GET https://cursor.com/api/usage-summary (the dashboard's own
+#     endpoint) with cookie WorkosCursorSessionToken=<account>::<token>, sent
+#     through curl -K - on stdin only. Probed only when cursor-agent is on
+#     PATH; cursor-agent itself is never executed. Linux token:
+#     ${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json, first of .accessToken,
+#     .access_token, .token — the field name is UNVERIFIED, so a miss
+#     degrades to null; whether cursor-agent honours XDG_CONFIG_HOME is
+#     unverified too. macOS token: `security find-generic-password -s
+#     cursor-access-token -a cursor-user -w` (read-only; may raise a GUI ACL
+#     prompt for an item another binary created — bounded by timeout 10,
+#     then null). Account id: cli-config.json (Linux: next to auth.json;
+#     macOS: ~/.cursor/) .authInfo.authId, .authInfo.userId, else the JWT
+#     sub, with the provider prefix up to the last `|` stripped. The cookie
+#     form is unverified live. Strictly read-only on Cursor's auth state:
+#     never writes, refreshes, or rotates anything.
 #   pi     — GET /api/v1/key on OpenRouter (usage-priced, so there is no
 #     quota to probe — only a spend-vs-target check). Key resolution:
 #     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
@@ -76,7 +86,7 @@ done
 # and --report) and report_json(). wsecs covers only the windows with a known
 # nominal length — codex's 1d/unknown/other buckets have none, so no pace can
 # be computed for them. A window carrying starts_at (pi's calendar `month`,
-# which has no fixed length) supplies its own.
+# cursor's billing cycle — neither has a fixed length) supplies its own.
 # shellcheck disable=SC2016  # jq's own $vars, not bash expansions
 JQ_DEFS='
   def reltime: . as $s
@@ -135,7 +145,8 @@ JQ_DEFS='
      elif $w.used_pct < 95 then
        (if $fam == "5h" then "short window: prefer waiting past the reset to shedding burn class"
         elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
-        elif $fam == "month" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
+        elif $fam == "month" and $e == "pi" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
+        elif $fam == "month" then "monthly plan quota: prefer a cheaper burn class or rotate engines"
         else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
         end)
      elif $gate == null then "not binding: window has already reset"
@@ -421,6 +432,76 @@ probe_codex() {
   ' <<<"$resp" 2>/dev/null
 }
 
+# probe_cursor — print the cursor engine object from the dashboard's
+# usage-summary; return 1 with no cursor-agent CLI, 2 with no usable access
+# token, 3 with no usable account id, 4 when the call fails, 5 when the
+# response is not recognised. Token and account are spliced into a curl
+# config, so each must match the JWT / WorkOS id charset; the token reaches
+# jq only on stdin, and every call that sees auth state discards stderr
+# (jq errors can echo string values).
+probe_cursor() {
+  command -v cursor-agent >/dev/null 2>&1 || return 1
+  local conf token account
+  if [[ $(uname -s) == Darwin ]]; then
+    conf="$HOME/.cursor/cli-config.json"
+    token=$(timeout 10 security find-generic-password -s cursor-access-token -a cursor-user -w 2>/dev/null) || token=""
+  else
+    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/cursor"
+    conf="$dir/cli-config.json"
+    token=$(jq -r '[.accessToken, .access_token, .token | strings | select(. != "")][0] // empty' "$dir/auth.json" 2>/dev/null) || token=""
+  fi
+  [[ $token =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+  account=$(jq -r '[.authInfo.authId, .authInfo.userId | strings | select(. != "")][0] // empty' "$conf" 2>/dev/null) || account=""
+  if [[ -z $account ]]; then
+    account=$(jq -Rr '
+      split(".")[1] // empty
+      | gsub("-"; "+") | gsub("_"; "/")
+      | . + ("=" * ((4 - length % 4) % 4))
+      | @base64d | fromjson | .sub | strings' <<<"$token" 2>/dev/null) || account=""
+  fi
+  account="${account##*|}"
+  [[ $account =~ ^[A-Za-z0-9._-]+$ ]] || return 3
+
+  local resp
+  resp=$(curl -sf --max-time 15 -K - https://cursor.com/api/usage-summary <<<"header = \"Accept: application/json\"
+header = \"Cookie: WorkosCursorSessionToken=$account::$token\"") || return 4
+
+  # The team shape reports individualUsage.overall used/limit, the individual
+  # shape per-pool plan percentages; max(auto, api) errs toward refusing. The
+  # billing-cycle bounds are both kept or both dropped, so no half-sized
+  # window is ever written. limit_reached compares the raw percentages
+  # (used_pct is rounded for display only).
+  jq -e '
+    def toepoch:
+      if type == "number" then (if . > 1e12 then . / 1000 else . end) | floor
+      elif type == "string" then (try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null)
+      else null end;
+    def bounded: (.limit | type) == "number" and .limit > 0 and (.used | type) == "number";
+    (.isUnlimited == true) as $unlimited
+    | ([.individualUsage.overall | objects | select(bounded) | .used / .limit * 100][0]) as $overall
+    | [.individualUsage.plan | objects | .autoPercentUsed, .apiPercentUsed | numbers] as $plan
+    | (if $overall != null then $overall else ($plan | max) end) as $pct
+    | if $pct == null and ($unlimited | not) then error("no usable percentage") else . end
+    | (.billingCycleStart | toepoch) as $s
+    | (.billingCycleEnd | toepoch) as $e
+    | (if $s != null and $e != null and $e > $s then [$s, $e] else [null, null] end) as [$starts, $resets]
+    | [.individualUsage.onDemand, .teamUsage.onDemand | objects | select(.enabled == true)] as $od
+    | ([$plan[], $overall | numbers] | max) as $raw
+    | {
+        source: "usage_summary",
+        plan_type: (if (.membershipType | type) == "string" then .membershipType else null end),
+        credits_cover: ($od | any(.limit == null or (bounded and .used < .limit))),
+        unlimited: $unlimited,
+        windows: (if $unlimited then {} else {month: {used_pct: (($pct * 10 | round) / 10), starts_at: $starts, resets_at: $resets}} end),
+        limit_reached: (
+          if $unlimited then null
+          elif $raw != null and $raw >= 100 then {reason: "plan usage at \($raw | round)%", resets_at: $resets}
+          elif ($od | any(bounded and .used >= .limit)) then {reason: "on-demand limit reached", resets_at: $resets}
+          else null end)
+      }
+  ' <<<"$resp" 2>/dev/null || return 5
+}
+
 # _or_key — resolve the OpenRouter key into the caller's `or_key` local
 # (never printed). DISPATCH_OPENROUTER_KEY_FILE, when set, is the exclusive
 # source — an unreadable file or an empty first line leaves `or_key` empty
@@ -545,14 +626,16 @@ report() {
        else
          "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
        end) + $reset
-    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) + ([.value.windows | to_entries[] |
+    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) +
+      (if .value.unlimited == true then "unlimited" else ([.value.windows | to_entries[] |
         "\(.key) \(.value.used_pct)% used" +
         (if .value.resets_at then
            " (resets \(.value.resets_at | todateiso8601)" +
            (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
            ")"
          else "" end)
-      ] | join(", ")) + (if .value.credits_cover then " [credits cover]" else "" end)
+      ] | join(", ")) end) + (if .value.credits_cover then " [credits cover]" else "" end) +
+      (if (.value.limit_reached.reason | type) == "string" then " [limit reached: \(.value.limit_reached.reason)]" else "" end)
     end
   ' "$OUT"
 }
@@ -605,7 +688,7 @@ main() {
   [[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"
   [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"
 
-  local claude='null' codex='null' pi='null' probe
+  local claude='null' codex='null' cursor='null' pi='null' probe
   if probe=$(probe_claude); then
     claude=$probe
   else
@@ -616,7 +699,17 @@ main() {
   else
     warn "codex quota unknown (no codex CLI or app-server call failed)"
   fi
-  local pi_probe rc
+  local cursor_probe rc
+  cursor_probe=$(probe_cursor) && rc=0 || rc=$?
+  case $rc in
+  0) cursor=$cursor_probe ;;
+  1) warn "cursor quota unknown (no cursor-agent CLI)" ;;
+  2) warn "cursor quota unknown — no usable cursor-agent access token (auth.json fields tried: accessToken, access_token, token; macOS: keychain item cursor-access-token)" ;;
+  3) warn "cursor quota unknown — no cursor account id (cli-config.json authInfo.authId/userId, JWT sub)" ;;
+  4) warn "cursor quota unknown — usage-summary call failed (HTTP error, expired login, or timeout)" ;;
+  *) warn "cursor quota unknown — usage-summary response not recognised" ;;
+  esac
+  local pi_probe
   pi_probe=$(probe_pi) && rc=0 || rc=$?
   if [[ $rc -eq 0 ]]; then
     pi=$pi_probe
@@ -635,11 +728,12 @@ main() {
     --argjson fetched_epoch "$(date +%s)" \
     --argjson claude "$claude" \
     --argjson codex "$codex" \
+    --argjson cursor "$cursor" \
     --argjson pi "$pi" \
     '{
        fetched_at: $fetched_at,
        fetched_epoch: $fetched_epoch,
-       engines: {claude: $claude, codex: $codex, cursor: null, pi: $pi}
+       engines: {claude: $claude, codex: $codex, cursor: $cursor, pi: $pi}
      }' >"$tmp"
   mv "$tmp" "$OUT"
 

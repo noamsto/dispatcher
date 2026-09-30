@@ -176,6 +176,14 @@ unknown, never free or unlimited. No target set means the spend is recorded
 but purely informational — no `month` window, no gate. Because the gates
 below fail open on a cache older than ~2h, run `refresh-budget` right before
 sizing a pi fan-out, not just once at session start.
+Cursor's entry is plan usage, not spend: `engines.cursor` holds a `month`
+window over its billing cycle (`starts_at`→`resets_at`), the plan's `plan_type`
+and `credits_cover`, and a `limit_reached` signal, read from the dashboard's
+usage summary with cursor-agent's own stored login. `used_pct` is the overall
+figure on team plans, else the higher of the Auto and API pools, so an
+exhausted API pool reads full even when Auto has room. An unlimited plan
+records no window and no limit. `null` — no cursor-agent, no usable login, or a
+failed call (`refresh-budget` warns which step) — is unknown, not free.
 
 - **pi is the cheap lane when claude's `7d` window runs ahead of pace — unless
   OpenRouter is itself ahead of its monthly pace.** `engines.pi.windows.month`
@@ -204,12 +212,14 @@ sizing a pi fan-out, not just once at session start.
   rotation). Inside its last 15% (~25h to reset), prefer waiting to shedding a
   fan-out you would otherwise have run.
 - **`month` at ≥85%** (pi's OpenRouter target) — stop shedding standard/trivial
-  work to pi even when it is not ahead of pace, and shed pi fan-out;
-  `refresh-budget`'s lever line says the same.
+  work to pi even when it is not ahead of pace, and shed pi fan-out. Cursor's
+  `month` is its billing cycle, a real plan budget: shed burn class or rotate
+  engines. `refresh-budget`'s lever line says the same for each (cursor's reads
+  "monthly plan quota: prefer a cheaper burn class or rotate engines").
 - **All three bullets above are advisory judgement, implemented by nothing** —
   no code reads the `5h` window for routing, and the mechanical gate below
-  reads only the `7d` window (pi: its `month` window) and only the pace rule,
-  never the 85% line. Don't mistake this prose for a mechanism.
+  reads only the `7d` window (pi and cursor: their `month` window) and only the
+  pace rule, never the 85% line. Don't mistake this prose for a mechanism.
 - **The tail of a window is not free headroom.** The pace rule below
   deliberately allows the premium rung at, say, 94% with two hours left on
   the `7d` window. A `deep` fan-out launched there can cross 95% mid-run and
@@ -234,7 +244,12 @@ sizing a pi fan-out, not just once at session start.
   `7d`: its length is the calendar month (`starts_at`→`resets_at`), not a
   fixed 604800s, but the same ≥70%-and->15-points math runs against
   `pi.windows.month`, and pi has no premium model to downgrade — only `xhigh`/
-  `max` effort is refused.
+  `max` effort is refused. Cursor's pace window is `month` too: its billing
+  cycle (`starts_at`→`resets_at`), same math against `cursor.windows.month`.
+  Cursor has a premium model rung to shed (`grok-4.7-high` →
+  `grok-4.7-medium`) but no effort knob — `--effort` is accepted-and-ignored
+  and its roles inherit the lead's effort — so only the model rung is refused;
+  `xhigh`/`max` is never refused for cursor.
 - **Two overrides, different blast radii.** `DISPATCH_IGNORE_RUNG=<the exact
   model id or effort>` bypasses only its matching refusal for that launch target,
   and leaves the ≥95% hard stop armed — the escape an agent can actually
@@ -312,30 +327,45 @@ sizing a pi fan-out, not just once at session start.
   `DISPATCH_IGNORE_RUNG` on each engine in turn; that override is for one
   dispatch, not a habit.
 - **`credits_cover: true`** means the engine bills real money past the plan
-  limit — the gate still fires regardless. Overriding just the rung refusal
-  is `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`; overriding both gates is
-  `--ignore-budget`, the human's spend decision — say so when you take
-  either.
-- **Codex absolute limits (`limit_reached`) are a second, window-independent
-  exhaustion signal** (#201). The app-server snapshot can be authoritative-
-  exhausted while every percent window is below 95% — it denies ordinary
-  usage outright (`ordinary_usage_allowed: false`), names a rate-limit-reached
-  reason (`rate_limit_reached_type`, e.g.
+  limit — the gate still fires regardless. For cursor it means an enabled
+  on-demand budget with room, and its gate still fires at plan 100%.
+  Overriding just the rung refusal is
+  `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`;
+  overriding both gates is `--ignore-budget`, the human's spend decision —
+  say so when you take either.
+- **Absolute limits (`limit_reached`) are a second, window-independent
+  exhaustion signal** (#201, #629). Codex's app-server snapshot can be
+  authoritative-exhausted while every percent window is below 95% — it denies
+  ordinary usage outright (`ordinary_usage_allowed: false`), names a
+  rate-limit-reached reason (`rate_limit_reached_type`, e.g.
   `workspace_owner_credits_depleted`), marks spend control reached
   (`spend_control_reached: true`), or reports a zeroed individual spend limit
-  (`individual_remaining_percent: 0`). `dispatch` refuses `--agent codex` on
-  any of these with the same message shape and `--ignore-budget` escape as the
-  ≥95% stop. `refresh-budget` also records each engine's `plan_type` (codex
-  from the snapshot; claude's oauth payload has no plan key, so `null`; cursor
-  unobservable) and prints it in the summary. Missing data never blocks — an
-  older cache without `plan_type`/`limit_reached` gates exactly as before.
+  (`individual_remaining_percent: 0`). `refresh-budget` sets cursor's when any
+  plan percentage (Auto, API, or the team overall) reaches 100%, or an enabled
+  on-demand budget with a positive limit is spent (`reason` is
+  `plan usage at N%` or `on-demand limit reached`; `resets_at` is the
+  billing-cycle end) — on a team plan one pool can sit at 100% under an
+  overall below 95%. `dispatch` refuses
+  `--agent codex` or `--agent cursor` on any of these with the same message
+  shape and `--ignore-budget` escape as the ≥95% stop. **This absolute-limit
+  stop covers the lead only**, for both engines: a codex or cursor role target
+  passes through the ≥95% stop alone. A `limit_reached` refusal also has
+  **no hold path** — the hold release predicate reads ≥95% windows only — so
+  hand the task back or pick another engine. `refresh-budget` also records
+  each engine's `plan_type` (codex from the snapshot; claude's oauth payload
+  has no plan key, so `null`; cursor from usage-summary's `membershipType`)
+  and prints it in the summary. Missing data never blocks — an older cache
+  without `plan_type`/`limit_reached` gates exactly as before, and a cursor
+  `limit_reached.resets_at` already past does not refuse.
 - **Report OpenRouter month-to-date spend vs target** using `refresh-budget`'s
   `pi:` summary line (spend, target, projection) alongside claude/codex/
   cursor's lines — it's the same one-line-per-engine summary, not a separate
   report.
-- **cursor's quota is unobservable** — treat it as neutral, but it's the engine
-  most likely to surprise you; route the work you'd shed first there, not the
-  work you'd shed last.
+- **cursor's quota is the shakiest reading.** When `refresh-budget` can't
+  read it (`engines.cursor` is `null`), treat it as neutral, but it's the
+  engine most likely to surprise you — the probe rides an undocumented
+  dashboard endpoint — so route the work you'd shed first there, not the work
+  you'd shed last. A non-null reading gates and levers like any other engine's.
 
 **Engine constraint:** the dispatchable set is whatever `dispatch --engines`
 prints — the resolved `engines` setting (a per-launch `DISPATCH_ENGINES` when
