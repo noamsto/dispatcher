@@ -317,9 +317,10 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
 - **`credits_cover: true`** means the engine bills real money past the plan
   limit — the gate still fires regardless. For cursor it means an enabled
   on-demand budget with room, and its gate still fires at plan 100%.
-  Overriding just the rung refusal is `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`; overriding both gates is
-  `--ignore-budget`, the human's spend decision — say so when you take
-  either.
+  Overriding just the rung refusal is
+  `DISPATCH_IGNORE_RUNG=<the exact refused model or effort target>`;
+  overriding both gates is `--ignore-budget`, the human's spend decision —
+  say so when you take either.
 - **Absolute limits (`limit_reached`) are a second, window-independent
   exhaustion signal** (#201, #629). Codex's app-server snapshot can be
   authoritative-exhausted while every percent window is below 95% — it denies
@@ -327,31 +328,32 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
   rate-limit-reached reason (`rate_limit_reached_type`, e.g.
   `workspace_owner_credits_depleted`), marks spend control reached
   (`spend_control_reached: true`), or reports a zeroed individual spend limit
-  (`individual_remaining_percent: 0`). `refresh-budget` sets cursor's when any plan percentage
-  (Auto, API, or the team overall) reaches 100%, or an enabled on-demand
-  budget with a positive limit is spent (`reason` is `plan usage at N%` or
-  `on-demand limit reached`; `resets_at` is the billing-cycle end) — on a team
-  plan one pool can sit at 100% under an overall below 95%. `dispatch` refuses
+  (`individual_remaining_percent: 0`). `refresh-budget` sets cursor's when any
+  plan percentage (Auto, API, or the team overall) reaches 100%, or an enabled
+  on-demand budget with a positive limit is spent (`reason` is
+  `plan usage at N%` or `on-demand limit reached`; `resets_at` is the
+  billing-cycle end) — on a team plan one pool can sit at 100% under an
+  overall below 95%. `dispatch` refuses
   `--agent codex` or `--agent cursor` on any of these with the same message
   shape and `--ignore-budget` escape as the ≥95% stop. **This absolute-limit
   stop covers the lead only**, for both engines: a codex or cursor role target
   passes through the ≥95% stop alone. A `limit_reached` refusal also has
   **no hold path** — the hold release predicate reads ≥95% windows only — so
-  hand the task back or pick another engine. `refresh-budget` also records each engine's
-  `plan_type` (codex from the snapshot; claude's oauth payload has no plan key,
-  so `null`; cursor from usage-summary's `membershipType`) and prints it in the
-  summary. Missing data never blocks — an older cache without
-  `plan_type`/`limit_reached` gates exactly as before, and a cursor
+  hand the task back or pick another engine. `refresh-budget` also records
+  each engine's `plan_type` (codex from the snapshot; claude's oauth payload
+  has no plan key, so `null`; cursor from usage-summary's `membershipType`)
+  and prints it in the summary. Missing data never blocks — an older cache
+  without `plan_type`/`limit_reached` gates exactly as before, and a cursor
   `limit_reached.resets_at` already past does not refuse.
 - **Report OpenRouter month-to-date spend vs target** using `refresh-budget`'s
   `pi:` summary line (spend, target, projection) alongside claude/codex/
   cursor's lines — it's the same one-line-per-engine summary, not a separate
   report.
-- **cursor's quota is the shakiest reading** — `refresh-budget` probes it, but
-  when it can't (`engines.cursor` is `null`) treat it as neutral. It's still
-  the engine most likely to surprise you: the probe rides an undocumented
-  dashboard endpoint and an unverified auth field name. Route the work you'd
-  shed first there, not the work you'd shed last.
+- **cursor's quota is the shakiest reading.** When `refresh-budget` can't
+  read it (`engines.cursor` is `null`), treat it as neutral, but it's the
+  engine most likely to surprise you — the probe rides an undocumented
+  dashboard endpoint — so route the work you'd shed first there, not the work
+  you'd shed last. A non-null reading gates and levers like any other engine's.
 
 **Engine constraint:** the dispatchable set is whatever `dispatch --engines`
 prints — the resolved `engines` setting (a per-launch `DISPATCH_ENGINES` when

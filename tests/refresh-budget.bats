@@ -1163,6 +1163,30 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "cursor billing dates are both kept or both dropped, even at a 100% plan pool" {
+  cursor_auth accessToken
+  cursor_config
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  # A missing start, then a +02:00 start the parser doesn't accept: the valid
+  # end must not survive alone as a half-sized window or a limit reset.
+  for start in '' '"billingCycleStart": "2026-09-14T08:12:31+02:00",'; do
+    cursor_usage '{
+      '"$start"'
+      "billingCycleEnd": "2026-10-14T08:12:31Z",
+      "membershipType": "pro", "isUnlimited": false,
+      "individualUsage": {"plan": {"enabled": true, "autoPercentUsed": 12, "apiPercentUsed": 100},
+                          "onDemand": {"enabled": false}}
+    }'
+    run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run jq -e '.engines.cursor.windows.month.starts_at == null
+      and .engines.cursor.windows.month.resets_at == null
+      and .engines.cursor.limit_reached.resets_at == null
+      and .engines.cursor.limit_reached.reason == "plan usage at 100%"' "$cache"
+    [ "$status" -eq 0 ]
+  done
+}
+
 @test "cursor exhausted on-demand block sets limit_reached; a 0 or null limit never does" {
   cursor_auth accessToken
   cursor_config
@@ -1306,6 +1330,7 @@ EOF
   [[ "$output" == *"cursor: [pro] month 63.5% used"* ]]
   [[ "$output" != *"SENTINELSIG"* ]]
   grep -q "cursor_cookie_on_stdin=yes" "$STUB_LOG"
+  run ! grep -q SENTINELSIG "$STUB_LOG"
   run ! grep -q SENTINELSIG "$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
@@ -1381,6 +1406,18 @@ EOF
   [ "$output" = "1" ]
   run ! grep -q SENTINELCURSORTOKEN "$STUB_LOG"
   run ! grep -q SENTINELCURSORTOKEN "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "macOS with a denied keychain leaves cursor unknown without calling usage-summary" {
+  cursor_config "$HOME/.cursor"
+  cursor_individual_usage
+  SHIM_UNAME=Darwin run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cursor quota unknown — no usable cursor-agent access token"* ]]
+  grep -qx "security find-generic-password -s cursor-access-token -a cursor-user -w" "$STUB_LOG"
+  run ! grep -q 'cursor.com/api/usage-summary' "$STUB_LOG"
+  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
 }
 
 # ---------------------------------------------------------------------------
