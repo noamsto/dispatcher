@@ -70,7 +70,7 @@ refuse_claude_sonnet_cap() {
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's month) is materially ahead of pace.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   # Only shed a rung when the downgrade burns less (defaults.json
