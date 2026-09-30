@@ -169,20 +169,21 @@ per-engine subscription quota to
 session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
 Pi/OpenRouter is usage-priced, but once a key is found it does carry a
-cache entry (key sources, first hit wins: `DISPATCH_OPENROUTER_KEY_FILE`,
-exclusive when set; `OPENROUTER_API_KEY`; then pi's own OpenRouter OAuth login
-(`.openrouter.access` in its auth store, read-only, `type: "oauth"` only): `engines.pi` holds month-to-date spend (`spend_usd`) against an
+cache entry. Key sources, first hit wins: `DISPATCH_OPENROUTER_KEY_FILE`
+(exclusive when set); `OPENROUTER_API_KEY`; then pi's own OpenRouter OAuth
+login (`.openrouter.access` in its auth store, read-only, `type: "oauth"`
+only). `engines.pi` holds month-to-date spend (`spend_usd`) against an
 optional configured monthly target (`target_usd`) and a burn-rate projection
 (`projected_month_end_usd`), over the UTC calendar month. `null` still means
-unknown, never free or unlimited. With no configured target, a key whose `limit_reset` is `monthly` and whose
-`limit` is set supplies it (`target_source: "key_limit"`); an explicit
-`monthlyUsd` always wins, and any other reset type sets none. No target at
-all means the spend is recorded
-but purely informational — no `month` window and no soft gate. Separately, a
-key whose own credit limit is set and exhausted (`limit_remaining <= 0`) sets
+unknown, never free or unlimited. With no configured target, a key whose
+`limit_reset` is `monthly` and whose `limit` is set supplies it
+(`target_source: "key_limit"`); an explicit `monthlyUsd` always wins, and any
+other reset type sets none. No target at all means the spend is recorded but
+purely informational — no `month` window and no soft gate. Separately, a key
+whose own credit limit is set and exhausted (`limit_remaining <= 0`) sets
 `engines.pi.limit_reached`, a hard wall: `dispatch --agent pi` (lead only) is
-refused, `--ignore-budget` overrides, like the codex absolute limit. Because the gates
-below fail open on a cache older than ~2h, run `refresh-budget` right before
+refused, `--ignore-budget` overrides, like the codex absolute limit. Because
+the gates below fail open on a cache older than ~2h, run `refresh-budget` right before
 sizing a pi fan-out, not just once at session start.
 Cursor's entry is plan usage, not spend: `engines.cursor` holds a `month`
 window over its billing cycle (`starts_at`→`resets_at`), the plan's `plan_type`
