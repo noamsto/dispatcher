@@ -9022,6 +9022,11 @@ _rw_wait_captures() {
   _rw_start claude
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
   _rw_wait_sends 1
+  # The next delivery lands several ticks after the first; linger afterwards to catch a duplicate.
+  for n in $(seq 1 150); do
+    grep -qE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG" && break
+    sleep 0.1
+  done
   sleep 1.2
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
