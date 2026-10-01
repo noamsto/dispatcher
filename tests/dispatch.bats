@@ -8606,6 +8606,7 @@ send-keys)
     rm -f "$STUB_DIR/flip"
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
   fi
+  [ -x "$STUB_DIR/hook" ] && "$STUB_DIR/hook" "$@"
   ;;
 load-buffer)
   [ -e "$STUB_DIR/load_buffer_fail" ] && exit 1
@@ -8618,6 +8619,7 @@ paste-buffer)
     rm -f "$STUB_DIR/flip"
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
   fi
+  [ -x "$STUB_DIR/hook" ] && "$STUB_DIR/hook" "$@"
   ;;
 esac
 exit 0
@@ -8630,7 +8632,8 @@ EOF
 # real capture value; defaults to "go".
 _rw_start() {
   export STUB_DIR STUB_LOG
-  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  # shellcheck disable=SC2086
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 ${RW_EXTRA:-} >/dev/null 2>&1 &
   RW_PID=$!
   sleep 0.6
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
@@ -9045,6 +9048,11 @@ _rw_wait_captures() {
   _rw_start claude
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
   _rw_wait_sends 1
+  # The next delivery lands several ticks after the first; linger afterwards to catch a duplicate.
+  for n in $(seq 1 150); do
+    grep -qE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG" && break
+    sleep 0.1
+  done
   sleep 1.2
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
@@ -9263,6 +9271,345 @@ _rw_wait_captures() {
   _rw_wait_captures 2
   _rw_stop
   [ "$(_rw_sends)" -eq 0 ]
+}
+
+# ---- --role-watch submit verification (#643) ---------------------------------
+# A stateful pane simulator behind the tmux stub. `input` is the composer's
+# content: a paste appends the payload (so a re-paste would duplicate it), an
+# Enter that is not swallowed clears it and starts a turn (`busy`). `swallow`
+# is how many Enters the pane ignores first.
+
+rw_tpl_pi_held() {
+  printf ' pi v0.87.1\n──────────────────────────────\n@TEXT@\n──────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)      unknown\n'
+}
+rw_tpl_claude_held() {
+  printf '✻ Churned for 36s · done 11:20 AM · 1 shell still running\n──────────────────\n❯ @TEXT@\n──────────────────\n  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents\n'
+}
+rw_tpl_codex_held() { rw_frame_codex_after_assignment | sed 's/Assignment: go/@TEXT@/'; }
+rw_tpl_cursor_held() { rw_frame_cursor_after_assignment | sed 's/Assignment: go/@TEXT@/'; }
+
+# pi 0.99.1 frames captured in a 14-row pane: a paste taller than the editor
+# scrolls it, drawing `↑ N more` / `↓ N more` inside the rules — text, not a live
+# turn. The capture ran with pi-vim loaded, which adds ` INSERT` to the lower
+# rule; the scrolled fixtures below drop that suffix (a pane that shows one still
+# reads as not idle and is never typed into — rw_frame_pi_idle_vim).
+rw_frame_pi_idle_vim() {
+  printf ' pi v0.99.1\n──────────────────────────────────────────────────────────────────────────\n\n──────────────────────────────────────────────────────────────── INSERT\n~/git/dispatcher\n0.0%%/0 (auto)                                                unknown\nLSP Inactive\n'
+}
+rw_tpl_pi_vim_held() {
+  rw_tpl_pi_held | sed 's/^─*$/&──── INSERT/'
+}
+rw_tpl_pi_scrolled_held() {
+  printf ' pi v0.99.1\n───────────────────────────────── ↑ 5 more ─────────────────────────────────\n@TEXT@\n────────────────────────────────────────────────────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)                                                unknown\nLSP Inactive\n'
+}
+rw_tpl_pi_midscroll_held() {
+  printf ' pi v0.99.1\n───────────────────────────────── ↑ 3 more ─────────────────────────────────\n@TEXT@\n───────────────────────────────── ↓ 2 more ─────────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)                                                unknown\nLSP Inactive\n'
+}
+
+# _rw_sim <engine> <idle-fn> <busy-fn> <swallow-count>
+_rw_sim() {
+  _rw_stub "$2"
+  "$3" >"$STUB_DIR/busy_frame"
+  "$2" >"$STUB_DIR/idle_frame"
+  "rw_tpl_${1}_held" >"$STUB_DIR/held_tpl"
+  : >"$STUB_DIR/input"
+  printf '%s\n' "$4" >"$STUB_DIR/swallow"
+  cat >"$STUB_DIR/hook" <<'EOF'
+#!/usr/bin/env bash
+render() {
+  {
+    if [ -s "$STUB_DIR/input" ]; then
+      tpl=$(cat "$STUB_DIR/held_tpl")
+      printf '%s\n' "${tpl//@TEXT@/$(cat "$STUB_DIR/input")}"
+    elif [ -e "$STUB_DIR/busy" ]; then
+      cat "$STUB_DIR/busy_frame"
+    else
+      cat "$STUB_DIR/idle_frame"
+    fi
+  } >"$STUB_DIR/frame"
+}
+case "$1 $*" in
+paste-buffer*) printf '%s' "$(cat "$STUB_DIR/paste_payload")" >>"$STUB_DIR/input" ;;
+send-keys*)
+  case "$*" in
+  'send-keys -t %6 Enter')
+    if [ -s "$STUB_DIR/input" ]; then
+      n=$(cat "$STUB_DIR/swallow")
+      if [ "$n" -gt 0 ]; then
+        printf '%s\n' $((n - 1)) >"$STUB_DIR/swallow"
+        [ -e "$STUB_DIR/dialog_frame" ] && { cp "$STUB_DIR/dialog_frame" "$STUB_DIR/frame"; exit 0; }
+      else
+        : >"$STUB_DIR/input"
+        touch "$STUB_DIR/busy"
+      fi
+    fi
+    ;;
+  'send-keys -t %6 C-u') : >"$STUB_DIR/input" ;;
+  esac
+  ;;
+esac
+render
+EOF
+  chmod +x "$STUB_DIR/hook"
+  "$2" >"$STUB_DIR/frame"
+}
+
+_rw_enters() { grep -cx 'send-keys -t %6 Enter' "$STUB_LOG" || true; }
+_rw_copies() { grep -o 'Assignment: go' "$STUB_DIR/frame" | wc -l; }
+_rw_wait_enters() {
+  local n
+  for n in $(seq 1 60); do
+    [ "$(_rw_enters)" -ge "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+_rw_unsubmitted() { grep -c '^msg .*assignment_unsubmitted' "$STUB_LOG" || true; }
+
+# _rw_swallow_case <engine> <idle-fn> <busy-fn> — the first Enter after the
+# paste is lost; the watcher must retry Enter alone and dequeue only once the
+# turn started.
+_rw_swallow_case() {
+  _spawn_role_fixture
+  _rw_sim "$1" "$2" "$3" 1
+  _rw_start "$1"
+  _rw_wait_enters 2
+  sleep 1
+  _rw_stop
+  [ "$(_rw_enters)" -eq 2 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ -e "$STUB_DIR/busy" ]
+  [ "$(_rw_copies)" -eq 0 ]
+}
+
+@test "role-watch: a swallowed first Enter is retried as a bare Enter, never a re-paste (pi)" {
+  _rw_swallow_case pi rw_frame_pi_idle rw_frame_pi_live
+}
+
+@test "role-watch: a swallowed first Enter is retried as a bare Enter, never a re-paste (claude)" {
+  _rw_swallow_case claude rw_frame_idle rw_frame_live
+}
+
+@test "role-watch: a swallowed first Enter is retried as a bare Enter, never a re-paste (codex)" {
+  _rw_swallow_case codex rw_frame_codex_idle_empty rw_frame_codex_live_turn
+}
+
+@test "role-watch: a swallowed first Enter is retried as a bare Enter, never a re-paste (cursor)" {
+  _rw_swallow_case cursor rw_frame_cursor_idle_empty rw_frame_cursor_live_turn
+}
+
+# A paste that scrolls the pi editor (`↑ N more` in its border) used to read as
+# a live turn: the post-paste re-check failed, no Enter was ever sent and the
+# role idled on an intact, unsent assignment (nix-config#444).
+_rw_scroll_case() {
+  _spawn_role_fixture
+  _rw_sim "$1" rw_frame_pi_idle rw_frame_pi_live 0
+  _rw_start pi
+  _rw_wait_enters 1
+  sleep 1
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ -e "$STUB_DIR/busy" ]
+}
+
+@test "role-watch: a long paste that scrolls the pi editor still gets its Enter" {
+  _rw_scroll_case pi_scrolled
+}
+
+@test "role-watch: a paste scrolled mid-editor (↑ and ↓ indicators) still gets its Enter" {
+  _rw_scroll_case pi_midscroll
+}
+
+@test "role-watch: a swallowed Enter on a scrolled pi editor is retried" {
+  _spawn_role_fixture
+  _rw_sim pi_scrolled rw_frame_pi_idle rw_frame_pi_live 1
+  _rw_start pi
+  _rw_wait_enters 2
+  sleep 1
+  _rw_stop
+  [ "$(_rw_enters)" -eq 2 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ -e "$STUB_DIR/busy" ]
+}
+
+@test "role-watch: an unrecognised frame after Enter is neither confirmed nor sent another Enter, then escalates" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 1
+  # the frame after Enter matches no recogniser (no input box at all)
+  printf ' something unrecognised\n' >"$STUB_DIR/dialog_frame"
+  RW_EXTRA='--submit-retries 2' _rw_start pi
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 0.5
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
+  grep -q 'could not confirm' "$STUB_LOG"
+}
+
+@test "role-watch: a pi pane whose lower rule carries a vim mode suffix is not typed into" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_idle_vim
+  _rw_start pi
+  _rw_wait_captures 3
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 0 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: a foreign draft in the box after Enter never gets a retry Enter" {
+  _spawn_role_fixture
+  _rw_sim claude rw_frame_idle rw_frame_live 1
+  rw_frame_claude_draft >"$STUB_DIR/dialog_frame"
+  RW_EXTRA='--submit-retries 2' _rw_start claude
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 0.5
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
+}
+
+# _rw_after_enter <engine> <idle-fn> <busy-fn> <frame-fn> — the first Enter is
+# swallowed and the pane then shows <frame-fn>; it must get no further Enter.
+_rw_after_enter() {
+  _spawn_role_fixture
+  _rw_sim "$1" "$2" "$3" 1
+  "$4" >"$STUB_DIR/dialog_frame"
+  RW_EXTRA='--submit-retries 2' _rw_start "$1"
+  _rw_wait_enters 1
+}
+
+rw_frame_pi_normal_held() {
+  rw_tpl_pi_vim_held | sed 's/@TEXT@/Assignment: go/; s/ INSERT$/ NORMAL/'
+}
+rw_frame_claude_spinner_empty() {
+  printf '%s\n' \
+    $'✻ Hatching… (2s · ↑ 1.2k tokens)' \
+    $'──────────────────' \
+    $'❯' \
+    $'──────────────────' \
+    $'  -- INSERT -- ⏵⏵ auto mode on · ← for agents'
+}
+
+@test "role-watch: pi text held under a vim normal-mode rule is unknown: no Enter, no dequeue, escalated" {
+  _rw_after_enter pi rw_frame_pi_idle rw_frame_pi_live rw_frame_pi_normal_held
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
+  grep -q 'could not confirm' "$STUB_LOG"
+}
+
+@test "role-watch: a cursor usage-limit frame after Enter gets no retry Enter" {
+  _rw_after_enter cursor rw_frame_cursor_idle_empty rw_frame_cursor_live_turn rw_frame_cursor_monthly_limit
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
+}
+
+@test "role-watch: a claude spinner row above an empty box is a live turn: dequeued, no alarm" {
+  _rw_after_enter claude rw_frame_idle rw_frame_live rw_frame_claude_spinner_empty
+  sleep 2.5
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+}
+
+@test "role-watch: a verdict that lands while the submit is still unconfirmed idles the role once it is" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 1
+  printf ' something unrecognised\n' >"$STUB_DIR/dialog_frame"
+  _rw_start pi
+  _rw_wait_enters 1
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  sleep 0.8
+  # the pane finally repaints as a live turn
+  rw_frame_pi_live >"$STUB_DIR/frame"
+  rm -f "$STUB_DIR/hook"
+  sleep 1.2
+  _rw_stop
+  # once at startup, once when the submit resolves
+  [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -ge 2 ]
+}
+
+@test "role-watch: several swallowed Enters are retried until the turn starts" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 3
+  _rw_start pi
+  _rw_wait_enters 4
+  sleep 1
+  _rw_stop
+  [ "$(_rw_enters)" -eq 4 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ -e "$STUB_DIR/busy" ]
+}
+
+@test "role-watch: an assignment still unsubmitted after the retry budget escalates and is not dequeued" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 99
+  RW_EXTRA='--submit-retries 2' _rw_start pi
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 2 ] && break
+    sleep 0.1
+  done
+  sleep 1.5
+  # initial Enter + 2 retries, then it stops
+  [ "$(_rw_enters)" -eq 3 ]
+  # one msg to the lead, one to the dispatcher, naming pane and role
+  grep -q '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_unsubmitted' "$STUB_LOG"
+  grep -q '^msg role:feat/9-x:reviewer dispatcher:c1 .*assignment_unsubmitted' "$STUB_LOG"
+  grep -q '^msg .*assignment_unsubmitted.*"pane":"%6"' "$STUB_LOG"
+  grep -q '^msg .*"role":"reviewer".*assignment_unsubmitted' "$STUB_LOG"
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  # the text stays in the box, exactly once, and the queue does not advance
+  [ "$(_rw_copies)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(grep -c '^paste Assignment: two' "$STUB_LOG" || true)" -eq 0 ]
+  # the lead submits it by hand: the queue then moves on
+  : >"$STUB_DIR/input"
+  touch "$STUB_DIR/busy"
+  "$STUB_DIR/hook" noop
+  rm -f "$STUB_DIR/busy"
+  "$STUB_DIR/hook" noop
+  for n in $(seq 1 60); do
+    grep -q '^paste Assignment: two' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  _rw_stop
+  grep -q '^paste Assignment: two' "$STUB_LOG"
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+}
+
+@test "role-watch: a dialog raised in place of the turn never gets a retry Enter" {
+  _spawn_role_fixture
+  _rw_sim claude rw_frame_idle rw_frame_live 1
+  rw_frame_permission >"$STUB_DIR/dialog_frame"
+  _rw_start claude
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
+  _rw_wait_enters 1
+  sleep 2
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  # a dialog neither dequeues nor escalates: the next assignment waits
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ "$(grep -c '^paste Assignment: two' "$STUB_LOG" || true)" -eq 0 ]
 }
 
 @test "role-watch: sender: a different-session lead delivers once" {
