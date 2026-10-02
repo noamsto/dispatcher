@@ -4148,7 +4148,7 @@ stall-watch)
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
   # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Six pane detectors read one capture per tick (D6 reads the bus instead):
+  # working (#31). Seven pane detectors read one capture per tick (D6 reads the bus instead):
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
@@ -4164,6 +4164,12 @@ stall-watch)
   #   D5 stalled:    pane still a bare shell --launch seconds in and no engine
   #                  ever seen there (`stalled: launch-not-started`, #342);
   #                  clears when the engine appears
+  #   D7 runaway:    a model sentinel token (`<｜end▁of▁thinking｜>`, `<|im_end|>`,
+  #                  …) leaked into assistant prose — outside any tool-output
+  #                  block — for --runaway-hits samples while the output-token
+  #                  count grew by --runaway-tokens (#650). claude and pi only.
+  #                  Never escalates: the turn is unrecoverable but the worktree
+  #                  usually isn't, so verify the pane, then kill and re-dispatch.
   #   D6 unread:     lead `working` while a role:<branch>:* msg to its session
   #                  sits past the delivered mark for --unread (#330); clears
   #                  once delivered. Repainting panes never trip D2/D3, so this
@@ -4189,7 +4195,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S]" >&2
+    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -4248,6 +4254,8 @@ stall-watch)
   bg_wait=7200
   launch=150
   unread=600
+  runaway_hits=3
+  runaway_tokens=1500
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -4303,6 +4311,14 @@ stall-watch)
       unread="${2:-}"
       shift 2
       ;;
+    --runaway-hits)
+      runaway_hits="${2:-}"
+      shift 2
+      ;;
+    --runaway-tokens)
+      runaway_tokens="${2:-}"
+      shift 2
+      ;;
     *)
       echo "crew: stall-watch: unknown arg '$1'" >&2
       exit 1
@@ -4327,6 +4343,15 @@ stall-watch)
     sig_session_limit=1
     sig_cursor_limit=0
     sig_bgwait=1
+    sig_runaway=1
+    ;;
+  pi)
+    sig_prompt=0
+    sig_meter=0
+    sig_session_limit=0
+    sig_cursor_limit=0
+    sig_bgwait=0
+    sig_runaway=1
     ;;
   codex)
     sig_prompt=1
@@ -4334,6 +4359,7 @@ stall-watch)
     sig_session_limit=0
     sig_cursor_limit=0
     sig_bgwait=0
+    sig_runaway=0
     ;;
   cursor)
     sig_prompt=0
@@ -4341,6 +4367,7 @@ stall-watch)
     sig_session_limit=0
     sig_cursor_limit=1
     sig_bgwait=0
+    sig_runaway=0
     ;;
   *)
     sig_prompt=0
@@ -4348,9 +4375,40 @@ stall-watch)
     sig_session_limit=0
     sig_cursor_limit=0
     sig_bgwait=0
+    sig_runaway=0
     ;;
   esac
   _frame_classifier
+
+  # Leaked model sentinels: DeepSeek `<｜…｜>` (fullwidth bars), ChatML/GPT
+  # `<|…|>` with a known token name.
+  re_sentinel='<｜[^｜>]{1,40}｜>|<\|(im_start|im_end|endoftext|eot_id|start_header_id|end_header_id)\|>'
+
+  # _runaway_prose <text> — the bottom of the frame with tool output removed, so
+  # a worker legitimately reading or editing text that contains a sentinel (this
+  # very detector, a fixture) never matches. claude: a `⎿` result row and its
+  # deeper-indented continuation, until the next `⏺` row; pi: a `Tool output`
+  # row until the next blank line.
+  _runaway_prose() {
+    printf '%s\n' "$1" | tail -60 | awk '
+      function flush(  i) { for (i = 1; i <= n; i++) print buf[i]; n = 0 }
+      /^[[:space:]]*⏺/ { skip = 0; n = 0 }
+      /^[[:space:]]*⏺[[:space:]]+[A-Za-z_]+\(/ { next }
+      /^[[:space:]]*(>|❯)/ { next }
+      /^[[:space:]]*⎿/ { skip = 1; next }
+      /^[[:space:]]*Tool output/ { skip = 2; next }
+      skip == 1 && (/^[[:space:]]*$/ || /^     /) { next }
+      skip == 2 && (/^[[:space:]]*$/ || /^  /) { next }
+      { skip = 0; buf[++n] = $0 }
+      END { flush() }'
+  }
+
+  # _out_tokens <text> — output-token count as an integer: the last `↓ N[kM]`
+  # in the bottom lines (claude's live meter, pi's footer). Empty when absent.
+  _out_tokens() {
+    printf '%s\n' "$1" | tail -12 | grep -oE '↓ ?[0-9.]+[kM]?' | tail -1 |
+      awk '{ sub(/^↓ ?/, ""); n=$0; m=1; if (n ~ /k$/) m=1000; else if (n ~ /M$/) m=1000000; sub(/[kM]$/, "", n); printf "%d", n * m }' || true
+  }
 
   # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
   # D0/D3 read the hash, D1/D2 read the text.
@@ -4618,6 +4676,9 @@ BUSLINE
   d4_since=0
   d5_at=0
   d6_at=0
+  d7_hits=0
+  d7_tok0=0
+  d7_at=0
   engine_seen=0
   _bus_refresh
   while :; do
@@ -4894,6 +4955,40 @@ BUSLINE
       d1b_hits=0
     fi
 
+    # ---- D7: runaway output (#650) ----------------------------------------
+    # The opposite of D2/D3: a degenerated turn repaints constantly and its
+    # token count climbs, so it reads as a busy worker forever. A leaked model
+    # sentinel in assistant prose is the engine-independent tell; it must
+    # persist --runaway-hits samples AND the output-token count must have grown
+    # by --runaway-tokens since the first hit, so a transient mention or a
+    # quoted string in a short reply cannot post. Tool-output blocks are
+    # excluded (see _runaway_prose). Never escalates (no d7 arm in the dead:
+    # check). A lexical word-salad check (signal 3) is deliberately absent: it
+    # needs real captures to tune and the sentinel+growth pair covers the
+    # measured incident.
+    if [ "$suppressed" = 0 ] && [ "$sig_runaway" = 1 ] && [ "$role_mode" = 0 ] &&
+      prose=$(_runaway_prose "$text") && [[ "$prose" =~ $re_sentinel ]]; then
+      tok=$(_out_tokens "$text")
+      if [ -n "$tok" ]; then
+        if [ "$d7_hits" = 0 ] || [ "$tok" -lt "$d7_tok0" ]; then
+          d7_tok0="$tok"
+        fi
+        d7_hits=$((d7_hits + 1))
+        if [ "$d7_at" = 0 ] && [ "$d7_hits" -ge "$runaway_hits" ] && [ $((tok - d7_tok0)) -ge "$runaway_tokens" ]; then
+          if _post_blocked "runaway:" "runaway: leaked model sentinel in pane $pane for $d7_hits samples while output tokens grew by $((tok - d7_tok0)) — the turn is degenerate; verify the pane, then kill and re-dispatch (the worktree usually survives)"; then
+            d7_at="$now"
+          fi
+        fi
+      fi
+    else
+      if [ "$d7_at" != 0 ]; then
+        _post_clear "runaway:"
+        d7_at=0
+      fi
+      d7_hits=0
+      d7_tok0=0
+    fi
+
     # ---- D3: quiet pane ---------------------------------------------------
     # Byte-identity, not "no meter": a healthy claude pane repaints its spinner
     # every second, so a working worker can never satisfy D3 even if every
@@ -4984,7 +5079,7 @@ BUSLINE
     if [ "$role_mode" = 0 ] && [ "$d2_at" != 0 ] && [ $((now - d2_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
-      prompt:* | quota:*) ;;
+      prompt:* | quota:* | runaway:*) ;;
       *)
         _post failed "dead: turn-stall: unchanged for $((now - d2_at))s"
         exit 0
@@ -4994,7 +5089,7 @@ BUSLINE
     if [ "$role_mode" = 0 ] && [ "$d3_at" != 0 ] && [ $((now - d3_at)) -ge "$dead" ]; then
       _bus_refresh
       case "$bus_detail" in
-      prompt:* | quota:*) ;;
+      prompt:* | quota:* | runaway:*) ;;
       *)
         if ! _pane_engine_alive; then
           _post failed "dead: quiet: unchanged for $((now - d3_at))s"

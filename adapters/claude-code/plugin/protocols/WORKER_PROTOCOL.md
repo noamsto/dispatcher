@@ -629,7 +629,7 @@ Immediately before every stopping path, emit one complete latest-state metrics s
   so it does not protect a subagent batch — the watchdog's own conjuncts do.
 - **A watchdog may post on your behalf.** `dispatch` spawns `crew stall-watch` per
   worker; it samples your pane and can append `blocked` with `body.source:"watchdog"`
-  and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`, `load:`), or
+  and a reserved `detail` prefix (`prompt:`, `turn-stall:`, `quiet:`, `stalled:`, `load:`, `runaway:`), or
   `failed` with a `dead:` prefix when the same evidence still holds 30 minutes later. It
   posts under your session id, never posts a `msg`, and never answers a prompt for you.
   If you find a watchdog `blocked` in your own history, you are by definition alive:
