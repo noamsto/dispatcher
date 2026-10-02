@@ -7360,6 +7360,40 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   [ "$(grep -cF -- '--session-id' <(launch_log))" -eq 1 ]
 }
 
+@test "engine_session: a claude dispatch row carries the id passed to --session-id" {
+  stub_launch_bins
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "extra dir"
+  [ "$status" -eq 0 ]
+  sid="$(jq -r 'select(.kind=="dispatch") | .engine_session' "$log" | tail -1)"
+  [[ "$sid" =~ ^$_lead_uuid_re$ ]]
+  grep -qF -- "--session-id $sid " <(launch_log)
+  [ "$(cat "$TEST_REPO/.git/crew/leads/feat/42-extra-dir")" = "claude $sid" ]
+}
+
+@test "engine_session: a pi dispatch row carries the id passed to --session-id" {
+  stub_launch_bins
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi lead"
+  [ "$status" -eq 0 ]
+  sid="$(jq -r 'select(.kind=="dispatch") | .engine_session' "$log" | tail -1)"
+  [[ "$sid" =~ ^$_lead_uuid_re$ ]]
+  grep -qF -- "--session-id $sid " <(launch_log)
+}
+
+@test "engine_session: codex and cursor dispatch rows carry null" {
+  stub_launch_bins
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  DISPATCH_PROFILE=personal run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --no-grid --crew-id c1 42 "codex lead"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c 'select(.kind=="dispatch") | .engine_session' "$log" | tail -1)" = null ]
+  DISPATCH_PROFILE=personal run run_dispatch standard composer-2.5 --agent cursor --effort medium --no-grid --crew-id c1 43 "cursor lead"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c 'select(.kind=="dispatch") | .engine_session' "$log" | tail -1)" = null ]
+}
+
 @test "lead-session: eager claude roles do not add --session-id or overwrite the lead's record" {
   stub_launch_bins
   _grid_tmux_stub

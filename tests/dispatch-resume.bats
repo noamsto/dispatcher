@@ -1134,6 +1134,9 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
+  sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
+  [ -n "$sid" ]
+  [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$sid" ]
 }
 
 @test "codex resume launches resume --last" {
@@ -1145,6 +1148,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$status" -eq 0 ]
   grep -q 'codex resume --last' <(launch_log)
   grep -q -- '--profile worker' <(launch_log)
+  [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
 }
 
 @test "codex --fresh drops the resume flag" {
@@ -1157,6 +1161,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
+  [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
 }
 
 @test "cursor resume launches with --continue" {
@@ -1512,6 +1517,7 @@ record_lead() {
   [ "$output" = 0 ]
   [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = true ]
   [ "$(cat "$(lead_rec)")" = "claude $LEAD_ID" ]
+  [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$LEAD_ID" ]
 }
 
 @test "pi resume attaches to the recorded lead session by id" {
@@ -1528,6 +1534,7 @@ record_lead() {
   grep -q 'this session has been resumed' <(launch_log)
   [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = true ]
   [ "$(cat "$(lead_rec)")" = "pi $LEAD_ID" ]
+  [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$LEAD_ID" ]
 }
 
 @test "legacy claude worker with several transcripts relaunches fresh and records a new id" {

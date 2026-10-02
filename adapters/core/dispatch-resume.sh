@@ -1168,10 +1168,12 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --arg worker "$worker_id" --arg prev "$prev_worker_id" \
   --arg engine "$agent" --arg model "$model" --arg session "$session" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
+  --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
-     session:$session, continued:$continued}
+     session:$session, continued:$continued,
+     engine_session:(if $engine_session == "" then null else $engine_session end)}
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
