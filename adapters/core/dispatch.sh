@@ -4095,8 +4095,14 @@ escalated_from_event=""
 if [ -n "${escalated_from:-}" ] && [[ ! $escalated_from =~ "record only" ]]; then
   escalated_from_event="$escalated_from"
 fi
+# engine_session: the engine's own session id, minted here so the row can carry
+# the id the lead is later launched with. codex/cursor cannot pre-assign one: null.
+lead_sid=""
+case "$agent" in
+claude | pi) lead_sid="$(_uuid)" ;;
+esac
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
-  --arg worker "$worker_id" \
+  --arg worker "$worker_id" --arg engine_session "$lead_sid" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
@@ -4104,7 +4110,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg escalated_from "$escalated_from_event" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if ($also_closes | length) > 0 then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
@@ -4537,13 +4543,11 @@ elif [ "$agent" = pi ]; then
   printf -v quoted_dir '%q' "$pi_agent_dir"
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
-  lead_sid="$(_uuid)"
   _record_lead_session pi "$lead_sid"
   launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $effort --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
-  lead_sid="$(_uuid)"
   _record_lead_session claude "$lead_sid"
   launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi

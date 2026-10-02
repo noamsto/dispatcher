@@ -2600,6 +2600,10 @@ roster)
       # dispatch events, or no dispatch event at all) -> null.
       (map(select(.crew_id==$crew and .kind=="dispatch"))
         | map({key:.branch, value:{title:(.title // null), engine:(.engine // null), model:(.model // null), tier:(.tier // null)}}) | from_entries) as $dispatch
+      |
+      (map(select(.crew_id==$crew and (.kind=="dispatch" or .kind=="resume")))
+        | group_by(.branch)
+        | map({key:.[0].branch, value:(sort_by(.ts) | last | .engine_session // null)}) | from_entries) as $esess
       | map(select(.crew_id==$crew and .kind=="status"
                    and ((.from // "") | startswith("worker:"))))
       | group_by(.from)
@@ -2629,6 +2633,7 @@ roster)
                engine: (.[0].branch as $b | $dispatch[$b].engine // null),
                model:  (.[0].branch as $b | $dispatch[$b].model  // null),
                tier:   (.[0].branch as $b | $dispatch[$b].tier   // null),
+               engine_session: (.[0].branch as $b | $esess[$b] // null),
                sessions: (sort_by(.ts) | map({session, state, age_s}))})' "$log")
   # Resolve a false `exited`. SessionEnd fires for more than the worker's own session
   # (a subagent ending, a human closing an auxiliary pane), and the hook sees only a

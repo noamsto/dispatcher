@@ -1984,6 +1984,16 @@ _pi_assert_refused() {
   [ "$(echo "$output" | jq -r '.[0].sessions[1].state')" = "working" ]
 }
 
+@test "roster: exposes the newest dispatch or resume engine_session" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  jq -nc '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/x",engine_session:"aaaa"}' >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].engine_session')" = "aaaa" ]
+  jq -nc '{ts:9999999999999,crew_id:"c1",kind:"resume",branch:"feat/x",engine_session:"bbbb"}' >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run run_crew roster c1
+  [ "$(echo "$output" | jq -r '.[0].engine_session')" = "bbbb" ]
+}
+
 @test "roster: the codename still derives from the branch" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   expected="$(run_crew identity feat/x | jq -r .name)"
