@@ -1029,7 +1029,7 @@ mid-task.
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of eight reserved prefixes:
+self-reported. Its `detail` always begins with one of nine reserved prefixes:
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and
@@ -1112,6 +1112,18 @@ self-reported. Its `detail` always begins with one of eight reserved prefixes:
   `load:` is always `blocked`, never `failed`, and never escalates. Per-worker `load:`
   events are expected to arrive in a burst — coalescing duplicates is your job (handle
   the batch in one turn), not a reason to treat any single one as a false positive.
+- `runaway:` — the opposite of `turn-stall:`: the pane repaints and its output-token
+  count climbs, but a model sentinel token (`<｜end▁of▁thinking｜>`, `<|im_end|>`,
+  `<|endoftext|>`, …) has leaked into assistant prose — outside any tool-output block —
+  for `--runaway-hits` samples (default 3) while output tokens grew by
+  `--runaway-tokens` (default 1500; provisional, from one reconstructed incident).
+  Claude and pi only. The turn is degenerate (word-salad) and unrecoverable, but the
+  worktree usually isn't. **Verify, then kill and re-dispatch**: `tmux capture-pane -p
+  -t %<id>` to confirm it is model output and not a worker discussing these strings,
+  check `git log` for a good local commit, then kill the window and re-dispatch (another
+  engine if the model keeps derailing). Never escalates to `dead:`; clears itself if the
+  sentinel leaves the frame. Own prefix — never reuse `prompt:`/`quota:`; consumers that
+  treat unknown watchdog prefixes as non-question `running` need no change.
 - `dead:` — a `turn-stall:`/`quiet:` episode whose evidence still held a further 30 min.
   For `quiet:` this now additionally requires the engine process to be gone, not just
   the static frame; `turn-stall:`'s escalation is unchanged. This is the **only**

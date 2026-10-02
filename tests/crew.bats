@@ -4994,6 +4994,204 @@ EOF
   [ "$output" = "0" ] # no meter matched → D2 has nothing to read
 }
 
+# ---- D7 runaway: (#650) -----------------------------------------------------
+# fx_pi_runaway <down-tokens> — the 2026-10-02 incident, RECONSTRUCTED from the
+# issue description (no raw capture): a leaked DeepSeek sentinel followed by a
+# word-salad stream, pi footer with a climbing `↓`.
+fx_pi_runaway() {
+  frame_file "pi_runaway.$1" <<EOF
+I'll trust evidence/inspection-based verification <｜end▁of▁thinking｜> dragon phoenix griffin
+kraken quark lepton boson carabiner piton cam nut granite basalt gneiss schist chert obsidian
+entropy enthalpy torque momentum inertia viscosity catalyst isotope lattice manifold
+─────────────────────────────────────────────────────────────────────
+⠇ Working
+↑50k ↓$1 R1.6M CH99.2% \$0.027 8.7%/1.0M (auto)
+EOF
+}
+
+# fx_pi_busy <down-tokens> — a normal busy pi frame: prose, no sentinel.
+fx_pi_busy() {
+  frame_file "pi_busy.$1" <<EOF
+I'll read the config first, then adjust the watchdog flags and run the suite.
+─────────────────────────────────────────────────────────────────────
+⠇ Working
+↑50k ↓$1 R1.6M CH99.2% \$0.027 8.7%/1.0M (auto)
+EOF
+}
+
+# fx_claude_tool_sentinel <tokens> — claude reading a file that contains
+# sentinel strings: they sit inside a `⎿` tool-result block.
+fx_claude_tool_sentinel() {
+  frame_file "claude_toolsent.$1" <<EOF
+⏺ Read(adapters/core/crew.sh)
+  ⎿  re_sentinel='<｜[^｜>]{1,40}｜>|<|im_end|>'
+     <｜end▁of▁thinking｜> appears in this fixture
+     <|endoftext|>
+⏺ Now I will update the detector.
+✳ Perusing… (1m 2s · ↓ $1 tokens · thinking)
+EOF
+}
+
+# fx_pi_tool_sentinel <down-tokens> — the same, in pi's expanded tool output.
+fx_pi_tool_sentinel() {
+  frame_file "pi_toolsent.$1" <<EOF
+Tool output: read adapters/core/crew.sh
+  re_sentinel='<｜[^｜>]{1,40}｜>' and <|im_end|> appear in the fixture
+
+Now I will update the detector.
+─────────────────────────────────────────────────────────────────────
+⠇ Working
+↑50k ↓$1 R1.6M CH99.2% \$0.027 8.7%/1.0M (auto)
+EOF
+}
+
+# fx_claude_long_answer <tokens> — a long, legitimate, punctuated answer.
+fx_claude_long_answer() {
+  frame_file "claude_long.$1" <<EOF
+⏺ Here is the full analysis. The watchdog samples the pane every fifteen seconds, and
+  each detector keeps its own episode state; when the evidence goes away, it posts a
+  clearance. First, the prompt detector requires a verified geometry. Second, the
+  quiet detector requires byte identity. Third, the load detector reads the host.
+✳ Composing… (2m 1s · ↓ $1 tokens · thinking)
+EOF
+}
+
+runaway_flags=(--grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 6 --runaway-hits 3 --runaway-tokens 1500)
+
+@test "stall-watch: D7 posts blocked/runaway: on the pi incident frame" {
+  a=$(fx_pi_runaway 19.0k)
+  b=$(fx_pi_runaway 19.8k)
+  c=$(fx_pi_runaway 20.5k)
+  d=$(fx_pi_runaway 21.2k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine pi "${runaway_flags[@]}"
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|runaway: leaked model sentinel in pane %9"* ]]
+}
+
+@test "stall-watch: D7 stays silent when the sentinel persists but tokens do not grow" {
+  a=$(fx_pi_runaway 19.0k)
+  stall_sampler "$a" "$a" "$a" "$a" "$a"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine pi "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 ignores a normal busy pi frame, however fast tokens climb" {
+  a=$(fx_pi_busy 19.0k)
+  b=$(fx_pi_busy 25.0k)
+  c=$(fx_pi_busy 31.0k)
+  d=$(fx_pi_busy 37.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine pi "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 ignores sentinel strings inside a claude tool-result block" {
+  a=$(fx_claude_tool_sentinel 10.0k)
+  b=$(fx_claude_tool_sentinel 12.0k)
+  c=$(fx_claude_tool_sentinel 14.0k)
+  d=$(fx_claude_tool_sentinel 16.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 ignores sentinel strings inside pi tool output" {
+  a=$(fx_pi_tool_sentinel 19.0k)
+  b=$(fx_pi_tool_sentinel 21.0k)
+  c=$(fx_pi_tool_sentinel 23.0k)
+  d=$(fx_pi_tool_sentinel 25.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine pi "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 ignores a long legitimate claude answer" {
+  a=$(fx_claude_long_answer 10.0k)
+  b=$(fx_claude_long_answer 13.0k)
+  c=$(fx_claude_long_answer 16.0k)
+  d=$(fx_claude_long_answer 19.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 clears when the sentinel leaves the frame" {
+  a=$(fx_pi_runaway 19.0k)
+  b=$(fx_pi_runaway 19.8k)
+  c=$(fx_pi_runaway 20.5k)
+  d=$(fx_pi_runaway 21.2k)
+  e=$(fx_pi_busy 21.5k)
+  stall_sampler "$a" "$b" "$c" "$d" "$e" "$e"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine pi "${runaway_flags[@]}"
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "blocked|runaway:"* ]]
+  [ "${lines[1]}" = "working|runaway: cleared" ]
+}
+
+# fx_claude_runaway <tokens> — sentinel streamed in the newest assistant block.
+fx_claude_runaway() {
+  frame_file "claude_runaway.$1" <<EOF
+⏺ Read(adapters/core/crew.sh)
+  ⎿  line one
+
+     <|im_end|> after a blank line inside the tool block
+> please do not mention <|endoftext|> in your answer
+⏺ I'll trust inspection <｜end▁of▁thinking｜> dragon phoenix griffin kraken quark
+✳ Perusing… (1m 2s · ↓ $1 tokens · thinking)
+EOF
+}
+
+fx_claude_stale_sentinel() {
+  frame_file "claude_stale.$1" <<EOF
+> please do not mention <|endoftext|> in your answer
+⏺ Bash(grep -n '<|im_end|>' crew.sh)
+  ⎿  crew.sh:12:<|im_end|>
+
+     <|im_end|> after a blank line
+⏺ Done reading; updating the detector now.
+✳ Perusing… (1m 2s · ↓ $1 tokens · thinking)
+EOF
+}
+
+@test "stall-watch: D7 posts runaway: on a claude frame with a streamed sentinel" {
+  a=$(fx_claude_runaway 10.0k)
+  b=$(fx_claude_runaway 11.0k)
+  c=$(fx_claude_runaway 12.0k)
+  d=$(fx_claude_runaway 13.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "1" ]
+}
+
+@test "stall-watch: D7 ignores stale sentinels in input rows, tool headers and blank-split tool output" {
+  a=$(fx_claude_stale_sentinel 10.0k)
+  b=$(fx_claude_stale_sentinel 12.0k)
+  c=$(fx_claude_stale_sentinel 14.0k)
+  d=$(fx_claude_stale_sentinel 16.0k)
+  stall_sampler "$a" "$b" "$c" "$d" "$d"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude "${runaway_flags[@]}"
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D7 survives a sentinel frame with no token meter" {
+  p=$(frame_file no_meter <<<'⏺ done <|im_end|>')
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude "${runaway_flags[@]}"
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c 'runaway:' || true"
+  [ "$output" = "0" ]
+}
+
 @test "stall-watch: D3 posts blocked/quiet: on a byte-identical pane in steady state" {
   # --max-life 8: D3 needs `quiet_for >= --idle 2`, and the run must still be
   # alive when it fires; at 4 one stretched pre-sample gap could exit the loop
