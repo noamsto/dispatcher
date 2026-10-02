@@ -171,13 +171,13 @@ fi
 # per-branch worker windows it spawns. Guarded on $TMUX — the dispatcher can be
 # launched outside a tmux pane.
 if [ -n "${TMUX:-}" ]; then
-  tmux set-window-option pane-border-style "bg=#{@thm_bg},fg=#{@thm_mauve}"
-  tmux set-window-option pane-active-border-style "bg=#{@thm_bg},fg=#{@thm_mauve},bold"
-  tmux set-window-option pane-border-format " #[bold]dispatcher#[nobold] "
+  tmux set-window-option -t "$TMUX_PANE" pane-border-style "bg=#{@thm_bg},fg=#{@thm_mauve}"
+  tmux set-window-option -t "$TMUX_PANE" pane-active-border-style "bg=#{@thm_bg},fg=#{@thm_mauve},bold"
+  tmux set-window-option -t "$TMUX_PANE" pane-border-format " #[bold]dispatcher#[nobold] "
   # Same @crew_* options `dispatch` stamps on workers, so lazytmux renders the
   # orchestrator badge too. colour99 clears contrast on both Catppuccin themes.
-  tmux set-window-option @crew_name dispatcher
-  tmux set-window-option @crew_color colour99
+  tmux set-window-option -t "$TMUX_PANE" @crew_name dispatcher
+  tmux set-window-option -t "$TMUX_PANE" @crew_color colour99
   # No tmux event fires on a user-option set, and lazytmux's per-tick poll only
   # runs for the session a client is viewing — kick a reflow or the badge won't
   # render until you next switch to this window. The reflow script is never on

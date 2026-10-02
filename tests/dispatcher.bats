@@ -197,6 +197,16 @@ teardown() {
   [ "$output" = "0" ]
 }
 
+@test "stamps its own window, not the current one, via -t \$TMUX_PANE" {
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 CREW_ID=c1 run_launcher
+  # All five set-window-option calls must include -t %1 as the second and third args.
+  run grep -c 'set-window-option -t %1 ' "$STUB_LOG"
+  [ "$output" = "5" ]
+  # Exactly 5 set-window-option calls total — none untargeted.
+  run grep -c 'set-window-option' "$STUB_LOG"
+  [ "$output" = "5" ]
+}
+
 @test "registers and deregisters around the agent launch" {
   CREW_ID=c1 run_launcher
   # Match each call exactly. A bare `grep -c register` also matches
