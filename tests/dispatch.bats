@@ -4745,7 +4745,10 @@ EOF
 # whose ref does not exist, and real worktrunk's `wt switch -c <br>` attaches to
 # it instead of creating anything. $SQUAT is that worker's tree. The wt stub
 # mimics worktrunk's attach; $SQUAT_RACE=before points the squatter's HEAD at
-# the branch just ahead of the listing, =after just behind a normal create.
+# the branch just ahead of the listing, =after just behind a normal create,
+# =moved also relocates the squatter's reported path (same admin id) and plants
+# the ref at the requested base, =moved-ref lets a normal create finish and then
+# repoints the ref.
 # Install it last: fixtures overwrite $STUB_DIR/wt and crew. The _tree half
 # leaves stub_launch_bins to the caller so setup_stacked_base can supply it.
 squat_head() { # <branch>
@@ -4776,10 +4779,16 @@ if [ "$1" = switch ]; then
   if [ "${SQUAT_RACE:-}" = before ]; then
     printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
   fi
+  if [ "${SQUAT_RACE:-}" = moved ]; then
+    ln -s . "$SQUAT/alias"
+    printf '%s\n' "$SQUAT/alias/.git" >"$TEST_REPO/.git/worktrees/squat/gitdir"
+    printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+  fi
   held="$(git -C "$TEST_REPO" worktree list --porcelain |
     awk -v b="refs/heads/$br" '/^worktree /{p=substr($0, 10)} $0=="branch "b{print p}')"
   if [ -n "$held" ]; then
     printf 'Switched to worktree for %s @ %s\n' "$br" "$held"
+    [ "${SQUAT_RACE:-}" != moved ] || git -C "$TEST_REPO" update-ref "refs/heads/$br" "${base:-HEAD}"
     exit 0
   fi
   dest="$TEST_REPO/.dispatch-wt/${br//\//-}"
@@ -4787,6 +4796,11 @@ if [ "$1" = switch ]; then
   git -C "$TEST_REPO" worktree add -b "$br" "$dest" "${base:-HEAD}" >/dev/null
   if [ "${SQUAT_RACE:-}" = after ]; then
     printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+  fi
+  if [ "${SQUAT_RACE:-}" = moved-ref ]; then
+    other="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+      git -C "$TEST_REPO" commit-tree -m other "$(git -C "$TEST_REPO" hash-object -t tree /dev/null)")"
+    git -C "$TEST_REPO" update-ref "refs/heads/$br" "$other"
   fi
 fi
 exit 0
@@ -4857,6 +4871,26 @@ assert_no_bus_row() { # <kind>
   [ "$status" -eq 1 ]
   run ! grep -q 'kill-window' "$STUB_LOG"
   assert_no_bus_row reclaim
+}
+
+@test "create: a squatter moved to a new path under its old admin id is refused (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=moved
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+@test "create: a branch ref repointed off the requested base is refused (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=moved-ref
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
 }
 
 # lock_path <branch> — the per-branch dispatch lock symlink, keyed exactly as
