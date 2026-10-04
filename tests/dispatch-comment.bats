@@ -141,13 +141,14 @@ wt_path_for() {
 # stub_gh_full <existing-issue-labels> <mint-issue-number> — extends
 # dispatch.bats' stub_gh_claim with `gh issue comment` capture: each call
 # appends the issue arg to $STUB_DIR/comment_issues.log (one line per call,
-# so a test can assert call count) and overwrites $STUB_DIR/comment_body.txt
-# with that call's --body value (only one call is ever expected, so
-# "overwrite" is equivalent to "record"). This sidesteps parsing the
-# multiline body back out of $STUB_LOG, where it sits inline with every other
-# stubbed invocation. $STUB_COMMENT_EXIT (default 0) controls the stubbed
-# exit status for the comment call only, so a test can prove a failing
-# comment does not abort the dispatch.
+# so a test can assert call count) and records that call's --body at
+# $STUB_DIR/comment_body.$3.txt, keyed by issue. $STUB_DIR/comment_body.txt
+# is additionally overwritten each call, so it holds only the *last* body —
+# a bundle (primary + --also-closes extras) must read the per-issue files.
+# This sidesteps parsing the multiline body back out of $STUB_LOG, where it
+# sits inline with every other stubbed invocation. $STUB_COMMENT_EXIT
+# (default 0) controls the stubbed exit status for the comment call only, so
+# a test can prove a failing comment does not abort the dispatch.
 stub_gh_full() {
   printf '%s' "$1" >"$STUB_DIR/gh_labels.txt"
   printf '%s' "$2" >"$STUB_DIR/gh_mint_num.txt"
@@ -220,6 +221,25 @@ EOF
 
   branch="feat/42-outside-home-test"
   wt_path="$(wt_path_for "$branch")"
+  body="$(cat "$STUB_DIR/comment_body.txt")"
+  [[ "$body" == *"| **Worktree** | \`$wt_path\` |"* ]]
+  [[ "$body" != *"| **Worktree** | \`~"* ]]
+}
+
+@test "Worktree row stays absolute when HOME is a string prefix but not a path prefix" {
+  stub_launch_bins
+  stub_gh_full "" ""
+  # HOME=/tmp/tmp.X, worktree=/tmp/tmp.XY/... — a naive "$HOME"* pattern
+  # would abbreviate the sibling path and publish a partial home path.
+  export HOME="${TEST_REPO%?}"
+  mkdir -p "$HOME"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "home string prefix test"
+  [ "$status" -eq 0 ]
+
+  branch="feat/42-home-string-prefix-test"
+  wt_path="$(wt_path_for "$branch")"
+  [[ "$wt_path" == "$HOME"* ]]
+  [[ "$wt_path" != "$HOME"/* ]]
   body="$(cat "$STUB_DIR/comment_body.txt")"
   [[ "$body" == *"| **Worktree** | \`$wt_path\` |"* ]]
   [[ "$body" != *"| **Worktree** | \`~"* ]]
