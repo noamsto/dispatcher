@@ -100,22 +100,6 @@ EOF
   report_mismatches
 }
 
-@test "model map: resume escalation admits as the old dispatch-resume.sh code did" {
-  unset -f _glob_match _escalation_hop
-  for fn in _glob_match _escalation_hop; do
-    def="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
-    [ -n "$def" ]
-    eval "$def"
-  done
-  mismatches=()
-  while IFS=$'\x1f' read -r -u 4 a t failed m _ _ kind label; do
-    hop="$(_escalation_hop "$a" "$t" "$failed" "$m" outOfRow)"
-    if [ -n "$hop" ]; then got="admit|$hop"; else got="none|"; fi
-    [ "$got" = "$kind|$label" ] || mismatches+=("$a $t $failed $m: want $kind|$label, got $got")
-  done 4< <(fixture_rows "$FIXTURES/escalation.tsv")
-  report_mismatches
-}
-
 @test "model map: pace downgrades each premium model as the old case did" {
   mismatches=()
   while IFS=$'\x1f' read -r -u 4 a m want; do

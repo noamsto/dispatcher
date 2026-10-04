@@ -14,6 +14,9 @@ setup() {
   # No engine process by default, so quiet:->dead: escalation stays
   # deterministic regardless of what runs on the host tmux server.
   export CREW_STALL_PROC_CMD='printf ""'
+  # stall-watch runs on a virtual clock: its waits advance this file instead
+  # of sleeping. Nothing else in crew reads it.
+  export CREW_STALL_CLOCK="$BATS_TEST_TMPDIR/stall-clock"
 }
 
 teardown() {
@@ -5443,6 +5446,22 @@ EOF
   [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
 }
 
+@test "stall-watch: CREW_STALL_CLOCK runs a ten-minute watch on virtual time" {
+  # Ten virtual minutes outlast D4's 300s --load window, so pin a calm host.
+  export CREW_STALL_LOAD_CMD='printf "1.0 32\n"'
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  SECONDS=0
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --interval 60 --window 600 --stall 120 --idle 99999 --dead 99999 --max-life 600
+  [ "$status" -eq 0 ]
+  # In real time this run would take 645s (45s default grace + 600s life).
+  [ "$SECONDS" -lt 60 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "blocked|stalled: no output for 120s" ]
+}
+
 @test "stall-watch: D2 posts blocked/turn-stall: when the clock advances and tokens do not" {
   a=$(fx_meter "5m 29s" "25.0k")
   b=$(fx_meter "5m 44s" "25.0k")
@@ -5712,8 +5731,8 @@ EOF
 @test "stall-watch: D5 clears itself when the engine appears late" {
   p=$(fx_idle_box)
   stall_sampler "$p"
-  export CREW_STALL_PROC_CMD="[ -f $BATS_TEST_TMPDIR/up ] && printf claude || printf fish"
-  (sleep 4 && touch "$BATS_TEST_TMPDIR/up") &
+  # The engine appears from the 4th sample on, once D5 has posted.
+  export CREW_STALL_PROC_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" -ge 4 ] && printf claude || printf fish"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
     --grace 0 --interval 1 --launch 1 --window 60 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
@@ -5806,7 +5825,8 @@ EOF
   stall_sampler "$p"
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
-  (sleep 2 && run_crew inbox worker:feat/x#s1-1 c1 >/dev/null) &
+  # The lead reads its inbox just before the 3rd sample, after D6 has posted.
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || bash $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
