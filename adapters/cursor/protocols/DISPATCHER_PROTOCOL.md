@@ -771,17 +771,26 @@ branch instead; the worktree carries over under `resume: true`.
   that branch, under an admin id that did not exist before the switch, with
   the ref at the requested base (#640). Relay either refusal to the human
   verbatim as possible tampering; never remove the named worktree, retry, or
-  re-dispatch under another title yourself. Residual (#680): the post-check
-  is detection against a worker racing the create, not a boundary. A HEAD
-  rewritten between `dispatch`'s worktree listing and worktrunk's own makes
-  the switch attach (for `--base` too), and on the default create
-  worktrunk's post-switch hooks (e.g. a devshell hook's `nix develop`) run in
-  that worker's tree before any refusal. A worker that adds or renames an
-  admin dir and binds it to a tree (a gitlink edit plus `git worktree
-  repair`), with the ref set to the base, any time from that listing until
-  the post-check — which spans worktrunk's own create and blocking hooks —
-  passes the post-check, so the launch can still land in the worker's own
-  tree.
+  re-dispatch under another title yourself. Every create switches with
+  `--no-hooks`; on the default create `dispatch` runs the operator's worktrunk
+  hooks itself — pre-switch in its own cwd before the switch, then pre-start,
+  post-start and post-switch (tmux blanked) with `-C` the new tree, only once
+  the post-check has passed and the config guard has re-run on that tree's
+  admin dir. So a HEAD rewritten between `dispatch`'s worktree listing and
+  worktrunk's own makes the switch attach (for `--base` too) and refuse, with
+  no operator hook run in that worker's tree (#680). The replayed hooks read
+  project hooks from the new tree's `.config/wt.toml` (the fetched
+  default-branch tip), not the dispatching cwd's, and their `{{ base }}` and
+  `{{ base_worktree_path }}` (pre-switch's `{{ branch }}` and `{{ target }}`
+  too) name the tree they run in, not the other side of the switch. Residual:
+  the post-check is detection against a worker racing the create, not a
+  boundary. A worker that adds or renames an admin dir and binds it to a tree
+  (a gitlink edit plus `git worktree repair`), with the ref set to the base,
+  any time from that listing until the post-check — which now spans
+  worktrunk's own create, not its hooks — passes the post-check, so the
+  launch, the replayed hooks and worktrunk's own discovery git can still land
+  in the worker's own tree; config drift written after the guard's re-run is
+  likewise unchecked.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Questions you put there are answered in the worker's tally, not on the PR: frame each as "report in your tally: …", and never ask the worker to write context (bench evidence, sibling-PR composition) onto the PR. Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`

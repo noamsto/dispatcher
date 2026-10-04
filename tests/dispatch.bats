@@ -4493,6 +4493,62 @@ EOF
   chmod +x "$STUB_DIR/wt"
 }
 
+# stub_wt_hook_log — wraps the fixture's $STUB_DIR/wt to log every operator hook
+# as "<type> <dir>[ <config-set>...]" in $BATS_TEST_TMPDIR/hooks.log. An explicit
+# `wt [-C dir] hook <type>` logs as-is; a `switch` without --no-hooks logs
+# pre-switch at $PWD, then pre-start/post-start/post-switch at every worktree
+# holding the branch afterwards, attached or created, as worktrunk does (#680).
+# Call it after the fixture helper: fixtures overwrite $STUB_DIR/wt.
+stub_wt_hook_log() {
+  : >"$BATS_TEST_TMPDIR/hooks.log"
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.orig"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+log="$BATS_TEST_TMPDIR/hooks.log"
+args=("\$@")
+c="" kv=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+  -C) c="\$2"; shift 2 ;;
+  --config-set) kv="\$kv \$2"; shift 2 ;;
+  -y) shift ;;
+  *) break ;;
+  esac
+done
+if [ "\${1:-}" = hook ]; then
+  printf '%s %s%s\n' "\$2" "\${c:-\$PWD}" "\$kv" >>"\$log"
+  exec "$STUB_DIR/wt.orig" "\${args[@]}"
+fi
+if [ "\${1:-}" = switch ]; then
+  br="" kv="" no_hooks=""
+  set -- "\${args[@]}"
+  while [ \$# -gt 0 ]; do
+    case "\$1" in
+    -c) br="\$2"; shift 2 ;;
+    --config-set) kv="\$kv \$2"; shift 2 ;;
+    --no-hooks) no_hooks=1; shift ;;
+    *) shift ;;
+    esac
+  done
+  if [ -z "\$no_hooks" ]; then
+    printf 'pre-switch %s\n' "\$PWD" >>"\$log"
+    "$STUB_DIR/wt.orig" "\${args[@]}"
+    rc=\$?
+    git -C "$TEST_REPO" worktree list --porcelain |
+      awk -v b="refs/heads/\$br" '/^worktree /{p=substr(\$0, 10)} \$0=="branch "b{print p}' |
+      while IFS= read -r dest; do
+        printf 'pre-start %s\n' "\$dest" >>"\$log"
+        printf 'post-start %s\n' "\$dest" >>"\$log"
+        printf 'post-switch %s%s\n' "\$dest" "\$kv" >>"\$log"
+      done
+    exit "\$rc"
+  fi
+fi
+exec "$STUB_DIR/wt.orig" "\${args[@]}"
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
 @test "resume: suppresses operator hooks with --no-hooks" {
   setup_resume_branch feat/42-do-a-thing
   stub_crew_gate '[]' '[]'
@@ -4513,15 +4569,27 @@ EOF
 }
 
 # The default base is operator-trusted, and its devshell hook is what
-# materializes .pre-commit-config.yaml, so only the tmux hook is blanked.
-@test "default create: leaves operator hooks running, blanks only the tmux hook" {
+# materializes .pre-commit-config.yaml, so the hooks still run, but only once
+# dispatch has verified the new tree, with only the tmux hook blanked.
+@test "default create: replays operator hooks once at the verified new worktree (#680)" {
   stub_launch_bins
-  stub_wt_operator_hook
+  stub_wt_hook_log
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  grep -q '^switch -c feat/42-do-a-thing' "$STUB_LOG"
-  run ! grep -q -- '--no-hooks' "$STUB_LOG"
-  [ -f "$BATS_TEST_TMPDIR/operator-hook-ran" ]
+  new="$(git -C "$TEST_REPO" worktree list --porcelain |
+    awk '/^worktree /{p=substr($0, 10)} $0=="branch refs/heads/feat/42-do-a-thing"{print p}')"
+  [ -n "$new" ]
+  grep -q '^switch -c feat/42-do-a-thing .*--no-hooks' "$STUB_LOG"
+  [ "$(wc -l <"$BATS_TEST_TMPDIR/hooks.log")" -eq 4 ]
+  [[ "$(sed -n 1p "$BATS_TEST_TMPDIR/hooks.log")" == "pre-switch "* ]]
+  [ "$(sed -n 2p "$BATS_TEST_TMPDIR/hooks.log")" = "pre-start $new" ]
+  [ "$(sed -n 3p "$BATS_TEST_TMPDIR/hooks.log")" = "post-start $new" ]
+  [ "$(sed -n 4p "$BATS_TEST_TMPDIR/hooks.log")" = "post-switch $new post-switch.tmux=\"\"" ]
+  switch_ln="$(grep -n '^switch -c' "$STUB_LOG" | head -1 | cut -d: -f1)"
+  hook_ln="$(grep -n 'hook pre-start' "$STUB_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$switch_ln" ] && [ -n "$hook_ln" ]
+  [ "$switch_ln" -lt "$hook_ln" ]
+  grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "stacked create: suppresses operator hooks with --no-hooks" {
@@ -4907,6 +4975,22 @@ assert_no_bus_row() { # <kind>
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+# Worktrunk fires its hooks on an attach too, so a HEAD rewritten between
+# dispatch's listing and worktrunk's own lookup must not get the operator's
+# hooks run in the worker's tree before the post-check has refused it.
+@test "create: a HEAD raced onto the branch runs no operator hook before the post-check (#680)" {
+  setup_unborn_squatter
+  stub_wt_hook_log
+  export SQUAT_RACE=before
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -F -- "$SQUAT" "$BATS_TEST_TMPDIR/hooks.log"
+  run ! grep -E '^(pre-start|post-start|post-switch) ' "$BATS_TEST_TMPDIR/hooks.log"
   run ! grep -q 'new-window' "$STUB_LOG"
   assert_no_bus_row claim
 }

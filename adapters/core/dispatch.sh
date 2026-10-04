@@ -3728,7 +3728,8 @@ fi
 # and a devshell hook would evaluate that tree's flake.nix here (#558). Such a
 # worker's .pre-commit-config.yaml appears once its own direnv devshell loads.
 #
-# A default-base create is operator-trusted, so it blanks only worktrunk's
+# A default-base create is operator-trusted, so dispatch replays the operator's
+# hooks onto it once verified (see the create arm, #680), blanking only the
 # post-switch *tmux* hook: we drive tmux ourselves below, and the hook would
 # otherwise open a second, undecorated shell window at the same worktree
 # (#123). Its own `$CLAUDECODE` guard only covers a Claude-launched dispatcher,
@@ -3975,7 +3976,8 @@ create)
     neutral_switch=1
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --config-set "$wt_post_switch"
+    wt hook pre-switch -y # pre-switch runs in this cwd, never the destination
+    wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
   # created the worktree and pin wt_path to it (#640). Admin ids survive a gitdir
@@ -3993,6 +3995,17 @@ create)
       echo "  possible tampering: stop and tell the human; do not remove it, retry, or re-dispatch under another title yourself."
     } >&2
     exit 1
+  fi
+  # worktrunk fires post-switch on an attach too (#680), so the default create
+  # switched with --no-hooks and replays its hooks here, in worktrunk's order, once
+  # the post-check proved $wt_path is the new tree. The guard first re-checks config
+  # drift planted during the create, before worktrunk's git reads that tree; a
+  # failing pre-start aborts here and leaves the worktree, as under `wt switch -c`.
+  if [ -z "$base_flag" ]; then
+    _wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1
+    wt -C "$wt_path" hook pre-start -y
+    wt -C "$wt_path" hook post-start -y
+    wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y
   fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
