@@ -128,8 +128,10 @@ in {
           a path would copy the secret into the Nix store. Set, it lands as
           `openrouter.keyFile` in the locked settings layer (the user
           settings file cannot set this key); `refresh-budget` falls back to
-          OPENROUTER_API_KEY when unset. `~/.pi/agent/auth.json` is never
-          read.
+          OPENROUTER_API_KEY when unset, then to pi's own OpenRouter login
+          (`pi auth print-api-key --provider openrouter`, else
+          `~/.pi/agent/auth.json`, read-only). A set keyFile is exclusive:
+          pi's login is never consulted.
         '';
       };
     };

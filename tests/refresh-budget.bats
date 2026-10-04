@@ -6,7 +6,8 @@ setup() {
   STUB_DIR="$(mktemp -d)"
   STUB_LOG="$STUB_DIR/calls.log"
   FIXTURE_DIR="$(mktemp -d)"
-  export STUB_DIR STUB_LOG FIXTURE_DIR
+  PI_LOG="$STUB_DIR/pi.log"
+  export STUB_DIR STUB_LOG FIXTURE_DIR PI_LOG
   # Resolved before $STUB_DIR is prepended to PATH, so the date and uname
   # shims below can fall through to the genuine binary for every call they
   # don't fake.
@@ -24,6 +25,7 @@ setup() {
   write_tmux_shim
   write_date_shim
   write_cursor_shims
+  write_pi_shim
   export PATH="$STUB_DIR:$PATH"
 }
 
@@ -37,6 +39,24 @@ or_key_fixture() {
       is_management_key: false, is_provisioning_key: false
     }
   }' >"$FIXTURE_DIR/or_key.json"
+}
+
+# write_pi_shim — a fail-closed `pi`: answers only `auth print-api-key
+# --provider openrouter`, with $SHIM_PI_KEY when set; everything else exits
+# $SHIM_PI_RC (default 1) silently. Logs to $PI_LOG, never $STUB_LOG. The real
+# pi must never be reachable from these tests.
+write_pi_shim() {
+  cat >"$STUB_DIR/pi" <<'EOF'
+#!/usr/bin/env bash
+printf 'pi %s\n' "$*" >>"$PI_LOG"
+if [[ -n "${SHIM_PI_KEY:-}" && "$*" == "auth print-api-key --provider openrouter" ]]; then
+  printf '%s\n' "$SHIM_PI_KEY"
+  exit 0
+fi
+echo "pi stub: unsupported" >&2
+exit "${SHIM_PI_RC:-1}"
+EOF
+  chmod +x "$STUB_DIR/pi"
 }
 
 # write_date_shim — a `date` that answers `+%s` from $SHIM_NOW when set, so
@@ -1768,6 +1788,69 @@ write_pi_auth() {
   run ! grep -rq "TESTSENTINELPI" "$XDG_DATA_HOME/crew"
 }
 
+@test "pi's auth CLI supplies the OpenRouter key, reaching curl only on stdin" {
+  or_key_fixture 10
+  SHIM_PI_KEY=sk-or-v1-TESTSENTINELCLI SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELCLI \
+    run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output$stderr" != *"TESTSENTINELCLI"* ]]
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+  run jq -r '.engines.pi.source' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "openrouter_key" ]
+  run ! grep -q "TESTSENTINELCLI" "$STUB_LOG"
+  run ! grep -rq "TESTSENTINELCLI" "$XDG_DATA_HOME/crew"
+  grep -q "pi auth print-api-key --provider openrouter" "$PI_LOG"
+}
+
+@test "a failing pi auth CLI leaves pi unknown" {
+  or_key_fixture 10
+  SHIM_PI_RC=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"log pi in to OpenRouter"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}
+
+@test "no pi on PATH leaves pi unknown" {
+  or_key_fixture 10
+  rm "$STUB_DIR/pi"
+  PATH="$(path_without_real pi)" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"log pi in to OpenRouter"* ]]
+  run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  ! grep -q openrouter "$STUB_LOG"
+}
+
+@test "pi CLI output that isn't an OpenRouter key falls back to the auth store" {
+  or_key_fixture 10
+  write_pi_auth '{"openrouter":{"type":"api_key","key":"sk-or-v1-TESTSENTINELPI"}}'
+  SHIM_PI_KEY=not-a-key SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELPI run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+}
+
+@test "pi's api_key auth-store shape is read when the CLI fails" {
+  or_key_fixture 10
+  write_pi_auth '{"openrouter":{"type":"api_key","key":"sk-or-v1-TESTSENTINELPI"}}'
+  SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELPI run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output$stderr" != *"TESTSENTINELPI"* ]]
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+  run jq -r '.engines.pi.source' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "openrouter_key" ]
+  run ! grep -rq "TESTSENTINELPI" "$XDG_DATA_HOME/crew"
+}
+
+@test "pi's CLI wins over its auth store" {
+  or_key_fixture 10
+  write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
+  SHIM_PI_KEY=sk-or-v1-TESTSENTINELCLI SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELCLI run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+}
+
 @test "PI_CODING_AGENT_DIR relocates pi's auth store" {
   or_key_fixture 10
   dir="$BATS_TEST_TMPDIR/piagent"
@@ -1782,25 +1865,27 @@ write_pi_auth() {
   or_key_fixture 10
   write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
   OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELENV SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELENV \
-    run bash "$SCRIPT"
+    SHIM_PI_KEY=sk-or-v1-TESTSENTINELCLI run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
+  [ ! -s "$PI_LOG" ]
 }
 
 @test "the key file is exclusive: pi's auth store is not consulted" {
   or_key_fixture 10
   write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
   keyfile="$BATS_TEST_TMPDIR/missing-key"
-  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" run bash "$SCRIPT"
+  DISPATCH_OPENROUTER_KEY_FILE="$keyfile" SHIM_PI_KEY=sk-or-v1-TESTSENTINELCLI run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
   ! grep -q openrouter "$STUB_LOG"
+  [ ! -s "$PI_LOG" ]
 }
 
 @test "a pi auth store without a usable key leaves pi unknown" {
   or_key_fixture 10
-  for body in '{"openrouter":{"type":"oauth","access":"not-a-key"}}' 'not json' '{"openrouter":{"type":"api_key","access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{}}' '{"other":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"type":"oauth","access":"sk-or-v1-bad key"}}'; do
+  for body in '{"openrouter":{"type":"oauth","access":"not-a-key"}}' 'not json' '{"openrouter":{"type":"api_key","access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{}}' '{"other":{"access":"sk-or-v1-TESTSENTINELPI"}}' '{"openrouter":{"type":"oauth","access":"sk-or-v1-bad key"}}' '{"openrouter":{"type":"api_key","key":"not-a-key"}}' '{"openrouter":{"type":"api_key","key":"sk-or-v1-bad key"}}'; do
     write_pi_auth "$body"
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]

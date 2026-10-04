@@ -342,8 +342,9 @@ than 15 points ahead of the month's elapsed fraction (escape with
 and `DISPATCH_OPENROUTER_KEY_FILE` (or `OPENROUTER_API_KEY`) directly.
 When `openrouter.keyFile` is set, its first line is the only key source (an
 unreadable or empty file leaves the spend unknown rather than falling back);
-otherwise `OPENROUTER_API_KEY` is used. `~/.pi/agent/auth.json` is never read
-for this, and the key is never printed or cached. The figure is **per key** — it only covers
+otherwise `OPENROUTER_API_KEY` is used, then pi's own OpenRouter login
+(`pi auth print-api-key --provider openrouter`, else `~/.pi/agent/auth.json`,
+read-only). The key is never printed or cached. The figure is **per key** — it only covers
 spend on the key pi actually uses, not the whole OpenRouter account — so
 OpenRouter's own per-key credit limit (in its dashboard) stays the hard
 backstop regardless of this target.

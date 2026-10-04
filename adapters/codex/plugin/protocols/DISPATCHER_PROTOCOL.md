@@ -170,9 +170,10 @@ session start; refresh again mid-session if the cache is older than ~2h or a
 worker fails on a limit error. A missing cache never blocks judging.
 Pi/OpenRouter is usage-priced, but once a key is found it does carry a
 cache entry. Key sources, first hit wins: `DISPATCH_OPENROUTER_KEY_FILE`
-(exclusive when set); `OPENROUTER_API_KEY`; then pi's own OpenRouter OAuth
-login (`.openrouter.access` in its auth store, read-only, `type: "oauth"`
-only). `engines.pi` holds month-to-date spend (`spend_usd`) against an
+(exclusive when set); `OPENROUTER_API_KEY`; then pi's own OpenRouter login:
+`pi auth print-api-key --provider openrouter` (timeout-bounded), falling back
+to its auth store, read-only (`.openrouter.key` for `type: "api_key"`,
+`.openrouter.access` for `type: "oauth"`). `engines.pi` holds month-to-date spend (`spend_usd`) against an
 optional configured monthly target (`target_usd`) and a burn-rate projection
 (`projected_month_end_usd`), over the UTC calendar month. `null` still means
 unknown, never free or unlimited. With no configured target, a key whose
