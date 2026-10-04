@@ -746,6 +746,57 @@ assert_allow_relative() {
   done
 }
 
+# The `-c` finder matches on the dequoted view and decode_word starts at the raw
+# index the view maps back to: a wrong view hides an interpreter, a wrong index
+# decodes the wrong word. Rows: raw text, its dequoted view, then the dequoted
+# indices to map and the raw indices they must map to.
+@test "secret-read-guard: dequote and dequote_index give bash's quote removal and its raw offsets, under every awk" {
+  local awk_chars awk_mask_cmd name awk_path row raw view ks want got
+  eval "$(sed -n "/^awk_chars='/,/^}'\$/p" "$GUARD")"
+  eval "$(sed -n "/^awk_mask_cmd='/,/^}'\$/p" "$GUARD")"
+  eval "$(sed -n '/^dequote() {/,/^}/p; /^dequote_index() {/,/^}/p' "$GUARD")"
+  eval "$(grep -E '^shell_c_(interp|opt|flag|re)=' "$GUARD")"
+  local -a rows=(
+    $'b\\ash -c \'env\'\tbash -c env\t1 8\t2 10'
+    $'"bash" \'-c\' x\tbash -c x\t8\t12'
+    $'$\'bash\' -c env\tbash -c env\t0\t2'
+    $'echo \'a b\'#c\techo a_b#c\t6\t7'
+    $'cat <<EOF\nit\'s\nEOF\nb\\ash -c env\tcat <<   \nit\'s\nEOF\nbash -c env\t20\t21'
+    $'echo "a $(b\\ash -c \'env\') c"\techo a_$(bash -c env)_c\t10\t12'
+    $'bash -c -e env\tbash -c -e env\t10\t10'
+  )
+  local -a awks=("")
+  for name in mawk nawk busybox-awk; do
+    awk_path=$(command -v "$name") || continue
+    mkdir -p "$BATS_TEST_TMPDIR/$name"
+    ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
+    awks+=("$BATS_TEST_TMPDIR/$name")
+  done
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r -d '' raw view ks want <<<"$row" || true
+    want=${want%$'\n'}
+    for awk_path in "${awks[@]}"; do
+      got=$(PATH="${awk_path:+$awk_path:}$PATH" dequote "$raw")
+      [[ $got == "$view" ]] || {
+        echo "${awk_path:-default awk}: dequote '$raw' -> '$got', want '$view'" >&2
+        return 1
+      }
+      got=$(PATH="${awk_path:+$awk_path:}$PATH" dequote_index "$raw" "$ks")
+      [[ ${got//$'\n'/ } == "$want" ]] || {
+        echo "${awk_path:-default awk}: dequote_index '$raw' '$ks' -> '$got', want '$want'" >&2
+        return 1
+      }
+    done
+  done
+  # The finder's match on `bash -c -e env` takes the `-e` option too, so the
+  # body decode_word gets starts at the `e` of `env`.
+  raw='bash -c -e env'
+  [[ $raw =~ $shell_c_re ]]
+  [[ ${BASH_REMATCH[0]} == 'bash -c -e ' ]]
+  got=$(dequote_index "$raw" $((${#BASH_REMATCH[0]} - 1)))
+  [[ ${raw:got+1} == env ]]
+}
+
 # bats test_tags=timing
 @test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies within K x its calibration under every awk" {
   local body

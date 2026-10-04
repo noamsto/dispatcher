@@ -274,10 +274,28 @@ builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|'"$dump_en
 fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--universal))+[[:space:]]*('"$dump_end"')'
 # A `-c` argument is quoted, so mask_quotes alone would erase a dumper the
 # shell actually runs. This only locates where the argument starts (through
-# the interpreter, its flags and trailing whitespace); decode_word extracts it.
-# `-[A-Za-z]*c` covers clusters like `fish -ic` / `bash -lc`; `/` and `(` ahead
-# of the name cover `/usr/bin/fish -c` and `(bash -c …)`.
-shell_c_re="(^|[[:space:]/(])(fish|bash|sh|zsh)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+"
+# the interpreter, its options and trailing whitespace); decode_word extracts
+# it. It models bash's option grammar: option words run until the first
+# non-option word, and once a cluster held `c` that word is the body — so
+# `-ic`, `-ce`, `-c -e` and `-o pipefail -c` all find it. An option word is a
+# `-`/`+` cluster (one holding `o`/`O` takes the next word: `-euo pipefail`,
+# `-O extglob`), a long `--norc`, `--rcfile`/`--init-file FILE`, or a bare `-`
+# or `--`; leftmost-longest matching ends the match right before the body.
+# The interpreters are the shells sharing bash's -c grammar (dash, ash and
+# `busybox sh`, ksh, mksh) plus fish, read with the same grammar. The anchor
+# takes `/` and `(` for `/usr/bin/fish -c` and `(bash -c …)`, and `;&|)` for a
+# compact `true;bash -c …`.
+#
+# Matched against the dequoted view (dequote, below), so an escaped or
+# quote-spliced `b\ash`, `"bash"`, `'-c'` or `$'bash'` reads as the word bash
+# runs, while every quoted metacharacter reads as `_`: quoted text is data, and
+# `echo 'see bash -c env'` has no anchor before `bash`. A `-c` inside a quoted
+# argument of another program (`ssh h '…'`, `su -c '…'`, `watch '…'`) is out of
+# scope (O4).
+shell_c_interp='(fish|bash|sh|zsh|dash|ksh|mksh|ash|busybox[[:space:]]+(sh|ash))'
+shell_c_opt='([-+][A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|[-+][A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|-(-([A-Za-z][-A-Za-z]*(=[^[:space:]]*)?)?)?)[[:space:]]+'
+shell_c_flag='(-[A-Za-z]*([oO][A-Za-z]*c|c[A-Za-z]*[oO])[A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|-[A-Za-z]*c[A-Za-z]*)'
+shell_c_re="(^|[[:space:]/(;&|)])${shell_c_interp}[[:space:]]+(${shell_c_opt})*${shell_c_flag}[[:space:]]+(${shell_c_opt})*"
 # Any read of /proc/<pid>/environ is a whole-environment dump, so this denies
 # without a printing-tool gate. Tested against the raw command, quotes and all,
 # which also catches it inside `fish -c '…'` without the -c extraction.
@@ -351,29 +369,25 @@ function feed(c) { printf "%s", mask(c) }' <<<"$1"
 # unquoted / '…' / "…" / $'…' segments with quote removal applied, stopping at
 # the first unquoted word terminator — `bash -c 'echo '\''hi'\''; env'` is ONE
 # argument. No expansion is attempted; the result is only ever re-scanned,
-# never executed. The $ of $'…' is dropped, or it breaks the command-position
-# anchor.
+# never executed. The $ of $'…' and $"…" is dropped, or it breaks the
+# command-position anchor.
 #
-# Sets DECODED_WORD and DECODE_WORD_END (one past the last consumed index)
-# instead of printing, so the caller can keep scanning past this word for a
-# sibling `-c` body; a `$(...)` return would lose the second value.
+# Sets DECODED_WORD; the `.` the pass ends with keeps a trailing newline of
+# the word from the `$(...)` strip.
 awk_decode='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; STOP = " \t\n;&|()" }
 function feed(c) {
   if (esc) {
     esc = 0
-    pos++
     printf "%s", c
     return
   }
   if (st == "q") {
-    pos++
     if (c == SQ) st = ""
     else printf "%s", c
     return
   }
   if (st != "") {
-    pos++
     if (c == BS) esc = 1
     else if (c == (st == "d" ? DQ : SQ)) st = ""
     else printf "%s", c
@@ -381,15 +395,13 @@ function feed(c) {
   }
   if (dollar) {
     dollar = 0
-    if (c == SQ) {
-      pos++
-      st = "a"
+    if (c == SQ || c == DQ) {
+      st = (c == SQ ? "a" : "d")
       return
     }
     printf "$"
   }
   if (index(STOP, c)) exit
-  pos++
   if (c == BS) esc = 1
   else if (c == "$") dollar = 1
   else if (c == SQ) st = "q"
@@ -399,14 +411,13 @@ function feed(c) {
 END {
   if (dollar) printf "$"
   if (esc && st != "") printf "%s", BS
-  printf "\n%d", pos
+  printf "."
 }'
 
 decode_word() {
   local res
   res=$(awk "$awk_decode$awk_chars" <<<"${1:$2}")
-  DECODED_WORD=${res%"$nl"*}
-  DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
+  DECODED_WORD=${res%.}
 }
 
 # Rule 2's masker: what mask_quotes does, plus the shell structure it cannot see,
@@ -453,13 +464,38 @@ decode_word() {
 # continuations joined (in awk_chars), searched beside the others. The comment
 # rule is a heuristic: the base reading is right for a real comment, J for a
 # misdetected one; a command mixing both is an accepted limit.
+#
+# D=1 (dequote) is not a mask but bash's quote removal over the W=0 reading,
+# so the `-c` finder sees the words bash runs and shares this machine's span
+# boundaries: an apostrophe in a comment or heredoc body cannot open a quote
+# here that the masker never opened. Quote characters and the `$` of `$'…'`
+# / `$"…"` are dropped; a quoted character is itself, except a metacharacter
+# (whitespace incl. CR/VT/FF, `; & | ( ) < >`), which is `_` so quoted data
+# can never separate or anchor; outside quotes `\X` is X (a metacharacter
+# `_`) and `\<newline>` nothing; inside "…" the backslash goes only before
+# $ ` " \ and newline (that newline too). Comments, heredoc bodies and
+# delimiter words, backticks and `$(` frames print as W=0 prints them, frame
+# contents dequoted as code. ANSI-C escapes are not decoded. Not
+# length-preserving, so K="k1 k2 …" (ascending) prints instead, one per line,
+# the raw index (feed count) of the character that produced each output index
+# — decode_word needs the raw offset — and stops reading after the last.
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
   SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; BT = "`"
   HDSTOP = " \t\n;&|()<>"
+  META = " \t\n\r" sprintf("%c%c", 11, 12) ";&|()<>"
   sp = 0; pd = 0; hd_i = 0; hd_n = 0
+  if (K != "") kc = split(K, ks, " ")
+  kn = 1
 }
+function out(s, i) {
+  if (K == "") { printf "%s", s; return }
+  on += length(s)
+  while (kn <= kc && on > ks[kn] + 0) { printf "%d\n", i; kn++ }
+  if (kn > kc) { hit = 1; exit }
+}
+function dqc(c) { return index(META, c) ? "_" : c }
 function wordstart(p) { return p == "" || index(" \t\n;&|()", p) > 0 }
 function push(k, saved) {
   sk[sp] = k; sv[sp] = saved; spd[sp] = pd
@@ -497,9 +533,12 @@ function framefeed(c) {
   prev = c
   if (frameout(c)) { fr = 0; pop() }
 }
-function code(c,    d, o, n) {
+function code(c,    d, o, n, u) {
   d = dl
   dl = 0
+  u = ud
+  ud = 0
+  if (u && c != SQ && c != DQ) out("$", ri - 1)
   o = " "
   if (W == 1) {
     wo = opn
@@ -517,18 +556,26 @@ function code(c,    d, o, n) {
       }
       else if (!W && c == BT && sp > 0 && sk[sp - 1] == "E") { pop(); o = ")" }
       else if (!W && c == BT && sp > 0 && sk[sp - 1] == BT) { push("E", ""); o = "(" }
+      else if (D) o = (c == "\n" ? "" : dqc(c))
+    } else if (D) {
+      if (q == DQ && c == "\n") o = ""
+      else if (q == DQ && !index("$" BT DQ BS, c)) { out(BS, ri - 1); o = dqc(c) }
+      else o = dqc(c)
     }
   } else if (cm) {
     o = c
     if (c == "\n") cm = 0
   } else if (q == SQ) {
-    if (c == SQ) q = ""
+    if (c == SQ) { q = ""; if (D) o = "" }
+    else if (D) o = dqc(c)
   } else if (q == "A") {
     if (c == BS) esc = 1
     else if (c == SQ) q = ""
+    if (D) o = (q == "" ? "" : dqc(c))
   } else if (q == DQ) {
-    if (c == BS) esc = 1
-    else if (c == DQ) q = ""
+    if (D) o = dqc(c)
+    if (c == BS) { esc = 1; if (D) o = "" }
+    else if (c == DQ) { q = ""; if (D) o = "" }
     else if (d && c == "(") { push("(", DQ); o = "(" }
     else if (c == BT) {
       push(BT, DQ)
@@ -541,9 +588,10 @@ function code(c,    d, o, n) {
     o = c
     if (c == BS) {
       esc = 1
-      if (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
-    } else if (c == SQ) { q = (d ? "A" : SQ); o = " " }
-    else if (c == DQ) { q = DQ; o = " " }
+      if (D) o = ""
+      else if (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
+    } else if (c == SQ) { q = (d ? "A" : SQ); o = (D ? "" : " ") }
+    else if (c == DQ) { q = DQ; o = (D ? "" : " ") }
     else if (c == BT) {
       if (W == 1) o = tick(n)
       else if (W == 2) { push(BT, ""); fr = 1; fb = 0; o = "(" }
@@ -554,7 +602,10 @@ function code(c,    d, o, n) {
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
     } else if (c == "#" && !J && (wordstart(prev) || (W == 1 && wo))) cm = 1
-    else if (c == "$") dl = 1
+    else if (c == "$") {
+      dl = 1
+      if (D) { ud = 1; o = "" }
+    }
   }
   return o
 }
@@ -568,7 +619,7 @@ function enterbody() {
 function bodyfeed(c,    w, term) {
   w = hd_w[hd_i]
   if (c == "\n") {
-    printf "\n"
+    out("\n", ri)
     term = (bok && bpos == length(w))
     bok = 1
     bpos = 0
@@ -588,28 +639,29 @@ function bodyfeed(c,    w, term) {
   if (W == 2 && (c == BT || c == BS)) { printf "%s", (c == BT ? ";" : " "); return }
   if (c == BT && (W || !hd_q[hd_i])) {
     bbt = !bbt
-    printf "%s", (bbt ? "(" : ")")
+    out(bbt ? "(" : ")", ri)
     return
   }
-  printf "%s", c
+  out(c, ri)
 }
 function feed(c,    arm, wasesc) {
+  ri = nf++
   if (fr) { framefeed(c); return }
   if (body) { bodyfeed(c); return }
   if (hs == 3) {
     if (hbt) { if (frameout(c)) hbt = 0; return }
-    if (hbs) { hbs = 0; hw = hw c; printf " "; return }
+    if (hbs) { hbs = 0; hw = hw c; out(" ", ri); return }
     if (W == 2 && c == BT && hq != SQ) { hbt = 1; fb = 0; hspan = 1; printf "("; return }
     if (hq != "") {
       if (c == hq) hq = ""
       else if (W == 2 && hq == DQ && c == BS) hbs = 1
       else hw = hw c
-      printf " "
+      out(" ", ri)
       return
     }
-    if (c == BS) { hbs = 1; hquo = 1; printf " "; return }
-    if (c == SQ || c == DQ) { hq = c; hquo = 1; printf " "; return }
-    if (!index(HDSTOP, c)) { hw = hw c; printf " "; return }
+    if (c == BS) { hbs = 1; hquo = 1; out(" ", ri); return }
+    if (c == SQ || c == DQ) { hq = c; hquo = 1; out(" ", ri); return }
+    if (!index(HDSTOP, c)) { hw = hw c; out(" ", ri); return }
     if (hw != "" || hquo || hspan) {
       hd_n++
       hd_w[hd_n] = hspan ? "\n" : hw
@@ -618,21 +670,26 @@ function feed(c,    arm, wasesc) {
     }
     hs = 0
   } else if (hs == 2) {
-    if (c == " " || c == "\t") { printf "%s", c; return }
-    if (c == "-" && !hdash) { hdash = 1; printf " "; return }
-    if (c == "<") { hs = 0; printf "<"; prev = c; return }
+    if (c == " " || c == "\t") { out(c, ri); return }
+    if (c == "-" && !hdash) { hdash = 1; out(" ", ri); return }
+    if (c == "<") { hs = 0; out("<", ri); prev = c; return }
     if (index(HDSTOP, c)) hs = 0
-    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0; feed(c); return }
+    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0; nf--; feed(c); return }
   }
   arm = (q == "" && !esc && !cm)
   wasesc = esc
-  printf "%s", code(c)
+  out(code(c), ri)
   if (arm && c == "<") {
     if (hs == 1) { hs = 2; hdash = 0 }
     else hs = 1
   } else if (hs == 1) hs = 0
   if (c == "\n" && q == "" && !wasesc && hd_i < hd_n) enterbody()
   prev = c
+}
+END {
+  if (!D || hit) exit
+  if (ud) out("$", ri)
+  else if (esc && (q == "" || q == DQ)) out(BS, ri)
 }'
 
 mask_cmd() {
@@ -649,6 +706,14 @@ mask_cmd_frames() {
 
 mask_cmd_joined() {
   awk -v W=0 -v J=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+dequote() {
+  awk -v W=0 -v D=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+}
+
+dequote_index() {
+  awk -v W=0 -v D=1 -v K="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -907,39 +972,63 @@ shell)
 
   # 2. Dumping the environment or listing shell variables, at command position
   #    only, in the masked top level and in every `-c` body. A worklist, not a
-  #    single variable: each match queues the extracted body (nesting) and the
-  #    rest of the string after it (siblings: `bash -c 'true'; bash -c
-  #    'declare -p NAME'`). Bounded by total matches, so it always terminates.
+  #    single variable: each match queues the extracted body (nesting), and the
+  #    search goes on past that body in the same text (siblings: `bash -c
+  #    'true'; bash -c 'declare -p NAME'`). Bounded by total matches, so it
+  #    always terminates. The finder reads each item's dequoted view, made once
+  #    — re-dequoting the text after every match was 20 passes over a 128 KiB
+  #    `-c` chain. A sibling search resumes after the body's word in that view
+  #    (a quoted metacharacter there is `_`, so data never ends it early), and
+  #    every match end maps back to raw text in one more pass, where
+  #    decode_word reads the body's own quoting.
   raw_spaces=("$command")
   search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
   fish_spaces=()
   subs=()
   sub_fish=()
+  dequoted_views=()
+  word_re='^[^[:space:];&|()<>]*'
   worklist=("$command")
   wi=0
   matches=0
   while ((wi < ${#worklist[@]})) && ((matches < 20)); do
     cur=${worklist[wi]}
     wi=$((wi + 1))
-    [[ $cur =~ $shell_c_re ]] || continue
-    match=${BASH_REMATCH[0]}
-    interpreter=${BASH_REMATCH[2]}
-    prefix=${cur%%"$match"*}
-    decode_word "$cur" $((${#prefix} + ${#match}))
-    sub=$DECODED_WORD
-    masked_sub=$(mask_cmd "$sub")
-    quoted_sub=$(mask_quotes "$sub")
-    raw_spaces+=("$sub")
-    search_spaces+=("$masked_sub" "$quoted_sub")
-    subs+=("$sub")
-    if [[ $interpreter == fish ]]; then
-      fish_spaces+=("$masked_sub" "$quoted_sub")
-      sub_fish+=(1)
-    else
-      sub_fish+=(0)
-    fi
-    matches=$((matches + 1))
-    worklist+=("$sub" "${cur:DECODE_WORD_END}")
+    dq=$(dequote "$cur")
+    dequoted_views+=("$dq")
+    ends=()
+    interpreters=()
+    off=0
+    while ((matches + ${#ends[@]} < 20)); do
+      rest=${dq:off}
+      [[ $rest =~ $shell_c_re ]] || break
+      match=${BASH_REMATCH[0]}
+      interpreters+=("${BASH_REMATCH[2]}")
+      prefix=${rest%%"$match"*}
+      off=$((off + ${#prefix} + ${#match}))
+      ends+=($((off - 1)))
+      [[ ${dq:off} =~ $word_re ]]
+      off=$((off + ${#BASH_REMATCH[0]}))
+    done
+    ((${#ends[@]})) || continue
+    mapfile -t starts <<<"$(dequote_index "$cur" "${ends[*]}")"
+    for ((j = 0; j < ${#ends[@]}; j++)); do
+      decode_word "$cur" $((starts[j] + 1))
+      sub=$DECODED_WORD
+      masked_sub=$(mask_cmd "$sub")
+      quoted_sub=$(mask_quotes "$sub")
+      raw_spaces+=("$sub")
+      search_spaces+=("$masked_sub" "$quoted_sub")
+      subs+=("$sub")
+      if [[ ${interpreters[j]} == fish ]]; then
+        fish_spaces+=("$masked_sub" "$quoted_sub")
+        sub_fish+=(1)
+      else
+        sub_fish+=(0)
+      fi
+      matches=$((matches + 1))
+      worklist+=("$sub")
+    done
   done
   check_dump_spaces "${search_spaces[@]}"
   check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"}
