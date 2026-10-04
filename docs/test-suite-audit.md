@@ -436,5 +436,6 @@ and prints the bats files to run, one per line.
   any changed file with no row selects the full suite, and the reason goes to stderr.
 - A docs-only change outside the protocol tree selects nothing.
 
-Workers use it for the iteration and review-fix gates. The full suite runs once
-before push, and CI keeps running the full suite.
+Workers use it at every gate, including the last one before push, and never run
+the full suite locally. CI runs the full suite and is where a shared-code
+regression surfaces; workers fix CI failures from its log.
