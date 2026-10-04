@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
@@ -181,5 +183,20 @@ func TestBudgetGaugeColorThresholds(t *testing.T) {
 		if got := gaugeColor(c.pct); got != c.want {
 			t.Fatalf("gaugeColor(%v) = %q, want %q", c.pct, got, c.want)
 		}
+	}
+}
+
+func TestBudgetErrorInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	msg := injectedErr
+	snap.Budget.Error = &msg
+	out := newBudgetView(snap).View(120, 24)
+	requireNoControl(t, out)
+	if !strings.Contains(out, "unavailable: boom") {
+		t.Errorf("missing unavailable: boom:\n%q", out)
 	}
 }

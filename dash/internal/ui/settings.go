@@ -307,7 +307,7 @@ func (v settingsView) View(w, h int) string {
 
 	bodyH := max0(h - len(lines))
 	if v.err != nil {
-		lines = append(lines, truncateLine("unavailable: "+*v.err, w))
+		lines = append(lines, truncateLine("unavailable: "+cleanText(*v.err), w))
 		return strings.Join(normalizeFrame(strings.Join(lines, "\n"), h, w), "\n")
 	}
 

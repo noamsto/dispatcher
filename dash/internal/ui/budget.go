@@ -124,7 +124,7 @@ func (v budgetView) Capturing() bool {
 
 func (v budgetView) View(w, h int) string {
 	if v.err != nil {
-		lines := []string{truncateLine("unavailable: "+*v.err, w)}
+		lines := []string{truncateLine("unavailable: "+cleanText(*v.err), w)}
 		return strings.Join(normalizeFrame(strings.Join(lines, "\n"), h, w), "\n")
 	}
 	if v.detail {

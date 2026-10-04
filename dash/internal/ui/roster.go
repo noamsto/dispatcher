@@ -276,7 +276,7 @@ func (v rosterView) tableView(w, h int) string {
 		top = append(top, truncateLine(warnStyle.Render(v.deps.liveOffNote), w))
 	}
 	if v.err != nil {
-		top = append(top, truncateLine("unavailable: "+*v.err, w))
+		top = append(top, truncateLine("unavailable: "+cleanText(*v.err), w))
 		return strings.Join(top, "\n")
 	}
 	if len(v.crews) == 0 {
@@ -292,7 +292,7 @@ func (v rosterView) tableView(w, h int) string {
 	for _, c := range v.crews {
 		body = append(body, truncateLine(headerStyle.Render("crew "+c.ID), w))
 		if c.WorkersError != nil {
-			body = append(body, truncateLine("  unavailable: "+*c.WorkersError, w))
+			body = append(body, truncateLine("  unavailable: "+cleanText(*c.WorkersError), w))
 		} else if len(c.Workers) > 0 {
 			rows := make([][]string, len(c.Workers))
 			for i, wm := range c.Workers {
@@ -313,7 +313,7 @@ func (v rosterView) tableView(w, h int) string {
 			}
 		}
 		if c.HoldsError != nil {
-			body = append(body, truncateLine("  holds unavailable: "+*c.HoldsError, w))
+			body = append(body, truncateLine("  holds unavailable: "+cleanText(*c.HoldsError), w))
 		} else {
 			for _, hd := range c.Holds {
 				body = append(body, truncateLine("  "+holdLine(hd), w))
@@ -473,7 +473,7 @@ func (v rosterView) detailView(w, h int) string {
 	case v.detailLoading:
 		body = append(body, truncateLine("loading…", w))
 	case v.detailErr != "":
-		body = append(body, truncateLine("unavailable: "+v.detailErr, w))
+		body = append(body, truncateLine("unavailable: "+cleanText(v.detailErr), w))
 	case len(v.detailEvents) == 0:
 		body = append(body, truncateLine("no recent events", w))
 	default:

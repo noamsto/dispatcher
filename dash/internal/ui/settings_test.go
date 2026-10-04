@@ -236,3 +236,18 @@ func TestSettingsSelectionIsCursorRow(t *testing.T) {
 		t.Fatalf("Selection() = %+v, want openrouter.keyFile/locked/not editable", sel)
 	}
 }
+
+func TestSettingsErrorInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	msg := injectedErr
+	snap.Settings.Error = &msg
+	out := newSettingsView(snap).View(120, 24)
+	requireNoControl(t, out)
+	if !strings.Contains(out, "unavailable: boom") {
+		t.Errorf("missing unavailable: boom:\n%q", out)
+	}
+}
