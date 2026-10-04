@@ -6096,6 +6096,7 @@ EOF
   # The label now exists (stub), no branch was created, and the leftover row's
   # pid is dead — a stale claim to re-claim, not a live claimant.
   stub_launch_bins
+  seed_git_baseline
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
