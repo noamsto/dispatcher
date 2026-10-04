@@ -195,7 +195,7 @@ func TestBudgetErrorInjectionIsCleaned(t *testing.T) {
 	msg := injectedErr
 	snap.Budget.Error = &msg
 	out := newBudgetView(snap).View(120, 24)
-	requireNoControl(t, out, true)
+	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
 	}

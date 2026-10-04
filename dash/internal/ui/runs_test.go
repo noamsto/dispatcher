@@ -315,12 +315,12 @@ func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 
 const injectedErr = "boom\x1b]0;pwned\x07\x1b[31m‮"
 
-func requireNoControl(t *testing.T, out string, bel bool) {
+func requireNoControl(t *testing.T, out string) {
 	t.Helper()
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("output contains a raw ESC:\n%q", out)
 	}
-	if bel && strings.ContainsRune(out, 0x07) {
+	if strings.ContainsRune(out, 0x07) {
 		t.Errorf("output contains BEL:\n%q", out)
 	}
 	if strings.ContainsRune(out, 0x202e) {
@@ -343,7 +343,7 @@ func TestRunsErrorLinesInjectionIsCleaned(t *testing.T) {
 			snap := loadFullSnapshot(t)
 			set(&snap)
 			out := newRunsView(snap).View(120, 24)
-			requireNoControl(t, out, true)
+			requireNoControl(t, out)
 			if !strings.Contains(out, "unavailable: boom") {
 				t.Errorf("missing %q:\n%q", "unavailable: boom", out)
 			}
@@ -358,14 +358,25 @@ func TestRunsBranchInjectionIsCleaned(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	for i := range snap.Runs.Retro.Rows {
-		snap.Runs.Retro.Rows[i].Branch = "br\x1b]0;pwned\x07\x1b[31m‮"
+		snap.Runs.Retro.Rows[i].Branch = "feat/inj\x1b]0;pwned\x07\x1b[31m‮"
 	}
 	v := newRunsView(snap)
-	requireNoControl(t, v.View(120, 24), false)
+	out := v.View(120, 24)
+	if !strings.Contains(out, "feat/inj") {
+		t.Fatalf("list should render the injected branch:\n%s", out)
+	}
+	requireNoControl(t, out)
 
 	nv, _ := v.Update(keyRune('f'))
 	v = nv.(runsView)
 	nv, _ = v.Update(keyType(tea.KeyEnter))
 	v = nv.(runsView)
-	requireNoControl(t, v.View(120, 24), false)
+	if !v.detail {
+		t.Fatalf("enter should open the detail pane")
+	}
+	out = v.View(120, 24)
+	if !strings.Contains(out, "feat/inj") {
+		t.Fatalf("detail pane should render the injected branch:\n%s", out)
+	}
+	requireNoControl(t, out)
 }

@@ -394,7 +394,7 @@ func TestRosterErrorLinesInjectionIsCleaned(t *testing.T) {
 			snap := loadFullSnapshot(t)
 			c.set(&snap)
 			out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(120, 24)
-			requireNoControl(t, out, true)
+			requireNoControl(t, out)
 			if !strings.Contains(out, c.want) {
 				t.Errorf("missing %q:\n%q", c.want, out)
 			}
@@ -411,7 +411,7 @@ func TestRosterDetailErrInjectionIsCleaned(t *testing.T) {
 	v.detail = true
 	nv, _ := v.Update(recentEventsMsg{err: injectedErr})
 	out := nv.(rosterView).View(120, 24)
-	requireNoControl(t, out, true)
+	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
 	}

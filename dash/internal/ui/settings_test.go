@@ -246,7 +246,7 @@ func TestSettingsErrorInjectionIsCleaned(t *testing.T) {
 	msg := injectedErr
 	snap.Settings.Error = &msg
 	out := newSettingsView(snap).View(120, 24)
-	requireNoControl(t, out, true)
+	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
 	}
