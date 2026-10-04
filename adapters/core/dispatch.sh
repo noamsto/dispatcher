@@ -3886,7 +3886,7 @@ prev_wt="$(printf '%s\n' "$wt_list" | _branch_wts "$branch")"
 # one, so a create that finds one holds an unborn-branch squatter (#640).
 if [ "$switch_mode" = create ] && [ -n "$prev_wt" ]; then
   {
-    echo "dispatch: $branch does not exist yet, but a worktree's HEAD already names it (an unborn branch — possible tampering):"
+    echo "dispatch: $branch does not exist yet, but a worktree's HEAD already names it (an unborn branch):"
     printf '%s\n' "$prev_wt" | sed 's/^/  /'
     echo "  a create would attach there instead of making a new worktree — possible tampering: stop and tell the human; removing it (git worktree remove) or re-dispatching under another title is their call."
   } >&2
