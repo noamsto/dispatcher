@@ -292,6 +292,16 @@ EOF
   [[ "$output" == *"detached HEAD"* ]]
 }
 
+@test "resume passes the anchor check when a tag shares the branch name (#688)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" tag feat/7-a-thing
+  stub_tmux_with_pane_at_wt '@4' '%8' '' fish
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
 # _assert_refused_before_discovery <status var already run> — no precheck, no
 # window/pane action happened: the anchor check must run before all of them.
 _assert_refused_before_discovery() {
