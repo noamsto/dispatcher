@@ -181,7 +181,7 @@ unknown, never free or unlimited. With no configured target, a key whose
 other reset type sets none. No target at all means the spend is recorded but
 purely informational — no `month` window and no soft gate. Separately, a key
 whose own credit limit is set and exhausted (`limit_remaining <= 0`) sets
-`engines.pi.limit_reached`, a hard wall: `dispatch --agent pi` (lead only) is
+`engines.pi.limit_reached`, a hard wall: `dispatch --agent pi` is
 refused, `--ignore-budget` overrides, like the codex absolute limit. Because
 the gates below fail open on a cache older than ~2h, run `refresh-budget` right before
 sizing a pi fan-out, not just once at session start.
@@ -357,8 +357,11 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
   overall below 95%. `dispatch` refuses
   `--agent codex` or `--agent cursor` on any of these with the same message
   shape and `--ignore-budget` escape as the ≥95% stop. **This absolute-limit
-  stop covers the lead only**, for both engines: a codex or cursor role target
-  passes through the ≥95% stop alone. A `limit_reached` refusal also has
+  stop covers the lead and every role target** — codex, cursor or pi: an
+  eager role (`--roles …=codex:…`/`…=cursor:…`/`…=pi:…`) and a `--spawn-role`
+  pane are both refused when the role's engine carries `limit_reached`, and the
+  refusal names the role (the `--spawn-role` path reads the role's recorded
+  engine from `roles.json`). A `limit_reached` refusal also has
   **no hold path** — the hold release predicate reads ≥95% windows only — so
   hand the task back or pick another engine. `refresh-budget` also records
   each engine's `plan_type` (codex from the snapshot; claude's oauth payload
