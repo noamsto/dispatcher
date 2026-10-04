@@ -1785,8 +1785,11 @@ if [ "${1:-}" = "--role-watch" ]; then
   # correct under LC_ALL=C (see _box_rows's own comment on the same trap).
   # The editor's scroll indicators (`↑ N more` / `↓ N more`, real capture, pi
   # 0.99.1, drawn once a paste is taller than the editor) are rule-borne text but
-  # not a live-turn label. Any other rule text, such as a vim mode suffix, still
-  # vetoes.
+  # not a live-turn label. pi-vim appends its mode label (` INSERT`, ` NORMAL`,
+  # ` EX …`, ` VISUAL`, ` V-LINE`, plus a pending-command tail such as
+  # ` NORMAL 3dw_`; real capture, pi 1.0.0 + pi-vim 0.14.2) to the LOWER rule, so
+  # a vim-mode pane is idle despite the rule text. Strip that trailing label
+  # before deciding. Any other rule text (e.g. `── ⠼ Working ──`) still vetoes.
   _pi_live_turn() {
     printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | awk '
       {
@@ -1795,30 +1798,53 @@ if [ "${1:-}" = "--role-watch" ]; then
         gsub(/─/, "", line)
         gsub(/↑ [0-9]+ more/, "", line)
         gsub(/↓ [0-9]+ more/, "", line)
+        sub(/[[:space:]]+(INSERT|NORMAL|EX|VISUAL|V-LINE)([[:space:]].*)?[[:space:]]*$/, "", line)
         if (line !~ /^[[:space:]]*$/) { found = 1; exit }
       }
       END { exit (found ? 0 : 1) }'
   }
 
+  # _pi_working_row <text> — a pi-vim working-indicator row: a braille glyph
+  # carrying the `Working` status text, drawn as its own row above the editor box
+  # instead of on the top rule (real capture, pi 1.0.0 + pi-vim 0.14.2:
+  # ` ⠸ Working`). The braille range U+2800–U+28FF is matched by its lead byte
+  # and two continuation ranges, never a quantifier directly on the glyph, so
+  # this stays correct under LC_ALL=C.
+  _pi_working_row() {
+    printf '%s\n' "$1" | LC_ALL=C grep -qE $'^[[:space:]]*\xe2[\xa0-\xa3][\x80-\xbf].*Working'
+  }
+
   # _pi_working_label <text> — POSITIVE live-turn evidence: a rule carrying the
-  # `Working` status text or a braille spinner glyph (real capture, pi 0.87.1).
+  # `Working` status text or a braille spinner glyph (real capture, pi 0.87.1),
+  # or a pi-vim working row adjacent to the editor box (real capture, pi 1.0.0).
   # `_pi_live_turn` is the wider fail-closed veto ("any rule text means not
   # idle"), which is right before a paste but is not proof that a turn started.
+  # The row check is positional (rows `_box_rows` prints above the upper rule) so
+  # a stale transcript row cannot dequeue a still-held assignment; when there is
+  # no box, only the rule-borne evidence counts.
   _pi_working_label() {
+    local out above
     printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 |
-      LC_ALL=C grep -qE $'^\xe2\x94\x80.*(Working|\xe2[\xa0-\xa3][\x80-\xbf])'
+      LC_ALL=C grep -qE $'^\xe2\x94\x80.*(Working|\xe2[\xa0-\xa3][\x80-\xbf])' && return 0
+    out=$(_box_rows "$1" '.*') || return 1
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    _pi_working_row "$above"
   }
 
   # _pi_idle_box <text> — positive idle shape of a pi pane, from a real capture
   # (pi 0.87.1): an editor bounded by two `─` rules, blank or holding text, with
   # the cwd and stats rows after the lower rule. A bare shell prompt or a boot
-  # frame has no such box.
+  # frame has no such box. A vim-mode rule suffix is not live-turn evidence
+  # (`_pi_live_turn`); a pi-vim working row among the box's above-rule rows is a
+  # live turn and vetoes (real capture, pi 1.0.0 + pi-vim 0.14.2).
   _pi_idle_box() {
-    local out row
+    local out row above
     _pi_live_turn "$1" && return 1
     out=$(_box_rows "$1" '.*') || return 1
     row=$(printf '%s\n' "$out" | head -1)
     printf '%s\n' "$row" | grep -qE "$re_option" && return 1
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    _pi_working_row "$above" && return 1
     return 0
   }
 
