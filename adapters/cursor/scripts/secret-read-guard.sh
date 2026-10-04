@@ -335,10 +335,10 @@ shell_c_raw_re="(^|[[:space:]/(\`])${shell_c_body}"
 # cannot walk past denies outright: before the flag, an interpreter followed by
 # nine non-flag option words (shell_c_opt, which leaves out the `-c` clusters)
 # and a `-`/`+` word; after the flag, eight option words and a ninth `-`/`+`
-# word. The flag itself is in neither count, so `bash -x ×8
-# -c make` and `bash -c -x ×8 make` stay allowed. Fixed repetition, so each
-# stays linear like the runs it guards. Each cap has two anchor variants, as the
-# body regex does: raw for the raw text (`$cur`), full for the dequoted view.
+# word. The flag itself is in neither count, so `bash -x ×8 -c make` and
+# `bash -c -x ×8 make` stay allowed. Fixed repetition, so each stays linear
+# like the runs it guards. Each cap has two anchor variants, as the body regex
+# does: raw for the raw text (`$cur`), full for the dequoted view.
 shell_c_opt='-[A-Zabd-z]*[oO][A-Zabd-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|\+[A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|-[A-Zabd-z]+|\+[A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z][-A-Za-z]*(=[^[:space:]]*)?'
 shell_c_cap_pre="${shell_c_interp}[[:space:]]+((${shell_c_opt}|--?)[[:space:]]+){9}[-+]"
 shell_c_cap_post="${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){0,8}${shell_c_flag}[[:space:]]+((${shell_c_word})[[:space:]]+){8}[-+]"
