@@ -1102,7 +1102,7 @@ decorate_pane() {
   tmux set-option -w -t "$pane" pane-border-status top
 }
 
-# layout_grid <window> — main-vertical, pinning the lead (pane 1, launched
+# layout_grid <window> — main-vertical, pinning the lead (pane 1, created
 # before any role pane splits off it) to 60% width. Role panes only carry
 # short verdict traffic and need far less room than the lead's diff/test/tool
 # output. The built-in fallback for a host without tmux-og's tmux-grid-refit.
@@ -1122,6 +1122,30 @@ refit_grid() {
   else
     layout_grid "$win"
   fi
+}
+
+# grid_refit_sig <window> — tmux-grid-refit's last-applied layout signature
+# (it covers the pane list, so adding a pane always changes it).
+grid_refit_sig() {
+  tmux show-options -w -v -q -t "$1" @grid_refit_sig 2>/dev/null || true
+}
+
+# wait_grid_refit <window> <sig-before-splits> — tmux-grid-refit relayouts in
+# the background on the tmux side, so wait until its @grid_refit_sig has moved
+# off the pre-split baseline and held for two reads, capped at ~2s. A no-op
+# without tmux-grid-refit (the fallback layout is synchronous), so it never
+# waits on a host that cannot settle.
+wait_grid_refit() {
+  local win="$1" base="$2" prev="" cur i
+  command -v tmux-grid-refit >/dev/null 2>&1 || return 0
+  for ((i = 0; i < 13; i++)); do
+    cur="$(grid_refit_sig "$win")"
+    if [ "$cur" != "$base" ] && [ "$cur" = "$prev" ]; then
+      return 0
+    fi
+    prev="$cur"
+    sleep 0.15
+  done
 }
 
 # An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
@@ -2397,7 +2421,16 @@ if [ "${1:-}" = "--spawn-role" ]; then
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   budget_stop "$spawn_agent" "$role"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
+  sig_before="$(grid_refit_sig "$win")"
   role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
+  # The lead stamp precedes the refit (tmux-grid-refit exits without one), and
+  # the layout settles before the engine boots so its TUI is not resized.
+  if [ -z "${CREW_ROLE_ID:-}" ]; then
+    publish_grid_lead "$win" "$TMUX_PANE"
+  fi
+  publish_grid_window "$win"
+  refit_grid "$win"
+  wait_grid_refit "$win" "$sig_before"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
@@ -2408,13 +2441,6 @@ if [ "${1:-}" = "--spawn-role" ]; then
   jq --arg r "$role" --arg a "$spawn_agent" --arg m "$spawn_model" --arg e "$effort" \
     '.[$r] = {agent: $a, model: $m, effort: $e}' "$roles_file" >"$roles_tmp"
   mv "$roles_tmp" "$roles_file"
-  # The grid hints follow the pane count: this window now has >=1 role pane.
-  # Only the lead publishes the lead hint (a role pane never runs this).
-  if [ -z "${CREW_ROLE_ID:-}" ]; then
-    publish_grid_lead "$win" "$TMUX_PANE"
-  fi
-  publish_grid_window "$win"
-  refit_grid "$win"
   echo "spawned role $role ($spawn_agent/$spawn_model) in $role_pane"
   exit 0
 fi
@@ -4552,34 +4578,44 @@ else
   launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
-tmux send-keys -t "$pane" "$launch_line" Enter
-
 # Role grid: split the task window into one pane per role. Each role pane parks
 # on the bus until the lead assigns it work; GRID_PROTOCOL.md is its system
 # prompt. A role may run a different engine from the lead (cross-engine review).
-# Split AFTER the lead launch so the lead keeps the first pane. A role pane gets
-# only the prompt watch, never the liveness detectors: a parked role produces no
-# output, which the pane-output watchdog would misread as a wedge.
+# Every pane is split and the layout settled BEFORE any engine launches: a TUI
+# that is still drawing its first frames garbles when a later split or refit
+# resizes it. The lead keeps the first pane by creation order, not launch order.
+# A role pane gets only the prompt watch, never the liveness detectors: a parked
+# role produces no output, which the pane-output watchdog would misread as a wedge.
+# A --lazy --status window gains a pane here even though it skipped the eager
+# role splits, so it must publish the grid hint too.
+role_panes=()
+status_pane=""
+sig_before="$(grid_refit_sig "$win")"
 if [ "${#role_names[@]}" -gt 0 ] && [ -z "$grid_lazy" ]; then
   publish_grid_window "$win"
   for i in "${!role_names[@]}"; do
-    role="${role_names[$i]}"
-    role_pane="$(split_role_pane "$win" "$wt_path" "$role" "$worker_id" "$crew_id")"
-    launch_role "$role_pane" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
-    watch_role "$role" "$role_pane" "${role_agents[$i]}"
-    watch_role_prompts "$role" "$role_pane" "${role_agents[$i]}" "$crew_id"
+    role_panes[i]="$(split_role_pane "$win" "$wt_path" "${role_names[$i]}" "$worker_id" "$crew_id")"
   done
-  refit_grid "$win"
 fi
-
-# Optional live status pane (--status): a bounded roster loop over the crew bus.
-# A --lazy --status window gains a pane here even though it skipped the eager
-# loop above, so it must publish the grid hint too.
 if [ -n "$grid_status" ] && [ "${#role_names[@]}" -gt 0 ]; then
   publish_grid_window "$win"
   status_pane="$(split_role_pane "$win" "$wt_path" status "$worker_id" "$crew_id")"
-  tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
+fi
+if [ "${#role_panes[@]}" -gt 0 ] || [ -n "$status_pane" ]; then
   refit_grid "$win"
+  wait_grid_refit "$win" "$sig_before"
+fi
+
+tmux send-keys -t "$pane" "$launch_line" Enter
+for i in "${!role_panes[@]}"; do
+  role="${role_names[$i]}"
+  launch_role "${role_panes[$i]}" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
+  watch_role "$role" "${role_panes[$i]}" "${role_agents[$i]}"
+  watch_role_prompts "$role" "${role_panes[$i]}" "${role_agents[$i]}" "$crew_id"
+done
+if [ -n "$status_pane" ]; then
+  # Optional live status pane (--status): a bounded roster loop over the crew bus.
+  tmux send-keys -t "$status_pane" "while true; do clear; crew roster 2>/dev/null | jq -r '.[] | \"  \\(.state)  \\(.from)\"'; sleep 3; done" Enter
 fi
 
 # Detached stall watchdog (#103): a wedged worker sits in `working` with no
