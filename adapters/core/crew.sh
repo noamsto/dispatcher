@@ -41,9 +41,8 @@ _identity() { # $1=branch -> {name,color,tmux}
   _identity_at "$(_identity_slot "$1")"
 }
 
-# _where_die <msg> — a `crew where` resolution failure: a readable message on
-# stderr and a non-zero exit. Separate from `status`' error path so the wording
-# is scoped to the locator.
+# _where_die <msg> — a `crew where` resolution failure: message on stderr and
+# a non-zero exit.
 _where_die() {
   echo "crew: where: $*" >&2
   exit 1
@@ -1167,10 +1166,9 @@ case "$sub" in
 where)
   # where <codename|branch|%id> [--crew ID] — a human-usable address for a
   # worker's pane: codename, session:window.pane, window name, role and the
-  # jump command. Resolved at call time from dispatcher-anchored state only
-  # (the window's @crew_* stamps, the dispatch rows) — never from git
-  # discovery inside a worktree or the worker's env (#618). Non-zero with a
-  # readable message when the pane/branch/codename is gone.
+  # jump command. Resolved from dispatcher-anchored state only (the window's
+  # @crew_* stamps, the dispatch rows), never from git discovery in a worktree
+  # or the worker's env. Non-zero with a readable message when it is gone.
   where_crew=$(_crew_id)
   where_target=""
   while [ $# -gt 0 ]; do
@@ -1192,8 +1190,7 @@ where)
   done
   [ -n "$where_target" ] || _where_die "usage: crew where <codename|branch|%id> [--crew ID]"
 
-  # A tmux read failure is not "the target is gone": report it as itself, or
-  # an outage (or a wrong socket) reads as a dead worker to the human.
+  # A tmux read failure is not "the target is gone".
   where_wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}' 2>/dev/null) ||
     _where_die "cannot read tmux windows (is a tmux server running?)"
   where_panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}' 2>/dev/null) ||
@@ -1208,8 +1205,7 @@ where)
   where_pane=""
   case "$where_target" in
   '%'[0-9]*)
-    # A pane id keeps that exact pane — never collapse to its window and
-    # re-pick the lead, or a role-pane address would print the lead pane.
+    # A pane id keeps that exact pane.
     where_wid=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_target" '$2 == p { print $1; exit }')
     [ -n "$where_wid" ] || _where_die "no pane $where_target"
     where_win=$(printf '%s\n' "$where_cwins" | awk -F'\t' -v w="$where_wid" '$1 == w { print; exit }')
@@ -1250,8 +1246,7 @@ where)
 
   where_role=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $3; exit }')
   where_pidx=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $4; exit }')
-  # A plain (non-grid) dispatch window stamps no @crew_role, so its lone pane
-  # is the lead — label it, never the nonsensical "(pane pane)".
+  # A plain (non-grid) dispatch window stamps no @crew_role: its lone pane is lead.
   [ -n "$where_role" ] || where_role=lead
   [ -n "$where_name" ] || where_name=$(_identity "$where_branch" | jq -r .name)
 
