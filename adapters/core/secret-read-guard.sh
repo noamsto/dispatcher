@@ -269,11 +269,11 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # a process substitution.
 dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
 # A dumper path starts path-like, so the shebang in heredoc text
-# (`#!/usr/bin/env -S bash`) is not read as a dumper path. A relative one holds
-# no `=`, so an assignment (`CONFIG=deploy/env`) is not read as one either; an
-# absolute one may (`/nix/store/x-a=b/bin/env`), since no assignment starts
-# with `/`.
-path_pfx='(/[^[:space:];&|()]*/|[A-Za-z0-9_.~][^[:space:];&|()=]*/)?'
+# (`#!/usr/bin/env -S bash`) is not read as a dumper path. A relative one may
+# hold `=` unless the word reads as an assignment `NAME=…`, so `CONFIG=deploy/env`
+# is not read as a path but `./a=b/env` and `a/b=c/env` are; an absolute one may
+# (`/nix/store/x-a=b/bin/env`), since no assignment starts with `/`.
+path_pfx='(/[^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^A-Za-z0-9_=[:space:];&|()][^[:space:];&|()]*)?/)?'
 env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
@@ -318,22 +318,34 @@ fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--univer
 # '…') or inside a here-string or a pipe into a shell is still found — the
 # dequoted view alone would read it as data. The raw search over-scans a
 # quoted mention (`echo 'see bash -c …'`); that is kept, as the price of not
-# letting a real dumper through when the masker misreads quoting. The raw
-# search (shell_c_raw_re) drops the `;&|)` anchors, which there would read a
-# pattern alternation (`rg 'foo|bash -c …'`) as a command; the dequoted search
-# still finds a compact `true;bash -c …`.
+# letting a real dumper through when the masker misreads quoting, and a
+# backticked one (`echo 'run `bash -c env`'`) denies too. The raw search
+# (shell_c_raw_re) drops the `;&|)` anchors, which there would read a pattern
+# alternation (`rg 'foo|bash -c …'`) as a command; the dequoted search still
+# finds a compact `true;bash -c …`. Both anchor on a backtick, which opens a
+# command substitution (`` x=`bash -c …` ``).
 shell_c_interp='(fish|bash|sh|zsh|dash|ksh|mksh|ash|busybox[[:space:]]+(sh|ash))'
 shell_c_word='[-+][A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|[-+][A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z][-A-Za-z]*(=[^[:space:]]*)?'
 shell_c_flag='(-[A-Za-z]*([oO][A-Za-z]*c|c[A-Za-z]*[oO])[A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|-[A-Za-z]*c[A-Za-z]*)'
 shell_c_body="${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){0,8}${shell_c_flag}[[:space:]]+((${shell_c_word})[[:space:]]+){0,8}(--?[[:space:]]+)?"
-shell_c_re="(^|[[:space:]/(;&|)])${shell_c_body}"
-shell_c_raw_re="(^|[[:space:]/(])${shell_c_body}"
+shell_c_re="(^|[[:space:]/(;&|)\`])${shell_c_body}"
+shell_c_raw_re="(^|[[:space:]/(\`])${shell_c_body}"
 # The 8-word caps would let a ninth option word hide the body (`bash -x ×9 -c
-# env` matches neither run), so an interpreter followed by eight option words
-# and a ninth `-`/`+` word denies outright. The `-c` flag is itself an option
-# word, so this covers the run after it too (`bash -c -x ×9 env`). Fixed
-# repetition, so it stays linear like the runs it guards.
-shell_c_cap_re="(^|[[:space:]/(;&|)])${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){8}[-+]"
+# env` matches neither run), so a run of option words that the body regex
+# cannot walk past denies outright: before the flag, an interpreter followed by
+# nine non-flag option words (shell_c_opt, which leaves out the `-c` clusters)
+# and a `-`/`+` word; after the flag, eight option words and a ninth `-`/`+`
+# word. The flag itself is in neither count, so `bash -x ×8 -c make` and
+# `bash -c -x ×8 make` stay allowed. Fixed repetition, so each stays linear
+# like the runs it guards. Each cap has two anchor variants, as the body regex
+# does: raw for the raw text (`$cur`), full for the dequoted view.
+shell_c_opt='-[A-Zabd-z]*[oO][A-Zabd-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|\+[A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|-[A-Zabd-z]+|\+[A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z][-A-Za-z]*(=[^[:space:]]*)?'
+shell_c_cap_pre="${shell_c_interp}[[:space:]]+((${shell_c_opt}|--?)[[:space:]]+){9}[-+]"
+shell_c_cap_post="${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){0,8}${shell_c_flag}[[:space:]]+((${shell_c_word})[[:space:]]+){8}[-+]"
+shell_c_cap_pre_raw_re="(^|[[:space:]/(\`])${shell_c_cap_pre}"
+shell_c_cap_post_raw_re="(^|[[:space:]/(\`])${shell_c_cap_post}"
+shell_c_cap_pre_re="(^|[[:space:]/(;&|)\`])${shell_c_cap_pre}"
+shell_c_cap_post_re="(^|[[:space:]/(;&|)\`])${shell_c_cap_post}"
 # Any read of /proc/<pid>/environ is a whole-environment dump, so this denies
 # without a printing-tool gate. Tested against the raw command, quotes and all,
 # which also catches it inside `fish -c '…'` without the -c extraction, and
@@ -433,27 +445,38 @@ strip_escapes() {
 #
 # Sets DECODED_WORD and DECODE_WORD_END (one past the last consumed index)
 # instead of printing, so the raw finder can keep scanning past this word for
-# a sibling `-c` body; a `$(...)` return would lose the second value.
+# a sibling `-c` body; a `$(...)` return would lose the second value. It also
+# sets DECODED_FRAME_WORD: the word cut at its first unquoted, unescaped
+# backtick, empty when there is none. A backtick that closes the enclosing
+# frame (`` `bash -c '…'` ``) is not a word terminator, so it is glued to the
+# word and the dump regexes then fail on the trailing `(`; the frame reading is
+# the word without it. It is searched beside the full word as an over-scan,
+# never instead of it, since a backtick that opens a substitution spliced into
+# the word (`` bash -c 'ec'`date`'; … ``) must keep the full reading.
 awk_decode='
-BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; STOP = " \t\n;&|()" }
+BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; STOP = " \t\n;&|()"; bt = -1 }
+function emit(s) {
+  printf "%s", s
+  pn += length(s)
+}
 function feed(c) {
   if (esc) {
     esc = 0
     pos++
-    printf "%s", c
+    emit(c)
     return
   }
   if (st == "q") {
     pos++
     if (c == SQ) st = ""
-    else printf "%s", c
+    else emit(c)
     return
   }
   if (st != "") {
     pos++
     if (c == BS) esc = 1
     else if (c == (st == "d" ? DQ : SQ)) st = ""
-    else printf "%s", c
+    else emit(c)
     return
   }
   if (dollar) {
@@ -463,7 +486,7 @@ function feed(c) {
       st = (c == SQ ? "a" : "d")
       return
     }
-    printf "$"
+    emit("$")
   }
   if (index(STOP, c)) exit
   pos++
@@ -471,19 +494,26 @@ function feed(c) {
   else if (c == "$") dollar = 1
   else if (c == SQ) st = "q"
   else if (c == DQ) st = "d"
-  else printf "%s", c
+  else {
+    if (c == "`" && bt < 0) bt = pn
+    emit(c)
+  }
 }
 END {
-  if (dollar) printf "$"
-  if (esc && st != "") printf "%s", BS
-  printf "\n%d", pos
+  if (dollar) emit("$")
+  if (esc && st != "") emit(BS)
+  printf "\n%d\n%d", bt, pos
 }'
 
 decode_word() {
-  local res
+  local res rest frame_len
   res=$(awk "$awk_decode$awk_chars" <<<"${1:$2}")
-  DECODED_WORD=${res%"$nl"*}
   DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
+  rest=${res%"$nl"*}
+  frame_len=${rest##*"$nl"}
+  DECODED_WORD=${rest%"$nl"*}
+  DECODED_FRAME_WORD=
+  if ((frame_len >= 0)); then DECODED_FRAME_WORD=${DECODED_WORD:0:frame_len}; fi
 }
 
 # Rule 2's masker: what mask_quotes does, plus the shell structure it cannot see,
@@ -1090,11 +1120,12 @@ shell)
     dq=$(dequote "$cur")
     dequoted_views+=("$dq")
     if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
-    if [[ $cur =~ $shell_c_cap_re || $dq =~ $shell_c_cap_re ]]; then option_cap=1; fi
+    if [[ $cur =~ $shell_c_cap_pre_raw_re || $cur =~ $shell_c_cap_post_raw_re || $dq =~ $shell_c_cap_pre_re || $dq =~ $shell_c_cap_post_re ]]; then option_cap=1; fi
     wi=$((wi + 1))
     raw_starts=()
     raw_interps=()
     raw_words=()
+    raw_frames=()
     off=0
     while ((matches + ${#raw_starts[@]} < 20)); do
       rest=${cur:off}
@@ -1106,6 +1137,7 @@ shell)
       raw_starts+=("$off")
       decode_word "$cur" "$off"
       raw_words+=("$DECODED_WORD")
+      raw_frames+=("$DECODED_FRAME_WORD")
       off=$DECODE_WORD_END
     done
     ends=()
@@ -1139,29 +1171,37 @@ shell)
     while ((matches < 20 && (i < ${#raw_starts[@]} || j < ${#dq_starts[@]}))); do
       if ((j < ${#dq_starts[@]} && (i == ${#raw_starts[@]} || dq_starts[j] + 1 < raw_starts[i]))); then
         decode_word "$cur" $((dq_starts[j] + 1))
-        sub=$DECODED_WORD
+        readings=("$DECODED_WORD")
+        frame=$DECODED_FRAME_WORD
         interp=${dq_interps[j]}
         j=$((j + 1))
       else
         if ((j < ${#dq_starts[@]} && dq_starts[j] + 1 == raw_starts[i])); then j=$((j + 1)); fi
-        sub=${raw_words[i]}
+        readings=("${raw_words[i]}")
+        frame=${raw_frames[i]}
         interp=${raw_interps[i]}
         i=$((i + 1))
       fi
-      masked_sub=$(mask_cmd "$sub")
-      quoted_sub=$(mask_quotes "$sub")
-      raw_spaces+=("$sub")
-      search_spaces+=("$masked_sub" "$quoted_sub")
-      subs+=("$sub")
-      if [[ $interp == fish ]]; then
-        fish_spaces+=("$masked_sub" "$quoted_sub")
-        sub_fish+=(1)
-      else
-        sub_fish+=(0)
-      fi
+      # The frame reading (decode_word) rides beside the full word, one match
+      # for both; a duplicate found inside it counts toward the cap, which
+      # fails closed.
+      if [[ -n $frame && $frame != "${readings[0]}" ]]; then readings+=("$frame"); fi
+      for sub in "${readings[@]}"; do
+        masked_sub=$(mask_cmd "$sub")
+        quoted_sub=$(mask_quotes "$sub")
+        raw_spaces+=("$sub")
+        search_spaces+=("$masked_sub" "$quoted_sub")
+        subs+=("$sub")
+        if [[ $interp == fish ]]; then
+          fish_spaces+=("$masked_sub" "$quoted_sub")
+          sub_fish+=(1)
+        else
+          sub_fish+=(0)
+        fi
+        worklist+=("$sub")
+        worklist_fish+=("${sub_fish[-1]}")
+      done
       matches=$((matches + 1))
-      worklist+=("$sub")
-      worklist_fish+=("${sub_fish[-1]}")
     done
   done
   # The dequoted views are searched too: quote splicing in a dumper word
