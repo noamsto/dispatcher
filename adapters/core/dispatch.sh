@@ -2559,7 +2559,7 @@ parent_issue=""
 also_closes_raw=()
 also_closes=()
 # Set by --also-closes none: the empty bundle is explicit, so the dispatch row
-# records also_closes:[] and a later plain re-dispatch carries nothing.
+# records also_closes:[].
 also_closes_explicit_empty=false
 base_ref=""
 base_flag=""
