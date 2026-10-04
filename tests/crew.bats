@@ -5345,6 +5345,8 @@ EOF
 }
 
 @test "stall-watch: CREW_STALL_CLOCK runs a ten-minute watch on virtual time" {
+  # Ten virtual minutes outlast D4's 300s --load window, so pin a calm host.
+  export CREW_STALL_LOAD_CMD='printf "1.0 32\n"'
   p=$(fx_idle_box)
   stall_sampler "$p"
   SECONDS=0
