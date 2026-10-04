@@ -44,10 +44,11 @@
 #     quota to probe — only a spend-vs-target check). Key resolution:
 #     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
 #     unreadable or empty file is unknown, never a fallback), else
-#     OPENROUTER_API_KEY, else (last resort) pi's own login: .openrouter.access
-#     in ${PI_CODING_AGENT_DIR:-~/.pi/agent}/auth.json (owner-confirmed shape),
-#     read-only, used only when .openrouter.type is "oauth" and the value
-#     looks like an sk-or-v1- key. The key goes to curl through -K -
+#     OPENROUTER_API_KEY, else (last resort) pi's own login:
+#     ${PI_CODING_AGENT_DIR:-~/.pi/agent}/auth.json read-only (.openrouter.key
+#     when type is "api_key", .openrouter.access when "oauth"), then `pi auth
+#     print-api-key --provider openrouter` (pi 0.83+, timeout-bounded); the
+#     value must look like an sk-or-v1- key. The key goes to curl through -K -
 #     on stdin only, never argv, and is never printed or cached. A key whose
 #     credit limit is set and exhausted (limit_remaining <= 0) sets
 #     engines.pi.limit_reached, which gates `dispatch --agent pi`. spend_usd is
@@ -512,7 +513,7 @@ header = \"Cookie: WorkosCursorSessionToken=$account::$token\"") || return 4
 # source — an unreadable file or an empty first line leaves `or_key` empty
 # rather than falling back to OPENROUTER_API_KEY, since spend is per key and
 # the wrong key would pace pi against the wrong spend. Otherwise reads
-# OPENROUTER_API_KEY, else pi's auth store (read-only, last fallback).
+# OPENROUTER_API_KEY, else pi's auth store, then its auth CLI.
 _or_key() {
   or_key=""
   if [[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]]; then
@@ -529,12 +530,22 @@ _or_key() {
 }
 
 # _or_key_from_pi — pi's OpenRouter login into the caller's `or_key` local.
-# Owner-confirmed shape: {"openrouter": {"type": "oauth", "access": "sk-or-v1-..."}}.
-# Anything else (other type, junk, missing file or field) leaves or_key empty.
+# auth.json first, read-only: {"type":"api_key","key":...} (what pi writes for
+# its OpenRouter login, since OpenRouter's OAuth hands back a plain API key) or
+# {"type":"oauth","access":...}. Then pi's CLI, but only a pi that has the
+# `auth` subcommand (0.83+): on an older pi the words become a prompt and pi
+# runs a billed agent turn. Anything else leaves or_key empty.
 _or_key_from_pi() {
-  local auth="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json" v
-  [[ -r $auth ]] || return 0
-  v=$(jq -r 'select(.openrouter.type == "oauth") | .openrouter.access // empty | strings' "$auth" 2>/dev/null) || return 0
+  local auth="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json" v="" ver=""
+  if [[ -r $auth ]]; then
+    v=$(jq -r '.openrouter | if .type == "api_key" then .key elif .type == "oauth" then .access else empty end | strings' "$auth" 2>/dev/null) || v=""
+  fi
+  if [[ ! $v =~ ^sk-or-v1-[A-Za-z0-9]+$ ]] && command -v pi >/dev/null 2>&1; then
+    ver=$(timeout 5 pi --version </dev/null 2>/dev/null) || ver=""
+    if [[ $ver =~ ([0-9]+)\.([0-9]+) ]] && ((BASH_REMATCH[1] > 0 || BASH_REMATCH[2] >= 83)); then
+      v=$(cd / && timeout -k 2 10 pi auth print-api-key --provider openrouter </dev/null 2>/dev/null) || v=""
+    fi
+  fi
   [[ $v =~ ^sk-or-v1-[A-Za-z0-9]+$ ]] && or_key=$v
   return 0
 }
