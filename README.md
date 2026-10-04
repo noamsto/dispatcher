@@ -87,12 +87,13 @@ crew roster                  # who is working, on what, how long
 crew status <from> <state>   # worker → dispatcher progress
 crew watch --states blocked  # block until something needs you
 crew inbox dispatcher:<id>   # messages addressed to you
+crew where nova              # a human-usable address for a worker's pane
 crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
 Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
 `await`, `register`, `deregister`, `watch`, `stream`, `hold`, `roster`, `inbox`,
-`stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`.
+`where`, `stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`.
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a

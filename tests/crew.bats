@@ -8318,3 +8318,118 @@ EOF
   [ "$(cat "$child_wt/WORKER_TASK.md")" = "$child_task_before" ]
   jq -e 'select(.kind=="reap" and .branch=="feat/10-parent")' "$log" >/dev/null
 }
+
+# --- crew where -----------------------------------------------------------
+# A human-usable address for a worker's pane, resolved at call time from the
+# window's dispatcher-anchored @crew_* stamps. The suite's tmux stub answers
+# just list-windows/list-panes, which is all `where` reads.
+
+_where_stub() { # $1=wins-body $2=panes-body
+  stub_tmux "$1" "$2"
+}
+
+@test "where: codename, branch and %id print the same lead-pane line" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/618-x\t%s\tc1\tnova\tsess\t3\twin-name\n' "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@624\t%%205\tplan-critic\t2\n')"
+  expected='nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204'
+  for target in nova feat/618-x '%204'; do
+    CREW_ID=c1 run run_crew where "$target"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected" ]
+  done
+}
+
+@test "where: a role-pane id keeps its own pane and role label" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/618-x\t%s\tc1\tnova\tsess\t3\twin-name\n' "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@624\t%%205\tplan-critic\t2\n')"
+  CREW_ID=c1 run run_crew where '%205'
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.2 "win-name" (plan-critic pane)   jump: ! tmux switch-client -t %205' ]
+  # The same window addressed by branch still resolves to its lead pane.
+  CREW_ID=c1 run run_crew where feat/618-x
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204' ]
+}
+
+@test "where: a gone pane/branch/codename fails with a readable error" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "" ""
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage"}' >>"$dir/events.jsonl"
+  CREW_ID=c1 run run_crew where '%999'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew: where: no pane %999"* ]]
+  CREW_ID=c1 run run_crew where feat/9-gone
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no live pane"* ]]
+  [[ "$output" == *"feat/9-gone"* ]]
+  CREW_ID=c1 run run_crew where sage
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no live pane"* ]]
+  CREW_ID=c1 run run_crew where nobody
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches 'nobody'"* ]]
+}
+
+@test "where: an ambiguous codename fails and names the branches" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/1-a\t%s\tc1\tnova\tsess\t3\twin-a\n@625\tfeat/2-b\t%s\tc1\tnova\tsess\t4\twin-b\n' "$dir" "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@625\t%%304\tlead\t1\n')"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ambiguous"* ]]
+  [[ "$output" == *"feat/1-a"* ]]
+  [[ "$output" == *"feat/2-b"* ]]
+}
+
+@test "where: needs a target and rejects an unknown flag" {
+  _where_stub "" ""
+  CREW_ID=c1 run run_crew where
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"usage: crew where"* ]]
+  CREW_ID=c1 run run_crew where --bogus nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown flag"* ]]
+}
+
+@test "where: a role-less pane in a plain dispatch window is labelled lead" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/618-x\t%s\tc1\tnova\tsess\t3\twin-name\n' "$dir")" \
+    "$(printf '@624\t%%204\t\t1\n')"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204' ]
+}
+
+@test "where: the crew anchor excludes another crew's window and pane" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/1-a\t%s\tc1\tnova\tsess\t3\twin-a\n@625\tfeat/2-b\t%s\tc2\tnova\tsess\t4\twin-b\n' "$dir" "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@625\t%%304\tlead\t1\n')"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.1 "win-a" (lead pane)   jump: ! tmux switch-client -t %204' ]
+  CREW_ID=c1 run run_crew where '%304'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a pane of this crew"* ]]
+}
+
+@test "where: a tmux read failure is reported as itself" {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+echo "no server running on /tmp/tmux-1000/default" >&2
+exit 1
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot read tmux windows"* ]]
+}
