@@ -4776,6 +4776,22 @@ PANES
     fi
   }
 
+  # CREW_STALL_CLOCK=<file> is a test-only virtual clock: _sw_now reads epoch
+  # seconds from it and _sw_sleep advances it instead of waiting. It starts at
+  # the real time and only moves forward, so bus rows (real ms) posted during a
+  # run still sort at or before `now`, as they do in production.
+  _sw_now() {
+    [ -n "${CREW_STALL_CLOCK:-}" ] || { date +%s; return; }
+    [ -s "$CREW_STALL_CLOCK" ] || date +%s >"$CREW_STALL_CLOCK"
+    cat "$CREW_STALL_CLOCK"
+  }
+  _sw_sleep() {
+    [ -n "${CREW_STALL_CLOCK:-}" ] || { sleep "$1"; return; }
+    local s="${1%%.*}"
+    [ "$s" = "$1" ] || s=$((${s:-0} + 1))
+    printf '%s\n' "$(($(_sw_now) + s))" >"$CREW_STALL_CLOCK"
+  }
+
   # C-3 — every bus read is scoped to THIS run. events.jsonl is append-only per
   # repo and re-dispatch onto the same branch is a first-class flow, so an
   # unscoped read lets the PREVIOUS run's failed/exited mute a freshly started
@@ -4786,7 +4802,7 @@ PANES
   # ms: without it a status the launcher posted a fraction of a second before
   # this process started sorts below the cutoff and reads as a previous run.
   # Previous runs are minutes away, so the slack cannot reach one.
-  run_start_ms=$((($(date +%s) - 1) * 1000))
+  run_start_ms=$((($(_sw_now) - 1) * 1000))
   own_epoch=""
   if [ "$from_id" != "$me" ]; then
     own_epoch="${from_id##*#s}"
@@ -4957,23 +4973,23 @@ BUSLINE
     _release_windows "$branch" "$rel_session" "$bus_state" "$bus_ts" "$release" "" || rc=$?
     [ "$rc" = 3 ] || exit 0
     idle_ticks=0
-    prev_change=$(date +%s)
+    prev_change=$(_sw_now)
   }
 
   _finished_release() {
     local t plain colored idle_ticks=0 prev_hash="" prev_change quiet_s rel_session=-
     ! _is_session_id "$from_id" || rel_session="${from_id##*#}"
-    prev_change=$(date +%s)
+    prev_change=$(_sw_now)
     say() { :; }
     note() { :; }
     while :; do
       _bus_refresh
       case "$bus_state" in
       done | failed) ;;
-      '') sleep "$interval"; continue ;;
+      '') _sw_sleep "$interval"; continue ;;
       *) return 0 ;;
       esac
-      t=$(date +%s)
+      t=$(_sw_now)
       [ $((t - start)) -ge "$max_life" ] && exit 0
       # A watchdog-posted `failed` marks a hung pane: keep it as evidence.
       [ "$bus_source" != watchdog ] || exit 0
@@ -4999,15 +5015,15 @@ BUSLINE
           [ "$quiet_s" -lt "$release" ] || _try_release
         fi
       fi
-      sleep "$interval"
+      _sw_sleep "$interval"
     done
   }
 
-  start=$(date +%s)
-  sleep "$grace"
+  start=$(_sw_now)
+  _sw_sleep "$grace"
   fails=0
   last_hash=""
-  last_change=$(date +%s)
+  last_change=$(_sw_now)
   tick=0
   d0_at=0
   d1_hits=0
@@ -5031,7 +5047,7 @@ BUSLINE
   engine_seen=0
   _bus_refresh
   while :; do
-    now=$(date +%s)
+    now=$(_sw_now)
     # --max-life exists because the watchdog is nohup-detached: without a hard
     # cap, a bug or an orphaned pane leaves a process polling forever.
     [ $((now - start)) -ge "$max_life" ] && exit 0
@@ -5040,7 +5056,7 @@ BUSLINE
     # and not on `working`, which is a heartbeat.
     case "$bus_state" in
     done | failed)
-      [ "$role_mode" = 1 ] || [ "$release" = 0 ] || { _finished_release; last_hash=""; last_change=$(date +%s); continue; }
+      [ "$role_mode" = 1 ] || [ "$release" = 0 ] || { _finished_release; last_hash=""; last_change=$(_sw_now); continue; }
       exit 0
       ;;
     exited) exit 0 ;;
@@ -5053,7 +5069,7 @@ BUSLINE
       # backstop owns the real case anyway.
       fails=$((fails + 1))
       [ "$fails" -ge 3 ] && exit 0
-      sleep "$interval"
+      _sw_sleep "$interval"
       tick=$((tick + 1))
       continue
     fi
@@ -5452,7 +5468,7 @@ BUSLINE
       esac
     fi
 
-    sleep "$interval"
+    _sw_sleep "$interval"
     tick=$((tick + 1))
     # Bus-read cadence: a whole-file jq over a growing cross-crew log every tick
     # for 12h is ~2880 spawns per worker. Every 4th tick costs ≤60s of latency
