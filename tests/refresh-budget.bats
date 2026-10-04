@@ -50,6 +50,7 @@ write_pi_shim() {
   cat >"$STUB_DIR/pi" <<'EOF'
 #!/usr/bin/env bash
 printf 'pi %s\n' "$*" >>"$PI_LOG"
+[[ "$1" == auth ]] && printf 'pi-cwd %s\n' "$PWD" >>"$PI_LOG"
 if [[ "$*" == "--version" ]]; then
   printf '%s\n' "${SHIM_PI_VERSION:-1.0.2}"
   exit 0
@@ -1808,6 +1809,7 @@ write_pi_auth() {
   run ! grep -q "TESTSENTINELCLI" "$STUB_LOG"
   run ! grep -rq "TESTSENTINELCLI" "$XDG_DATA_HOME/crew"
   grep -q "pi auth print-api-key --provider openrouter" "$PI_LOG"
+  grep -qx "pi-cwd /" "$PI_LOG"
 }
 
 @test "a failing pi auth CLI leaves pi unknown" {
@@ -1870,7 +1872,7 @@ write_pi_auth() {
   [ "$output" = "null" ]
 }
 
-@test "pi's api_key auth-store shape is read when the CLI fails" {
+@test "pi's api_key auth-store shape supplies the key without calling the CLI" {
   or_key_fixture 10
   write_pi_auth '{"openrouter":{"type":"api_key","key":"sk-or-v1-TESTSENTINELPI"}}'
   SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELPI run --separate-stderr bash "$SCRIPT"
@@ -1880,6 +1882,7 @@ write_pi_auth() {
   run jq -r '.engines.pi.source' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "openrouter_key" ]
   run ! grep -rq "TESTSENTINELPI" "$XDG_DATA_HOME/crew"
+  run ! grep -q auth "$PI_LOG"
 }
 
 @test "pi's auth store wins over its CLI" {
