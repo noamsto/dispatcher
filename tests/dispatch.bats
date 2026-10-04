@@ -2341,6 +2341,27 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
   run ! grep -q 'split-window' "$STUB_LOG"
 }
 
+@test "absolute limit refuses --spawn-role on the role's recorded engine, naming the role" {
+  _spawn_role_fixture
+  printf '{"reviewer":{"agent":"codex","model":"gpt-5.6-terra"}}\n' >"$roles_dir/roles.json"
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (codex) quota exhausted (absolute limit: ordinary use not allowed)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "--ignore-budget lets --spawn-role through an absolute limit" {
+  _spawn_role_fixture
+  printf '{"reviewer":{"agent":"codex","model":"gpt-5.6-terra"}}\n' >"$roles_dir/roles.json"
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  run run_dispatch --spawn-role reviewer --ignore-budget
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'split-window' "$STUB_LOG"
+}
+
 @test ">=95% gate lets a role on an already-reset engine through" {
   stub_launch_bins
   budget_json_at pi 97 -3600
@@ -3457,12 +3478,40 @@ pi_limit_json() { # <limit_reached jq literal>
   [[ "$output" != *"quota exhausted"* ]]
 }
 
-@test "a cursor role is not refused by the cursor absolute limit (lead only)" {
-  # The absolute-limit gate covers the lead only, same documented gap as
-  # codex: a cursor role goes through the >=95% stop alone, and windows is {}.
+@test "a cursor role is refused by the cursor absolute limit, naming the role" {
   stub_launch_bins
   cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor limit cursor role"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (cursor) quota exhausted (absolute limit: plan usage at 100%)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a codex role is refused by the codex absolute limit, naming the role" {
+  stub_launch_bins
+  codex_limit_json '{ordinary_usage_allowed: false}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --roles 'reviewer=codex:gpt-5.6-terra' --crew-id c1 42 "codex limit codex role"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (codex) quota exhausted (absolute limit: ordinary use not allowed)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "a pi role is refused by the pi absolute limit, naming the role" {
+  stub_launch_bins
+  pi_limit_json '{reason: "OpenRouter key credit limit reached"}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --roles 'reviewer=pi:openrouter/deepseek/deepseek-v4-flash' --crew-id c1 42 "pi limit pi role"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' (pi) quota exhausted (absolute limit: OpenRouter key credit limit reached)"* ]]
+  [[ "$output" == *"--ignore-budget"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "--ignore-budget lets a cursor role through the cursor absolute limit" {
+  stub_launch_bins
+  cursor_limit_json '{reason: "plan usage at 100%", resets_at: null}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --ignore-budget --roles 'reviewer=cursor:grok-4.7-medium' --crew-id c1 42 "cursor limit cursor role ignore"
   [ "$status" -eq 0 ]
   [[ "$output" != *"quota exhausted"* ]]
   run grep -F -- 'cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model grok-4.7-medium' <(launch_log)

@@ -166,6 +166,47 @@ budget_stop() {
   exit 1
 }
 
+# absolute_limit_stop <engine> [<role-label>] — refuse an engine whose
+# authoritative limit_reached is set even when every percent window is below
+# 95% (or no window exists). Codex (#201): denies ordinary usage, names a
+# rate-limit-reached reason, marks spend control reached, or reports a zeroed
+# individual spend limit. Cursor (#629): a plan pool at 100% or a spent
+# on-demand budget under a <95% month window (team plans); a resets_at already
+# past no longer holds. Pi (#639): the OpenRouter key's own credit limit is
+# exhausted. With a role-label the refusal names the role, like budget_stop.
+# The cache is advisory from refresh-budget — fail open when missing, stale
+# (>2h), or silent on this engine. --ignore-budget is the manual escape hatch.
+absolute_limit_stop() {
+  local engine="$1" role_label="${2:-}" now_ts stale_before abs_limit
+  case "$engine" in codex | cursor | pi) ;; *) return 0 ;; esac
+  [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
+  now_ts="$(date +%s)"
+  stale_before=$((now_ts - 7200))
+  abs_limit=$(jq -r --arg e "$engine" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
+    if .fetched_epoch < $stale_before then empty
+    elif .engines[$e] == null then empty
+    else .engines[$e].limit_reached as $l
+      | if $e == "pi" then $l.reason // empty
+        elif $e == "cursor" then
+          if $l == null or ($l.resets_at != null and $l.resets_at <= $now) then empty
+          else $l.reason // "limit reached" end
+        else ($l // {}) as $l
+          | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
+            elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
+            elif $l.spend_control_reached == true then "spend control reached"
+            elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
+            else empty end
+        end
+    end' "$budget_file" 2>/dev/null || true)
+  [ -n "$abs_limit" ] || return 0
+  if [ -n "$role_label" ]; then
+    echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+  else
+    echo "dispatch: $engine quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+  fi
+  exit 1
+}
+
 # _mint_leak_check <body> — run public-leak-guard over a minted issue's body as
 # the `gh issue create` it becomes, and refuse on any verdict with the guard's
 # reason, so whoever ran dispatch can rewrite the summary. flake.nix bakes the
@@ -2479,6 +2520,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   fi
   pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
   budget_stop "$spawn_agent" "$role"
+  absolute_limit_stop "$spawn_agent" "$role"
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   sig_before="$(grid_refit_sig "$win")"
   role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
@@ -3211,9 +3253,8 @@ fi
 
 # Lead budget gate. budget_stop owns the >=95% predicate and its cache rules
 # (fail open when stale/missing/silent; skip a window already past resets_at);
-# the blocks below add the claude-blind warning and the codex/cursor
-# absolute-limit gate. --ignore-budget is the manual escape hatch (e.g. credits
-# cover it).
+# the claude-blind warning and absolute_limit_stop below add the rest.
+# --ignore-budget is the manual escape hatch (e.g. credits cover it).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
 budget_stop "$agent"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
@@ -3225,39 +3266,8 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
-# Codex/cursor/pi absolute-limit gate. An engine can be authoritative-exhausted
-# while every percent window is below 95% (or no window exists). Codex (#201):
-# the backend denies ordinary usage, names a rate-limit-reached reason, marks
-# spend control reached, or reports a zeroed individual spend limit. Cursor
-# (#629): a plan pool at 100% or a spent on-demand budget can sit under a <95%
-# month window (e.g. team plans, where the window is the overall figure);
-# refresh-budget writes the reason, and a limit whose resets_at has passed no
-# longer holds. Refuse on any of them, same severity and escape as the >=95%
-# stop. Pi (#639): the OpenRouter key's own credit limit is exhausted (lead
-# only; role targets: #636). Missing or stale data (older cache without
-# limit_reached) fails open, like the rest of the budget gate.
-if [ -z "$ignore_budget" ] && { [ "$agent" = codex ] || [ "$agent" = cursor ] || [ "$agent" = pi ]; } && [ -f "$budget_file" ]; then
-  abs_limit=$(jq -r --arg e "$agent" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
-    if .fetched_epoch < $stale_before then empty
-    elif .engines[$e] == null then empty
-    else .engines[$e].limit_reached as $l
-      | if $e == "pi" then $l.reason // empty
-        elif $e == "cursor" then
-          if $l == null or ($l.resets_at != null and $l.resets_at <= $now) then empty
-          else $l.reason // "limit reached" end
-        else ($l // {}) as $l
-          | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
-            elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
-            elif $l.spend_control_reached == true then "spend control reached"
-            elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
-            else empty end
-        end
-    end' "$budget_file" 2>/dev/null || true)
-  if [ -n "$abs_limit" ]; then
-    echo "dispatch: $agent quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
-    exit 1
-  fi
-fi
+# Codex/cursor/pi absolute-limit gate, lead and (#636) role targets.
+absolute_limit_stop "$agent"
 
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
 # half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
@@ -3405,6 +3415,7 @@ if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     budget_stop "${role_agents[$i]}" "${role_names[$i]}"
+    absolute_limit_stop "${role_agents[$i]}" "${role_names[$i]}"
   done
 fi
 
