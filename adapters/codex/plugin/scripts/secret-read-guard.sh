@@ -269,9 +269,11 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # a process substitution.
 dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
 # A dumper path starts path-like, so the shebang in heredoc text
-# (`#!/usr/bin/env -S bash`) is not read as a dumper path, and holds no `=`,
-# so an assignment (`CONFIG=deploy/env`) is not read as one either.
-path_pfx='([A-Za-z0-9_.~/][^[:space:];&|()=]*/)?'
+# (`#!/usr/bin/env -S bash`) is not read as a dumper path. A relative one holds
+# no `=`, so an assignment (`CONFIG=deploy/env`) is not read as one either; an
+# absolute one may (`/nix/store/x-a=b/bin/env`), since no assignment starts
+# with `/`.
+path_pfx='(/[^[:space:];&|()]*/|[A-Za-z0-9_.~][^[:space:];&|()=]*/)?'
 env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
@@ -326,6 +328,12 @@ shell_c_flag='(-[A-Za-z]*([oO][A-Za-z]*c|c[A-Za-z]*[oO])[A-Za-z]*[[:space:]]+[^-
 shell_c_body="${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){0,8}${shell_c_flag}[[:space:]]+((${shell_c_word})[[:space:]]+){0,8}(--?[[:space:]]+)?"
 shell_c_re="(^|[[:space:]/(;&|)])${shell_c_body}"
 shell_c_raw_re="(^|[[:space:]/(])${shell_c_body}"
+# The 8-word caps would let a ninth option word hide the body (`bash -x ×9 -c
+# env` matches neither run), so an interpreter followed by eight option words
+# and a ninth `-`/`+` word denies outright. The `-c` flag is itself an option
+# word, so this covers the run after it too (`bash -c -x ×9 env`). Fixed
+# repetition, so it stays linear like the runs it guards.
+shell_c_cap_re="(^|[[:space:]/(;&|)])${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){8}[-+]"
 # Any read of /proc/<pid>/environ is a whole-environment dump, so this denies
 # without a printing-tool gate. Tested against the raw command, quotes and all,
 # which also catches it inside `fish -c '…'` without the -c extraction, and
@@ -1056,7 +1064,7 @@ shell)
   #    single variable: each match queues the extracted body (nesting), and the
   #    search goes on past that body in the same text (siblings: `bash -c
   #    'true'; bash -c 'declare -p NAME'`). Bounded by total matches, so it
-  #    always terminates. Each item is searched twice: on the raw text
+  #    always terminates; reaching that bound denies below. Each item is searched twice: on the raw text
   #    (shell_c_raw_re), where a sibling search resumes past the body's
   #    decoded word, and on its dequoted view (shell_c_re), made once —
   #    re-dequoting the text after every
@@ -1077,11 +1085,13 @@ shell)
   worklist_fish=(0)
   wi=0
   matches=0
+  option_cap=0
   while ((wi < ${#worklist[@]})) && ((matches < 20)); do
     cur=${worklist[wi]}
     dq=$(dequote "$cur")
     dequoted_views+=("$dq")
     if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
+    if [[ $cur =~ $shell_c_cap_re || $dq =~ $shell_c_cap_re ]]; then option_cap=1; fi
     wi=$((wi + 1))
     raw_starts=()
     raw_interps=()
@@ -1238,6 +1248,18 @@ shell)
   done
   check_dump_spaces ${joined_spaces[@]+"${joined_spaces[@]}"}
   check_fish_spaces ${joined_fish_spaces[@]+"${joined_fish_spaces[@]}"}
+
+  # The finder's blind spots deny last, so any specific deny above wins.
+  if ((option_cap)); then
+    deny "This shell invocation carries too many options for the secret-read guard to find its -c body; it cannot verify what runs. Drop the redundant options (set them inside the body with set -x / set -o …), or run the code from a script file."
+  fi
+  # The 20th body is queued but never searched, so reaching the cap always
+  # leaves work unverified — and quoted mentions count toward it, so a padded
+  # string must not push a real body past it. Fails closed on a command with
+  # 20 or more real `-c` bodies too.
+  if ((matches >= 20)); then
+    deny "This command holds too many shell -c invocations for the secret-read guard to verify. Split the command into smaller ones, or run the code from a script file."
+  fi
   ;;
 esac
 

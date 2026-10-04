@@ -3563,3 +3563,66 @@ big_bash() { printf '%s' "$1" | jq -Rsc '{hook_event_name:"PreToolUse",tool_name
   for ((i = 0; i < 18725; i++)); do chain+='=/proc/' calib+='=/proX/'; done
   assert_deny_relative "$(big_bash "$calib"$'\n'"cat .env")" "$(big_bash "$chain"$'\n'"cat .env")"
 }
+
+# --- the -c finder's bounds fail closed ---
+
+@test "secret-read-guard: nine option words ahead of -c deny, since the finder stops at eight" {
+  deny_cmd "bash -x -x -x -x -x -x -x -x -x -c 'env'"
+  deny_cmd "sh -a -b -C -e -f -h -m -n -u -v -x -c 'declare -p'"
+  deny_cmd "\"bash\" -x -x -x -x -x -x -x -x -x '-c' 'env'"
+  deny_cmd "bash -c \"bash -x -x -x -x -x -x -x -x -x -c env\""
+}
+
+@test "secret-read-guard: nine option words after -c deny" {
+  deny_cmd "bash -c -x -x -x -x -x -x -x -x -x 'env'"
+  deny_cmd "bash -o pipefail -o pipefail -o pipefail -c -x -x -x -x -x -x -x -x -x 'env'"
+}
+
+@test "secret-read-guard: ordinary shell options around -c stay allowed" {
+  allow_cmd "bash -euo pipefail -c 'make'"
+  allow_cmd "bash -e -u -o pipefail -O extglob -c 'make test'"
+  allow_cmd "bash -x -x -c 'make'"
+  allow_cmd 'sh -e script.sh'
+}
+
+@test "secret-read-guard: quoted -c mentions filling the match cap ahead of a real body deny" {
+  local pad
+  pad=$(printf ' dash -c a%.0s' $(seq 1 21))
+  deny_cmd "echo '${pad}'; bash -c 'env'"
+  pad=$(printf ' bash -c a%.0s' $(seq 1 21))
+  deny_cmd "echo '${pad}'; sh -c 'declare -p'"
+}
+
+# Fails closed: the twentieth body is queued but never searched itself.
+@test "secret-read-guard: twenty real -c bodies reach the match cap and deny" {
+  deny_cmd "$(printf "bash -c 'true'; %.0s" $(seq 1 20))true"
+}
+
+@test "secret-read-guard: a few quoted -c mentions beside a harmless body stay allowed" {
+  allow_cmd "echo ' dash -c a dash -c a dash -c a'; bash -c 'true'"
+}
+
+@test "secret-read-guard: an absolute dumper path holding = denies" {
+  deny_cmd '/nix/store/x-a=b/bin/env'
+  deny_cmd '/nix/store/x-a=b/bin/printenv'
+}
+
+@test "secret-read-guard: a relative assignment ending in /env stays allowed" {
+  allow_cmd 'a=b/env'
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 128 KiB bash -x chain allows in linear time" {
+  local chain calib i
+  chain='' calib=''
+  for ((i = 0; i < 16384; i++)); do chain+='bash -x ' calib+='bask -x '; done
+  assert_allow_relative "$(big_bash "$calib")" "$(big_bash "$chain")"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 128 KiB run of options after bash -c denies in linear time" {
+  local chain calib i
+  chain='' calib=''
+  for ((i = 0; i < 32768; i++)); do chain+='-x ' calib+='-x '; done
+  assert_deny_relative "$(big_bash "bask -c $calib")" "$(big_bash "bash -c $chain")"
+}
