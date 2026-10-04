@@ -5200,6 +5200,62 @@ lock_path() { # <branch>
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
 }
 
+# A worker can rewrite refs/remotes/origin/<n> between dispatch's fetch and its
+# re-read of that ref; the oid must come from the fetch itself (#695).
+# stub_git_race_after_fetch <ref> <oid> — a git wrapper that runs the real git,
+# then moves <ref> to <oid> once a `fetch` has completed.
+stub_git_race_after_fetch() {
+  local real_git
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+"$real_git" "\$@"
+rc=\$?
+for a in "\$@"; do
+  if [ "\$a" = fetch ]; then
+    "$real_git" -C "$TEST_REPO" update-ref "$1" "$2"
+    break
+  fi
+done
+exit \$rc
+EOF
+  chmod +x "$STUB_DIR/git"
+}
+
+@test "default create: a ref rewritten right after the fetch cannot replace the fetched tip (#695)" {
+  setup_stale_default_branch
+  stub_git_race_after_fetch refs/remotes/origin/main "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STALE_REMOTE_OID" "$STUB_LOG"
+}
+
+@test "--base: a ref rewritten right after the fetch cannot replace the fetched tip (#695)" {
+  setup_stacked_base feat/parent
+  stub_git_race_after_fetch refs/remotes/origin/feat/parent "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
+}
+
+@test "default create: an up-to-date fetch still pins the fetched tip (#695)" {
+  setup_stale_default_branch
+  git -C "$TEST_REPO" fetch -q origin +refs/heads/main:refs/remotes/origin/main
+  stub_git_race_after_fetch refs/remotes/origin/main "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STALE_REMOTE_OID" "$STUB_LOG"
+}
+
 @test "--base refuses an unresolvable ref before scaffolding" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/nope --crew-id c1 42 "implement thing"

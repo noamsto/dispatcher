@@ -686,15 +686,29 @@ _bus_append() {
 # (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
 # fetch option (`--upload-pack=...`), so it must be a plain branch name and is
 # spelled as an explicit refspec. Anchored on the common dir, so it runs the
-# same from any cwd and no worker's `.git` is consulted (#539, #633).
+# same from any cwd and no worker's `.git` is consulted (#539, #633). Sets
+# fetched_oid from the fetch's own porcelain output, never a re-read: refs are
+# shared with workers, which can rewrite refs/remotes/origin/<name> between the
+# fetch and a later rev-parse (#695).
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
 }
 _fetch_origin_branch() {
   local name=$1
+  local out line flag new ref oid=
+  fetched_oid=
   _plain_branch_name "$name" || return 1
-  _wt_git_common "${crew_dir%/crew}" fetch --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name"
+  out="$(_wt_git_common "${crew_dir%/crew}" fetch --porcelain -v --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name")" || return 1
+  while IFS= read -r line; do
+    flag=${line:0:1}
+    read -r _ new ref <<<"${line:2}"
+    [ "$ref" = "refs/remotes/origin/$name" ] || continue
+    case $flag in ' ' | + | '*' | = | t) oid=$new ;; esac
+  done <<<"$out"
+  [ -n "$oid" ] || return 1
+  _wt_git_common "${crew_dir%/crew}" cat-file -e "$oid^{commit}" 2>/dev/null || return 1
+  fetched_oid=$oid
 }
 
 # Must read stdin to EOF: an early exit closes the pipe, SIGPIPEs git and trips pipefail.
@@ -3617,11 +3631,7 @@ if [ -n "$base_flag" ]; then
     echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   fi
-  # Fully qualified: a worker's refs/heads/origin/<x> or tag origin/<x> would shadow the short name (#688).
-  base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$base_flag^{commit}")" || {
-    echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
-    exit 1
-  }
+  base_oid=$fetched_oid
   base_ref="$base_flag"
   create_base_label="origin/$base_flag"
 fi
@@ -3847,12 +3857,8 @@ else
       # Pinned now, not re-resolved at switch time below: the occupancy/reclaim
       # gate in between shells out to crew/jq, giving a concurrent fetch a window
       # to move the floating ref — pinning keeps what's branched and what the
-      # success line reports from ever diverging.
-      # Fully qualified: a worker's refs/heads/origin/<x> or tag origin/<x> would shadow the short name (#688).
-      create_base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$default_branch^{commit}")" || {
-        echo "dispatch: default branch '$default_branch' does not resolve to a commit on origin — refusing to scaffold" >&2
-        exit 1
-      }
+      # success line reports from ever diverging. The oid is the fetch's own (#695).
+      create_base_oid=$fetched_oid
       create_base_label="origin/$default_branch"
     fi
     create_base_short="$(git rev-parse --short "$create_base_oid")"
