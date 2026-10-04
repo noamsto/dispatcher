@@ -3694,7 +3694,26 @@ crew_tty() {
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" != *tok-secret* ]]
-  [[ "$output" == *'***@x.example'* ]]
+  [[ "$output" == *'https://REDACTED@x.example/r.git'* ]]
+}
+
+@test "git-baseline redacts schemeless proxy userinfo (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config http.proxy u:tok-secret@p.example:3128
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" != *tok-secret* ]]
+  [[ "$output" == *p.example:3128* ]]
+}
+
+@test "git-baseline redacts key and value apart, so a value's @ cannot hide the key's host (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config url.http://evil.example.insteadOf u@x
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *url.http://evil.example.insteadof=* ]]
 }
 
 @test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {

@@ -769,7 +769,7 @@ write_anchor() {
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
   [[ $stderr != *tok-secret* ]]
-  [[ $stderr == *'https://***@evil.example/'* ]]
+  [[ $stderr == *'https://REDACTED@evil.example/'* ]]
   [[ $stderr == *"remove it: edit $COMMON/config"* ]]
   [[ $stderr != *--unset-all\ url.* ]]
 }
@@ -780,7 +780,8 @@ write_anchor() {
   git config remote.origin.url https://evil.example/r.git
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
-  [[ $stderr == *"restore the baselined value or remove it: git config --file $COMMON/config --unset-all remote.origin.url"* ]]
+  [[ $stderr == *"restore the baselined value or remove it: edit $COMMON/config"* ]]
+  [[ $stderr != *"--unset-all remote.origin.url"* ]]
 }
 
 @test "migration note redacts URL userinfo in a local key (#678)" {
@@ -790,7 +791,17 @@ write_anchor() {
   run --separate-stderr _wt_cfg_baseline_init "$COMMON"
   [ "$status" -eq 0 ]
   [[ $stderr != *tok-secret* ]]
-  [[ $stderr == *'url.https://***@evil.example/.insteadof'* ]]
+  [[ $stderr == *'url.https://REDACTED@evil.example/.insteadof'* ]]
+}
+
+@test "migration note redacts each key alone, so a later key's @ cannot hide a host (#678)" {
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  git config url.http://evil.example.insteadOf x
+  git config 'url.z@y.insteadOf' https://github.com/
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *url.http://evil.example.insteadof* ]]
 }
 
 @test "a pre-redirect baseline migrates once, records the marker and then guards redirects (#678)" {
