@@ -3604,7 +3604,8 @@ if [ -n "$base_flag" ]; then
     echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   fi
-  base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
+  # Fully qualified: a worker's refs/heads/origin/<x> or tag origin/<x> would shadow the short name (#688).
+  base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$base_flag^{commit}")" || {
     echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
     exit 1
   }
@@ -3833,7 +3834,11 @@ else
       # gate in between shells out to crew/jq, giving a concurrent fetch a window
       # to move the floating ref — pinning keeps what's branched and what the
       # success line reports from ever diverging.
-      create_base_oid="$(git rev-parse "origin/$default_branch")"
+      # Fully qualified: a worker's refs/heads/origin/<x> or tag origin/<x> would shadow the short name (#688).
+      create_base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$default_branch^{commit}")" || {
+        echo "dispatch: default branch '$default_branch' does not resolve to a commit on origin — refusing to scaffold" >&2
+        exit 1
+      }
       create_base_label="origin/$default_branch"
     fi
     create_base_short="$(git rev-parse --short "$create_base_oid")"
@@ -3953,11 +3958,12 @@ fi
 neutral_switch=
 case "$switch_mode" in
 create)
+  # A bare 40-hex start point resolves a same-named ref before the object, and refs are shared with workers.
   if [ -n "$base_flag" ]; then
     neutral_switch=1
-    _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid" -y --no-hooks
+    _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
+    wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --config-set "$wt_post_switch"
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
   # created the worktree and pin wt_path to it (#640). Admin ids survive a gitdir
@@ -4047,7 +4053,7 @@ WINDOWS
   fi
   neutral_switch=1
   _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
-  branch_short="$(git rev-parse --short "$branch")"
+  branch_short="$(git rev-parse --short "refs/heads/$branch")"
   echo "dispatch: resuming branch $branch at $branch_short"
   ;;
 name)

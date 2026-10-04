@@ -5003,6 +5003,93 @@ lock_path() { # <branch>
   grep -qx 'base: feat/parent' "$wt_path/WORKER_TASK.md"
 }
 
+# Refs are shared across worktrees and gitrevisions resolves refs/tags/<x> and
+# refs/heads/<x> before refs/remotes/<x> (and before the object for a bare 40-hex
+# name), so a worker-created `origin/<name>` or `<oid>` ref must not shadow the
+# fetched tip (#688).
+
+@test "default create: a branch named origin/main cannot shadow the fetched tip (#688)" {
+  setup_stale_default_branch
+  git -C "$TEST_REPO" branch origin/main "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STALE_REMOTE_OID" "$STUB_LOG"
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STALE_REMOTE_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/main ($short)"* ]]
+}
+
+@test "default create: a tag named origin/main cannot shadow the fetched tip (#688)" {
+  setup_stale_default_branch
+  git -C "$TEST_REPO" tag origin/main "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STALE_REMOTE_OID" "$STUB_LOG"
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STALE_REMOTE_OID")"
+  [[ "$output" == *"created branch feat/42-implement-thing from origin/main ($short)"* ]]
+}
+
+@test "--base: a branch named origin/feat/parent cannot shadow the fetched tip (#688)" {
+  setup_stacked_base feat/parent
+  git -C "$TEST_REPO" branch origin/feat/parent "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STACKED_OID")"
+  [[ "$output" == *"from origin/feat/parent ($short)"* ]]
+}
+
+@test "--base: a tag named origin/feat/parent cannot shadow the fetched tip (#688)" {
+  setup_stacked_base feat/parent
+  git -C "$TEST_REPO" tag origin/feat/parent "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+  grep -q "switch -c feat/42-implement-thing -b $STACKED_OID" "$STUB_LOG"
+  short="$(git -C "$TEST_REPO" rev-parse --short "$STACKED_OID")"
+  [[ "$output" == *"from origin/feat/parent ($short)"* ]]
+}
+
+@test "default create: a ref named after the fetched tip oid cannot shadow it (#688)" {
+  setup_stale_default_branch
+  git -C "$TEST_REPO" update-ref "refs/heads/$STALE_REMOTE_OID" "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+}
+
+@test "default create: a tag named after the fetched tip oid cannot shadow it (#688)" {
+  setup_stale_default_branch
+  git -C "$TEST_REPO" update-ref "refs/tags/$STALE_REMOTE_OID" "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_REMOTE_OID" ]
+}
+
+@test "--base: a ref named after the fetched parent oid cannot shadow it (#688)" {
+  setup_stacked_base feat/parent
+  git -C "$TEST_REPO" update-ref "refs/heads/$STACKED_OID" "$STALE_LOCAL_OID"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-implement-thing"
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STACKED_OID" ]
+}
+
 @test "--base refuses an unresolvable ref before scaffolding" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/nope --crew-id c1 42 "implement thing"

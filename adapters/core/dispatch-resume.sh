@@ -409,8 +409,8 @@ if [ "$wt_path" = "$primary_wt" ]; then
   exit 1
 fi
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
-[ "$branch" != HEAD ] || {
+branch="$(git branch --show-current)"
+[ -n "$branch" ] || {
   echo "dispatch resume: detached HEAD — a worker resumes onto its own branch. Check the branch out and retry." >&2
   exit 1
 }
