@@ -272,6 +272,16 @@ locked-layer path is exported to go stale. `userSettings` symlinks
 file you manage — above, a git-tracked file in a nix-config repo. The module
 does not create the target.
 
+### Lean claude workers
+
+Claude workers launch with `ENABLE_CLAUDEAI_MCP_SERVERS=false`, which drops the
+claude.ai account connectors (Gmail, Drive, Calendar, Sentry, PostHog,
+Cloudflare, Claude Docs) a worker never uses; their tool names would otherwise
+ride every turn's context. Plugin and `--mcp` profile servers are unaffected.
+Set `DISPATCH_CLAUDE_CONNECTORS=1` in the dispatching shell to opt out. Claude
+Code has no per-launch way to disable individual plugins without also dropping
+the hooks and skills workers need, so plugins are left alone.
+
 ### Settings
 
 `dispatch-config` resolves the module's settings as one JSON tree from four
