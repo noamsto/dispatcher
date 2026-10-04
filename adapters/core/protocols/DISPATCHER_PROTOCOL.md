@@ -673,7 +673,7 @@ branch instead; the worktree carries over under `resume: true`.
   window-kill and `wt remove` gates — so a dispatcher run from a linked
   worktree with no dispatcher record refuses the relative spelling (set
   `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
-  not (it guards the record's dirs). Anchored calls — and, via
+  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) — and, via
   `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
   `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and

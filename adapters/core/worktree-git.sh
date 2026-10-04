@@ -63,8 +63,8 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
 # <common>: any other spelling (`.husky`, `./.git/hooks`) may name a
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
-# _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry and the `wt`
-# gates, which cannot take --git-dir — asks git's own
+# _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry, reap's
+# window-kill gate and the `wt` gates, which cannot take --git-dir — asks git's own
 # `--git-path hooks` whether the spellings resolve to one dir. Any
 # core.worktree turns the equivalence off: work-tree commands resolve the value
 # there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
@@ -313,7 +313,7 @@ _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <
   fi
   mapfile -t lines <"$rec"
   if [ "${lines[1]:-}" != "$(realpath -m -- "$common/crew")" ]; then
-    printf 'refusing git: %q is inside the worker worktree %q, whose git resolves to %q, not the recorded %q — run from the main checkout\n' \
+    printf 'refusing git: %q is inside the worker worktree %q, whose git resolves to %q, not the recorded %q — its .git no longer matches its dispatcher record (possible tampering): stop and tell the human\n' \
       "$(pwd -P)" "$d" "$common" "${lines[1]%/crew}" >&2
     return 1
   fi
@@ -330,7 +330,7 @@ _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <
   done
   # A separate-git-dir layout reports the git dir itself as the main worktree.
   if [ -z "$primary" ] || [ "$(realpath -m -- "$primary")" = "$(realpath -m -- "$common")" ] || ! cd -- "$primary"; then
-    printf 'refusing git: %q is a worker worktree and %q has no main checkout to run from — run from the main checkout\n' "$d" "$common" >&2
+    printf 'refusing git: %q is a worker worktree and %q has no main checkout to run from — run from a directory outside any worker worktree\n' "$d" "$common" >&2
     return 1
   fi
 }

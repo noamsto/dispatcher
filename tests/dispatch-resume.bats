@@ -169,12 +169,27 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
 }
 
-@test "resume excludes WORKER_TASK.md in the common dir's info/exclude" {
+@test "resume excludes WORKER_TASK.md in the anchored common dir, not a worker-swapped .git (#633)" {
   setup_worker_wt
+  git init -q "$BATS_TEST_TMPDIR/fake"
+  # `crew identity` runs after the record check and before the exclude append;
+  # the stub swaps the worktree's gitfile for a standalone repo in that window.
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+if [ "\$1" = identity ] && [ ! -e "$BATS_TEST_TMPDIR/swapped" ]; then
+  : >"$BATS_TEST_TMPDIR/swapped"
+  rm "$WT/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$WT/.git"
+fi
+exit 0
+EOF
   cd "$WT"
   run run_resume
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
   [ "$status" -eq 0 ]
   [ "$(grep -cxF WORKER_TASK.md "$TEST_REPO/.git/info/exclude")" -eq 1 ]
+  ! grep -qxF WORKER_TASK.md "$WT/.git/info/exclude"
 }
 
 @test "resume refuses a worktree whose admin dir has a config.worktree (#539)" {
