@@ -12403,3 +12403,36 @@ setup_bundle_resume() {
   grep -q 'switch -c eng-9-title' "$STUB_LOG"
   grep -qx 'Closes ENG-9' "$TEST_REPO/.dispatch-wt/eng-9-title/WORKER_TASK.md"
 }
+
+@test "also-closes: an explicit empty set shrinks the bundle to zero and warns" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes none "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dropping #43"* ]]
+  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  run jq -sc '[.[] | select(.kind=="dispatch")] | last | .also_closes' "$(also_closes_log)"
+  [ "$output" = '[]' ]
+}
+
+@test "also-closes: a plain re-dispatch after an explicit empty set carries nothing" {
+  setup_bundle_resume
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[43]}'
+  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"claim-issue","issue":"43","branch":"feat/42-do-a-thing","pid":1}'
+  seed_claim_row '{"ts":2,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing","also_closes":[]}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"carrying"* ]]
+  run ! grep -q 'Closes #43' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+  run jq -sc '[.[] | select(.kind=="dispatch")] | last | .also_closes' "$(also_closes_log)"
+  [ "$output" = 'null' ]
+}
+
+@test "also-closes: refused when none is combined with another extra" {
+  stub_launch_bins
+  stub_gh_multi
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes none --also-closes 43 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"none"* ]]
+}
