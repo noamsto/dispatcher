@@ -5004,8 +5004,9 @@ lock_path() { # <branch>
 }
 
 # Refs are shared across worktrees and gitrevisions resolves refs/tags/<x> and
-# refs/heads/<x> before refs/remotes/<x>, so a worker-created `origin/<name>`
-# ref must not shadow the fetched tip (#688).
+# refs/heads/<x> before refs/remotes/<x> (and before the object for a bare 40-hex
+# name), so a worker-created `origin/<name>` or `<oid>` ref must not shadow the
+# fetched tip (#688).
 
 @test "default create: a branch named origin/main cannot shadow the fetched tip (#688)" {
   setup_stale_default_branch
