@@ -3976,7 +3976,7 @@ create)
     neutral_switch=1
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    # pre-switch runs in this cwd, never the destination; branch/target/base are what a real create binds
+    # Runs in this cwd, never the destination; --branch/--target as a real create binds them.
     wt hook pre-switch -y --branch="$branch" --target="$branch"
     wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
@@ -3998,10 +3998,9 @@ create)
     exit 1
   fi
   # worktrunk fires post-switch on an attach too (#680), so the default create
-  # switched with --no-hooks and replays its hooks here, in worktrunk's order, once
-  # the post-check proved $wt_path is the new tree. The guard first re-checks config
-  # drift planted during the create, before worktrunk's git reads that tree; a
-  # failing pre-start aborts here and leaves the worktree, as under `wt switch -c`.
+  # switched with --no-hooks and its hooks run here, in worktrunk's order, once the
+  # post-check has proven $wt_path is the new tree — after re-guarding config
+  # planted mid-create, since worktrunk's git reads that tree.
   if [ -z "$base_flag" ]; then
     _wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1
     wt -C "$wt_path" hook pre-start -y --base="$create_base_oid"
