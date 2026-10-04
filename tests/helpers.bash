@@ -261,3 +261,6 @@ mint_spec() {
   printf 'Summary for the minted issue.\n\n## Task\n\nDo the thing.\n' >"$DISPATCH_SPEC"
   export DISPATCH_SPEC
 }
+
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/coverage.bash"

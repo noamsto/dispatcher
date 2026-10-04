@@ -12,6 +12,9 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 # others.
 export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 
+# shellcheck source=/dev/null
+source "$BATS_TEST_DIRNAME/coverage.bash"
+
 # setup_file runs once per file, before any test in it. Every test below used
 # to `nix build`/`nix eval` on its own -- each invocation is a full flake
 # evaluation, and the nine-way build alone dominates a worker's edit loop.
