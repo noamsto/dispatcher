@@ -890,8 +890,8 @@ EOF
   [ "$output" = "30" ]
   run jq '(.engines.pi.projected_month_end_usd * 100 | round)' "$cache"
   [ "$output" = "13333" ]
-  ! grep -q SENTINELKEY123 "$cache"
-  ! grep -q SENTINELKEY123 "$STUB_LOG"
+  run ! grep -q SENTINELKEY123 "$cache"
+  run ! grep -q SENTINELKEY123 "$STUB_LOG"
   grep -q "openrouter_key_on_stdin=yes" "$STUB_LOG"
 }
 
