@@ -8,8 +8,10 @@
 # a live value in a transcript and forced a credential rotation. Guidance
 # cannot fix an instinct; a guard can.
 #
-# Blocks the printing paths only. Writing, testing existence, ignoring and
-# deleting stay allowed — `test -f .env`, direnv, update-env are ordinary work.
+# Blocks the printing paths only. Dumping the environment counts even into a
+# file, since a later command prints it; writing, testing existence, ignoring and
+# deleting a credential file stay allowed — `test -f .env`, direnv, update-env
+# are ordinary work.
 #
 # One script for every engine. The caller is recognised by the event it names,
 # and the deny is rendered in that caller's shape:
@@ -39,6 +41,15 @@
 # stderr — rather than closed: blocking every call on a broken host would stop
 # every worker, and a non-zero hook exit is shown by every engine while the call
 # proceeds.
+#
+# Runtime: runs standalone as `bash adapters/core/secret-read-guard.sh` with the
+# hook JSON on stdin, inside or outside a dispatcher session. Needs bash >= 4
+# (arrays, `[[ =~ ]]`, `${s:i}`, mapfile), jq, any POSIX awk (gawk, mawk, nawk/BWK
+# and BusyBox are all exercised by the tests), grep -E and coreutils
+# mktemp/cat/rm; it exports LC_ALL=C itself. PATH is required (command lookup);
+# TMPDIR is optional (mktemp, default /tmp); no dispatcher variable (CREW_*) is
+# read. There is no internal time budget: a hook timeout is an allow, so every
+# pass is linear in command length — that is the guarantee.
 
 set -euo pipefail
 
@@ -200,12 +211,18 @@ strip_templates() {
 # no-comment (J) reading; a command mixing a real comment with a misread one
 # is an accepted limit.
 #
-# Out of scope: O1 word-forming obfuscation — quote splicing,
-# escapes, variables, eval, aliases. O2 expansion-dependent structure — a
+# S7 escapes and quote splicing in the interpreter word, the -c flag, a
+# credential name, a /proc path and a dumper word: the dequoted view (dequote)
+# and the escape-stripped space (strip_escapes) read them as bash does.
+#
+# Out of scope: O1 word-forming obfuscation — variables, eval, aliases and
+# ANSI-C escape decoding. O2 expansion-dependent structure — a
 # substitution expanding to nothing (`env $(true)`). O3 lexer precision
 # beyond the masker's model — quotes in "${x#...}", an escaped quote in a
 # $'...' heredoc delimiter, a case nested in a double-quoted $(...). O4
-# non-dumper paths, and a quoted ssh remote command.
+# non-dumper paths, and a command inside a quoted argument of another program
+# (`ssh h '…'`, `su -c '…'`, `watch '…'`, `script -c '…'`, `tmux new-window
+# '…'`): the -c finder reads the dequoted view, where quoted text is data.
 #
 # A spelling in O1-O4 is not a finding — cite this block instead of filing it.
 #
