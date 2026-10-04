@@ -312,3 +312,60 @@ func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 		t.Errorf("rendered detail pane contains U+202E from an injected note:\n%q", out)
 	}
 }
+
+const injectedErr = "boom\x1b]0;pwned\x07\x1b[31m‮"
+
+func requireNoControl(t *testing.T, out string, bel bool) {
+	t.Helper()
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("output contains a raw ESC:\n%q", out)
+	}
+	if bel && strings.ContainsRune(out, 0x07) {
+		t.Errorf("output contains BEL:\n%q", out)
+	}
+	if strings.ContainsRune(out, 0x202e) {
+		t.Errorf("output contains U+202E:\n%q", out)
+	}
+}
+
+func TestRunsErrorLinesInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	msg := injectedErr
+	cases := map[string]func(*data.Snapshot){
+		"retro":   func(s *data.Snapshot) { s.Runs.RetroError = &msg },
+		"ratings": func(s *data.Snapshot) { s.Runs.RatingsError = &msg },
+	}
+	for name, set := range cases {
+		t.Run(name, func(t *testing.T) {
+			snap := loadFullSnapshot(t)
+			set(&snap)
+			out := newRunsView(snap).View(120, 24)
+			requireNoControl(t, out, true)
+			if !strings.Contains(out, "unavailable: boom") {
+				t.Errorf("missing %q:\n%q", "unavailable: boom", out)
+			}
+		})
+	}
+}
+
+func TestRunsBranchInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	for i := range snap.Runs.Retro.Rows {
+		snap.Runs.Retro.Rows[i].Branch = "br\x1b]0;pwned\x07\x1b[31m‮"
+	}
+	v := newRunsView(snap)
+	requireNoControl(t, v.View(120, 24), false)
+
+	nv, _ := v.Update(keyRune('f'))
+	v = nv.(runsView)
+	nv, _ = v.Update(keyType(tea.KeyEnter))
+	v = nv.(runsView)
+	requireNoControl(t, v.View(120, 24), false)
+}

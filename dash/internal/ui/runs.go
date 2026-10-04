@@ -280,7 +280,7 @@ func (v runsView) sectionTitle(text string, focused bool) string {
 func (v runsView) ratingsLines(w, h int) []string {
 	title := truncateLine(v.sectionTitle("Ratings", v.focus == 0)+" — sort: "+sortColumns[v.sortCol]+" "+orderArrow(v.desc), w)
 	if v.ratingsErr != nil {
-		return []string{title, truncateLine("unavailable: "+*v.ratingsErr, w)}
+		return []string{title, truncateLine("unavailable: "+cleanText(*v.ratingsErr), w)}
 	}
 	if len(v.ratings) == 0 {
 		return []string{title, truncateLine("no runs swept for this repo yet", w)}
@@ -328,7 +328,7 @@ func orderArrow(desc bool) string {
 func (v runsView) rowsLines(w, h int) []string {
 	title := truncateLine(v.sectionTitle("Runs (newest first)", v.focus == 1), w)
 	if v.retroErr != nil {
-		return []string{title, truncateLine("unavailable: "+*v.retroErr, w)}
+		return []string{title, truncateLine("unavailable: "+cleanText(*v.retroErr), w)}
 	}
 	if len(v.rows) == 0 {
 		return []string{title, truncateLine("no retro notes yet", w)}
@@ -371,7 +371,7 @@ func rowLine(r data.RetroRow) string {
 		return "crew " + crew + "  " + cleanText(summary) + "  " + tagCounts(r.Notes, "session_summary")
 	}
 	tem := r.Tier + "/" + r.Engine + "/" + r.Model
-	return r.Branch + "  " + tem + "  " + r.Outcome + "  " + tagCounts(r.Notes, "")
+	return cleanText(r.Branch) + "  " + tem + "  " + r.Outcome + "  " + tagCounts(r.Notes, "")
 }
 
 // tagCounts ports once.go's tagstrDash: "tag x2" for a repeated tag, in
@@ -407,7 +407,7 @@ func (v runsView) detailView(w, h int) string {
 	if !ok {
 		return ""
 	}
-	label := row.Branch
+	label := cleanText(row.Branch)
 	if row.Kind == "dispatcher" {
 		crew := ""
 		if row.Crew != nil {

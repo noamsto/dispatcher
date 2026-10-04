@@ -373,3 +373,46 @@ func TestRosterSelectionIsCursorWorker(t *testing.T) {
 		t.Fatalf("Selection() = %+v, want the first worker row", sel)
 	}
 }
+
+func TestRosterErrorLinesInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	msg := injectedErr
+	cases := []struct {
+		name string
+		want string
+		set  func(*data.Snapshot)
+	}{
+		{"roster", "unavailable: boom", func(s *data.Snapshot) { s.Roster.Error = &msg }},
+		{"workers", "unavailable: boom", func(s *data.Snapshot) { s.Roster.Crews[0].WorkersError = &msg }},
+		{"holds", "holds unavailable: boom", func(s *data.Snapshot) { s.Roster.Crews[0].HoldsError = &msg }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			snap := loadFullSnapshot(t)
+			c.set(&snap)
+			out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(120, 24)
+			requireNoControl(t, out, true)
+			if !strings.Contains(out, c.want) {
+				t.Errorf("missing %q:\n%q", c.want, out)
+			}
+		})
+	}
+}
+
+func TestRosterDetailErrInjectionIsCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	v := newTestRosterView(t)
+	v.detail = true
+	nv, _ := v.Update(recentEventsMsg{err: injectedErr})
+	out := nv.(rosterView).View(120, 24)
+	requireNoControl(t, out, true)
+	if !strings.Contains(out, "unavailable: boom") {
+		t.Errorf("missing unavailable: boom:\n%q", out)
+	}
+}
