@@ -704,9 +704,9 @@ branch instead; the worktree carries over under `resume: true`.
   as modified, so reap keeps the worktree. Relay a refusal to the human
   verbatim; never run its printed `--unset-all` or clear it yourself — only
   the human clears it: they inspect drift (`crew git-baseline`), remove keys
-  they did not set (`git config --unset-all`) — a redirect key whose value
-  was replaced (e.g. `remote.origin.url`) is restored to its baselined value
-  rather than unset — then run `crew git-baseline
+  they did not set (`git config --unset-all`) — a redirect key (e.g.
+  `remote.origin.url`, whose value may have been replaced) is restored to its
+  baselined value by editing the named config file, never unset — then run `crew git-baseline
   --accept` in their own terminal, which merges exactly the pairs it showed
   after a typed `yes`. The tty + `yes` check is a procedural gate against
   accidental or agent-initiated accepts, not an unbypassable boundary — never
@@ -732,9 +732,10 @@ branch instead; the worktree carries over under `resume: true`.
   is trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
-  config, not the program; printed keys and `crew git-baseline` values have
-  URL userinfo redacted, but a token elsewhere in a URL (path, query) is not,
-  and `crew git-baseline` still prints other values (e.g. a `credential.helper`
+  config, not the program; URL userinfo, with or without a scheme
+  (`user:tok@proxy:3128`), is masked per field in printed keys and in `crew
+  git-baseline` keys and values, but a token elsewhere in a URL (path, query)
+  is not, and `crew git-baseline` still prints other values (e.g. a `credential.helper`
   argument) — the human runs it, never the dispatcher; gh-based repo
   resolution reads `remote.origin.url` outside the guard;
   `<git-common-dir>/info/attributes` still selects
