@@ -169,6 +169,14 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
 }
 
+@test "resume excludes WORKER_TASK.md in the common dir's info/exclude" {
+  setup_worker_wt
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [ "$(grep -cxF WORKER_TASK.md "$TEST_REPO/.git/info/exclude")" -eq 1 ]
+}
+
 @test "resume refuses a worktree whose admin dir has a config.worktree (#539)" {
   # #539: per-worktree config lives in the admin dir and is still read under
   # an anchored gitdir; it can carry keys no -c list enumerates, so resume
@@ -223,6 +231,7 @@ EOF
   run run_resume
   [ "$status" -eq 1 ]
   [[ "$output" == *core.fsmonitor* ]]
+  run ! grep -qi 'refusing git: core.hookspath' <<<"$output"
 }
 
 @test "resume refuses on a worker-planted include (#557)" {

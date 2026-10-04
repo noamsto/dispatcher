@@ -3414,6 +3414,77 @@ EOF
   run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/633-cand
 }
 
+@test "reap: the branch delete stays anchored when an unrecorded caller's .git is swapped (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-cand
+  cand_wt="$BATS_TEST_TMPDIR/633-cand-wt"
+  git worktree add -q "$cand_wt" feat/633-cand
+  echo unique >"$cand_wt/work.txt"
+  git -C "$cand_wt" add work.txt
+  git -C "$cand_wt" commit -q -m "cand work"
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  scratch="$BATS_TEST_TMPDIR/633-fake"
+  make_fake_gitdir "$scratch" feat/633-cand
+  stub_tmux "" ""
+  export SWAP_REPO="$TEST_REPO" SWAP_W1="$w1" SWAP_FAKE="$scratch" SWAP_CAND=feat/633-cand SWAP_MARK="$BATS_TEST_TMPDIR/swapped"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*)
+  if [ ! -e "$SWAP_MARK" ]; then
+    : >"$SWAP_MARK"
+    rm -f "$SWAP_W1/.git"
+    mv "$SWAP_FAKE/.git" "$SWAP_W1/.git"
+  fi
+  git -C "$SWAP_REPO" rev-parse "refs/heads/$SWAP_CAND"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/633-cand
+  git --git-dir="$w1/.git" show-ref --verify --quiet refs/heads/feat/633-cand
+}
+
+@test "reap: keeps the recorded worktree the caller stands in after relocating (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  write_full_anchor_record "$w1" feat/633-here
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-here" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"it is the current worktree"* ]]
+  [ -d "$w1" ]
+}
+
 @test "reap: refuses from inside a worker worktree whose .git was swapped (#633)" {
   git commit -q --allow-empty -m init
   git branch feat/633-cand

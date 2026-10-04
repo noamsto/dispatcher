@@ -653,21 +653,27 @@ branch instead; the worktree carries over under `resume: true`.
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
   remove` and `git branch -D`. `dispatch` and `crew reap` first leave a
-  recorded worker worktree for the main checkout (refusing when the cwd's git
-  does not resolve to the recorded crew dir) and run `git fetch`/`ls-remote`/
-  `git branch -D` anchored — `--git-dir=<git-common-dir>` plus the neutral
-  config below — so no worker `.git`, standalone or swapped mid-run, is ever
-  discovered by them; `dispatch resume` guards the record's common and admin
+  recorded worker worktree for the main checkout, and run `git
+  fetch`/`ls-remote`/`git branch -D` anchored — `--git-dir=<git-common-dir>`
+  plus the `-c` keys of `_wt_neutral_cfg` (these commands read no attributes)
+  — so no worker `.git`, standalone or swapped mid-run, is ever discovered by
+  them. They refuse instead of leaving when the record is not a regular file,
+  when the repo has no main checkout to move to (a bare or separate-git-dir
+  layout), or when the cwd's git does not resolve to the recorded crew dir:
+  that worktree's `.git` no longer matches its record, which is tampering
+  evidence — relay that refusal to the human verbatim, never just retry from
+  the main checkout. `dispatch resume` guards the record's common and admin
   dirs, not the cwd. Values compare literally, except that the exact relative
   `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix writes
   one from the main checkout, the other from a linked worktree). From a cwd,
   that relative spelling against an absolute-only baseline passes only where
   git itself resolves hooks to the resolved `<common>/hooks` (`git rev-parse
-  --git-path hooks`) and no `core.worktree` is set; that cwd check now runs
-  only before `wt` (which cannot be anchored), so only a dispatcher run from a
-  linked worktree that is not a worker's refuses the relative spelling (set
-  `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` no
-  longer does. Anchored calls — and, via
+  --git-path hooks`) and no `core.worktree` is set; that cwd check runs only
+  from a trusted cwd — dispatch entry, before `wt switch`, and reap's
+  window-kill and `wt remove` gates — so a dispatcher run from a linked
+  worktree with no dispatcher record refuses the relative spelling (set
+  `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
+  not (it guards the record's dirs). Anchored calls — and, via
   `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
   `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
@@ -713,11 +719,16 @@ branch instead; the worktree carries over under `resume: true`.
   names its path, but one the human wrote can select a relative driver whose
   script the worker rewrites); a cwd with no dispatcher record on any ancestor
   is trusted as the caller's own — a worktree dispatched before #518 or not by
-  `dispatch`, or a worker-writable directory outside its worktree (reached e.g.
-  through a worker-planted symlink) holding a standalone `.git`; `dispatch
-  resume`'s plumbing before its record check reads the cwd's `.git` (it runs no
-  program); and
-  only a default create — `wt switch -c` off the freshly fetched
+  `dispatch`, a recorded worktree its worker renamed or moved (records key on
+  the worktree's path), or a worker-writable directory outside its worktree
+  (reached e.g. through a worker-planted symlink) holding a standalone `.git`;
+  `dispatch resume`'s plumbing before its record check, and its `crew` bus
+  calls, discover through the cwd's `.git` (they run no program); `crew
+  reap`'s `wt remove` still runs worktrunk's own discovery git (`git status`)
+  inside the worker's worktree after reap's gitlink check, so a `.git` swapped
+  in that window is read with the neutral env only — its own config and
+  `info/attributes` can still select a filter (tracked as a follow-up;
+  anchoring the removal is the fix); and only a default create — `wt switch -c` off the freshly fetched
   default-branch tip, operator-trusted — still checks out with the new
   tree's own attributes and hooks, so a baselined relative smudge program or
   hook runs whatever that tree holds in the dispatcher's shell: keep driver

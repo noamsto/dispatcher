@@ -1136,7 +1136,7 @@ _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
 
 # Ensure WORKER_TASK.md is excluded from tracking across every worktree.
-exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+exclude_file="${_crew_dir_real%/crew}/info/exclude"
 if ! grep -qxF 'WORKER_TASK.md' "$exclude_file" 2>/dev/null; then
   printf '\n%s\n' 'WORKER_TASK.md' >>"$exclude_file"
 fi

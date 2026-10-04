@@ -6572,12 +6572,73 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
+  git -C "$TEST_REPO" update-ref -d refs/remotes/origin/main
   cd "$TEST_REPO/w9"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ -e "$BATS_TEST_TMPDIR/swapped" ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
   [ "$status" -eq 0 ]
   [ "$(git -C "$TEST_REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TEST_REPO/origin.git" rev-parse main)" ]
+}
+
+@test "fetch stays anchored from an unrecorded worktree swapped mid-dispatch (#633)" {
+  stub_launch_bins
+  git -C "$TEST_REPO" worktree add -q -b feat/9-other "$TEST_REPO/w9" HEAD
+  seed_git_baseline
+  make_fake_gitdir "$BATS_TEST_TMPDIR/fake"
+  cat >"$STUB_DIR/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+repo\ view\ *)
+  if [ ! -e "$BATS_TEST_TMPDIR/swapped" ]; then
+    touch "$BATS_TEST_TMPDIR/swapped"
+    rm "$TEST_REPO/w9/.git"
+    mv "$BATS_TEST_TMPDIR/fake/.git" "$TEST_REPO/w9/.git"
+  fi
+  printf '%s\n' main
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  git -C "$TEST_REPO" update-ref -d refs/remotes/origin/main
+  cd "$TEST_REPO/w9"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ "$(git -C "$TEST_REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TEST_REPO/origin.git" rev-parse main)" ]
+}
+
+@test "resume: refuses from a recorded worktree it would relocate out of (#633)" {
+  setup_resume_branch feat/42-do-a-thing
+  record_wt "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing" feat/42-do-a-thing
+  seed_git_baseline
+  cd "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the worktree this dispatch is running from"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "dispatch runs crew reap from the caller's directory after relocating (#633)" {
+  setup_recorded_w9
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+reap) printf '%s\n' "$PWD" >>"$REAP_PWD_LOG" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  export REAP_PWD_LOG="$BATS_TEST_TMPDIR/reap-pwd"
+  cd "$TEST_REPO/w9"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(realpath "$(cat "$REAP_PWD_LOG")")" = "$(realpath "$TEST_REPO/w9")" ]
 }
 
 @test "dispatch refuses from a worker worktree whose .git is already a standalone repo (#633)" {

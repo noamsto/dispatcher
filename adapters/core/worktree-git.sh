@@ -63,7 +63,8 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
 # <common>: any other spelling (`.husky`, `./.git/hooks`) may name a
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
-# before `wt` — which cannot take --git-dir — _wt_cfg_guard_cwd asks git's own
+# _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry and the `wt`
+# gates, which cannot take --git-dir — asks git's own
 # `--git-path hooks` whether the spellings resolve to one dir. Any
 # core.worktree turns the equivalence off: work-tree commands resolve the value
 # there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
@@ -294,7 +295,8 @@ _wt_git_common() { # <common> <git args…> — guard <common>, then git anchore
   "${argv[@]}" "$@"
 }
 # Path-keyed on the dispatcher record of the cwd's own ancestor, so there is no
-# check-then-use gap: a worker swapping its `.git` cannot hide the worktree (#633).
+# check-then-use gap: swapping `.git` cannot hide the worktree (#633). Moving or
+# renaming the worktree can — a documented residual.
 _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <common>'s main checkout
   local common="$1" d rec line primary=
   local -a lines wl
