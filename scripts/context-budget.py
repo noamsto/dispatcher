@@ -14,16 +14,16 @@
 #   context-budget.py tools                  worker-lead tool-result carry cost
 #   context-budget.py sections FILE          markdown ##/### section sizes
 #   context-budget.py dispatcher             dispatcher wake/idle context cost
-#   (global) --since DAYS  --json  --ratio R  --root DIR
+#   (global) --since DAYS  --json  --ratio R  --root DIR  --reorient R  --restart-every N,N
 import argparse
 import json
 import math
 import os
 import re
 import statistics
-import time
-import sys
 import multiprocessing
+import sys
+import time
 from pathlib import Path
 
 DISPATCHER_BASH = re.compile(r"(^|[;&|\n]\s*)(dispatch\s|crew (watch|roster|stream)\b)")
@@ -802,7 +802,7 @@ def cmd_sections(args):
 # -------------------------------------------------------------- dispatcher
 
 def wake_segments(s):
-    """Wakes with the turn range [a, b) they trigger; consecutive wakes collapse."""
+    """Wakes with the turn range [a, b) they trigger; wakes at the same turn collapse."""
     n = len(s["turns"])
     marks = s["marks"]
     wakes = []
