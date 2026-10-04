@@ -2133,7 +2133,12 @@ if [ "${1:-}" = "--role-watch" ]; then
           elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
             # The role answered while its assignment is still being verified; its
             # own assignment_unsubmitted posts (from the same id) are not a verdict.
-            case "$ev" in *assignment_unsubmitted*) ;; *) verdict_seen=1 ;; esac
+            # Match the event's own JSON field, not the raw text: a verdict that
+            # merely quotes the string is still a verdict (#648).
+            case "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" in
+            assignment_unsubmitted) ;;
+            *) verdict_seen=1 ;;
+            esac
           elif [[ $to != dispatcher:* ]] && [ "${#pending[@]}" -eq 0 ]; then
             # A verdict from the role — it is idle again. The watcher's own
             # drop posts go to dispatcher:* and must not idle a working role.

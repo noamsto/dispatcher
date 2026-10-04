@@ -9580,6 +9580,44 @@ rw_frame_claude_spinner_empty() {
   [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -ge 2 ]
 }
 
+# The exclusion must key on the event's own JSON field, not a substring of the
+# whole line: while the submit is unconfirmed, a verdict that merely quotes
+# `assignment_unsubmitted` is still the role answering (#648).
+@test "role-watch: a verdict quoting assignment_unsubmitted while a submit is unconfirmed idles the role" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 1
+  printf ' something unrecognised\n' >"$STUB_DIR/dialog_frame"
+  _rw_start pi
+  _rw_wait_enters 1
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"verdict\":\"revise\",\"finding\":\"quotes assignment_unsubmitted\"}"}' >>"$common/crew/events.jsonl"
+  sleep 0.8
+  # the pane finally repaints as a live turn
+  rw_frame_pi_live >"$STUB_DIR/frame"
+  rm -f "$STUB_DIR/hook"
+  sleep 1.2
+  _rw_stop
+  # once at startup, once when the submit resolves
+  [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -ge 2 ]
+}
+
+# The converse: the watcher's own escalation (same id) carries the event field
+# in its JSON body, so an exact match still excludes it (#648).
+@test "role-watch: the watcher's own assignment_unsubmitted post is not a verdict" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 1
+  printf ' something unrecognised\n' >"$STUB_DIR/dialog_frame"
+  _rw_start pi
+  _rw_wait_enters 1
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"role\":\"reviewer\",\"event\":\"assignment_unsubmitted\"}"}' >>"$common/crew/events.jsonl"
+  sleep 0.8
+  rw_frame_pi_live >"$STUB_DIR/frame"
+  rm -f "$STUB_DIR/hook"
+  sleep 1.2
+  _rw_stop
+  # only the startup idle: the own post is not a verdict
+  [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -eq 1 ]
+}
+
 @test "role-watch: several swallowed Enters are retried until the turn starts" {
   _spawn_role_fixture
   _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 3
