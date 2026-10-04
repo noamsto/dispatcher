@@ -167,6 +167,7 @@ esac
 if [ "$1" = issue ] && [ "$2" = comment ]; then
   printf '%s\n' "$3" >>"$STUB_DIR/comment_issues.log"
   printf '%s' "$5" >"$STUB_DIR/comment_body.txt"
+  printf '%s' "$5" >"$STUB_DIR/comment_body.$3.txt"
   exit "${STUB_COMMENT_EXIT:-0}"
 fi
 exit 0
@@ -200,11 +201,63 @@ EOF
   [[ "$body" == *"claude · sonnet · standard"* ]]
   [[ "$body" == *"effort: medium"* ]]
   [[ "$body" == *"$branch"* ]]
-  [[ "$body" == *"$wt_path"* ]]
+  wt_display="~${wt_path#"$HOME"}"
+  [[ "$body" == *"| **Worktree** | \`$wt_display\` |"* ]]
+  [[ "$body" != *"$wt_path"* ]]
   [[ "$body" == *"| **Host** | \`$host\` |"* ]]
   [[ "$body" == *"$worker_id"* ]]
   [[ "$body" == *"$crew_id_stamp"* ]]
   [ "$(tail -1 "$STUB_DIR/comment_body.txt")" = "<!-- dispatched -->" ]
+}
+
+@test "Worktree row keeps an absolute path when the worktree is outside HOME" {
+  stub_launch_bins
+  stub_gh_full "" ""
+  export HOME="$BATS_TEST_TMPDIR/elsewhere"
+  mkdir -p "$HOME"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "outside home test"
+  [ "$status" -eq 0 ]
+
+  branch="feat/42-outside-home-test"
+  wt_path="$(wt_path_for "$branch")"
+  body="$(cat "$STUB_DIR/comment_body.txt")"
+  [[ "$body" == *"| **Worktree** | \`$wt_path\` |"* ]]
+  [[ "$body" != *"| **Worktree** | \`~"* ]]
+}
+
+@test "posts the context comment on each --also-closes extra with a primary line" {
+  stub_launch_bins
+  stub_gh_full "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 \
+    --also-closes 43 --also-closes 44 "bundle comment test"
+  [ "$status" -eq 0 ]
+
+  [ -f "$STUB_DIR/comment_issues.log" ]
+  printf '42\n43\n44\n' >"$STUB_DIR/expected_issues.txt"
+  diff -u "$STUB_DIR/expected_issues.txt" "$STUB_DIR/comment_issues.log"
+
+  primary="$(cat "$STUB_DIR/comment_body.42.txt")"
+  [[ "$primary" != *"Rides on"* ]]
+  for extra in 43 44; do
+    body="$(cat "$STUB_DIR/comment_body.$extra.txt")" 2>/dev/null || true
+    [ -n "$body" ]
+    [[ "$body" == *"Rides on #42"* ]]
+    [[ "$body" == *"<!-- dispatched -->" ]]
+  done
+}
+
+@test "a failing gh issue comment on an --also-closes extra warns but does not abort" {
+  stub_launch_bins
+  stub_gh_full "" ""
+  export STUB_COMMENT_EXIT=1
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 \
+    --also-closes 43 "bundle comment failure test"
+  unset STUB_COMMENT_EXIT
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not post dispatch-context comment on issue #42"* ]]
+  [[ "$output" == *"could not post dispatch-context comment on issue #43"* ]]
+  grep -q 'issue edit 43 --add-label dispatched' "$STUB_LOG"
+  grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "posts one gh issue comment for a newly minted GitHub issue" {
