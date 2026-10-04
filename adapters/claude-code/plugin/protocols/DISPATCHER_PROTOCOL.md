@@ -730,7 +730,8 @@ branch instead; the worktree carries over under `resume: true`.
   though the guard's refusal lines still reach stderr; the guard compares
   config, not the program; for `url.<base>.insteadOf` the rewrite base is part
   of the key, so a token embedded there is printed in a refusal; gh-based repo
-  resolution reads `remote.origin.url` outside the guard; `<git-common-dir>/info/attributes` still selects
+  resolution reads `remote.origin.url` outside the guard;
+  `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
   names its path, but one the human wrote can select a relative driver whose
   script the worker rewrites); a cwd with no dispatcher record on any ancestor
