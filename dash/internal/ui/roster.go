@@ -290,7 +290,7 @@ func (v rosterView) tableView(w, h int) string {
 	cursorLine := 0
 	flatIdx := 0
 	for _, c := range v.crews {
-		body = append(body, truncateLine(headerStyle.Render("crew "+c.ID), w))
+		body = append(body, truncateLine(headerStyle.Render("crew "+cleanText(c.ID)), w))
 		if c.WorkersError != nil {
 			body = append(body, truncateLine("  unavailable: "+cleanText(*c.WorkersError), w))
 		} else if len(c.Workers) > 0 {
@@ -411,7 +411,7 @@ func rosterWorkerCells(w map[string]any, now time.Time) []string {
 	return []string{
 		truncateLine(cleanText(name), rosterNameCap),
 		truncateLine(cleanText(state), rosterStateCap),
-		truncateLine(tier+"/"+engine+"/"+model, rosterTierCap),
+		truncateLine(cleanText(tier+"/"+engine+"/"+model), rosterTierCap),
 		truncateLine(detail, rosterDetailCap),
 		truncateLine(reltime(ageS), rosterAgeCap),
 		truncateLine(pr, rosterPRCap),
@@ -446,11 +446,12 @@ func tmuxColorStyle(w map[string]any) lipgloss.Style {
 }
 
 func holdLine(h map[string]any) string {
-	id := fmt.Sprintf("%v", h["id"])
+	id := cleanText(fmt.Sprintf("%v", h["id"]))
 	wait, _ := h["wait"].(map[string]any)
 	task, _ := h["task"].(map[string]any)
 	engine, _ := wait["engine"].(string)
 	window, _ := wait["window"].(string)
+	engine, window = cleanText(engine), cleanText(window)
 	resetsAt, _ := wait["resets_at"].(float64)
 	title := ""
 	if task != nil {

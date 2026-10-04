@@ -416,3 +416,27 @@ func TestRosterDetailErrInjectionIsCleaned(t *testing.T) {
 		t.Errorf("missing unavailable: boom:\n%q", out)
 	}
 }
+
+func TestRosterFieldsInjectionAreCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Roster.Crews = []data.RosterCrew{{
+		ID: "c" + injectedErr,
+		Workers: []map[string]any{
+			{"name": "w1", "state": "working", "tier": "t" + injectedErr, "engine": "e" + injectedErr, "model": "m" + injectedErr, "age_s": float64(5)},
+		},
+		Holds: []map[string]any{
+			{"id": "h" + injectedErr, "wait": map[string]any{"engine": "e" + injectedErr, "window": "w" + injectedErr}},
+		},
+	}}
+	out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(160, 24)
+	requireNoControl(t, out)
+	for _, want := range []string{"crew cboom", "hold hboom]0;pwned[31m: eboom]0;pwned[31m wboom"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%q", want, out)
+		}
+	}
+}

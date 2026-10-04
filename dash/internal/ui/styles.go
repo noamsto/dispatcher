@@ -49,7 +49,7 @@ func badgeText(origin string) string {
 	case "locked":
 		return "🔒 locked"
 	default:
-		return origin
+		return cleanText(origin)
 	}
 }
 

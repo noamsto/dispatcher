@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -249,5 +250,27 @@ func TestSettingsErrorInjectionIsCleaned(t *testing.T) {
 	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
+	}
+}
+
+func TestSettingsFieldsInjectionAreCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Settings.Warnings = []string{injectedErr}
+	snap.Settings.Layers.User.Path = "/p" + injectedErr
+	snap.Settings.Layers.Base = "b" + injectedErr
+	locked := injectedErr
+	snap.Settings.Layers.Locked = &locked
+	snap.Settings.Rows = append(snap.Settings.Rows, data.SettingRow{Path: []string{"a" + injectedErr, "b" + injectedErr}, Value: json.RawMessage("1"), Origin: "user"})
+	for i := range snap.Settings.Rows {
+		snap.Settings.Rows[i].Value = json.RawMessage("\"v\u202e\"")
+	}
+	out := newSettingsView(snap).View(160, 40)
+	requireNoControl(t, out)
+	if !strings.Contains(out, "warning: boom") {
+		t.Errorf("missing warning: boom:\n%q", out)
 	}
 }

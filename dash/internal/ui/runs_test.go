@@ -380,3 +380,28 @@ func TestRunsBranchInjectionIsCleaned(t *testing.T) {
 	}
 	requireNoControl(t, out)
 }
+
+func TestRunsRowFieldsInjectionAreCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	for i := range snap.Runs.Retro.Rows {
+		r := &snap.Runs.Retro.Rows[i]
+		r.Tier, r.Engine, r.Model, r.Outcome = "t"+injectedErr, "e"+injectedErr, "m"+injectedErr, "o"+injectedErr
+		crew := "c" + injectedErr
+		r.Crew = &crew
+	}
+	for i := range snap.Runs.RatingsGroups {
+		snap.Runs.RatingsGroups[i].Model = "m" + injectedErr
+	}
+	v := newRunsView(snap)
+	requireNoControl(t, v.View(160, 40))
+
+	nv, _ := v.Update(keyRune('f'))
+	v = nv.(runsView)
+	nv, _ = v.Update(keyType(tea.KeyEnter))
+	v = nv.(runsView)
+	requireNoControl(t, v.View(160, 40))
+}

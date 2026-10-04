@@ -144,7 +144,7 @@ func (v budgetView) tableView(w int) string {
 		lines = append(lines, truncateLine(fetched, w))
 	}
 	for _, warn := range v.warnings {
-		lines = append(lines, truncateLine(warnStyle.Render("warning: "+warn), w))
+		lines = append(lines, truncateLine(warnStyle.Render("warning: "+cleanText(warn)), w))
 	}
 
 	if v.report == nil {
@@ -160,9 +160,9 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 	if eb == nil {
 		return []string{truncateLine(e+": unknown", w)}
 	}
-	heading := e + " (" + eb.Source + ")"
+	heading := e + " (" + cleanText(eb.Source) + ")"
 	if eb.PlanType != nil {
-		heading += " [" + *eb.PlanType + "]"
+		heading += " [" + cleanText(*eb.PlanType) + "]"
 	}
 	out := []string{truncateLine(headerStyle.Render(heading), w)}
 	if eb.Unlimited {
@@ -187,7 +187,7 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 			out = append(out, truncateLine("  spend $"+usd(f64(eb.SpendUSD))+" month-to-date (no target)", w))
 		}
 		if eb.Projection != nil {
-			out = append(out, truncateLine("  "+*eb.Projection, w))
+			out = append(out, truncateLine("  "+cleanText(*eb.Projection), w))
 		}
 	}
 
@@ -211,7 +211,7 @@ func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
 	gaugeW := clamp(remaining/3, 10, max0(remaining))
 	verdictW := max0(remaining - gaugeW)
 
-	name := padRight(truncateLine(win.Key, nameW), nameW)
+	name := padRight(truncateLine(cleanText(win.Key), nameW), nameW)
 	pct := win.UsedPct
 	if pct < 0 {
 		pct = 0
@@ -237,7 +237,7 @@ func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
 
 	verdictTxt := "—"
 	if win.Verdict != nil {
-		verdictTxt = *win.Verdict
+		verdictTxt = cleanText(*win.Verdict)
 	}
 	verdictCell := truncateLine(verdictTxt, verdictW)
 
@@ -263,9 +263,9 @@ func (v budgetView) detailView(w int) string {
 	}
 	verdict := "—"
 	if win.Verdict != nil {
-		verdict = *win.Verdict
+		verdict = cleanText(*win.Verdict)
 	}
-	header := headerStyle.Render(win.Key + " — full verdict")
+	header := headerStyle.Render(cleanText(win.Key) + " — full verdict")
 	// This is the one place the dashboard deliberately wraps instead of
 	// clipping, since it is the verdict's own full-text detail; ansi.Wrap is
 	// display-width-aware and hard-breaks a word longer than w — len()

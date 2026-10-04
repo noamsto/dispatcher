@@ -290,7 +290,7 @@ func (v runsView) ratingsLines(w, h int) []string {
 	rows := make([][]string, len(v.ratings))
 	for i, g := range v.ratings {
 		rows[i] = []string{
-			g.Tier, g.Engine, g.Model,
+			cleanText(g.Tier), cleanText(g.Engine), cleanText(g.Model),
 			renderAgg(g.N.K, g.N.N, optNumber(g.N.Value)),
 			renderAgg(g.PrPct.K, g.PrPct.N, optNumber(g.PrPct.Value)),
 			renderAgg(g.MergePct.K, g.MergePct.N, optNumber(g.MergePct.Value)),
@@ -368,10 +368,10 @@ func rowLine(r data.RetroRow) string {
 				break
 			}
 		}
-		return "crew " + crew + "  " + cleanText(summary) + "  " + tagCounts(r.Notes, "session_summary")
+		return "crew " + cleanText(crew) + "  " + cleanText(summary) + "  " + tagCounts(r.Notes, "session_summary")
 	}
-	tem := r.Tier + "/" + r.Engine + "/" + r.Model
-	return cleanText(r.Branch) + "  " + tem + "  " + r.Outcome + "  " + tagCounts(r.Notes, "")
+	tem := cleanText(r.Tier + "/" + r.Engine + "/" + r.Model)
+	return cleanText(r.Branch) + "  " + tem + "  " + cleanText(r.Outcome) + "  " + tagCounts(r.Notes, "")
 }
 
 // tagCounts ports once.go's tagstrDash: "tag x2" for a repeated tag, in
@@ -413,12 +413,12 @@ func (v runsView) detailView(w, h int) string {
 		if row.Crew != nil {
 			crew = *row.Crew
 		}
-		label = "crew " + crew
+		label = "crew " + cleanText(crew)
 	}
 	// T0 is a bus timestamp — milliseconds, like every other event ts in
 	// this system (confirmed against real `crew retro --report --json`
 	// output, e.g. t0: 1789027428338) — isoUTC wants seconds.
-	header := label + "  " + row.Tier + "/" + row.Engine + "/" + row.Model + "  " + row.Outcome + "  " + isoUTC(row.T0/1000)
+	header := label + "  " + cleanText(row.Tier+"/"+row.Engine+"/"+row.Model) + "  " + cleanText(row.Outcome) + "  " + isoUTC(row.T0/1000)
 
 	// Render every note as its own block, tracking each block's starting
 	// line so the viewport can center on the cursor's note (Update only

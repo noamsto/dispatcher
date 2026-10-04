@@ -78,10 +78,10 @@ func settingsPane(snap data.Snapshot) []line {
 	var out []line
 	out = append(out, layerLines(snap.Settings.Layers)...)
 	for _, w := range snap.Settings.Warnings {
-		out = append(out, line{style: "n", text: "warning: " + w})
+		out = append(out, line{style: "n", text: "warning: " + cleanText(w)})
 	}
 	if snap.Settings.Error != nil {
-		out = append(out, line{style: "n", text: "unavailable: " + *snap.Settings.Error})
+		out = append(out, line{style: "n", text: "unavailable: " + cleanText(*snap.Settings.Error)})
 		return out
 	}
 	out = append(out, settingsBody(snap.Settings.Rows)...)
@@ -101,16 +101,16 @@ func layerLines(layers *data.Layers) []line {
 		present = "present"
 	}
 	return []line{
-		{style: "n", text: "layers: default " + layers.Base},
-		{style: "n", text: "        user    " + layers.User.Path + " (" + present + ")"},
-		{style: "n", text: "        locked  " + locked},
+		{style: "n", text: "layers: default " + cleanText(layers.Base)},
+		{style: "n", text: "        user    " + cleanText(layers.User.Path) + " (" + present + ")"},
+		{style: "n", text: "        locked  " + cleanText(locked)},
 	}
 }
 
 func leafPrefix(r data.SettingRow) string {
 	depth := len(r.Path) - 1
 	last := r.Path[len(r.Path)-1]
-	return strings.Repeat("  ", depth) + last + ": " + compactJSON(r.Value)
+	return strings.Repeat("  ", depth) + cleanText(last) + ": " + cleanText(compactJSON(r.Value))
 }
 
 func compactJSON(raw json.RawMessage) string {
@@ -132,7 +132,7 @@ func badgeOf(origin string) string {
 	case "locked":
 		return "🔒 locked"
 	default:
-		return origin
+		return cleanText(origin)
 	}
 }
 
@@ -169,7 +169,7 @@ func settingsBody(rows []data.SettingRow) []line {
 		prefix := r.Path[:len(r.Path)-1]
 		common := commonLen(prev, prefix)
 		for d := common; d < len(prefix); d++ {
-			out = append(out, line{style: "n", text: strings.Repeat("  ", d) + prefix[d]})
+			out = append(out, line{style: "n", text: strings.Repeat("  ", d) + cleanText(prefix[d])})
 		}
 		pfx := prefixes[idx]
 		pad := cap_ + 2 - utf8.RuneCountInString(pfx)
@@ -195,7 +195,7 @@ var engineOrder = []string{"claude", "codex", "cursor", "pi"}
 func budgetPane(snap data.Snapshot) []line {
 	b := snap.Budget
 	if b.Error != nil {
-		return []line{{style: "n", text: "unavailable: " + *b.Error}}
+		return []line{{style: "n", text: "unavailable: " + cleanText(*b.Error)}}
 	}
 	age := snap.Now - b.Report.FetchedEpoch
 	fetchedLine := "fetched " + reltime(age) + " ago"
@@ -213,9 +213,9 @@ func engineLines(e string, v *data.EngineBudget) []line {
 	if v == nil {
 		return []line{{style: "n", text: e + ": unknown"}}
 	}
-	heading := e + " (" + v.Source + ")"
+	heading := e + " (" + cleanText(v.Source) + ")"
 	if v.PlanType != nil {
-		heading += " [" + *v.PlanType + "]"
+		heading += " [" + cleanText(*v.PlanType) + "]"
 	}
 
 	out := []line{{style: "h", text: heading}}
@@ -243,7 +243,7 @@ func engineLines(e string, v *data.EngineBudget) []line {
 			out = append(out, line{style: "n", text: "  spend $" + usd(f64(v.SpendUSD)) + " month-to-date (no target)"})
 		}
 		if v.Projection != nil {
-			out = append(out, line{style: "n", text: "  " + *v.Projection})
+			out = append(out, line{style: "n", text: "  " + cleanText(*v.Projection)})
 		}
 	}
 
@@ -268,9 +268,9 @@ func windowRowCells(w data.Window) []string {
 	}
 	verdict := "—"
 	if w.Verdict != nil {
-		verdict = *w.Verdict
+		verdict = cleanText(*w.Verdict)
 	}
-	return []string{w.Key, formatNumber(w.UsedPct) + "%", ahead, resets, verdict}
+	return []string{cleanText(w.Key), formatNumber(w.UsedPct) + "%", ahead, resets, verdict}
 }
 
 func f64(p *float64) float64 {
@@ -364,7 +364,7 @@ func crewNotesLines(g crewGroup) []line {
 		}
 	}
 
-	out := []line{{style: "h", text: "crew " + g.crew}}
+	out := []line{{style: "h", text: "crew " + cleanText(g.crew)}}
 	summaryText := "(none)"
 	if summary != nil {
 		summaryText = cleanText(summary.Detail)
@@ -405,7 +405,7 @@ func ratingsTable(groups []data.RatingGroup) []line {
 	rows := make([][]string, 0, len(sorted))
 	for _, g := range sorted {
 		rows = append(rows, []string{
-			g.Tier, g.Engine, g.Model,
+			cleanText(g.Tier), cleanText(g.Engine), cleanText(g.Model),
 			renderAgg(g.N.K, g.N.N, optNumber(g.N.Value)),
 			renderAgg(g.PrPct.K, g.PrPct.N, optNumber(g.PrPct.Value)),
 			renderAgg(g.MergePct.K, g.MergePct.N, optNumber(g.MergePct.Value)),
@@ -428,7 +428,7 @@ func runsPane(snap data.Snapshot) []line {
 
 	var partA []line
 	if r.RetroError != nil {
-		partA = []line{{style: "n", text: "unavailable: " + *r.RetroError}}
+		partA = []line{{style: "n", text: "unavailable: " + cleanText(*r.RetroError)}}
 	} else {
 		var rows []data.RetroRow
 		if r.Retro != nil {
@@ -446,7 +446,7 @@ func runsPane(snap data.Snapshot) []line {
 
 	var partB []line
 	if r.RatingsError != nil {
-		partB = []line{{style: "n", text: "unavailable: " + *r.RatingsError}}
+		partB = []line{{style: "n", text: "unavailable: " + cleanText(*r.RatingsError)}}
 	} else {
 		partB = ratingsTable(r.RatingsGroups)
 	}
@@ -502,13 +502,13 @@ func workerCells(w map[string]any) []string {
 	if s, ok := strField(w, "pr_url"); ok {
 		prURL = cleanText(s)
 	}
-	return []string{cleanText(name), cleanText(state), tier + "/" + engine + "/" + model, reltime(ageS), prURL}
+	return []string{cleanText(name), cleanText(state), cleanText(tier + "/" + engine + "/" + model), reltime(ageS), prURL}
 }
 
 func rosterCrewLines(c data.RosterCrew) []line {
-	out := []line{{style: "h", text: "crew " + c.ID}}
+	out := []line{{style: "h", text: "crew " + cleanText(c.ID)}}
 	if c.WorkersError != nil {
-		out = append(out, line{style: "n", text: "  unavailable: " + *c.WorkersError})
+		out = append(out, line{style: "n", text: "  unavailable: " + cleanText(*c.WorkersError)})
 	} else if len(c.Workers) > 0 {
 		headers := []string{"name", "state", "tier/engine/model", "age", "pr"}
 		wrows := make([][]string, 0, len(c.Workers))
@@ -524,7 +524,7 @@ func rosterCrewLines(c data.RosterCrew) []line {
 		}
 	}
 	if c.HoldsError != nil {
-		out = append(out, line{style: "n", text: "  holds unavailable: " + *c.HoldsError})
+		out = append(out, line{style: "n", text: "  holds unavailable: " + cleanText(*c.HoldsError)})
 	} else {
 		for _, h := range c.Holds {
 			out = append(out, line{style: "n", text: "  " + holdLine(h)})
@@ -534,11 +534,12 @@ func rosterCrewLines(c data.RosterCrew) []line {
 }
 
 func holdLine(h map[string]any) string {
-	id := fmt.Sprintf("%v", h["id"])
+	id := cleanText(fmt.Sprintf("%v", h["id"]))
 	wait, _ := h["wait"].(map[string]any)
 	task, _ := h["task"].(map[string]any)
 	engine, _ := wait["engine"].(string)
 	window, _ := wait["window"].(string)
+	engine, window = cleanText(engine), cleanText(window)
 	resetsAt, _ := wait["resets_at"].(float64)
 	title := ""
 	if task != nil {
@@ -552,7 +553,7 @@ func holdLine(h map[string]any) string {
 func rosterPane(snap data.Snapshot) []line {
 	r := snap.Roster
 	if r.Error != nil {
-		return []line{{style: "n", text: "unavailable: " + *r.Error}}
+		return []line{{style: "n", text: "unavailable: " + cleanText(*r.Error)}}
 	}
 	if len(r.Crews) == 0 {
 		return []line{{style: "n", text: "no active crew"}}
