@@ -88,12 +88,16 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = switch ]; then
-  br=""
+  br="" base=""
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
     -c)
       br="$2"
+      shift 2
+      ;;
+    -b)
+      base="$2"
       shift 2
       ;;
     *) shift ;;
@@ -102,7 +106,7 @@ if [ "$1" = switch ]; then
   [ -n "$br" ] || exit 1
   dest="$TEST_REPO/.dispatch-wt/${br//\//-}"
   mkdir -p "$(dirname "$dest")"
-  git -C "$TEST_REPO" worktree add -b "$br" "$dest" HEAD >/dev/null
+  git -C "$TEST_REPO" worktree add -b "$br" "$dest" "${base:-HEAD}" >/dev/null
 fi
 exit 0
 EOF
@@ -5461,11 +5465,13 @@ wt_path_for() {
 # commit_envrc — track a real .envrc on the source branch so a worktree cut
 # from it (via `wt`'s `git worktree add -b ... HEAD`) actually has one; the
 # direnv-allow guard now skips entirely when .envrc is absent, so tests that
-# mean to exercise `direnv allow` itself need this.
+# mean to exercise `direnv allow` itself need this. Pushed too: the default
+# create branches off origin's fetched tip, not local HEAD.
 commit_envrc() {
   echo 'use nix' >"$TEST_REPO/.envrc"
   git -C "$TEST_REPO" add .envrc
   git -C "$TEST_REPO" commit -q -m envrc
+  git -C "$TEST_REPO" push -q origin main
 }
 
 @test "trust: a claude dispatch stamps hasTrustDialogAccepted for the new worktree" {
