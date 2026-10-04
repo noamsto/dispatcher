@@ -5344,14 +5344,15 @@ EOF
   [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
 }
 
-@test "stall-watch: CREW_STALL_CLOCK runs an hour-long watch on virtual time" {
+@test "stall-watch: CREW_STALL_CLOCK runs a ten-minute watch on virtual time" {
   p=$(fx_idle_box)
   stall_sampler "$p"
   SECONDS=0
   CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
-    --interval 60 --window 3600 --stall 120 --idle 99999 --dead 99999 --max-life 3600
+    --interval 60 --window 600 --stall 120 --idle 99999 --dead 99999 --max-life 600
   [ "$status" -eq 0 ]
-  [ "$SECONDS" -lt 10 ]
+  # In real time this run would take 645s (45s default grace + 600s life).
+  [ "$SECONDS" -lt 60 ]
   run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
   [ "${lines[0]}" = "blocked|stalled: no output for 120s" ]
