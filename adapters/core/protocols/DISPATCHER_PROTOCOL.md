@@ -1031,6 +1031,14 @@ A `status` carrying `body.source: "watchdog"` was posted **on the worker's behal
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
 self-reported. Its `detail` always begins with one of nine reserved prefixes:
 
+**Relaying a pane to the human.** Whenever you point the human at a pane — a
+relayed prompt or classifier escalation, a `quota:` wait, an `unread:` nudge, or
+the manual injection fallback — give the `crew where <codename|branch|%id>` line
+instead of a bare `%id`: it names the codename, `session:window.pane`, the window
+name, the role, and the `jump:` command. The `%id` in a watchdog `detail` stays
+the stable key `permission-check` and `capture-pane` use; `crew where` translates
+it at relay time.
+
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and
   the watchdog clears the state itself. This never escalates: an unanswered answerable
@@ -1045,13 +1053,15 @@ self-reported. Its `detail` always begins with one of nine reserved prefixes:
     The checker derives the worktree (from `git worktree list`) and the crew dir itself.
     `allow-once` means the checker re-verified the frame and already answered `1`
     (allow once): do nothing more. `human: <reason>`, or any non-zero exit → relay the
-    exact captured request and the reason to the human, as before.
+    exact captured request and the reason to the human, as before, with the
+    `crew where <branch-or-%id>` line naming the pane — never a bare `%id`.
     Never answer a permission dialog any other way: not from the detail text, not on
     your own reading of a frame, never option 2 ("don't ask again"), never option 3 or
     `Esc`, and never override a refusal.
     **Classifier escalations always go to the human** — the `│` "Auto mode classifier
     requires confirmation" frame; answering one would pre-empt the classifier, which
-    _Permission blocks_ says the harness never does. The checker decides from the
+    _Permission blocks_ says the harness never does. Relay it with the `crew where`
+    line for the pane. The checker decides from the
     session transcript's exact bytes, not the pane: pane text is attacker-influenceable
     and cannot establish the exact command that will run. Counterexamples and residual
     risks — notably, the guarantee holds only if the transcript files are authentic —
@@ -1059,7 +1069,7 @@ self-reported. Its `detail` always begins with one of nine reserved prefixes:
 
     Claude role panes carry their own prompt-only watch (`role:<branch>:<role>`),
     posting `prompt:`/`quota:` the same way — the pane is named in the detail; verify,
-    then act, exactly as above — except a role pane's permission dialog goes straight to the human: do not run `permission-check` on it (the checker would refuse anyway: the pane is not running the lead session).
+    then act, exactly as above — except a role pane's permission dialog goes straight to the human: do not run `permission-check` on it (the checker would refuse anyway: the pane is not running the lead session). Give the human the `crew where` line for that pane.
 - `quota:` — two distinct frame shapes, both meaning stop dispatching to this engine,
   don't answer a question. The rate-limit prompt ("Stop and wait for limit to reset")
   is a content variant of `prompt:` with the opposite correct response. Recovery is
@@ -1072,7 +1082,8 @@ self-reported. Its `detail` always begins with one of nine reserved prefixes:
   will **not** submit a queued prompt while the limit holds. The only real recoveries
   are waiting for the reset window shown in the pane, or a human explicitly invoking
   `/low-priority` in the pane — that spends weekly budget, a human spend decision,
-  never something the watchdog or any automated recovery takes. Either way, **never
+  never something the watchdog or any automated recovery takes. Relay the pane with a
+  `crew where` line so the human can find it. Either way, **never
   re-dispatch** a worker wedged on `quota:`, it would discard hours of intact work for
   nothing that needed redoing. Neither variant ever escalates to `dead:`.
 - `turn-stall:` — the pane's clock advanced for 30 min against a static token count with
@@ -1096,7 +1107,8 @@ self-reported. Its `detail` always begins with one of nine reserved prefixes:
   keeps repainting, so no pane detector fires — the #300 hand-rolled-poll deadlock shape.
   Own prefix, not a `stalled:` sub-case, because the recovery differs. **Verify, then
   nudge**: `crew inbox <lead session id>` shows the waiting verdict; if it is there,
-  tell the lead in its pane to read it (`crew await --from role:<branch>:<role>`). It clears itself once the
+  tell the lead in its pane to read it (`crew await --from role:<branch>:<role>`),
+  naming the pane with `crew where <lead branch>`. It clears itself once the
   msg is delivered. Never escalates and is never `failed`: a lead slow to read is not dead.
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
@@ -1204,7 +1216,8 @@ Two reads remain for detail:
   or re-dispatched session. No component types into an engine pane for that. If a
   worker must be reached this way (for example a stopped session that was already
   re-dispatched, or a coded reply a human must hand-deliver), the only fallback is a
-  human running `tmux send-keys` directly: capture the pane **before** typing and
+  human running `tmux send-keys` directly — give them the `crew where <branch>` line
+  to find the pane first: capture the pane **before** typing and
   **after** submitting, verify the prompt was accepted, and
   never do it while the pane shows unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a
   quota wait is answered by waiting for the reset window or a human-run
