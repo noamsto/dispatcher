@@ -40,7 +40,7 @@ fleet total is 6.72B):
 | 2    | Fresh dispatcher per batch (about every 100 turns)                                                 | 41.0% of dispatcher integral                                                                                 | up to 498M (7.4%)                                                      | Medium: the dispatcher holds some state only in its conversation (the human's in-chat instructions, pending decisions, triage reasoning); the handoff note must carry them | Hours to 1 day (protocol plus a handoff note) | TBD   |
 | 3    | Suppress idle dispatcher wakes (filter no-action notifications; do not re-arm on a drained roster) | 33.9% of dispatcher integral                                                                                 | up to 412M (6.1%); overlaps rank 2                                     | Low                                                                                                                                                                        | Hours                                         | TBD   |
 | 4    | Load protocols by phase (worker core plus seam files; dispatcher rare reference on demand)         | ~1.1M per worker run; turn-1 floor down by up to ~27k                                                        | ~210M worker plus ~45M dispatcher = ~255M (3.8%)                       | Medium: a lead that skips a seam read; both adapter copies and tests change                                                                                                | 1-2 days                                      | TBD   |
-| 5    | Lean launch profile: no claude.ai connectors, no unused plugins                                    | >=11.3k tokens per turn (up to ~16k)                                                                         | ~157-222M workers; ~230-325M with role panes and dispatcher (3.4-4.8%) | Low                                                                                                                                                                        | In progress                                   | #690  |
+| 5    | Lean launch profile: no claude.ai connectors, no unused plugins                                    | >=11.3k tokens per turn (up to ~16k, estimated)                                                              | ~157-222M workers; ~230-325M with role panes and dispatcher (3.4-4.8%) | Low                                                                                                                                                                        | In progress                                   | #690  |
 | 6    | Narrow file reads and search output in workers                                                     | Not measured per run                                                                                         | ~160M (2.4%), low confidence                                           | Low to medium                                                                                                                                                              | Hours                                         | TBD   |
 
 Savings in rows 1-3 overlap with each other and with row 4 (a smaller floor makes
@@ -98,12 +98,14 @@ review") map to spec or plan. For 63 of the 176 completed runs no usable
 heartbeat was found and the phase falls back to tool heuristics (critic spawns
 mark spec and plan, reviewer spawns mark review, the `deslop` skill marks pr).
 In those runs the `start` bucket absorbs spec and plan. Phase medians below
-therefore blur spec, plan, and start slightly.
+therefore blur spec, plan, and start slightly. As a data-quality check, 2 of
+the 176 completed runs enter their phases out of pipeline order (a misread
+stage label).
 
 **Ratio calibration.** Chars-per-token is 2.7, measured from first-turn usage
-deltas when a file is appended to the prompt: the protocol gives 2.73 (115,038
-bytes, +41,848 tokens) and the CLAUDE.md import chain gives 2.60. The
-Q3 uses bytes/2.75 for the same file; reproduce it with
+deltas when a file is appended to the prompt: the protocol gives 2.73 (114,128
+chars, 115,038 bytes, +41,848 tokens; 2.75 bytes/token) and the CLAUDE.md
+import chain gives 2.60. Q3 uses bytes/2.75 for the same file; reproduce it with
 `python3 scripts/context-budget.py --ratio 2.75 sections adapters/core/protocols/WORKER_PROTOCOL.md`,
 which prints 41,832 tokens total (the default ratio 2.7 prints about 42.6k). The
 older 4 chars/token estimate understated the protocol by a third.
@@ -179,13 +181,14 @@ Other measurements:
 - A lean variant (no MCP, no plugins) with the protocol is 74.3k against 85.7k,
   so #690 saves at least 11.3k per turn. The `-p` comparison misses the
   claude.ai connector listing and MCP instructions, which sit in the 10.3k
-  interactive residual and which #690 also removes; the 80-85k post-#690 floor
-  implies up to ~16k. After #690 the interactive floor is about 80-85k and the
-  worker protocol is about half of it.
+  interactive residual and which #690 also removes. Up to ~16k is an estimate,
+  not a measurement: it assumes about 5k of that residual is connector listing
+  and MCP instructions. After #690 the interactive floor is roughly 80-85k
+  (estimated the same way), and the worker protocol is about half of it.
 
 **Answer.** The protocol is the largest single item at 43% of the floor; the
 rest is spread across tool schemas, listings, MCP, and instructions, none above
-11%. #690 trims the connector and plugin share (at least 11.3k per turn: ~157-222M/week
+11%. #690 trims the connector and plugin share (at least 11.3k per turn, measured; the upper ends are estimates: ~157-222M/week
 for workers, ~230-325M including role panes and the dispatcher, 20,291 turns).
 Anything larger has to shrink the
 protocol itself (Q3).
@@ -296,7 +299,7 @@ another engine, a few k tokens, not measured precisely.
 An always-on core would be about 20 KB (~7k tokens). A long-lived dispatcher
 reads the triage and scaffold reference at its first batch and keeps it, so
 the split pays mainly for the rarely used parts: relaying a pane plus the
-roster diagram is about 10k tokens times 4,492 turns, roughly 45M/week (3.8%
+roster diagram is about 10k tokens times 4,492 turns, roughly 45M/week (3.7%
 of dispatcher integral). It pays more when combined with fresh sessions per
 batch (Q6).
 
@@ -332,8 +335,9 @@ against a fresh-session floor of about 97k.
 input, which is 20x a cache read. A restart writes about `F + R` (107-127k)
 fresh, about 2.1-2.5M read-equivalent tokens; two restarts cost 4.3-5.1M
 against a 3.9-5.2M median saving. So in dollars a restart is roughly
-break-even; its value is keeping turns out of the long-context (>150k) band and
-quota pressure, not price. Claude Code's `--exclude-dynamic-system-prompt-sections`
+break-even; its measured value is keeping turns out of the long-context
+(>150k) band. Any quota benefit depends on how cache reads are weighted, which
+is not measured. Claude Code's `--exclude-dynamic-system-prompt-sections`
 moves per-machine sections (cwd, git status) out of the system prompt, which
 could let the static ~85k prefix (base prompt, tools, protocol) be shared
 across sessions in the cache and make restarts and every fresh worker launch
