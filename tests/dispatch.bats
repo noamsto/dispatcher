@@ -940,6 +940,50 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+# _line_of <pattern> — first line number in $STUB_LOG matching the fixed string.
+_line_of() {
+  grep -n -F -m1 -- "$1" "$STUB_LOG" | cut -d: -f1
+}
+
+@test "grid: every split and the refit precede the first engine launch, lead first" {
+  stub_launch_bins
+  _grid_tmux_stub
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "reviewer,plan-critic" --effort high --crew-id c1 42 "order"
+  [ "$status" -eq 0 ]
+
+  last_split="$(grep -n '^split-window' "$STUB_LOG" | tail -1 | cut -d: -f1)"
+  refit="$(_line_of 'tmux-grid-refit %1')"
+  lead_launch="$(_line_of 'send-keys -t %1 ')"
+  role_launch="$(_line_of 'send-keys -t %6 ')"
+  [ "$(grep -c '^split-window' "$STUB_LOG")" -eq 2 ]
+  [ "$last_split" -lt "$refit" ]
+  [ "$refit" -lt "$lead_launch" ]
+  [ "$lead_launch" -lt "$role_launch" ]
+}
+
+@test "grid: --spawn-role splits and refits before launching the new role" {
+  _spawn_role_fixture
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  split="$(_line_of 'split-window')"
+  refit="$(_line_of 'tmux-grid-refit @1')"
+  launch="$(_line_of 'send-keys -t %6 ')"
+  [ "$split" -lt "$refit" ]
+  [ "$refit" -lt "$launch" ]
+}
+
 @test "grid: --reap-roles unsets @crew_grid once the last role pane is gone" {
   _spawn_role_fixture
   cat >"$STUB_DIR/tmux" <<'EOF'
