@@ -673,7 +673,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args claude_lean_env; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -997,11 +997,30 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude --continue' <(launch_log)
-  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
+  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+}
+
+@test "claude resume drops the claude.ai connectors unless DISPATCH_CLAUDE_CONNECTORS=1" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  grep -qF 'ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
+}
+
+@test "claude resume keeps the connectors under DISPATCH_CLAUDE_CONNECTORS=1" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  ! grep -qF 'ENABLE_CLAUDEAI_MCP_SERVERS' <(launch_log)
+  grep -qF "DISPATCH_CLAUDE_CONNECTORS=1 claude --continue" <(launch_log)
 }
 
 # _grant_record <line...> — write the branch's grant record, the only source a
@@ -1188,7 +1207,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
   sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
@@ -1524,7 +1543,7 @@ _assert_refused_unlaunched() { # <field> <marker>
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 claude ' <(launch_log)
+  grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude ' <(launch_log)
   grep -q -- '--name iris --model sonnet --effort medium' <(launch_log)
   sed -i -e 's|^engine: .*|engine: pi|' -e 's|^model: .*|model: openrouter/deepseek/deepseek-v4-flash|' WORKER_TASK.md
   : >"$STUB_LOG"

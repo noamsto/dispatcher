@@ -13102,3 +13102,40 @@ setup_bundle_resume() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"none"* ]]
 }
+
+# ── Lean claude launch (claude.ai connectors dropped) ──────────
+
+@test "lean: a claude lead launch drops the claude.ai connectors by default" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
+}
+
+@test "lean: DISPATCH_CLAUDE_CONNECTORS=1 opts out" {
+  stub_launch_bins
+  DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *"ENABLE_CLAUDEAI_MCP_SERVERS"* ]]
+}
+
+@test "lean: --mcp profile composes with the lean env" {
+  stub_launch_bins
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{}' >"$HOME/.config/claude-code/mcp-posthog.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --mcp analytics --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
+  [[ "$line" == *"--mcp-config $HOME/.config/claude-code/mcp-posthog.json"* ]]
+}
+
+@test "lean: an eager claude role launch drops the connectors" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --roles reviewer=claude:sonnet --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris-reviewer "* ]]
+}

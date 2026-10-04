@@ -1486,6 +1486,18 @@ _record_worktree_anchor() {
   )
 }
 
+# claude_lean_env — emit the env prefix of a claude worker launch that drops the
+# claude.ai account connectors (Gmail, Drive, Sentry, ...). Workers never use
+# them and their tool names ride every turn's context. DISPATCH_CLAUDE_CONNECTORS=1
+# opts out. Plugin and base MCP servers are untouched.
+claude_lean_env() {
+  if [ "${DISPATCH_CLAUDE_CONNECTORS:-}" = 1 ]; then
+    printf 'DISPATCH_CLAUDE_CONNECTORS=1 '
+  else
+    printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
+  fi
+}
+
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
 # launch needs so its tool calls never stop on a permission dialog nobody
 # watches: the protocol, skills, reviewers and critics dirs, the branch's own
@@ -1600,7 +1612,7 @@ launch_role() {
     printf -v quoted_dir '%q' "$pi_agent_dir"
     cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}claude --name $quoted_name --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
   codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -4718,7 +4730,7 @@ else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks
