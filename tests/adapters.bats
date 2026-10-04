@@ -2137,6 +2137,7 @@ $hits"
   done <<'TABLE'
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Owner authorization.**
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Permission blocks.**
+adapters/core/protocols/WORKER_PROTOCOL.md|**Run the affected tests while iterating, the full suite once before push.**
 adapters/core/protocols/WORKER_PROTOCOL.md|## Resuming a killed run
 adapters/core/protocols/WORKER_PROTOCOL.md|"seam":"deslop"
 adapters/core/protocols/WORKER_PROTOCOL.md|dispatcher:deslop

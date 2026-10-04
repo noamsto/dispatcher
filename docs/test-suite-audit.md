@@ -16,8 +16,8 @@ Measured on 2026-10-04 at `4bd0199` (main). Reproduce with `scripts/bats-timing.
   take 5.8s of summed test time (0.3%). Cutting them is about maintenance and
   surviving the #703 protocol restructure, not CI time.
 - **Exact duplicates: 3** (the classifier flagged 4; one was a false positive).
-- CI time is won by speeding up three slow families (S1–S3 below). Worker time is
-  won by running only the affected bats files while iterating (`scripts/bats-affected`).
+- CI time is won by speeding up slow families (S1 and S3 below; S2 turned out to have nothing to change). Worker time is
+  won by running only the affected bats files while iterating (`scripts/bats-affected.sh`).
 
 ## Runtime
 
@@ -258,10 +258,11 @@ any of them runs the full suite: `tests/helpers.bash`, `adapters/core/dispatch-c
 `adapters/core/worktree-git.sh`. `adapters/core/crew.sh` reaches 19 files and is
 selected by its own map row.
 
-## Proposed cut list
+## Cut list (approved 2026-10-04, applied)
 
-Behaviour and security tests are not on this list, except the exact duplicates
-in C2.
+The owner approved every item below on 2026-10-04. The **Applied** section says
+where the applied change differs from the proposal. Behaviour and security tests
+are not on this list, except the exact duplicates in C2 and S3's redundant re-run.
 
 ### C1. Doc-pinning: delete 44, collapse 16 into one anchor test, keep 16
 
@@ -405,14 +406,14 @@ on a cold nix cache.
 - **CI `bats` step:** on the 4-core runner this step is limited by slot
   occupancy, so wall time should fall roughly in proportion, from ~14m to ~9–10m.
   This is an estimate; the measured before/after goes in the PR.
-- **Worker gate:** with `scripts/bats-affected`, a change to one script runs only
+- **Worker gate:** with `scripts/bats-affected.sh`, a change to one script runs only
   its mapped files. For example, a `secret-read-guard.sh` change runs 3 files
   (~2.5 min summed, under 30s wall) instead of all 29. A change to a shared
   source still runs everything.
 
 ## Affected-test selection (phase 3)
 
-`scripts/bats-affected [--base REF] [--files FILE...]` takes the changed files
+`scripts/bats-affected.sh [--base REF] [--files FILE...]` takes the changed files
 (vs the merge-base with `--base`, plus staged, unstaged and untracked changes)
 and prints the bats files to run, one per line.
 
