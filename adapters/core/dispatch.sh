@@ -696,6 +696,10 @@ _fetch_origin_branch() {
   _wt_git_common "${crew_dir%/crew}" fetch --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
+_branch_wts() { # <branch> — porcelain on stdin -> every worktree whose HEAD names refs/heads/<branch>
+  awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
+}
+
 # Unconditional, unlike the advisory hint lib: without it dispatch must abort,
 # never fall back to discovery in a worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
@@ -3872,7 +3876,18 @@ trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || 
 # is deliberate: a worker that dies without posting anything holds the branch until
 # a human kills the window, which the refusal spells out and stall-watch resolves
 # on its own after 30 minutes.
-prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+wt_list="$(git worktree list --porcelain)"
+prev_wt="$(printf '%s\n' "$wt_list" | _branch_wts "$branch")"
+# `wt switch -c` attaches to a worktree already on the branch instead of creating
+# one, so a create that finds one holds an unborn-branch squatter (#640).
+if [ "$switch_mode" = create ] && [ -n "$prev_wt" ]; then
+  {
+    echo "dispatch: $branch does not exist yet, but a worktree's HEAD already names it (an unborn branch — possible tampering):"
+    printf '%s\n' "$prev_wt" | sed 's/^/  /'
+    echo "  a create would attach there instead of making a new worktree — inspect it, then \`git worktree remove\` it or re-dispatch under another title."
+  } >&2
+  exit 1
+fi
 if [ -n "$prev_wt" ]; then
   occ=$(crew occupants "$prev_wt")
   if [ "$occ" != "[]" ]; then
@@ -3939,6 +3954,18 @@ create)
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid" -y --no-hooks
   else
     wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
+  fi
+  # A HEAD rewritten after the listing still makes the switch attach, so verify it
+  # created the worktree and pin wt_path to it (#640).
+  wt_path="$(git worktree list --porcelain | _branch_wts "$branch")"
+  wt_before="$(printf '%s\n' "$wt_list" | awk '/^worktree /{print $2}')"
+  if ! git show-ref --verify --quiet "refs/heads/$branch" || [ -z "$wt_path" ] || [[ $wt_path == *$'\n'* ]] ||
+    grep -qxF -- "$wt_path" <<<"$wt_before"; then
+    {
+      echo "dispatch: wt switch -c did not create a new worktree for $branch — a worktree's HEAD was pointed at it mid-dispatch (possible tampering); refusing to launch there. Holding it:"
+      printf '%s\n' "${wt_path:-(none)}" | sed 's/^/  /'
+    } >&2
+    exit 1
   fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
@@ -4063,7 +4090,9 @@ _bus_append "$crew_dir/events.jsonl" "$line"
 # awk must read to EOF: an early `exit` closes the pipe while git still has
 # blocks to write, and the resulting SIGPIPE (141) trips pipefail + errexit,
 # killing dispatch silently right after `wt switch` created the worktree.
-wt_path="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+if [ "$switch_mode" != create ]; then
+  wt_path="$(git worktree list --porcelain | _branch_wts "$branch")"
+fi
 if [ -z "$wt_path" ]; then
   echo "dispatch: could not locate worktree for branch $branch" >&2
   exit 1
