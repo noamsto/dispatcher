@@ -486,9 +486,9 @@ branch instead; the worktree carries over under `resume: true`.
   symlink-chain check above, kept narrow to bound the scan's cost.
 
   A grant is also refused if it is equal to, inside or above the **hooks dir, git
-  dir or common dir** of any repo whose worktree contains it, or an absolute global
-  `core.hooksPath`. Otherwise the narrowest-subdir advice itself would hand over
-  the hooks: in a Husky repo (`core.hooksPath=.husky`), `~/other-repo/.husky`
+  dir or common dir** of any repo whose worktree contains it, or any
+  `core.hooksPath` value, `:(optional)` forms included. Otherwise the
+  narrowest-subdir advice itself would hand over the hooks: in a Husky repo (`core.hooksPath=.husky`), `~/other-repo/.husky`
   holds no `.git` entry but its scripts run on the human's next `git commit`
   there. Found by walking up from the grant to every `.git` entry (dir, gitfile or
   symlink) and asking git itself: `git rev-parse --git-path hooks --git-dir
@@ -496,9 +496,12 @@ branch instead; the worktree carries over under `resume: true`.
   from any config layer, relative (against the worktree root) or absolute, with
   the default `$GIT_COMMON_DIR/hooks` when unset; a submodule's git dir under
   `.git/modules/<name>` and a `--separate-git-dir` inside the tree count as git
-  dirs. Plus `git config --path --get core.hooksPath` outside any repo for an
-  absolute user-wide value. Each of those dirs' symlink chains is walked hop by hop
-  as for the secrets dirs above. git only reads config there (no hooks, fsmonitor
+  dirs. Plus a raw `git config --get-all core.hooksPath` per repo (every scope git
+  reads for it, relative values against the worktree root) and outside any repo for
+  absolute or `~` user-wide values; each value counts as written and with any
+  `:(optional)` prefix stripped, since git reads `:(optional)<missing dir>` as
+  unset while a worker could create the dir. Each of those dirs' symlink chains
+  is walked hop by hop as for the secrets dirs above. git only reads config there (no hooks, fsmonitor
   or filters run); `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_CONFIG` and
   command-line `-c` config (`GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_COUNT`) are
   dropped from its env so the answer is the human's own config. Paths are taken
@@ -548,8 +551,7 @@ branch instead; the worktree carries over under `resume: true`.
   filesystem mounted inside the grant (the scan stays on one filesystem); a
   grant-held symlink or hard link into another repo that does not contain the
   grant; an include named only by a file
-  that a currently non-matching `includeIf` pulls in; a `core.hooksPath` with a
-  `:(optional)` prefix naming a missing dir, which git treats as unset; a file
+  that a currently non-matching `includeIf` pulls in; a file
   in a subdirectory of the hooks dir, or one a hook runs by its content (only
   each hook entry's own symlink chain is followed); and symlinks or hard links
   the worker plants after the grant, until the next re-check drops it. Other
