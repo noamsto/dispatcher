@@ -1064,15 +1064,14 @@ shell)
   #    single variable: each match queues the extracted body (nesting), and the
   #    search goes on past that body in the same text (siblings: `bash -c
   #    'true'; bash -c 'declare -p NAME'`). Bounded by total matches, so it
-  #    always terminates; reaching that bound denies below. Each item is searched twice: on the raw text
-  #    (shell_c_raw_re), where a sibling search resumes past the body's
-  #    decoded word, and on its dequoted view (shell_c_re), made once —
-  #    re-dequoting the text after every
-  #    match was 20 passes over a 128 KiB `-c` chain — where it resumes past
-  #    the body's word in that view (a quoted metacharacter there is `_`, so
-  #    data never ends it early), and every match end maps back to raw text in
-  #    one more pass. The two sets of raw body starts are merged in order, a
-  #    body both found counted once, under the shared match cap.
+  #    always terminates; reaching that bound denies below. Each item is
+  #    searched twice: on the raw text (shell_c_raw_re), resuming past the
+  #    body's decoded word, and on its dequoted view (shell_c_re), made once
+  #    per item so a long sibling chain stays linear, resuming past the body's
+  #    word in that view (a quoted metacharacter there is `_`, so data never
+  #    ends it early); every match end maps back to raw text in one more pass.
+  #    The two sets of raw body starts merge in order, a body both found
+  #    counted once, under the shared match cap.
   raw_spaces=("$command")
   search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
   fish_spaces=()
