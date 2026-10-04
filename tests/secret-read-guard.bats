@@ -811,6 +811,18 @@ assert_allow_relative() {
   [[ $stderr == *"jq not found"* ]]
 }
 
+run_guard_bare() {
+  env -i PATH="$PATH" bash "$GUARD"
+}
+
+@test "secret-read-guard: runs standalone with only PATH in the environment" {
+  run --separate-stderr run_guard_bare <<<"$(claude_bash 'cat .env')"
+  assert_deny_claude
+  run --separate-stderr run_guard_bare <<<"$(claude_bash 'ls')"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 # ---------------------------------------------------------------------------
 # Grep glob branch
 # ---------------------------------------------------------------------------
@@ -1505,6 +1517,12 @@ allow_cmd() { # <command>
   deny_cmd 'env >&2 # c'
   deny_cmd 'set -S>&2'
   deny_cmd 'export -p>&2'
+  deny_cmd 'env >/tmp/x'
+  deny_cmd 'env > /tmp/x'
+  deny_cmd 'printenv >>f'
+  deny_cmd 'env >| f'
+  deny_cmd 'env &>f'
+  deny_cmd 'env {fd}>&2'
 }
 
 @test "secret-read-guard: allows a backticked word that is not a dump" {
@@ -1519,7 +1537,6 @@ allow_cmd() { # <command>
   allow_cmd 'set -euo pipefail >&2'
   allow_cmd 'export FOO=1 >&2'
   allow_cmd 'declare -a a 2>/dev/null'
-  allow_cmd 'env >/tmp/x'
 }
 
 # backtick_level <k> — the backtick that opens or closes nesting level k: bash
@@ -2503,4 +2520,872 @@ EOF
   [ "$status" -eq 1 ]
   [ -z "$output" ]
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Regression cases carried over from a downstream copy of this guard.
+# ---------------------------------------------------------------------------
+
+guard_bash() { run --separate-stderr run_guard <<<"$(claude_bash "$1")"; }
+
+guard_json() {
+  local p
+  p=$(jq -c 'if type == "object" and has("tool_name") then .hook_event_name = "PreToolUse" else . end' <<<"$1")
+  run --separate-stderr run_guard <<<"$p"
+}
+
+assert_deny() { assert_deny_claude; }
+
+# --- deny: bare dumpers, wrapped and terminated in every accepted way ---
+
+@test "secret-read-guard (merged): deny: bare env" {
+  guard_bash 'env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bare printenv" {
+  guard_bash 'printenv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: absolute path to env" {
+  guard_bash '/usr/bin/env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: relative path to printenv" {
+  guard_bash './bin/printenv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: command env" {
+  guard_bash 'command env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: command -- env" {
+  guard_bash 'command -- env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: sudo env" {
+  guard_bash 'sudo env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: sudo -u root env" {
+  guard_bash 'sudo -u root env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env terminated by semicolon" {
+  guard_bash 'env; ls'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env piped to grep" {
+  guard_bash 'env | grep X'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env after &&" {
+  guard_bash 'ls && env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env inside parens" {
+  guard_bash '(env)'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env followed by comment" {
+  guard_bash 'env # c'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env with output redirect" {
+  guard_bash 'env >/tmp/x'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env with fd redirect" {
+  guard_bash 'env 2>&1'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env on its own line after a newline" {
+  guard_bash $'ls\nenv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: env -0 still dumps, just NUL-separated" {
+  guard_bash 'env -0'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bare set" {
+  guard_bash 'set'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: declare -p with no name" {
+  guard_bash 'declare -p'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: declare -p NAME still dumps that variable" {
+  guard_bash 'declare -p FOO'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: export -p" {
+  guard_bash 'export -p'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: typeset -p" {
+  guard_bash 'typeset -p'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: declare -x with no name" {
+  guard_bash 'declare -x'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: set -S NAME always prints" {
+  guard_bash 'set -S FOO'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: tmux show-environment" {
+  guard_bash 'tmux show-environment'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: systemctl --user show-environment" {
+  guard_bash 'systemctl --user show-environment'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: launchctl getenv NAME" {
+  guard_bash 'launchctl getenv FOO'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c 'env'" {
+  guard_bash $'bash -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: sh -c \"printenv\"" {
+  guard_bash 'sh -c "printenv"'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c 'declare -p'" {
+  guard_bash $'bash -c \'declare -p\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: fish -c 'set -gx' with no name" {
+  guard_bash $'fish -c \'set -gx\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: fish -c 'set -S'" {
+  guard_bash $'fish -c \'set -S\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: echo \"\$(env)\" dumps through a substitution" {
+  # shellcheck disable=SC2016
+  guard_bash 'echo "$(env)"'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: echo backtick-printenv-backtick" {
+  # shellcheck disable=SC2016
+  guard_bash 'echo `printenv`'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/self/environ" {
+  guard_bash 'cat /proc/self/environ'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: echo of a secret-named variable" {
+  # shellcheck disable=SC2016
+  guard_bash 'echo $MY_API_KEY'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env" {
+  guard_bash 'cat .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep over .env with default output" {
+  guard_bash 'grep FOO .env'
+  assert_deny
+}
+
+# --- allow: ordinary, non-dumping uses of the same words ---
+
+@test "secret-read-guard (merged): allow: env FOO=1 make runs make, not a dump" {
+  guard_bash 'env FOO=1 make'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: envsubst is not env" {
+  guard_bash 'envsubst < a'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo env, env is just an argument" {
+  guard_bash 'echo env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: printenv HOME reads a single name" {
+  guard_bash 'printenv HOME'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: rg over a quoted pattern mentioning env" {
+  guard_bash $'rg \'env|printenv\' f'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: command -v env only checks for the binary" {
+  guard_bash 'command -v env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo then env, then is not a real separator here" {
+  guard_bash 'echo then env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: env -i make runs make in a cleared env" {
+  guard_bash 'env -i make'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: xargs env cmd runs cmd, not a dump" {
+  guard_bash 'xargs env cmd'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: set -x is bash xtrace, not a dump" {
+  guard_bash 'set -x'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: fish -c 'set -gx PATH a' is an assignment" {
+  guard_bash $'fish -c \'set -gx PATH a\''
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: bash -c 'true' has no dumper" {
+  guard_bash $'bash -c \'true\''
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: cat .env.example is a committed template" {
+  guard_bash 'cat .env.example'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -c FOO .env only counts matches" {
+  guard_bash 'grep -c FOO .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: test -f .env only checks existence" {
+  guard_bash 'test -f .env'
+  assert_allow
+}
+
+# --- dequoted view: backslash escapes and quote removal ---
+
+@test "secret-read-guard (merged): deny: b\\ash -c 'env', a backslash-escaped interpreter" {
+  guard_bash $'b\\ash -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -\\c 'env', a backslash-escaped -c flag" {
+  guard_bash $'bash -\\c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: f\\ish -c 'set -x', a backslash-escaped fish" {
+  guard_bash $'f\\ish -c \'set -x\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: b''ash -c 'env', an empty single-quote pair in the interpreter" {
+  guard_bash $'b\'\'ash -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: b\"\"ash -c 'env', an empty double-quote pair in the interpreter" {
+  guard_bash $'b""ash -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: \"bash\" -c 'env', a quoted interpreter" {
+  guard_bash $'"bash" -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash '-c' 'env', a quoted -c flag" {
+  guard_bash $'bash \'-c\' \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: echo 'bash' -c env, a quoted interpreter word" {
+  guard_bash $'echo \'bash\' -c env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /pro\\c/1/environ, a backslash inside /proc" {
+  guard_bash 'cat /pro\c/1/environ'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/1/env\\iron, a backslash inside environ" {
+  guard_bash 'cat /proc/1/env\iron'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/1/e''nviron, an empty quote pair inside environ" {
+  guard_bash $'cat /proc/1/e\'\'nviron'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat \\.env, a backslash before the dot" {
+  guard_bash 'cat \.env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .e''nv, an empty single-quote pair inside .env" {
+  guard_bash $'cat .e\'\'nv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat ./.e\"\"nv, an empty double-quote pair inside .env" {
+  guard_bash 'cat ./.e""nv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .n\\etrc, a backslash inside .netrc" {
+  guard_bash 'cat .n\etrc'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: head .env\\.local, a backslash inside .env.local" {
+  guard_bash 'head .env\.local'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c 'cat \\.env', an escaped .env inside an inner command" {
+  guard_bash $'bash -c \'cat \\.env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c 'grep FOO .env', a content-reading grep inside an inner command" {
+  guard_bash $'bash -c \'grep FOO .env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env .env.ex\\ample, an exemption must not cover the plain .env" {
+  guard_bash 'cat .env .env.ex\ample'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env .e''nv.example, an exemption must not cover the plain .env" {
+  guard_bash $'cat .env .e\'\'nv.example'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep FOO .env; bash -\\c true, an exemption in one view must not cover another" {
+  guard_bash 'grep FOO .env; bash -\c true'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: fish -c 'set -x', unescaped" {
+  guard_bash $'fish -c \'set -x\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/1/environ, unescaped" {
+  guard_bash 'cat /proc/1/environ'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: ba\$''sh -c 'env', an empty ANSI-C quote pair in the interpreter" {
+  guard_bash $'ba$\'\'sh -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: \$'bash' -c 'env', an ANSI-C quoted interpreter" {
+  guard_bash $'$\'bash\' -c \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash \$'-c' 'env', an ANSI-C quoted -c flag" {
+  guard_bash $'bash $\'-c\' \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash \$\"-c\" 'env', a locale-quoted -c flag" {
+  guard_bash $'bash $"-c" \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .e\$''nv, an empty ANSI-C quote pair inside .env" {
+  guard_bash $'cat .e$\'\'nv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/1/envi\$''ron, an empty ANSI-C quote pair inside environ" {
+  guard_bash $'cat /proc/1/envi$\'\'ron'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c \$\"env\", a locale-quoted -c body" {
+  guard_bash 'bash -c $"env"'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: an escaped interpreter on the line after a comment with an apostrophe" {
+  guard_bash $'echo hi # it\'s done\nb\\ash -c env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: b\\ash -c with a backslash-newline before the body" {
+  guard_bash $'b\\ash -c \\\n  \'env\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: x=\$(b\\ash -c env), an escaped interpreter in a substitution" {
+  # shellcheck disable=SC2016
+  guard_bash 'x=$(b\ash -c env)'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c 'true'; b\\ash -c env, a second -c after a harmless one" {
+  guard_bash $'bash -c \'true\'; b\\ash -c env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -o pipefail -c 'env', pipefail is an option argument" {
+  guard_bash "bash -o pipefail -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -euo pipefail -c 'env', a cluster with o takes the next word" {
+  guard_bash "bash -euo pipefail -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -ce 'env', c inside a cluster before another flag" {
+  guard_bash "bash -ce 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c -e 'env', an option after -c before the body" {
+  guard_bash "bash -c -e 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash --norc -c 'env', a long option before -c" {
+  guard_bash "bash --norc -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: dash -c 'env'" {
+  guard_bash "dash -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: ksh -c 'env'" {
+  guard_bash "ksh -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: mksh -c 'env'" {
+  guard_bash "mksh -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: ash -c 'env'" {
+  guard_bash "ash -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: busybox sh -c 'env'" {
+  guard_bash "busybox sh -c 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -co pipefail 'env', o and c in one cluster" {
+  guard_bash "bash -co pipefail 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: bash script.sh -c foo, -c after the script is the script's" {
+  guard_bash "bash script.sh -c foo"
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -c x file" {
+  guard_bash "grep -c x file"
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo \"bash -c env\", a quoted mention" {
+  guard_bash 'echo "bash -c env"'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo 'see bash -c env here', a quoted mention" {
+  guard_bash "echo 'see bash -c env here'"
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: true # see bash -c 'echo hi', a harmless bash -c mention in a comment" {
+  guard_bash "true # see bash -c 'echo hi'"
+  assert_allow
+}
+
+@test "secret-read-guard (merged): deny: a comment holding a full bash -c 'env'" {
+  guard_bash "true # see bash -c 'env'"
+  assert_deny
+}
+
+# shellcheck disable=SC2016
+@test "secret-read-guard (merged): deny: a # inside backticks is not a comment" {
+  guard_bash 'echo `true #`; bash -c '"'env'"
+  assert_deny
+}
+
+# shellcheck disable=SC2016
+@test "secret-read-guard (merged): deny: a # inside a nested \${} default is not a comment" {
+  guard_bash 'echo ${x:-${y} #}; bash -c '"'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: a # inside backticks in a nested bash -c body" {
+  guard_bash "bash -c 'echo \`true #\`; bash -c env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: bash -c - 'env', a lone - ends options" {
+  guard_bash "bash -c - 'env'"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: bash -o pipefail script.sh, no -c" {
+  guard_bash "bash -o pipefail script.sh"
+  assert_allow
+}
+
+@test "secret-read-guard (merged): deny: cat /proc/1/environ followed by a heredoc larger than the pipe buffer" {
+  local body json
+  body=$(printf 'line of filler text %s\n' {1..8000})
+  ((${#body} > 120000))
+  # Through stdin: one argv string this long exceeds the kernel's per-argument limit.
+  json=$(printf '%s' "cat /proc/1/environ; cat <<'EOF'"$'\n'"$body"$'\n'"EOF" |
+    jq -Rs '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:.}}')
+  guard_json "$json"
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: bash -c 'echo hi'" {
+  guard_bash $'bash -c \'echo hi\''
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: cat README.md" {
+  guard_bash 'cat README.md'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: ls /proc/1/" {
+  guard_bash 'ls /proc/1/'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep '\\.env' file, a literal backslash in a pattern" {
+  guard_bash $'grep \'\\.env\' file'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: rg \"\\.env\" src, a literal backslash in a pattern" {
+  guard_bash 'rg "\.env" src'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo 'a\\.env', a literal backslash in data" {
+  guard_bash $'echo \'a\\.env\''
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: cat .e''nv.example, a quoted-in-the-middle example file" {
+  guard_bash $'cat .e\'\'nv.example'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: rg 'foo|bash -c env x' ., the words sit inside one pattern" {
+  guard_bash $'rg \'foo|bash -c env x\' .'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: test -f \\.env only checks existence" {
+  guard_bash 'test -f \.env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -c FOO \\.env only counts matches" {
+  guard_bash 'grep -c FOO \.env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: echo \"x<CR>bash<CR>-c<CR>env\", a quoted CR is not a separator" {
+  guard_bash $'echo "x\rbash\r-c\renv"'
+  assert_allow
+}
+
+# --- rule 3: path anchors and per-word exemptions ---
+
+@test "secret-read-guard (merged): deny: cat ~/.netrc, a slash before .netrc" {
+  guard_bash 'cat ~/.netrc'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat /x/.netrc, a slash before .netrc" {
+  guard_bash 'cat /x/.netrc'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat <.env, a redirect right before .env" {
+  guard_bash 'cat <.env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat<.env, no space around the redirect" {
+  guard_bash 'cat<.env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat {.env,}, a brace-expansion list" {
+  guard_bash 'cat {.env,}'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env .env.example, a template must not exempt the plain .env" {
+  guard_bash 'cat .env .env.example'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep KEY .env --null, --null is not a quiet flag" {
+  guard_bash 'grep KEY .env --null'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep KEY .env | tee out-full, -full is not a quiet flag" {
+  guard_bash 'grep KEY .env | tee out-full'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .e''nv .env\$''.example, empty quote pairs hide the plain .env" {
+  guard_bash $'cat .e\'\'nv .env$\'\'.example'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep KEY .e''nv x-\$'l', a literal -l inside a word is not a quiet flag" {
+  guard_bash $'grep KEY .e\'\'nv x-$\'l\''
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep KEY .env then wc -l on the next line, the -l belongs to wc" {
+  guard_bash $'grep KEY .env\nwc -l'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: rg -L KEY .env, rg's -L is --follow, not quiet" {
+  guard_bash 'rg -L KEY .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep KEY .env -- -c, nothing after -- is an option" {
+  guard_bash 'grep KEY .env -- -c'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep --label -c KEY .env, -c is the value of --label" {
+  guard_bash 'grep --label -c KEY .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep -ec .env, -c is the inline value of -e" {
+  guard_bash 'grep -ec .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: grep -e KEY -e -c .env, -c is the value of the second -e" {
+  guard_bash 'grep -e KEY -e -c .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: ag --silent KEY .env, ag --silent still prints matches" {
+  guard_bash 'ag --silent KEY .env'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env glued to a backtick substitution" {
+  guard_bash 'cat .env`true`'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat .env glued to a \$( substitution" {
+  guard_bash 'cat .env$(true)'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: cat ~/.netrc glued to a variable expansion" {
+  guard_bash 'cat ~/.netrc$x'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: grep KEY .env 2>&1 -c, a redirect does not end the segment" {
+  guard_bash 'grep KEY .env 2>&1 -c'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -rc KEY .env counts matches" {
+  guard_bash 'grep -rc KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -Ec 'A' .env counts matches" {
+  guard_bash $'grep -Ec \'A\' .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -i -c KEY .env counts matches" {
+  guard_bash 'grep -i -c KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: rg -l KEY .env lists files only" {
+  guard_bash 'rg -l KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: rg -c KEY .env counts matches" {
+  guard_bash 'rg -c KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -e KEY -c .env counts matches" {
+  guard_bash 'grep -e KEY -c .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: ag -l KEY .env lists files only" {
+  guard_bash 'ag -l KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: ls -la .env only lists the file" {
+  guard_bash 'ls -la .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -c '^KEY=' .env only counts matches" {
+  guard_bash $'grep -c \'^KEY=\' .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -q KEY .env prints nothing" {
+  guard_bash 'grep -q KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: git check-ignore .env prints no content" {
+  guard_bash 'git check-ignore .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: cp .env.example .env writes, never prints" {
+  guard_bash 'cp .env.example .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep --count KEY .env only counts matches" {
+  guard_bash 'grep --count KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep -nc KEY .env only counts matches" {
+  guard_bash 'grep -nc KEY .env'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: grep KEY config/.env -c, the flag after the file" {
+  guard_bash 'grep KEY config/.env -c'
+  assert_allow
+}
+
+# --- non-Bash tools ---
+
+@test "secret-read-guard (merged): deny: Read .env" {
+  guard_json '{"tool_name":"Read","tool_input":{"file_path":".env"}}'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: Read .env.example" {
+  guard_json '{"tool_name":"Read","tool_input":{"file_path":".env.example"}}'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): deny: Grep .env with output_mode content" {
+  guard_json '{"tool_name":"Grep","tool_input":{"path":".env","output_mode":"content"}}'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): allow: Grep .env with output_mode count" {
+  guard_json '{"tool_name":"Grep","tool_input":{"path":".env","output_mode":"count"}}'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: unrelated tool_name Write" {
+  guard_json '{"tool_name":"Write","tool_input":{}}'
+  assert_allow
+}
+
+@test "secret-read-guard (merged): allow: empty input" {
+  guard_json '{}'
+  assert_allow
+}
+
+# --- cases that need a fix to pass: assert the INTENDED deny ---
+
+@test "secret-read-guard (merged): deny: env -u NAME still dumps the rest of the environment" {
+  guard_bash 'env -u NAME'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: p\\rintenv, a backslash-escaped printenv" {
+  guard_bash 'p\rintenv'
+  assert_deny
+}
+
+@test "secret-read-guard (merged): deny: timeout 5 env still dumps" {
+  guard_bash 'timeout 5 env'
+  assert_deny
 }

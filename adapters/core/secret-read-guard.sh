@@ -238,19 +238,24 @@ wrap_host='[^-[:space:];&|][^[:space:];&|]*'
 ssh_opts='(([[:space:]]+-[A-Za-z]*[bcDEeFIiJLlmOoPpRSWw][[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 ctr_opts='(([[:space:]]+-[A-Za-z]*[ewuvplfcH][[:space:]]+'"$wrap_word"')|([[:space:]]+--(env|env-file|volume|workdir|user|name|network|entrypoint|publish|mount|platform|label|file|project-name|profile|context|host)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 kube_opts='(([[:space:]]+-[A-Za-z]*[cn][[:space:]]+'"$wrap_word"')|([[:space:]]+--(container|namespace|context|kubeconfig)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
-cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+-p)+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+(-p|--))+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
 # A case arm (`x) env`) is a command start only at line start or after ; & or
 # `in`. A bare `)` is not: heredoc prose such as `(re)set` is scanned raw.
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
-# Where a bare dumper may end: a separator, a comment, a redirect (`env >&2`,
-# `env 2>&1`, `env 2>/dev/null`), or stdin (`env <file`, `env <<EOF`) — every
-# path still lands the dump somewhere legible. The `<` must follow a space, so
-# prose placeholders (`X=<empty>`) are not redirects, and `<(` is a process
-# substitution.
-dump_end='$|[;&|)#]|[0-9]+>|>&[[:space:]]*[0-9]|[[:space:]]<[^(]'
-env_dump_re="$cmd_start"'(/[^[:space:];&|()]*/)?(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
+# Where a bare dumper may end: a separator, a comment, an output redirect
+# (`env >&2`, `env 2>&1`, `env >/tmp/x`, `env &>f`, `env {fd}>&2`), or stdin
+# (`env <file`, `env <<EOF`) — every path still lands the dump somewhere
+# legible, and a redirect to a file leaves it there for a later command to
+# print. A `>` must follow a space, an fd number or `{fd}` (or open `>&`), and
+# a `<` a space, so prose placeholders (`X=<empty>`) are not redirects; `<(` is
+# a process substitution.
+dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
+# A dumper path starts path-like, so the shebang in heredoc text
+# (`#!/usr/bin/env -S bash`) is not read as a dumper path.
+path_pfx='([A-Za-z0-9_.~/][^[:space:];&|()]*/)?'
+env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
-printenv_secret_re="$cmd_start"'(/[^[:space:];&|()]*/)?printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
+printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
 # the LINEAR_API_KEY rotation. `-S`/`--show`/`-p` always print, name or not;
 # the rest dump only when bare: `export NAME=v` or `declare -x NAME=v` just
@@ -261,7 +266,7 @@ printenv_secret_re="$cmd_start"'(/[^[:space:];&|()]*/)?printenv([[:space:]]+[^[:
 # (`declare -xp NAME` and `declare -x -p NAME` both print). Bare `export` dumps
 # every exported variable, same as `export -p`.
 declare_dump='(declare|typeset)((([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*[A-EG-Za-eg-z][A-Za-z]*([[:space:]]+-[A-Za-z]+)*)?[[:space:]]*('"$dump_end"')|([[:space:]]+-[A-Za-z]+)*[[:space:]]+-[A-Za-z]*p[A-Za-z]*)'
-builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|tmux[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|launchctl[[:space:]]+getenv([[:space:]]|'"$dump_end"'))'
+builtin_dump_re="$cmd_start"'(set([[:space:]]+(-S|--show)([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|'"$declare_dump"'|export([[:space:]]+-p([[:space:]]|'"$dump_end"')|[[:space:]]*('"$dump_end"'))|'"$path_pfx"'tmux[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|'"$path_pfx"'systemctl([[:space:]]+--user)?[[:space:]]+show-environment([[:space:]]|'"$dump_end"')|'"$path_pfx"'launchctl[[:space:]]+getenv([[:space:]]|'"$dump_end"'))'
 # fish's scope flags (-x export, -g/-U/-l global/universal/local, -u unexport,
 # -L) list that scope when no name follows; with a name they're the ordinary
 # `set -gx PATH …` idiom. Checked only inside a confirmed `fish -c` body —
