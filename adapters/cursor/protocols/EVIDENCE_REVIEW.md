@@ -18,7 +18,9 @@ it is one line. A worker discovering this on trivial reports the risk and asks
 for re-tiering before implementation; it cannot silently skip the review gate.
 
 - **Behavioral bug fix:** name the violated invariant and add a regression through
-  the production entry point that owns it. Run the same test against the old
+  the production entry point that owns it. When an existing test or table row
+  already covers that path, extend it (add a row / an assertion to the existing
+  test) instead of adding a new narrow test. Run the same test against the old
   behavior (red for the claimed bug) and the fix (green). A helper-only test is
   enough only when that helper owns the invariant and its real caller is covered.
   If the fix already exists, keep the new test and restore only the old production

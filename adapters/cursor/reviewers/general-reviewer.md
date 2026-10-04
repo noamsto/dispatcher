@@ -32,7 +32,7 @@ Get the complete diff before judging any of it; if the output is truncated, read
 
 - **Session and CSRF**: fixation, missing expiry or secure flags, a state-changing endpoint with no CSRF protection
 - **Output escaping**: a value rendered into HTML or another interpreter unescaped
-- **A test that cannot fail**, or a changed behavior with no test exercising it
+- **A test that cannot fail**, or a changed behavior with no test exercising it, or a new narrow regression test whose setup and assertion shape duplicate an existing test when extending that test (or adding a table row) would do
 
 ## Verification
 
