@@ -440,15 +440,17 @@ _also_closes_token() {
 
 # _bundle_recorded <branch> — the extras a previous dispatch on <branch>
 # bundled, one per line; returns 1 when the bus cannot be read. The source is
-# the newest dispatch row that carries a bundle: a later --pr/--review dispatch
-# onto the same head writes one without. Claim rows are no record: a
+# the newest dispatch row that carries an also_closes key, empty or not: an
+# explicit-empty row (also_closes:[]) therefore yields nothing and a later
+# plain re-dispatch carries nothing, while a later --pr/--review row without
+# the key does not shadow an older bundle. Claim rows are no record: a
 # rolled-back run leaves them too.
 _bundle_recorded() {
   local events="$crew_dir/events.jsonl"
   [ -f "$events" ] || return 0
   jq -nrR --arg b "$1" '
     [inputs | fromjson? | objects | select(.branch == $b and .kind == "dispatch")
-      | select((.also_closes | arrays | length) > 0)]
+      | select(has("also_closes") and (.also_closes | type == "array"))]
     | last | (.also_closes // [])[] | tostring' "$events"
 }
 
@@ -2587,6 +2589,9 @@ pr_body=""
 parent_issue=""
 also_closes_raw=()
 also_closes=()
+# Set by --also-closes none: the empty bundle is explicit, so the dispatch row
+# records also_closes:[].
+also_closes_explicit_empty=false
 base_ref=""
 base_flag=""
 add_dir_flags=()
@@ -2860,6 +2865,16 @@ if [ "${#also_closes_raw[@]}" -gt 0 ]; then
     exit 1
   fi
   for also_tok in "${also_closes_raw[@]}"; do
+    # `none` is the explicit empty set: it shrinks a carried bundle to zero.
+    # Only meaningful alone — pairing it with a real extra is ambiguous.
+    if [ "$also_tok" = none ]; then
+      if [ "${#also_closes_raw[@]}" -ne 1 ]; then
+        echo "dispatch: --also-closes none means 'no extras' and cannot be combined with another --also-closes" >&2
+        exit 1
+      fi
+      also_closes_explicit_empty=true
+      continue
+    fi
     also_canon="$(_also_closes_token "$also_tok" "${gh_issue:-$linear_id}" ${also_closes[@]+"${also_closes[@]}"})" || {
       echo "dispatch: --also-closes: $also_canon" >&2
       exit 1
@@ -4141,9 +4156,10 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg escalated_from "$escalated_from_event" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
+  --argjson also_closes_explicit "$also_closes_explicit_empty" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
-   + if ($also_closes | length) > 0 then {also_closes:$also_closes} else {} end')
+   + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
