@@ -49,7 +49,10 @@ func (v *budgetView) rebuildSel() {
 	}
 	for _, e := range budgetEngineOrder {
 		eb := v.report.Engines[e]
-		if eb == nil {
+		if eb == nil || eb.Unlimited {
+			// An unlimited engine renders no window rows, so its windows are
+			// not selectable either — renderer and selection stay in step by
+			// construction, however the producer shapes the report.
 			continue
 		}
 		for i := range eb.Windows {
