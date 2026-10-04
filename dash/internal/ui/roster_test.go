@@ -434,7 +434,9 @@ func TestRosterFieldsInjectionAreCleaned(t *testing.T) {
 	}}
 	out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(160, 24)
 	requireNoControl(t, out)
-	if !strings.Contains(out, "boom") {
-		t.Errorf("injected fields should render cleaned:\n%q", out)
+	for _, want := range []string{"crew cboom", "hold hboom]0;pwned[31m: eboom]0;pwned[31m wboom"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%q", want, out)
+		}
 	}
 }

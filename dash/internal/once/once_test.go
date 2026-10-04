@@ -250,3 +250,44 @@ func TestUnavailableLinesInjectionAreCleaned(t *testing.T) {
 		t.Errorf("want unavailable: boom on every source, got %d:\n%s", n, got)
 	}
 }
+
+func TestRawFieldsInjectionAreCleaned(t *testing.T) {
+	inj := "boom\x1b]0;pwned\x07\x1b[31m‮"
+	snap := loadSnapshot(t)
+	snap.Settings.Warnings = []string{inj}
+	snap.Settings.Layers.Base = inj
+	snap.Settings.Layers.User.Path = inj
+	snap.Settings.Layers.Locked = &inj
+	snap.Settings.Rows = append(snap.Settings.Rows, data.SettingRow{Path: []string{"a" + inj, "b" + inj}, Value: json.RawMessage("\"v\u202e\""), Origin: inj})
+	snap.Budget.Warnings = []string{inj}
+	for _, eb := range snap.Budget.Report.Engines {
+		if eb == nil {
+			continue
+		}
+		eb.Source = inj
+		eb.PlanType = &inj
+		eb.Projection = &inj
+		for i := range eb.Windows {
+			eb.Windows[i].Key = inj
+			eb.Windows[i].Verdict = &inj
+		}
+	}
+	for i := range snap.Runs.RatingsGroups {
+		snap.Runs.RatingsGroups[i].Tier = inj
+	}
+	crew := inj
+	for i := range snap.Runs.Retro.Rows {
+		snap.Runs.Retro.Rows[i].Crew = &crew
+	}
+	snap.Roster.Crews = []data.RosterCrew{{
+		ID:      inj,
+		Workers: []map[string]any{{"name": "w", "state": "working", "tier": inj, "engine": inj, "model": inj, "age_s": float64(5)}},
+		Holds:   []map[string]any{{"id": inj, "wait": map[string]any{"engine": inj, "window": inj}}},
+	}}
+	got := Render(snap, false)
+	for _, r := range []rune{0x1b, 0x07, 0x202e} {
+		if strings.ContainsRune(got, r) {
+			t.Errorf("--once output contains %U:\n%q", r, got)
+		}
+	}
+}

@@ -160,9 +160,9 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 	if eb == nil {
 		return []string{truncateLine(e+": unknown", w)}
 	}
-	heading := e + " (" + eb.Source + ")"
+	heading := e + " (" + cleanText(eb.Source) + ")"
 	if eb.PlanType != nil {
-		heading += " [" + *eb.PlanType + "]"
+		heading += " [" + cleanText(*eb.PlanType) + "]"
 	}
 	out := []string{truncateLine(headerStyle.Render(heading), w)}
 	if eb.Unlimited {
@@ -237,7 +237,7 @@ func (v budgetView) windowLine(win data.Window, selected bool, w int) string {
 
 	verdictTxt := "—"
 	if win.Verdict != nil {
-		verdictTxt = *win.Verdict
+		verdictTxt = cleanText(*win.Verdict)
 	}
 	verdictCell := truncateLine(verdictTxt, verdictW)
 
@@ -263,7 +263,7 @@ func (v budgetView) detailView(w int) string {
 	}
 	verdict := "—"
 	if win.Verdict != nil {
-		verdict = *win.Verdict
+		verdict = cleanText(*win.Verdict)
 	}
 	header := headerStyle.Render(cleanText(win.Key) + " — full verdict")
 	// This is the one place the dashboard deliberately wraps instead of

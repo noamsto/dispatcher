@@ -262,8 +262,11 @@ func TestSettingsFieldsInjectionAreCleaned(t *testing.T) {
 	snap.Settings.Warnings = []string{injectedErr}
 	snap.Settings.Layers.User.Path = "/p" + injectedErr
 	snap.Settings.Layers.Base = "b" + injectedErr
+	locked := injectedErr
+	snap.Settings.Layers.Locked = &locked
+	snap.Settings.Rows = append(snap.Settings.Rows, data.SettingRow{Path: []string{"a" + injectedErr, "b" + injectedErr}, Value: json.RawMessage("1"), Origin: "user"})
 	for i := range snap.Settings.Rows {
-		snap.Settings.Rows[i].Value = json.RawMessage(`"v\u202e"`)
+		snap.Settings.Rows[i].Value = json.RawMessage("\"v\u202e\"")
 	}
 	out := newSettingsView(snap).View(160, 40)
 	requireNoControl(t, out)
