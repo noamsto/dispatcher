@@ -516,13 +516,15 @@ def cmd_growth(args):
         n_fallback_completed += used_fb
         ctxs = s["turns"]
         per = phase_stats(ctxs, phases)
-        partition_ok = (sum(v["turns"] for v in per.values()) == len(ctxs)
-                        and sum(v["integral"] for v in per.values()) == sum(ctxs))
         first_idx = {}
         for t, ph in enumerate(phases):
             first_idx.setdefault(ph, t)
+        # Data quality: a run whose phases are first entered out of pipeline
+        # order has a misread stage label somewhere.
+        entered = [first_idx[p] for p in PHASES if p in first_idx]
+        in_order = entered == sorted(entered)
         runs.append({"per": per, "ctxs": ctxs, "first_idx": first_idx, "first": ctxs[0], "peak": max(ctxs), "turns": len(ctxs),
-                     "end": ctxs[-1], "partition_ok": partition_ok,
+                     "end": ctxs[-1], "in_order": in_order,
                      "integral": sum(ctxs)})
     total_int = sum(r["integral"] for r in runs)
     agg, rows = {}, []
@@ -550,7 +552,7 @@ def cmd_growth(args):
         "turns_median": med([r["turns"] for r in runs]),
         "end_ctx_median": med([r["end"] for r in runs]),
         "run_integral_median": med([r["integral"] for r in runs]),
-        "phase_partition_ok": sum(1 for r in runs if r["partition_ok"]),
+        "phase_out_of_order": sum(1 for r in runs if not r["in_order"]),
         "ctx_at_execute_start_median": med([r["per"]["execute"]["first"] for r in runs if "execute" in r["per"]]),
         "ctx_at_review_start_median": med([r["per"]["review"]["first"] for r in runs if "review" in r["per"]]),
     }
@@ -591,7 +593,7 @@ def cmd_growth(args):
              f"median run integral: {fmt(summary['run_integral_median'])}\n"
              f"median ctx at start of execute: {fmt(summary['ctx_at_execute_start_median'])}   "
              f"at start of review: {fmt(summary['ctx_at_review_start_median'])}\n"
-             f"phase partition check: {summary['phase_partition_ok']}/{len(runs)} runs")
+             f"runs with phases first entered out of pipeline order: {summary['phase_out_of_order']}/{len(runs)}")
     text += ("\n\nturns before first entering each phase (completed runs, 0 if never entered):\n"
              + table(["phase", "never", "median", "mean", "total"], before_rows)
              + f"\ntotal turns before first entering review: {fmt(before_review['total_turns_before_review'])} "
