@@ -81,10 +81,9 @@ type EngineBudget struct {
 	Projection           *string         `json:"projection"`
 }
 
-// LimitReachedReason reports the human reason recorded in LimitReached, when
-// the engine set one. Engines that signal exhaustion without a reason (codex's
-// absolute-limit object) return false, matching the text report(), which only
-// prints a verdict when `.limit_reached.reason` is a string.
+// LimitReachedReason reports the reason from LimitReached, if any. Engines
+// that signal exhaustion without one (codex's absolute-limit object) return
+// false, matching the text report().
 func (b *EngineBudget) LimitReachedReason() (string, bool) {
 	if len(b.LimitReached) == 0 {
 		return "", false

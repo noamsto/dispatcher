@@ -127,9 +127,6 @@ func TestBudgetLimitReachedReasonCleaned(t *testing.T) {
 func TestBudgetUnlimitedHidesWindowTable(t *testing.T) {
 	snap := loadSnapshot(t)
 	eb := snap.Budget.Report.Engines["codex"]
-	// codex's fixture still carries a 5h window; an unlimited plan must
-	// suppress it, so keep the window (nilling it would make the assertion
-	// below vacuous).
 	eb.Unlimited = true
 	v := newBudgetView(snap)
 	// claude's 5h+7d and cursor's month stay selectable; codex's 5h does not.
