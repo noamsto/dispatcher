@@ -755,7 +755,7 @@ assert_allow_relative() {
   eval "$(sed -n "/^awk_chars='/,/^}'\$/p" "$GUARD")"
   eval "$(sed -n "/^awk_mask_cmd='/,/^}'\$/p" "$GUARD")"
   eval "$(sed -n '/^dequote() {/,/^}/p; /^dequote_index() {/,/^}/p' "$GUARD")"
-  eval "$(grep -E '^shell_c_(interp|opt|flag|re)=' "$GUARD")"
+  eval "$(grep -E '^shell_c_(interp|word|flag|body|re)=' "$GUARD")"
   local -a rows=(
     $'b\\ash -c \'env\'\tbash -c env\t1 8\t2 10'
     $'"bash" \'-c\' x\tbash -c x\t8\t12'
@@ -3145,9 +3145,11 @@ assert_deny() { assert_deny_claude; }
   assert_allow
 }
 
-@test "secret-read-guard (merged): allow: echo 'see bash -c env here', a quoted mention" {
+# The raw -c finder reads quoted text as written; kept because a dequoted-only
+# finder lets real dumpers through wherever the masker misreads quoting.
+@test "secret-read-guard (merged): deny (kept over-scan): echo 'see bash -c env here', a quoted mention" {
   guard_bash "echo 'see bash -c env here'"
-  assert_allow
+  assert_deny
 }
 
 @test "secret-read-guard (merged): allow: true # see bash -c 'echo hi', a harmless bash -c mention in a comment" {
@@ -3248,9 +3250,11 @@ assert_deny() { assert_deny_claude; }
   assert_allow
 }
 
-@test "secret-read-guard (merged): allow: echo \"x<CR>bash<CR>-c<CR>env\", a quoted CR is not a separator" {
+# The raw -c finder takes a CR as whitespace even inside quotes; kept for the
+# same reason as the quoted mention above.
+@test "secret-read-guard (merged): deny (kept over-scan): echo \"x<CR>bash<CR>-c<CR>env\", a quoted CR" {
   guard_bash $'echo "x\rbash\r-c\renv"'
-  assert_allow
+  assert_deny
 }
 
 # --- rule 3: path anchors and per-word exemptions ---
@@ -3482,4 +3486,80 @@ assert_deny() { assert_deny_claude; }
 @test "secret-read-guard (merged): deny: timeout 5 env still dumps" {
   guard_bash 'timeout 5 env'
   assert_deny
+}
+
+# --- the -c finder searches the raw text beside the dequoted view ---
+
+@test "secret-read-guard: -c body after a backslash-space misread as a comment denies" {
+  deny_cmd $'echo a\\ #\'\nx\'; bash -c \'env\''
+}
+
+@test "secret-read-guard: -c body after an escaped paren and a misread comment denies" {
+  deny_cmd $'echo \\(#\'\nx\'; bash -c \'env\''
+}
+
+@test "secret-read-guard: -c body after a lone quote inside backticks denies" {
+  deny_cmd "echo \`echo '\`; bash -c env"
+}
+
+@test "secret-read-guard: -c body after fish's \\' inside single quotes denies" {
+  deny_cmd "fish -c \"echo 'it\\'s'; bash -c 'env'\""
+  deny_cmd "fish -c \"echo 'don\\'t'; sh -c 'declare -p'\""
+}
+
+@test "secret-read-guard: -c body inside a here-string fed to a shell denies" {
+  deny_cmd "bash <<< 'true; bash -c env'"
+}
+
+@test "secret-read-guard: -c body inside a quoted argument piped into a shell denies" {
+  deny_cmd "echo 'x; bash -c env' | bash"
+}
+
+@test "secret-read-guard: a bare -- after -c ends the options, so an option-like body is the body" {
+  deny_cmd "bash -c -- '--x=;env' y"
+}
+
+# --- dumper words spliced by quotes are judged on the dequoted view ---
+
+@test "secret-read-guard: quote-spliced dumper words deny" {
+  deny_cmd '"env"'
+  deny_cmd 'e""nv'
+  deny_cmd "pr'i'ntenv"
+  deny_cmd "'env' >/tmp/x"
+  deny_cmd 'de"cl"are -p'
+  deny_cmd 'ex"po"rt'
+}
+
+@test "secret-read-guard: a quoted dumper word as an argument stays allowed" {
+  allow_cmd "echo 'see env'"
+  allow_cmd 'git commit -m "env"'
+}
+
+@test "secret-read-guard: an assignment whose value ends in /env is not a dumper path" {
+  allow_cmd 'CONFIG=deploy/env'
+  allow_cmd 'DIR=services/env; ls $DIR'
+}
+
+@test "secret-read-guard: &> splits a grep stage under POSIX sh, so a later -q does not quiet it" {
+  deny_cmd "sh -c 'grep KEY .env &>/dev/null -q'"
+}
+
+# claude_bash for a command past Linux's 128 KiB single-argument limit: the
+# text reaches jq on stdin, not argv.
+big_bash() { printf '%s' "$1" | jq -Rsc '{hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:.}}'; }
+
+# bats test_tags=timing
+@test "secret-read-guard: a 128 KiB bash -o chain then a dump denies in linear time" {
+  local chain calib i
+  chain='' calib=''
+  for ((i = 0; i < 16384; i++)); do chain+='bash -o ' calib+='bash -x '; done
+  assert_deny_relative "$(big_bash "$calib"$'\n'"env")" "$(big_bash "$chain"$'\n'"env")"
+}
+
+# bats test_tags=timing
+@test "secret-read-guard: a 128 KiB =/proc/ chain then a credential read denies in linear time" {
+  local chain calib i
+  chain='' calib=''
+  for ((i = 0; i < 18725; i++)); do chain+='=/proc/' calib+='=/proX/'; done
+  assert_deny_relative "$(big_bash "$calib"$'\n'"cat .env")" "$(big_bash "$chain"$'\n'"cat .env")"
 }

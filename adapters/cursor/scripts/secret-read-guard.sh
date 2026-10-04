@@ -213,16 +213,17 @@ strip_templates() {
 #
 # S7 escapes and quote splicing in the interpreter word, the -c flag, a
 # credential name, a /proc path and a dumper word: the dequoted view (dequote)
-# and the escape-stripped space (strip_escapes) read them as bash does.
+# and the escape-stripped space (strip_escapes) read them as bash does. S8 a
+# `-c` body anywhere in the raw text — after a misread quote or comment, in a
+# here-string or a pipe into a shell, in a quoted argument — found by the raw
+# finder beside the dequoted one.
 #
 # Out of scope: O1 word-forming obfuscation — variables, eval, aliases and
 # ANSI-C escape decoding. O2 expansion-dependent structure — a
 # substitution expanding to nothing (`env $(true)`). O3 lexer precision
 # beyond the masker's model — quotes in "${x#...}", an escaped quote in a
 # $'...' heredoc delimiter, a case nested in a double-quoted $(...). O4
-# non-dumper paths, and a command inside a quoted argument of another program
-# (`ssh h '…'`, `su -c '…'`, `watch '…'`, `script -c '…'`, `tmux new-window
-# '…'`): the -c finder reads the dequoted view, where quoted text is data.
+# non-dumper paths, and a quoted ssh remote command (`ssh h '…'`).
 #
 # A spelling in O1-O4 is not a finding — cite this block instead of filing it.
 #
@@ -268,8 +269,9 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # a process substitution.
 dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
 # A dumper path starts path-like, so the shebang in heredoc text
-# (`#!/usr/bin/env -S bash`) is not read as a dumper path.
-path_pfx='([A-Za-z0-9_.~/][^[:space:];&|()]*/)?'
+# (`#!/usr/bin/env -S bash`) is not read as a dumper path, and holds no `=`,
+# so an assignment (`CONFIG=deploy/env`) is not read as one either.
+path_pfx='([A-Za-z0-9_.~/][^[:space:];&|()=]*/)?'
 env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
@@ -298,25 +300,37 @@ fish_dump_re="$cmd_start"'set([[:space:]]+(-[xguUlL]+|--export|--global|--univer
 # `-`/`+` cluster (one holding `o`/`O` takes the next word: `-euo pipefail`,
 # `-O extglob`), a long `--norc`, `--rcfile`/`--init-file FILE`, or a bare `-`
 # or `--`; leftmost-longest matching ends the match right before the body.
+# After the flag a bare `-`/`--` ends the option run, so the next word is the
+# body even when it looks like an option (`bash -c -- '--x=;env'`). Each run
+# is capped at 8 words: an unbounded one restarts at every interpreter word of
+# `bash -o bash -o …` and runs to the end each time — quadratic in glibc.
 # The interpreters are the shells sharing bash's -c grammar (dash, ash and
 # `busybox sh`, ksh, mksh) plus fish, read with the same grammar. The anchor
 # takes `/` and `(` for `/usr/bin/fish -c` and `(bash -c …)`, and `;&|)` for a
 # compact `true;bash -c …`.
 #
-# Matched against the dequoted view (dequote, below), so an escaped or
+# Matched twice per text. On the dequoted view (dequote, below) an escaped or
 # quote-spliced `b\ash`, `"bash"`, `'-c'` or `$'bash'` reads as the word bash
-# runs, while every quoted metacharacter reads as `_`: quoted text is data, and
-# `echo 'see bash -c env'` has no anchor before `bash`. A `-c` inside a quoted
-# argument of another program (`ssh h '…'`, `su -c '…'`, `watch '…'`) is out of
-# scope (O4).
+# runs. On the raw text, as written, so a body after quoting the W=0 masker
+# misreads (a `#` taken for a comment, fish's `\'` in '…', a backtick inside
+# '…') or inside a here-string or a pipe into a shell is still found — the
+# dequoted view alone would read it as data. The raw search over-scans a
+# quoted mention (`echo 'see bash -c …'`); that is kept, as the price of not
+# letting a real dumper through when the masker misreads quoting. The raw
+# search (shell_c_raw_re) drops the `;&|)` anchors, which there would read a
+# pattern alternation (`rg 'foo|bash -c …'`) as a command; the dequoted search
+# still finds a compact `true;bash -c …`.
 shell_c_interp='(fish|bash|sh|zsh|dash|ksh|mksh|ash|busybox[[:space:]]+(sh|ash))'
-shell_c_opt='([-+][A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|[-+][A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|-(-([A-Za-z][-A-Za-z]*(=[^[:space:]]*)?)?)?)[[:space:]]+'
+shell_c_word='[-+][A-Za-z]*[oO][A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|[-+][A-Za-z]+|--(rcfile|init-file)[[:space:]]+[^[:space:]]+|--[A-Za-z][-A-Za-z]*(=[^[:space:]]*)?'
 shell_c_flag='(-[A-Za-z]*([oO][A-Za-z]*c|c[A-Za-z]*[oO])[A-Za-z]*[[:space:]]+[^-+[:space:]][^[:space:]]*|-[A-Za-z]*c[A-Za-z]*)'
-shell_c_re="(^|[[:space:]/(;&|)])${shell_c_interp}[[:space:]]+(${shell_c_opt})*${shell_c_flag}[[:space:]]+(${shell_c_opt})*"
+shell_c_body="${shell_c_interp}[[:space:]]+((${shell_c_word}|--?)[[:space:]]+){0,8}${shell_c_flag}[[:space:]]+((${shell_c_word})[[:space:]]+){0,8}(--?[[:space:]]+)?"
+shell_c_re="(^|[[:space:]/(;&|)])${shell_c_body}"
+shell_c_raw_re="(^|[[:space:]/(])${shell_c_body}"
 # Any read of /proc/<pid>/environ is a whole-environment dump, so this denies
 # without a printing-tool gate. Tested against the raw command, quotes and all,
 # which also catches it inside `fish -c '…'` without the -c extraction, and
-# against each dequoted view, where a path split by quotes reads as written.
+# against each dequoted view, where a path split by quotes reads as written —
+# by grep -E, not `[[ =~ ]]`, which is quadratic on `=/proc/=/proc/…`.
 proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
 nl=$'\n'
 
@@ -409,22 +423,26 @@ strip_escapes() {
 # never executed. The $ of $'…' and $"…" is dropped, or it breaks the
 # command-position anchor.
 #
-# Sets DECODED_WORD; the `.` the pass ends with keeps a trailing newline of
-# the word from the `$(...)` strip.
+# Sets DECODED_WORD and DECODE_WORD_END (one past the last consumed index)
+# instead of printing, so the raw finder can keep scanning past this word for
+# a sibling `-c` body; a `$(...)` return would lose the second value.
 awk_decode='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; STOP = " \t\n;&|()" }
 function feed(c) {
   if (esc) {
     esc = 0
+    pos++
     printf "%s", c
     return
   }
   if (st == "q") {
+    pos++
     if (c == SQ) st = ""
     else printf "%s", c
     return
   }
   if (st != "") {
+    pos++
     if (c == BS) esc = 1
     else if (c == (st == "d" ? DQ : SQ)) st = ""
     else printf "%s", c
@@ -433,12 +451,14 @@ function feed(c) {
   if (dollar) {
     dollar = 0
     if (c == SQ || c == DQ) {
+      pos++
       st = (c == SQ ? "a" : "d")
       return
     }
     printf "$"
   }
   if (index(STOP, c)) exit
+  pos++
   if (c == BS) esc = 1
   else if (c == "$") dollar = 1
   else if (c == SQ) st = "q"
@@ -448,13 +468,14 @@ function feed(c) {
 END {
   if (dollar) printf "$"
   if (esc && st != "") printf "%s", BS
-  printf "."
+  printf "\n%d", pos
 }'
 
 decode_word() {
   local res
   res=$(awk "$awk_decode$awk_chars" <<<"${1:$2}")
-  DECODED_WORD=${res%.}
+  DECODED_WORD=${res%"$nl"*}
+  DECODE_WORD_END=$(($2 + ${res##*"$nl"}))
 }
 
 # Rule 2's masker: what mask_quotes does, plus the shell structure it cannot see,
@@ -800,11 +821,12 @@ BEGIN {
 {
   if ($0 ~ /(^|[^A-Za-z0-9_])(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([^A-Za-z0-9_]|$)/ || $0 ~ /\$\([[:space:]]*</) P = 1
   if ($0 ~ /(^|[^|])\|([^;&|]*[^A-Za-z0-9_.;&|-])?(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)([^A-Za-z0-9_.-]|$)/) I = 1
-  # The split must not cut a redirect: `>&`, `<&`, `&>` and `>|` become \001/\002
-  # forms on a copy, so `grep KEY .env 2>&1 -c` stays one stage. The P/I tests
-  # above read the original line.
+  # The split must not cut a redirect: `>&`, `<&` and `>|` become \001/\002
+  # forms on a copy, so `grep KEY .env 2>&1 -c` stays one stage. `&>` is not
+  # protected: POSIX sh reads `grep … &>f -q` as `grep … &` then `>f -q`. The
+  # P/I tests above read the original line.
   t = $0
-  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/&>/, "\001>", t); gsub(/>\|/, ">\002", t)
+  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/>\|/, ">\002", t)
   ns = split(t, SEG, /[;&|()`]/)
   for (s = 1; s <= ns; s++) segment(SEG[s])
 }
@@ -1034,52 +1056,95 @@ shell)
   #    single variable: each match queues the extracted body (nesting), and the
   #    search goes on past that body in the same text (siblings: `bash -c
   #    'true'; bash -c 'declare -p NAME'`). Bounded by total matches, so it
-  #    always terminates. The finder reads each item's dequoted view, made once
-  #    — re-dequoting the text after every match was 20 passes over a 128 KiB
-  #    `-c` chain. A sibling search resumes after the body's word in that view
-  #    (a quoted metacharacter there is `_`, so data never ends it early), and
-  #    every match end maps back to raw text in one more pass, where
-  #    decode_word reads the body's own quoting.
+  #    always terminates. Each item is searched twice: on the raw text
+  #    (shell_c_raw_re), where a sibling search resumes past the body's
+  #    decoded word, and on its dequoted view (shell_c_re), made once —
+  #    re-dequoting the text after every
+  #    match was 20 passes over a 128 KiB `-c` chain — where it resumes past
+  #    the body's word in that view (a quoted metacharacter there is `_`, so
+  #    data never ends it early), and every match end maps back to raw text in
+  #    one more pass. The two sets of raw body starts are merged in order, a
+  #    body both found counted once, under the shared match cap.
   raw_spaces=("$command")
   search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
   fish_spaces=()
   subs=()
   sub_fish=()
   dequoted_views=()
+  dequoted_fish_views=()
   word_re='^[^[:space:];&|()<>]*'
   worklist=("$command")
+  worklist_fish=(0)
   wi=0
   matches=0
   while ((wi < ${#worklist[@]})) && ((matches < 20)); do
     cur=${worklist[wi]}
-    wi=$((wi + 1))
     dq=$(dequote "$cur")
     dequoted_views+=("$dq")
+    if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
+    wi=$((wi + 1))
+    raw_starts=()
+    raw_interps=()
+    raw_words=()
+    off=0
+    while ((matches + ${#raw_starts[@]} < 20)); do
+      rest=${cur:off}
+      [[ $rest =~ $shell_c_raw_re ]] || break
+      match=${BASH_REMATCH[0]}
+      raw_interps+=("${BASH_REMATCH[2]}")
+      prefix=${rest%%"$match"*}
+      off=$((off + ${#prefix} + ${#match}))
+      raw_starts+=("$off")
+      decode_word "$cur" "$off"
+      raw_words+=("$DECODED_WORD")
+      off=$DECODE_WORD_END
+    done
     ends=()
-    interpreters=()
+    dq_interps=()
     off=0
     while ((matches + ${#ends[@]} < 20)); do
       rest=${dq:off}
       [[ $rest =~ $shell_c_re ]] || break
       match=${BASH_REMATCH[0]}
-      interpreters+=("${BASH_REMATCH[2]}")
+      dq_interps+=("${BASH_REMATCH[2]}")
       prefix=${rest%%"$match"*}
       off=$((off + ${#prefix} + ${#match}))
       ends+=($((off - 1)))
       [[ ${dq:off} =~ $word_re ]]
       off=$((off + ${#BASH_REMATCH[0]}))
     done
-    ((${#ends[@]})) || continue
-    mapfile -t starts <<<"$(dequote_index "$cur" "${ends[*]}")"
-    for ((j = 0; j < ${#ends[@]}; j++)); do
-      decode_word "$cur" $((starts[j] + 1))
-      sub=$DECODED_WORD
+    dq_starts=()
+    if ((${#ends[@]})); then
+      # Captured before mapfile: inside `<<<"$(…)"` a failed pass escapes
+      # errexit and reads as one empty start — an allow. Bare errexit on the
+      # assignment would exit silently, so a failure empties idx instead.
+      idx=$(dequote_index "$cur" "${ends[*]}") || idx=
+      mapfile -t dq_starts <<<"$idx"
+      if [[ -z $idx ]] || ((${#dq_starts[@]} != ${#ends[@]})); then
+        echo "secret-read-guard: index map failed; guard NOT enforcing" >&2
+        exit 1
+      fi
+    fi
+    i=0
+    j=0
+    while ((matches < 20 && (i < ${#raw_starts[@]} || j < ${#dq_starts[@]}))); do
+      if ((j < ${#dq_starts[@]} && (i == ${#raw_starts[@]} || dq_starts[j] + 1 < raw_starts[i]))); then
+        decode_word "$cur" $((dq_starts[j] + 1))
+        sub=$DECODED_WORD
+        interp=${dq_interps[j]}
+        j=$((j + 1))
+      else
+        if ((j < ${#dq_starts[@]} && dq_starts[j] + 1 == raw_starts[i])); then j=$((j + 1)); fi
+        sub=${raw_words[i]}
+        interp=${raw_interps[i]}
+        i=$((i + 1))
+      fi
       masked_sub=$(mask_cmd "$sub")
       quoted_sub=$(mask_quotes "$sub")
       raw_spaces+=("$sub")
       search_spaces+=("$masked_sub" "$quoted_sub")
       subs+=("$sub")
-      if [[ ${interpreters[j]} == fish ]]; then
+      if [[ $interp == fish ]]; then
         fish_spaces+=("$masked_sub" "$quoted_sub")
         sub_fish+=(1)
       else
@@ -1087,19 +1152,16 @@ shell)
       fi
       matches=$((matches + 1))
       worklist+=("$sub")
+      worklist_fish+=("${sub_fish[-1]}")
     done
   done
-  check_dump_spaces "${search_spaces[@]}"
-  check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"}
+  # The dequoted views are searched too: quote splicing in a dumper word
+  # (`e""nv`, `de"cl"are -p`) hides it from both masks but not from bash.
+  check_dump_spaces "${search_spaces[@]}" "${dequoted_views[@]}"
+  check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"} ${dequoted_fish_views[@]+"${dequoted_fish_views[@]}"}
 
-  proc_hit=0
-  for view in "$command" "${dequoted_views[@]}"; do
-    if [[ $view =~ $proc_environ_re ]]; then
-      proc_hit=1
-      break
-    fi
-  done
-  if ((proc_hit)); then
+  printf -v proc_views '%s\n' "$command" "${dequoted_views[@]}"
+  if grep -qE "$proc_environ_re" <<<"$proc_views"; then
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
   fi
 
