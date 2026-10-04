@@ -564,22 +564,45 @@ _claim_check_extra() {
   claim_notes+=("dispatch: issue #$n carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$n-*) — re-claiming.")
 }
 
+# _home_relative_path <path> — abbreviate a true $HOME prefix to ~, so a
+# worktree under the owner's home does not publish their directory layout on
+# the issue (#656). Only a genuine prefix counts: a $HOME substring inside
+# another path (`/home/other/...`) is left absolute.
+_home_relative_path() {
+  local path="$1"
+  # An empty HOME would make "$HOME"/* match every absolute path.
+  [ -n "$HOME" ] || { printf '%s' "$path"; return; }
+  case "$path" in
+  "$HOME") printf '~' ;;
+  "$HOME"/*) printf '~%s' "${path#"$HOME"}" ;;
+  *) printf '%s' "$path" ;;
+  esac
+}
+
 # Post a best-effort context comment on a dispatched GitHub issue. The
 # `dispatched` label stays the claim semaphore; this comment is history only
-# and must never abort a dispatch.
+# and must never abort a dispatch. `$13`, when given, is the primary issue an
+# --also-closes extra's comment rides on, and adds a line naming it.
 _post_dispatch_comment() {
   local issue="$1" name="$2" engine="$3" model="$4" tier="$5" effort="$6" \
-    branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}"
+    branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}" \
+    primary="${13:-}"
   local verb="dispatched" host="${HOSTNAME:-$(uname -n)}"
   [ "$resume" = true ] && verb="(resumed) dispatched"
+  local prefix=""
+  [ -n "$primary" ] && prefix="Rides on $(_also_closes_label "$primary") — the primary issue of this bundle.
+
+"
+  local wt_display
+  wt_display="$(_home_relative_path "$wt_path")"
   local body
   body="$(cat <<EOF
 🚀 **$name** $verb — $engine · $model · $tier
 
-| | |
+${prefix}| | |
 |---|---|
 | **Branch** | \`$branch\` |
-| **Worktree** | \`$wt_path\` |
+| **Worktree** | \`$wt_display\` |
 | **Host** | \`$host\` |
 | **Agent** | $engine · $model · $tier (effort: $effort) |
 | **Session** | \`$session\` |
@@ -4135,6 +4158,14 @@ if [ -n "$comment_issue" ]; then
   _post_dispatch_comment "$comment_issue" "$agent_name" "$agent" "$model" "$tier" "$effort" \
     "$branch" "$wt_path" "$session" "$worker_id" "$crew_id" \
     "$([ "$switch_mode" = resume ] && echo true || echo "")"
+  # Each --also-closes extra gets the same context comment plus a line naming
+  # the primary it rides on. Best-effort and non-fatal exactly like the
+  # primary's (#656).
+  for also_comment_issue in ${also_closes[@]+"${also_closes[@]}"}; do
+    _post_dispatch_comment "$also_comment_issue" "$agent_name" "$agent" "$model" "$tier" "$effort" \
+      "$branch" "$wt_path" "$session" "$worker_id" "$crew_id" \
+      "$([ "$switch_mode" = resume ] && echo true || echo "")" "$comment_issue"
+  done
 fi
 
 # A resume issued without re-passing $DISPATCH_SPEC would otherwise leave a
