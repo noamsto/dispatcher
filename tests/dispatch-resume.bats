@@ -987,7 +987,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ (ENABLE_CLAUDEAI_MCP_SERVERS=false )?claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -1010,6 +1010,7 @@ EOF
   DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
   ! grep -qF 'ENABLE_CLAUDEAI_MCP_SERVERS' <(launch_log)
+  grep -qF "DISPATCH_CLAUDE_CONNECTORS=1 claude --continue" <(launch_log)
 }
 
 # _grant_record <line...> — write the branch's grant record, the only source a

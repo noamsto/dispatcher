@@ -1491,7 +1491,11 @@ _record_worktree_anchor() {
 # them and their tool names ride every turn's context. DISPATCH_CLAUDE_CONNECTORS=1
 # opts out. Plugin and base MCP servers are untouched.
 claude_lean_env() {
-  [ "${DISPATCH_CLAUDE_CONNECTORS:-}" = 1 ] || printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
+  if [ "${DISPATCH_CLAUDE_CONNECTORS:-}" = 1 ]; then
+    printf 'DISPATCH_CLAUDE_CONNECTORS=1 '
+  else
+    printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
+  fi
 }
 
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
