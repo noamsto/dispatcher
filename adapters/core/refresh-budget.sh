@@ -688,6 +688,7 @@ report_json() {
               source: $v.source,
               plan_type: $v.plan_type,
               credits_cover: $v.credits_cover,
+              unlimited: ($v.unlimited == true),
               spend_usd: ($v.spend_usd // null),
               target_usd: ($v.target_usd // null),
               elapsed_pct: ($v.elapsed_pct // null),

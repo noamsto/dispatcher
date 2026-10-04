@@ -104,11 +104,38 @@ func TestBudgetDetailWrapsMultiByteAndLongWord(t *testing.T) {
 func TestBudgetUnknownEngines(t *testing.T) {
 	v := newTestBudgetView(t)
 	out := v.View(80, 24)
-	if !strings.Contains(out, "cursor: unknown") {
-		t.Fatalf("cursor engine not rendered unknown:\n%s", out)
-	}
 	if !strings.Contains(out, "pi: unknown") {
 		t.Fatalf("pi engine not rendered unknown:\n%s", out)
+	}
+}
+
+// TestBudgetLimitReachedReasonCleaned checks the renderer surfaces an engine's
+// limit-reached reason and runs it through cleanText (tab/newline become a
+// space), matching the text report()'s limit verdict.
+func TestBudgetLimitReachedReasonCleaned(t *testing.T) {
+	snap := loadSnapshot(t)
+	snap.Budget.Report.Engines["cursor"].LimitReached = []byte(`{"reason":"limit\tat\n50%"}`)
+	v := newBudgetView(snap)
+	out := strings.Join(v.engineLines("cursor", snap.Budget.Report.Engines["cursor"], 200), "\n")
+	if !strings.Contains(out, "limit reached: limit at 50%") {
+		t.Fatalf("cleaned limit-reached reason missing:\n%s", out)
+	}
+}
+
+// TestBudgetUnlimitedHidesWindowTable checks an unlimited plan renders the
+// `unlimited` line in place of its window rows, the way report() does.
+func TestBudgetUnlimitedHidesWindowTable(t *testing.T) {
+	snap := loadSnapshot(t)
+	eb := snap.Budget.Report.Engines["codex"]
+	eb.Unlimited = true
+	eb.Windows = nil
+	v := newBudgetView(snap)
+	out := strings.Join(v.engineLines("codex", eb, 200), "\n")
+	if !strings.Contains(out, "unlimited") {
+		t.Fatalf("unlimited line missing:\n%s", out)
+	}
+	if strings.Contains(out, "5h") {
+		t.Fatalf("window table rendered for an unlimited engine:\n%s", out)
 	}
 }
 

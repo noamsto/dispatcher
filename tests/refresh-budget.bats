@@ -1638,6 +1638,92 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+@test "--report --json carries limit_reached for codex/cursor and unlimited for an unlimited plan" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  SHIM_NOW=1700000000
+  export SHIM_NOW
+  start_epoch=$((SHIM_NOW - 1296000))
+  reset_epoch=$((SHIM_NOW + 1296000))
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": null,
+    "codex": {
+      "source": "app-server",
+      "credits_cover": true,
+      "plan_type": "team",
+      "windows": {"5h": {"used_pct": 100, "resets_at": $reset_epoch}},
+      "limit_reached": {
+        "ordinary_usage_allowed": false,
+        "rate_limit_reached_type": "primary",
+        "spend_control_reached": null,
+        "credits_unlimited": false,
+        "credits_balance": "0",
+        "individual_remaining_percent": null,
+        "individual_resets_at": null
+      }
+    },
+    "cursor": {
+      "source": "usage_summary",
+      "plan_type": "pro",
+      "credits_cover": false,
+      "unlimited": false,
+      "windows": {"month": {"used_pct": 100, "starts_at": $start_epoch, "resets_at": $reset_epoch}},
+      "limit_reached": {"reason": "plan usage at 100%", "resets_at": $reset_epoch}
+    },
+    "pi": null
+  }
+}
+EOF
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  run jq -e --argjson r "$reset_epoch" '
+    .engines.codex.limit_reached.ordinary_usage_allowed == false and
+    .engines.codex.limit_reached.rate_limit_reached_type == "primary" and
+    .engines.codex.limit_reached.credits_balance == "0" and
+    .engines.codex.unlimited == false and
+    .engines.cursor.limit_reached == {reason: "plan usage at 100%", resets_at: $r} and
+    .engines.cursor.unlimited == false
+  ' <<<"$output"
+  [ "$status" -eq 0 ]
+
+  # An engine with no unlimited field reads as false; a null limit_reached
+  # stays null; an unlimited plan flips unlimited true and drops its window.
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<EOF
+{
+  "fetched_at": "2026-01-01T00:00:00Z",
+  "fetched_epoch": $SHIM_NOW,
+  "engines": {
+    "claude": null,
+    "codex": {
+      "source": "app-server",
+      "credits_cover": false,
+      "plan_type": null,
+      "windows": {},
+      "limit_reached": null
+    },
+    "cursor": {
+      "source": "usage_summary",
+      "plan_type": "enterprise",
+      "credits_cover": true,
+      "unlimited": true,
+      "windows": {},
+      "limit_reached": null
+    },
+    "pi": null
+  }
+}
+EOF
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.codex.unlimited == false and .engines.codex.limit_reached == null
+    and .engines.cursor.unlimited == true and .engines.cursor.windows == []
+    and .engines.cursor.limit_reached == null' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "--report with no cached budget exits 1" {
   run --separate-stderr bash "$SCRIPT" --report
   [ "$status" -eq 1 ]

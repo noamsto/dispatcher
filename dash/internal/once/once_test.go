@@ -2,12 +2,36 @@ package once
 
 import (
 	"encoding/json"
+	"flag"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
+
+var updateGolden = flag.Bool("update", false, "update golden files")
+
+// checkGolden compares got against testdata/name, or rewrites it under -update
+// (the same mechanism dash/internal/ui/golden_test.go uses).
+func checkGolden(t *testing.T, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *updateGolden {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden %s: %v", path, err)
+		}
+		return
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading golden %s: %v (run with -update to generate)", path, err)
+	}
+	if got != string(want) {
+		t.Errorf("golden %s mismatch:\n--- got ---\n%s\n--- want ---\n%s", path, got, string(want))
+	}
+}
 
 func loadSnapshot(t *testing.T) data.Snapshot {
 	t.Helper()
@@ -24,27 +48,33 @@ func loadSnapshot(t *testing.T) data.Snapshot {
 
 func TestRenderMatchesGolden(t *testing.T) {
 	snap := loadSnapshot(t)
-
-	golden, err := os.ReadFile("testdata/once.golden")
-	if err != nil {
-		t.Fatalf("reading golden: %v", err)
-	}
-	got := Render(snap, false)
-	if got != string(golden) {
-		t.Errorf("Render(color=false) mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, golden)
-	}
+	checkGolden(t, "once.golden", Render(snap, false))
 }
 
 func TestRenderMatchesColorGolden(t *testing.T) {
 	snap := loadSnapshot(t)
+	checkGolden(t, "once-color.golden", Render(snap, true))
+}
 
-	golden, err := os.ReadFile("testdata/once-color.golden")
-	if err != nil {
-		t.Fatalf("reading color golden: %v", err)
+// TestEngineLinesLimitReachedAndUnlimited checks the renderer surfaces the two
+// states the text report() prints: an unlimited plan (no window table) and a
+// limit-reached reason, with the reason run through cleanText.
+func TestEngineLinesLimitReachedAndUnlimited(t *testing.T) {
+	eb := &data.EngineBudget{
+		Source:       "usage_summary",
+		Unlimited:    true,
+		LimitReached: []byte(`{"reason":"plan\tusage at 100%"}`),
 	}
-	got := Render(snap, true)
-	if got != string(golden) {
-		t.Errorf("Render(color=true) mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, golden)
+	var texts []string
+	for _, l := range engineLines("cursor", eb) {
+		texts = append(texts, l.text)
+	}
+	out := strings.Join(texts, "\n")
+	if !strings.Contains(out, "unlimited") {
+		t.Fatalf("unlimited line missing:\n%s", out)
+	}
+	if !strings.Contains(out, "limit reached: plan usage at 100%") {
+		t.Fatalf("cleaned limit-reached reason missing:\n%s", out)
 	}
 }
 

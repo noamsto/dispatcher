@@ -218,16 +218,19 @@ func engineLines(e string, v *data.EngineBudget) []line {
 		heading += " [" + *v.PlanType + "]"
 	}
 
-	table := [][]string{{"window", "used", "pace", "resets in", "verdict"}}
-	for _, w := range v.Windows {
-		table = append(table, windowRowCells(w))
-	}
-	widths := tableWidths(table)
-	left := []bool{true, false, false, true, true}
-
 	out := []line{{style: "h", text: heading}}
-	for _, row := range table {
-		out = append(out, line{style: "n", text: "  " + padRow(row, widths, left)})
+	if v.Unlimited {
+		out = append(out, line{style: "n", text: "  unlimited"})
+	} else {
+		table := [][]string{{"window", "used", "pace", "resets in", "verdict"}}
+		for _, w := range v.Windows {
+			table = append(table, windowRowCells(w))
+		}
+		widths := tableWidths(table)
+		left := []bool{true, false, false, true, true}
+		for _, row := range table {
+			out = append(out, line{style: "n", text: "  " + padRow(row, widths, left)})
+		}
 	}
 
 	if v.Source == "openrouter_key" {
@@ -242,6 +245,10 @@ func engineLines(e string, v *data.EngineBudget) []line {
 		if v.Projection != nil {
 			out = append(out, line{style: "n", text: "  " + *v.Projection})
 		}
+	}
+
+	if reason, ok := v.LimitReachedReason(); ok {
+		out = append(out, line{style: "n", text: "  limit reached: " + cleanText(reason)})
 	}
 	return out
 }

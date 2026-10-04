@@ -5,10 +5,10 @@ claude (oauth_usage)
   7d     ███████████████████████████░░░   90%  +40   3d 12h real budget: prefer a cheaper burn class or rotate engines
 codex (app_server) [pro]
   5h     █████████░░░░░░░░░░░░░░░░░░░░░   30%    —    1h 0m —
-cursor: unknown
+cursor (usage_summary) [pro]
+  month  ██████████████████░░░░░░░░░░░░   60%    —   15d 0h —
+  limit reached: on-demand limit reached
 pi: unknown
-
-
 
 
 
