@@ -37,7 +37,7 @@ PHASES = ["start", "spec", "plan", "execute", "gate", "review", "pr"]
 CLASSES = ["worker-lead", "role-pane", "subagent", "interactive-worktree", "dispatcher", "interactive"]
 LONG_CTX = 150_000
 
-STAGE_RE = re.compile(r"""crew status[^\n]*?\sworking[ \t]+(?:"([^"]*)"|'([^']*)'|([^\s;&|"'][^;&|\n]*))""")
+STAGE_RE = re.compile(r"""crew status[^\n]*?\sworking[ \t]+(?:"([^"]*)"|'([^']*)'|(?!\d*[<>])([^\s;&|<>"'][^;&|<>\n]*))""")
 SEAM_RE = re.compile(r"""seam\\?"\s*:\s*\\?"(review|deslop)""")
 
 
@@ -154,7 +154,7 @@ def parse_file(path):
                         inp = b.get("input")
                         arg = tool_arg(name, inp)
                         uses[idx].append((tid, name, arg))
-                        tin.append((idx, name, arg, len(json.dumps(inp))))
+                        tin.append((idx, name, arg, len(json.dumps(inp, ensure_ascii=False))))
                         if not dispatcher_flag and (
                                 (name == "Bash" and DISPATCHER_BASH.search(arg))
                                 or (name == "Skill" and arg == "dispatcher:dispatcher")):
@@ -390,21 +390,32 @@ def cmd_fleet(args):
 
 # ------------------------------------------------------------------ growth
 
+STAGE_KEYWORDS = [
+    ("pr", re.compile(r"\b(deslop|push|pr|pr_open)\b|pre-push")),
+    ("review", re.compile(r"\breview")),
+    ("gate", re.compile(r"\bgate\b")),
+    ("execute", re.compile(r"\bexecut")),
+    ("plan", re.compile(r"\bplan")),
+    ("spec", re.compile(r"\bspec")),
+]
+CRITIC_RE = re.compile(r"\b(spec|plan)[- ]critic")
+DONE_RE = re.compile(r"\b(done|green|accepted|passed|complete|approved)\b")
+
+
 def stage_phase(stage):
+    """Phase a heartbeat label puts the run in. A label naming only a stage that
+    just finished ("fast gate green") means the next phase has begun."""
     s = stage.lower()
-    if re.search(r"\b(deslop|push|pr|pr_open)\b", s) or "pre-push" in s:
+    if "post-review" in s:
         return "pr"
-    if re.search(r"\breview", s):
-        return "review"
-    if re.search(r"\bgate\b", s):
-        return "gate"
-    if re.search(r"\bexecut", s):
-        return "execute"
-    if re.search(r"\bplan", s):
-        return "plan"
-    if re.search(r"\bspec", s):
-        return "spec"
-    return None
+    m = CRITIC_RE.search(s)
+    hits = [m.group(1)] if m else [p for p, rx in STAGE_KEYWORDS if rx.search(s)]
+    if not hits:
+        return None
+    phase = hits[0]
+    if len(hits) == 1 and phase != "pr" and DONE_RE.search(s):
+        return PHASES[PHASES.index(phase) + 1]
+    return phase
 
 
 def lead_markers(s):
@@ -434,8 +445,9 @@ def lead_markers(s):
                     fallback.append((t, "review"))
             elif name == "Skill" and "deslop" in arg:
                 fallback.append((t, "pr"))
-    used_fallback = not heartbeat
-    markers = [(t, p) for t, p in heartbeat if p] + other + (fallback if used_fallback else [])
+    hb = [(t, p) for t, p in heartbeat if p]
+    used_fallback = not hb
+    markers = hb + other + (fallback if used_fallback else [])
     markers.sort(key=lambda x: x[0])
     return markers, used_fallback
 
@@ -475,16 +487,20 @@ def phase_stats(ctxs, phases):
 def restart_saving(ctxs, reorient, seams):
     """Context integral saved if the session restarted fresh at each seam turn.
 
-    Turn t >= seam runs at F + R + (ctx_t - ctx_seam) instead of ctx_t, where F is
-    the run's first-turn context and R the re-orientation cost.
+    Turn t >= seam runs at F + R + (ctx_t - ctx_seam) instead of ctx_t (so the seam
+    turn itself runs at F + R), where F is the run's first-turn context and R the
+    re-orientation cost. Per-turn saving is clamped to [0, ctx_t - F - R] so a
+    context drop (compaction) never yields a negative or larger-than-the-turn saving.
     """
     seams = sorted(seams)
+    if not seams:
+        return 0
     first, saving, j, base = ctxs[0], 0, 0, 0
     for t in range(seams[0], len(ctxs)):
         while j < len(seams) and seams[j] <= t:
             base = ctxs[seams[j]]
             j += 1
-        saving += base - first - reorient
+        saving += max(0, min(base - first - reorient, ctxs[t] - first - reorient))
     return saving
 
 
@@ -500,12 +516,13 @@ def cmd_growth(args):
         n_fallback_completed += used_fb
         ctxs = s["turns"]
         per = phase_stats(ctxs, phases)
-        d_sum = sum(v["delta"] for v in per.values())
+        partition_ok = (sum(v["turns"] for v in per.values()) == len(ctxs)
+                        and sum(v["integral"] for v in per.values()) == sum(ctxs))
         first_idx = {}
         for t, ph in enumerate(phases):
             first_idx.setdefault(ph, t)
         runs.append({"per": per, "ctxs": ctxs, "first_idx": first_idx, "first": ctxs[0], "peak": max(ctxs), "turns": len(ctxs),
-                     "end": ctxs[-1], "delta_ok": abs(d_sum - (ctxs[-1] - ctxs[0])) <= 1,
+                     "end": ctxs[-1], "partition_ok": partition_ok,
                      "integral": sum(ctxs)})
     total_int = sum(r["integral"] for r in runs)
     agg, rows = {}, []
@@ -533,7 +550,7 @@ def cmd_growth(args):
         "turns_median": med([r["turns"] for r in runs]),
         "end_ctx_median": med([r["end"] for r in runs]),
         "run_integral_median": med([r["integral"] for r in runs]),
-        "delta_sum_ok": sum(1 for r in runs if r["delta_ok"]),
+        "phase_partition_ok": sum(1 for r in runs if r["partition_ok"]),
         "ctx_at_execute_start_median": med([r["per"]["execute"]["first"] for r in runs if "execute" in r["per"]]),
         "ctx_at_review_start_median": med([r["per"]["review"]["first"] for r in runs if "review" in r["per"]]),
     }
@@ -574,7 +591,7 @@ def cmd_growth(args):
              f"median run integral: {fmt(summary['run_integral_median'])}\n"
              f"median ctx at start of execute: {fmt(summary['ctx_at_execute_start_median'])}   "
              f"at start of review: {fmt(summary['ctx_at_review_start_median'])}\n"
-             f"delta-sum == last-first (within 1 token): {summary['delta_sum_ok']}/{len(runs)} runs")
+             f"phase partition check: {summary['phase_partition_ok']}/{len(runs)} runs")
     text += ("\n\nturns before first entering each phase (completed runs, 0 if never entered):\n"
              + table(["phase", "never", "median", "mean", "total"], before_rows)
              + f"\ntotal turns before first entering review: {fmt(before_review['total_turns_before_review'])} "
@@ -748,18 +765,25 @@ def cmd_tools(args):
 # ---------------------------------------------------------------- sections
 
 HEADING = re.compile(rb"^(#{1,3}) (.*?)\s*$")
+FENCE = re.compile(rb"^(`{3,}|~{3,})(.*)$")
 
 
 def cmd_sections(args):
     data = Path(args.file).read_bytes()
     size = len(data)
     rows = [["preamble", 0, 0]]
-    fence = False
+    fence = None
     for line in data.splitlines(keepends=True):
-        stripped = line.lstrip()
-        if stripped.startswith((b"```", b"~~~")):
-            fence = not fence
-        m = None if fence or stripped.startswith((b"```", b"~~~")) else HEADING.match(line.rstrip(b"\r\n"))
+        f = FENCE.match(line.lstrip())
+        if fence:
+            if f and f.group(1)[:1] == fence[0] and len(f.group(1)) >= fence[1] and not f.group(2).strip():
+                fence = None
+            m = None
+        elif f and not (f.group(1)[:1] == b"`" and b"`" in f.group(2)):
+            fence = (f.group(1)[:1], len(f.group(1)))
+            m = None
+        else:
+            m = HEADING.match(line.rstrip(b"\r\n"))
         if m:
             rows.append([m.group(2).decode("utf-8", "replace"), len(m.group(1)), 0])
         rows[-1][2] += len(line)
@@ -783,7 +807,7 @@ def wake_segments(s):
     for i, (tc, kind, sub) in enumerate(marks):
         if kind != "W" or tc >= n:
             continue
-        if wakes and wakes[-1]["a"] == tc and wakes[-1]["mark"] == i - 1:
+        if wakes and wakes[-1]["a"] == tc:
             wakes[-1]["mark"] = i
             wakes[-1]["kinds"].append(sub)
             continue
@@ -833,15 +857,7 @@ def cmd_dispatcher(args):
         rows.append([label, len(vals), fmt(med(vals))])
     restart = {}
     for n in (int(x) for x in args.restart_every.split(",") if x.strip()):
-        saving = 0
-        for s in ds:
-            ctxs = s["turns"]
-            first, base = ctxs[0], None
-            for t in range(len(ctxs)):
-                if t and t % n == 0:
-                    base = ctxs[t - 1]
-                if base is not None:
-                    saving += base - first - args.reorient
+        saving = sum(restart_saving(s["turns"], args.reorient, range(n, len(s["turns"]), n)) for s in ds)
         restart[n] = {"total_saving": saving, "saving_pct_of_integral": share(saving, total)}
     summary = {"sessions": len(ds), "turns": n_turns, "integral": total, "wakes": wakes, "idle_wakes": idle,
                "wake_kinds": kinds, "idle_wake_integral": idle_int,
