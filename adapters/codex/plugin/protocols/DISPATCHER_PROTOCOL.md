@@ -733,13 +733,13 @@ branch instead; the worktree carries over under `resume: true`.
   is trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
-  config, not the program; URL userinfo is masked per field in printed
-  `url.*`/`http.*` keys and in `crew git-baseline` redirect-key values
-  (schemeless userinfo, `user:tok@proxy:3128`, only for proxy keys — an
-  scp-style `remote.*.url`'s `user@` names its host), but exec-class values
-  (e.g. a `credential.helper` argument) and a token elsewhere in a URL (path,
-  query) are printed as-is, so a masked `@` never hides what the human
-  accepts — the human runs it, never the dispatcher; gh-based repo
+  config, not the program; refusals name the key and its file, never the
+  value — but a `url.<base>.insteadOf` key embeds its URL, so a token in that
+  base is printed in refusals and in dispatch's baseline-recorded note;
+  `crew git-baseline` prints raw values verbatim, which may include credentials
+  (a remote URL's userinfo token, a proxy password, a `credential.helper`
+  argument), so the human runs it in their own terminal, never the dispatcher;
+  gh-based repo
   resolution reads `remote.origin.url` outside the guard;
   `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
