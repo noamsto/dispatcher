@@ -129,8 +129,10 @@ in {
           `openrouter.keyFile` in the locked settings layer (the user
           settings file cannot set this key); `refresh-budget` falls back to
           OPENROUTER_API_KEY when unset, then to pi's own OpenRouter login
-          (`pi auth print-api-key --provider openrouter`, else
-          `~/.pi/agent/auth.json`, read-only). A set keyFile is exclusive:
+          (`~/.pi/agent/auth.json` read-only, `.openrouter.key` for
+          `type: "api_key"`, `.openrouter.access` for `type: "oauth"`, else
+          `pi auth print-api-key --provider openrouter`, pi 0.83+,
+          timeout-bounded). A set keyFile is exclusive:
           pi's login is never consulted.
         '';
       };

@@ -343,8 +343,10 @@ and `DISPATCH_OPENROUTER_KEY_FILE` (or `OPENROUTER_API_KEY`) directly.
 When `openrouter.keyFile` is set, its first line is the only key source (an
 unreadable or empty file leaves the spend unknown rather than falling back);
 otherwise `OPENROUTER_API_KEY` is used, then pi's own OpenRouter login
-(`pi auth print-api-key --provider openrouter`, else `~/.pi/agent/auth.json`,
-read-only). The key is never printed or cached. The figure is **per key** — it only covers
+(`~/.pi/agent/auth.json` read-only, `.openrouter.key` for `type: "api_key"`,
+`.openrouter.access` for `type: "oauth"`, else
+`pi auth print-api-key --provider openrouter`, pi 0.83+, timeout-bounded). The
+key is never printed or cached. The figure is **per key** — it only covers
 spend on the key pi actually uses, not the whole OpenRouter account — so
 OpenRouter's own per-key credit limit (in its dashboard) stays the hard
 backstop regardless of this target.
