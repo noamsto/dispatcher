@@ -9510,6 +9510,16 @@ _rw_scroll_case() {
   [ "$(_rw_unsubmitted)" -ge 1 ]
 }
 
+# A short human draft that merely occurs inside "Assignment: go" is not the
+# assignment: claude's box does not scroll, so only a leading slice is held.
+rw_frame_claude_substring_draft() {
+  rw_tpl_claude_held | sed 's/@TEXT@/go/'
+}
+rw_frame_pi_paste_marker_wrong() { RW_PASTE_CHARS=1234 rw_frame_pi_paste_marker; }
+rw_frame_pi_paste_marker() {
+  rw_tpl_pi_held | sed "s/@TEXT@/[paste #1 ${RW_PASTE_CHARS} chars]/"
+}
+
 # _rw_after_enter <engine> <idle-fn> <busy-fn> <frame-fn> — the first Enter is
 # swallowed and the pane then shows <frame-fn>; it must get no further Enter.
 _rw_after_enter() {
@@ -9542,6 +9552,40 @@ rw_frame_claude_spinner_empty() {
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
   grep -q 'could not confirm' "$STUB_LOG"
+}
+
+@test "role-watch: a claude draft that is only a substring of the assignment gets no retry Enter" {
+  _rw_after_enter claude rw_frame_idle rw_frame_live rw_frame_claude_substring_draft
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
+}
+
+@test "role-watch: a pi collapsed-paste marker with the assignment's length is held and retried" {
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 1
+  RW_PASTE_CHARS=14 rw_frame_pi_paste_marker >"$STUB_DIR/dialog_frame"
+  _rw_start pi
+  _rw_wait_enters 2
+  sleep 1
+  _rw_stop
+  [ "$(_rw_enters)" -eq 2 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+}
+
+@test "role-watch: a pi collapsed-paste marker with another length is unknown: no retry Enter" {
+  _rw_after_enter pi rw_frame_pi_idle rw_frame_pi_live rw_frame_pi_paste_marker_wrong
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -ge 1 ]
 }
 
 @test "role-watch: a cursor usage-limit frame after Enter gets no retry Enter" {

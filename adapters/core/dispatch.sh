@@ -1959,7 +1959,9 @@ if [ "${1:-}" = "--role-watch" ]; then
   #              dequeued, never sent Enter, escalated after a few ticks
   # codex and cursor match the exact composer text. claude and pi cannot
   # reconstruct a wrapped or scrolled box from a capture, so `held` there is an
-  # idle box whose visible editor row is a slice of "Assignment: <text>"; any
+  # idle box whose visible editor row is, on claude, a leading slice of
+  # "Assignment: <text>" (its box does not scroll), on pi any slice (its editor
+  # scrolls) or a collapsed-paste marker carrying the assignment's length; any
   # other non-empty row (a human draft, a suggestion, an extension dialog) is
   # `unknown`.
   _role_submit_state() {
@@ -2007,7 +2009,7 @@ if [ "${1:-}" = "--role-watch" ]; then
         echo submitted # a spinner row above the box: a live turn
       elif _claude_idle_box "$text" "$colored" 1; then
         row=$(printf '%s\n' "$out" | head -1 | sed -E $'s/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//; s/[[:space:]]+$//')
-        if [ -n "$row" ] && { [[ $full == *"$row"* ]] || [[ $row == '[Pasted text'* ]]; }; then echo held; else echo unknown; fi
+        if [ -n "$row" ] && { [[ $full == "$row"* ]] || [[ $row == '[Pasted text'* ]]; }; then echo held; else echo unknown; fi
       else
         echo unknown
       fi
@@ -2020,7 +2022,8 @@ if [ "${1:-}" = "--role-watch" ]; then
         row=$(printf '%s\n' "$out" | head -1 | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
         if [ -z "$row" ]; then
           echo submitted
-        elif [[ $full == *"$row"* ]]; then
+        elif [[ $full == *"$row"* ]] ||
+          { [[ $row =~ ^\[paste\ \#[0-9]+\ ([0-9]{1,9})\ chars\]$ ]] && [ "${BASH_REMATCH[1]}" -eq "${#full}" ]; }; then
           echo held
         else
           echo unknown
