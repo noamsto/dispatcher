@@ -967,7 +967,9 @@ teardown() {
       '**Classifier escalations always go to the human**' \
       '`permission-check … --answer`; otherwise it goes to the human' \
       'keystroke is not an authorization delivery: it answers a tool-permission dialog the checker verified, never a permission block.' \
-      'only by `permission-check --answer`, never by hand'; do
+      'only by `permission-check --answer`, never by hand' \
+      '**Relaying a pane to the human.**' \
+      'instead of a bare `%id`'; do
       run grep -F "$statement" "$ROOT/$doc"
       [ "$status" -eq 0 ]
     done

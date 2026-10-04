@@ -8396,3 +8396,40 @@ _where_stub() { # $1=wins-body $2=panes-body
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown flag"* ]]
 }
+
+@test "where: a role-less pane in a plain dispatch window is labelled lead" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/618-x\t%s\tc1\tnova\tsess\t3\twin-name\n' "$dir")" \
+    "$(printf '@624\t%%204\t\t1\n')"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204' ]
+}
+
+@test "where: the crew anchor excludes another crew's window and pane" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/1-a\t%s\tc1\tnova\tsess\t3\twin-a\n@625\tfeat/2-b\t%s\tc2\tnova\tsess\t4\twin-b\n' "$dir" "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@625\t%%304\tlead\t1\n')"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 0 ]
+  [ "$output" = 'nova — sess:3.1 "win-a" (lead pane)   jump: ! tmux switch-client -t %204' ]
+  CREW_ID=c1 run run_crew where '%304'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a pane of this crew"* ]]
+}
+
+@test "where: a tmux read failure is reported as itself" {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+echo "no server running on /tmp/tmux-1000/default" >&2
+exit 1
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  CREW_ID=c1 run run_crew where nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot read tmux windows"* ]]
+}

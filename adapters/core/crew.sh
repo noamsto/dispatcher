@@ -1192,8 +1192,12 @@ where)
   done
   [ -n "$where_target" ] || _where_die "usage: crew where <codename|branch|%id> [--crew ID]"
 
-  where_wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}' 2>/dev/null || true)
-  where_panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}' 2>/dev/null || true)
+  # A tmux read failure is not "the target is gone": report it as itself, or
+  # an outage (or a wrong socket) reads as a dead worker to the human.
+  where_wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}' 2>/dev/null) ||
+    _where_die "cannot read tmux windows (is a tmux server running?)"
+  where_panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}' 2>/dev/null) ||
+    _where_die "cannot read tmux panes (is a tmux server running?)"
   # Windows anchored to this crew: a non-empty branch, this repo's crew dir,
   # and this crew's id when the window carries one. Keep the display fields.
   where_cwins=$(printf '%s\n' "$where_wins" |
@@ -1246,7 +1250,9 @@ where)
 
   where_role=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $3; exit }')
   where_pidx=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $4; exit }')
-  [ -n "$where_role" ] || where_role=pane
+  # A plain (non-grid) dispatch window stamps no @crew_role, so its lone pane
+  # is the lead — label it, never the nonsensical "(pane pane)".
+  [ -n "$where_role" ] || where_role=lead
   [ -n "$where_name" ] || where_name=$(_identity "$where_branch" | jq -r .name)
 
   printf '%s — %s:%s.%s "%s" (%s pane)   jump: ! tmux switch-client -t %s\n' \
