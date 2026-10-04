@@ -3976,7 +3976,8 @@ create)
     neutral_switch=1
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    wt hook pre-switch -y # pre-switch runs in this cwd, never the destination
+    # pre-switch runs in this cwd, never the destination; the vars are what a real create binds
+    wt hook pre-switch -y --branch="$branch" --target="$branch"
     wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
@@ -4003,9 +4004,9 @@ create)
   # failing pre-start aborts here and leaves the worktree, as under `wt switch -c`.
   if [ -z "$base_flag" ]; then
     _wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1
-    wt -C "$wt_path" hook pre-start -y
-    wt -C "$wt_path" hook post-start -y
-    wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y
+    wt -C "$wt_path" hook pre-start -y --base="$create_base_oid"
+    wt -C "$wt_path" hook post-start -y --base="$create_base_oid"
+    wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y --base="$create_base_oid"
   fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the

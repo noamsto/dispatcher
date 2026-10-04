@@ -4589,6 +4589,8 @@ EOF
   hook_ln="$(grep -n 'hook pre-start' "$STUB_LOG" | head -1 | cut -d: -f1)"
   [ -n "$switch_ln" ] && [ -n "$hook_ln" ]
   [ "$switch_ln" -lt "$hook_ln" ]
+  grep -q -- "hook pre-switch -y --branch=feat/42-do-a-thing --target=feat/42-do-a-thing" "$STUB_LOG"
+  grep -q -- "hook pre-start -y --base=" "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
 }
 
@@ -4993,6 +4995,27 @@ assert_no_bus_row() { # <kind>
   run ! grep -E '^(pre-start|post-start|post-switch) ' "$BATS_TEST_TMPDIR/hooks.log"
   run ! grep -q 'new-window' "$STUB_LOG"
   assert_no_bus_row claim
+}
+
+# The guard re-run before the replay is what keeps config drift planted mid-create
+# from reaching worktrunk's git in the new tree.
+@test "default create: config drift planted during the create stops the hook replay (#680)" {
+  stub_launch_bins
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.base"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+"$STUB_DIR/wt.base" "\$@"
+rc=\$?
+[ "\${1:-}" != switch ] || git -C "$TEST_REPO" config core.fsmonitor "$BATS_TEST_TMPDIR/evil"
+exit "\$rc"
+EOF
+  chmod +x "$STUB_DIR/wt"
+  stub_wt_hook_log
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not in the git-config baseline"* ]]
+  run ! grep -E '^(pre-start|post-start|post-switch) ' "$BATS_TEST_TMPDIR/hooks.log"
+  run ! grep -q 'new-window' "$STUB_LOG"
 }
 
 # lock_path <branch> — the per-branch dispatch lock symlink, keyed exactly as
