@@ -40,7 +40,7 @@ full_reason=""
 selected=()
 
 full_suite() {
-  [[ -n "$full_reason" ]] || full_reason="$1"
+  [[ -n $full_reason ]] || full_reason="$1"
 }
 
 add() {
@@ -94,7 +94,7 @@ map_file() {
 
 changed_files() {
   local ref="${base:-}" mb
-  if [[ -z "$ref" ]]; then
+  if [[ -z $ref ]]; then
     if git -C "$root" rev-parse --verify -q refs/remotes/origin/HEAD >/dev/null; then
       ref=refs/remotes/origin/HEAD
     else
@@ -113,14 +113,14 @@ changed_files() {
   } | sort -u
 }
 
-if ((! use_files)); then
+if ((!use_files)); then
   if ! out="$(changed_files)"; then
     full_suite "$out"
     out=""
   fi
   files=()
   while IFS= read -r line; do
-    [[ -z "$line" ]] || files+=("$line")
+    [[ -z $line ]] || files+=("$line")
   done <<<"$out"
 fi
 
@@ -128,7 +128,7 @@ for f in ${files[@]+"${files[@]}"}; do
   map_file "$f"
 done
 
-if [[ -n "$full_reason" ]]; then
+if [[ -n $full_reason ]]; then
   echo "bats-affected: $full_reason" >&2
   (cd "$root" && printf '%s\n' tests/*.bats)
   exit 0
