@@ -93,7 +93,12 @@ stub_tmux() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-list-windows) cat "$STUB_DIR/wins.txt" ;;
+list-windows)
+  case "$*" in
+  *window_activity*) [ -f "$STUB_DIR/human.txt" ] && cat "$STUB_DIR/human.txt" ;;
+  *) cat "$STUB_DIR/wins.txt" ;;
+  esac
+  ;;
 list-panes) cat "$STUB_DIR/panes.txt" ;;
 esac
 exit 0
@@ -179,6 +184,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 list-windows)
   case "$*" in
+  *window_activity*) [ -f "$STUB_DIR/human.txt" ] && cat "$STUB_DIR/human.txt" ;;
   *@crew_branch*) [ -f "$STUB_DIR/wins3.txt" ] && cat "$STUB_DIR/wins3.txt" ;;
   *) cat "$STUB_DIR/wins.txt" ;;
   esac
@@ -2272,6 +2278,94 @@ EOF
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"released @23"* ]]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+}
+
+@test "reap: default grace releases a done window older than it and keeps a younger one" {
+  git commit --allow-empty -q -m init
+  git branch feat/old-done
+  git branch feat/new-done
+  old_wt="$BATS_TEST_TMPDIR/old-done-wt"
+  new_wt="$BATS_TEST_TMPDIR/new-done-wt"
+  git worktree add -q "$old_wt" feat/old-done
+  git worktree add -q "$new_wt" feat/new-done
+  old_wt=$(cd "$old_wt" && pwd -P)
+  new_wt=$(cd "$new_wt" && pwd -P)
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n@24\tbird\t%s\n' "$old_wt" "$new_wt")" "$(printf '@23\t%%33\tfish\n@24\t%%34\tfish\n')"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  old_ts=$((($(date +%s) - 400) * 1000))
+  new_ts=$((($(date +%s) - 100) * 1000))
+  jq -nc --argjson ts "$old_ts" '{ts:$ts, crew_id:"c1", from:"worker:feat/old-done#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$log"
+  jq -nc --argjson ts "$new_ts" '{ts:$ts, crew_id:"c1", from:"worker:feat/new-done#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  run ! grep -q 'kill-window -t @24' "$STUB_LOG"
+}
+
+_human_setup() {
+  git commit --allow-empty -q -m init
+  git branch feat/human
+  human_wt="$BATS_TEST_TMPDIR/human-wt"
+  git worktree add -q "$human_wt" feat/human
+  human_wt=$(cd "$human_wt" && pwd -P)
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$human_wt")" "$(printf '@23\t%%33\tfish\n')"
+  CREW_ID=c1 run_crew status "worker:feat/human#s1-1" done
+}
+
+@test "reap: keeps a done window that is visible in an attached tmux client" {
+  _human_setup
+  printf '@23\t1\t1\t%s\n' "$(($(date +%s) - 9999))" >"$STUB_DIR/human.txt"
+  CREW_ID=c1 run run_crew reap --idle 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/human — human present: @23 is visible in an attached tmux client"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: a done window that is active but in a detached session is released" {
+  _human_setup
+  printf '@23\t1\t0\t%s\n' "$(($(date +%s) - 9999))" >"$STUB_DIR/human.txt"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window with activity inside the grace" {
+  _human_setup
+  printf '@23\t0\t0\t%s\n' "$(($(date +%s) - 5))" >"$STUB_DIR/human.txt"
+  CREW_ID=c1 run run_crew reap --idle 60
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose transcript has a user turn newer than the status" {
+  _human_setup
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  tdir="$CLAUDE_CONFIG_DIR/projects/$(printf '%s' "$human_wt" | sed 's/[^A-Za-z0-9]/-/g')"
+  mkdir -p "$tdir"
+  newer=$(date -u -d '+30 seconds' +%Y-%m-%dT%H:%M:%S.000Z)
+  printf '%s\n' \
+    '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","message":{"content":"start"}}' \
+    "{\"type\":\"user\",\"timestamp\":\"$newer\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}" >"$tdir/s.jsonl"
+  CREW_ID=c1 run run_crew reap --idle 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"human present: the engine transcript has a user turn newer than the status"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: an old user turn and a newer tool result do not count as a human" {
+  _human_setup
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  tdir="$CLAUDE_CONFIG_DIR/projects/$(printf '%s' "$human_wt" | sed 's/[^A-Za-z0-9]/-/g')"
+  mkdir -p "$tdir"
+  newer=$(date -u -d '+30 seconds' +%Y-%m-%dT%H:%M:%S.000Z)
+  printf '%s\n' \
+    '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","message":{"content":"start"}}' \
+    "{\"type\":\"user\",\"timestamp\":\"$newer\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"ok\"}]}}" >"$tdir/s.jsonl"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
   grep -q 'kill-window -t @23' "$STUB_LOG"
 }
 
@@ -4982,6 +5076,52 @@ fx_permission_sanitize() {
 
  Esc to cancel · Tab to amend
 EOF
+}
+
+# stall-watch finished-worker release: the watchdog releases its own worker's
+# window after done + --release with no stream or reap running.
+_release_setup() {
+  git commit --allow-empty -q -m init
+  git branch feat/x
+  rel_wt="$BATS_TEST_TMPDIR/rel-wt"
+  git worktree add -q "$rel_wt" feat/x
+  rel_wt=$(cd "$rel_wt" && pwd -P)
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$rel_wt")" "$(printf '@23\t%%9\tclaude\n')"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
+}
+
+fx_done_idle() {
+  frame_file done_idle <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
+@test "stall-watch: releases its worker's window after done + --release on an idle frame" {
+  _release_setup
+  p=$(fx_done_idle)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 10 --release 1
+  [ "$status" -eq 0 ]
+  grep -q 'kill-window -t @23' "$STUB_LOG"
+  [ -d "$rel_wt" ]
+  run bash -c "bus | jq -r 'select(.kind==\"release\") | \"\(.branch) \(.state)\"'"
+  [ "$output" = "feat/x done" ]
+}
+
+@test "stall-watch: does not release while the pane shows a live turn" {
+  _release_setup
+  p=$(fx_meter 1m2s 3.1k)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 5 --release 1
+  [ "$status" -eq 0 ]
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "stall-watch: D1 posts blocked/prompt: on the option-select frame" {
@@ -8683,4 +8823,28 @@ EOF
   CREW_ID=c1 run run_crew where nova
   [ "$status" -eq 1 ]
   [[ "$output" == *"cannot read tmux windows"* ]]
+}
+
+@test "stall-watch: keeps the window after a watchdog-posted failed on a static non-claude pane" {
+  _release_setup
+  seed_raw "worker:feat/x#s1-1" failed "dead: quiet: no output" watchdog "$(($(date +%s) * 1000 + 500))"
+  p=$(fx_done_idle)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 5 --release 1
+  [ "$status" -eq 0 ]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: harness-injected user turns (task-notification, isMeta) do not count as a human" {
+  _human_setup
+  export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/claude"
+  tdir="$CLAUDE_CONFIG_DIR/projects/$(printf '%s' "$human_wt" | sed 's/[^A-Za-z0-9]/-/g')"
+  mkdir -p "$tdir"
+  newer=$(date -u -d '+30 seconds' +%Y-%m-%dT%H:%M:%S.000Z)
+  printf '%s\n' \
+    "{\"type\":\"user\",\"timestamp\":\"$newer\",\"message\":{\"content\":\"<task-notification>done</task-notification>\"}}" \
+    "{\"type\":\"user\",\"isMeta\":true,\"timestamp\":\"$newer\",\"message\":{\"content\":\"Base directory for this skill\"}}" >"$tdir/s.jsonl"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  grep -q 'kill-window -t @23' "$STUB_LOG"
 }
