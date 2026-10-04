@@ -696,6 +696,7 @@ _fetch_origin_branch() {
   _wt_git_common "${crew_dir%/crew}" fetch --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
+# Must read stdin to EOF: an early exit closes the pipe, SIGPIPEs git and trips pipefail.
 _branch_wts() { # <branch> — porcelain on stdin -> every worktree whose HEAD names refs/heads/<branch>
   awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
 }
@@ -3877,6 +3878,9 @@ trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || 
 # a human kills the window, which the refusal spells out and stall-watch resolves
 # on its own after 30 minutes.
 wt_list="$(git worktree list --porcelain)"
+admin_before=
+admin_root="${crew_dir%/crew}/worktrees"
+[ ! -d "$admin_root" ] || admin_before="$(ls -A -- "$admin_root")"
 prev_wt="$(printf '%s\n' "$wt_list" | _branch_wts "$branch")"
 # `wt switch -c` attaches to a worktree already on the branch instead of creating
 # one, so a create that finds one holds an unborn-branch squatter (#640).
@@ -3884,7 +3888,7 @@ if [ "$switch_mode" = create ] && [ -n "$prev_wt" ]; then
   {
     echo "dispatch: $branch does not exist yet, but a worktree's HEAD already names it (an unborn branch — possible tampering):"
     printf '%s\n' "$prev_wt" | sed 's/^/  /'
-    echo "  a create would attach there instead of making a new worktree — inspect it, then \`git worktree remove\` it or re-dispatch under another title."
+    echo "  a create would attach there instead of making a new worktree — possible tampering: stop and tell the human; removing it (git worktree remove) or re-dispatching under another title is their call."
   } >&2
   exit 1
 fi
@@ -3956,14 +3960,19 @@ create)
     wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
-  # created the worktree and pin wt_path to it (#640).
+  # created the worktree and pin wt_path to it (#640). Admin ids survive a gitdir
+  # rewrite or `git worktree move`, paths don't; the ref must be the base we asked for.
   wt_path="$(git worktree list --porcelain | _branch_wts "$branch")"
-  wt_before="$(printf '%s\n' "$wt_list" | awk '/^worktree /{print $2}')"
-  if ! git show-ref --verify --quiet "refs/heads/$branch" || [ -z "$wt_path" ] || [[ $wt_path == *$'\n'* ]] ||
-    grep -qxF -- "$wt_path" <<<"$wt_before"; then
+  new_admin=
+  if [ -n "$wt_path" ] && [[ $wt_path != *$'\n'* ]]; then
+    new_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || new_admin=
+  fi
+  if [ -z "$new_admin" ] || grep -qxF -- "${new_admin##*/}" <<<"$admin_before" ||
+    [ "$(git rev-parse --verify -q "refs/heads/$branch" || true)" != "$create_base_oid" ]; then
     {
-      echo "dispatch: wt switch -c did not create a new worktree for $branch — a worktree's HEAD was pointed at it mid-dispatch (possible tampering); refusing to launch there. Holding it:"
+      echo "dispatch: wt switch -c did not create a new worktree for $branch at $create_base_short — a worktree's HEAD or the branch ref was tampered with mid-dispatch; refusing to launch there. Holding it:"
       printf '%s\n' "${wt_path:-(none)}" | sed 's/^/  /'
+      echo "  possible tampering: stop and tell the human; do not remove it, retry, or re-dispatch under another title yourself."
     } >&2
     exit 1
   fi

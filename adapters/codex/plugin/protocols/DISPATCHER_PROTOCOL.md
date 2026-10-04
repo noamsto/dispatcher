@@ -734,14 +734,18 @@ branch instead; the worktree carries over under `resume: true`.
   hook runs whatever that tree holds in the dispatcher's shell: keep driver
   programs outside the repo tree (absolute paths). A create (default or
   `--base`) never lands in an existing tree: it refuses when any worktree's
-  HEAD already names the branch it is about to create — necessarily an
-  unborn HEAD, since the ref does not exist yet, so relay it to the human as
-  possible tampering — and refuses to launch when the switch did not leave
-  exactly one new worktree on a newly created ref (#640). Residual: a HEAD
-  rewritten between `dispatch`'s worktree listing and worktrunk's own still
-  makes the default create attach, and worktrunk's post-switch hooks (e.g. a
-  devshell hook's `nix develop`) run in that worker's tree before the refusal
-  (#680).
+  HEAD already names the branch it is about to create (necessarily an
+  unborn HEAD, since the ref does not exist yet), and refuses to launch
+  unless the switch left exactly one worktree on that branch, under an admin
+  id that did not exist before the switch, with the ref at the requested base
+  (#640). Relay either refusal to the human verbatim as possible tampering;
+  never remove the named worktree, retry, or re-dispatch under another title
+  yourself. Residual: a HEAD rewritten between `dispatch`'s worktree listing
+  and worktrunk's own still makes the switch attach (for `--base` too); the
+  post-check then refuses, but on the default create worktrunk's post-switch
+  hooks (e.g. a devshell hook's `nix develop`) have already run in that
+  worker's tree, and a brand-new worktree added in that window with the ref
+  set to the base passes the post-check (#680).
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Questions you put there are answered in the worker's tally, not on the PR: frame each as "report in your tally: …", and never ask the worker to write context (bench evidence, sibling-PR composition) onto the PR. Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`
