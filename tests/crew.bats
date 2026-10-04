@@ -2327,8 +2327,57 @@ EOF
 
 @test "reap: never releases a watchdog-posted failed window" {
   _live_claude_done_setup
+  set_frame %33 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
   seed_raw "worker:feat/idle-done-live#s1-1" failed "dead: quiet: no output" watchdog "$((($(date +%s) - 400) * 1000))"
-  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" != *"released"* ]]
+  [[ "$output" != *"pane busy"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose pane cannot be read" {
+  _live_claude_done_setup
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %33 is unreadable"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose non-claude engine pane shows a prompt" {
+  _live_claude_done_setup
+  stub_tmux_frames "$(printf '@23\tsage\t%s\n' "$wt_path")" "" "$(printf '@23\t%%33\tpi\n')"
+  set_frame %33 <<'EOF'
+  2. Gate everything on 3.8
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %33 shows a prompt"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: a second busy engine pane in the window keeps it" {
+  _live_claude_done_setup
+  stub_tmux_frames "$(printf '@23\tsage\t%s\n' "$wt_path")" "" "$(printf '@23\t%%33\t.claude-wrapped\n@23\t%%34\t.claude-wrapped\n')"
+  set_frame %33 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  set_frame %34 <<'EOF'
+✳ Perusing… (1m2s · ↓ 3.1k tokens · thinking more with high effort)
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %34"* ]]
   run ! grep -q 'kill-window' "$STUB_LOG"
 }
 

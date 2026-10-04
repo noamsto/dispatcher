@@ -297,7 +297,7 @@ _pane_is_engine_at() {
   _is_engine_cmd "${1%% *}"
 }
 
-# _occupants <worktree_path> -> [{window,name,pane,command,engine}] — worker windows
+# _occupants <worktree_path> -> [{window,name,pane,command,engine,panes}] — worker windows
 # rooted at that path. Keyed on @crew_name (dispatch stamps it on every worker
 # window), NOT on the pane's running command: a finished agent drops back to a
 # shell prompt, and a command match would then read its window as empty and let
@@ -319,19 +319,18 @@ _occupants() {
     [ -n "$nm" ] || continue
     [ "$nm" != dispatcher ] || continue
     [ "$wid" != "$self_win" ] || continue
-    epane="" ecmd=""
+    epane="" ecmd="" eall='[]'
     while IFS=$'\t' read -r pw pid cmd; do
       [ "$pw" = "$wid" ] || continue
       if _is_engine_cmd "$cmd"; then
-        epane="$pid"
-        ecmd="$cmd"
-        break
+        [ -n "$epane" ] || { epane="$pid"; ecmd="$cmd"; }
+        eall=$(printf '%s' "$eall" | jq -c --arg p "$pid" --arg c "$cmd" '. + [{pane:$p, command:$c}]')
       fi
     done <<PANES
 $panes
 PANES
-    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" --arg c "$ecmd" \
-      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), command:$c, engine:($p!="")}]')
+    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" --arg c "$ecmd" --argjson all "$eall" \
+      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), command:$c, engine:($p!=""), panes:$all}]')
   done <<WINS
 $wins
 WINS
@@ -648,40 +647,51 @@ _pane_capture() {
 
 # _frames_busy <occupants-json> — prints why and returns 0 when any engine pane
 # of a finished worker's windows is not provably idle; returns 1 when every one
-# is. Needs _frame_classifier already called. Claude panes must pass
-# _pane_idle_reason on two samples a second apart with identical text; other
-# engines have no idle signature, so they need an unchanged frame and no
-# prompt. An unreadable pane keeps.
+# is. Needs _frame_classifier already called. Every pane is sampled twice, one
+# gap apart: claude panes must pass _pane_idle_reason on both with identical
+# text; other engines have no idle signature, so they need an unchanged frame
+# and no prompt. An unreadable pane keeps, and so does unreadable input. The
+# set of engine panes is what _is_engine_cmd recognises.
 _frames_busy() {
-  local pane cmd stripped engine a b ca cb why gap="${CREW_RELEASE_GAP:-1}"
+  local rows pane cmd stripped engine i why cap
+  local -a panes=() cmds=() plain=() colored=()
+  rows=$(printf '%s' "$1" | jq -r '.[].panes[]? | [.pane, .command] | @tsv') || {
+    printf '%s' "occupants are unreadable"
+    return 0
+  }
   while IFS=$'\t' read -r pane cmd; do
     [ -n "$pane" ] || continue
-    stripped="${cmd#.}"
-    stripped="${stripped%-wrapped}"
-    engine="$stripped"
-    a=$(_pane_capture "$pane" || true)
-    ca=$(_pane_capture "$pane" colored || true)
-    if [ -z "$a" ]; then
+    panes+=("$pane")
+    cmds+=("$cmd")
+    cap=$(_pane_capture "$pane" || true)
+    plain+=("$cap")
+    colored+=("$(_pane_capture "$pane" colored || true)")
+    if [ -z "$cap" ]; then
       printf '%s' "$pane is unreadable"
       return 0
     fi
-    sleep "$gap"
-    b=$(_pane_capture "$pane" || true)
-    cb=$(_pane_capture "$pane" colored || true)
-    if [ "$a" != "$b" ]; then
+  done <<<"$rows"
+  [ "${#panes[@]}" -gt 0 ] || return 1
+  sleep "${CREW_RELEASE_GAP:-1}"
+  for i in "${!panes[@]}"; do
+    pane="${panes[i]}"
+    stripped="${cmds[i]#.}"
+    stripped="${stripped%-wrapped}"
+    engine="$stripped"
+    if [ "$(_pane_capture "$pane" || true)" != "${plain[i]}" ]; then
       printf '%s' "$pane is still changing"
       return 0
     fi
     if [ "$stripped" = claude ]; then
-      if ! why=$(_pane_idle_reason "$a" "$ca") || ! why=$(_pane_idle_reason "$b" "$cb"); then
+      if ! why=$(_pane_idle_reason "${plain[i]}" "${colored[i]}"); then
         printf '%s' "$pane is not idle ($why)"
         return 0
       fi
-    elif _is_prompt "$b" || _is_permission_prompt "$b"; then
+    elif _is_prompt "${plain[i]}" || _is_permission_prompt "${plain[i]}"; then
       printf '%s' "$pane shows a prompt"
       return 0
     fi
-  done < <(printf '%s' "$1" | jq -r '.[] | select(.engine) | [.pane, .command] | @tsv')
+  done
   return 1
 }
 
