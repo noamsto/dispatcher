@@ -147,11 +147,40 @@ _hook_entries() {
   }
 }
 
+# _hooks_path_dirs <worktree-or-empty> <raw-value> — print, NUL-terminated,
+# every dir a raw core.hooksPath value may name, each followed by its
+# _hook_entries: the literal value and the form with each leading
+# `:(optional)` stripped, since git 2.55 reads a `:(optional)<missing dir>`
+# value as unset while a worker could create the dir. Values expand as in
+# _git_config_target, a relative one joined to <worktree> (git runs hooks from
+# the worktree root); with no worktree (the global lookup) a relative form is
+# skipped. Fails closed, silently; the caller words the refusal.
+_hooks_path_dirs() {
+  local wt="$1" v="$2" tf d
+  while :; do
+    if [ -n "$wt" ] || [[ $v == /* || $v == '~'* || $v == '%(prefix)'* ]]; then
+      tf=$(mktemp) || return 1
+      _git_config_target "$wt/." "$v" >"$tf" || {
+        rm -f "$tf"
+        return 1
+      }
+      IFS= read -r -d '' d <"$tf" || :
+      rm -f "$tf"
+      printf '%s\0' "$d"
+      _hook_entries "$d" || return 1
+    fi
+    [[ $v == ':(optional)'* ]] || break
+    v="${v#:(optional)}"
+  done
+}
+
 # _git_protected_dirs <path> — print, NUL-terminated, the hooks dir, git dir,
 # common dir and .git entry of every repo whose worktree contains <path>, a
 # gitfile's gitdir: and a git dir's commondir as spelled, and the config
 # files and include targets git reads there, as git spells them (see
-# _git_config_files); then the global core.hooksPath when it is absolute,
+# _git_config_files), and every core.hooksPath value git reads there, read raw
+# so a `:(optional)` one counts (see _hooks_path_dirs); then every global
+# core.hooksPath value that is absolute or `~`-relative,
 # the global and system config files and include targets, and the global
 # config candidates git reads when present, since a grant could create a
 # missing one. A grant overlapping any of these is a grant on some repo's
@@ -162,7 +191,7 @@ _hook_entries() {
 # caller's repo-location, GIT_CONFIG and -c env overrides are dropped so the
 # answer comes from the human's own config. Fails closed, printing why.
 _git_protected_dirs() {
-  local a="$1" out gd rc
+  local a="$1" out gd rc tf
   local -a lines
   while :; do
     if [ -e "$a/.git" ] || [ -L "$a/.git" ]; then
@@ -208,30 +237,55 @@ _git_protected_dirs() {
         printf '%s\0' "$out"
       fi
       _git_config_files "$a" || return 1
+      tf=$(mktemp) || return 1
+      rc=0
+      env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+        git -C "$a" config -z --get-all core.hooksPath >"$tf" || rc=$?
+      # exit 1: core.hooksPath is unset
+      if [ "$rc" -gt 1 ]; then
+        rm -f "$tf"
+        printf >&2 'dispatch: git cannot read core.hooksPath of %s; refusing the grant\n' "$a"
+        return 1
+      fi
+      rc=0
+      while IFS= read -r -d '' out; do
+        _hooks_path_dirs "$a" "$out" || {
+          rc=1
+          break
+        }
+      done <"$tf"
+      rm -f "$tf"
+      if [ "$rc" -ne 0 ]; then
+        printf >&2 'dispatch: cannot resolve core.hooksPath of %s; refusing the grant\n' "$a"
+        return 1
+      fi
     fi
     [ "$a" != / ] || break
     a="${a%/*}"
     a="${a:-/}"
   done
+  tf=$(mktemp) || return 1
   rc=0
-  out="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
-    git -C / config --path --get core.hooksPath && printf x)" || rc=$?
-  case $rc in
-  0)
-    out="${out%x}"
-    out="${out%$'\n'}"
-    if [[ $out == /* ]]; then
-      printf '%s\0' "$out"
-      _hook_entries "$out" || return 1
-    fi
-    ;;
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+    git -C / config -z --get-all core.hooksPath >"$tf" || rc=$?
   # exit 1: core.hooksPath is unset
-  1) ;;
-  *)
+  if [ "$rc" -gt 1 ]; then
+    rm -f "$tf"
     printf >&2 'dispatch: git cannot read the global core.hooksPath; refusing the grant\n'
     return 1
-    ;;
-  esac
+  fi
+  rc=0
+  while IFS= read -r -d '' out; do
+    _hooks_path_dirs "" "$out" || {
+      rc=1
+      break
+    }
+  done <"$tf"
+  rm -f "$tf"
+  if [ "$rc" -ne 0 ]; then
+    printf >&2 'dispatch: git cannot read the global core.hooksPath; refusing the grant\n'
+    return 1
+  fi
   _git_config_files / || return 1
   if [ -n "${GIT_CONFIG_GLOBAL:-}" ]; then
     [[ $GIT_CONFIG_GLOBAL != /* ]] || printf '%s\0' "$GIT_CONFIG_GLOBAL"
@@ -301,7 +355,8 @@ _hard_link_in() {
 # A later check also refuses a grant containing a .git or .claude entry, then
 # one equal to, inside or above the hooks dir, git dir or common dir of any
 # repo whose worktree contains it, a config file or include target git reads
-# for it, or an absolute global core.hooksPath (see _git_protected_dirs).
+# for it, or any configured core.hooksPath value, `:(optional)` forms
+# included (see _git_protected_dirs).
 # Every symlink inside the grant is resolved too, and one whose target lies
 # outside the grant and contains a hop of, or lies inside, any protected
 # chain is refused: git reports those dirs resolved, so whichever file

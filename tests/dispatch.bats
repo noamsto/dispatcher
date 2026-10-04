@@ -11567,6 +11567,49 @@ STUBEOF
   [[ "$output" == *"cannot list the config includes"* ]]
 }
 
+@test "add-dir: an :(optional) core.hooksPath naming a missing dir is refused, per repo and globally" {
+  . "$GRANT_CHECK_LIB"
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  HOME="$T/home"
+  mkdir -p "$HOME"
+  crew_dir="$T/crew"
+  export DISPATCH_GRANT_ROOTS="$T/roots"
+  export GIT_CONFIG_NOSYSTEM=1
+  : >"$T/gc"
+  export GIT_CONFIG_GLOBAL="$T/gc"
+
+  git init -q "$T/roots/r"
+  git -C "$T/roots/r" config core.hooksPath ":(optional)$T/roots/r/docs/hk"
+  mkdir -p "$T/roots/r/docs" "$T/roots/r/src"
+
+  run _add_dir_ok "$T/roots/r/docs"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+
+  run _add_dir_ok "$T/roots/r/src"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/r/src" ]
+
+  git init -q "$T/roots/r2"
+  git -C "$T/roots/r2" config core.hooksPath ':(optional)tools/hk'
+  mkdir -p "$T/roots/r2/tools"
+
+  run _add_dir_ok "$T/roots/r2/tools"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+
+  git config --file "$T/gc" core.hooksPath ":(optional)$T/roots/g/hk"
+  mkdir -p "$T/roots/g" "$T/roots/other"
+
+  run _add_dir_ok "$T/roots/g"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlaps git hooks, git dir or config file"* ]]
+
+  run _add_dir_ok "$T/roots/other"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$T/roots/other" ]
+}
+
 @test "add-dir: a stowed global gitconfig link is refused, its sibling allowed" {
   . "$GRANT_CHECK_LIB"
   T="$(realpath "$BATS_TEST_TMPDIR")"
