@@ -743,3 +743,120 @@ write_anchor() {
   [ "$status" -eq 0 ]
   [[ $output == *refs/heads/main* ]]
 }
+
+@test "guard refuses a planted url insteadOf rewrite, never printing the credential (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config url.https://evil.example/.insteadOf https://tok-secret@github.com/
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *url.https://evil.example/.insteadof* ]]
+  [[ $stderr == *"(from $COMMON/config)"* ]]
+  [[ $stderr != *tok-secret* ]]
+}
+
+@test "guard refuses a planted http.proxy, never printing the credential (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config http.proxy http://tok-secret@evil.example:1
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *http.proxy* ]]
+  [[ $stderr != *tok-secret* ]]
+}
+
+@test "guard names an exec key verbatim whose subsection looks like a URL (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config 'diff.x://attacker.example@y.textconv' cat
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *diff.x://attacker.example@y.textconv* ]]
+}
+
+@test "guard hints restoring a redirect key whose value was replaced (#678)" {
+  git config remote.origin.url https://x.example/r.git
+  _wt_cfg_baseline_init "$COMMON"
+  git config remote.origin.url https://evil.example/r.git
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"restore the baselined value or remove it: edit $COMMON/config"* ]]
+  [[ $stderr != *"--unset-all remote.origin.url"* ]]
+}
+
+@test "a pre-redirect baseline migrates once, records the marker and then guards redirects (#678)" {
+  local -a recs
+  local rec found=0
+  git config remote.origin.url https://tok-secret@x.example/r.git
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  _wt_cfg_guard "$COMMON"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *remote.origin.url* ]]
+  [[ $stderr != *tok-secret* ]]
+  [[ $stderr != *'#covers'* ]]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nredirect' ]] && found=1
+  done
+  [ "$found" -eq 1 ]
+  _wt_cfg_guard "$COMMON"
+  cp "$BASELINE" "$BATS_TEST_TMPDIR/first"
+  _wt_cfg_baseline_init "$COMMON"
+  cmp "$BASELINE" "$BATS_TEST_TMPDIR/first"
+  git config remote.origin.url https://evil.example/r.git
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remote.origin.url* ]]
+}
+
+@test "a marker-less baseline guards exec keys only until migration records the redirect keys (#678)" {
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  git config http.proxy http://evil.example:1
+  _wt_cfg_guard "$COMMON"
+  _wt_cfg_baseline_init "$COMMON"
+  _wt_cfg_guard "$COMMON"
+}
+
+@test "_wt_cfg_pairs lists redirecting keys in canonical form (#678)" {
+  git config url.X.insteadOf a
+  git config url.X.pushInsteadOf b
+  git config remote.o.url u
+  git config remote.o.pushurl pu
+  git config remote.o.proxy rp
+  git config http.proxy hp
+  git config 'http.https://h/.proxy' sp
+  git config http.sslVerify false
+  git config http.sslCAInfo /c
+  git config http.sslCAPath /p
+  git config http.curloptResolve h:443:1.2.3.4
+  git config fetch.bundleURI https://b/
+  local out
+  out="$(pairs "$COMMON")"
+  grep -Fx 'url.X.insteadof=a' <<<"$out"
+  grep -Fx 'url.X.pushinsteadof=b' <<<"$out"
+  grep -Fx 'remote.o.url=u' <<<"$out"
+  grep -Fx 'remote.o.pushurl=pu' <<<"$out"
+  grep -Fx 'remote.o.proxy=rp' <<<"$out"
+  grep -Fx 'http.proxy=hp' <<<"$out"
+  grep -Fx 'http.https://h/.proxy=sp' <<<"$out"
+  grep -Fx 'http.sslverify=false' <<<"$out"
+  grep -Fx 'http.sslcainfo=/c' <<<"$out"
+  grep -Fx 'http.sslcapath=/p' <<<"$out"
+  grep -Fx 'http.curloptresolve=h:443:1.2.3.4' <<<"$out"
+  grep -Fx 'fetch.bundleuri=https://b/' <<<"$out"
+}
+
+@test "a fresh baseline records the redirect marker without printing it (#678)" {
+  local -a recs
+  local rec found=0
+  git config filter.x.clean cat
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *filter.x.clean* ]]
+  [[ $stderr != *'#covers'* ]]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nredirect' ]] && found=1
+  done
+  [ "$found" -eq 1 ]
+}

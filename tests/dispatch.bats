@@ -426,6 +426,20 @@ EOF
   run ! grep -q '^base:' "$wt_path/WORKER_TASK.md"
 }
 
+@test "dispatch after upgrade: a pre-#678 baseline with origin configured migrates instead of refusing (#678)" {
+  local -a recs
+  stub_launch_bins
+  stub_gh_claim "" ""
+  mkdir -p "$TEST_REPO/.git/crew"
+  : >"$TEST_REPO/.git/crew/git-config-baseline"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "post-upgrade dispatch"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$TEST_REPO/.git/crew/git-config-baseline"
+  [ "${#recs[@]}" -eq 2 ]
+  [ "${recs[0]}" = $'#covers\nredirect' ]
+  [ "${recs[1]}" = "remote.origin.url"$'\n'"$TEST_REPO/origin.git" ]
+}
+
 # The separator's real job: stop option parsing before a flag-shaped FIRST
 # title word. The quoted-title test above would stay green if the `--` arm
 # kept `shift` but dropped `break` — it only proves the literal `--` token is
@@ -6096,6 +6110,7 @@ EOF
   # The label now exists (stub), no branch was created, and the leftover row's
   # pid is dead — a stale claim to re-claim, not a live claimant.
   stub_launch_bins
+  seed_git_baseline
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]

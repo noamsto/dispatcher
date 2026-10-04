@@ -646,7 +646,14 @@ branch instead; the worktree carries over under `resume: true`.
   `credential.helper`, `filter.<d>.clean/smudge/process`,
   `hook.<name>.command`, `include.path`/`includeIf.*.path`, … — the full list
   is `_wt_exec_keys` in `worktree-git.sh`) would run in the dispatcher's
-  shell: the laundering case above. Defense: `dispatch`, `dispatch resume`
+  shell: the laundering case above. A key redirecting where git connects or
+  what it trusts (`url.*.insteadOf`/`pushInsteadOf`,
+  `remote.*.url`/`pushurl`/`proxy`, `http[.<url>].proxy`, `sslVerify`,
+  `sslCAInfo`/`sslCAPath`, `curloptResolve`, `fetch.bundleURI` —
+  `_wt_redirect_keys`) would send
+  the dispatcher's anchored `git fetch`/`ls-remote`, with the operator's
+  credential-helper token, to a worker-chosen endpoint, and hand a default
+  create a tip from there. Defense: `dispatch`, `dispatch resume`
   and `crew reap` diff those keys' local/worktree-scope config (includes
   resolved; the call's git dir and the caller's own) against a baseline at
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
@@ -697,7 +704,10 @@ branch instead; the worktree carries over under `resume: true`.
   as modified, so reap keeps the worktree. Relay a refusal to the human
   verbatim; never run its printed `--unset-all` or clear it yourself — only
   the human clears it: they inspect drift (`crew git-baseline`), remove keys
-  they did not set (`git config --unset-all`), then run `crew git-baseline
+  they did not set (`git config --unset-all`) — a redirect key (e.g.
+  `remote.origin.url`, whose value may have been replaced) is restored to its
+  baselined value or removed by editing the named config file, never unset
+  (an added one like `url.<evil>.insteadOf` has no baselined value) — then run `crew git-baseline
   --accept` in their own terminal, which merges exactly the pairs it showed
   after a typed `yes`. The tty + `yes` check is a procedural gate against
   accidental or agent-initiated accepts, not an unbypassable boundary — never
@@ -707,14 +717,31 @@ branch instead; the worktree carries over under `resume: true`.
   Trust-on-first-use: only a `dispatch` records the baseline unasked, as the
   union over the main checkout and every linked worktree's context — resume
   and reap never do, and `crew git-baseline` writes only on the human's
-  `--accept`. Residual: no protection for the human's own interactive git
+  `--accept`. Migration: a baseline recorded before redirect keys were covered
+  (#678) lacks the `#covers` marker record; until the marker is written the
+  guard checks
+  program keys only, and the next `dispatch` entry records the redirect keys
+  present at that moment (TOFU again, before any fetch) — so an existing
+  `remote.origin.url` never refuses; `crew git-baseline --accept` also writes
+  the marker. A legitimate change of origin's URL, a proxy, or a local
+  `insteadOf` alias then refuses like any drift until the human accepts it
+  (global-scope `insteadOf` aliases are unchecked, as all global config).
+  Residual: no protection for the human's own interactive git
   between dispatcher runs (the refusal is the warning); `--global`/system
   config is unchecked (its scope is named in the call text, and nix store
   paths there churn every rebuild); a key planted before the baseline existed
   is trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
-  config, not the program; `<git-common-dir>/info/attributes` still selects
+  config, not the program; refusals name the key and its file, never the
+  value — but a `url.<base>.insteadOf` key embeds its URL, so a token in that
+  base is printed in refusals and in dispatch's baseline-recorded note;
+  `crew git-baseline` prints raw values verbatim, which may include credentials
+  (a remote URL's userinfo token, a proxy password, a `credential.helper`
+  argument), so the human runs it in their own terminal, never the dispatcher;
+  gh-based repo
+  resolution reads `remote.origin.url` outside the guard;
+  `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
   names its path, but one the human wrote can select a relative driver whose
   script the worker rewrites); a cwd with no dispatcher record on any ancestor
