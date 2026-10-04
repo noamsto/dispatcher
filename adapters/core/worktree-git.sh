@@ -8,8 +8,9 @@
 #
 # The anchored git still reads the COMMON config, which a worker can also
 # write (`git config filter.x.clean …`). _wt_git therefore refuses when an
-# exec-capable (key,value) pair has drifted from a baseline recorded while
-# the repo was still trusted (#557). The anchored git also reads no in-tree
+# exec-capable or redirecting (`url.*.insteadOf`, `http.proxy`, #678)
+# (key,value) pair has drifted from a baseline recorded while the repo was
+# still trusted (#557). The anchored git also reads no in-tree
 # .gitattributes and ignores core.attributesFile, so a baselined driver whose
 # program is a worktree-relative path the worker rewrote never runs (#578).
 #
@@ -47,15 +48,33 @@ _wt_exec_keys=(
   'tar.*.command' 'sendemail.smtpserver' 'sendemail.*cmd'
   'lfs.customtransfer.*.path' 'lfs.extension.*.clean' 'lfs.extension.*.smudge'
 )
-_wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair exec-capable
+# Config keys that choose which endpoint git talks to, or whether it trusts it
+# (#678). Same format as _wt_exec_keys.
+_wt_redirect_keys=(
+  'url.*.insteadof' 'url.*.pushinsteadof'
+  'remote.*.url' 'remote.*.pushurl' 'remote.*.proxy'
+  'http.proxy' 'http.*.proxy'
+  'http.sslverify' 'http.*.sslverify'
+  'http.sslcainfo' 'http.*.sslcainfo' 'http.sslcapath' 'http.*.sslcapath'
+  'http.curloptresolve' 'http.*.curloptresolve'
+  'fetch.bundleuri'
+)
+# A baseline record saying the baseline covers _wt_redirect_keys: without it the
+# baseline predates #678. No config key can start with `#`.
+_wt_cfg_redirect_mark=$'#covers\nredirect'
+_wt_cfg_match() { # <table-name> <key> <value> — status 0 when the table names the pair
+  local -n _wt_tbl="$1"
   local entry
-  for entry in "${_wt_exec_keys[@]}"; do
+  for entry in "${_wt_tbl[@]}"; do
     # shellcheck disable=SC2053 # the table holds globs, matched unquoted
-    if [[ $1 == ${entry%% *} ]] && { [[ $entry != *' '* ]] || [[ $2 == ${entry#* } ]]; }; then
+    if [[ $2 == ${entry%% *} ]] && { [[ $entry != *' '* ]] || [[ $3 == ${entry#* } ]]; }; then
       return 0
     fi
   done
   return 1
+}
+_wt_cfg_guarded() { # <key> <value> — status 0 when the baseline guards the pair
+  _wt_cfg_match _wt_exec_keys "$1" "$2" || _wt_cfg_match _wt_redirect_keys "$1" "$2"
 }
 # git-hooks.nix spells the shared core.hooksPath `.git/hooks` from the main
 # checkout and `<common>/hooks` from a linked worktree (#628). Only that exact
@@ -63,16 +82,18 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
 # <common>: any other spelling (`.husky`, `./.git/hooks`) may name a
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
-# from a cwd _wt_cfg_guard_cwd asks git's own `--git-path hooks` whether the
-# spellings resolve to one dir. Any core.worktree turns the equivalence off:
-# work-tree commands resolve the value there, which rev-parse does not show.
-# Admin-dir contexts pin core.hooksPath=/dev/null (_wt_neutral_cfg).
+# _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry, reap's
+# window-kill gate and the `wt` gates, which cannot take --git-dir — asks git's own
+# `--git-path hooks` whether the spellings resolve to one dir. Any
+# core.worktree turns the equivalence off: work-tree commands resolve the value
+# there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
+# pin core.hooksPath=/dev/null (_wt_neutral_cfg) and resolve nothing from a cwd.
 _wt_cfg_canon() { # <R> <rec> <var> — set <var> to <rec>, the exact relative `.git/hooks` core.hookspath made `<R>/hooks`
   printf -v "$3" '%s' "$2"
   [[ $2 == core.hookspath$'\n'.git/hooks && -n $1 ]] || return 0
   printf -v "$3" 'core.hookspath\n%s/hooks' "$1"
 }
-_wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktree pairs
+_wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` guarded local/worktree pairs
   local -a recs
   local i scope key value
   # Listing config never runs a configured program.
@@ -85,7 +106,7 @@ _wt_cfg_pairs() { # <git-dir> -> sorted `key\nvalue\0` exec-capable local/worktr
     key="${recs[i + 1]%%$'\n'*}"
     value="${recs[i + 1]#"$key"}"
     value="${value#$'\n'}"
-    if _wt_cfg_exec "$key" "$value"; then printf '%s\n%s\0' "$key" "$value"; fi
+    if _wt_cfg_guarded "$key" "$value"; then printf '%s\n%s\0' "$key" "$value"; fi
   done | LC_ALL=C sort -z -u
 }
 _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admin dir
@@ -102,30 +123,59 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
   ((${#pairs[@]})) || return 0
   printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
-_wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite
-  local common="$1" file tmp rec keys=
-  local -a recs
+_wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
+  local what="$1" rec keys=
+  shift
+  for rec in "$@"; do
+    [ "$rec" != "$_wt_cfg_redirect_mark" ] || continue
+    rec="${rec%%$'\n'*}"
+    [[ ", $keys, " == *", $rec, "* ]] || keys="${keys:+$keys, }$rec"
+  done
+  # Keys only: a credential.helper value may carry a token.
+  [ -n "$keys" ] || return 0
+  echo "git-config baseline: recorded $what: $keys" >&2
+}
+_wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite, only add the redirect class (#678)
+  local common="$1" file tmp rec key value
+  local -a recs union add=()
   file="$common/crew/git-config-baseline"
-  if [ -e "$file" ] || [ -L "$file" ]; then
+  if [ -L "$file" ]; then
+    return 0
+  fi
+  if [ -e "$file" ]; then
+    [ -f "$file" ] || return 0
+    mapfile -d '' recs <"$file" || return 1
+    for rec in "${recs[@]}"; do
+      [ "$rec" != "$_wt_cfg_redirect_mark" ] || return 0
+    done
+    # TOFU, as at creation — but never exec-class pairs, which would launder drift.
+    mapfile -d '' union < <(_wt_cfg_union "$common")
+    wait $! || return 1
+    for rec in "${union[@]}"; do
+      key="${rec%%$'\n'*}"
+      value="${rec#"$key"}"
+      value="${value#$'\n'}"
+      if _wt_cfg_match _wt_redirect_keys "$key" "$value"; then add+=("$rec"); fi
+    done
+    tmp="$(mktemp "$file.XXXXXX")" || return 1
+    if ! printf '%s\0' "${recs[@]}" "${add[@]}" "$_wt_cfg_redirect_mark" | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+    _wt_cfg_note_keys "redirect keys in $file" "${add[@]}"
     return 0
   fi
   mkdir -p -- "$common/crew" || return 1
   tmp="$(mktemp "$file.XXXXXX")" || return 1
-  if ! _wt_cfg_union "$common" >"$tmp" || ! mv -f -- "$tmp" "$file"; then
+  if ! { _wt_cfg_union "$common" && printf '%s\0' "$_wt_cfg_redirect_mark"; } | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
     rm -f -- "$tmp"
     return 1
   fi
   mapfile -d '' recs <"$file"
-  ((${#recs[@]})) || return 0
-  # Keys only: a credential.helper value may carry a token.
-  for rec in "${recs[@]}"; do
-    rec="${rec%%$'\n'*}"
-    [[ ", $keys, " == *", $rec, "* ]] || keys="${keys:+$keys, }$rec"
-  done
-  echo "git-config baseline: recorded $file: $keys" >&2
+  _wt_cfg_note_keys "$file" "${recs[@]}"
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key origin found i R canon
+  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon redirect=
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -137,6 +187,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
     [ -n "$rec" ] || continue
+    [ "$rec" != "$_wt_cfg_redirect_mark" ] || redirect=1
     _wt_cfg_canon "$R" "$rec" canon
     base["$canon"]=1
   done
@@ -149,6 +200,12 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     _wt_cfg_canon "$R" "$rec" canon
     [ -z "${base["$canon"]+x}" ] || continue
     key="${rec%%$'\n'*}"
+    # A pre-#678 baseline guards the exec class only until dispatch's init migrates it.
+    if [ -z "$redirect" ]; then
+      value="${rec#"$key"}"
+      value="${value#$'\n'}"
+      ! _wt_cfg_match _wt_redirect_keys "$key" "$value" || continue
+    fi
     [ -n "${seen["$key"]+x}" ] || drift+=("$key")
     seen["$key"]=1
     bad["$rec"]=1
@@ -166,7 +223,12 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
       [[ " $found " != *" $origin "* ]] || continue
       found+=" $origin"
       printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$key" "$origin" "$file" >&2
-      printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
+      # Unsetting a replaced remote.origin.url would delete origin.
+      if _wt_cfg_match _wt_redirect_keys "$key" "${rec#"$key"$'\n'}"; then
+        printf '  restore the baselined value or remove it: edit %q\n' "$origin" >&2
+      else
+        printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
+      fi
     done
     [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
   done
@@ -274,6 +336,63 @@ _wt_neutral() { # <git-dir> <cmd…> — run a tool that spawns its own git (wt)
     n=$((n + 1))
   done
   env GIT_ATTR_SOURCE="$empty" GIT_CONFIG_COUNT="$n" "${kv_env[@]}" "$@"
+}
+# Anchor, don't discover (#633): --git-dir=<common> reads no cwd's `.git`, so a
+# worker-swapped or standalone one is never consulted. A builder, not a runner,
+# so a caller can background git itself and keep its pid.
+_wt_common_argv() { # <common> <array-var>
+  local -n _wt_argv="$2"
+  local kv
+  _wt_argv=(git --git-dir="$1")
+  for kv in "${_wt_neutral_cfg[@]}" gc.auto=0 maintenance.auto=false; do _wt_argv+=(-c "$kv"); done
+}
+_wt_git_common() { # <common> <git args…> — guard <common>, then git anchored on it
+  local common="$1"
+  local -a argv
+  shift
+  _wt_cfg_guard "$common" || return 1
+  _wt_common_argv "$common" argv
+  "${argv[@]}" "$@"
+}
+# Path-keyed on the dispatcher record of the cwd's own ancestor, so there is no
+# check-then-use gap: swapping `.git` cannot hide the worktree (#633). Moving or
+# renaming the worktree can — a documented residual.
+_wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <common>'s main checkout
+  local common="$1" d rec line primary=
+  local -a lines wl
+  d="$(pwd -P)" || return 1
+  while :; do
+    rec="$(_worktree_anchor_path "$d")"
+    [ ! -e "$rec" ] && [ ! -L "$rec" ] || break
+    [ "$d" != / ] || return 0
+    d="$(dirname -- "$d")"
+  done
+  if [ -L "$rec" ] || [ ! -f "$rec" ]; then
+    printf 'refusing git: the dispatcher record for %q is not a regular file: %q\n' "$d" "$rec" >&2
+    return 1
+  fi
+  mapfile -t lines <"$rec"
+  if [ "${lines[1]:-}" != "$(realpath -m -- "$common/crew")" ]; then
+    printf 'refusing git: %q is inside the worker worktree %q, whose git resolves to %q, not the recorded %q — its .git no longer matches its dispatcher record (possible tampering): stop and tell the human\n' \
+      "$(pwd -P)" "$d" "$common" "${lines[1]%/crew}" >&2
+    return 1
+  fi
+  mapfile -t wl < <(git --git-dir="$common" worktree list --porcelain)
+  for line in "${wl[@]}"; do
+    [ -n "$line" ] || break
+    case $line in
+    'worktree '*) primary="${line#worktree }" ;;
+    bare)
+      primary=
+      break
+      ;;
+    esac
+  done
+  # A separate-git-dir layout reports the git dir itself as the main worktree.
+  if [ -z "$primary" ] || [ "$(realpath -m -- "$primary")" = "$(realpath -m -- "$common")" ] || ! cd -- "$primary"; then
+    printf 'refusing git: %q is a worker worktree and %q has no main checkout to run from — run from a directory outside any worker worktree\n' "$d" "$common" >&2
+    return 1
+  fi
 }
 _wt_git() { # <admin-dir> <worktree> <git args…>
   local admin="$1" wt="$2" empty kv

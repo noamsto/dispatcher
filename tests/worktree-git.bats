@@ -614,3 +614,249 @@ guard_cwd_refuses() {
   [ "$status" -eq 1 ]
   [[ $stderr == *"empty tree"* ]]
 }
+
+# add_origin — a bare origin holding main, as COMMON's `origin`; the pushed
+# tracking ref is dropped so a fetch has something to create (#633).
+add_origin() {
+  ORIGIN="$BATS_TEST_TMPDIR/origin.git"
+  git init -q --bare "$ORIGIN"
+  git remote add origin "$ORIGIN"
+  git push -q origin main
+  git update-ref -d refs/remotes/origin/main
+}
+
+# fake_standalone_git <wt> — replace <wt>/.git with a standalone repo whose
+# reference-transaction hook touches $SENTINEL and whose origin is $ORIGIN,
+# with a branch `x` (#633).
+fake_standalone_git() {
+  local fake="$BATS_TEST_TMPDIR/fake"
+  git init -q "$fake"
+  git -C "$fake" config remote.origin.url "$ORIGIN"
+  git -C "$fake" -c user.email=f@example.com -c user.name=f commit -q --allow-empty -m fake
+  git -C "$fake" branch x
+  printf '#!/bin/sh\ntouch %q\n' "$SENTINEL" >"$fake/.git/hooks/reference-transaction"
+  chmod +x "$fake/.git/hooks/reference-transaction"
+  rm "$1/.git"
+  mv "$fake/.git" "$1/.git"
+}
+
+# write_anchor <wt> <common> <admin> — the 4-line dispatcher record for <wt> (#633).
+write_anchor() {
+  local rec
+  rec="$(_worktree_anchor_path "$1")"
+  mkdir -p -- "$(dirname -- "$rec")"
+  printf '%s\n%s\n%s\n%s\n' "$(realpath -e -- "$1")" "$(realpath -m -- "$2/crew")" branch "$(realpath -e -- "$3")" >"$rec"
+}
+
+@test "_wt_git_common fetch never runs a standalone .git's hook from that cwd (#633)" {
+  add_origin
+  add_worktree w
+  fake_standalone_git "$WT"
+  _wt_cfg_baseline_init "$COMMON"
+  cd "$WT"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 0 ]
+  [ ! -e "$SENTINEL" ]
+  git --git-dir="$COMMON" rev-parse refs/remotes/origin/main
+  # Control: plain discovery from the same cwd does run the fake's hook.
+  git fetch -q origin +refs/heads/main:refs/remotes/origin/main
+  [ -e "$SENTINEL" ]
+}
+
+@test "_wt_git_common branch -D deletes in the common dir, not a standalone .git (#633)" {
+  add_origin
+  add_worktree w
+  fake_standalone_git "$WT"
+  git branch x
+  _wt_cfg_baseline_init "$COMMON"
+  cd "$WT"
+  run --separate-stderr _wt_git_common "$COMMON" branch -D x
+  [ "$status" -eq 0 ]
+  [ ! -e "$SENTINEL" ]
+  run ! git --git-dir="$COMMON" show-ref --verify --quiet refs/heads/x
+  git show-ref --verify --quiet refs/heads/x
+}
+
+@test "_wt_git_common refuses on drift (#633)" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.fsmonitor "$HIT"
+  run --separate-stderr _wt_git_common "$COMMON" fetch origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *core.fsmonitor* ]]
+  [ ! -e "$SENTINEL" ]
+  run ! git rev-parse --verify --quiet refs/remotes/origin/main
+}
+
+@test "_wt_trusted_cwd stays outside a recorded worktree (#633)" {
+  local before="$PWD"
+  _wt_trusted_cwd "$COMMON"
+  [ "$PWD" = "$before" ]
+}
+
+@test "_wt_trusted_cwd leaves a recorded worktree, even from a subdir (#633)" {
+  add_worktree w
+  write_anchor "$WT" "$COMMON" "$ADMIN"
+  mkdir "$WT/sub"
+  cd "$WT/sub"
+  _wt_trusted_cwd "$COMMON"
+  [ "$(pwd -P)" = "$(realpath -e "$TEST_REPO")" ]
+}
+
+@test "_wt_trusted_cwd refuses a recorded worktree whose git resolves elsewhere (#633)" {
+  local rc=0 before other="$BATS_TEST_TMPDIR/other"
+  add_worktree w
+  write_anchor "$WT" "$COMMON" "$ADMIN"
+  git init -q "$other"
+  cd "$WT"
+  before="$PWD"
+  _wt_trusted_cwd "$other/.git" 2>"$BATS_TEST_TMPDIR/err" || rc=$?
+  [ "$rc" -eq 1 ]
+  [[ $(<"$BATS_TEST_TMPDIR/err") == *"inside the worker worktree"* ]]
+  [ "$PWD" = "$before" ]
+}
+
+@test "_wt_trusted_cwd refuses when the main checkout is bare (#633)" {
+  local rc=0 before bare="$BATS_TEST_TMPDIR/bare.git" bwt="$BATS_TEST_TMPDIR/bwt" badmin
+  git init -q --bare "$bare"
+  git --git-dir="$bare" worktree add -q --orphan -b o "$bwt"
+  badmin="$(_wt_admin_dir "$bare" "$bwt")"
+  write_anchor "$bwt" "$bare" "$badmin"
+  cd "$bwt"
+  before="$PWD"
+  _wt_trusted_cwd "$bare" 2>"$BATS_TEST_TMPDIR/err" || rc=$?
+  [ "$rc" -eq 1 ]
+  [[ $(<"$BATS_TEST_TMPDIR/err") == *"no main checkout"* ]]
+  [ "$PWD" = "$before" ]
+}
+
+@test "_wt_common_argv ls-remote never reads a standalone .git's config from that cwd (#633)" {
+  local -a a
+  add_origin
+  add_worktree w
+  fake_standalone_git "$WT"
+  git -C "$WT" config remote.origin.url /nonexistent
+  cd "$WT"
+  _wt_common_argv "$COMMON" a
+  [[ " ${a[*]} " == *" gc.auto=0 "* ]]
+  run --separate-stderr "${a[@]}" ls-remote --heads origin
+  [ "$status" -eq 0 ]
+  [[ $output == *refs/heads/main* ]]
+}
+
+@test "guard refuses a planted url insteadOf rewrite, never printing the credential (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config url.https://evil.example/.insteadOf https://tok-secret@github.com/
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *url.https://evil.example/.insteadof* ]]
+  [[ $stderr == *"(from $COMMON/config)"* ]]
+  [[ $stderr != *tok-secret* ]]
+}
+
+@test "guard refuses a planted http.proxy, never printing the credential (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config http.proxy http://tok-secret@evil.example:1
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *http.proxy* ]]
+  [[ $stderr != *tok-secret* ]]
+}
+
+@test "guard names an exec key verbatim whose subsection looks like a URL (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config 'diff.x://attacker.example@y.textconv' cat
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *diff.x://attacker.example@y.textconv* ]]
+}
+
+@test "guard hints restoring a redirect key whose value was replaced (#678)" {
+  git config remote.origin.url https://x.example/r.git
+  _wt_cfg_baseline_init "$COMMON"
+  git config remote.origin.url https://evil.example/r.git
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"restore the baselined value or remove it: edit $COMMON/config"* ]]
+  [[ $stderr != *"--unset-all remote.origin.url"* ]]
+}
+
+@test "a pre-redirect baseline migrates once, records the marker and then guards redirects (#678)" {
+  local -a recs
+  local rec found=0
+  git config remote.origin.url https://tok-secret@x.example/r.git
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  _wt_cfg_guard "$COMMON"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *remote.origin.url* ]]
+  [[ $stderr != *tok-secret* ]]
+  [[ $stderr != *'#covers'* ]]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nredirect' ]] && found=1
+  done
+  [ "$found" -eq 1 ]
+  _wt_cfg_guard "$COMMON"
+  cp "$BASELINE" "$BATS_TEST_TMPDIR/first"
+  _wt_cfg_baseline_init "$COMMON"
+  cmp "$BASELINE" "$BATS_TEST_TMPDIR/first"
+  git config remote.origin.url https://evil.example/r.git
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remote.origin.url* ]]
+}
+
+@test "a marker-less baseline guards exec keys only until migration records the redirect keys (#678)" {
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  git config http.proxy http://evil.example:1
+  _wt_cfg_guard "$COMMON"
+  _wt_cfg_baseline_init "$COMMON"
+  _wt_cfg_guard "$COMMON"
+}
+
+@test "_wt_cfg_pairs lists redirecting keys in canonical form (#678)" {
+  git config url.X.insteadOf a
+  git config url.X.pushInsteadOf b
+  git config remote.o.url u
+  git config remote.o.pushurl pu
+  git config remote.o.proxy rp
+  git config http.proxy hp
+  git config 'http.https://h/.proxy' sp
+  git config http.sslVerify false
+  git config http.sslCAInfo /c
+  git config http.sslCAPath /p
+  git config http.curloptResolve h:443:1.2.3.4
+  git config fetch.bundleURI https://b/
+  local out
+  out="$(pairs "$COMMON")"
+  grep -Fx 'url.X.insteadof=a' <<<"$out"
+  grep -Fx 'url.X.pushinsteadof=b' <<<"$out"
+  grep -Fx 'remote.o.url=u' <<<"$out"
+  grep -Fx 'remote.o.pushurl=pu' <<<"$out"
+  grep -Fx 'remote.o.proxy=rp' <<<"$out"
+  grep -Fx 'http.proxy=hp' <<<"$out"
+  grep -Fx 'http.https://h/.proxy=sp' <<<"$out"
+  grep -Fx 'http.sslverify=false' <<<"$out"
+  grep -Fx 'http.sslcainfo=/c' <<<"$out"
+  grep -Fx 'http.sslcapath=/p' <<<"$out"
+  grep -Fx 'http.curloptresolve=h:443:1.2.3.4' <<<"$out"
+  grep -Fx 'fetch.bundleuri=https://b/' <<<"$out"
+}
+
+@test "a fresh baseline records the redirect marker without printing it (#678)" {
+  local -a recs
+  local rec found=0
+  git config filter.x.clean cat
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *filter.x.clean* ]]
+  [[ $stderr != *'#covers'* ]]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nredirect' ]] && found=1
+  done
+  [ "$found" -eq 1 ]
+}

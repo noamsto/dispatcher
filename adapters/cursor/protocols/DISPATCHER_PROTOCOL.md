@@ -651,20 +651,41 @@ branch instead; the worktree carries over under `resume: true`.
   `credential.helper`, `filter.<d>.clean/smudge/process`,
   `hook.<name>.command`, `include.path`/`includeIf.*.path`, … — the full list
   is `_wt_exec_keys` in `worktree-git.sh`) would run in the dispatcher's
-  shell: the laundering case above. Defense: `dispatch`, `dispatch resume`
+  shell: the laundering case above. A key redirecting where git connects or
+  what it trusts (`url.*.insteadOf`/`pushInsteadOf`,
+  `remote.*.url`/`pushurl`/`proxy`, `http[.<url>].proxy`, `sslVerify`,
+  `sslCAInfo`/`sslCAPath`, `curloptResolve`, `fetch.bundleURI` —
+  `_wt_redirect_keys`) would send
+  the dispatcher's anchored `git fetch`/`ls-remote`, with the operator's
+  credential-helper token, to a worker-chosen endpoint, and hand a default
+  create a tip from there. Defense: `dispatch`, `dispatch resume`
   and `crew reap` diff those keys' local/worktree-scope config (includes
   resolved; the call's git dir and the caller's own) against a baseline at
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`. Values compare literally, except that the exact
-  relative `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix
-  writes one from the main checkout, the other from a linked worktree). From a
-  cwd, that relative spelling against an absolute-only baseline passes only
-  where git itself resolves hooks to the resolved `<common>/hooks` (`git
-  rev-parse --git-path hooks`) and no `core.worktree` is set, so a dispatcher
-  run from a linked worktree refuses: set `core.hooksPath` to the absolute
-  `<common>/hooks`. Anchored calls — and, via
+  remove` and `git branch -D`. `dispatch` and `crew reap` first leave a
+  recorded worker worktree for the main checkout, and run `git
+  fetch`/`ls-remote`/`git branch -D` anchored — `--git-dir=<git-common-dir>`
+  plus the `-c` keys of `_wt_neutral_cfg` (these commands read no attributes)
+  — so no worker `.git`, standalone or swapped mid-run, is ever discovered by
+  them. They refuse instead of leaving when the record is not a regular file,
+  when the repo has no main checkout to move to (a bare or separate-git-dir
+  layout), or when the cwd's git does not resolve to the recorded crew dir:
+  that worktree's `.git` no longer matches its record, which is tampering
+  evidence — relay that refusal to the human verbatim, never just retry from
+  the main checkout. `dispatch resume` guards the record's common and admin
+  dirs, not the cwd. Values compare literally, except that the exact relative
+  `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix writes
+  one from the main checkout, the other from a linked worktree). From a cwd,
+  that relative spelling against an absolute-only baseline passes only where
+  git itself resolves hooks to the resolved `<common>/hooks` (`git rev-parse
+  --git-path hooks`) and no `core.worktree` is set; that cwd check runs only
+  from a trusted cwd — dispatch entry, before `wt switch`, and reap's
+  window-kill and `wt remove` gates — so a dispatcher run from a linked
+  worktree with no dispatcher record refuses the relative spelling (set
+  `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
+  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) — and, via
   `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
   `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
@@ -688,7 +709,10 @@ branch instead; the worktree carries over under `resume: true`.
   as modified, so reap keeps the worktree. Relay a refusal to the human
   verbatim; never run its printed `--unset-all` or clear it yourself — only
   the human clears it: they inspect drift (`crew git-baseline`), remove keys
-  they did not set (`git config --unset-all`), then run `crew git-baseline
+  they did not set (`git config --unset-all`) — a redirect key (e.g.
+  `remote.origin.url`, whose value may have been replaced) is restored to its
+  baselined value or removed by editing the named config file, never unset
+  (an added one like `url.<evil>.insteadOf` has no baselined value) — then run `crew git-baseline
   --accept` in their own terminal, which merges exactly the pairs it showed
   after a typed `yes`. The tty + `yes` check is a procedural gate against
   accidental or agent-initiated accepts, not an unbypassable boundary — never
@@ -698,22 +722,66 @@ branch instead; the worktree carries over under `resume: true`.
   Trust-on-first-use: only a `dispatch` records the baseline unasked, as the
   union over the main checkout and every linked worktree's context — resume
   and reap never do, and `crew git-baseline` writes only on the human's
-  `--accept`. Residual: no protection for the human's own interactive git
+  `--accept`. Migration: a baseline recorded before redirect keys were covered
+  (#678) lacks the `#covers` marker record; until the marker is written the
+  guard checks
+  program keys only, and the next `dispatch` entry records the redirect keys
+  present at that moment (TOFU again, before any fetch) — so an existing
+  `remote.origin.url` never refuses; `crew git-baseline --accept` also writes
+  the marker. A legitimate change of origin's URL, a proxy, or a local
+  `insteadOf` alias then refuses like any drift until the human accepts it
+  (global-scope `insteadOf` aliases are unchecked, as all global config).
+  Residual: no protection for the human's own interactive git
   between dispatcher runs (the refusal is the warning); `--global`/system
   config is unchecked (its scope is named in the call text, and nix store
   paths there churn every rebuild); a key planted before the baseline existed
   is trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
-  config, not the program; `<git-common-dir>/info/attributes` still selects
+  config, not the program; refusals name the key and its file, never the
+  value — but a `url.<base>.insteadOf` key embeds its URL, so a token in that
+  base is printed in refusals and in dispatch's baseline-recorded note;
+  `crew git-baseline` prints raw values verbatim, which may include credentials
+  (a remote URL's userinfo token, a proxy password, a `credential.helper`
+  argument), so the human runs it in their own terminal, never the dispatcher;
+  gh-based repo
+  resolution reads `remote.origin.url` outside the guard;
+  `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
   names its path, but one the human wrote can select a relative driver whose
-  script the worker rewrites); and
-  only a default create — `wt switch -c` off the freshly fetched
+  script the worker rewrites); a cwd with no dispatcher record on any ancestor
+  is trusted as the caller's own — a worktree dispatched before #518 or not by
+  `dispatch`, a recorded worktree its worker renamed or moved (records key on
+  the worktree's path), or a worker-writable directory outside its worktree
+  (reached e.g. through a worker-planted symlink) holding a standalone `.git`;
+  `dispatch resume`'s plumbing before its record check, and its `crew` bus
+  calls, discover through the cwd's `.git` (they run no program); `crew
+  reap`'s `wt remove` still runs worktrunk's own discovery git (`git status`)
+  inside the worker's worktree after reap's gitlink check, so a `.git` swapped
+  in that window is read with the neutral env only — its own config and
+  `info/attributes` can still select a filter (tracked as a follow-up;
+  anchoring the removal is the fix); and only a default create — `wt switch -c` off the freshly fetched
   default-branch tip, operator-trusted — still checks out with the new
   tree's own attributes and hooks, so a baselined relative smudge program or
   hook runs whatever that tree holds in the dispatcher's shell: keep driver
-  programs outside the repo tree (absolute paths).
+  programs outside the repo tree (absolute paths). A create (default or
+  `--base`) refuses when any worktree's HEAD already names the branch it is
+  about to create (necessarily an unborn HEAD, since the ref does not exist
+  yet), and refuses to launch unless the switch left exactly one worktree on
+  that branch, under an admin id that did not exist before the switch, with
+  the ref at the requested base (#640). Relay either refusal to the human
+  verbatim as possible tampering; never remove the named worktree, retry, or
+  re-dispatch under another title yourself. Residual (#680): the post-check
+  is detection against a worker racing the create, not a boundary. A HEAD
+  rewritten between `dispatch`'s worktree listing and worktrunk's own makes
+  the switch attach (for `--base` too), and on the default create
+  worktrunk's post-switch hooks (e.g. a devshell hook's `nix develop`) run in
+  that worker's tree before any refusal. A worker that adds or renames an
+  admin dir and binds it to a tree (a gitlink edit plus `git worktree
+  repair`), with the ref set to the base, any time from that listing until
+  the post-check — which spans worktrunk's own create and blocking hooks —
+  passes the post-check, so the launch can still land in the worker's own
+  tree.
 - **Review attach.** For reviewing an **existing GitHub PR N**, pass `--pr N` (not an issue number, not a title that would mint `feat/N-review-…`). `dispatch` resolves the PR's `headRefName`, `headRefOid`, and `baseRefName` in one `gh pr view` call and attaches with `wt switch` (**no** `-c`), then verifies the worktree's `HEAD` against `headRefOid` — `wt switch` attaches to an existing worktree without fetching or resetting it, so a stale local branch would otherwise slip through. A clean mismatch is fetched and hard-reset to the PR head; a dirty mismatch aborts before any worker launches. So the worktree's current branch **is, verifiably,** the PR head — lazytmux can stamp `@pr_number`, and the worker reads the real tree. Task header stamps `pr: N` and `base: <baseRefName>` (no `Closes #N` from the PR number) — the worker reads `base:` instead of assuming the default branch, which matters on a stacked PR. `--pr` cannot combine with a Linear id or GitHub issue token.
 - **Review mode.** Add `--review` (requires `--pr N`) for a review-only worker. It stamps `kind: review` and appends `REVIEW_TASK.md` — the durable review contract — to the task doc, and the launch prompt drops the push/PR mandate. Do **not** re-author that contract as per-worker prose: `--review` already says don't edit/commit/push/PR, that the worktree is the PR head, dispatch reviewers directly (never through a meta-agent), refute every finding, post one `COMMENT` review, approve only when nothing survives, never approve a draft, and report a tally. Your `DISPATCH_SPEC` carries only what is specific to *this* PR (what to look at, prior findings to re-verify). Questions you put there are answered in the worker's tally, not on the PR: frame each as "report in your tally: …", and never ask the worker to write context (bench evidence, sibling-PR composition) onto the PR. Tier still sizes the reviewer fan-out; a pi review worker above `trivial` fans out through the default `reviewer,refuter` grid (`REVIEW_TASK.md` "Role-grid path").
 - **Role grid.** `--grid`, passed explicitly, derives `plan-critic,reviewer`

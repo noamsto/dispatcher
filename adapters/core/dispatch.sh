@@ -243,6 +243,7 @@ _ensure_dispatched_label() {
 # Local branches are the caller's business, not checked here.
 _claim_evidence() {
   local issue="$1" out rc events="$crew_dir/events.jsonl" pid waited bound outf
+  local -a lsr
   # Bound the remote probe by wall clock (#321). Stock macOS ships no coreutils
   # `timeout`, so the old `timeout 20` guard simply vanished there and a stalled
   # origin could hang the dispatch forever. git's own `http.lowSpeed*` fails the
@@ -254,7 +255,7 @@ _claim_evidence() {
   # Read as evidence below, same as an unreachable origin (#557): ls-remote runs
   # sshCommand/credential helper, and _wt_cfg_guard already wrote its reason to
   # stderr.
-  if ! _wt_cfg_guard_cwd "${crew_dir%/crew}" >&2; then
+  if ! _wt_cfg_guard "${crew_dir%/crew}" >&2; then
     echo "git config drift"
     return 0
   fi
@@ -262,8 +263,9 @@ _claim_evidence() {
     echo "origin unreachable"
     return 0
   }
+  _wt_common_argv "${crew_dir%/crew}" lsr
   GIT_TERMINAL_PROMPT=0 \
-    git -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
+    "${lsr[@]}" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
     ls-remote --heads origin "refs/heads/feat/$issue-*" >"$outf" 2>/dev/null &
   pid=$!
   waited=0
@@ -682,18 +684,21 @@ _bus_append() {
 # repo. A bare positional would parse the name as a refspec
 # (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
 # fetch option (`--upload-pack=...`), so it must be a plain branch name and is
-# spelled as an explicit refspec. Never run it in a worker's worktree: fetch
-# honours that gitdir's config (#539), and refs/remotes are shared anyway.
+# spelled as an explicit refspec. Anchored on the common dir, so it runs the
+# same from any cwd and no worker's `.git` is consulted (#539, #633).
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
 }
 _fetch_origin_branch() {
   local name=$1
-  # fetch runs sshCommand/credential helper/reference-transaction hooks (#557).
-  _wt_cfg_guard_cwd "${crew_dir%/crew}" || return 1
   _plain_branch_name "$name" || return 1
-  git fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
+  _wt_git_common "${crew_dir%/crew}" fetch --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name"
+}
+
+# Must read stdin to EOF: an early exit closes the pipe, SIGPIPEs git and trips pipefail.
+_branch_wts() { # <branch> — porcelain on stdin -> every worktree whose HEAD names refs/heads/<branch>
+  awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
 }
 
 # Unconditional, unlike the advisory hint lib: without it dispatch must abort,
@@ -3518,6 +3523,13 @@ fi
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
 crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+# #633: git and wt never run from a worker's worktree. caller_pwd keeps the
+# checks that are about where the caller stood.
+caller_pwd="$PWD"
+if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
+  DISPATCH_SPEC="$caller_pwd/$DISPATCH_SPEC"
+fi
+_wt_trusted_cwd "${crew_dir%/crew}" || exit 1
 mkdir -p "$crew_dir"
 
 # Entry guard (#557): refuse a drifted config now, before `gh issue create`
@@ -3696,7 +3708,7 @@ fi
 # must never fail because cleanup of unrelated, already-merged work failed.
 # Any worker still booting on a branch this reap could otherwise mistake for
 # idle-done is protected by the claim write near `worker_id=` below.
-crew reap --quiet || true
+(cd "$caller_pwd" && crew reap --quiet) || true
 
 # A switch onto a tree a worker or PR author wrote (resume, --pr, a stacked
 # --base parent) runs with --no-hooks: the operator's hooks run in this shell,
@@ -3865,7 +3877,21 @@ trap 'rm -f "$dispatch_lock" "${claude_json_lock:-}"; [ -z "$ident_locked" ] || 
 # is deliberate: a worker that dies without posting anything holds the branch until
 # a human kills the window, which the refusal spells out and stall-watch resolves
 # on its own after 30 minutes.
-prev_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+wt_list="$(git worktree list --porcelain)"
+admin_before=
+admin_root="${crew_dir%/crew}/worktrees"
+[ ! -d "$admin_root" ] || admin_before="$(ls -A -- "$admin_root")"
+prev_wt="$(printf '%s\n' "$wt_list" | _branch_wts "$branch")"
+# `wt switch -c` attaches to a worktree already on the branch instead of creating
+# one, so a create that finds one holds an unborn-branch squatter (#640).
+if [ "$switch_mode" = create ] && [ -n "$prev_wt" ]; then
+  {
+    echo "dispatch: $branch does not exist yet, but a worktree's HEAD already names it (an unborn branch):"
+    printf '%s\n' "$prev_wt" | sed 's/^/  /'
+    echo "  a create would attach there instead of making a new worktree — possible tampering: stop and tell the human; removing it (git worktree remove) or re-dispatching under another title is their call."
+  } >&2
+  exit 1
+fi
 if [ -n "$prev_wt" ]; then
   occ=$(crew occupants "$prev_wt")
   if [ "$occ" != "[]" ]; then
@@ -3933,6 +3959,23 @@ create)
   else
     wt switch -c "$branch" -b "$create_base_oid" -y --config-set "$wt_post_switch"
   fi
+  # A HEAD rewritten after the listing still makes the switch attach, so verify it
+  # created the worktree and pin wt_path to it (#640). Admin ids survive a gitdir
+  # rewrite or `git worktree move`, paths don't; the ref must be the base we asked for.
+  wt_path="$(git worktree list --porcelain | _branch_wts "$branch")"
+  new_admin=
+  if [ -n "$wt_path" ] && [[ $wt_path != *$'\n'* ]]; then
+    new_admin="$(_wt_admin_dir "${crew_dir%/crew}" "$wt_path")" || new_admin=
+  fi
+  if [ -z "$new_admin" ] || grep -qxF -- "${new_admin##*/}" <<<"$admin_before" ||
+    [ "$(git rev-parse --verify -q "refs/heads/$branch" || true)" != "$create_base_oid" ]; then
+    {
+      echo "dispatch: wt switch -c did not create a new worktree for $branch at $create_base_short — a worktree's HEAD or the branch ref was tampered with mid-dispatch; refusing to launch there. Holding it:"
+      printf '%s\n' "${wt_path:-(none)}" | sed 's/^/  /'
+      echo "  possible tampering: stop and tell the human; do not remove it, retry, or re-dispatch under another title yourself."
+    } >&2
+    exit 1
+  fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
   # default branch and silently strands the earlier branch's uncommitted work
@@ -3978,7 +4021,7 @@ resume)
       echo "dispatch: $branch is checked out in the primary worktree $prev_wt — a worker must not run in the main checkout. Move the branch to its own worktree, then re-dispatch." >&2
       exit 1
     fi
-    case "$PWD/" in
+    case "$caller_pwd/" in
     "$prev_wt"/*)
       echo "dispatch: $branch is checked out at $prev_wt, the worktree this dispatch is running from — a worker would open on top of you. Re-dispatch from elsewhere." >&2
       exit 1
@@ -4056,7 +4099,9 @@ _bus_append "$crew_dir/events.jsonl" "$line"
 # awk must read to EOF: an early `exit` closes the pipe while git still has
 # blocks to write, and the resulting SIGPIPE (141) trips pipefail + errexit,
 # killing dispatch silently right after `wt switch` created the worktree.
-wt_path="$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')"
+if [ "$switch_mode" != create ]; then
+  wt_path="$(git worktree list --porcelain | _branch_wts "$branch")"
+fi
 if [ -z "$wt_path" ]; then
   echo "dispatch: could not locate worktree for branch $branch" >&2
   exit 1

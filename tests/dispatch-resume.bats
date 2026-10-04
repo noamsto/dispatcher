@@ -169,6 +169,29 @@ setup_worker_wt() { # [extra header lines...]
   [[ "$output" != *"WORKER_TASK.md is tracked"* ]]
 }
 
+@test "resume excludes WORKER_TASK.md in the anchored common dir, not a worker-swapped .git (#633)" {
+  setup_worker_wt
+  git init -q "$BATS_TEST_TMPDIR/fake"
+  # `crew identity` runs after the record check and before the exclude append;
+  # the stub swaps the worktree's gitfile for a standalone repo in that window.
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+if [ "\$1" = identity ] && [ ! -e "$BATS_TEST_TMPDIR/swapped" ]; then
+  : >"$BATS_TEST_TMPDIR/swapped"
+  rm "$WT/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$WT/.git"
+fi
+exit 0
+EOF
+  cd "$WT"
+  run run_resume
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ "$status" -eq 0 ]
+  [ "$(grep -cxF WORKER_TASK.md "$TEST_REPO/.git/info/exclude")" -eq 1 ]
+  ! grep -qxF WORKER_TASK.md "$WT/.git/info/exclude"
+}
+
 @test "resume refuses a worktree whose admin dir has a config.worktree (#539)" {
   # #539: per-worktree config lives in the admin dir and is still read under
   # an anchored gitdir; it can carry keys no -c list enumerates, so resume
@@ -200,6 +223,30 @@ EOF
   [[ "$output" == *core.fsmonitor* ]]
   [[ "$output" != *"could not read the index"* ]]
   [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
+}
+
+@test "resume accepts a relative .git/hooks against an absolute baseline from its linked worktree (#638)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" config core.hooksPath "$(realpath -e "$TEST_REPO/.git")/hooks"
+  seed_git_baseline
+  git -C "$TEST_REPO" config core.hooksPath .git/hooks
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refusing git"* ]]
+}
+
+@test "resume still refuses a drifted key under a relative .git/hooks (#638)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" config core.hooksPath "$(realpath -e "$TEST_REPO/.git")/hooks"
+  seed_git_baseline
+  git -C "$TEST_REPO" config core.hooksPath .git/hooks
+  git -C "$TEST_REPO" config core.fsmonitor /evil
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.fsmonitor* ]]
+  run ! grep -qi 'refusing git: core.hookspath' <<<"$output"
 }
 
 @test "resume refuses on a worker-planted include (#557)" {

