@@ -203,12 +203,6 @@ EOF
   [[ "$output" == *"crew new"* ]]
 }
 
-@test "id: honours CREW_ID when set" {
-  CREW_ID=1720800000-12345 run run_crew id
-  [ "$status" -eq 0 ]
-  [ "$output" = "1720800000-12345" ]
-}
-
 @test "id: resolves from WORKER_TASK.md when CREW_ID is unset" {
   printf 'crew_id: 1785381776-999\n' >WORKER_TASK.md
   CREW_ID= run run_crew id

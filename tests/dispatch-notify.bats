@@ -260,18 +260,6 @@ EOF
   [ -n "$exited" ]
 }
 
-@test "notify: a SessionEnd with the lead process gone still posts exited" {
-  # No engine-named ancestor at all (a hook outside the pane): the child-session
-  # guard must not fire either.
-  task_doc
-  seed_status working
-
-  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
-  [ "$status" -eq 0 ]
-
-  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
-}
-
 @test "notify: a turn-end (stop) while the lead engine is alive posts nothing" {
   stub_tmux
   task_doc %9

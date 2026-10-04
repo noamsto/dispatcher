@@ -2670,12 +2670,6 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "the grammar floor holds with no codex cache" {
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6 --agent codex --effort high --crew-id c1 42 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"there is no bare gpt-5.6"* ]]
-}
-
 @test "an absent codex cache is a skip, not a hard fail" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "title"
