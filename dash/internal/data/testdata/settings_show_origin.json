@@ -10,6 +10,149 @@
     "value": "work",
     "origin": "locked"
   },
+  "burnClasses": {
+    "value": [
+      {
+        "match": "*opus*",
+        "byEffort": {
+          "low": {
+            "class": "standard",
+            "weight": 2
+          },
+          "medium": {
+            "class": "standard",
+            "weight": 2
+          },
+          "xhigh": {
+            "class": "premium",
+            "weight": 6
+          },
+          "max": {
+            "class": "premium",
+            "weight": 8
+          },
+          "default": {
+            "class": "premium",
+            "weight": 4
+          }
+        }
+      },
+      {
+        "match": "composer-2.5*",
+        "class": "free",
+        "weight": 0
+      },
+      {
+        "match": "*haiku*",
+        "class": "cheap",
+        "weight": 1
+      },
+      {
+        "match": "gpt-5.6-luna",
+        "class": "cheap",
+        "weight": 1
+      },
+      {
+        "match": "*grok-4.[0-9]-low",
+        "class": "cheap",
+        "weight": 1
+      },
+      {
+        "match": "*sonnet*",
+        "class": "standard",
+        "weight": 2
+      },
+      {
+        "match": "gpt-5.6-terra",
+        "class": "standard",
+        "weight": 2
+      },
+      {
+        "match": "*grok-4.[0-9]-medium",
+        "class": "standard",
+        "weight": 2
+      },
+      {
+        "match": "*grok-4.[0-9]-low-fast",
+        "class": "standard",
+        "weight": 2
+      },
+      {
+        "match": "gpt-5.6-sol",
+        "class": "premium",
+        "weight": 4
+      },
+      {
+        "match": "*grok-4.[0-9]-high",
+        "class": "premium",
+        "weight": 4
+      },
+      {
+        "match": "*grok-4.[0-9]-medium-fast",
+        "class": "premium",
+        "weight": 4
+      },
+      {
+        "match": "*grok-4.[0-9]-xhigh",
+        "class": "premium",
+        "weight": 6
+      },
+      {
+        "match": "*grok-4.[0-9]-high-fast",
+        "class": "premium",
+        "weight": 8
+      },
+      {
+        "match": "*grok-4.[0-9]-xhigh-fast",
+        "class": "premium",
+        "weight": 12
+      },
+      {
+        "match": "*fable*",
+        "class": "fable",
+        "weight": 8
+      }
+    ],
+    "origin": "base"
+  },
+  "orchestratorDefaults": {
+    "claude": {
+      "model": {
+        "value": "opus",
+        "origin": "base"
+      },
+      "effort": {
+        "value": "high",
+        "origin": "base"
+      }
+    },
+    "codex": {
+      "model": {
+        "value": "gpt-5.6-sol",
+        "origin": "base"
+      },
+      "effort": {
+        "value": "high",
+        "origin": "base"
+      }
+    },
+    "cursor": {
+      "model": {
+        "value": "kimi-k3-high",
+        "origin": "base"
+      }
+    },
+    "pi": {
+      "model": {
+        "value": "openrouter/deepseek/deepseek-v4.1-flash",
+        "origin": "base"
+      },
+      "effort": {
+        "value": "high",
+        "origin": "base"
+      }
+    }
+  },
   "modelMap": {
     "claude": {
       "deep": {

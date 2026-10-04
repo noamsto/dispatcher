@@ -4,21 +4,21 @@ layers: default <BASE>
         locked  <LOCKED>
 › engines: ["claude","pi"]                                                  user
   profile: "work"                                                      🔒 locked
+  burnClasses: [{"match":"*opus*","byEffort":{"low":{"class":"standard"… default
+  ▾ orchestratorDefaults                                                        
+    ▾ claude                                                                    
+      model: "opus"                                                      default
+      effort: "high"                                                     default
+    ▾ codex                                                                     
+      model: "gpt-5.6-sol"                                               default
+      effort: "high"                                                     default
+    ▾ cursor                                                                    
+      model: "kimi-k3-high"                                              default
+    ▾ pi                                                                        
+      model: "openrouter/deepseek/deepseek-v4.1-flash"                   default
+      effort: "high"                                                     default
   ▾ modelMap                                                                    
     ▾ claude                                                                    
       ▾ deep                                                                    
         default: "opus"                                                  default
-  ▾ openrouter                                                                  
-    monthlyUsd: 20                                                       default
-    keyFile: "/run/agenix/a-very-long-key-file-path-that-overflows-ei… 🔒 locked
-  ▾ repoTrackers                                                                
-    noamsto/dispatcher: "github"                                            user
-  grantRoots: ["/a/git"]                                               🔒 locked
-
-
-
-
-
-
-
 1-4 views • tab next view • r refresh • ? help • q quit …  refreshed 14:13:20
