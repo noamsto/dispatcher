@@ -774,6 +774,15 @@ write_anchor() {
   [[ $stderr != *--unset-all\ url.* ]]
 }
 
+@test "guard never masks an exec key whose subsection looks like a URL (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config 'diff.x://attacker.example@y.textconv' cat
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *diff.x://attacker.example@y.textconv* ]]
+  [[ $stderr != *REDACTED* ]]
+}
+
 @test "guard hints restoring a redirect key whose value was replaced (#678)" {
   git config remote.origin.url https://x.example/r.git
   _wt_cfg_baseline_init "$COMMON"
