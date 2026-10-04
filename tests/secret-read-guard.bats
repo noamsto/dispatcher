@@ -797,6 +797,49 @@ assert_allow_relative() {
   [[ ${raw:got+1} == env ]]
 }
 
+@test "secret-read-guard: strip_escapes removes unquoted backslashes the way bash does, under every awk" {
+  local awk_chars awk_escapes name awk_path i got
+  eval "$(sed -n "/^awk_chars='/,/^}'\$/p" "$GUARD")"
+  eval "$(sed -n "/^awk_escapes='/,/^}'\$/p" "$GUARD")"
+  eval "$(sed -n '/^strip_escapes() {/,/^}/p' "$GUARD")"
+  local -a raws=(
+    'p\rintenv'
+    'a\\b'
+    'a\\\b'
+    $'a\\\nb'
+    'tail\'
+    'x\\'
+    $'one\ntw\\o'
+    'plain'
+  )
+  local -a wants=(
+    'printenv'
+    'a\b'
+    'a\b'
+    'ab'
+    'tail\'
+    'x\'
+    $'one\ntwo'
+    'plain'
+  )
+  local -a awks=("")
+  for name in mawk nawk busybox-awk; do
+    awk_path=$(command -v "$name") || continue
+    mkdir -p "$BATS_TEST_TMPDIR/$name"
+    ln -sf "$awk_path" "$BATS_TEST_TMPDIR/$name/awk"
+    awks+=("$BATS_TEST_TMPDIR/$name")
+  done
+  for i in "${!raws[@]}"; do
+    for awk_path in "${awks[@]}"; do
+      got=$(PATH="${awk_path:+$awk_path:}$PATH" strip_escapes "${raws[i]}")
+      [[ $got == "${wants[i]}" ]] || {
+        echo "${awk_path:-default awk}: strip_escapes '${raws[i]}' -> '$got', want '${wants[i]}'" >&2
+        return 1
+      }
+    done
+  done
+}
+
 # bats test_tags=timing
 @test "secret-read-guard: a 100 KB chain of credential names ahead of a template name denies within K x its calibration under every awk" {
   local body

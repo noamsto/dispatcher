@@ -298,7 +298,8 @@ shell_c_flag='(-[A-Za-z]*([oO][A-Za-z]*c|c[A-Za-z]*[oO])[A-Za-z]*[[:space:]]+[^-
 shell_c_re="(^|[[:space:]/(;&|)])${shell_c_interp}[[:space:]]+(${shell_c_opt})*${shell_c_flag}[[:space:]]+(${shell_c_opt})*"
 # Any read of /proc/<pid>/environ is a whole-environment dump, so this denies
 # without a printing-tool gate. Tested against the raw command, quotes and all,
-# which also catches it inside `fish -c '…'` without the -c extraction.
+# which also catches it inside `fish -c '…'` without the -c extraction, and
+# against each dequoted view, where a path split by quotes reads as written.
 proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
 nl=$'\n'
 
@@ -363,6 +364,25 @@ function mask(c) {
 mask_quotes() {
   awk "$awk_mask$awk_chars"'
 function feed(c) { printf "%s", mask(c) }' <<<"$1"
+}
+
+# Bash's removal of unquoted backslashes over an already-masked space (quoted
+# spans are spaces there, so every backslash left is unquoted): `\X` is X, `\\`
+# is one `\`, `\<newline>` is nothing, and a trailing lone `\` stays.
+# shellcheck disable=SC2016
+awk_escapes='
+BEGIN { BS = "\\" }
+function feed(c) {
+  if (esc) {
+    esc = 0
+    if (c != "\n") printf "%s", c
+  } else if (c == BS) esc = 1
+  else printf "%s", c
+}
+END { if (esc) printf "%s", BS }'
+
+strip_escapes() {
+  awk "$awk_escapes$awk_chars" <<<"$1"
 }
 
 # Extracts one shell WORD starting at index `start` of `s`: concatenated
@@ -909,27 +929,37 @@ deny() {
   exit 0
 }
 
+# Every space with a backslash is judged again with its unquoted backslashes
+# removed, as bash reads it: `p\rintenv` runs printenv.
 check_dump_spaces() {
-  local space
+  local space views view
   for space in "$@"; do
-    if grep -qE "$env_dump_re" <<<"$space"; then
-      deny "A bare env/printenv prints every secret in scope into this transcript. Name the one variable you need and test it without echoing its value."
-    fi
-    if grep -qE "$printenv_secret_re" <<<"$space"; then
-      deny "printenv with a secret-named variable prints its live value into this transcript. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
-    fi
-    if grep -qE "$builtin_dump_re" <<<"$space"; then
-      deny "This lists or shows shell variables, which prints live values into this transcript — the same leak as env/printenv, just through a different command (set -S, declare -p, show-environment, …). To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
-    fi
+    views=("$space")
+    if [[ $space == *\\* ]]; then views+=("$(strip_escapes "$space")"); fi
+    for view in "${views[@]}"; do
+      if grep -qE "$env_dump_re" <<<"$view"; then
+        deny "A bare env/printenv prints every secret in scope into this transcript. Name the one variable you need and test it without echoing its value."
+      fi
+      if grep -qE "$printenv_secret_re" <<<"$view"; then
+        deny "printenv with a secret-named variable prints its live value into this transcript. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+      fi
+      if grep -qE "$builtin_dump_re" <<<"$view"; then
+        deny "This lists or shows shell variables, which prints live values into this transcript — the same leak as env/printenv, just through a different command (set -S, declare -p, show-environment, …). To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+      fi
+    done
   done
 }
 
 check_fish_spaces() {
-  local space
+  local space views view
   for space in "$@"; do
-    if grep -qE "$fish_dump_re" <<<"$space"; then
-      deny "set with only scope flags (-x, -g, -U, …) and no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
-    fi
+    views=("$space")
+    if [[ $space == *\\* ]]; then views+=("$(strip_escapes "$space")"); fi
+    for view in "${views[@]}"; do
+      if grep -qE "$fish_dump_re" <<<"$view"; then
+        deny "set with only scope flags (-x, -g, -U, …) and no name lists that scope's variables in fish, printing live values into this transcript — same leak as set -S. To test presence: set -q NAME."
+      fi
+    done
   done
 }
 
@@ -1033,7 +1063,11 @@ shell)
   check_dump_spaces "${search_spaces[@]}"
   check_fish_spaces ${fish_spaces[@]+"${fish_spaces[@]}"}
 
-  if grep -qE "$proc_environ_re" <<<"$command"; then
+  proc_hit=0
+  for view in "$command" "${dequoted_views[@]}"; do
+    if [[ $view =~ $proc_environ_re ]]; then proc_hit=1; break; fi
+  done
+  if ((proc_hit)); then
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
   fi
 
@@ -1052,7 +1086,10 @@ shell)
   # 3. Reading a credential file's content (credential_read, above deny). A
   #    failed check fails loud rather than allowing. Every space is judged by
   #    the narrow name test first; the wide strip runs only on the spaces that
-  #    missed it, so a deny elsewhere never pays for it.
+  #    missed it, so a deny elsewhere never pays for it. The dequoted views are
+  #    spaces too: quoting inside a credential name (`.e""nv`) hides it from
+  #    the raw text but not from bash.
+  raw_spaces+=("${dequoted_views[@]}")
   missed=()
   for pass in narrow wide; do
     if [[ $pass == narrow ]]; then spaces=("${raw_spaces[@]}"); else spaces=("${missed[@]}"); fi
