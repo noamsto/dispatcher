@@ -4590,7 +4590,10 @@ EOF
   [ -n "$switch_ln" ] && [ -n "$hook_ln" ]
   [ "$switch_ln" -lt "$hook_ln" ]
   grep -q -- "hook pre-switch -y --branch=feat/42-do-a-thing --target=feat/42-do-a-thing" "$STUB_LOG"
-  grep -q -- "hook pre-start -y --base=" "$STUB_LOG"
+  oid="$(git -C "$TEST_REPO" rev-parse refs/heads/feat/42-do-a-thing)"
+  for h in pre-start post-start post-switch; do
+    grep -qF -- "hook $h -y --base=$oid" "$STUB_LOG"
+  done
   grep -q 'new-window' "$STUB_LOG"
 }
 

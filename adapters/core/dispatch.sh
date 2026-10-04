@@ -3976,7 +3976,7 @@ create)
     neutral_switch=1
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    # pre-switch runs in this cwd, never the destination; the vars are what a real create binds
+    # pre-switch runs in this cwd, never the destination; branch/target/base are what a real create binds
     wt hook pre-switch -y --branch="$branch" --target="$branch"
     wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
