@@ -90,9 +90,11 @@ else
   echo "✓ control: plain 'wt switch' opens $control_bare bare window(s) (bug reproduced)"
 fi
 
-# Fixed path: the override dispatch.sh uses, then dispatch's own managed window.
+# Fixed path: dispatch's `--no-hooks` switch plus its replayed post-switch with
+# the tmux hook blanked, then dispatch's own managed window.
 managed_path="$tmp/worktrees/managed"
-wt -C "$repo" switch -c managed -y "${wt_cfg[@]}" --config-set 'post-switch.tmux=""' >/dev/null
+wt -C "$repo" switch -c managed -y "${wt_cfg[@]}" --no-hooks >/dev/null
+wt "${wt_cfg[@]}" --config-set 'post-switch.tmux=""' -C "$managed_path" hook post-switch -y >/dev/null
 
 # Wait the hook out BEFORE creating the managed window — creating it first masks
 # the bug: once any window sits at the worktree path, the hook's matcher
