@@ -530,13 +530,11 @@ _or_key() {
 }
 
 # _or_key_from_pi — pi's OpenRouter login into the caller's `or_key` local.
-# Reads auth.json first, read-only: {"type":"api_key","key":...} (what pi writes
-# for its OpenRouter login, since OpenRouter's OAuth hands back a plain API key)
-# or {"type":"oauth","access":...}. Only without a usable key there does it ask
-# pi's CLI, and only a pi that has the `auth` subcommand (0.83+): on an older pi
-# the words become a prompt and pi runs a billed agent turn. So the CLI runs
-# from / with stdin closed and a timeout. Anything else (other type, junk,
-# missing file or field) leaves or_key empty.
+# auth.json first, read-only: {"type":"api_key","key":...} (what pi writes for
+# its OpenRouter login, since OpenRouter's OAuth hands back a plain API key) or
+# {"type":"oauth","access":...}. Then pi's CLI, but only a pi that has the
+# `auth` subcommand (0.83+): on an older pi the words become a prompt and pi
+# runs a billed agent turn. Anything else leaves or_key empty.
 _or_key_from_pi() {
   local auth="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/auth.json" v="" ver=""
   if [[ -r $auth ]]; then

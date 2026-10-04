@@ -44,7 +44,7 @@ or_key_fixture() {
 # write_pi_shim — a fail-closed `pi`: answers `--version` ($SHIM_PI_VERSION,
 # default 1.0.2) and `auth print-api-key --provider openrouter` (with
 # $SHIM_PI_KEY when set, after sleeping $SHIM_PI_SLEEP seconds when set);
-# everything else exits $SHIM_PI_RC (default 1) silently. Logs to $PI_LOG,
+# everything else exits $SHIM_PI_RC (default 1). Logs to $PI_LOG,
 # never $STUB_LOG. The real pi must never be reachable from these tests.
 write_pi_shim() {
   cat >"$STUB_DIR/pi" <<'EOF'
