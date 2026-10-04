@@ -763,24 +763,12 @@ write_anchor() {
   [[ $stderr != *tok-secret* ]]
 }
 
-@test "guard redacts URL userinfo in a planted key and points at the file instead (#678)" {
-  _wt_cfg_baseline_init "$COMMON"
-  git config url.https://x-access-token:tok-secret@evil.example/.insteadOf https://github.com/
-  run --separate-stderr _wt_cfg_guard "$COMMON"
-  [ "$status" -eq 1 ]
-  [[ $stderr != *tok-secret* ]]
-  [[ $stderr == *'https://REDACTED@evil.example/'* ]]
-  [[ $stderr == *"remove it: edit $COMMON/config"* ]]
-  [[ $stderr != *--unset-all\ url.* ]]
-}
-
-@test "guard never masks an exec key whose subsection looks like a URL (#678)" {
+@test "guard names an exec key verbatim whose subsection looks like a URL (#678)" {
   _wt_cfg_baseline_init "$COMMON"
   git config 'diff.x://attacker.example@y.textconv' cat
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
   [[ $stderr == *diff.x://attacker.example@y.textconv* ]]
-  [[ $stderr != *REDACTED* ]]
 }
 
 @test "guard hints restoring a redirect key whose value was replaced (#678)" {
@@ -791,26 +779,6 @@ write_anchor() {
   [ "$status" -eq 1 ]
   [[ $stderr == *"restore the baselined value or remove it: edit $COMMON/config"* ]]
   [[ $stderr != *"--unset-all remote.origin.url"* ]]
-}
-
-@test "migration note redacts URL userinfo in a local key (#678)" {
-  mkdir -p "$COMMON/crew"
-  : >"$BASELINE"
-  git config url.https://x-access-token:tok-secret@evil.example/.insteadOf https://github.com/
-  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
-  [ "$status" -eq 0 ]
-  [[ $stderr != *tok-secret* ]]
-  [[ $stderr == *'url.https://REDACTED@evil.example/.insteadof'* ]]
-}
-
-@test "migration note redacts each key alone, so a later key's @ cannot hide a host (#678)" {
-  mkdir -p "$COMMON/crew"
-  : >"$BASELINE"
-  git config url.http://evil.example.insteadOf x
-  git config 'url.z@y.insteadOf' https://github.com/
-  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
-  [ "$status" -eq 0 ]
-  [[ $stderr == *url.http://evil.example.insteadof* ]]
 }
 
 @test "a pre-redirect baseline migrates once, records the marker and then guards redirects (#678)" {

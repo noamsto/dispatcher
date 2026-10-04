@@ -123,51 +123,12 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
   ((${#pairs[@]})) || return 0
   printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
-# A key like url.<base>.insteadof carries its URL, and a URL may carry a token;
-# curl also takes a proxy without a scheme, so with [schemeless] the field's
-# start is an authority too. Redact one field at a time: another field's `@`
-# must not swallow a visible host.
-_wt_cfg_redact() { # <var> <field> [schemeless] — set <var> to <field> with each URL's userinfo shown as REDACTED
-  local rest="$2" auth out=
-  if [ -n "${3:-}" ] && [[ ${rest%%@*} != *://* ]]; then
-    auth="${rest%%[/?#]*}"
-    [[ $auth != *@* ]] || rest="REDACTED@${rest#"${auth%@*}"@}"
-  fi
-  while [[ $rest == *://* ]]; do
-    out+="${rest%%://*}://"
-    rest="${rest#*://}"
-    auth="${rest%%[/?#]*}"
-    [[ $auth == *@* ]] || continue
-    out+='REDACTED@'
-    rest="${rest#"${auth%@*}"@}"
-  done
-  printf -v "$1" '%s' "$out$rest"
-}
-# Only url.* and http.* subsections are URLs: masking any other key, or an exec
-# value, could hide the payload the human is asked to accept.
-_wt_cfg_redact_key() { # <var> <key>
-  if [[ $2 == url.* || $2 == http.* ]]; then
-    _wt_cfg_redact "$1" "$2"
-  else
-    printf -v "$1" '%s' "$2"
-  fi
-}
-# An scp-style url's `user@` is the ssh user, and masking it would hide the host.
-_wt_cfg_redact_value() { # <var> <key> <value>
-  if ! _wt_cfg_match _wt_redirect_keys "$2" "$3"; then
-    printf -v "$1" '%s' "$3"
-  elif [[ $2 == http.proxy || $2 == http.*.proxy || $2 == remote.*.proxy ]]; then
-    _wt_cfg_redact "$1" "$3" schemeless
-  else
-    _wt_cfg_redact "$1" "$3"
-  fi
-}
 _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
   local what="$1" rec keys=
   shift
   for rec in "$@"; do
     [ "$rec" != "$_wt_cfg_redirect_mark" ] || continue
-    _wt_cfg_redact_key rec "${rec%%$'\n'*}"
+    rec="${rec%%$'\n'*}"
     [[ ", $keys, " == *", $rec, "* ]] || keys="${keys:+$keys, }$rec"
   done
   # Keys only: a credential.helper value may carry a token.
@@ -214,7 +175,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   _wt_cfg_note_keys "$file" "${recs[@]}"
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon shown redirect=
+  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon redirect=
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -253,7 +214,6 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   mapfile -d '' listing < <(git --git-dir="$gitdir" config --list --show-origin --show-scope -z)
   for key in "${drift[@]}"; do
     found=
-    _wt_cfg_redact_key shown "$key"
     for ((i = 0; i + 2 < ${#listing[@]}; i += 3)); do
       [[ ${listing[i]} == local || ${listing[i]} == worktree ]] || continue
       rec="${listing[i + 2]}"
@@ -262,17 +222,15 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
       origin="${listing[i + 1]#file:}"
       [[ " $found " != *" $origin "* ]] || continue
       found+=" $origin"
-      printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$shown" "$origin" "$file" >&2
+      printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$key" "$origin" "$file" >&2
       # Unsetting a replaced remote.origin.url would delete origin.
       if _wt_cfg_match _wt_redirect_keys "$key" "${rec#"$key"$'\n'}"; then
         printf '  restore the baselined value or remove it: edit %q\n' "$origin" >&2
-      elif [ "$shown" != "$key" ]; then
-        printf "  remove it: edit %q (the key's URL userinfo is redacted here)\n" "$origin" >&2
       else
         printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
       fi
     done
-    [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$shown" "$file" >&2
+    [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
   done
   printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: \`crew git-baseline --accept\` (deleting %q instead re-records EVERYTHING present at the next dispatch)\n" "$file" >&2
   return 1

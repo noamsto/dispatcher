@@ -5305,8 +5305,6 @@ git-baseline)
       gb_origin="${gb_listing[gb_i + 1]#file:}"
       [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
       gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-      _wt_cfg_redact_value gb_value "$gb_key" "$gb_value"
-      _wt_cfg_redact_key gb_key "$gb_key"
       printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "$gb_origin"
       gb_shown+=("$gb_rec")
     done
