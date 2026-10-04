@@ -168,10 +168,13 @@ budget_stop() {
 
 # absolute_limit_stop <engine> [<role-label>] — refuse an engine whose
 # authoritative limit_reached is set even when every percent window is below
-# 95% (or no window exists). Codex (#201), cursor (#629) and pi (#639) each
-# carry the signal (see the lead-gate block below for the per-engine shape).
-# With a role-label, the refusal names the role, like budget_stop. The cache is
-# advisory data from refresh-budget — fail open when it is missing, stale
+# 95% (or no window exists). Codex (#201): denies ordinary usage, names a
+# rate-limit-reached reason, marks spend control reached, or reports a zeroed
+# individual spend limit. Cursor (#629): a plan pool at 100% or a spent
+# on-demand budget under a <95% month window (team plans); a resets_at already
+# past no longer holds. Pi (#639): the OpenRouter key's own credit limit is
+# exhausted. With a role-label the refusal names the role, like budget_stop.
+# The cache is advisory from refresh-budget — fail open when missing, stale
 # (>2h), or silent on this engine. --ignore-budget is the manual escape hatch.
 absolute_limit_stop() {
   local engine="$1" role_label="${2:-}" now_ts stale_before abs_limit
@@ -3165,16 +3168,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   fi
 fi
 
-# Codex/cursor/pi absolute-limit gate. An engine can be authoritative-exhausted
-# while every percent window is below 95% (or no window exists). Codex (#201):
-# the backend denies ordinary usage, names a rate-limit-reached reason, marks
-# spend control reached, or reports a zeroed individual spend limit. Cursor
-# (#629): a plan pool at 100% or a spent on-demand budget can sit under a <95%
-# month window (e.g. team plans, where the window is the overall figure);
-# refresh-budget writes the reason, and a limit whose resets_at has passed no
-# longer holds. Pi (#639): the OpenRouter key's own credit limit is exhausted.
-# Refuse on any of them, same severity and escape as the >=95% stop, for the
-# lead and (#636) every codex/cursor/pi role target.
+# Codex/cursor/pi absolute-limit gate, lead and (#636) role targets.
 absolute_limit_stop "$agent"
 
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
