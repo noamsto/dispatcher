@@ -9369,10 +9369,18 @@ rw_tpl_cursor_held() { rw_frame_cursor_after_assignment | sed 's/Assignment: go/
 # pi 0.99.1 frames captured in a 14-row pane: a paste taller than the editor
 # scrolls it, drawing `↑ N more` / `↓ N more` inside the rules — text, not a live
 # turn. The capture ran with pi-vim loaded, which adds ` INSERT` to the lower
-# rule; the scrolled fixtures below drop that suffix (a pane that shows one still
-# reads as not idle and is never typed into — rw_frame_pi_idle_vim).
+# rule; the scrolled fixtures below drop that suffix, since it is orthogonal to
+# the scroll handling they exercise. rw_frame_pi_idle_vim keeps it: a vim-mode
+# suffix is idle and the pane IS typed into (#645).
 rw_frame_pi_idle_vim() {
   printf ' pi v0.99.1\n──────────────────────────────────────────────────────────────────────────\n\n──────────────────────────────────────────────────────────────── INSERT\n~/git/dispatcher\n0.0%%/0 (auto)                                                unknown\nLSP Inactive\n'
+}
+
+# A pi-vim pane mid-turn (real capture, pi 1.0.0 + pi-vim 0.14.2): the working
+# indicator is its own braille row above the editor instead of on the top rule,
+# and the lower rule carries the mode suffix.
+rw_frame_pi_vim_live() {
+  printf ' pi v1.0.0\n say hi in one word\n\n ⠸ Working\n\n──────────────────────────────────────────────────────────────────────────\n\n──────────────────────────────────────────────────────────────── INSERT\n~/git/dispatcher\n0.0%%/0 (auto)                                                unknown\nLSP Inactive\n'
 }
 rw_tpl_pi_vim_held() {
   rw_tpl_pi_held | sed 's/^─*$/&──── INSERT/'
@@ -9529,14 +9537,54 @@ _rw_scroll_case() {
   grep -q 'could not confirm' "$STUB_LOG"
 }
 
-@test "role-watch: a pi pane whose lower rule carries a vim mode suffix is not typed into" {
+@test "role-watch: a pi pane whose lower rule carries a vim mode suffix is typed into" {
   _spawn_role_fixture
   _rw_stub rw_frame_pi_idle_vim
+  # Every mode label pi-vim draws, plus a pending-command tail (`([[:space:]].*)?`
+  # in the awk sub), is idle.
+  for suffix in ' INSERT' ' NORMAL' ' NORMAL 3dw_' ' EX w_' ' VISUAL' ' V-LINE'; do
+    : >"$STUB_LOG"
+    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+    rw_frame_pi_idle_vim | sed "s/ INSERT$/$suffix/" >"$STUB_DIR/frame"
+    _rw_start pi
+    _rw_wait_sends 1
+    _rw_stop
+    [ "$(_rw_deliveries)" -eq 1 ] || { echo "pi vim$suffix: not typed into"; return 1; }
+    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" || { echo "pi vim$suffix: no Enter"; return 1; }
+  done
+}
+
+@test "role-watch: a pi-vim working row above the editor is a live turn and is not typed into" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_pi_vim_live
   _rw_start pi
   _rw_wait_captures 3
   _rw_stop
   [ "$(_rw_deliveries)" -eq 0 ]
   run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: a vim-mode pi pane that started a turn is confirmed via its working row" {
+  # The post-Enter frame carries the working indicator as its own row (not on a
+  # rule), so only _pi_working_label's box-rows path proves the turn started.
+  # Without it, _pi_idle_box vetoes on the same row and the state is `unknown`:
+  # the assignment is never dequeued and escalates.
+  _spawn_role_fixture
+  _rw_sim pi rw_frame_pi_idle_vim rw_frame_pi_vim_live 0
+  _rw_start pi
+  _rw_wait_enters 1
+  # unknown_max is 5 ticks; wait past it so a missing confirmation would raise
+  # `could not confirm` inside the window instead of after the test stops.
+  for n in $(seq 1 40); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  _rw_stop
+  [ "$(_rw_enters)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ -e "$STUB_DIR/busy" ]
+  run ! grep -q 'could not confirm' "$STUB_LOG"
 }
 
 @test "role-watch: a foreign draft in the box after Enter never gets a retry Enter" {
@@ -9586,16 +9634,18 @@ rw_frame_claude_spinner_empty() {
     $'  -- INSERT -- ⏵⏵ auto mode on · ← for agents'
 }
 
-@test "role-watch: pi text held under a vim normal-mode rule is unknown: no Enter, no dequeue, escalated" {
+@test "role-watch: pi text held under a vim normal-mode rule is retried with a bare Enter, never re-pasted" {
+  # pi-vim's NORMAL_KEYS has no Enter, so normal-mode input falls through to the
+  # host editor's submit path (index.ts:2625) — a re-sent Enter really submits.
   _rw_after_enter pi rw_frame_pi_idle rw_frame_pi_live rw_frame_pi_normal_held
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
+  _rw_wait_enters 2
+  sleep 1
   _rw_stop
-  [ "$(_rw_enters)" -eq 1 ]
-  [ "$(_rw_unsubmitted)" -ge 1 ]
-  grep -q 'could not confirm' "$STUB_LOG"
+  [ "$(_rw_enters)" -eq 2 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ -e "$STUB_DIR/busy" ]
+  [ "$(_rw_copies)" -eq 0 ]
 }
 
 @test "role-watch: a claude draft that is only a substring of the assignment gets no retry Enter" {
