@@ -759,7 +759,9 @@ dequote_index() {
 #   - grep: each grep word opens a stage that runs to the next ; & | ( ) or
 #     backtick, whose quoted text is blanked and comment dropped; every grep in
 #     it must carry a quiet flag, not counting words after -- or the argument
-#     of -e/-f/-m/-A/-B/-C/-d/-D; ripgrep and ag get a stricter class. A CR,
+#     of -e/-f/-m/-A/-B/-C/-d/-D or of a long option that takes a value
+#     (--label, --include, --glob, --max-count, ...: --label -c reads -c as
+#     the label); ripgrep and ag get a stricter class. A CR,
 #     VT or FF in the stage makes it loud: some shells split words there.
 # Prints `print`, `interp`, `grep` or nothing.
 #
@@ -781,7 +783,12 @@ BEGIN {
 {
   if ($0 ~ /(^|[^A-Za-z0-9_])(cat|bat|head|tail|less|more|strings|xxd|od|nl|tac|rev|cut|paste|sed|awk|dotenv|source)([^A-Za-z0-9_]|$)/ || $0 ~ /\$\([[:space:]]*</) P = 1
   if ($0 ~ /(^|[^|])\|([^;&|]*[^A-Za-z0-9_.;&|-])?(python[0-9.]*|pypy[0-9.]*|node|nodejs|bun|deno|ruby|perl|php|lua[0-9.]*|luajit|Rscript|osascript|pwsh)([^A-Za-z0-9_.-]|$)/) I = 1
-  ns = split($0, SEG, /[;&|()`]/)
+  # The split must not cut a redirect: `>&`, `<&`, `&>` and `>|` become \001/\002
+  # forms on a copy, so `grep KEY .env 2>&1 -c` stays one stage. The P/I tests
+  # above read the original line.
+  t = $0
+  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/&>/, "\001>", t); gsub(/>\|/, ">\002", t)
+  ns = split(t, SEG, /[;&|()`]/)
   for (s = 1; s <= ns; s++) segment(SEG[s])
 }
 function segment(g, W, nw, j, w, b) {
@@ -842,7 +849,8 @@ function grep_loud(s, m, W, n, j, x, e, rg, found) {
   m = mask(s)
   sub(/[[:space:]]#.*$/, "", m)
   if (m ~ /[\r\013\f]/) return 1
-  gsub(/[0-9]*(>>?[|&]?|<[<>&]?<?-?)[[:space:]]*[^[:space:]]+/, " ", m)
+  # \001/\002 are the protected redirect forms from the stage split.
+  gsub(/[0-9]*(>>?[|&\001\002]?|<[<>&\001]?<?-?)[[:space:]]*[^[:space:]]+/, " ", m)
   n = split(m, W, /[[:space:]]+/)
   for (j = 1; j <= n; j++) {
     if (W[j] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/) continue
@@ -851,7 +859,7 @@ function grep_loud(s, m, W, n, j, x, e, rg, found) {
     for (e = j + 1; e <= n && W[e] != "+" && W[e] !~ /^((e|f|z|u|ze|zf|bz|xz)?grep|rg|ripgrep|ag)$/; e++) ;
     for (x = j + 1; x < e && W[x] != "--"; x++) ;
     for (j++; j < x; j++) {
-      if (W[j] ~ /^-(-regexp|-file|[efmABCdD])$/ && j + 1 < x) j++
+      if (W[j] ~ /^-(-(regexp|file|label|exclude|include|exclude-dir|exclude-from|include-dir|max-count|context|after-context|before-context|binary-files|devices|directories|group-separator|glob|iglob|type|type-not|type-add|replace|max-depth|encoding|max-filesize|engine|path-separator|sort|sortr|pre|pre-glob|ignore-file|colors|file-search-regex|path-to-ignore|ignore|after|before|depth)|[efmABCdD])$/ && j + 1 < x) j++
       else if (rg ? W[j] ~ /^(-[abFhHiInPsSuUvwxzN]*[cql][abFhHiInPsSuUvwxzNcql]*|--count|--quiet|--files-with-matches|--files-without-match)$/ : W[j] ~ /^(-[abEFGhHiInoPrRsTUvVwxyzZ]*[cqlL][abEFGhHiInoPrRsTUvVwxyzZcqlL]*|--count|--quiet|--silent|--files-with-matches|--files-without-match)$/) break
     }
     if (j >= x) return 1
@@ -893,11 +901,15 @@ END {
 # On a command line the same path is preceded by a space, quote, = or / (~ for
 # `~/.netrc`), and followed by whitespace, a quote, a redirect or a pipe —
 # never by a line anchor, so the path-anchored pattern above would silently
-# match nothing here.
-cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
+# match nothing here. A name can also end at a $ or ( the shell expands
+# (`.env$(true)`, `.netrc$x`); templates are stripped before this test, so
+# `.env.example$x` is still dropped first.
+# shellcheck disable=SC2016
+cmd_secret_re='(^|[[:space:]"'"'"'=/])\.env([[:space:]"'"'"';|&)>$(]|$|\.[A-Za-z0-9_-]+)|\.aws/credentials|(^|[[:space:]"'"'"'=/~])\.netrc([[:space:]"'"'"';|&)>$(]|$)|id_(rsa|ed25519|ecdsa)([[:space:]]|$)|\.(pem|p12|pfx)([[:space:]]|$)'
 # The same names as the shell also spells them: after < : { , ( or a
 # backtick, and before a glob, a brace, a backtick or a redirect.
-cmd_secret_wide_re='(^|[[:space:]"'"'"'=/<:{,(`])\.env([[:space:]"'"'"';|&)><*?[{},`]|$|\.[A-Za-z0-9_*?[{-])|(^|[[:space:]"'"'"'=/<:{,(`])\.envrc\.local([[:space:]"'"'"';|&)><*?[{},`]|$)|\.aws/credentials|(^|[[:space:]"'"'"'=/<:{,(`~])\.netrc([[:space:]"'"'"';|&)><*?[{},`]|$)|id_(rsa|ed25519|ecdsa)([[:space:]"'"'"';|&)><*?[{},`]|$)|\.(pem|p12|pfx)([[:space:]"'"'"';|&)><*?[{},`]|$)'
+# shellcheck disable=SC2016
+cmd_secret_wide_re='(^|[[:space:]"'"'"'=/<:{,(`])\.env([[:space:]"'"'"';|&)><*?[{},`$(]|$|\.[A-Za-z0-9_*?[{-])|(^|[[:space:]"'"'"'=/<:{,(`])\.envrc\.local([[:space:]"'"'"';|&)><*?[{},`$(]|$)|\.aws/credentials|(^|[[:space:]"'"'"'=/<:{,(`~])\.netrc([[:space:]"'"'"';|&)><*?[{},`$(]|$)|id_(rsa|ed25519|ecdsa)([[:space:]"'"'"';|&)><*?[{},`$(]|$)|\.(pem|p12|pfx)([[:space:]"'"'"';|&)><*?[{},`$(]|$)'
 
 # Here-strings, not pipes: under pipefail a grep -q that exits early could
 # fail its writer, and a failed test reads as "no name" — an allow.
