@@ -57,6 +57,7 @@ _wt_redirect_keys=(
   'http.sslverify' 'http.*.sslverify'
   'http.sslcainfo' 'http.*.sslcainfo' 'http.sslcapath' 'http.*.sslcapath'
   'http.curloptresolve' 'http.*.curloptresolve'
+  'fetch.bundleuri'
 )
 # A baseline record saying the baseline covers _wt_redirect_keys: without it the
 # baseline predates #678. No config key can start with `#`.
@@ -122,6 +123,19 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
   ((${#pairs[@]})) || return 0
   printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
+# A key like url.<base>.insteadof carries its URL, and a URL may carry a token.
+_wt_cfg_redact() { # <var> <string> — set <var> to <string> with each URL's userinfo shown as ***
+  local rest="$2" auth out=
+  while [[ $rest == *://* ]]; do
+    out+="${rest%%://*}://"
+    rest="${rest#*://}"
+    auth="${rest%%[/?#]*}"
+    [[ $auth == *@* ]] || continue
+    out+='***@'
+    rest="${rest#"${auth%@*}"@}"
+  done
+  printf -v "$1" '%s' "$out$rest"
+}
 _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
   local what="$1" rec keys=
   shift
@@ -131,7 +145,9 @@ _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their
     [[ ", $keys, " == *", $rec, "* ]] || keys="${keys:+$keys, }$rec"
   done
   # Keys only: a credential.helper value may carry a token.
-  [ -z "$keys" ] || echo "git-config baseline: recorded $what: $keys" >&2
+  [ -n "$keys" ] || return 0
+  _wt_cfg_redact keys "$keys"
+  echo "git-config baseline: recorded $what: $keys" >&2
 }
 _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite, only add the redirect class (#678)
   local common="$1" file tmp rec key value
@@ -173,7 +189,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   _wt_cfg_note_keys "$file" "${recs[@]}"
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon redirect=
+  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon shown line hint redirect=
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -212,6 +228,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   mapfile -d '' listing < <(git --git-dir="$gitdir" config --list --show-origin --show-scope -z)
   for key in "${drift[@]}"; do
     found=
+    _wt_cfg_redact shown "$key"
     for ((i = 0; i + 2 < ${#listing[@]}; i += 3)); do
       [[ ${listing[i]} == local || ${listing[i]} == worktree ]] || continue
       rec="${listing[i + 2]}"
@@ -220,10 +237,22 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
       origin="${listing[i + 1]#file:}"
       [[ " $found " != *" $origin "* ]] || continue
       found+=" $origin"
-      printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$key" "$origin" "$file" >&2
-      printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
+      printf -v line 'refusing git: %q (from %q) is not in the git-config baseline %s' "$key" "$origin" "$file"
+      _wt_cfg_redact line "$line"
+      printf '%s\n' "$line" >&2
+      hint='remove it'
+      # Unsetting a replaced remote.origin.url would delete origin.
+      ! _wt_cfg_match _wt_redirect_keys "$key" "${rec#"$key"$'\n'}" || hint='restore the baselined value or remove it'
+      if [ "$shown" != "$key" ]; then
+        printf "  %s: edit %q (the key's URL userinfo is redacted here)\n" "$hint" "$origin" >&2
+      else
+        printf '  %s: git config --file %q --unset-all %q\n' "$hint" "$origin" "$key" >&2
+      fi
     done
-    [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
+    [ -z "$found" ] || continue
+    printf -v line 'refusing git: %q is not in the git-config baseline %s' "$key" "$file"
+    _wt_cfg_redact line "$line"
+    printf '%s\n' "$line" >&2
   done
   printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: \`crew git-baseline --accept\` (deleting %q instead re-records EVERYTHING present at the next dispatch)\n" "$file" >&2
   return 1

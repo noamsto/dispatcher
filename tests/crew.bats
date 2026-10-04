@@ -3686,6 +3686,17 @@ crew_tty() {
   [[ "$output" == *"url.https://evil.example/.insteadof=https://github.com/ (main checkout, "* ]]
 }
 
+@test "git-baseline redacts URL userinfo in a drifted value (#678)" {
+  git commit -q --allow-empty -m init
+  git config remote.origin.url https://x.example/r.git
+  seed_git_baseline
+  git config remote.origin.url https://u:tok-secret@x.example/r.git
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" != *tok-secret* ]]
+  [[ "$output" == *'***@x.example'* ]]
+}
+
 @test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {
   git commit -q --allow-empty -m init
   : >"$TEST_REPO/.git/crew/git-config-baseline"

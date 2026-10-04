@@ -763,6 +763,36 @@ write_anchor() {
   [[ $stderr != *tok-secret* ]]
 }
 
+@test "guard redacts URL userinfo in a planted key and points at the file instead (#678)" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config url.https://x-access-token:tok-secret@evil.example/.insteadOf https://github.com/
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr != *tok-secret* ]]
+  [[ $stderr == *'https://***@evil.example/'* ]]
+  [[ $stderr == *"remove it: edit $COMMON/config"* ]]
+  [[ $stderr != *--unset-all\ url.* ]]
+}
+
+@test "guard hints restoring a redirect key whose value was replaced (#678)" {
+  git config remote.origin.url https://x.example/r.git
+  _wt_cfg_baseline_init "$COMMON"
+  git config remote.origin.url https://evil.example/r.git
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"restore the baselined value or remove it: git config --file $COMMON/config --unset-all remote.origin.url"* ]]
+}
+
+@test "migration note redacts URL userinfo in a local key (#678)" {
+  mkdir -p "$COMMON/crew"
+  : >"$BASELINE"
+  git config url.https://x-access-token:tok-secret@evil.example/.insteadOf https://github.com/
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr != *tok-secret* ]]
+  [[ $stderr == *'url.https://***@evil.example/.insteadof'* ]]
+}
+
 @test "a pre-redirect baseline migrates once, records the marker and then guards redirects (#678)" {
   local -a recs
   local rec found=0
@@ -811,6 +841,7 @@ write_anchor() {
   git config http.sslCAInfo /c
   git config http.sslCAPath /p
   git config http.curloptResolve h:443:1.2.3.4
+  git config fetch.bundleURI https://b/
   local out
   out="$(pairs "$COMMON")"
   grep -Fx 'url.X.insteadof=a' <<<"$out"
@@ -824,6 +855,7 @@ write_anchor() {
   grep -Fx 'http.sslcainfo=/c' <<<"$out"
   grep -Fx 'http.sslcapath=/p' <<<"$out"
   grep -Fx 'http.curloptresolve=h:443:1.2.3.4' <<<"$out"
+  grep -Fx 'fetch.bundleuri=https://b/' <<<"$out"
 }
 
 @test "a fresh baseline records the redirect marker without printing it (#678)" {
