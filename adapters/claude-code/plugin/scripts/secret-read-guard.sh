@@ -1094,7 +1094,10 @@ shell)
 
   proc_hit=0
   for view in "$command" "${dequoted_views[@]}"; do
-    if [[ $view =~ $proc_environ_re ]]; then proc_hit=1; break; fi
+    if [[ $view =~ $proc_environ_re ]]; then
+      proc_hit=1
+      break
+    fi
   done
   if ((proc_hit)); then
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
