@@ -297,7 +297,7 @@ _pane_is_engine_at() {
   _is_engine_cmd "${1%% *}"
 }
 
-# _occupants <worktree_path> -> [{window,name,pane,engine}] — worker windows
+# _occupants <worktree_path> -> [{window,name,pane,command,engine,panes}] — worker windows
 # rooted at that path. Keyed on @crew_name (dispatch stamps it on every worker
 # window), NOT on the pane's running command: a finished agent drops back to a
 # shell prompt, and a command match would then read its window as empty and let
@@ -306,7 +306,7 @@ _pane_is_engine_at() {
 # engine/pane fields below ARE a command check (via _is_engine_cmd) and are
 # advisory only — occupancy itself stays window-keyed.
 _occupants() {
-  local wtp="$1" self_win="" wins panes out wid nm path pw pid cmd epane
+  local wtp="$1" self_win="" wins panes out wid nm path pw pid cmd epane ecmd
   if [ -n "${TMUX_PANE:-}" ]; then
     self_win=$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null || true)
   fi
@@ -319,18 +319,18 @@ _occupants() {
     [ -n "$nm" ] || continue
     [ "$nm" != dispatcher ] || continue
     [ "$wid" != "$self_win" ] || continue
-    epane=""
+    epane="" ecmd="" eall='[]'
     while IFS=$'\t' read -r pw pid cmd; do
       [ "$pw" = "$wid" ] || continue
       if _is_engine_cmd "$cmd"; then
-        epane="$pid"
-        break
+        [ -n "$epane" ] || { epane="$pid"; ecmd="$cmd"; }
+        eall=$(printf '%s' "$eall" | jq -c --arg p "$pid" --arg c "$cmd" '. + [{pane:$p, command:$c}]')
       fi
     done <<PANES
 $panes
 PANES
-    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" \
-      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), engine:($p!="")}]')
+    out=$(printf '%s' "$out" | jq -c --arg w "$wid" --arg n "$nm" --arg p "$epane" --arg c "$ecmd" --argjson all "$eall" \
+      '. + [{window:$w, name:$n, pane:(if $p=="" then null else $p end), command:$c, engine:($p!=""), panes:$all}]')
   done <<WINS
 $wins
 WINS
@@ -630,12 +630,78 @@ _human_present() {
   return 1
 }
 
+# _pane_capture <pane> [colored] — the pane's text, or its ANSI-colored capture
+# when the second argument is non-empty. CREW_STALL_SAMPLE_CMD /
+# CREW_STALL_COLOR_CMD override it so frame checks are testable without tmux.
+_pane_capture() {
+  if [ -n "${2:-}" ] && [ -n "${CREW_STALL_COLOR_CMD:-}" ]; then
+    eval "$CREW_STALL_COLOR_CMD" 2>/dev/null
+  elif [ -n "${CREW_STALL_SAMPLE_CMD:-}" ]; then
+    eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
+  elif [ -n "${2:-}" ]; then
+    tmux capture-pane -e -p -t "$1" 2>/dev/null
+  else
+    tmux capture-pane -p -t "$1" 2>/dev/null
+  fi
+}
+
+# _frames_busy <occupants-json> — prints why and returns 0 when any engine pane
+# of a finished worker's windows is not provably idle; returns 1 when every one
+# is. Needs _frame_classifier already called. Every pane is sampled twice, one
+# gap apart: claude panes must pass _pane_idle_reason on both with identical
+# text; other engines have no idle signature, so they need an unchanged frame
+# and no prompt. An unreadable pane keeps, and so does unreadable input. The
+# set of engine panes is what _is_engine_cmd recognises.
+_frames_busy() {
+  local rows pane cmd stripped engine i why cap
+  local -a panes=() cmds=() plain=() colored=()
+  rows=$(printf '%s' "$1" | jq -r '.[].panes[]? | [.pane, .command] | @tsv') || {
+    printf '%s' "occupants are unreadable"
+    return 0
+  }
+  while IFS=$'\t' read -r pane cmd; do
+    [ -n "$pane" ] || continue
+    panes+=("$pane")
+    cmds+=("$cmd")
+    cap=$(_pane_capture "$pane" || true)
+    plain+=("$cap")
+    colored+=("$(_pane_capture "$pane" colored || true)")
+    if [ -z "$cap" ]; then
+      printf '%s' "$pane is unreadable"
+      return 0
+    fi
+  done <<<"$rows"
+  [ "${#panes[@]}" -gt 0 ] || return 1
+  sleep "${CREW_RELEASE_GAP:-1}"
+  for i in "${!panes[@]}"; do
+    pane="${panes[i]}"
+    stripped="${cmds[i]#.}"
+    stripped="${stripped%-wrapped}"
+    engine="$stripped"
+    if [ "$(_pane_capture "$pane" || true)" != "${plain[i]}" ]; then
+      printf '%s' "$pane is still changing"
+      return 0
+    fi
+    if [ "$stripped" = claude ]; then
+      if ! why=$(_pane_idle_reason "${plain[i]}" "${colored[i]}"); then
+        printf '%s' "$pane is not idle ($why)"
+        return 0
+      fi
+    elif _is_prompt "${plain[i]}" || _is_permission_prompt "${plain[i]}"; then
+      printf '%s' "$pane shows a prompt"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # _release_windows <branch> <session> <state> <status-ts-ms> <grace-s> <dry> —
 # kill the WINDOWs of a finished worker session, never its worktree: a worker
 # legitimately sits in `done` for as long as its PR takes to merge (#17).
 # Shared by reap's idle-release pass and stall-watch's finished-worker release;
 # the caller defines say/note. Returns 3 (nothing killed) when a person is
-# present, so the caller re-checks on its next cycle.
+# present or an engine pane is not provably idle, so the caller re-checks on its
+# next cycle.
 _release_windows() {
   local rbranch="$1" rsession="$2" rstate="$3" rts="$4" rgrace="$5" rdry="$6" rwt rocc w line why
   rwt=$(git --git-dir="$common" worktree list --porcelain |
@@ -656,6 +722,10 @@ _release_windows() {
   fi
   if why=$(_human_present "$(printf '%s' "$rocc" | jq -r '[.[].window] | join(" ")')" "$rwt" "$rts" "$rgrace"); then
     note "keeping $rbranch — human present: $why"
+    return 3
+  fi
+  if why=$(_frames_busy "$rocc"); then
+    note "keeping $rbranch — pane busy: $why"
     return 3
   fi
   for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
@@ -4696,23 +4766,9 @@ stall-watch)
 
   # Raw pane text on stdout; non-zero when the pane is gone. The CALLER hashes:
   # D0/D3 read the hash, D1/D2 read the text.
-  _sample() {
-    if [ -n "${CREW_STALL_SAMPLE_CMD:-}" ]; then
-      eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
-    else
-      tmux capture-pane -p -t "$pane" 2>/dev/null
-    fi
-  }
+  _sample() { _pane_capture "$pane"; }
 
-  _sample_colored() {
-    if [ -n "${CREW_STALL_COLOR_CMD:-}" ]; then
-      eval "$CREW_STALL_COLOR_CMD" 2>/dev/null
-    elif [ -n "${CREW_STALL_SAMPLE_CMD:-}" ]; then
-      eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
-    else
-      tmux capture-pane -e -p -t "$pane" 2>/dev/null
-    fi
-  }
+  _sample_colored() { _pane_capture "$pane" colored; }
 
   # _pane_engine_alive — corroborating evidence for quiet:'s dead: escalation.
   # The trade-off: a turn that hangs while the engine process stays resident
@@ -5784,6 +5840,7 @@ reap)
   # will not touch it while its PR is open. Kill the WINDOW only — the worktree
   # stays, because a worker legitimately sits in `done` for as long as its PR
   # takes to merge (#17).
+  _frame_classifier
   while IFS=$'\t' read -r rbranch rsession rstate rts; do
     [ -n "$rbranch" ] || continue
     _release_windows "$rbranch" "$rsession" "$rstate" "$rts" "$idle" "$dry" || [ $? = 3 ]
@@ -5799,6 +5856,8 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     | group_by(.from) | map(max_by(.ts))
     | group_by(.from | wid_branch) | map(max_by(.ts))
     | map(select(.body.state as $st | ($terminal | index($st)) != null))
+    # A watchdog-posted failed marks a hung pane: keep it as evidence.
+    | map(select((.body.source // "") != "watchdog" or .body.state != "failed"))
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
     | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state, .ts] | @tsv' "$log")
 EOF

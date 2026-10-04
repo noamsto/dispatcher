@@ -2265,7 +2265,7 @@ EOF
   [ "$output" = "feat/idle-me s1-1 failed" ]
 }
 
-@test "reap: releases an idle done window even with a live engine" {
+_live_claude_done_setup() {
   git commit --allow-empty -q -m init
   git branch feat/idle-done-live
   wt_path="$BATS_TEST_TMPDIR/idle-done-live-wt"
@@ -2273,12 +2273,112 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
   stub_bin gh
   stub_bin wt
-  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\t.claude-wrapped\n')"
+  export CREW_RELEASE_GAP=0
+  stub_tmux_frames "$(printf '@23\tsage\t%s\n' "$wt_path")" "" "$(printf '@23\t%%33\t.claude-wrapped\n')"
+}
+
+@test "reap: releases a done window once its claude pane is provably idle on two samples" {
+  _live_claude_done_setup
   CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  set_frame %33 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"released @23"* ]]
   grep -q 'kill-window -t @23' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose claude pane shows a live turn, at the default flags" {
+  _live_claude_done_setup
+  set_frame %33 <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✳ Perusing… (1m2s · ↓ 3.1k tokens · thinking more with high effort)
+EOF
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  old_ts=$((($(date +%s) - 400) * 1000))
+  jq -nc --argjson ts "$old_ts" '{ts:$ts, crew_id:"c1", from:"worker:feat/idle-done-live#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/idle-done-live — pane busy"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose pane changes between the two samples" {
+  _live_claude_done_setup
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  set_frame %33 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+❯
+EOF
+  set_frame %33.2 <<'EOF'
+✻ Churned for 37s · done 11:20 AM
+❯
+EOF
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %33 is still changing"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: never releases a watchdog-posted failed window" {
+  _live_claude_done_setup
+  set_frame %33 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  seed_raw "worker:feat/idle-done-live#s1-1" failed "dead: quiet: no output" watchdog "$((($(date +%s) - 400) * 1000))"
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" != *"released"* ]]
+  [[ "$output" != *"pane busy"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose pane cannot be read" {
+  _live_claude_done_setup
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %33 is unreadable"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: keeps a done window whose non-claude engine pane shows a prompt" {
+  _live_claude_done_setup
+  stub_tmux_frames "$(printf '@23\tsage\t%s\n' "$wt_path")" "" "$(printf '@23\t%%33\tpi\n')"
+  set_frame %33 <<'EOF'
+  2. Gate everything on 3.8
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %33 shows a prompt"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+}
+
+@test "reap: a second busy engine pane in the window keeps it" {
+  _live_claude_done_setup
+  stub_tmux_frames "$(printf '@23\tsage\t%s\n' "$wt_path")" "" "$(printf '@23\t%%33\t.claude-wrapped\n@23\t%%34\t.claude-wrapped\n')"
+  set_frame %33 <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+  set_frame %34 <<'EOF'
+✳ Perusing… (1m2s · ↓ 3.1k tokens · thinking more with high effort)
+EOF
+  CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
+  CREW_ID=c1 run run_crew reap --idle 0
+  [[ "$output" == *"pane busy: %34"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: default grace releases a done window older than it and keeps a younger one" {
@@ -2919,6 +3019,7 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   : >"$wt_path/WORKER_TASK.md"
   : >"$wt_path/REVIEW_NOTES.md"
+  export CREW_RELEASE_GAP=0
   stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tpi\n@23\t%%34\tpi\n')"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -2927,6 +3028,7 @@ case "$1" in
 list-windows) cat "$STUB_DIR/wins.txt" ;;
 list-panes) cat "$STUB_DIR/panes.txt" ;;
 kill-window) : >"$STUB_DIR/wins.txt"; : >"$STUB_DIR/panes.txt" ;;
+capture-pane) echo "pi: finished" ;;
 esac
 exit 0
 EOF
