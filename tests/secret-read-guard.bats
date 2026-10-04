@@ -3626,3 +3626,51 @@ big_bash() { printf '%s' "$1" | jq -Rsc '{hook_event_name:"PreToolUse",tool_name
   for ((i = 0; i < 32768; i++)); do chain+='-x ' calib+='-x '; done
   assert_deny_relative "$(big_bash "bask -c $calib")" "$(big_bash "bash -c $chain")"
 }
+
+# --- backtick command substitution holding a -c body (#682) ---
+
+@test "secret-read-guard: #682 a bash -c body inside backticks denies" {
+  deny_cmd '`bash -c '\''env'\''`'
+  deny_cmd 'echo `bash -c '\''env'\''`'
+  deny_cmd 'x=`bash -c '\''env'\''`'
+  deny_cmd '`"bash" -c '\''env'\''`'
+  deny_cmd 'echo "`bash -c '\''env'\''`"'
+}
+
+@test "secret-read-guard: a -c body after a backtick substitution in single quotes still denies" {
+  deny_cmd 'bash -c '\''ec'\''`date`'\''; env'\'
+}
+
+@test "secret-read-guard: a harmless backtick -c mention or body stays allowed" {
+  allow_cmd 'echo '\''run `bash -c make` first'\'
+  allow_cmd 'x=`bash -c '\''true'\''`'
+}
+
+@test "secret-read-guard: #683 option words past the cap that cannot hide a -c body stay allowed" {
+  allow_cmd "bash -x -x -x -x -x -x -x -x -c 'make'"
+  allow_cmd "bash -c -x -x -x -x -x -x -x -x 'make'"
+  allow_cmd "rg 'foo|bash -x -x -x -x -x -x -x -x -x'"
+  allow_cmd "bash$(printf ' --rcfile bash%.0s' $(seq 1 9)) x"
+}
+
+@test "secret-read-guard: nine option-with-argument words ahead of -c still deny" {
+  deny_cmd "bash$(printf ' -o pipefail%.0s' $(seq 1 9)) -c 'env'"
+  deny_cmd "bash$(printf ' -O extglob%.0s' $(seq 1 9)) -c 'env'"
+}
+
+@test "secret-read-guard: #683 a relative dumper path holding = denies" {
+  deny_cmd './a=b/env'
+  deny_cmd '~/a=b/env'
+  deny_cmd 'a/b=c/env'
+  deny_cmd '1a=b/env'
+}
+
+@test "secret-read-guard: a relative dumper path without = denies" {
+  deny_cmd 'bin/env'
+  deny_cmd 'bin/printenv'
+  deny_cmd 'x/env'
+}
+
+@test "secret-read-guard: an underscore-led assignment ending in /env stays allowed" {
+  allow_cmd '_X=y/env'
+}
