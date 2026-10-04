@@ -1784,7 +1784,7 @@ write_pi_auth() {
   printf '%s\n' "$1" >"$HOME/.pi/agent/auth.json"
 }
 
-@test "pi's auth store is the last-resort OpenRouter key, reaching curl only on stdin" {
+@test "pi's auth store supplies the OpenRouter key, reaching curl only on stdin" {
   or_key_fixture 10
   write_pi_auth '{"openrouter":{"type":"oauth","access":"sk-or-v1-TESTSENTINELPI"}}'
   SHIM_OR_EXPECT_KEY=sk-or-v1-TESTSENTINELPI run --separate-stderr bash "$SCRIPT"
@@ -1819,7 +1819,8 @@ write_pi_auth() {
   [[ "$output" == *"log pi in to OpenRouter"* ]]
   run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
-  ! grep -q openrouter "$STUB_LOG"
+  run ! grep -q openrouter "$STUB_LOG"
+  grep -q "pi auth print-api-key --provider openrouter" "$PI_LOG"
 }
 
 @test "no pi on PATH leaves pi unknown" {
@@ -1922,7 +1923,7 @@ write_pi_auth() {
   [ "$status" -eq 0 ]
   run jq '.engines.pi' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
-  ! grep -q openrouter "$STUB_LOG"
+  run ! grep -q openrouter "$STUB_LOG"
   [ ! -s "$PI_LOG" ]
 }
 
