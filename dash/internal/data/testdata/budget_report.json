@@ -27,7 +27,9 @@
           "verdict": "real budget: prefer a cheaper burn class or rotate engines"
         }
       ],
-      "projection": null
+      "projection": null,
+      "unlimited": false,
+      "limit_reached": null
     },
     "codex": {
       "source": "app_server",
@@ -47,9 +49,35 @@
           "verdict": null
         }
       ],
+      "projection": null,
+      "unlimited": false,
+      "limit_reached": null
+    },
+    "cursor": {
+      "source": "usage_summary",
+      "plan_type": "pro",
+      "credits_cover": false,
+      "unlimited": false,
+      "spend_usd": null,
+      "target_usd": null,
+      "elapsed_pct": null,
+      "projected_month_end_usd": null,
+      "windows": [
+        {
+          "key": "month",
+          "used_pct": 60,
+          "resets_at": 1790592000,
+          "resets_in_s": 1296000,
+          "ahead_pts": null,
+          "verdict": null
+        }
+      ],
+      "limit_reached": {
+        "reason": "on-demand limit reached",
+        "resets_at": 1790592000
+      },
       "projection": null
     },
-    "cursor": null,
     "pi": null
   }
 }

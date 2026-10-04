@@ -37,7 +37,10 @@ claude (oauth_usage)
 codex (app_server) [pro]
   window  used  pace  resets in  verdict
   5h       30%     —  1h 0m      —
-cursor: unknown
+cursor (usage_summary) [pro]
+  window  used  pace  resets in  verdict
+  month    60%     —  15d 0h     —
+  limit reached: on-demand limit reached
 pi: unknown
 
 == Runs ==

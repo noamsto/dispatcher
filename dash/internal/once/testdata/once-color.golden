@@ -37,7 +37,10 @@ fetched 10m ago
 [1mcodex (app_server) [pro][0m
   window  used  pace  resets in  verdict
   5h       30%     —  1h 0m      —
-cursor: unknown
+[1mcursor (usage_summary) [pro][0m
+  window  used  pace  resets in  verdict
+  month    60%     —  15d 0h     —
+  limit reached: on-demand limit reached
 pi: unknown
 
 [1m== Runs ==[0m

@@ -55,24 +55,46 @@ type BudgetSection struct {
 	Error    *string       `json:"error"`
 }
 
-// BudgetReport mirrors refresh-budget --report --json exactly (field order
-// included), so a Go re-marshal of a source document round-trips byte for
-// byte modulo indentation.
+// BudgetReport decodes refresh-budget --report --json. EngineBudget models the
+// fields dash reads; LimitReached is kept raw (json.RawMessage) so its
+// engine-specific shape — codex's absolute-limit signals vs cursor's
+// {reason,resets_at} vs pi's {reason} — round-trips a Go re-marshal unchanged.
+// Fields no renderer reads (target_source, limit_reset, pi's key_limit_* and
+// starts_at/resets_at) are intentionally unmodeled and are dropped on
+// re-marshal.
 type BudgetReport struct {
 	FetchedEpoch int64                    `json:"fetched_epoch"`
 	Engines      map[string]*EngineBudget `json:"engines"`
 }
 
 type EngineBudget struct {
-	Source               string   `json:"source"`
-	PlanType             *string  `json:"plan_type"`
-	CreditsCover         *bool    `json:"credits_cover"`
-	SpendUSD             *float64 `json:"spend_usd"`
-	TargetUSD            *float64 `json:"target_usd"`
-	ElapsedPct           *float64 `json:"elapsed_pct"`
-	ProjectedMonthEndUSD *float64 `json:"projected_month_end_usd"`
-	Windows              []Window `json:"windows"`
-	Projection           *string  `json:"projection"`
+	Source               string          `json:"source"`
+	PlanType             *string         `json:"plan_type"`
+	CreditsCover         *bool           `json:"credits_cover"`
+	Unlimited            bool            `json:"unlimited"`
+	SpendUSD             *float64        `json:"spend_usd"`
+	TargetUSD            *float64        `json:"target_usd"`
+	ElapsedPct           *float64        `json:"elapsed_pct"`
+	ProjectedMonthEndUSD *float64        `json:"projected_month_end_usd"`
+	Windows              []Window        `json:"windows"`
+	LimitReached         json.RawMessage `json:"limit_reached"`
+	Projection           *string         `json:"projection"`
+}
+
+// LimitReachedReason reports the reason from LimitReached, if any. Engines
+// that signal exhaustion without one (codex's absolute-limit object) return
+// false, matching the text report().
+func (b *EngineBudget) LimitReachedReason() (string, bool) {
+	if len(b.LimitReached) == 0 {
+		return "", false
+	}
+	var lr struct {
+		Reason *string `json:"reason"`
+	}
+	if err := json.Unmarshal(b.LimitReached, &lr); err != nil || lr.Reason == nil || *lr.Reason == "" {
+		return "", false
+	}
+	return *lr.Reason, true
 }
 
 type Window struct {

@@ -49,7 +49,8 @@ func (v *budgetView) rebuildSel() {
 	}
 	for _, e := range budgetEngineOrder {
 		eb := v.report.Engines[e]
-		if eb == nil {
+		if eb == nil || eb.Unlimited {
+			// unlimited engines render no window rows, so none are selectable
 			continue
 		}
 		for i := range eb.Windows {
@@ -164,14 +165,18 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 		heading += " [" + *eb.PlanType + "]"
 	}
 	out := []string{truncateLine(headerStyle.Render(heading), w)}
-	var curRef winRef
-	hasCur := v.cursor >= 0 && v.cursor < len(v.sel)
-	if hasCur {
-		curRef = v.sel[v.cursor]
-	}
-	for i, win := range eb.Windows {
-		selected := hasCur && curRef.engine == e && curRef.idx == i
-		out = append(out, v.windowLine(win, selected, w))
+	if eb.Unlimited {
+		out = append(out, truncateLine("  unlimited", w))
+	} else {
+		var curRef winRef
+		hasCur := v.cursor >= 0 && v.cursor < len(v.sel)
+		if hasCur {
+			curRef = v.sel[v.cursor]
+		}
+		for i, win := range eb.Windows {
+			selected := hasCur && curRef.engine == e && curRef.idx == i
+			out = append(out, v.windowLine(win, selected, w))
+		}
 	}
 	if eb.Source == "openrouter_key" {
 		if eb.TargetUSD != nil {
@@ -184,6 +189,10 @@ func (v budgetView) engineLines(e string, eb *data.EngineBudget, w int) []string
 		if eb.Projection != nil {
 			out = append(out, truncateLine("  "+*eb.Projection, w))
 		}
+	}
+
+	if reason, ok := eb.LimitReachedReason(); ok {
+		out = append(out, truncateLine("  limit reached: "+cleanText(reason), w))
 	}
 	return out
 }
