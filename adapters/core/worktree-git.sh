@@ -320,7 +320,10 @@ _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <
     [ -n "$line" ] || break
     case $line in
     'worktree '*) primary="${line#worktree }" ;;
-    bare) primary= ; break ;;
+    bare)
+      primary=
+      break
+      ;;
     esac
   done
   # A separate-git-dir layout reports the git dir itself as the main worktree.
