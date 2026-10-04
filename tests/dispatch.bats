@@ -6526,6 +6526,82 @@ EOF
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
+# #633: a worker owns its worktree's `.git`, so a dispatch started from inside
+# one must never let git discover it. The fake is a standalone repo whose
+# reference-transaction hook proves any git that ran there.
+make_fake_gitdir() { # <scratch> — a standalone .git whose hook touches SENTINEL
+  git init -q "$1"
+  git -C "$1" config remote.origin.url "$TEST_REPO/origin.git"
+  mkdir -p "$1/.git/hooks"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$1/.git/hooks/reference-transaction"
+  chmod +x "$1/.git/hooks/reference-transaction"
+}
+
+record_wt() { # <wt> <branch> — the record `_record_worktree_anchor` writes
+  local wt="$1" common key
+  common="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)"
+  key="$(printf %s "$(realpath -e -- "$wt")" | sha256sum | cut -c1-64)"
+  mkdir -p "$XDG_DATA_HOME/crew/worktrees"
+  printf '%s\n' "$(realpath -e -- "$wt")" "$(realpath -m -- "$common/crew")" "$2" \
+    "$(realpath -e -- "$common/worktrees/${wt##*/}")" >"$XDG_DATA_HOME/crew/worktrees/$key"
+}
+
+setup_recorded_w9() {
+  stub_launch_bins
+  git -C "$TEST_REPO" worktree add -q -b feat/9-other "$TEST_REPO/w9" HEAD
+  record_wt "$TEST_REPO/w9" feat/9-other
+  seed_git_baseline
+}
+
+@test "fetch from a worker worktree whose .git is swapped mid-dispatch never runs its hooks (#633)" {
+  setup_recorded_w9
+  make_fake_gitdir "$BATS_TEST_TMPDIR/fake"
+  cat >"$STUB_DIR/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+repo\ view\ *)
+  if [ ! -e "$BATS_TEST_TMPDIR/swapped" ]; then
+    touch "$BATS_TEST_TMPDIR/swapped"
+    rm "$TEST_REPO/w9/.git"
+    mv "$BATS_TEST_TMPDIR/fake/.git" "$TEST_REPO/w9/.git"
+  fi
+  printf '%s\n' main
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  cd "$TEST_REPO/w9"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO" rev-parse refs/remotes/origin/main)" = "$(git -C "$TEST_REPO/origin.git" rev-parse main)" ]
+}
+
+@test "dispatch refuses from a worker worktree whose .git is already a standalone repo (#633)" {
+  setup_recorded_w9
+  make_fake_gitdir "$BATS_TEST_TMPDIR/fake"
+  rm "$TEST_REPO/w9/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$TEST_REPO/w9/.git"
+  cd "$TEST_REPO/w9"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"inside the worker worktree"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ ! -e "$TEST_REPO/w9/.git/crew" ]
+}
+
+@test "a relative DISPATCH_SPEC still resolves against the caller's worktree after relocating (#633)" {
+  setup_recorded_w9
+  printf 'the spec body\n' >"$TEST_REPO/w9/spec.md"
+  cd "$TEST_REPO/w9"
+  DISPATCH_PROFILE=personal DISPATCH_SPEC=spec.md run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q 'the spec body' "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing/WORKER_TASK.md"
+}
+
 # The scan's field order is window_id / pane_current_path / @crew_name —
 # deliberately NOT `crew occupants`' order. Tab is IFS whitespace, so an empty
 # middle field collapses and `read` shifts the path into it; @crew_name goes last

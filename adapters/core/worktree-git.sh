@@ -63,10 +63,11 @@ _wt_cfg_exec() { # <key> <value> — status 0 when _wt_exec_keys names the pair 
 # <common>: any other spelling (`.husky`, `./.git/hooks`) may name a
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
-# from a cwd _wt_cfg_guard_cwd asks git's own `--git-path hooks` whether the
-# spellings resolve to one dir. Any core.worktree turns the equivalence off:
-# work-tree commands resolve the value there, which rev-parse does not show.
-# Admin-dir contexts pin core.hooksPath=/dev/null (_wt_neutral_cfg).
+# before `wt` — which cannot take --git-dir — _wt_cfg_guard_cwd asks git's own
+# `--git-path hooks` whether the spellings resolve to one dir. Any
+# core.worktree turns the equivalence off: work-tree commands resolve the value
+# there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
+# pin core.hooksPath=/dev/null (_wt_neutral_cfg) and resolve nothing from a cwd.
 _wt_cfg_canon() { # <R> <rec> <var> — set <var> to <rec>, the exact relative `.git/hooks` core.hookspath made `<R>/hooks`
   printf -v "$3" '%s' "$2"
   [[ $2 == core.hookspath$'\n'.git/hooks && -n $1 ]] || return 0
@@ -274,6 +275,59 @@ _wt_neutral() { # <git-dir> <cmd…> — run a tool that spawns its own git (wt)
     n=$((n + 1))
   done
   env GIT_ATTR_SOURCE="$empty" GIT_CONFIG_COUNT="$n" "${kv_env[@]}" "$@"
+}
+# Anchor, don't discover (#633): --git-dir=<common> reads no cwd's `.git`, so a
+# worker-swapped or standalone one is never consulted. A builder, not a runner,
+# so a caller can background git itself and keep its pid.
+_wt_common_argv() { # <common> <array-var>
+  local -n _wt_argv="$2"
+  local kv
+  _wt_argv=(git --git-dir="$1")
+  for kv in "${_wt_neutral_cfg[@]}" gc.auto=0 maintenance.auto=false; do _wt_argv+=(-c "$kv"); done
+}
+_wt_git_common() { # <common> <git args…> — guard <common>, then git anchored on it
+  local common="$1"
+  local -a argv
+  shift
+  _wt_cfg_guard "$common" || return 1
+  _wt_common_argv "$common" argv
+  "${argv[@]}" "$@"
+}
+# Path-keyed on the dispatcher record of the cwd's own ancestor, so there is no
+# check-then-use gap: a worker swapping its `.git` cannot hide the worktree (#633).
+_wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <common>'s main checkout
+  local common="$1" d rec line primary=
+  local -a lines wl
+  d="$(pwd -P)" || return 1
+  while :; do
+    rec="$(_worktree_anchor_path "$d")"
+    [ ! -e "$rec" ] && [ ! -L "$rec" ] || break
+    [ "$d" != / ] || return 0
+    d="$(dirname -- "$d")"
+  done
+  if [ -L "$rec" ] || [ ! -f "$rec" ]; then
+    printf 'refusing git: the dispatcher record for %q is not a regular file: %q\n' "$d" "$rec" >&2
+    return 1
+  fi
+  mapfile -t lines <"$rec"
+  if [ "${lines[1]:-}" != "$(realpath -m -- "$common/crew")" ]; then
+    printf 'refusing git: %q is inside the worker worktree %q, whose git resolves to %q, not the recorded %q — run from the main checkout\n' \
+      "$(pwd -P)" "$d" "$common" "${lines[1]%/crew}" >&2
+    return 1
+  fi
+  mapfile -t wl < <(git --git-dir="$common" worktree list --porcelain)
+  for line in "${wl[@]}"; do
+    [ -n "$line" ] || break
+    case $line in
+    'worktree '*) primary="${line#worktree }" ;;
+    bare) primary= ; break ;;
+    esac
+  done
+  # A separate-git-dir layout reports the git dir itself as the main worktree.
+  if [ -z "$primary" ] || [ "$(realpath -m -- "$primary")" = "$(realpath -m -- "$common")" ] || ! cd -- "$primary"; then
+    printf 'refusing git: %q is a worker worktree and %q has no main checkout to run from — run from the main checkout\n' "$d" "$common" >&2
+    return 1
+  fi
 }
 _wt_git() { # <admin-dir> <worktree> <git args…>
   local admin="$1" wt="$2" empty kv

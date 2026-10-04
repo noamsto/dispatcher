@@ -5372,6 +5372,15 @@ reap)
     ;;
   esac
   claim_mask_ttl=3600
+  # Unconditional, unlike the advisory hint lib: without it reap must abort,
+  # never fall back to discovery in a worker's worktree (#539).
+  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+  # shellcheck source=/dev/null
+  . "$wt_git_lib"
+  # Never run reap's git/wt from a worker's worktree (#633); the caller's own
+  # cwd still decides which worktree is kept.
+  reap_cwd="$PWD"
+  _wt_trusted_cwd "$common" || exit 1
   [ -f "$log" ] || exit 0
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
@@ -5574,12 +5583,6 @@ EOF
     }
   done
 
-  # Unconditional, unlike the advisory hint lib: without it reap must abort,
-  # never fall back to discovery in a worker's worktree (#539).
-  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
-  # shellcheck source=/dev/null
-  . "$wt_git_lib"
-
   # Orphan windows: report only — a human may be using one.
   while IFS=$'\t' read -r owid obranch ocdir; do
     [ -n "$owid" ] && [ -n "$obranch" ] || continue
@@ -5711,7 +5714,7 @@ PANES
     fi
     # Never remove the worktree the caller is standing in — it would leave the
     # invoking shell (or dispatch itself) on a path that no longer exists.
-    case "$PWD/" in
+    case "$reap_cwd/" in
     "$wtpath"/*)
       note "keeping $branch — it is the current worktree"
       continue
@@ -5898,8 +5901,8 @@ SCAFFOLD
       if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
-          if _wt_cfg_guard_cwd "$common"; then
-            git branch -D "$branch" >/dev/null 2>&1 || true
+          if _wt_cfg_guard "$common"; then
+            _wt_git_common "$common" branch -D "$branch" >/dev/null 2>&1 || true
           else
             note "kept local branch $branch — git config drift"
           fi

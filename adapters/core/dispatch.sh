@@ -243,6 +243,7 @@ _ensure_dispatched_label() {
 # Local branches are the caller's business, not checked here.
 _claim_evidence() {
   local issue="$1" out rc events="$crew_dir/events.jsonl" pid waited bound outf
+  local -a lsr
   # Bound the remote probe by wall clock (#321). Stock macOS ships no coreutils
   # `timeout`, so the old `timeout 20` guard simply vanished there and a stalled
   # origin could hang the dispatch forever. git's own `http.lowSpeed*` fails the
@@ -253,8 +254,8 @@ _claim_evidence() {
   bound="${DISPATCH_CLAIM_LS_REMOTE_TIMEOUT_S:-20}"
   # Read as evidence below, same as an unreachable origin (#557): ls-remote runs
   # sshCommand/credential helper, and _wt_cfg_guard already wrote its reason to
-  # stderr.
-  if ! _wt_cfg_guard_cwd "${crew_dir%/crew}" >&2; then
+  # stderr. Anchored on the common dir like the guard: no cwd's `.git` is read (#633).
+  if ! _wt_cfg_guard "${crew_dir%/crew}" >&2; then
     echo "git config drift"
     return 0
   fi
@@ -262,8 +263,9 @@ _claim_evidence() {
     echo "origin unreachable"
     return 0
   }
+  _wt_common_argv "${crew_dir%/crew}" lsr
   GIT_TERMINAL_PROMPT=0 \
-    git -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
+    "${lsr[@]}" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
     ls-remote --heads origin "refs/heads/feat/$issue-*" >"$outf" 2>/dev/null &
   pid=$!
   waited=0
@@ -682,18 +684,16 @@ _bus_append() {
 # repo. A bare positional would parse the name as a refspec
 # (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
 # fetch option (`--upload-pack=...`), so it must be a plain branch name and is
-# spelled as an explicit refspec. Never run it in a worker's worktree: fetch
-# honours that gitdir's config (#539), and refs/remotes are shared anyway.
+# spelled as an explicit refspec. Anchored on the common dir, so it runs the
+# same from any cwd and no worker's `.git` is consulted (#539, #633).
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
 }
 _fetch_origin_branch() {
   local name=$1
-  # fetch runs sshCommand/credential helper/reference-transaction hooks (#557).
-  _wt_cfg_guard_cwd "${crew_dir%/crew}" || return 1
   _plain_branch_name "$name" || return 1
-  git fetch origin "+refs/heads/$name:refs/remotes/origin/$name"
+  _wt_git_common "${crew_dir%/crew}" fetch --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name"
 }
 
 # Unconditional, unlike the advisory hint lib: without it dispatch must abort,
@@ -3518,6 +3518,13 @@ fi
 slug=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | cut -c1-40 | sed -E 's/^-+//; s/-+$//')
 
 crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+# #633: git and wt never run from a worker's worktree. caller_pwd keeps the
+# checks that are about where the caller stood.
+caller_pwd="$PWD"
+if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
+  DISPATCH_SPEC="$caller_pwd/$DISPATCH_SPEC"
+fi
+_wt_trusted_cwd "${crew_dir%/crew}" || exit 1
 mkdir -p "$crew_dir"
 
 # Entry guard (#557): refuse a drifted config now, before `gh issue create`
@@ -3696,7 +3703,7 @@ fi
 # must never fail because cleanup of unrelated, already-merged work failed.
 # Any worker still booting on a branch this reap could otherwise mistake for
 # idle-done is protected by the claim write near `worker_id=` below.
-crew reap --quiet || true
+(cd "$caller_pwd" && crew reap --quiet) || true
 
 # A switch onto a tree a worker or PR author wrote (resume, --pr, a stacked
 # --base parent) runs with --no-hooks: the operator's hooks run in this shell,
@@ -3978,7 +3985,7 @@ resume)
       echo "dispatch: $branch is checked out in the primary worktree $prev_wt — a worker must not run in the main checkout. Move the branch to its own worktree, then re-dispatch." >&2
       exit 1
     fi
-    case "$PWD/" in
+    case "$caller_pwd/" in
     "$prev_wt"/*)
       echo "dispatch: $branch is checked out at $prev_wt, the worktree this dispatch is running from — a worker would open on top of you. Re-dispatch from elsewhere." >&2
       exit 1

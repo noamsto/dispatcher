@@ -458,8 +458,12 @@ _anchor_mismatch() { # $1=label $2=discovered $3=recorded
 [ "${_anchor_lines[3]:-}" = "$_gitdir_real" ] || _anchor_mismatch "git dir" "$_gitdir_real" "${_anchor_lines[3]:-}"
 
 # Anchored crew dir is now trusted; refuse a drifted config before it reaches
-# the launch script (#557).
-_wt_cfg_guard_cwd "${_crew_dir_real%/crew}" || exit 1
+# the launch script (#557). Both configs come from the dispatcher record
+# (common dir + this worktree's admin dir), so a relative `.git/hooks` compares
+# canonically against the baseline and no hook-capable git runs from the
+# worker's cwd (#638).
+_wt_cfg_guard "${_crew_dir_real%/crew}" || exit 1
+_wt_cfg_guard "${_crew_dir_real%/crew}" "${_anchor_lines[3]}" || exit 1
 
 # Header reader. `cut -d' ' -f2-` keeps values containing spaces (title), and
 # -m1 pins the first occurrence so a value echoed inside the ## Task body

@@ -202,6 +202,29 @@ EOF
   [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
 }
 
+@test "resume accepts a relative .git/hooks against an absolute baseline from its linked worktree (#638)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" config core.hooksPath "$(realpath -e "$TEST_REPO/.git")/hooks"
+  seed_git_baseline
+  git -C "$TEST_REPO" config core.hooksPath .git/hooks
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refusing git"* ]]
+}
+
+@test "resume still refuses a drifted key under a relative .git/hooks (#638)" {
+  setup_worker_wt
+  git -C "$TEST_REPO" config core.hooksPath "$(realpath -e "$TEST_REPO/.git")/hooks"
+  seed_git_baseline
+  git -C "$TEST_REPO" config core.hooksPath .git/hooks
+  git -C "$TEST_REPO" config core.fsmonitor /evil
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.fsmonitor* ]]
+}
+
 @test "resume refuses on a worker-planted include (#557)" {
   # #557: a worker's `git config include.path <file>` in the worktree writes
   # the COMMON config that dispatcher-run git (here, resume's own ls-files

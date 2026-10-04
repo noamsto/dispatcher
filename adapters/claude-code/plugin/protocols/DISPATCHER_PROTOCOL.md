@@ -652,14 +652,22 @@ branch instead; the worktree carries over under `resume: true`.
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`. Values compare literally, except that the exact
-  relative `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix
-  writes one from the main checkout, the other from a linked worktree). From a
-  cwd, that relative spelling against an absolute-only baseline passes only
-  where git itself resolves hooks to the resolved `<common>/hooks` (`git
-  rev-parse --git-path hooks`) and no `core.worktree` is set, so a dispatcher
-  run from a linked worktree refuses: set `core.hooksPath` to the absolute
-  `<common>/hooks`. Anchored calls — and, via
+  remove` and `git branch -D`. `dispatch` and `crew reap` first leave a
+  recorded worker worktree for the main checkout (refusing when the cwd's git
+  does not resolve to the recorded crew dir) and run `git fetch`/`ls-remote`/
+  `git branch -D` anchored — `--git-dir=<git-common-dir>` plus the neutral
+  config below — so no worker `.git`, standalone or swapped mid-run, is ever
+  discovered by them; `dispatch resume` guards the record's common and admin
+  dirs, not the cwd. Values compare literally, except that the exact relative
+  `core.hooksPath` `.git/hooks` equals `<common>/hooks` (git-hooks.nix writes
+  one from the main checkout, the other from a linked worktree). From a cwd,
+  that relative spelling against an absolute-only baseline passes only where
+  git itself resolves hooks to the resolved `<common>/hooks` (`git rev-parse
+  --git-path hooks`) and no `core.worktree` is set; that cwd check now runs
+  only before `wt` (which cannot be anchored), so only a dispatcher run from a
+  linked worktree that is not a worker's refuses the relative spelling (set
+  `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` no
+  longer does. Anchored calls — and, via
   `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
   `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
@@ -703,7 +711,12 @@ branch instead; the worktree carries over under `resume: true`.
   config, not the program; `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
   names its path, but one the human wrote can select a relative driver whose
-  script the worker rewrites); and
+  script the worker rewrites); a cwd with no dispatcher record on any ancestor
+  is trusted as the caller's own — a worktree dispatched before #518 or not by
+  `dispatch`, or a worker-writable directory outside its worktree (reached e.g.
+  through a worker-planted symlink) holding a standalone `.git`; `dispatch
+  resume`'s plumbing before its record check reads the cwd's `.git` (it runs no
+  program); and
   only a default create — `wt switch -c` off the freshly fetched
   default-branch tip, operator-trusted — still checks out with the new
   tree's own attributes and hooks, so a baselined relative smudge program or
