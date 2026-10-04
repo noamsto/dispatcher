@@ -88,12 +88,16 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = switch ]; then
-  br=""
+  br="" base=""
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
     -c)
       br="$2"
+      shift 2
+      ;;
+    -b)
+      base="$2"
       shift 2
       ;;
     *) shift ;;
@@ -102,7 +106,7 @@ if [ "$1" = switch ]; then
   [ -n "$br" ] || exit 1
   dest="$TEST_REPO/.dispatch-wt/${br//\//-}"
   mkdir -p "$(dirname "$dest")"
-  git -C "$TEST_REPO" worktree add -b "$br" "$dest" HEAD >/dev/null
+  git -C "$TEST_REPO" worktree add -b "$br" "$dest" "${base:-HEAD}" >/dev/null
 fi
 exit 0
 EOF
@@ -4754,6 +4758,159 @@ EOF
   run ! grep -q '^switch' "$STUB_LOG"
 }
 
+# A worker owns its worktree's admin HEAD, so it can point it at an unborn
+# branch (#640): `git worktree list` then reports that tree as holding a branch
+# whose ref does not exist, and real worktrunk's `wt switch -c <br>` attaches to
+# it instead of creating anything. $SQUAT is that worker's tree. The wt stub
+# mimics worktrunk's attach; $SQUAT_RACE=before points the squatter's HEAD at
+# the branch just ahead of the listing, =after just behind a normal create,
+# =moved also relocates the squatter's reported path (same admin id) and plants
+# the ref at the requested base, =moved-ref lets a normal create finish and then
+# repoints the ref.
+# Install it last: fixtures overwrite $STUB_DIR/wt and crew. The _tree half
+# leaves stub_launch_bins to the caller so setup_stacked_base can supply it.
+squat_head() { # <branch>
+  printf 'ref: refs/heads/%s\n' "$1" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+}
+
+setup_unborn_squatter_tree() {
+  stub_gh_claim "" ""
+  git -C "$TEST_REPO" branch squat
+  mkdir -p "$TEST_REPO/.worktrees"
+  git -C "$TEST_REPO" worktree add -q "$TEST_REPO/.worktrees/squat" squat
+  export SQUAT="$TEST_REPO/.worktrees/squat"
+  stub_crew_gate '[]' '[]'
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = switch ]; then
+  br="" base=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -c) br="$2"; shift 2 ;;
+    -b) base="$2"; shift 2 ;;
+    *) shift ;;
+    esac
+  done
+  [ -n "$br" ] || exit 1
+  if [ "${SQUAT_RACE:-}" = before ]; then
+    printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+  fi
+  if [ "${SQUAT_RACE:-}" = moved ]; then
+    ln -s . "$SQUAT/alias"
+    printf '%s\n' "$SQUAT/alias/.git" >"$TEST_REPO/.git/worktrees/squat/gitdir"
+    printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+  fi
+  held="$(git -C "$TEST_REPO" worktree list --porcelain |
+    awk -v b="refs/heads/$br" '/^worktree /{p=substr($0, 10)} $0=="branch "b{print p}')"
+  if [ -n "$held" ]; then
+    printf 'Switched to worktree for %s @ %s\n' "$br" "$held"
+    [ "${SQUAT_RACE:-}" != moved ] || git -C "$TEST_REPO" update-ref "refs/heads/$br" "${base:-HEAD}"
+    exit 0
+  fi
+  dest="$TEST_REPO/.dispatch-wt/${br//\//-}"
+  mkdir -p "$(dirname "$dest")"
+  git -C "$TEST_REPO" worktree add -b "$br" "$dest" "${base:-HEAD}" >/dev/null
+  if [ "${SQUAT_RACE:-}" = after ]; then
+    printf 'ref: refs/heads/%s\n' "$br" >"$TEST_REPO/.git/worktrees/squat/HEAD"
+  fi
+  if [ "${SQUAT_RACE:-}" = moved-ref ]; then
+    other="$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+      git -C "$TEST_REPO" commit-tree -m other "$(git -C "$TEST_REPO" hash-object -t tree /dev/null)")"
+    git -C "$TEST_REPO" update-ref "refs/heads/$br" "$other"
+  fi
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+setup_unborn_squatter() {
+  stub_launch_bins
+  setup_unborn_squatter_tree
+}
+
+# assert_no_bus_row <kind> — the dispatch bus carries no row of that kind (a
+# refusal before the bus is touched leaves no log at all).
+assert_no_bus_row() { # <kind>
+  local log="$TEST_REPO/.git/crew/events.jsonl"
+  [ ! -f "$log" ] || run ! jq -e --arg k "$1" 'select(.kind == $k)' "$log"
+}
+
+@test "create: refuses when a worktree's unborn HEAD already names the branch (#640)" {
+  setup_unborn_squatter
+  squat_head feat/42-title
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$SQUAT"* ]]
+  [[ "$output" == *"unborn"* ]]
+  run ! grep -q '^switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "create: refuses a stacked create onto an unborn-HEAD worktree (#640)" {
+  setup_stacked_base feat/parent
+  setup_unborn_squatter_tree
+  squat_head feat/42-title
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  run ! grep -q '^switch' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+@test "create: a HEAD pointed at the branch mid-dispatch is refused after the switch (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=before
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+@test "create: refuses when a second worktree claims the new branch before launch (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=after
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+@test "create: an unborn-HEAD squatter's window is never reclaimed (#640)" {
+  setup_unborn_squatter
+  squat_head feat/42-title
+  stub_crew_gate \
+    '[{"name":"x","window":"@9","engine":null}]' \
+    '[{"state":"done","terminal":true,"worker_id":"worker:feat/42-title#s1"}]'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+  assert_no_bus_row reclaim
+}
+
+@test "create: a squatter moved to a new path under its old admin id is refused (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=moved
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
+@test "create: a branch ref repointed off the requested base is refused (#640)" {
+  setup_unborn_squatter
+  export SQUAT_RACE=moved-ref
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not create a new worktree"* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+  assert_no_bus_row claim
+}
+
 # lock_path <branch> — the per-branch dispatch lock symlink, keyed exactly as
 # dispatch keys it (cksum of the branch), under the same git-common-dir.
 lock_path() { # <branch>
@@ -5322,11 +5479,13 @@ wt_path_for() {
 # commit_envrc — track a real .envrc on the source branch so a worktree cut
 # from it (via `wt`'s `git worktree add -b ... HEAD`) actually has one; the
 # direnv-allow guard now skips entirely when .envrc is absent, so tests that
-# mean to exercise `direnv allow` itself need this.
+# mean to exercise `direnv allow` itself need this. Pushed too: the default
+# create branches off origin's fetched tip, not local HEAD.
 commit_envrc() {
   echo 'use nix' >"$TEST_REPO/.envrc"
   git -C "$TEST_REPO" add .envrc
   git -C "$TEST_REPO" commit -q -m envrc
+  git -C "$TEST_REPO" push -q origin main
 }
 
 @test "trust: a claude dispatch stamps hasTrustDialogAccepted for the new worktree" {
