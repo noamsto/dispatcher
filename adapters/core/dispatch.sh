@@ -686,6 +686,9 @@ _bus_append() {
 # fetch option (`--upload-pack=...`), so it must be a plain branch name and is
 # spelled as an explicit refspec. Anchored on the common dir, so it runs the
 # same from any cwd and no worker's `.git` is consulted (#539, #633).
+# Resolve the fetched tip as refs/remotes/origin/<name>: refs are shared across
+# worktrees, and a worker's refs/heads/origin/<name> or tag origin/<name> outranks
+# the short name (#688).
 _plain_branch_name() {
   [[ $1 == *:* || $1 == +* ]] && return 1
   git check-ref-format --branch "$1" >/dev/null
@@ -3604,7 +3607,7 @@ if [ -n "$base_flag" ]; then
     echo "dispatch: --base '$base_flag' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   fi
-  base_oid="$(git rev-parse --verify --quiet "origin/$base_flag^{commit}")" || {
+  base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$base_flag^{commit}")" || {
     echo "dispatch: --base '$base_flag' does not resolve to a commit on origin — refusing to scaffold" >&2
     exit 1
   }
@@ -3833,7 +3836,10 @@ else
       # gate in between shells out to crew/jq, giving a concurrent fetch a window
       # to move the floating ref — pinning keeps what's branched and what the
       # success line reports from ever diverging.
-      create_base_oid="$(git rev-parse "origin/$default_branch")"
+      create_base_oid="$(git rev-parse --verify --quiet "refs/remotes/origin/$default_branch^{commit}")" || {
+        echo "dispatch: default branch '$default_branch' does not resolve to a commit on origin — refusing to scaffold" >&2
+        exit 1
+      }
       create_base_label="origin/$default_branch"
     fi
     create_base_short="$(git rev-parse --short "$create_base_oid")"
