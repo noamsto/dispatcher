@@ -5233,8 +5233,8 @@ pr-watch)
   printf '%s\n' "$ev"
   ;;
 git-baseline)
-  # Lists — or, with --accept, merges into — the exec-capable git-config
-  # baseline _wt_cfg_guard enforces (#557, #585). Only a dispatch records one
+  # Lists — or, with --accept, merges into — the exec-capable and redirecting
+  # git-config baseline _wt_cfg_guard enforces (#557, #585, #678). Only a dispatch records one
   # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
   # terminal, and --accept writes exactly the pairs this run printed: each
   # context is read once, and a pair is shown and collected in one step.
@@ -5265,9 +5265,12 @@ git-baseline)
 
   declare -A gb_base=() gb_seen=()
   gb_canon=
+  gb_marked=
   gb_real="$(realpath -e -- "$common")" || gb_real=
   for gb_rec in "${gb_recs[@]}"; do
     [ -n "$gb_rec" ] || continue
+    # shellcheck disable=SC2154 # set by the sourced worktree-git lib
+    [ "$gb_rec" != "$_wt_cfg_redirect_mark" ] || gb_marked=1
     _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
     gb_base["$gb_canon"]=1
   done
@@ -5276,6 +5279,10 @@ git-baseline)
   for gb_head in "$common"/worktrees/*/HEAD; do
     [ -f "$gb_head" ] && gb_ctxs+=("${gb_head%/HEAD}")
   done
+
+  if [ -f "$baseline_file" ] && [ -z "$gb_marked" ]; then
+    echo "git-config baseline $baseline_file predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does"
+  fi
 
   gb_shown=()
   for gb_ctx in "${gb_ctxs[@]}"; do
@@ -5292,7 +5299,7 @@ git-baseline)
       [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
       gb_key="${gb_rec%%$'\n'*}"
       gb_value="${gb_rec#"$gb_key"$'\n'}"
-      _wt_cfg_exec "$gb_key" "$gb_value" || continue
+      _wt_cfg_guarded "$gb_key" "$gb_value" || continue
       _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
       [ -z "${gb_base["$gb_canon"]+x}" ] || continue
       gb_origin="${gb_listing[gb_i + 1]#file:}"
@@ -5303,7 +5310,7 @@ git-baseline)
     done
   done
 
-  if [ "${#gb_shown[@]}" -eq 0 ] && [ -f "$baseline_file" ]; then
+  if [ "${#gb_shown[@]}" -eq 0 ] && [ -f "$baseline_file" ] && [ -n "$gb_marked" ]; then
     echo "git-config baseline $baseline_file: no drift"
     exit 0
   fi
@@ -5312,7 +5319,7 @@ git-baseline)
   fi
 
   if [ "${#gb_shown[@]}" -eq 0 ]; then
-    echo "no exec-capable git config yet — yes records an empty baseline"
+    echo "no guarded git config yet — yes records an empty baseline"
   fi
   printf 'Accept these into the baseline %s? type yes: ' "$baseline_file"
   read -r gb_answer
@@ -5324,9 +5331,9 @@ git-baseline)
   mkdir -p -- "$dir" || exit 1
   gb_tmp="$(mktemp "$baseline_file.XXXXXX")" || exit 1
   # Merge, never replace: this run shows only the drift, so a replace would
-  # drop every pair already accepted. An empty set writes a 0-byte file, never
-  # a lone NUL (an empty record).
-  if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}"; do
+  # drop every pair already accepted. The marker is always written, so an
+  # empty set is never a 0-byte file or a lone NUL (an empty record).
+  if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}" "$_wt_cfg_redirect_mark"; do
     [ -z "$gb_rec" ] || printf '%s\0' "$gb_rec"
   done | LC_ALL=C sort -z -u >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
     rm -f -- "$gb_tmp"
