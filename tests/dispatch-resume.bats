@@ -15,6 +15,11 @@ setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = pi-agent-dir ]; then exec bash -euo pipefail "$CREW_REAL" pi-agent-dir; fi
+if [ "$1" = resolve-target ]; then exec bash -euo pipefail "$CREW_REAL" "$@"; fi
+if [ "$1" = where ]; then
+  [ -z "${STUB_WHERE_LIVE:-}" ] || { echo "iris — main:3.1 (lead pane)   jump: ! tmux switch-client -t %9"; exit 0; }
+  exit 1
+fi
 if [ "$1" = engine-cmd ]; then
   c="${2#.}"
   c="${c%-wrapped}"
@@ -2345,4 +2350,110 @@ EOF
   run run_resume
   [ "$status" -eq 0 ]
   [[ "$output" != *"arm/adjust the lane"* ]]
+}
+
+# seed_dispatch_row <branch> <name> <host> [also_closes-json] — a bus row as
+# dispatch writes it, in the repo $CREW_REAL resolves from the cwd.
+seed_dispatch_row() {
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc --arg b "$1" --arg n "$2" --arg h "$3" --argjson a "${4:-[]}" \
+    '{ts: 1, crew_id: "c1", kind: "dispatch", branch: $b, name: $n, host: $h, also_closes: $a}' \
+    >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "target: #N, branch and codename resume the same worker as cwd-bound, from the main checkout" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  cd "$WT"
+  run run_resume --print
+  [ "$status" -eq 0 ]
+  expected="$output"
+  cd "$TEST_REPO"
+  for t in '#7' 7 feat/7-a-thing iris 'worker:feat/7-a-thing#s1-99'; do
+    run run_resume "$t" --print
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected" ]
+  done
+}
+
+@test "target: a live worker is refused with its window and nothing launches" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  STUB_WHERE_LIVE=1 run run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"still alive"* ]]
+  [[ "$output" == *"tmux switch-client -t %9"* ]]
+  ! grep -q '^new-window\|^send-keys' "$STUB_LOG"
+}
+
+@test "target: a record from another host is refused, naming the host" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris otherbox
+  cd "$TEST_REPO"
+  run run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"host 'otherbox'"* ]]
+}
+
+@test "target: an ambiguous target lists its candidates" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  seed_dispatch_row fix/7-another iris "$(uname -n)"
+  cd "$TEST_REPO"
+  run run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ambiguous"* ]]
+  [[ "$output" == *"feat/7-a-thing"* ]]
+  [[ "$output" == *"fix/7-another"* ]]
+  run run_resume iris
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ambiguous"* ]]
+}
+
+@test "target: an unknown target is refused" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  cd "$TEST_REPO"
+  run run_resume '#999'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches '#999'"* ]]
+}
+
+@test "target: a plain word the bus does not know stays an extra prompt" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  cd "$WT"
+  run run_resume continue --print
+  [ "$status" -eq 0 ]
+  [[ "$output" == *continue* ]]
+}
+
+@test "target: a worktree whose record no longer matches is still refused" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  git -C "$WT" checkout -q -b feat/other
+  cd "$TEST_REPO"
+  run run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match the dispatcher's record"* ]]
+}
+
+@test "target: a legacy row with no host or codename still resumes" {
+  setup_worker_wt
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing"}' >"$TEST_REPO/.git/crew/events.jsonl"
+  cd "$TEST_REPO"
+  run run_resume '#7' --print
+  [ "$status" -eq 0 ]
+}
+
+@test "target: an unknown branch-shaped word is refused, not taken as a prompt" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  cd "$WT"
+  run run_resume feat/other --print
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches 'feat/other'"* ]]
 }
