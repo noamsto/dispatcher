@@ -229,3 +229,24 @@ func TestRunsPaneRatingsWrongShapeIsUnavailable(t *testing.T) {
 		t.Errorf("wrong-shape ratings should read unavailable: unparseable crew rate output: ...:\n%s", got)
 	}
 }
+
+func TestUnavailableLinesInjectionAreCleaned(t *testing.T) {
+	inj := "boom\x1b]0;pwned\x07\x1b[31m‮"
+	snap := loadSnapshot(t)
+	snap.Settings.Error = &inj
+	snap.Budget.Error = &inj
+	snap.Runs.RetroError = &inj
+	snap.Runs.RatingsError = &inj
+	snap.Roster.Crews = []data.RosterCrew{{ID: "c1", WorkersError: &inj, HoldsError: &inj}}
+	got := Render(snap, false)
+	snap.Roster.Error = &inj
+	got += Render(snap, false)
+	for _, r := range []rune{0x1b, 0x07, 0x202e} {
+		if strings.ContainsRune(got, r) {
+			t.Errorf("--once output contains %U:\n%q", r, got)
+		}
+	}
+	if n := strings.Count(got, "unavailable: boom"); n < 7 {
+		t.Errorf("want unavailable: boom on every source, got %d:\n%s", n, got)
+	}
+}

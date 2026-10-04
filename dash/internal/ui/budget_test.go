@@ -200,3 +200,28 @@ func TestBudgetErrorInjectionIsCleaned(t *testing.T) {
 		t.Errorf("missing unavailable: boom:\n%q", out)
 	}
 }
+
+func TestBudgetFieldsInjectionAreCleaned(t *testing.T) {
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(orig)
+
+	snap := loadFullSnapshot(t)
+	snap.Budget.Warnings = []string{injectedErr}
+	proj := injectedErr
+	for _, eb := range snap.Budget.Report.Engines {
+		if eb == nil {
+			continue
+		}
+		eb.Projection = &proj
+		for i := range eb.Windows {
+			eb.Windows[i].Key = "k" + injectedErr
+		}
+	}
+	v := newBudgetView(snap)
+	out := v.View(160, 40)
+	requireNoControl(t, out)
+	if !strings.Contains(out, "warning: boom") {
+		t.Errorf("missing warning: boom:\n%q", out)
+	}
+}

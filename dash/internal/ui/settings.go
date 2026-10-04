@@ -327,13 +327,13 @@ func (v settingsView) headerLines(w int) []string {
 			present = "present"
 		}
 		out = append(out,
-			truncateLine(headerStyle.Render("layers:")+" default "+v.layers.Base, w),
-			truncateLine("        user    "+v.layers.User.Path+" ("+present+")", w),
-			truncateLine("        locked  "+locked, w),
+			truncateLine(headerStyle.Render("layers:")+" default "+cleanText(v.layers.Base), w),
+			truncateLine("        user    "+cleanText(v.layers.User.Path)+" ("+present+")", w),
+			truncateLine("        locked  "+cleanText(locked), w),
 		)
 	}
 	for _, warn := range v.warnings {
-		out = append(out, truncateLine(warnStyle.Render("warning: "+warn), w))
+		out = append(out, truncateLine(warnStyle.Render("warning: "+cleanText(warn)), w))
 	}
 	if v.filterOn {
 		out = append(out, truncateLine(v.filter.View(), w))
@@ -375,12 +375,12 @@ func (v settingsView) renderNode(n *node, selected bool, w int) string {
 		if n.collapsed {
 			arrow = "▸"
 		}
-		left := indent + arrow + " " + n.name
+		left := indent + arrow + " " + cleanText(n.name)
 		leftOut, _ := alignRight(left, "", max0(w-2))
 		return prefix + branchStyle.Render(leftOut)
 	}
 
-	left := indent + n.name + ": " + compactJSON(n.row.Value)
+	left := indent + cleanText(n.name) + ": " + cleanText(compactJSON(n.row.Value))
 	badge := badgeText(n.row.Origin)
 	leftOut, badgeOut := alignRight(left, badge, max0(w-2))
 	st := leafStyle

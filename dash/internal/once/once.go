@@ -81,7 +81,7 @@ func settingsPane(snap data.Snapshot) []line {
 		out = append(out, line{style: "n", text: "warning: " + w})
 	}
 	if snap.Settings.Error != nil {
-		out = append(out, line{style: "n", text: "unavailable: " + *snap.Settings.Error})
+		out = append(out, line{style: "n", text: "unavailable: " + cleanText(*snap.Settings.Error)})
 		return out
 	}
 	out = append(out, settingsBody(snap.Settings.Rows)...)
@@ -195,7 +195,7 @@ var engineOrder = []string{"claude", "codex", "cursor", "pi"}
 func budgetPane(snap data.Snapshot) []line {
 	b := snap.Budget
 	if b.Error != nil {
-		return []line{{style: "n", text: "unavailable: " + *b.Error}}
+		return []line{{style: "n", text: "unavailable: " + cleanText(*b.Error)}}
 	}
 	age := snap.Now - b.Report.FetchedEpoch
 	fetchedLine := "fetched " + reltime(age) + " ago"
@@ -428,7 +428,7 @@ func runsPane(snap data.Snapshot) []line {
 
 	var partA []line
 	if r.RetroError != nil {
-		partA = []line{{style: "n", text: "unavailable: " + *r.RetroError}}
+		partA = []line{{style: "n", text: "unavailable: " + cleanText(*r.RetroError)}}
 	} else {
 		var rows []data.RetroRow
 		if r.Retro != nil {
@@ -446,7 +446,7 @@ func runsPane(snap data.Snapshot) []line {
 
 	var partB []line
 	if r.RatingsError != nil {
-		partB = []line{{style: "n", text: "unavailable: " + *r.RatingsError}}
+		partB = []line{{style: "n", text: "unavailable: " + cleanText(*r.RatingsError)}}
 	} else {
 		partB = ratingsTable(r.RatingsGroups)
 	}
@@ -508,7 +508,7 @@ func workerCells(w map[string]any) []string {
 func rosterCrewLines(c data.RosterCrew) []line {
 	out := []line{{style: "h", text: "crew " + c.ID}}
 	if c.WorkersError != nil {
-		out = append(out, line{style: "n", text: "  unavailable: " + *c.WorkersError})
+		out = append(out, line{style: "n", text: "  unavailable: " + cleanText(*c.WorkersError)})
 	} else if len(c.Workers) > 0 {
 		headers := []string{"name", "state", "tier/engine/model", "age", "pr"}
 		wrows := make([][]string, 0, len(c.Workers))
@@ -524,7 +524,7 @@ func rosterCrewLines(c data.RosterCrew) []line {
 		}
 	}
 	if c.HoldsError != nil {
-		out = append(out, line{style: "n", text: "  holds unavailable: " + *c.HoldsError})
+		out = append(out, line{style: "n", text: "  holds unavailable: " + cleanText(*c.HoldsError)})
 	} else {
 		for _, h := range c.Holds {
 			out = append(out, line{style: "n", text: "  " + holdLine(h)})
@@ -552,7 +552,7 @@ func holdLine(h map[string]any) string {
 func rosterPane(snap data.Snapshot) []line {
 	r := snap.Roster
 	if r.Error != nil {
-		return []line{{style: "n", text: "unavailable: " + *r.Error}}
+		return []line{{style: "n", text: "unavailable: " + cleanText(*r.Error)}}
 	}
 	if len(r.Crews) == 0 {
 		return []line{{style: "n", text: "no active crew"}}
