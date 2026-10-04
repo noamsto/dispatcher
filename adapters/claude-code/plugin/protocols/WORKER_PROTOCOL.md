@@ -297,7 +297,8 @@ not skip the message. A lead that never sends `final` is still reclaimed
 without a manual `tmux kill-window`:
 
 - **Reap reclaims a finished grid window without a release (#194).** Once the
-  lead's last status is terminal and the `--idle` threshold passes, reap's
+  lead's last status is terminal and the `--idle` threshold (default 300s) passes,
+  reap's — or the lead's own `stall-watch`, once its pane is provably idle —
   **idle-release phase** kills the window — engine commands and role panes
   included — for a `done` or `failed` lead, and for an `exited` lead only
   while **no engine process is live** in the tree (the #69 backstop: an

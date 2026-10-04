@@ -558,6 +558,99 @@ _pane_idle_reason() {
   fi
 }
 
+# release_grace — how long a finished (`done`/`failed`) worker's window stays
+# open before it is released. The session is terminal (`reply` refuses it,
+# nothing types into it), so the window only buys a human a glance at the final
+# summary and a late dispatcher directive time to re-open the session.
+release_grace=300
+
+# _human_present <window-ids> <worktree> <status-ts-ms> <grace-s> — prints why
+# and returns 0 when a person is evidently using a finished worker's window:
+# it is the active window of an attached tmux session, it saw output within the
+# grace, or its claude transcript holds a user turn newer than the status.
+_human_present() {
+  local wins="$1" wtp="$2" ts_ms="$3" grace="$4" now row wid active attached act dir latest f
+  now=$(date +%s)
+  while IFS=$'\t' read -r wid active attached act; do
+    [ -n "$wid" ] || continue
+    case " $wins " in *" $wid "*) ;; *) continue ;; esac
+    if [ "$active" = 1 ] && [ "${attached:-0}" -gt 0 ] 2>/dev/null; then
+      printf '%s' "$wid is visible in an attached tmux client"
+      return 0
+    fi
+    if [ -n "$act" ] && [ $((now - act)) -lt "$grace" ] 2>/dev/null; then
+      printf '%s' "$wid had activity within the grace"
+      return 0
+    fi
+  done < <(tmux list-windows -a -F $'#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}' 2>/dev/null || true)
+  dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf '%s' "$wtp" | sed 's/[^A-Za-z0-9]/-/g')"
+  latest=""
+  for f in "$dir"/*.jsonl; do
+    [ -e "$f" ] || continue
+    if [ -z "$latest" ] || [ "$f" -nt "$latest" ]; then latest="$f"; fi
+  done
+  if [ -n "$latest" ]; then
+    # Only text a person typed: not tool results, isMeta injections, or the
+    # harness's own task-notification/bash-output turns.
+    row=$(jq -Rr --argjson ts "$ts_ms" '
+      fromjson? | select(.type == "user" and .timestamp != null and ((.isMeta // false) | not))
+      | ((.message.content | if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join("\n")) end)) as $t
+      | select($t != "" and ($t | test("^\\s*<(task-notification|bash-stdout|bash-stderr|local-command-stdout)>") | not))
+      | select((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) * 1000 > $ts)
+      | "x"' "$latest" 2>/dev/null | head -n 1 || true)
+    if [ -n "$row" ]; then
+      printf '%s' "the engine transcript has a user turn newer than the status"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# _release_windows <branch> <session> <state> <status-ts-ms> <grace-s> <dry> —
+# kill the WINDOWs of a finished worker session, never its worktree: a worker
+# legitimately sits in `done` for as long as its PR takes to merge (#17).
+# Shared by reap's idle-release pass and stall-watch's finished-worker release;
+# the caller defines say/note. Returns 3 (nothing killed) when a person is
+# present, so the caller re-checks on its next cycle.
+_release_windows() {
+  local rbranch="$1" rsession="$2" rstate="$3" rts="$4" rgrace="$5" rdry="$6" rwt rocc w line why
+  rwt=$(git --git-dir="$common" worktree list --porcelain |
+    awk -v b="refs/heads/$rbranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+  [ -n "$rwt" ] && [ -d "$rwt" ] || return 0
+  rocc=$(_occupants "$rwt")
+  [ "$rocc" != '[]' ] || return 0
+  # `exited` is the SessionEnd backstop, not something the worker asserts, and
+  # it fires for subagents and stray panes too (#69) — so an `exited` row with
+  # a live engine in the tree is a false read, and killing the window would
+  # kill a working agent. `done`/`failed` are the worker's own word and stay
+  # releasable, engine or not: an agent legitimately idles in its pane after
+  # posting `done`, which is exactly what idle-release exists to clean up (#17).
+  if [ "$rstate" = exited ] &&
+    [ "$(printf '%s' "$rocc" | jq -r 'map(select(.engine)) | length')" -gt 0 ]; then
+    note "keeping $rbranch — exited but an engine is still running there"
+    return 0
+  fi
+  if why=$(_human_present "$(printf '%s' "$rocc" | jq -r '[.[].window] | join(" ")')" "$rwt" "$rts" "$rgrace"); then
+    note "keeping $rbranch — human present: $why"
+    return 3
+  fi
+  for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
+    if [ -n "$rdry" ]; then
+      say "would release $w at $rwt ($rbranch $rstate)"
+      continue
+    fi
+    tmux kill-window -t "$w" 2>/dev/null || true
+    say "released $w at $rwt ($rbranch $rstate)"
+  done
+  [ -n "$rdry" ] || {
+    line=$(jq -nc --arg branch "$rbranch" --arg session "$rsession" \
+      --arg state "$rstate" --argjson occ "$rocc" \
+      '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
+          state:$state, windows:($occ|map(.window))}') || return 1
+    _bus_append "$log" "$line"
+  }
+}
+
 # _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
 # s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
 # `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
@@ -4245,7 +4338,7 @@ hold)
   ;;
 stall-watch)
   # stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
-  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S]
+  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S]
   #
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
@@ -4288,6 +4381,15 @@ stall-watch)
   # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
   # pane liveness) and CREW_STALL_PROC_CMD overrides the engine-liveness check
   # (see _pane_engine_alive), so the loop is testable without tmux.
+  # Finished-worker release: once the worker's own latest word is `done`/`failed`
+  # and --release seconds (default $release_grace, 0 = off) have passed, release its
+  # window through reap's _release_windows — no stream or reap needed. Claude
+  # panes must also show a provably idle frame on two consecutive ticks (a
+  # live turn, prompt, unsent input or background shell keeps the window);
+  # other engines have no idle signature, so their frame must be unchanged for
+  # --release and show no prompt. A watchdog-posted `failed` (hung pane) is never
+  # released here — it waits for --max-life or a reap. The worktree is never touched.
+  # CREW_STALL_COLOR_CMD overrides the colored capture like CREW_STALL_SAMPLE_CMD.
   # D0/D3 stay silent (claude only) while a finished turn waits on a background
   # shell, for at most --bg-wait (default 2h) of unchanged frame.
   # role:<branch>:<role> selects prompt-only mode: a parked role pane
@@ -4297,7 +4399,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]" >&2
+    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -4353,6 +4455,7 @@ stall-watch)
   dead=1800
   max_life=43200
   load_win=300
+  release=$release_grace
   bg_wait=7200
   launch=150
   unread=600
@@ -4401,6 +4504,10 @@ stall-watch)
       load_win="${2:-}"
       shift 2
       ;;
+    --release)
+      release="${2:-}"
+      shift 2
+      ;;
     --bg-wait)
       bg_wait="${2:-}"
       shift 2
@@ -4431,6 +4538,11 @@ stall-watch)
     echo "crew: stall-watch needs --pane <id>" >&2
     exit 1
   }
+  case "$release" in '' | *[!0-9]*)
+    echo "crew: stall-watch: --release must be a non-negative integer number of seconds" >&2
+    exit 1
+    ;;
+  esac
   # Signature table. Enabling an engine is DATA, not logic: capture its prompt
   # and meter frames on a work-profile host, pin them as fixtures, add a row.
   # Codex's single verified hook-review frame is deliberately narrower than
@@ -4519,6 +4631,16 @@ stall-watch)
       eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
     else
       tmux capture-pane -p -t "$pane" 2>/dev/null
+    fi
+  }
+
+  _sample_colored() {
+    if [ -n "${CREW_STALL_COLOR_CMD:-}" ]; then
+      eval "$CREW_STALL_COLOR_CMD" 2>/dev/null
+    elif [ -n "${CREW_STALL_SAMPLE_CMD:-}" ]; then
+      eval "$CREW_STALL_SAMPLE_CMD" 2>/dev/null
+    else
+      tmux capture-pane -e -p -t "$pane" 2>/dev/null
     fi
   }
 
@@ -4756,6 +4878,61 @@ BUSLINE
            | .ts] | min // empty' 2>/dev/null || true
   }
 
+  # _finished_release — the worker posted done/failed: wait out --release, then
+  # release its window and exit. Returns only when the worker has re-opened the
+  # session (a later non-terminal status), so the main loop resumes watching.
+  # Everything else exits, so a failed sample or --max-life never loops here.
+  _try_release() {
+    local rc=0
+    _release_windows "$branch" "$rel_session" "$bus_state" "$bus_ts" "$release" "" || rc=$?
+    [ "$rc" = 3 ] || exit 0
+    idle_ticks=0
+    prev_change=$(date +%s)
+  }
+
+  _finished_release() {
+    local t plain colored idle_ticks=0 prev_hash="" prev_change quiet_s rel_session=-
+    ! _is_session_id "$from_id" || rel_session="${from_id##*#}"
+    prev_change=$(date +%s)
+    say() { :; }
+    note() { :; }
+    while :; do
+      _bus_refresh
+      case "$bus_state" in
+      done | failed) ;;
+      '') sleep "$interval"; continue ;;
+      *) return 0 ;;
+      esac
+      t=$(date +%s)
+      [ $((t - start)) -ge "$max_life" ] && exit 0
+      # A watchdog-posted `failed` marks a hung pane: keep it as evidence.
+      [ "$bus_source" != watchdog ] || exit 0
+      if ! plain=$(_sample); then
+        exit 0
+      fi
+      if [ "$(printf '%s' "$plain" | cksum)" != "$prev_hash" ]; then
+        prev_hash=$(printf '%s' "$plain" | cksum)
+        prev_change="$t"
+      fi
+      if [ $((t - bus_ts / 1000)) -ge "$release" ]; then
+        if [ "$engine" = claude ]; then
+          colored=$(_sample_colored || true)
+          if (_pane_idle_reason "$plain" "$colored" >/dev/null); then
+            idle_ticks=$((idle_ticks + 1))
+          else
+            idle_ticks=0
+          fi
+          [ "$idle_ticks" -lt 2 ] || _try_release
+        else
+          quiet_s=$((t - prev_change))
+          ! _is_prompt "$plain" && ! _is_permission_prompt "$plain" || quiet_s=0
+          [ "$quiet_s" -lt "$release" ] || _try_release
+        fi
+      fi
+      sleep "$interval"
+    done
+  }
+
   start=$(date +%s)
   sleep "$grace"
   fails=0
@@ -4792,7 +4969,11 @@ BUSLINE
     # still working (#31's own prompt was rendered by a worker watching PR CI),
     # and not on `working`, which is a heartbeat.
     case "$bus_state" in
-    done | failed | exited) exit 0 ;;
+    done | failed)
+      [ "$role_mode" = 1 ] || [ "$release" = 0 ] || { _finished_release; last_hash=""; last_change=$(date +%s); continue; }
+      exit 0
+      ;;
+    exited) exit 0 ;;
     esac
 
     if ! text=$(_sample); then
@@ -5352,7 +5533,7 @@ reap)
   quiet=""
   dry=""
   nowait=""
-  idle=3600
+  idle=$release_grace
   while [ $# -gt 0 ]; do
     case "$1" in
     --quiet) quiet=1 ;;
@@ -5533,39 +5714,9 @@ reap)
   # will not touch it while its PR is open. Kill the WINDOW only — the worktree
   # stays, because a worker legitimately sits in `done` for as long as its PR
   # takes to merge (#17).
-  while IFS=$'\t' read -r rbranch rsession rstate; do
+  while IFS=$'\t' read -r rbranch rsession rstate rts; do
     [ -n "$rbranch" ] || continue
-    rwt=$(git worktree list --porcelain |
-      awk -v b="refs/heads/$rbranch" '/^worktree /{p=$2} $0=="branch "b{print p}')
-    [ -n "$rwt" ] && [ -d "$rwt" ] || continue
-    rocc=$(_occupants "$rwt")
-    [ "$rocc" != '[]' ] || continue
-    # `exited` is the SessionEnd backstop, not something the worker asserts, and
-    # it fires for subagents and stray panes too (#69) — so an `exited` row with
-    # a live engine in the tree is a false read, and killing the window would
-    # kill a working agent. `done`/`failed` are the worker's own word and stay
-    # releasable, engine or not: an agent legitimately idles in its pane after
-    # posting `done`, which is exactly what idle-release exists to clean up (#17).
-    if [ "$rstate" = exited ] &&
-      [ "$(printf '%s' "$rocc" | jq -r 'map(select(.engine)) | length')" -gt 0 ]; then
-      note "keeping $rbranch — exited but an engine is still running there"
-      continue
-    fi
-    for w in $(printf '%s' "$rocc" | jq -r '.[].window'); do
-      if [ -n "$dry" ]; then
-        say "would release $w at $rwt ($rbranch $rstate)"
-        continue
-      fi
-      tmux kill-window -t "$w" 2>/dev/null || true
-      say "released $w at $rwt ($rbranch $rstate)"
-    done
-    [ -n "$dry" ] || {
-      line=$(jq -nc --arg branch "$rbranch" --arg session "$rsession" \
-        --arg state "$rstate" --argjson occ "$rocc" \
-        '{ts:(now*1000|floor), kind:"release", branch:$branch, session:$session,
-            state:$state, windows:($occ|map(.window))}')
-      _bus_append "$log" "$line"
-    }
+    _release_windows "$rbranch" "$rsession" "$rstate" "$rts" "$idle" "$dry" || [ $? = 3 ]
   done <<EOF
 $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
@@ -5579,7 +5730,7 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     | group_by(.from | wid_branch) | map(max_by(.ts))
     | map(select(.body.state as $st | ($terminal | index($st)) != null))
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
-    | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state] | @tsv' "$log")
+    | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state, .ts] | @tsv' "$log")
 EOF
   # gh reads PR state; wt owns the worktree layout, so it does the removal and
   # resolves from the ambient session PATH (same as in dispatch) — hence checked.
