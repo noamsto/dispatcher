@@ -411,8 +411,15 @@ mentions `resume` is never read as one.
 
 `dispatch` is the dumb mechanism — it creates the worktree and tmux window, stamps `WORKER_TASK.md` (tier, plan, crew_id, dispatcher_pane, closes line(s), task body), and launches the worker with `WORKER_PROTOCOL.md` baked. You supply the tier + model + effort you judged.
 
-To restart a worker that died mid-task, prefer `dispatch resume` run in that
-worker's worktree over a fresh `dispatch` on the same title: it resumes the
+To restart a worker that died mid-task, prefer `dispatch resume` over a fresh
+`dispatch` on the same title. Run it in that worker's worktree, or from anywhere
+in the repo with a target: `dispatch resume '#N'` (quoted — a bare `#` starts a shell comment; or a Linear id), a branch, a
+codename or a `worker:<branch>#<session>` id. A target is resolved from your own
+`kind:"dispatch"` rows and the dispatcher-written worktree record, then takes the
+same path as the cwd-bound form; it refuses a live worker (naming its window), a
+branch dispatched on another host, an ambiguous target (listing the candidates)
+and an unknown one. A leading word that is none of those shapes and that no row
+names is an extra prompt, as before. Either way it resumes the
 lead's own recorded session (by id), or relaunches fresh with the reorient note
 when that session cannot be identified (e.g. role panes share the worktree),
 instead of making the worker rebuild its position from `SPEC.md`, `PLAN.md` and
@@ -1100,8 +1107,8 @@ own `done`/`failed`/`pr_open` is the ordinary SessionEnd backstop and stays sile
 so a finished worker never double-wakes you. The terminal states
 (`done`/`pr_open`/`failed`) free fan-out budget, so the same wakeup tells you when
 to dispatch the next queued task. **A mid-run `exited` means the worker's engine
-died before it posted a terminal status: recover it with `dispatch resume` in that
-worker's worktree** (not a fresh `dispatch`), exactly as for any worker that died
+died before it posted a terminal status: recover it with `dispatch resume`, in that
+worker's worktree or by target** (not a fresh `dispatch`), exactly as for any worker that died
 mid-task.
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by

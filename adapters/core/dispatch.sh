@@ -7,7 +7,7 @@
 # this file is only the function body (see crew.sh for the same pattern).
 
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--also-closes N|ID]... [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--also-closes N|ID]... [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [<target>] [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
 }
 
 valid_effort() {
@@ -630,7 +630,7 @@ _home_relative_path() {
 # --also-closes extra's comment rides on, and adds a line naming it.
 _post_dispatch_comment() {
   local issue="$1" name="$2" engine="$3" model="$4" tier="$5" effort="$6" \
-    branch="$7" wt_path="$8" session="$9" worker_id="${10}" crew_id="${11}" resume="${12}" \
+    branch="$7" wt_path="$8" worker_id="${10}" crew_id="${11}" resume="${12}" \
     primary="${13:-}"
   local verb="dispatched" host="${HOSTNAME:-$(uname -n)}"
   [ "$resume" = true ] && verb="(resumed) dispatched"
@@ -638,7 +638,8 @@ _post_dispatch_comment() {
   [ -n "$primary" ] && prefix="Rides on $(_also_closes_label "$primary") — the primary issue of this bundle.
 
 "
-  local wt_display
+  local wt_display resume_target="$branch"
+  [ -n "$issue" ] && resume_target="'#$issue'"
   wt_display="$(_home_relative_path "$wt_path")"
   local body
   body="$(cat <<EOF
@@ -650,7 +651,7 @@ ${prefix}| | |
 | **Worktree** | \`$wt_display\` |
 | **Host** | \`$host\` |
 | **Agent** | $engine · $model · $tier (effort: $effort) |
-| **Session** | \`$session\` |
+| **Resume** | \`dispatch resume $resume_target\` (on \`$host\`) |
 | **Worker** | \`$worker_id\` |
 | **Crew** | \`$crew_id\` |
 
@@ -4277,13 +4278,14 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg worker "$worker_id" --arg engine_session "$lead_sid" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
   --arg shape "$dispatch_shape" --arg title "$title" --arg task_kind "$kind" \
+  --arg host "${HOSTNAME:-$(uname -n)}" \
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
-  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
+  '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"

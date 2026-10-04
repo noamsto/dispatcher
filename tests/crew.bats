@@ -8848,3 +8848,30 @@ EOF
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   grep -q 'kill-window -t @23' "$STUB_LOG"
 }
+
+@test "resolve-target: #N, Linear id, branch, codename and worker id name one branch; ambiguity exits 2" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage","host":"h1"}'
+    printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"eng-12-thing","name":"nova","also_closes":["ENG-13"]}'
+    printf '%s\n' '{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"fix/10-b","name":"nova"}'
+  } >"$dir/events.jsonl"
+  for target in '#9' 9 feat/9-gone sage 'worker:feat/9-gone#s1-2'; do
+    run run_crew resolve-target "$target"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$(printf 'feat/9-gone\tsage\th1\tc1')" ]
+  done
+  run run_crew resolve-target ENG-12
+  [ "$status" -eq 0 ]
+  [[ "$output" == eng-12-thing* ]]
+  run run_crew resolve-target eng-13
+  [ "$status" -eq 0 ]
+  [[ "$output" == eng-12-thing* ]]
+  run run_crew resolve-target nova
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ambiguous"*"eng-12-thing"*"fix/10-b"* ]]
+  run run_crew resolve-target nobody
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches 'nobody'"* ]]
+}

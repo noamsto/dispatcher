@@ -9,7 +9,7 @@
 # `set -euo pipefail` are prepended by writeShellApplication.
 
 usage() {
-  echo "usage: dispatch resume [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
+  echo "usage: dispatch resume [<target>] [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
 }
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
@@ -319,6 +319,62 @@ _check_protocol_rev() {
   fi
 }
 
+# _resolve_target_worktree <target> — resolve a target to its worktree
+# and cd there, so the cwd-bound path below runs unchanged (its record-mismatch
+# refusals included). The branch comes from the dispatcher's own bus rows
+# (`crew resolve-target`) and the worktree from the dispatcher-written record
+# whose crew dir and branch both match — never from git state in a worktree or
+# the worker's env.
+_resolve_target_worktree() {
+  local target="$1" row err rc=0 t_branch t_crew host here common cdir rec rec_wt where_out
+  local -a hits=()
+  git rev-parse --git-common-dir >/dev/null 2>&1 || {
+    echo "dispatch resume: '$target' needs the repo's crew bus — run from inside the repository (any worktree)" >&2
+    exit 1
+  }
+  err="$(mktemp)"
+  row="$(crew resolve-target "$target" 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    row="$(cat "$err")"
+    rm -f "$err"
+    echo "dispatch resume: ${row#crew: resolve-target: }" >&2
+    exit 1
+  fi
+  rm -f "$err"
+  # cut, not read: tab is IFS whitespace, so an empty host or codename would
+  # collapse and shift the fields.
+  t_branch="$(cut -f1 <<<"$row")"
+  host="$(cut -f3 <<<"$row")"
+  t_crew="$(cut -f4 <<<"$row")"
+  here="${HOSTNAME:-$(uname -n)}"
+  if [ -n "$host" ] && [ "$host" != "$here" ]; then
+    echo "dispatch resume: $t_branch was dispatched on host '$host' (this is '$here') — its worktree and session transcript live there; run dispatch resume on $host" >&2
+    exit 1
+  fi
+  if where_out="$(crew where "$t_branch" ${t_crew:+--crew "$t_crew"} 2>/dev/null)"; then
+    echo "dispatch resume: $t_branch is still alive — $where_out" >&2
+    exit 1
+  fi
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  cdir="$(realpath -m -- "$common/crew")"
+  for rec in "${XDG_DATA_HOME:-$HOME/.local/share}"/crew/worktrees/*; do
+    [ -f "$rec" ] && [ ! -L "$rec" ] || continue
+    mapfile -t _rl <"$rec"
+    [ "${_rl[1]:-}" = "$cdir" ] && [ "${_rl[2]:-}" = "$t_branch" ] && [ -d "${_rl[0]:-}" ] || continue
+    hits+=("${_rl[0]}")
+  done
+  if [ "${#hits[@]}" -eq 0 ]; then
+    echo "dispatch resume: no dispatcher record of a worktree for $t_branch on this host — re-dispatch the task onto its branch; the worktree carries over" >&2
+    exit 1
+  fi
+  if [ "${#hits[@]}" -gt 1 ]; then
+    echo "dispatch resume: $t_branch has several recorded worktrees (${hits[*]}) — cd into the one to resume" >&2
+    exit 1
+  fi
+  rec_wt="${hits[0]}"
+  cd -- "$rec_wt" || exit 1
+}
+
 fresh=""
 do_print=""
 ignore_budget=""
@@ -328,6 +384,8 @@ model_flag=""
 effort_flag=""
 mcp_flag_val=""
 extra=""
+target=""
+positional=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -384,11 +442,34 @@ while [ $# -gt 0 ]; do
     exit 1
     ;;
   *)
-    extra="${extra:+$extra }$1"
+    positional+=("$1")
     shift
     ;;
   esac
 done
+
+# An optional leading target — `#N`/N, a Linear id, `worker:<branch>#<session>`,
+# a branch or a codename — lets this run from anywhere. A word of those shapes
+# is always a target; any other word is one only when the bus knows it (or it
+# is ambiguous), so an extra prompt such as "continue" keeps working.
+if [ "${#positional[@]}" -gt 0 ]; then
+  _first="${positional[0]}"
+  if [[ $_first =~ ^#?[0-9]+$ || $_first =~ ^[A-Za-z]+-[0-9]+$ || $_first == */* || $_first == worker:* ]]; then
+    target="$_first"
+  else
+    _rc=0
+    crew resolve-target "$_first" >/dev/null 2>&1 || _rc=$?
+    [ "$_rc" -eq 1 ] || target="$_first"
+  fi
+  if [ -n "$target" ]; then
+    positional=("${positional[@]:1}")
+  fi
+fi
+extra="${positional[*]}"
+
+if [ -n "$target" ]; then
+  _resolve_target_worktree "$target"
+fi
 
 git rev-parse --git-common-dir >/dev/null 2>&1 || {
   echo "dispatch resume: not in a git repository" >&2

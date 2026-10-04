@@ -206,7 +206,9 @@ EOF
   [[ "$body" == *"| **Worktree** | \`$wt_display\` |"* ]]
   [[ "$body" != *"$wt_path"* ]]
   [[ "$body" == *"| **Host** | \`$host\` |"* ]]
-  [[ "$body" == *"$worker_id"* ]]
+  [[ "$body" == *"| **Resume** | \`dispatch resume '#42'\` (on \`$host\`) |"* ]]
+  [[ "$body" != *"**Session**"* ]]
+  [[ "$body" == *"| **Worker** | \`$worker_id\` |"* ]]
   [[ "$body" == *"$crew_id_stamp"* ]]
   [ "$(tail -1 "$STUB_DIR/comment_body.txt")" = "<!-- dispatched -->" ]
 }

@@ -48,6 +48,30 @@ _where_die() {
   exit 1
 }
 
+# _resolve_target <target> [crew] — one TSV line (branch, codename, host, crew)
+# per branch the target names, from the latest `dispatch` row of each branch in
+# the bus: `#N`/`N` (branch `<type>/N-…`, or an `also_closes` entry), a Linear
+# id (`eng-N-…`, or an `also_closes` entry), `worker:<branch>#<session>`, a
+# branch, or a codename. Shared by `crew where` and `crew resolve-target`. The
+# rows are unauthenticated (workers can append to the bus): a caller that acts
+# on the result must still gate on the dispatcher-written worktree record.
+_resolve_target() {
+  [ -f "$log" ] || return 0
+  jq -nrR --arg t "$1" --arg c "${2:-}" '
+    ($t | ltrimstr("#")) as $s
+    | ($s | ascii_downcase) as $l
+    | (if $t | startswith("worker:") then $t | ltrimstr("worker:") | sub("#[^#]*$"; "") else $t end) as $b
+    | (if $s | test("^[0-9]+$") then "issue"
+       elif $s | test("^[A-Za-z]+-[0-9]+$") then "linear" else "name" end) as $k
+    | [inputs | fromjson? | objects
+        | select(.kind == "dispatch" and ((.branch // null) | type) == "string" and ($c == "" or .crew_id == $c))]
+    | group_by(.branch) | map(max_by(.ts))[]
+    | select(.branch == $b or (.name // "") == $t
+        or ($k == "issue" and ((.branch | test("(^|/)" + $s + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring == $s)))
+        or ($k == "linear" and ((.branch | ascii_downcase | test("(^|/)" + $l + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring | ascii_downcase == $l))))
+    | [.branch, (.name // ""), (.host // ""), (.crew_id // "")] | @tsv' "$log" 2>/dev/null || true
+}
+
 # _identity_recorded <branch> — the identity `dispatch` recorded for this branch
 # (latest dispatch event that carries one), or nothing for a legacy branch.
 _identity_recorded() {
@@ -1314,11 +1338,11 @@ where)
       where_win="$where_matches"
     fi
     if [ -z "$where_win" ]; then
-      where_dbr=$(jq -r --arg c "$where_crew" --arg t "$where_target" \
-        'select(.crew_id == $c and .kind == "dispatch") | select(.name == $t or .branch == $t) | .branch' "$log" 2>/dev/null | tail -1 || true)
-      if [ -n "$where_dbr" ]; then
-        _where_die "no live pane for '$where_target' (branch $where_dbr) — its window is gone"
-      fi
+      where_dbr=$(_resolve_target "$where_target" "$where_crew" | cut -f1 | paste -sd, -)
+      case "$where_dbr" in
+      *,*) _where_die "ambiguous target '$where_target' — matches $where_dbr; pass a branch or %pane" ;;
+      ?*) _where_die "no live pane for '$where_target' (branch $where_dbr) — its window is gone" ;;
+      esac
       _where_die "no worker matches '$where_target'"
     fi
     ;;
@@ -1345,6 +1369,52 @@ where)
 
   printf '%s — %s:%s.%s "%s" (%s pane)   jump: ! tmux switch-client -t %s\n' \
     "$where_name" "$where_sess" "$where_widx" "$where_pidx" "$where_wname" "$where_role" "$where_pane"
+  ;;
+resolve-target)
+  # resolve-target <target> [--crew ID] — the branch, codename, host and crew a
+  # `#N`, Linear id, branch, codename or worker id names, as one TSV line.
+  # Exit 1 when nothing matches, 2 when several branches do (all listed).
+  rt_crew=""
+  rt_target=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew)
+      [ -n "${2:-}" ] || {
+        echo "crew: resolve-target: --crew needs an id" >&2
+        exit 1
+      }
+      rt_crew="$2"
+      shift 2
+      ;;
+    --*)
+      echo "crew: resolve-target: unknown flag '$1'" >&2
+      exit 1
+      ;;
+    *)
+      [ -z "$rt_target" ] || {
+        echo "crew: resolve-target: one target only" >&2
+        exit 1
+      }
+      rt_target="$1"
+      shift
+      ;;
+    esac
+  done
+  [ -n "$rt_target" ] || {
+    echo "usage: crew resolve-target <target> [--crew ID]" >&2
+    exit 1
+  }
+  rt_out=$(_resolve_target "$rt_target" "$rt_crew")
+  rt_n=$(printf '%s\n' "$rt_out" | grep -c . || true)
+  if [ "$rt_n" -eq 0 ]; then
+    echo "crew: resolve-target: no worker matches '$rt_target'" >&2
+    exit 1
+  fi
+  if [ "$rt_n" -gt 1 ]; then
+    echo "crew: resolve-target: ambiguous target '$rt_target' — matches: $(printf '%s\n' "$rt_out" | cut -f1 | paste -sd, - | sed 's/,/, /g'); pass a branch" >&2
+    exit 2
+  fi
+  printf '%s\n' "$rt_out"
   ;;
 status | msg)
   crew=$(_crew_id)
