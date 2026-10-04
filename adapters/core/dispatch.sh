@@ -254,7 +254,7 @@ _claim_evidence() {
   bound="${DISPATCH_CLAIM_LS_REMOTE_TIMEOUT_S:-20}"
   # Read as evidence below, same as an unreachable origin (#557): ls-remote runs
   # sshCommand/credential helper, and _wt_cfg_guard already wrote its reason to
-  # stderr. Anchored on the common dir like the guard: no cwd's `.git` is read (#633).
+  # stderr.
   if ! _wt_cfg_guard "${crew_dir%/crew}" >&2; then
     echo "git config drift"
     return 0
