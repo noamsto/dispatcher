@@ -106,9 +106,9 @@ changed_files() {
     return 1
   fi
   {
-    git -C "$root" diff --name-only "$mb"
-    git -C "$root" diff --name-only
-    git -C "$root" diff --name-only --cached
+    git -C "$root" diff --no-renames --name-only "$mb"
+    git -C "$root" diff --no-renames --name-only
+    git -C "$root" diff --no-renames --name-only --cached
     git -C "$root" ls-files --others --exclude-standard
   } | sort -u
 }
@@ -136,7 +136,8 @@ fi
 
 if ((${#selected[@]})); then
   printf '%s\n' "${selected[@]}" | sort -u | while IFS= read -r t; do
-    [[ -f "$root/$t" ]] && echo "$t"
+    [[ -f "$root/$t" ]] || continue
+    echo "$t"
   done
 fi
 exit 0

@@ -174,3 +174,21 @@ make_git_fixture() {
   [ "${#lines[@]}" -eq 4 ]
   [[ "$stderr" == *"full suite"* ]]
 }
+
+@test "affected git: a committed rename out of a mapped path still selects the old path's row" {
+  make_git_fixture
+  mkdir -p docs
+  git mv adapters/core/secret-read-guard.sh docs/secret-read-guard.md
+  git -c user.name=t -c user.email=t@t commit -q -m rename
+  run --separate-stderr bash scripts/bats-affected.sh --base main
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\n' tests/adapters.bats tests/dispatch.bats tests/secret-read-guard.bats)" ]
+}
+
+@test "affected: a missing last test file is skipped and the exit stays 0" {
+  make_git_fixture
+  rm tests/secret-read-guard.bats
+  run --separate-stderr bash scripts/bats-affected.sh --files adapters/core/secret-read-guard.sh
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\n' tests/adapters.bats tests/dispatch.bats)" ]
+}
