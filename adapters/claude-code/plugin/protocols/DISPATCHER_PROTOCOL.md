@@ -706,7 +706,8 @@ branch instead; the worktree carries over under `resume: true`.
   the human clears it: they inspect drift (`crew git-baseline`), remove keys
   they did not set (`git config --unset-all`) — a redirect key (e.g.
   `remote.origin.url`, whose value may have been replaced) is restored to its
-  baselined value by editing the named config file, never unset — then run `crew git-baseline
+  baselined value or removed by editing the named config file, never unset
+  (an added one like `url.<evil>.insteadOf` has no baselined value) — then run `crew git-baseline
   --accept` in their own terminal, which merges exactly the pairs it showed
   after a typed `yes`. The tty + `yes` check is a procedural gate against
   accidental or agent-initiated accepts, not an unbypassable boundary — never
@@ -732,11 +733,13 @@ branch instead; the worktree carries over under `resume: true`.
   is trusted, as is one written between a check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
-  config, not the program; URL userinfo, with or without a scheme
-  (`user:tok@proxy:3128`), is masked per field in printed keys and in `crew
-  git-baseline` keys and values, but a token elsewhere in a URL (path, query)
-  is not, and `crew git-baseline` still prints other values (e.g. a `credential.helper`
-  argument) — the human runs it, never the dispatcher; gh-based repo
+  config, not the program; URL userinfo is masked per field in printed
+  `url.*`/`http.*` keys and in `crew git-baseline` redirect-key values
+  (schemeless userinfo, `user:tok@proxy:3128`, only for proxy keys — an
+  scp-style `remote.*.url`'s `user@` names its host), but exec-class values
+  (e.g. a `credential.helper` argument) and a token elsewhere in a URL (path,
+  query) are printed as-is, so a masked `@` never hides what the human
+  accepts — the human runs it, never the dispatcher; gh-based repo
   resolution reads `remote.origin.url` outside the guard;
   `<git-common-dir>/info/attributes` still selects
   drivers in that git and in those worktree creations (a worker writing it
