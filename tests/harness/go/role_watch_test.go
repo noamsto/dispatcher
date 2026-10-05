@@ -10,8 +10,34 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// os/exec copies stderr from its own goroutine for the life of the watcher.
+// diagnostics and start read and reset that buffer on the test goroutine.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
 
 const rwTmuxStub = `#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -204,7 +230,7 @@ type roleWatch struct {
 	wt     string
 	common string
 	cmd    *exec.Cmd
-	stderr bytes.Buffer
+	stderr syncBuffer
 }
 
 func newRoleWatch(t *caseTest) *roleWatch {
