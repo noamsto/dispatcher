@@ -424,6 +424,18 @@ on a cold nix cache.
 
 Net effect, counted against the rebased base `d499e7f`: 2,893 → 2,850 tests (−64 cut, +1 anchor test, +1 virtual-clock test, +19 `bats-affected.bats` tests), with the summed time of the slowest family cut by about 575s (30% of the measured total). The CI `bats` step before and after is reported in the PR.
 
+## CI wall time (#721)
+
+The `check` run 37234504956 took 21 minutes; its non-timing bats step took
+15m17s. A four-core local probe used 3.76 cores with `bats --jobs 16`, so the
+workflow now spreads that suite across four balanced file shards. Each shard
+keeps `--jobs 16`; `module.bats`, timing tests, lint, and `nix flake check` run
+alongside it, and the final `check` job preserves the previous status name.
+
+`scripts/bats-shard.sh` weights files by `bats --count`, assigns them with a
+deterministic greedy bin-pack, and `tests/bats-shard.bats` verifies that the
+four shards are exhaustive and disjoint.
+
 ## Affected-test selection (phase 3)
 
 `scripts/bats-affected.sh [--base REF] [--files FILE...]` takes the changed files
