@@ -17,6 +17,19 @@ jobs:
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
 
+  # module.bats's setup_file does a multi-output nix build and a fresh
+  # <nixpkgs> import. That races inside nix on a cold git-fetcher cache,
+  # so this file runs alone, once, on this runner. Shard jobs still
+  # `nix develop`; their bats files do not run this build, and runners do
+  # not share a store.
+  bats-module:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: bats (module.bats, serial)
+        run: nix develop -c bats tests/module.bats
+
   bats:
     runs-on: ubuntu-latest
     strategy:
@@ -26,10 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
-      # module.bats warms this runner's git-fetcher cache before the parallel
-      # shard touches the flake. Matrix runners do not share that cache.
-      - name: bats (module.bats, serial)
-        run: nix develop -c bats tests/module.bats
       - name: bats (shard ${{ matrix.shard }})
         shell: bash
         run: |
@@ -57,7 +66,7 @@ jobs:
 
   check:
     if: always()
-    needs: [lint, bats, bats-timing, flake-check]
+    needs: [lint, bats, bats-module, bats-timing, flake-check]
     runs-on: ubuntu-latest
     steps:
       - name: report failed dependencies

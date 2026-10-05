@@ -430,8 +430,10 @@ Net effect, counted against the rebased base `d499e7f`: 2,893 â†’ 2,850 tests (â
 The `check` run 37234504956 took 21 minutes; its non-timing bats step took
 15m17s. A four-core local probe used 3.76 cores with `bats --jobs 16`, so the
 workflow now spreads that suite across four balanced file shards. Each shard
-keeps `--jobs 16`; `module.bats`, timing tests, lint, and `nix flake check` run
-alongside it, and the final `check` job preserves the previous status name.
+keeps `--jobs 16`; timing tests, lint, and `nix flake check` run alongside the
+shards, and the final `check` job preserves the previous status name.
+`module.bats` is a single parallel job (`bats-module`), not a step repeated on
+every shard.
 
 `scripts/bats-shard.sh` weights files by `bats --count`, assigns them with a
 deterministic greedy bin-pack, and `tests/bats-shard.bats` verifies that the
