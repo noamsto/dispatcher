@@ -7077,6 +7077,154 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$status" -eq 0 ]
 }
 
+@test "watch: a re-stamped blocked does not wake" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 8 of 24)" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: a changed blocked detail wakes" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked "different question (cycle 2 of 24)" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.detail == "different question (cycle 2 of 24)"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: a first blocked wakes" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+
+  run --separate-stderr run_crew watch --crew c1 --since 0 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "blocked"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: a question msg wakes" {
+  CREW_ID=c1 run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"q":1}'
+
+  run --separate-stderr run_crew watch --crew c1 --since 0 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].kind == "msg"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: a blocked re-stamp on another session wakes" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+  seed_raw "worker:feat/x#s2-2" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].from == "worker:feat/x#s2-2"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: a blocked after working wakes even with the same detail" {
+  t="$(($(date +%s) * 1000))"
+  detail="need a waiver — awaited 300s, no reply (cycle 7 of 24)"
+  seed_raw "worker:feat/x#s1-1" blocked "$detail" "" "$t"
+  seed_raw "worker:feat/x#s1-1" working "$detail" "" "$((t + 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "$detail" "" "$((t + 2000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$((t + 1000))" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e --argjson ts "$((t + 2000))" \
+    '(.events | length) == 1 and .events[0].body.state == "blocked" and .events[0].ts == $ts' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "roster: a suppressed re-stamp still refreshes age_s" {
+  now_ms="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$((now_ms - 30000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 8 of 24)" "" "$now_ms"
+
+  CREW_ID=c1 run --separate-stderr run_crew roster c1
+  [ "$status" -eq 0 ]
+  run jq -e --argjson ts "$now_ms" '.[0].ts == $ts and .[0].age_s < 15' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "watch: a re-stamp stays on the log" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 8 of 24)" "" "$((t + 1000))"
+
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -s -e --arg f "worker:feat/x#s1-1" \
+    '[.[] | select(.kind == "status" and .from == $f and .body.state == "blocked")] | length == 2' "$log"
+  [ "$status" -eq 0 ]
+}
+
+@test "stream: a re-stamped blocked does not wake" {
+  start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)"
+  poll_for 100 at_least_lines 1
+
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 8 of 24)"
+  sleep 3
+  [ "$(stream_lines)" -eq 1 ]
+
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "different question (cycle 2 of 24)"
+  poll_for 100 at_least_lines 2
+  [ "$(stream_lines)" -eq 2 ]
+  stop_stream
+}
+
+@test "watch: a watchdog load: cleared does not wake even if working is in --states" {
+  seed_raw "worker:feat/x#s1-1" working "load: cleared" watchdog
+
+  run --separate-stderr run_crew watch --crew c1 --states blocked,working --since 0 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: a worker working wakes when working is in --states" {
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+
+  run --separate-stderr run_crew watch --crew c1 --states blocked,working --since 0 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "working"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "status: --restamp records body.restamp on blocked only" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" blocked "q (cycle 1 of 24)" --restamp
+  [ "$status" -eq 0 ]
+  run jq -s -e \
+    '[.[] | select(.body.state == "blocked" and .body.detail == "q (cycle 1 of 24)" and .body.restamp == true)] | length == 1' \
+    "$log"
+  [ "$status" -eq 0 ]
+
+  before="$(wc -l <"$log")"
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" working --restamp
+  [ "$status" -ne 0 ]
+  [ "$(wc -l <"$log")" = "$before" ]
+
+  t="$(jq -s -r '[.[] | select(.body.detail == "q (cycle 1 of 24)")][0].ts' "$log")"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "q (cycle 2 of 24)" --restamp
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+
+  t2="$(jq -s -r '[.[] | select(.body.detail == "q (cycle 2 of 24)")][0].ts' "$log")"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "other question" --restamp
+  run --separate-stderr run_crew watch --crew c1 --since "$t2" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.detail == "other question"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "stream: a batch line passes through verbatim and parses as {cursor, events}" {
   start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
   CREW_ID=c1 run_crew status worker:feat/x done

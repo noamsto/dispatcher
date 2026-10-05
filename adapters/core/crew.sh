@@ -1494,7 +1494,27 @@ status | msg)
   }
   mkdir -p "$dir"
   if [ "$sub" = status ]; then
-    # status <from> <state> [detail] [pr_url]
+    # status <from> <state> [detail] [pr_url] [--restamp]
+    # --restamp may sit anywhere; strip it so the positionals stay in order.
+    restamp=false
+    sargs=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --restamp)
+        restamp=true
+        shift
+        ;;
+      --*)
+        echo "crew: status: unknown arg '$1'" >&2
+        exit 1
+        ;;
+      *)
+        sargs+=("$1")
+        shift
+        ;;
+      esac
+    done
+    set -- "${sargs[@]+"${sargs[@]}"}"
     # Reject an unknown state: the log IS the state, and a junk value is silently
     # absorbed by every reader (`{"state":""}` reached the log once and rendered as
     # a blank roster row). Fail loudly at the writer instead.
@@ -1505,6 +1525,10 @@ status | msg)
       exit 1
       ;;
     esac
+    if [ "$restamp" = true ] && [ "${2:-}" != blocked ]; then
+      echo "crew: --restamp is only valid with blocked" >&2
+      exit 1
+    fi
     # Terminal states are posted once. A worker that re-announces `pr_open`/`done`
     # (seen: the same pr_open+done pair 4s apart) wakes `watch` twice with an
     # identical batch, so the dispatcher handles the same completion again.
@@ -1669,12 +1693,13 @@ status | msg)
     esac
     _build_status() {
       jq -nc --arg crew "$crew" --arg from "$from" --arg state "$state" \
-        --arg detail "$1" --arg pr "$pr" \
+        --arg detail "$1" --arg pr "$pr" --argjson restamp "$restamp" \
         '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
           kind:"status",
           body:({state:$state}
                 + (if $detail!="" then {detail:$detail} else {} end)
-                + (if $pr!="" then {pr_url:$pr} else {} end))}'
+                + (if $pr!="" then {pr_url:$pr} else {} end)
+                + (if $restamp then {restamp:true} else {} end))}'
     }
     line=$(_fit_line _build_status "${3:-}")
   else
@@ -2341,6 +2366,11 @@ watch)
                | select(.body.state != "exited")
                | {ts: .ts, state: .body.state} ]
              | sort_by(.ts) | last | .state);
+          def norm: gsub(" *\\(cycle [0-9]+ of [0-9]+\\)"; "");
+          def prev_status($all; $e):
+            ([ $all[]
+               | select(.crew_id==$e.crew_id and .kind=="status" and .from==$e.from and .ts < $e.ts) ]
+             | sort_by(.ts) | last);
           . as $all
           | map(. as $e
                 | select($e.crew_id==$crew and $e.ts>$since)
@@ -2349,7 +2379,17 @@ watch)
                       and ($e.body.state as $s | $states | index($s))
                       and ( if $e.body.state == "exited"
                             then (prev_state($all; $e) as $p | ($p == "working" or $p == "blocked"))
-                            else true end ) )
+                            else true end )
+                      and (prev_status($all; $e) as $prev
+                           | ( ( $e.body.state == "blocked"
+                                 and $prev != null
+                                 and $prev.body.state == "blocked"
+                                 and ((($e.body.detail // "") | norm)
+                                      == (($prev.body.detail // "") | norm)) )
+                               or ( $e.body.source == "watchdog"
+                                    and $e.body.state == "working"
+                                    and (($e.body.detail // "") | test(" cleared$")) ) )
+                           | not) )
                     or ( $e.kind=="msg" and ($e.to==$me or $e.to=="*") ) ))
           | sort_by(.ts)
           | select(length>0)
