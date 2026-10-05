@@ -223,20 +223,75 @@ port is assertion-complete yet unloved by the team's shell-native review
 habits, and it loses to Go on every axis measured here — it stays the fallback
 if Go's build step ever blocks the devshell.
 
+## Parity proofs (first slice: pr-watch clock seam)
+
+Assertion map: every manifest `assert_id` has exactly one counterpart per
+candidate harness, machine-checked — `tests/harness/go/verify.sh` ("verified 32
+result rows and assertion metadata"), `tests/harness/pytest/check-results.sh`,
+and `tests/harness/shellspec/check-results.sh` all gate on it in CI. The
+decision keeps bats, so no bats case is removed and no boundary needs an
+integration replacement; the ports stand as the proven successor evidence.
+
+Coverage (scripts/bats-coverage.sh, sample-scoped to tests/pr-watch.bats):
+unique covered `adapters/core/pr-watch.sh` lines 61 (pre-seam aea199b) → 72
+(HEAD). Every pre-seam covered statement has a covered counterpart post-seam
+(the helper insertion shifted the loop +23); the virtual-clock path is covered
+by 13 park/poll cases, the real path by the default-clock regression. No
+production statement lost coverage.
+
+Mutation checks (scratch worktrees at HEAD; bats = selected runner, Go =
+designated successor; control: unmutated 18/18 bats ok, 18/18 Go pr-watch
+subtests pass):
+
+| mutation (pr-watch.sh)                          | bats 18 cases | Go 18 subtests | caught |
+| ----------------------------------------------- | ------------- | -------------- | ------ |
+| change-detection `!=` → `==` in changed-keys jq | 12 fail       | same 12 fail   | yes    |
+| deadline `-ge` → `-lt`                          | 1 fail        | same 1 fail    | yes\*  |
+| `_save` writes `{}`                             | 8 fail        | same 8 fail    | yes    |
+
+\* the deadline flip is caught by exactly one test — the default-clock
+regression added with the seam. Under the virtual clock the mutated park still
+exits early with the right message; only the real-time `>= 1s` assertion sees
+it. Thin but sufficient, and it is the argument for keeping that regression in
+every future port.
+
+Commands: `nix develop -c bats tests/pr-watch.bats` and
+`cd tests/harness/go && go test -count=1 -run "TestManifest/^pr-watch" .` per
+scratch worktree (mutation 2 under `timeout 600`; nothing hung), control in
+the main worktree.
+
 ## Migration slices (ordered)
 
-1. Weight-aware shard rebalance + `--check` lint gate (this branch, landed).
-2. Slow-family sample addition + role-watch wait profile (this branch, landed —
-   evidence only, no behavior change).
-3. pr-watch virtual clock (this branch, landed: `PR_WATCH_CLOCK`; wait
-   16.07 s → 1.00 s, file 23.3 s → 3.8 s; default-path regression included).
-4. role-watch / dispatch.bats clock seams (ranked 1 by measured savings;
-   needs dispatcher sign-off because this issue's plan scopes H12 away from
-   role-watch paths), then crew await event-waits.
-5. Re-run this benchmark post-seams; if harness+residual dominates what
-   remains, port to Go: devshell wiring, runner, CI step, affected-selection,
-   then manifest-case ports with bats originals removed only after parity
-   (assertion map + coverage + 3 mutation checks per slice).
+Landed on this branch:
+
+1. Weight-aware shard rebalance + `--check` lint gate.
+2. Slow-family sample addition + role-watch wait profile (evidence only).
+3. pr-watch virtual clock (`PR_WATCH_CLOCK`; wait 16.07 s → 1.00 s, file
+   23.3 s → 3.8 s; default-path regression included).
+
+Future slices — one named family and one PR each, ordered by measured saving:
+
+4. **role-watch clock seam** (dispatch.bats role-watch family; 188 s weight,
+   measured 60–80% wait share → est. save 110–150 s, the largest lever).
+   Dependency: dispatcher sign-off — this issue's plan scoped H12 away from
+   role-watch production paths, and the seam touches dispatch.sh's watcher
+   loop. Retained coverage: the 5 role-watch manifest cases run in all four
+   harnesses; per-slice mutation checks per the table above.
+5. **secret-read-guard event-waits** (246 s, timing-tagged and serial by
+   fence). Dependency: a wait-profile run first — its wait share is
+   unmeasured, and its guards are timing-sensitive, so this is event-waits
+   rather than a virtual clock. Retained coverage: the file's timing phase
+   stays serial; shard weights re-measured in the same PR.
+6. **crew await + hold event-waits** (crew.bats await families ≈ 49 s,
+   pr_open ≈ 36 s). Dependency: none. Retained coverage: CREW_STALL_CLOCK
+   already proves the pattern in this file (#712: 622 s → 49 s on
+   stall-watch).
+7. **Harness re-decision gate**: re-run this benchmark with the seams landed.
+   If harness+residual then dominates the remaining profile, port to Go —
+   devshell wiring, runner, CI step, affected-selection, then manifest-case
+   ports with bats originals removed only after parity (assertion map +
+   coverage + 3 mutation checks per slice, as demonstrated above). If waits
+   still dominate, keep bats and stop.
 
 ## Regenerating this evidence
 
