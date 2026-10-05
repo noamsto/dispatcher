@@ -2045,7 +2045,9 @@ if [ "${1:-}" = "--role-watch" ]; then
     local text="$1" composer="$2" line value footer_i start_i i n path=0
     local -a rows
     local footer_re='^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$'
-    local model_re='^[[:space:]]+(256K Low|High)([[:space:]].*)?$'
+    local path_re='^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/)'
+    local branch_re='^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$'
+    local model_re='^[[:space:]]+(256K Low|High)[[:space:]]*%?[[:space:]]*$'
     printf '%s\n' "$text" | grep -qE '^[[:space:]]*v[0-9][0-9.]*-' || return 1
     case "$composer" in
     *$'\n'*) return 1 ;;
@@ -2078,11 +2080,15 @@ if [ "${1:-}" = "--role-watch" ]; then
       [ -n "${rows[i]}" ] || continue
       n=$((n + 1))
       [ "$n" -le 6 ] || return 1
-      case "${rows[i]}" in
-      *'~'* | *'/'*) path=1 ;;
-      *' · '*) ;;
-      *) [[ ${rows[i]} =~ $model_re ]] || return 1 ;;
-      esac
+      if [[ ${rows[i]} =~ $path_re ]]; then
+        path=1
+      elif [[ ${rows[i]} =~ $branch_re ]]; then
+        :
+      elif [[ ${rows[i]} =~ $model_re ]]; then
+        :
+      else
+        return 1
+      fi
     done
     [ "$n" -ge 1 ] && [ "$path" -eq 1 ] || return 1
     printf '%s\n' "$text" | grep -qF 'ctrl+c to stop' && return 1
@@ -2272,9 +2278,10 @@ if [ "${1:-}" = "--role-watch" ]; then
   # never the paste, which would duplicate the text — up to `submit_retries`
   # times, waiting 2, 4, 8… ticks between. A frame that is neither held nor
   # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks
-  # it is escalated once. A held draft whose retries run out is retyped once;
-  # a second exhaustion is escalated once (`assignment_unsubmitted`)
-  # and left in place: nothing else is typed until the box clears.
+  # it is escalated once. A held pi draft is retyped once per assignment, and a
+  # second exhaustion of that same assignment escalates. Codex and cursor
+  # escalate on the first exhaustion (`assignment_unsubmitted`) and are left
+  # in place: nothing else is typed until the box clears.
   # `pending_from` runs parallel to `pending` so the escalation reaches the
   # sender of the assignment that stalled.
   pending=()
@@ -2353,6 +2360,7 @@ if [ "${1:-}" = "--role-watch" ]; then
         submit_tries=0
         unknown_ticks=0
         escalated=0
+        retyped=0
         cooldown=1
         [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ] && watch_set_state idle
         verdict_seen=0
@@ -2364,7 +2372,7 @@ if [ "${1:-}" = "--role-watch" ]; then
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           submit_tries=$((submit_tries + 1))
           cooldown=$((1 << submit_tries))
-        elif [ "$retyped" -eq 0 ] && [ "$escalated" -eq 0 ]; then
+        elif [ "$engine" = pi ] && [ "$retyped" -eq 0 ] && [ "$escalated" -eq 0 ]; then
           # The next delivery already sends C-u when unsent=1. A C-u here
           # would clear the re-paste before Enter.
           pending=("$inflight" "${pending[@]}")

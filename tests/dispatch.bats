@@ -10758,6 +10758,16 @@ rw725_cursor_dialog() {
   printf '\n  Dialog overlay: Enter to confirm\n'
 }
 
+rw725_cursor_status_prompt() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  High — allow this command?'
+}
+
+rw725_cursor_status_path() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  write /tmp/out?'
+}
+
 # Swap only the composer line. Footer and status rows stay the capture's.
 _rw725_assignment_swap() {
   sed -e 's/› Ask Codex to do anything/› Assignment: go/' \
@@ -10904,6 +10914,26 @@ _rw725_poll_captures() {
   run ! grep -q '^send-keys' "$STUB_LOG"
 }
 
+@test "role-watch: #725 cursor status line that is a prompt defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_prompt
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor status line with an embedded path defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_path
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
 # Held pi frame: lower rule, exactly two non-empty rows after it, upper rule
 # in the `↑ 2 more` shape. Paste shows it. Enter leaves it in place until
 # $STUB_DIR/retyped exists, then the next Enter installs rw_frame_pi_live.
@@ -11005,6 +11035,60 @@ _rw725_paste_go() { grep -c '^paste Assignment: go$' "$STUB_LOG" || true; }
   # paste and must not add a third.
   [ "$(_rw_unsubmitted)" -eq 2 ]
   [ "$(_rw725_paste_go)" -eq 2 ]
+}
+
+# Held codex frame: paste swaps the empty composer to the assignment and
+# leaves it there. Every Enter is swallowed, so the draft stays held.
+_rw725_codex_held_stub() {
+  rw725_codex_post_turn >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  sed -e 's/› Ask Codex to do anything/› Assignment: go/' "$STUB_DIR/frame" >"$STUB_DIR/frame.next"
+  mv "$STUB_DIR/frame.next" "$STUB_DIR/frame"
+  ;;
+send-keys) ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "role-watch: #725 codex held exhaustion still escalates" {
+  _spawn_role_fixture
+  _rw725_codex_held_stub
+  RW_EXTRA='--submit-retries 1' _rw_start codex
+  local n
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 2 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  [ "$(_rw725_paste_go)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  [ "$(grep -cx 'send-keys -t %6 C-u' "$STUB_LOG" || true)" -eq 0 ]
 }
 
 # #{pane_id} is %6 until $STUB_DIR/dead exists, then empty stdout and exit 0.
