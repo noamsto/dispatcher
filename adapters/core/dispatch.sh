@@ -762,7 +762,7 @@ local_slot_cap() {
       who="${who%, }"
     fi
     [ -z "$target" ] || target="role '$target' (pi) "
-    echo "dispatch: ${target}local model '$id' has no free slot ($in_use/$max in use: $who) — wait for it to finish, pick a hosted pi model, or pass --ignore-budget" >&2
+    echo "dispatch: ${target}local model '$id' has no free slot ($in_use/$max in use: $who) — wait for it to finish (a finished worker holds its slot until \`crew reap\` closes its window), pick a hosted pi model, or pass --ignore-budget" >&2
     exit 1
   done
 }

@@ -926,6 +926,20 @@ EOF
   jq -e '. == {providers: {}}' "$WORKER/models.json"
 }
 
+@test "pi-agent-dir: a localModels provider with a stored credential is refused" {
+  _pi_fixture
+  printf '{"openai":{"type":"api_key","key":"sk-test-fixture"}}\n' >"$AMBIENT/auth.json"
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"localModels":{"OpenAI/gpt-oss-120b":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}\n' \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"localModels provider 'OpenAI' has a stored pi credential"* ]]
+  [[ "$stderr" != *sk-test-fixture* ]]
+  [ ! -e "$WORKER/models.json" ]
+}
+
 @test "pi-agent-dir: invalid dispatcher settings refuse to seed models.json" {
   _pi_fixture
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"

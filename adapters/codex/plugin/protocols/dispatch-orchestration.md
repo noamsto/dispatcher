@@ -304,33 +304,40 @@ a locked entry winning per field:
 
 `baseUrl` is `http(s)://…` with no trailing slash; `maxConcurrent` defaults to
 `1` and `tiers` to `trivial` + `standard`. Declare entries in the locked
-home-manager layer (`programs.dispatcher.localModels`) so a stray user file
-can't widen the cap.
+home-manager layer (`programs.dispatcher.localModels`): the option pins all four
+fields of each id it declares, so a stray user file can't widen the cap or the
+tiers. The user file can still add other ids.
 
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
   pi's OpenRouter budget gates skip a local target — it costs no OpenRouter
   spend.
 - **Probe.** Before scaffolding, `dispatch` fetches `<baseUrl>/models` (5s) and
-  refuses unless the response lists the model id.
+  refuses when the endpoint is `unreachable`, `returned an HTTP error` (4xx/5xx,
+  e.g. a wrong `baseUrl` path), or `did not list '<model>'`.
 - **Cap.** `dispatch` counts the live lead and role panes stamped `@crew_model`
   = the id whose engine runs, and refuses past `maxConcurrent`:
-  `dispatch: local model '<id>' has no free slot (1/1 in use: <holders>) — wait
-  for it to finish, pick a hosted pi model, or pass --ignore-budget`.
-  `--ignore-budget` bypasses it with a stderr notice. The check is not a lock:
-  two simultaneous dispatches can both pass it.
+  ``dispatch: local model '<id>' has no free slot (1/1 in use: <holders>) — wait
+  for it to finish (a finished worker holds its slot until `crew reap` closes
+  its window), pick a hosted pi model, or pass --ignore-budget``. A finished pi
+  worker's pane keeps holding its slot until reaped. `--ignore-budget` bypasses
+  it with a stderr notice. The check is not a lock: two simultaneous dispatches
+  can both pass it.
 - **Roles.** A local lead's role panes with no explicit model default to hosted
   pi at the tier's `modelMap` default — a cross-model review that needs no
   second engine and doesn't take the slot; those hosted roles keep pi's
   OpenRouter gates. An explicit role on a local id shares the cap. Lazy roles
-  count when they are dispatched.
+  on a local id count at the lead's dispatch and again when spawned.
 - **Slot use.** `refresh-budget` (a probing run, not `--report`) prints
   `local: <id> <n>/<max> in use`.
 - **Not counted.** The endpoint's other consumers — a chat bot, an interactive
   pi, a dispatcher session on the local id. Size `maxConcurrent` for them.
 - **Worker dir.** `crew pi-agent-dir` generates
   `~/.pi/dispatcher-worker/models.json` from the setting, with a dummy
-  `apiKey`.
+  `apiKey`. Every seed replaces any existing file (the dir is
+  dispatcher-owned). It refuses a `localModels` provider name that has a stored
+  credential in pi's `auth.json`: pi would send that credential instead of the
+  dummy key.
 - **Ratings.** `crew rate` groups by `[engine, model, tier]` and the id differs
   from every `openrouter/…` rung, so local runs rate separately with no extra
   tag.

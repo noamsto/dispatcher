@@ -84,7 +84,9 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   mechanical, bounded `trivial`/`standard` work — not security-adjacent, UI, or
   underspecified work. Its slot is shared with the host's other consumers of
   the model: check the `local:` line of `refresh-budget` before fanning out,
-  and expect a refusal naming the holder when it's full. See
+  and expect a refusal naming the holder when it's full. That line and the cap
+  count only dispatcher panes; the host's other consumers (chat bot,
+  interactive pi) can hold the slot unseen. See
   `dispatch-orchestration.md` → "Local models".
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`

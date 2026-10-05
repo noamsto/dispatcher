@@ -169,7 +169,7 @@
 
           refresh-budget = pkgs.writeShellApplication {
             name = "refresh-budget";
-            runtimeInputs = with pkgs; [curl jq coreutils];
+            runtimeInputs = with pkgs; [curl jq coreutils tmux];
             text = withConfig (sub (builtins.readFile ./adapters/core/refresh-budget.sh));
           };
 

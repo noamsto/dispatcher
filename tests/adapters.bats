@@ -74,15 +74,18 @@ teardown() {
   done
 }
 
-@test "dispatch-notify.sh's _is_engine_cmd copy matches crew.sh's" {
-  # dispatch-notify.sh is a standalone build with no shared lib, so it carries a
-  # copy of crew.sh's engine-signature table (the #531 child-session guard).
-  # flake.nix excludes the hook from treefmt, so shfmt cannot rewrite the copy
-  # out of sync; byte-compare it instead, like the _bus_append copies above.
+@test "every standalone _is_engine_cmd copy matches crew.sh's" {
+  # dispatch-notify.sh (the #531 child-session guard) is a standalone build with
+  # no shared lib, and local-models.sh (#669) is sourced by crew.sh itself, so
+  # both carry a copy of crew.sh's engine-signature table. flake.nix excludes
+  # them from treefmt, so shfmt cannot rewrite a copy out of sync; byte-compare
+  # each instead, like the _bus_append copies above.
   canonical="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/crew.sh")"
   [ -n "$canonical" ]
-  found="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/dispatch-notify.sh")"
-  [ "$found" = "$canonical" ]
+  for f in dispatch-notify.sh local-models.sh; do
+    found="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/$f")"
+    [ "$found" = "$canonical" ]
+  done
 }
 
 @test "dispatch.sh's --role-watch prompt signatures match crew.sh's stall-watch" {

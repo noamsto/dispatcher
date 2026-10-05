@@ -321,8 +321,8 @@ hand-managed `~/.cursor` files.
 `localModels` declares self-hosted models for the pi lane, keyed by the pi
 dispatch id `<provider>/<model>` (`baseUrl`, `contextWindow`, optional
 `maxConcurrent` and `tiers`). It merges per key across layers, and a locked
-entry wins per field, so declare entries through
-`programs.dispatcher.localModels`. `dispatch` caps live panes on each id at
+entry wins per field. `programs.dispatcher.localModels` pins all four fields of
+each id it declares (the user file can still add other ids). `dispatch` caps live panes on each id at
 `maxConcurrent`; it does not see the endpoint's other consumers, so size it for
 them. See `dispatch-orchestration.md` → "Local models".
 

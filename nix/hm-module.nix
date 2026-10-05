@@ -26,9 +26,14 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
-    // lib.optionalAttrs (cfg.localModels != null) {
-      localModels = lib.mapAttrs (_: lib.filterAttrs (_: v: v != null)) cfg.localModels;
-    };
+    // lib.optionalAttrs (cfg.localModels != null) {inherit (cfg) localModels;};
+  localModelKeyValid = k:
+    builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*" k
+    != null
+    && lib.toLower (lib.head (lib.splitString "/" k)) != "openrouter";
+  badLocalModelKeys =
+    lib.optionals (cfg.localModels != null)
+    (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -121,14 +126,14 @@ in {
             description = "The model's context window in tokens.";
           };
           maxConcurrent = lib.mkOption {
-            type = lib.types.nullOr lib.types.ints.positive;
-            default = null;
-            description = "Concurrent dispatch workers allowed on this model. Null defaults to 1 at runtime.";
+            type = lib.types.ints.positive;
+            default = 1;
+            description = "Concurrent dispatch workers allowed on this model.";
           };
           tiers = lib.mkOption {
-            type = lib.types.nullOr (lib.types.nonEmptyListOf (lib.types.enum ["trivial" "standard" "deep"]));
-            default = null;
-            description = "Tiers this model may serve. Null defaults to trivial and standard at runtime.";
+            type = lib.types.nonEmptyListOf (lib.types.enum ["trivial" "standard" "deep"]);
+            default = ["trivial" "standard"];
+            description = "Tiers this model may serve.";
           };
         };
       }));
@@ -141,13 +146,13 @@ in {
       };
       description = ''
         Local pi models, served from your own endpoint. Keys are pi dispatch
-        ids `<provider>/<model>`, validated by dispatch-config at runtime.
-        Null `maxConcurrent` and `tiers` are omitted, so the runtime defaults
-        apply (1; trivial and standard). Size `maxConcurrent` for the
-        endpoint's other consumers (chat bots, interactive sessions), which
-        dispatch does not count. Set, it lands in the locked settings layer
-        and wins per field over the user settings file's `localModels`;
-        unset, the key is left out and the user file governs alone.
+        ids `<provider>/<model>`; a malformed key or an `openrouter` provider
+        fails the build. Size `maxConcurrent` for the endpoint's other
+        consumers (chat bots, interactive sessions), which dispatch does not
+        count. Set, each declared entry pins all four fields in the locked
+        settings layer, so the user settings file cannot change them; it can
+        still add other ids (the locked layer only governs the ids it
+        declares). Unset, the key is left out and the user file governs alone.
       '';
     };
 
@@ -223,6 +228,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = badLocalModelKeys == [];
+        message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+    ];
+
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {

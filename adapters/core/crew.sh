@@ -1166,7 +1166,7 @@ _copy_if_changed() { # $1=target $2=source
 # generated from localModels on every seed — dispatcher-owned, so a removed entry
 # stops being reachable — with a dummy apiKey (local endpoints ignore it).
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings dsettings probe bridge bridge_entry
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings dsettings clash probe bridge bridge_entry
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -1278,6 +1278,16 @@ _pi_agent_dir() {
     echo "crew: could not resolve the dispatcher settings for the pi worker models.json — refusing to seed pi worker dir" >&2
     exit 1
   }
+  # pi prefers a stored auth.json credential over a models.json apiKey, and the
+  # worker's auth.json links the user's real one — a clashing provider name
+  # would send that credential to the local endpoint.
+  clash=$(jq -nr --argjson s "$dsettings" --slurpfile a "$dir/auth.json" \
+    '($a[0] | keys | map(ascii_downcase)) as $stored
+     | [($s.localModels // {}) | keys[] | split("/")[0] | select(ascii_downcase | IN($stored[]))][0] // empty')
+  if [ -n "$clash" ]; then
+    echo "crew: localModels provider '$clash' has a stored pi credential in auth.json — rename the provider so the credential is never sent to a local endpoint" >&2
+    exit 1
+  fi
   _write_if_changed "$dir/models.json" 644 "$(_local_pi_models_json "$dsettings")"
 
   printf '%s\n' "$dir"

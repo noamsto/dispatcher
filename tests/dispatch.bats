@@ -2439,16 +2439,18 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
 # #669 local-model lane. local_lane_fixture writes a user-layer localModels
 # entry plus a curl stub standing in for its endpoint — no test may reach a real
 # one. local_holder_tmux wraps whatever tmux stub is in place (call it after the
-# stub it wraps) so the holder scan sees one live pi pane on the id.
+# stub it wraps) so the holder scan sees $HOLDERS (default 1) live pi panes on
+# the id. local_lane_fixture's optional argument is extra entry fields, e.g.
+# ',"maxConcurrent":2'.
 local_lane_fixture() {
   LOCAL_ID=lemonade/Qwen3.8-Flash-Next-MTP
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
-  printf '{"localModels":{"%s":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072}}}\n' "$LOCAL_ID" \
+  printf '{"localModels":{"%s":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072%s}}}\n' "$LOCAL_ID" "${1:-}" \
     >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   cat >"$STUB_DIR/curl" <<'EOF'
 #!/usr/bin/env bash
 printf 'curl %s\n' "$*" >>"$STUB_LOG"
-[ -z "${CURL_FAIL:-}" ] || exit 7
+[ -z "${CURL_FAIL:-}" ] || exit "${CURL_RC:-7}"
 if [ -n "${CURL_BODY:-}" ]; then
   printf '%s\n' "$CURL_BODY"
 else
@@ -2464,7 +2466,9 @@ local_holder_tmux() {
 #!/usr/bin/env bash
 if [ "$1" = list-panes ] && [ "$2" = -a ] && [[ $* == *@crew_model* ]]; then
   printf '%s\n' "$*" >>"$STUB_LOG"
-  printf 'lemonade/Qwen3.8-Flash-Next-MTP\x1fpi\x1fslate\x1ffeat/1-x\x1f\n'
+  for ((i = 0; i < ${HOLDERS:-1}; i++)); do
+    printf 'lemonade/Qwen3.8-Flash-Next-MTP\x1fpi\x1fslate%s\x1ffeat/1-x\x1f\n' "${i#0}"
+  done
   exit 0
 fi
 exec "$STUB_DIR/tmux-inner" "$@"
@@ -2487,6 +2491,14 @@ EOF
 
   DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --ignore-map --crew-id c1 "t"
   [ "$status" -eq 0 ]
+
+  # An explicit tiers list replaces the default.
+  local_lane_fixture ',"tiers":["deep"]'
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not allowed at standard — its localModels entry allows deep;"* ]]
 }
 
 @test "local lane: a live holder fills the slot; --ignore-budget skips the cap with a notice" {
@@ -2494,11 +2506,25 @@ EOF
   local_holder_tmux
   DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"dispatch: local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead)) — wait for it to finish, pick a hosted pi model, or pass --ignore-budget"* ]]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead)) — wait for it to finish (a finished worker holds its slot until \`crew reap\` closes its window), pick a hosted pi model, or pass --ignore-budget"* ]]
 
   DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --ignore-budget --crew-id c1 "t"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: local slot cap skipped (--ignore-budget) — '$LOCAL_ID' 1/1 in use"* ]]
+
+  # A decimal maxConcurrent (dispatch-config accepts 1.0) must still cap.
+  local_lane_fixture ',"maxConcurrent":1.0'
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no free slot (1/1 in use: slate (feat/1-x lead))"* ]]
+
+  # maxConcurrent 2: one holder leaves a slot, two fill it.
+  local_lane_fixture ',"maxConcurrent":2'
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  HOLDERS=2 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no free slot (2/2 in use: slate (feat/1-x lead), slate1 (feat/1-x lead))"* ]]
 }
 
 @test "local lane: an unreachable endpoint or an unlisted model is refused" {
@@ -2510,6 +2536,11 @@ EOF
   CURL_BODY='{"data":[{"id":"Other"}]}' DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is unavailable — http://halo.test:13305/v1/models did not list 'Qwen3.8-Flash-Next-MTP'"* ]]
+
+  # curl -f exits 22 on an HTTP 4xx/5xx: the server answered, so not "unreachable".
+  CURL_FAIL=1 CURL_RC=22 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"http://halo.test:13305/v1/models returned an HTTP error; start the server"* ]]
 }
 
 @test "local lane: hosted pi gates skip a local lead but keep its hosted default roles" {
