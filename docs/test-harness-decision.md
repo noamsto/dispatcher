@@ -142,6 +142,22 @@ the runner's slower cores amplify bats' per-case interpreter cost while the
 waits stay constant. Ranking is identical local and CI; pytest ran 0 failures
 in both CI runs, closing the validity question for good.
 
+Post-seam CI (run 37315774340, 32-case manifest with `PR_WATCH_CLOCK` live, 5
+reps, 0 failures):
+
+| harness            | run wall median ms | vs bats compat | vs pre-seam CI |
+| ------------------ | ------------------ | -------------- | -------------- |
+| bats compatibility | 64630              | —              | −14.4 s        |
+| bats tuned         | 64650              | +0.0%          | −14.4 s        |
+| ShellSpec          | 35540              | −45%           | −13.1 s        |
+| pytest + xdist     | 29180              | −55%           | −13.2 s        |
+| Go testing         | 24920              | −61%           | −13.0 s        |
+
+The pr-watch clock cut ~14 s of run wall in every harness — the estimated 15 s,
+measured. And with the waits gone, Go's lead widened again (−52% → −61%): the
+seams-then-redecide ordering matters, because each landed seam makes the
+harness's own overhead a larger share of what remains.
+
 ShellSpec micro-benchmarks (`tests/harness/shellspec/measure.sh`): noop example
 overhead ≈ 15 ms/example vs bats ≈ 23 ms/test, but ShellSpec function mocks cost
 12.4 ms/call vs 3.6 ms/call for PATH-stub execs — mocks are 3.4× **slower** than
