@@ -1,0 +1,4 @@
+entry_point	include_when_call_preserves_boundary	method	reason
+adapters/core/crew.sh	no	When run script	The public contract is a fresh bash process with argv and environment parsing; sourcing executes its command dispatcher and may exit the harness shell.
+adapters/core/refresh-models.sh	no	When run script	The script executes immediately, writes its cache atomically, and propagates cursor-agent failure through process status.
+adapters/core/pr-watch.sh	no	When run script	The script executes its polling main path immediately and uses exit for validation and gh failures; a sourced call would erase the public process boundary.

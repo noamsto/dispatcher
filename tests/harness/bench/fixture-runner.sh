@@ -20,3 +20,5 @@ emit() {
 
 emit fixture-a "$((HARNESS_BENCH_REP * 2000 - 1000))"
 emit fixture-b "$((HARNESS_BENCH_REP * 2000))"
+
+[[ $HARNESS_BENCH_MODE != adapter-failure ]] || exit 7

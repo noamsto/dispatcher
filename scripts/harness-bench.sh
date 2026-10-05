@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly result_header='harness	mode	rep	case_id	file	family	status	wall_ms	cpu_user_ms	cpu_sys_ms'
-readonly metadata_header='harness	mode	rep	revision	timestamp	load_1	nproc	taskset_mask'
+readonly metadata_header='harness	mode	rep	revision	timestamp	load_1	nproc	taskset_mask	run_wall_ms	run_cpu_user_ms	run_cpu_sys_ms	run_status'
 readonly summary_header='harness	mode	file	family	samples	cases	failures	wall_median_ms	wall_iqr_ms	cpu_user_median_ms	cpu_user_iqr_ms	cpu_sys_median_ms	cpu_sys_iqr_ms'
+readonly run_summary_header='harness	mode	repetitions	failures	run_wall_median_ms	run_wall_iqr_ms	run_cpu_user_median_ms	run_cpu_user_iqr_ms	run_cpu_sys_median_ms	run_cpu_sys_iqr_ms'
 
 usage() {
   cat >&2 <<EOF
@@ -145,9 +146,69 @@ aggregate() {
   ' "$results" >"$summary"
 }
 
+aggregate_runs() {
+  local metadata=$1 summary=$2
+  awk -F '\t' -v OFS='\t' -v header="$run_summary_header" '
+    function sorted(list, values,    n, i, j, item) {
+      n = split(list, values, ",")
+      for (i = 2; i <= n; i++) {
+        item = values[i] + 0
+        j = i - 1
+        while (j >= 1 && values[j] + 0 > item) {
+          values[j + 1] = values[j]
+          j--
+        }
+        values[j + 1] = item
+      }
+      return n
+    }
+    function median(values, first, last,    span, middle) {
+      span = last - first + 1
+      middle = int(span / 2)
+      if (span % 2) return values[first + middle]
+      return (values[first + middle - 1] + values[first + middle]) / 2
+    }
+    function stats(list,    values, n, overall, lower_last, upper_first, q1, q3) {
+      delete values
+      n = sorted(list, values)
+      overall = median(values, 1, n)
+      if (n == 1) return sprintf("%.6f\t0.000000", overall)
+      lower_last = int(n / 2)
+      upper_first = int((n + 1) / 2) + 1
+      q1 = median(values, 1, lower_last)
+      q3 = median(values, upper_first, n)
+      return sprintf("%.6f\t%.6f", overall, q3 - q1)
+    }
+    NR == 1 { next }
+    {
+      key = $1 SUBSEP $2
+      if (!(key in seen_group)) {
+        seen_group[key] = 1
+        order[++groups] = key
+        harness[key] = $1
+        mode[key] = $2
+      }
+      repetitions[key]++
+      if ($12 != 0) failures[key]++
+      wall[key] = wall[key] (wall[key] == "" ? "" : ",") $9
+      user[key] = user[key] (user[key] == "" ? "" : ",") $10
+      sys_cpu[key] = sys_cpu[key] (sys_cpu[key] == "" ? "" : ",") $11
+    }
+    END {
+      print header
+      for (i = 1; i <= groups; i++) {
+        key = order[i]
+        print harness[key], mode[key], repetitions[key], failures[key] + 0,
+          stats(wall[key]), stats(user[key]), stats(sys_cpu[key])
+      }
+    }
+  ' "$metadata" >"$summary"
+}
+
 run_benchmark() {
   local harness=$1 mode=$2 adapter=$3 repetitions=$4 cpu_set=$5 output=$6
   local revision host_nproc affinity_mask repetition timestamp load repetition_file failures adapter_status
+  local time_bin run_timing run_wall_seconds run_user_seconds run_system_seconds run_wall_ms run_user_ms run_system_ms
   local adapter_failures=0
 
   [[ $harness != *$'\t'* && $harness != *$'\n'* && -n $harness && $mode != *$'\t'* && $mode != *$'\n'* && -n $mode ]] || {
@@ -167,30 +228,47 @@ run_benchmark() {
     return 2
   }
   mkdir -p "$output"
-  [[ ! -e $output/results.tsv && ! -e $output/metadata.tsv && ! -e $output/summary.tsv ]] || {
+  [[ ! -e $output/results.tsv && ! -e $output/metadata.tsv && ! -e $output/summary.tsv && ! -e $output/run-summary.tsv ]] || {
     echo "harness-bench: output already contains benchmark results: $output" >&2
     return 2
   }
 
   revision=$(git rev-parse HEAD)
   host_nproc=$(nproc)
+  time_bin=$(type -P time || true)
+  [[ -n $time_bin ]] || {
+    echo "harness-bench: GNU time is required" >&2
+    return 2
+  }
   affinity_mask=$(taskset -c "$cpu_set" bash -c "awk '\$1 == \"Cpus_allowed:\" { print \$2 }' /proc/self/status")
   printf '%s\n' "$result_header" >"$output/results.tsv"
   printf '%s\n' "$metadata_header" >"$output/metadata.tsv"
   for ((repetition = 1; repetition <= repetitions; repetition++)); do
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     read -r load _ </proc/loadavg
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$harness" "$mode" "$repetition" "$revision" "$timestamp" "$load" "$host_nproc" "$affinity_mask" \
-      >>"$output/metadata.tsv"
     repetition_file="$output/repetition-$repetition.tsv"
     set +e
-    HARNESS_BENCH_HARNESS=$harness \
-      HARNESS_BENCH_MODE=$mode \
-      HARNESS_BENCH_REP=$repetition \
-      taskset -c "$cpu_set" "$adapter" >"$repetition_file"
+    run_timing=$(
+      HARNESS_BENCH_HARNESS=$harness \
+        HARNESS_BENCH_MODE=$mode \
+        HARNESS_BENCH_REP=$repetition \
+        taskset -c "$cpu_set" "$time_bin" -q -f '%e\t%U\t%S' -o /dev/fd/3 -- "$adapter" \
+        3>&1 >"$repetition_file"
+    )
     adapter_status=$?
     set -e
+    IFS=$'\t' read -r run_wall_seconds run_user_seconds run_system_seconds <<<"$run_timing"
+    [[ $run_wall_seconds =~ ^[0-9]+([.][0-9]+)?$ && $run_user_seconds =~ ^[0-9]+([.][0-9]+)?$ && $run_system_seconds =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+      echo "harness-bench: GNU time returned an invalid adapter measurement" >&2
+      return 1
+    }
+    read -r run_wall_ms run_user_ms run_system_ms < <(
+      awk -v wall="$run_wall_seconds" -v user="$run_user_seconds" -v sys="$run_system_seconds" \
+        'BEGIN { printf "%.0f %.0f %.0f\n", wall * 1000, user * 1000, sys * 1000 }'
+    )
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$harness" "$mode" "$repetition" "$revision" "$timestamp" "$load" "$host_nproc" "$affinity_mask" \
+      "$run_wall_ms" "$run_user_ms" "$run_system_ms" "$adapter_status" >>"$output/metadata.tsv"
     if ((adapter_status != 0)); then
       adapter_failures=$((adapter_failures + 1))
     fi
@@ -206,9 +284,10 @@ run_benchmark() {
     return 1
   }
   aggregate "$output/results.tsv" "$output/summary.tsv"
+  aggregate_runs "$output/metadata.tsv" "$output/run-summary.tsv"
   failures=$(awk -F '\t' 'NR > 1 && $7 != 0 { count++ } END { print count + 0 }' "$output/results.tsv")
-  printf 'harness-bench: wrote %s, %s, and %s (CPU set %s)\n' \
-    "$output/results.tsv" "$output/metadata.tsv" "$output/summary.tsv" "$cpu_set" >&2
+  printf 'harness-bench: wrote %s, %s, %s, and %s (CPU set %s)\n' \
+    "$output/results.tsv" "$output/metadata.tsv" "$output/summary.tsv" "$output/run-summary.tsv" "$cpu_set" >&2
   ((failures == 0)) || {
     echo "harness-bench: $failures case measurements failed" >&2
     return 1
@@ -220,7 +299,7 @@ run_benchmark() {
 }
 
 self_test() {
-  local test_dir output cpu_set wrapper_row
+  local test_dir output failure_output cpu_set wrapper_row
   test_dir=$(mktemp -d)
   output=$test_dir/result
   cpu_set=$(default_cpu_set) || {
@@ -244,15 +323,44 @@ self_test() {
   }
   awk -F '\t' '
     NR == 1 {
-      if ($0 != "harness\tmode\trep\trevision\ttimestamp\tload_1\tnproc\ttaskset_mask") exit 1
+      if ($0 != "harness\tmode\trep\trevision\ttimestamp\tload_1\tnproc\ttaskset_mask\trun_wall_ms\trun_cpu_user_ms\trun_cpu_sys_ms\trun_status") exit 1
       next
     }
-    NF != 8 || $1 != "fixture" || $2 != "deterministic" || $3 != NR - 1 ||
+    NF != 12 || $1 != "fixture" || $2 != "deterministic" || $3 != NR - 1 ||
       $4 !~ /^[0-9a-f]+$/ || $5 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T/ ||
-      $6 !~ /^[0-9]+([.][0-9]+)?$/ || $7 !~ /^[1-9][0-9]*$/ || $8 !~ /^[0-9a-f,]+$/ { exit 1 }
+      $6 !~ /^[0-9]+([.][0-9]+)?$/ || $7 !~ /^[1-9][0-9]*$/ || $8 !~ /^[0-9a-f,]+$/ ||
+      $9 !~ /^[0-9]+$/ || $10 !~ /^[0-9]+$/ || $11 !~ /^[0-9]+$/ || $12 != 0 { exit 1 }
     END { if (NR != 5) exit 1 }
   ' "$output/metadata.tsv" || {
     echo "harness-bench: repetition metadata self-test failed" >&2
+    return 1
+  }
+  awk -F '\t' '
+    NR == 1 {
+      if ($0 != "harness\tmode\trepetitions\tfailures\trun_wall_median_ms\trun_wall_iqr_ms\trun_cpu_user_median_ms\trun_cpu_user_iqr_ms\trun_cpu_sys_median_ms\trun_cpu_sys_iqr_ms") exit 1
+      next
+    }
+    NF != 10 || $1 != "fixture" || $2 != "deterministic" || $3 != 4 || $4 != 0 { exit 1 }
+    { for (column = 5; column <= 10; column++) if ($column !~ /^[0-9]+([.][0-9]+)?$/) exit 1 }
+    END { if (NR != 2) exit 1 }
+  ' "$output/run-summary.tsv" || {
+    echo "harness-bench: run summary self-test failed" >&2
+    return 1
+  }
+
+  failure_output=$test_dir/adapter-failure
+  if run_benchmark fixture adapter-failure tests/harness/bench/fixture-runner.sh 2 "$cpu_set" "$failure_output" 2>/dev/null; then
+    echo "harness-bench: nonzero adapter status was not preserved" >&2
+    return 1
+  fi
+  awk -F '\t' 'NR > 1 && ($12 != 7 || NF != 12) { exit 1 } END { if (NR != 3) exit 1 }' \
+    "$failure_output/metadata.tsv" || {
+    echo "harness-bench: adapter status metadata self-test failed" >&2
+    return 1
+  }
+  awk -F '\t' 'NR == 2 && ($1 != "fixture" || $2 != "adapter-failure" || $3 != 2 || $4 != 2) { exit 1 }
+    END { if (NR != 2) exit 1 }' "$failure_output/run-summary.tsv" || {
+    echo "harness-bench: adapter failure summary self-test failed" >&2
     return 1
   }
 
