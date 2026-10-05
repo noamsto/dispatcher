@@ -259,6 +259,10 @@ commands_reach_row() { # path template containing $ROOT and $n
 @test "every adapter ships the complete shared protocol references" {
   for adapter in claude-code/plugin codex/plugin cursor; do
     for source in "$ROOT"/adapters/core/protocols/*.md; do
+      # claude-code ships the claude render; the sync test covers it.
+      [ "$adapter/$(basename "$source")" != claude-code/plugin/WORKER_PROTOCOL.md ] || continue
+      # only a claude lead reads the render, so codex and cursor do not ship it.
+      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != WORKER_PROTOCOL.claude.md ] || continue
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
   done
@@ -394,8 +398,12 @@ guard_ships_row() { # script basename
 @test "every canonical protocol exactly matches both shipped protocol trees" {
   for source in "$ROOT"/adapters/core/protocols/*.md; do
     name="$(basename "$source")"
-    run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
-    [ "$status" -eq 0 ]
+    # claude-code ships the claude render; the sync test covers it.
+    if [ "$name" != WORKER_PROTOCOL.md ]; then
+      run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
+      [ "$status" -eq 0 ]
+    fi
+    [ "$name" != WORKER_PROTOCOL.claude.md ] || continue
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done
@@ -2225,4 +2233,168 @@ adapters/core/protocols/WORKER_PROTOCOL.md|## Deferred findings (standard/deep)
 adapters/core/protocols/dispatch-orchestration.md|### Cursor Task-spawn slugs
 TABLE
   [ "$missing" -eq 0 ]
+}
+
+# Fixture for the render-engine tests: shared lines, a non-claude block, a
+# claude-only block, and blank lines that must survive byte-for-byte.
+_render_fixture() {
+  printf '%s\n' \
+    'shared one' \
+    '' \
+    '<!-- only:codex,cursor,pi -->' \
+    'non-claude line' \
+    '' \
+    '<!-- /only -->' \
+    'shared two' \
+    '<!-- only:claude -->' \
+    'claude line' \
+    '<!-- /only -->' \
+    'shared three' >"$BATS_TEST_TMPDIR/fixture.md"
+}
+
+@test "render-engine claude keeps shared lines and claude blocks only" {
+  _render_fixture
+  run bash "$ROOT/scripts/render-engine.sh" claude "$BATS_TEST_TMPDIR/fixture.md"
+  [ "$status" -eq 0 ]
+  expected="$(printf '%s\n' 'shared one' '' 'shared two' 'claude line' 'shared three')"
+  [ "$output" = "$expected" ]
+  bash "$ROOT/scripts/render-engine.sh" claude "$BATS_TEST_TMPDIR/fixture.md" >"$BATS_TEST_TMPDIR/out.md"
+  printf '%s\n' 'shared one' '' 'shared two' 'claude line' 'shared three' >"$BATS_TEST_TMPDIR/want.md"
+  cmp "$BATS_TEST_TMPDIR/out.md" "$BATS_TEST_TMPDIR/want.md"
+}
+
+@test "render-engine pi keeps shared lines and its listed blocks only" {
+  _render_fixture
+  bash "$ROOT/scripts/render-engine.sh" pi "$BATS_TEST_TMPDIR/fixture.md" >"$BATS_TEST_TMPDIR/out.md"
+  printf '%s\n' 'shared one' '' 'non-claude line' '' 'shared two' 'shared three' >"$BATS_TEST_TMPDIR/want.md"
+  cmp "$BATS_TEST_TMPDIR/out.md" "$BATS_TEST_TMPDIR/want.md"
+}
+
+@test "render-engine rejects malformed input with a message on stderr" {
+  local bad=(
+    "nested open|<!-- only:claude -->\n<!-- only:pi -->\nx\n<!-- /only -->\n<!-- /only -->\n"
+    "close without open|a\n<!-- /only -->\n"
+    "unclosed block|a\n<!-- only:claude -->\nb\n"
+    "unknown engine in list|<!-- only:claude,gemini -->\nb\n<!-- /only -->\n"
+    "empty engine list|<!-- only: -->\nb\n<!-- /only -->\n"
+    "heading in block|<!-- only:claude -->\n## Heading\n<!-- /only -->\n"
+    "marker in fence|\`\`\`\n<!-- only:claude -->\n\`\`\`\n"
+    "marker in indented fence|item\n  \`\`\`\n  x\n<!-- only:claude -->\n  \`\`\`\n"
+    "marker in tilde fence|~~~\n<!-- only:claude -->\n~~~\n"
+    "marker in longer fence after a short fence line|\`\`\`\`\n\`\`\`\n<!-- only:claude -->\n\`\`\`\`\n"
+    "marker in fence closed by a shorter run|~~~~\n~~~\n<!-- /only -->\n~~~~\n"
+    "near-miss indented open|  <!-- only:claude -->\nx\n<!-- /only -->\n"
+    "near-miss indented close|<!-- only:claude -->\nx\n  <!-- /only -->\n"
+    "near-miss trailing text|<!-- only:claude --> trailing\nx\n<!-- /only -->\n"
+    "near-miss without spaces|<!--only:claude-->\nx\n<!-- /only -->\n"
+    "near-miss trailing CR|<!-- only:claude -->\r\nx\n<!-- /only -->\n"
+  )
+  local case_ f
+  [ -f "$ROOT/scripts/render-engine.sh" ]
+  for case_ in "${bad[@]}"; do
+    f="$BATS_TEST_TMPDIR/bad.md"
+    printf "${case_#*|}" >"$f"
+    if bash "$ROOT/scripts/render-engine.sh" claude "$f" >/dev/null 2>"$BATS_TEST_TMPDIR/err"; then
+      echo "accepted: ${case_%%|*}"
+      return 1
+    fi
+    [ -s "$BATS_TEST_TMPDIR/err" ] || { echo "no stderr: ${case_%%|*}"; return 1; }
+    case ${case_%%|*} in
+    "marker in"*) grep -q 'inside a code fence' "$BATS_TEST_TMPDIR/err" || { echo "wrong error: ${case_%%|*}"; return 1; } ;;
+    near-miss*) grep -q 'malformed marker' "$BATS_TEST_TMPDIR/err" || { echo "wrong error: ${case_%%|*}"; return 1; } ;;
+    esac
+  done
+  _render_fixture
+  if bash "$ROOT/scripts/render-engine.sh" gemini "$BATS_TEST_TMPDIR/fixture.md" >/dev/null 2>"$BATS_TEST_TMPDIR/err"; then
+    return 1
+  fi
+  [ -s "$BATS_TEST_TMPDIR/err" ]
+}
+
+@test "render-engine copies marker-like text that is not a whole marker line" {
+  printf '%s\n' \
+    'see <!-- only:claude --> inline' \
+    'text <!-- /only -->' \
+    '## Heading' >"$BATS_TEST_TMPDIR/plain.md"
+  bash "$ROOT/scripts/render-engine.sh" pi "$BATS_TEST_TMPDIR/plain.md" >"$BATS_TEST_TMPDIR/out.md"
+  cmp "$BATS_TEST_TMPDIR/out.md" "$BATS_TEST_TMPDIR/plain.md"
+}
+
+@test "render-engine keeps an indented fence inside a kept block intact" {
+  printf '%s\n' \
+    '<!-- only:claude -->' \
+    '- item' \
+    '  ```sh' \
+    '  ## not a heading' \
+    '  ```' \
+    '- next' \
+    '~~~' \
+    '## not a heading' \
+    '~~~' \
+    '<!-- /only -->' \
+    'tail' >"$BATS_TEST_TMPDIR/in.md"
+  run bash "$ROOT/scripts/render-engine.sh" claude "$BATS_TEST_TMPDIR/in.md"
+  [ "$status" -eq 0 ]
+  expected="$(sed '1d;/^<!-- \/only -->$/d' "$BATS_TEST_TMPDIR/in.md")"
+  [ "$output" = "$expected" ]
+}
+
+@test "claude worker protocol render is in sync with core and the claude plugin copy" {
+  local core="$ROOT/adapters/core/protocols"
+  bash "$ROOT/scripts/render-engine.sh" claude "$core/WORKER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/render.md"
+  cmp "$BATS_TEST_TMPDIR/render.md" "$core/WORKER_PROTOCOL.claude.md"
+  cmp "$BATS_TEST_TMPDIR/render.md" "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
+  [ -f "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" ]
+}
+
+@test "engine-only blocks reach codex and cursor copies but not the claude render" {
+  local core="$ROOT/adapters/core/protocols" a
+  grep -E '^<!-- only:' "$core/WORKER_PROTOCOL.md" | grep -qv 'only:[^>]*claude'
+  for a in "$core/WORKER_PROTOCOL.claude.md" "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"; do
+    if grep -qE '^(<!-- only:|<!-- /only -->)' "$a"; then
+      echo "marker left in $a"
+      return 1
+    fi
+  done
+  local marker
+  while IFS= read -r marker; do
+    grep -qxF -- "$marker" "$ROOT/adapters/codex/plugin/protocols/WORKER_PROTOCOL.md"
+    grep -qxF -- "$marker" "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.md"
+  done < <(grep -E '^<!-- only:' "$core/WORKER_PROTOCOL.md")
+  local anchor
+  for anchor in \
+    '**Run the affected tests at every gate; CI runs the full suite.**' \
+    '## Resuming a killed run' \
+    '"seam":"deslop"' \
+    'dispatcher:deslop' \
+    '## Retro notes (all tiers)' \
+    '## Code review gate (standard/deep)' \
+    '## Cross-engine one-shots (consult and diverse reviewer)' \
+    '**The reviewers themselves ship with the harness.**' \
+    'reviewer-roster --base' \
+    '## Gating verdicts are awaited (all engines)' \
+    '**Critics are independent, on every engine.**' \
+    '$DISPATCHER_CRITICS_DIR' \
+    '## Deferred findings (standard/deep)'; do
+    grep -qF -- "$anchor" "$core/WORKER_PROTOCOL.claude.md" || { echo "missing anchor: $anchor"; return 1; }
+  done
+}
+
+@test "gen-adapters leaves the claude render intact and no tmp file when rendering fails" {
+  # The claude render is written to a dotted tmp inside the hashed protocols tree
+  # then moved into place. A direct redirect would truncate the committed render
+  # on a failed render, and a leaked tmp would change the runtime-derived hash.
+  work="$BATS_TEST_TMPDIR/atomic"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cp "$protocols/WORKER_PROTOCOL.claude.md" "$work/before.md"
+  # An unclosed only: block makes render-engine.sh fail.
+  printf '<!-- only:pi -->\n' >>"$protocols/WORKER_PROTOCOL.md"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
+  [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
 }

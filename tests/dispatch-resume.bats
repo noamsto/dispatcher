@@ -45,7 +45,7 @@ EOF
   chmod +x "$STUB_DIR/dispatch"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   # Stands in for the store path flake.nix bakes as @skillsDir@ (#225).
   export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
@@ -403,6 +403,19 @@ _assert_refused_before_discovery() {
   [[ "$output" == *"EVIDENCE_REVIEW.md"* ]]
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+
+  # Only a claude lead appends the claude render, so only it requires that file.
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WORKER_PROTOCOL.claude.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sed -i -e "s/^engine: .*/engine: codex/" -e "s|^model: .*|model: gpt-5.6-terra|" -e "s/^effort: .*/effort: medium/" "$WT/WORKER_TASK.md"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
@@ -413,7 +426,7 @@ _assert_refused_before_discovery() {
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 1 ]
@@ -431,7 +444,7 @@ _assert_refused_before_discovery() {
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   sed "s/@protocolRev@/$rev/" "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
@@ -462,7 +475,7 @@ _store_resume() {
 _store_protocols() { # <dir> <content>
   local f
   mkdir -p "$1"
-  for f in WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
+  for f in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
     printf '%s %s\n' "$2" "$f" >"$1/$f"
   done
 }
@@ -478,7 +491,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$WT/WORKER_TASK.md"
-  grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
+  grep -q -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.claude.md" <(launch_log)
   grep -q 'send-keys' "$STUB_LOG"
 }
 
@@ -554,7 +567,7 @@ _store_protocols() { # <dir> <content>
   cd "$WT"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   run run_resume
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
@@ -593,7 +606,7 @@ _store_protocols() { # <dir> <content>
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
@@ -1007,7 +1020,7 @@ EOF
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
-  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" <(launch_log)
 }
 
 @test "claude resume disables only the worker's unused plugins" {

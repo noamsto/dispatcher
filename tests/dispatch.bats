@@ -37,7 +37,7 @@ EOF
   # for availability).
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   # Stands in for the store path flake.nix bakes as @skillsDir@; pi launches
   # pass it with --skill (#225).
   export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
@@ -1481,13 +1481,24 @@ EOF
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
+
+  # Only a claude lead appends the claude render, so only it requires that file.
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "no claude render"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"WORKER_PROTOCOL.claude.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
+  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --no-grid --crew-id c1 42 "codex needs no claude render"
+  [ "$status" -eq 0 ]
+  grep -q 'new-window' "$STUB_LOG"
 }
 
 @test "deep dispatch aborts before scaffolding when GRID_PROTOCOL.md is missing from the protocol dir" {
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-grid"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "deep grid missing protocol file"
   [ "$status" -ne 0 ]
   [[ "$output" == *"GRID_PROTOCOL.md"* ]]
@@ -1501,7 +1512,7 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev mismatch"
   [ "$status" -ne 0 ]
@@ -1518,7 +1529,7 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale protocols"
   [ "$status" -ne 0 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
@@ -1531,7 +1542,7 @@ EOF
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   _substituted_dispatch "$rev"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev match"
@@ -1544,7 +1555,7 @@ EOF
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "checkout dev loop"
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
@@ -1578,7 +1589,7 @@ _store_dispatch() {
 _store_protocols() { # <dir> <content>
   local f
   mkdir -p "$1"
-  for f in WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
+  for f in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
     printf '%s %s\n' "$2" "$f" >"$1/$f"
   done
 }
@@ -1594,7 +1605,7 @@ _store_protocols() { # <dir> <content>
   [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
   grep -q 'new-window' "$STUB_LOG"
   grep -qx "protocol_dir: $BAKED_PROTOCOLS" "$TEST_REPO/.dispatch-wt/feat-42-stale-store-export/WORKER_TASK.md"
-  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log)
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/WORKER_PROTOCOL.claude.md" <(launch_log)
   run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
@@ -1772,7 +1783,7 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
@@ -11365,7 +11376,7 @@ _assert_bound_send_keys() {
   done
   export DISPATCHER_PROTOCOL_DIR="$long_dir"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
 
   crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
   n=0
@@ -11375,7 +11386,7 @@ _assert_bound_send_keys() {
   : >"$STUB_LOG"
   DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 100 "claude deep bound"
   [ "$status" -eq 0 ]
-  _assert_bound_send_keys "$crew_launch_dir" WORKER_PROTOCOL.md
+  _assert_bound_send_keys "$crew_launch_dir" WORKER_PROTOCOL.claude.md
   n=$((n + 1))
 
   while IFS='|' read -r eng model effort profile _bin _marker; do
@@ -11702,7 +11713,7 @@ EOF
   _substituted_dispatch
   bad="$TEST_REPO/protocols-no-rev"
   mkdir -p "$bad"
-  touch "$bad/WORKER_PROTOCOL.md" "$bad/EVIDENCE_REVIEW.md" "$bad/GRID_PROTOCOL.md"
+  touch "$bad/WORKER_PROTOCOL.md" "$bad/WORKER_PROTOCOL.claude.md" "$bad/EVIDENCE_REVIEW.md" "$bad/GRID_PROTOCOL.md"
   _write_dirs_record "$bad" "$DISPATCHER_SKILLS_DIR" "" ""
   run run_subst_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
@@ -11716,7 +11727,7 @@ EOF
   _spawn_role_fixture
   bad="$TEST_REPO/protocols-no-grid"
   mkdir -p "$bad"
-  touch "$bad/WORKER_PROTOCOL.md" "$bad/EVIDENCE_REVIEW.md"
+  touch "$bad/WORKER_PROTOCOL.md" "$bad/WORKER_PROTOCOL.claude.md" "$bad/EVIDENCE_REVIEW.md"
   _write_dirs_record "$bad" "$DISPATCHER_SKILLS_DIR" "" ""
   run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
@@ -11753,7 +11764,7 @@ EOF
   _spawn_role_fixture
   rec="$TEST_REPO/rec-protocols"
   mkdir -p "$rec"
-  touch "$rec"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch "$rec"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   _write_dirs_record "$rec" "$DISPATCHER_SKILLS_DIR" "" ""
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]

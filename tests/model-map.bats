@@ -65,7 +65,7 @@ EOF
   stub_bin direnv
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \

@@ -606,6 +606,13 @@ Edit a protocol, dispatch again, and the change is live — no rebuild. The same
 variable is what the slash command and the Cursor rule resolve at read time,
 which is why the module exports it rather than only baking it into the binaries.
 
+Claude worker leads append `WORKER_PROTOCOL.claude.md`, not `WORKER_PROTOCOL.md`:
+`./scripts/gen-adapters.sh` renders it with `scripts/render-engine.sh`, which
+drops every `<!-- only:... -->` … `<!-- /only -->` block whose list omits claude
+(e.g. `only:codex,cursor,pi`, `only:pi`): text only other engines' leads need.
+After editing `WORKER_PROTOCOL.md`, regenerate so a claude lead sees the change;
+pi, codex and cursor leads read the core file.
+
 ### The version-skew guard (#184, #193)
 
 `dispatch` and `dispatch-resume` refuse to launch when the resolved protocol

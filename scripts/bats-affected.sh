@@ -83,7 +83,7 @@ map_file() {
   adapters/core/protocols/dispatch-orchestration.md) add "${prompt_set[@]}" crew model-map-doc ;;
   adapters/core/protocols/*.md | adapters/core/critics/*.md | adapters/core/reviewers/*.md | adapters/core/skills/*/SKILL.md) add "${prompt_set[@]}" ;;
   adapters/claude-code/* | adapters/codex/* | adapters/cursor/*) add adapters module ;;
-  scripts/cache-report.sh | scripts/gen-adapters.sh) add adapters ;;
+  scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters crew public-leak-guard secret-read-guard ;;
