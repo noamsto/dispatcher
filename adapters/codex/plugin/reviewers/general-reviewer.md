@@ -27,12 +27,13 @@ Get the complete diff before judging any of it; if the output is truncated, read
 - **Information disclosure**: internal errors, stack traces or timing differences returned to a caller who should not see them
 - **DoS**: an unbounded loop, allocation or request fan-out, or a missing limit on work driven by outside input
 - **Business-logic edges**: state-machine violations, numeric overflow, an empty, zero or negative input the code never considered
+- **A new narrow test duplicating existing coverage**: when an existing test or table row already covers that path, the fix is a row or an assertion on that test, not a new test
 
 ### MEDIUM
 
 - **Session and CSRF**: fixation, missing expiry or secure flags, a state-changing endpoint with no CSRF protection
 - **Output escaping**: a value rendered into HTML or another interpreter unescaped
-- **A test that cannot fail**, or a changed behavior with no test exercising it, or a new narrow regression test whose setup and assertion shape duplicate an existing test when extending that test (or adding a table row) would do
+- **A test that cannot fail**, or a changed behavior with no test exercising it
 
 ## Verification
 

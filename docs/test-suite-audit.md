@@ -450,11 +450,14 @@ through `BASH_ENV` (`tests/coverage-env.bash`), which opens the trace file by
 path, so no file descriptor is inherited. `scripts/bats-coverage.sh` runs each
 file once untraced (the pass/fail baseline, and the number→name map) and once
 traced, and reduces a test's trace when its TAP line lands. Peak disk is
-therefore bounded by parallelism, not by suite size.
+therefore bounded by parallelism, not by suite size. The reducer keeps only
+lines that map to a tracked production source (`adapters/core/`, `scripts/`,
+`dash/`); bats-library lines, tool internals, and store paths are discarded
+before anything is counted.
 
 Validity: **0 outcome mismatches** between the traced and untraced runs (the
 traced run reproduced the untraced pass/fail set). Peak disk **2.06 GB**
-(2,058,961,963 bytes), wall **2266s** at `-j16`. Raw trace sizes over 2,861
+(2,058,961,963 bytes), wall **2266s** at `JOBS=16`. Raw trace sizes over 2,861
 tests: min 129,213 bytes, median 1,478,071 bytes (1.48 MB), p90 11,695,391
 bytes (11.7 MB), max 1,951,065,614 bytes (1.95 GB).
 
@@ -464,8 +467,8 @@ Blind spots:
 - Granularity is per command, not per branch.
 - A partial `env -i` scrub inside an otherwise-traced test is invisible (for example `secret-read-guard.bats:909`).
 - Detached `nohup` children (`dispatch.sh` role-watch and stall-watch) can append after the janitor has reduced the trace.
-- `writeShellApplication` wrappers inflate covered lines with their PATH setup.
-- `module.bats` and `smoke.bats` measure as `no-lines` because nix builds run in a sandbox.
+- Tests that exec the built `writeShellApplication` wrappers (`module.bats`'s `$OUT_CREW/bin/crew` and friends) measure as `no-lines`: a `/nix/store/…` path does not suffix-match a tracked source, so the reducer discards every line. The wrapper's own PATH setup is likewise discarded, not counted.
+- `smoke.bats` is `no-lines` for the same reason: it drives git/XDG/stub binaries, never a tracked production script. `module.bats`'s `nix build` in `setup_file` is also untraced.
 - The measurement indexes only the stamped commit.
 
 | file                   | tests | measured | unmeasured | zero-unique share |
@@ -509,7 +512,8 @@ feeds the candidate list. It is not a cut signal by itself.
 
 Unmeasured: **169 tests, all `no-lines`** (zero `outcome` mismatches). Dominated
 by `adapters.bats` structure and doc tests (92) that grep or `cmp` files
-without executing production bash, and by `module.bats` (39, nix sandbox).
+without executing production bash, and by `module.bats` (39, store-path
+executables the reducer discards, plus an untraced `nix build`).
 These 169 are excluded from the zero-unique share and from the cut candidates.
 
 ## Cut candidates (#714)
@@ -521,9 +525,9 @@ line-redundant: each pins a specific bypass input.
 
 Cross-referencing the 2,358 measured zero-unique tests at `d321f8f` with the
 converted families finds **no applied cuts**. #712 already removed the exact
-duplicates. Of those 2,358, 159 names are gone because they were folded into
-table rows; the other 2,199 are still standalone. Near-duplicate family
-members differ in input, so they became table rows. The rows
+duplicates. The conversions removed 127 standalone `@test` titles and added
+49 table-driven tests (net 2,861 → 2,783); near-duplicate family members
+differ in input, so they became table rows, not cuts. The rows
 below were read in full; none is the same input class and the same assertion
 as its sibling.
 

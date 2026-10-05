@@ -3,6 +3,7 @@ result-*
 .direnv
 .claude/settings.local.json
 .pre-commit-config.yaml
+.bats-coverage.*
 /REVIEW_NOTES.md
 /SPEC.md
 /PLAN.md

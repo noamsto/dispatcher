@@ -72,21 +72,38 @@ reduce_trace() {
   ' "$REPO_FILES" "$trace" | sort -u >"$dest"
 }
 
+# du -sb is GNU-only; fall back to BSD du -sk. du also races the janitors'
+# rm under pipefail — a vanished entry exits 1 — so never propagate failure.
+disk_bytes() {
+  local sz
+  sz=$(du -sb "$1" 2>/dev/null | awk 'NR == 1 { print $1 }') || sz=""
+  if [[ -z $sz ]]; then
+    sz=$(du -sk "$1" 2>/dev/null | awk 'NR == 1 { print $1 * 1024 }') || sz=""
+  fi
+  printf '%s\n' "$sz"
+}
+
 note_disk() {
   local sz cur
-  # du races the janitors' rm under pipefail: a vanished entry exits 1.
-  sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }') || true
+  sz=$(disk_bytes "$WORK")
   [[ -n ${sz:-} ]] || return 0
-  {
-    flock 9
-    cur=0
-    if [[ -f $WORK/peak.note ]]; then
-      cur=$(<"$WORK/peak.note")
-    fi
-    if ((sz > cur)); then
-      printf '%s\n' "$sz" >"$WORK/peak.note"
-    fi
-  } 9>"$WORK/peak.lock"
+  # Portable lock (flock is util-linux, absent on Darwin). A janitor that
+  # cannot take it in ~10s skips its note rather than wedging the run; the
+  # sampler still bounds the peak.
+  local lock="$WORK/peak.lock.d" spins=0
+  until mkdir "$lock" 2>/dev/null; do
+    spins=$((spins + 1))
+    ((spins <= 200)) || return 0
+    sleep 0.05
+  done
+  cur=0
+  if [[ -f $WORK/peak.note ]]; then
+    cur=$(<"$WORK/peak.note")
+  fi
+  if ((sz > cur)); then
+    printf '%s\n' "$sz" >"$WORK/peak.note"
+  fi
+  rmdir "$lock"
 }
 
 tap_count() {
@@ -263,7 +280,7 @@ start_sampler() {
   (
     local peak=0 sz
     while true; do
-      sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }') || true
+      sz=$(disk_bytes "$WORK")
       if [[ -n ${sz:-} ]] && ((sz > peak)); then
         peak=$sz
         printf '%s\n' "$peak" >"$WORK/peak.sampler"
@@ -482,7 +499,9 @@ bats_bin="$(command -v bats)"
 bats_prefix="$(cd "$(dirname "$bats_bin")/.." && pwd)"
 BATS_LIB="$bats_prefix/lib"
 BATS_LIBEXEC="$bats_prefix/libexec"
-WORK="$(mktemp -d "$PWD/.bats-coverage.XXXXXX")"
+# Traces record expanded commands — including any token a test stub expands —
+# so the work dir lives outside the repo with owner-only permissions.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/bats-coverage.XXXXXX")"
 if [[ -n $out ]]; then
   mkdir -p "$out"
   LINES_DIR="$out"
