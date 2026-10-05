@@ -3466,8 +3466,7 @@ if [ -n "$grid_roles" ]; then
     done
     role_agent="$agent"
     role_model="$model"
-    # A local lead's bare roles take the tier's hosted pi rung: no second engine
-    # needed, still a different model family, and no claim on the lead's slot.
+    # A local lead's bare roles take the tier's hosted pi rung, off its slot.
     if [ -n "$local_entry" ] && [ -z "$rest" ]; then
       role_model="$(jq -r --arg t "$tier" '.modelMap.pi[$t].default' <<<"$settings")"
     fi
@@ -3515,7 +3514,6 @@ fi
 
 # All launch targets are resolved now. Validate the lead and every eager role
 # before any pane is created; lazy roles validate their final override later.
-# The hosted gates skip a target on a local id.
 [ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort"
 if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
