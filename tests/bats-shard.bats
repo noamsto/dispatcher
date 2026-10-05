@@ -93,7 +93,7 @@ shard() {
         ;;
       esac
     done <<<"$output"
-    loads[$shard]=$sum
+    loads[shard]=$sum
     if ((shard == 1 || sum < min)); then min=$sum; fi
     if ((sum > max)); then max=$sum; fi
   done
@@ -131,7 +131,7 @@ shard() {
   [ "$output" = "$grouped" ]
 }
 
-@test "check rejects an uncovered family" {
+@test "check warns on an uncovered family and schedules it" {
   local file="$FIXTURE/cases.bats"
   write_case "$file" "alpha: first"
   write_case "$file" "beta: second"
@@ -139,13 +139,36 @@ shard() {
   add_weight "$file" alpha '!timing' 10
 
   shard --check "$FIXTURE"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
   [[ $stderr == *"$file"* ]]
   [[ $stderr == *beta* ]]
   [[ $stderr == *bats-shard-weights.sh* ]]
+
+  local shard all='' name line regex covered
+  for shard in 1 2; do
+    shard "$shard" 2 "$FIXTURE"
+    [ "$status" -eq 0 ]
+    all+=$'\n'"$output"
+  done
+  for name in "alpha: first" "beta: second"; do
+    covered=0
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      if [[ $line != *$'\t'* ]]; then
+        covered=1
+        break
+      fi
+      regex=${line#*$'\t'}
+      if [[ $name =~ $regex ]]; then
+        covered=1
+        break
+      fi
+    done <<<"$all"
+    [ "$covered" -eq 1 ]
+  done
 }
 
-@test "check rejects a weights row that names no case" {
+@test "check warns on a weights row that names no case" {
   local file="$FIXTURE/cases.bats"
   write_case "$file" "alpha: first"
   write_weights_header
@@ -153,9 +176,27 @@ shard() {
   add_weight "$file" nope '!timing' 4
 
   shard --check "$FIXTURE"
-  [ "$status" -ne 0 ]
-  [[ $stderr == *"names no case"* ]]
+  [ "$status" -eq 0 ]
+  [[ $stderr == *"stale"* ]]
   [[ $stderr == *nope* ]]
+}
+
+@test "uncovered family gets the median per-case rate as fallback weight" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "alpha: one"
+  write_case "$file" "gamma: one"
+  write_case "$file" "gamma: two"
+  write_case "$file" "gamma: three"
+  write_case "$file" "beta: one"
+  write_case "$file" "beta: two"
+  write_weights_header
+  add_weight "$file" alpha '!timing' 10
+  add_weight "$file" gamma '!timing' 90
+
+  # Rates 10 and 30. Even count, lower-middle is 10; beta has 2 cases → 20.
+  shard --plan "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$(awk -F '\t' '$4 == "beta" { print $5 }' <<<"$output")" = 20 ]
 }
 
 @test "timing-tagged cases never appear in shard output" {
@@ -192,7 +233,7 @@ shard() {
 
   shard 1 2 "$FIXTURE"
   [ "$status" -eq 0 ]
-  [ "$output" = $file$'\t''^(a\.b):' ]
+  [ "$output" = "$file"$'\t''^(a\.b):' ]
 }
 
 @test "a split star family selects names with no colon" {
@@ -205,10 +246,10 @@ shard() {
 
   shard 1 2 "$FIXTURE"
   [ "$status" -eq 0 ]
-  [ "$output" = $file$'\t''^[^:]+$' ]
+  [ "$output" = "$file"$'\t''^[^:]+$' ]
   shard 2 2 "$FIXTURE"
   [ "$status" -eq 0 ]
-  [ "$output" = $file$'\t''^(grid):' ]
+  [ "$output" = "$file"$'\t''^(grid):' ]
 }
 
 @test "equal weights break ties by unit name" {

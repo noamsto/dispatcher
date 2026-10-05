@@ -6,7 +6,14 @@
 #   bats-shard.sh --check [tests-dir]
 #
 # --weights <path> overrides tests/shard-weights.tsv. A missing default file
-# falls back to bats --count per file. --plan prints the 4-shard CI assignment.
+# falls back to bats --count per file. When a file has weights but a family
+# has no row, that family is still scheduled: its weight is the median
+# per-case rate of the file's other same-filter families (weight_ms / cases,
+# integer division; even counts take the lower middle) times this family's
+# case count, at least 1ms. With no sibling rate, the weight is the case
+# count. Timing families are not scheduled. Stale rows (no matching case, or
+# a file outside the tests dir) warn and are skipped. --check warns on that
+# staleness and still exits 0. --plan prints the 4-shard CI assignment.
 # Shard stdout is one unit per line: a bats path, or path<TAB>regex when only
 # some families of that file land in the shard.
 set -euo pipefail
@@ -218,7 +225,7 @@ else
   fi
 fi
 
-declare -A present all_count keep_count timing_count
+declare -A present all_count keep_count timing_count family_count
 present_keys=()
 keep_tests=()
 errors=()
@@ -279,6 +286,7 @@ if [[ -n $inventory ]]; then
       present[$pkey]=1
       present_keys+=("$pkey")
     fi
+    family_count[$pkey]=$((${family_count[$pkey]:-0} + 1))
     if [[ $filter == '!timing' ]]; then
       keep_count[$file]=$((${keep_count[$file]:-0} + 1))
       keep_tests+=("${file}"$'\x1f'"${family}"$'\x1f'"${name}")
@@ -304,22 +312,56 @@ add_unit() {
   unit_ids+=("$id")
 }
 
+# Same-file, same-filter rates only. Even counts take the lower middle
+# (10 and 30 → 10). No sibling rate → the family's own case count.
+fallback_weight() {
+  local file=$1 filter=$2 count=$3
+  local -a rates=() sorted=()
+  local wkey wfile wfam wfilter n wms idx rate weight
+  for wkey in "${weight_keys[@]+"${weight_keys[@]}"}"; do
+    IFS=$'\x1f' read -r wfile wfam wfilter <<<"$wkey"
+    [[ $wfile == "$file" && $wfilter == "$filter" ]] || continue
+    [[ -n ${present[$wkey]+x} ]] || continue
+    n=${family_count[$wkey]:-0}
+    ((n > 0)) || continue
+    wms=${weight_ms[$wkey]}
+    rates+=("$((wms / n))")
+  done
+  if ((${#rates[@]} == 0)); then
+    printf '%s' "$count"
+    return
+  fi
+  mapfile -t sorted < <(printf '%s\n' "${rates[@]}" | LC_ALL=C sort -n)
+  idx=$(((${#sorted[@]} - 1) / 2))
+  rate=${sorted[$idx]}
+  weight=$((rate * count))
+  if ((weight < 1)); then
+    weight=1
+  fi
+  printf '%s' "$weight"
+}
+
 for unresolved in "${unresolved_weights[@]+"${unresolved_weights[@]}"}"; do
-  errors+=("weights row names no case: $unresolved")
+  printf 'bats-shard: warning: weights row names no case (stale): %s\n' "$unresolved" >&2
 done
 
 for wkey in "${weight_keys[@]+"${weight_keys[@]}"}"; do
   IFS=$'\x1f' read -r wfile wfam wfilter <<<"$wkey"
   if [[ -z ${present[$wkey]+x} ]]; then
-    errors+=("weights row names no case: $wfile / $wfam / $wfilter")
+    printf 'bats-shard: warning: weights row names no case (stale): %s / %s / %s\n' "$wfile" "$wfam" "$wfilter" >&2
   fi
 done
 
 for pkey in "${present_keys[@]+"${present_keys[@]}"}"; do
   IFS=$'\x1f' read -r pfile pfam pfilter <<<"$pkey"
   [[ -n ${file_has_weight[$pfile]+x} ]] || continue
-  if [[ -z ${weight_ms[$pkey]+x} ]]; then
-    errors+=("uncovered family $pfile / $pfam ($pfilter); regenerate with scripts/bats-shard-weights.sh")
+  [[ -z ${weight_ms[$pkey]+x} ]] || continue
+  n=${family_count[$pkey]:-0}
+  fb=$(fallback_weight "$pfile" "$pfilter" "$n")
+  printf 'bats-shard: warning: no weight for %s / %s (%s); using fallback %sms — regenerate with scripts/bats-shard-weights.sh\n' \
+    "$pfile" "$pfam" "$pfilter" "$fb" >&2
+  if [[ $pfilter == '!timing' ]]; then
+    add_unit "$pfile" "$pfam" "$fb"
   fi
 done
 
