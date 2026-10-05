@@ -17,10 +17,12 @@ jobs:
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
 
-  # The cold git-fetcher race is inside module.bats's own nix build
-  # (a multi-output nix build plus a fresh <nixpkgs> resolution). It must
-  # run alone on its runner. Shard jobs do not invoke nix and do not share
-  # a store with this job, so this is the only place the file runs.
+  # module.bats's setup_file does a multi-output nix build and a fresh
+  # <nixpkgs> import. That races inside nix on a cold git-fetcher cache,
+  # so this file runs alone, once, on this runner. Shard jobs still
+  # `nix develop` (the same cold eval lint, bats-timing, and flake-check
+  # already do); their bats files do not run this build, and runners do
+  # not share a store.
   bats-module:
     runs-on: ubuntu-latest
     steps:
