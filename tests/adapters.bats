@@ -2375,3 +2375,20 @@ _render_fixture() {
     grep -qF -- "$anchor" "$core/WORKER_PROTOCOL.claude.md" || { echo "missing anchor: $anchor"; return 1; }
   done
 }
+
+@test "gen-adapters leaves the claude render intact and no tmp file when rendering fails" {
+  # The claude render is written to a dotted tmp inside the hashed protocols tree
+  # then moved into place. A direct redirect would truncate the committed render
+  # on a failed render, and a leaked tmp would change the runtime-derived hash.
+  work="$BATS_TEST_TMPDIR/atomic"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cp "$protocols/WORKER_PROTOCOL.claude.md" "$work/before.md"
+  # An unclosed only: block makes render-engine.sh fail.
+  printf '<!-- only:pi -->\n' >>"$protocols/WORKER_PROTOCOL.md"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
+  [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+}
