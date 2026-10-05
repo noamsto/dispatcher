@@ -47,6 +47,9 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # Worker-only plugin disablement is shared with dispatch.  It is a separate
 # --settings layer, preserving the Nix wrapper's settings overlay.
 claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
+if [ "$claude_worker_settings_lib" = '@claudeWorkerSettingsLib@' ]; then
+  claude_worker_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/claude-worker-settings.sh"
+fi
 # shellcheck source=/dev/null
 . "$claude_worker_settings_lib"
 

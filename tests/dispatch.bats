@@ -13444,6 +13444,7 @@ setup_bundle_resume() {
 
 @test "lean: a claude lead launch disables only the worker's unused plugins" {
   stub_launch_bins
+  unset CLAUDE_WORKER_SETTINGS_LIB
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"

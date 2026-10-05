@@ -1014,6 +1014,7 @@ EOF
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
+  unset CLAUDE_WORKER_SETTINGS_LIB
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --continue' <(launch_log))"
