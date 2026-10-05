@@ -67,7 +67,7 @@ map_file() {
   scripts/bats-timing.sh | scripts/bats-classify.sh | scripts/bats-coverage.sh) ;;
   scripts/bats-shard.sh) add bats-shard ;;
   adapters/core/crew.sh) add "${crew_set[@]}" ;;
-  adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
+  adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
