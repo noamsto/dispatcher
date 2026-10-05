@@ -44,6 +44,12 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # shellcheck source=/dev/null
 . "$grant_check_lib"
 
+# Worker-only plugin disablement is shared with dispatch.  It is a separate
+# --settings layer, preserving the Nix wrapper's settings overlay.
+claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
+# shellcheck source=/dev/null
+. "$claude_worker_settings_lib"
+
 # _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
 # it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
 # them. Mirrors the grant-record checks in dispatch.sh.
@@ -1387,7 +1393,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
