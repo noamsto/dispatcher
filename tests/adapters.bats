@@ -261,6 +261,8 @@ commands_reach_row() { # path template containing $ROOT and $n
     for source in "$ROOT"/adapters/core/protocols/*.md; do
       # claude-code ships the claude render; the sync test covers it.
       [ "$adapter/$(basename "$source")" != claude-code/plugin/WORKER_PROTOCOL.md ] || continue
+      # only a claude lead reads the render, so codex and cursor do not ship it.
+      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != WORKER_PROTOCOL.claude.md ] || continue
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
   done
@@ -401,6 +403,7 @@ guard_ships_row() { # script basename
       run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
       [ "$status" -eq 0 ]
     fi
+    [ "$name" != WORKER_PROTOCOL.claude.md ] || continue
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done
@@ -2341,6 +2344,9 @@ _render_fixture() {
   bash "$ROOT/scripts/render-engine.sh" claude "$core/WORKER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/render.md"
   cmp "$BATS_TEST_TMPDIR/render.md" "$core/WORKER_PROTOCOL.claude.md"
   cmp "$BATS_TEST_TMPDIR/render.md" "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
+  [ -f "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" ]
 }
 
 @test "engine-only blocks reach codex and cursor copies but not the claude render" {

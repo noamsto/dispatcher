@@ -131,6 +131,8 @@ done
 
 # The claude plugin's local fallback is claude-only; codex keeps the core copy.
 cp "$protocols/WORKER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
+# Only a claude lead reads the render; codex and cursor never launch one.
+rm "$root/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md"
 
 # codex reads a critic the way it reads a reviewer — body into a subagent
 # prompt. claude is not in this loop: its copy IS the agents/ registry below.
@@ -159,6 +161,7 @@ for r in "$reviewers" "$critics" "$protocols"; do
   rm -rf "$root/adapters/cursor/$(basename "$r")"
   cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
 done
+rm "$root/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md"
 
 # The two claude-only frontmatter keys live here rather than in the shared
 # body: a body codex and cursor paste into a prompt must not name a model
