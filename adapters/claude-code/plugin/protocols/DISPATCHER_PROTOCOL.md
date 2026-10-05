@@ -1133,6 +1133,13 @@ died before it posted a terminal status: recover it with `dispatch resume`, in t
 worker's worktree or by target** (not a fresh `dispatch`), exactly as for any worker that died
 mid-task.
 
+A later `blocked` from the same session does not wake when its detail matches the
+previous `blocked` once ` (cycle N of M)` is removed. A first `blocked`, a changed
+detail, and a question `msg` still wake. The row stays on the log, so roster
+`age_s` still advances. A watchdog `working` whose detail ends in ` cleared`
+(for example `load: cleared`) does not wake, including when `working` is passed
+in `--states`.
+
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
 self-reported. Its `detail` always begins with one of nine reserved prefixes:
