@@ -38,7 +38,13 @@ ccs="$root/adapters/claude-code/plugin/skills"
 bash "$root/scripts/gen-model-map-doc.sh"
 
 # The claude lead appends this render; codex, cursor and pi read the core file.
-bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$protocols/WORKER_PROTOCOL.claude.md"
+# The tmp name is dotted but still inside the hashed tree, so it must never survive.
+tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
+if ! bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp"; then
+  rm -f "$tmp"
+  exit 1
+fi
+mv "$tmp" "$protocols/WORKER_PROTOCOL.claude.md"
 
 # The protocol revision marker (#184, #193) is no longer a committed file:
 # the content hash of adapters/core/protocols (sorted `name:sha256;` entries,

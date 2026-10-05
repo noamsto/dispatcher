@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Render a shared markdown file for one engine. A block opens with the exact
-# line `<!-- only:ENGINE[,ENGINE...] -->` and closes with `<!-- /only -->`;
-# its content is kept only for the listed engines, marker lines never print.
-# Blocks cannot nest, hold headings, or have markers inside a code fence.
+# column-0 line `<!-- only:ENGINE[,ENGINE...] -->` and closes with the exact
+# column-0 line `<!-- /only -->`; its content is kept only for the listed
+# engines, marker lines never print. A line that starts (after any indent) with
+# `<!--` plus `only:` or `/only` but is not exactly a marker line, including one
+# with a trailing CR, is an error; marker-like text mid-line is plain text.
+# Blocks cannot nest, hold headings, or have markers inside a code fence. A
+# fence is 3+ backticks or tildes after any indent and closes on the same
+# character at least as long.
 # Usage: render-engine.sh <engine> <file>   (engine: claude|codex|cursor|pi)
 set -euo pipefail
 
@@ -24,7 +29,21 @@ function fail(msg) {
   failed = 1
   exit 1
 }
-/^```/ { fence = !fence }
+{
+  t = $0
+  sub(/^[ \t]+/, "", t)
+  if (fence) {
+    if ((t ~ /^`+[ \t]*$/ || t ~ /^~+[ \t]*$/) && substr(t, 1, 1) == fchar) {
+      sub(/[ \t]+$/, "", t)
+      if (length(t) >= flen) fence = 0
+    }
+  } else if (t ~ /^(```|~~~)/) {
+    fchar = substr(t, 1, 1)
+    flen = match(t, fchar == "`" ? "^`+" : "^~+") ? RLENGTH : 0
+    fence = 1
+  }
+}
+/^[ \t]*<!--[ \t]*(only:|\/only)/ && !/^<!-- only:.* -->$/ && !/^<!-- \/only -->$/ { fail("malformed marker") }
 /^<!-- only:.* -->$/ || /^<!-- \/only -->$/ {
   if (fence) fail("marker inside a code fence")
   if ($0 ~ /^<!-- \/only -->$/) {

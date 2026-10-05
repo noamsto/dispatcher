@@ -2276,6 +2276,15 @@ _render_fixture() {
     "empty engine list|<!-- only: -->\nb\n<!-- /only -->\n"
     "heading in block|<!-- only:claude -->\n## Heading\n<!-- /only -->\n"
     "marker in fence|\`\`\`\n<!-- only:claude -->\n\`\`\`\n"
+    "marker in indented fence|item\n  \`\`\`\n  x\n<!-- only:claude -->\n  \`\`\`\n"
+    "marker in tilde fence|~~~\n<!-- only:claude -->\n~~~\n"
+    "marker in longer fence after a short fence line|\`\`\`\`\n\`\`\`\n<!-- only:claude -->\n\`\`\`\`\n"
+    "marker in fence closed by a shorter run|~~~~\n~~~\n<!-- /only -->\n~~~~\n"
+    "near-miss indented open|  <!-- only:claude -->\nx\n<!-- /only -->\n"
+    "near-miss indented close|<!-- only:claude -->\nx\n  <!-- /only -->\n"
+    "near-miss trailing text|<!-- only:claude --> trailing\nx\n<!-- /only -->\n"
+    "near-miss without spaces|<!--only:claude-->\nx\n<!-- /only -->\n"
+    "near-miss trailing CR|<!-- only:claude -->\r\nx\n<!-- /only -->\n"
   )
   local case_ f
   [ -f "$ROOT/scripts/render-engine.sh" ]
@@ -2287,6 +2296,10 @@ _render_fixture() {
       return 1
     fi
     [ -s "$BATS_TEST_TMPDIR/err" ] || { echo "no stderr: ${case_%%|*}"; return 1; }
+    case ${case_%%|*} in
+    "marker in"*) grep -q 'inside a code fence' "$BATS_TEST_TMPDIR/err" || { echo "wrong error: ${case_%%|*}"; return 1; } ;;
+    near-miss*) grep -q 'malformed marker' "$BATS_TEST_TMPDIR/err" || { echo "wrong error: ${case_%%|*}"; return 1; } ;;
+    esac
   done
   _render_fixture
   if bash "$ROOT/scripts/render-engine.sh" gemini "$BATS_TEST_TMPDIR/fixture.md" >/dev/null 2>"$BATS_TEST_TMPDIR/err"; then
@@ -2298,11 +2311,29 @@ _render_fixture() {
 @test "render-engine copies marker-like text that is not a whole marker line" {
   printf '%s\n' \
     'see <!-- only:claude --> inline' \
-    '  <!-- /only -->' \
-    '<!-- only:claude --> trailing' \
+    'text <!-- /only -->' \
     '## Heading' >"$BATS_TEST_TMPDIR/plain.md"
   bash "$ROOT/scripts/render-engine.sh" pi "$BATS_TEST_TMPDIR/plain.md" >"$BATS_TEST_TMPDIR/out.md"
   cmp "$BATS_TEST_TMPDIR/out.md" "$BATS_TEST_TMPDIR/plain.md"
+}
+
+@test "render-engine keeps an indented fence inside a kept block intact" {
+  printf '%s\n' \
+    '<!-- only:claude -->' \
+    '- item' \
+    '  ```sh' \
+    '  ## not a heading' \
+    '  ```' \
+    '- next' \
+    '~~~' \
+    '## not a heading' \
+    '~~~' \
+    '<!-- /only -->' \
+    'tail' >"$BATS_TEST_TMPDIR/in.md"
+  run bash "$ROOT/scripts/render-engine.sh" claude "$BATS_TEST_TMPDIR/in.md"
+  [ "$status" -eq 0 ]
+  expected="$(sed '1d;/^<!-- \/only -->$/d' "$BATS_TEST_TMPDIR/in.md")"
+  [ "$output" = "$expected" ]
 }
 
 @test "claude worker protocol render is in sync with core and the claude plugin copy" {

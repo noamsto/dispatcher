@@ -608,9 +608,10 @@ which is why the module exports it rather than only baking it into the binaries.
 
 Claude worker leads append `WORKER_PROTOCOL.claude.md`, not `WORKER_PROTOCOL.md`:
 `./scripts/gen-adapters.sh` renders it with `scripts/render-engine.sh`, which
-drops the `<!-- only:codex,cursor,pi -->` … `<!-- /only -->` blocks that only
-other engines' leads need. After editing `WORKER_PROTOCOL.md`, regenerate so a
-claude lead sees the change; pi, codex and cursor leads read the core file.
+drops every `<!-- only:... -->` … `<!-- /only -->` block whose list omits claude
+(e.g. `only:codex,cursor,pi`, `only:pi`): text only other engines' leads need.
+After editing `WORKER_PROTOCOL.md`, regenerate so a claude lead sees the change;
+pi, codex and cursor leads read the core file.
 
 ### The version-skew guard (#184, #193)
 
