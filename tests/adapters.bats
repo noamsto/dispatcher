@@ -77,9 +77,10 @@ teardown() {
 @test "every standalone _is_engine_cmd copy matches crew.sh's" {
   # dispatch-notify.sh (the #531 child-session guard) is a standalone build with
   # no shared lib, and local-models.sh (#669) is sourced by crew.sh itself, so
-  # both carry a copy of crew.sh's engine-signature table. flake.nix excludes
-  # them from treefmt, so shfmt cannot rewrite a copy out of sync; byte-compare
-  # each instead, like the _bus_append copies above.
+  # both carry a copy of crew.sh's engine-signature table. crew.sh and
+  # dispatch-notify.sh are excluded from treefmt but local-models.sh is not, so
+  # an unformatted change to crew.sh's copy fails here once shfmt rewrites the
+  # lib's; byte-compare each, like the _bus_append copies above.
   canonical="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/crew.sh")"
   [ -n "$canonical" ]
   for f in dispatch-notify.sh local-models.sh; do
