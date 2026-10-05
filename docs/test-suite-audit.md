@@ -537,10 +537,14 @@ as its sibling.
 
 ## Table-driven families (#714)
 
-Conversion rules: each row isolates its fixture (unset `STUB_DIR`/`STUB_LOG`,
-a fresh `XDG_DATA_HOME` under `$BATS_TEST_TMPDIR`, `PATH` restored, the bus
-log truncated). Every row runs. Failures are accumulated and named. No
-assertion was weakened.
+Conversion rules: each row isolates its fixture to the degree the family
+needs. `crew.bats` rows unset `STUB_DIR`/`STUB_LOG`, take a fresh
+`XDG_DATA_HOME` under `$BATS_TEST_TMPDIR`, restore `PATH`, and truncate the
+bus log. `dispatch.bats` refusal families reuse the setup-time stubs and
+truncate the events log per row. `secret-read-guard.bats` rows are
+stateless. Row loops read the table on fd 3, so no command in a row body
+can swallow the remaining rows from stdin. Every row runs; failures are
+accumulated and named by row. No assertion was weakened.
 
 49 families folded (17 in `crew.bats`, 11 in `dispatch.bats`, 21 elsewhere).
 Line count rose by 905: per-row isolation and failure-accumulation scaffolding

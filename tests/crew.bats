@@ -495,7 +495,7 @@ EOF
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to expect rc
-  while IFS='|' read -r label from to expect; do
+  while IFS='|' read -r label from to expect <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -514,7 +514,7 @@ EOF
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 msg: rejects dispatcher: with an empty id|worker|dispatcher:|missing an id after the colon
 msg: rejects worker: with an empty id|dispatcher:c1|worker:|missing an id after the colon
 msg: rejects retro: with an empty id|worker|retro:|missing an id after the colon
@@ -766,7 +766,7 @@ EOF
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label cmd rc
-  while IFS='|' read -r label cmd; do
+  while IFS='|' read -r label cmd <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -787,7 +787,7 @@ EOF
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 occupants: a nix-wrapped claude pane is an engine|.claude-wrapped
 occupants: a cursor-agent pane reports node and is an engine|node
 occupants: a codex pane reports its own literal name and is an engine|codex
@@ -7753,7 +7753,7 @@ _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"d
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label tier rc
-  while IFS='|' read -r label tier; do
+  while IFS='|' read -r label tier <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -7772,7 +7772,7 @@ _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"d
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: standard with no review seam is refused and not written|standard
 pr_open: deep with no review seam is refused and not written|deep
 ROWS
@@ -7798,7 +7798,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label body rc
-  while IFS='|' read -r label body; do
+  while IFS='|' read -r label body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -7821,7 +7821,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: standard with a review seam posts silently|{"seam":"review","review_mode":"full"}
 pr_open: a downgraded review seam counts like a full one|{"seam":"review","review_mode":"downgraded"}
 ROWS
@@ -7881,7 +7881,7 @@ _allowed() {
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label verdict to rc
-  while IFS='|' read -r label verdict to; do
+  while IFS='|' read -r label verdict to <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -7901,7 +7901,7 @@ _allowed() {
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi reviewer revise alone is refused|revise|worker:feat/x#s1-1
 pr_open: a pi reviewer reject alone is refused|reject|worker:feat/x#s1-1
 pr_open: a pi accept addressed to another worker as the only verdict is refused|accept|dispatcher:c1
@@ -7968,7 +7968,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label verdict to rc
-  while IFS='|' read -r label verdict to; do
+  while IFS='|' read -r label verdict to <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -7989,7 +7989,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi accept followed by a later reject is refused|reject|worker:feat/x#s1-1
 pr_open: a pi accept then a reject addressed to the dispatcher is refused|reject|dispatcher:c1
 pr_open: a pi accept then a wrong-case Reject verdict is refused|Reject|worker:feat/x#s1-1
@@ -8097,7 +8097,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to body expect rc
-  while IFS='|' read -r label from to body expect; do
+  while IFS='|' read -r label from to body expect <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8118,7 +8118,7 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi accept then an unparseable lead assignment to the reviewer is refused|worker:feat/x#s1-1|role:feat/x:reviewer|not json|no review seam
 pr_open: a pi accept then a markdown-fenced reviewer reject is refused|role:feat/x:reviewer|worker:feat/x#s1-1|```json {"seam":"review","verdict":"reject"} ```|no review seam
 pr_open: a pi accept then a reviewer msg whose body is a JSON array is refused|role:feat/x:reviewer|worker:feat/x#s1-1|[{"seam":"review","verdict":"reject"}]|no review seam
@@ -8141,7 +8141,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from1 to1 body1 from2 to2 body2 rc
-  while IFS='|' read -r label from1 to1 body1 from2 to2 body2; do
+  while IFS='|' read -r label from1 to1 body1 from2 to2 body2 <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8164,7 +8164,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi accept survives role_exited and final objects on the bus|role:feat/x:reviewer|worker:feat/x#s1-1|{"event":"role_exited"}|worker:feat/x#s1-1|dispatcher:c1|{"final":true}
 pr_open: a pi accept survives a lead release that carries only final|worker:feat/x#s1-1|role:feat/x:reviewer|{"final":true}|worker:feat/x#s1-1|role:feat/other:reviewer|{"question":"another branch"}
 ROWS
@@ -8188,7 +8188,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to body rc
-  while IFS='|' read -r label from to body; do
+  while IFS='|' read -r label from to body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8213,7 +8213,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi accept then a reviewer object with neither seam nor verdict is refused|role:feat/x:reviewer|worker:feat/x#s1-1|{"decision":"reject"}
 pr_open: a pi accept then a lead question to the reviewer with no seam or artifact is refused|worker:feat/x#s1-1|role:feat/x:reviewer|{"question":"look again please"}
 ROWS
@@ -8233,7 +8233,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label body rc
-  while IFS='|' read -r label body; do
+  while IFS='|' read -r label body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8253,7 +8253,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi reviewer object with neither seam nor verdict alone is refused|{"decision":"accept"}
 pr_open: a reviewer retro-style note is not a review seam|{"seam":"review","tag":"other","detail":"x"}
 ROWS
@@ -8273,7 +8273,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to body rc
-  while IFS='|' read -r label from to body; do
+  while IFS='|' read -r label from to body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8295,7 +8295,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi accept survives a reviewer role_exited event with no seam or verdict|role:feat/x:reviewer|worker:feat/x#s1-1|{"role":"reviewer","event":"role_exited","pane":"%3","detail":"engine exited before a verdict"}
 pr_open: a pi accept survives a reviewer tag-only note with no seam|role:feat/x:reviewer|worker:feat/x#s1-1|{"tag":"other","detail":"x"}
 pr_open: a lead final release to the reviewer does not cancel an accept|worker:feat/x#s1-1|role:feat/x:reviewer|{"final":true}
@@ -8363,7 +8363,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label body rc
-  while IFS='|' read -r label body; do
+  while IFS='|' read -r label body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8384,7 +8384,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a pi assignment with an elided artifact still cancels the lead's seam|{"artifact":"…[elided]"}
 pr_open: a pi lead question to the reviewer cancels the lead's own review seam|{"question":"look again please"}
 ROWS
@@ -8560,7 +8560,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to body rc
-  while IFS='|' read -r label from to body; do
+  while IFS='|' read -r label from to body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8580,7 +8580,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a tagged retro note is not a review seam|worker:feat/x#s1-1|retro:c1|{"seam":"review","tag":"other","detail":"x"}
 pr_open: a review seam sent to metrics does not count|worker:feat/x#s1-1|metrics:c1|{"seam":"review","review_mode":"full"}
 pr_open: a review seam from another branch does not count|worker:feat/other#s1-1|review:c1|{"seam":"review"}
@@ -8663,7 +8663,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label tier rc
-  while IFS='|' read -r label tier; do
+  while IFS='|' read -r label tier <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8683,7 +8683,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: standard with a review seam but no deslop seam is refused|standard
 pr_open: deep with a review seam but no deslop seam is refused|deep
 ROWS
@@ -8732,7 +8732,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label from to body rc
-  while IFS='|' read -r label from to body; do
+  while IFS='|' read -r label from to body <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8753,7 +8753,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a deslop seam sent to metrics does not count|worker:feat/x#s1-1|metrics:c1|{"seam":"deslop"}
 pr_open: a deslop seam from another branch does not count|worker:feat/other#s1-1|review:c1|{"seam":"deslop"}
 pr_open: a tagged deslop seam does not count|worker:feat/x#s1-1|review:c1|{"seam":"deslop","tag":"x"}
@@ -8915,7 +8915,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label heading rc
-  while IFS='|' read -r label heading; do
+  while IFS='|' read -r label heading <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8938,7 +8938,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a ### Acceptance criteria list keeps the ledger hint (not the empty-detail steer)|### Acceptance criteria
 pr_open: a bold **Acceptance:** list keeps the ledger hint (not the empty-detail steer)|**Acceptance:**
 pr_open: an inline-bold ### **Acceptance criteria** heading is detected|### **Acceptance criteria**
@@ -8961,7 +8961,7 @@ ROWS
   _ROW_FAILURES=()
   rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
   local n=0 label block rc
-  while IFS='|' read -r label block; do
+  while IFS='|' read -r label block <&3; do
     [ -n "$label" ] || continue
     case "$label" in '#'*) continue ;; esac
     n=$((n + 1))
@@ -8983,7 +8983,7 @@ ROWS
       _ROW_FAILURES+=("$label")
       printf 'row failed: %s\n' "$label" >&2
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 pr_open: a bold **Acceptance criteria** list keeps the ledger hint|\n**Acceptance criteria**\n- AC1\n
 pr_open: a line-start Acceptance: is detected case-insensitively|\nacceptance: AC1 pass(x)\n
 ROWS

@@ -761,7 +761,7 @@ EOF
 @test "rejects an invalid role name or an empty model on an explicit engine" {
   local -a failures=()
   local roles frag why row_output
-  while IFS='|' read -r roles frag; do
+  while IFS='|' read -r roles frag <&3; do
     case "$roles" in '' | '#'*) continue ;; esac
     run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "$roles" --effort high --crew-id c1 "title"
     row_output=$output
@@ -771,7 +771,7 @@ EOF
     if [ -n "$why" ]; then
       failures+=("$roles: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 reviewer,bad role|invalid role 'bad role'
 reviewer=claude:|needs a model after 'claude:'
 ROWS
@@ -1940,12 +1940,15 @@ EOF
 @test "--roles reviewer is recorded on the worker task" {
   stub_launch_bins
   local -a failures=()
-  local path_saved="$PATH" title slug task why
-  while IFS='|' read -r title slug; do
+  local path_saved="$PATH" bus title slug task why
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r title slug <&3; do
     case "$title" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$slug"
     mkdir -p "$XDG_DATA_HOME"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
     : >"$STUB_LOG"
     DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "$title"
     task="$TEST_REPO/.dispatch-wt/$slug/WORKER_TASK.md"
@@ -1957,7 +1960,7 @@ EOF
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 additive reviewer pane|feat-42-additive-reviewer-pane
 roles override default|feat-42-roles-override-default
 ROWS
@@ -3317,7 +3320,7 @@ TABLE
 @test "budget rung and exhaustion gates refuse codex sol by 7d percent" {
   local -a failures=()
   local path_saved="$PATH" pct title contain forbid why row_output
-  while IFS='|' read -r pct title contain forbid; do
+  while IFS='|' read -r pct title contain forbid <&3; do
     case "$pct" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
@@ -3332,7 +3335,7 @@ TABLE
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 70|rung refuse 70|gpt-5.6-terra|quota exhausted
 84|rung refuse 84|gpt-5.6-terra|quota exhausted
 95|rung vs exhaustion 95|quota exhausted|the premium rung
@@ -3347,7 +3350,7 @@ ROWS
 @test "codex absolute limit refuses each absolute-limit signal" {
   local -a failures=()
   local path_saved="$PATH" payload title frag why row_output
-  while IFS='|' read -r payload title frag; do
+  while IFS='|' read -r payload title frag <&3; do
     case "$payload" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
@@ -3362,7 +3365,7 @@ ROWS
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 {rate_limit_reached_type: "workspace_owner_credits_depleted"}|abs rate limit reached|quota exhausted (absolute limit: workspace_owner_credits_depleted)
 {individual_remaining_percent: 0}|abs individual drained|quota exhausted (absolute limit: spend control: 0% remaining)
 {spend_control_reached: true}|abs spend control|quota exhausted (absolute limit: spend control reached)
@@ -3433,12 +3436,15 @@ pi_limit_json() { # <limit_reached jq literal>
 @test "a stale codex absolute limit and a 5h spike with low 7d both launch" {
   stub_launch_bins
   local -a failures=()
-  local path_saved="$PATH" age title program epoch why
-  while IFS='|' read -r age title program; do
+  local path_saved="$PATH" bus age title program epoch why
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r age title program <&3; do
     case "$age" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
     mkdir -p "$XDG_DATA_HOME/crew"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
     : >"$STUB_LOG"
     epoch="$(($(date +%s) - age))"
     jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
@@ -3451,7 +3457,7 @@ pi_limit_json() { # <limit_reached jq literal>
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 10000|stale abs limit|{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {}, limit_reached: {ordinary_usage_allowed: false}}, cursor: null}}
 0|5h spike 7d low|{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"5h": {used_pct: 90, resets_at: null}, "7d": {used_pct: 30, resets_at: null}}}, cursor: null}}
 ROWS
@@ -3489,12 +3495,15 @@ ROWS
 @test "a stale cursor absolute limit and an unknown cursor quota both launch" {
   stub_launch_bins
   local -a failures=()
-  local path_saved="$PATH" age title program epoch why row_output
-  while IFS='|' read -r age title program; do
+  local path_saved="$PATH" bus age title program epoch why row_output
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r age title program <&3; do
     case "$age" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
     mkdir -p "$XDG_DATA_HOME/crew"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
     : >"$STUB_LOG"
     epoch="$(($(date +%s) - age))"
     jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
@@ -3509,7 +3518,7 @@ ROWS
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 10000|cursor abs stale|{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "usage_summary", windows: {}, limit_reached: {reason: "plan usage at 100%", resets_at: null}}}}
 0|cursor abs unknown|{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}
 ROWS
@@ -3692,7 +3701,7 @@ ROWS
 @test "pace-ahead and ignore-rung refusals name their downgrade" {
   local -a failures=()
   local path_saved="$PATH" pct resets title frag1 frag2 why row_output
-  while IFS='|' read -r pct resets title frag1 frag2; do
+  while IFS='|' read -r pct resets title frag1 frag2 <&3; do
     case "$pct" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
@@ -3707,7 +3716,7 @@ ROWS
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 77|345600|pace ahead refuses|sonnet|34 points ahead of pace
 77|345600|message names ignore rung|DISPATCH_IGNORE_RUNG=opus|--ignore-budget
 ROWS
@@ -3782,12 +3791,15 @@ ROWS
 @test "budget rung gate allows burn at pace, near reset, and below the floor" {
   stub_launch_bins
   local -a failures=()
-  local path_saved="$PATH" pct resets title why
-  while IFS='|' read -r pct resets title; do
+  local path_saved="$PATH" bus pct resets title why
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r pct resets title <&3; do
     case "$pct" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
     mkdir -p "$XDG_DATA_HOME"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
     : >"$STUB_LOG"
     budget_json_at claude "$pct" "$resets"
     run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "$title"
@@ -3799,7 +3811,7 @@ ROWS
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 77|86400|at pace allows
 94|7200|near reset allows
 69|432000|below floor allows
@@ -6404,7 +6416,7 @@ spawn_claimant() {
   local -a failures=()
   local path_saved="$PATH" bus json note frag why row_output
   bus="$TEST_REPO/.git/crew/events.jsonl"
-  while IFS='|' read -r json note frag; do
+  while IFS='|' read -r json note frag <&3; do
     case "$json" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$note"
@@ -6429,7 +6441,7 @@ spawn_claimant() {
     if [ -n "$why" ]; then
       failures+=("$note: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 {"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}|exact branch|dispatch row for feat/42-do-a-thing
 {"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-something-else"}|sibling branch|dispatch row for feat/42-something-else
 ROWS
@@ -6575,7 +6587,7 @@ EOF
   local -a failures=()
   local path_saved="$PATH" bus ts note json frag why row_output
   bus="$TEST_REPO/.git/crew/events.jsonl"
-  while IFS='|' read -r ts note; do
+  while IFS='|' read -r ts note <&3; do
     case "$ts" in '' | '#'*) continue ;; esac
     if [ -n "${live_pid:-}" ]; then
       kill "$live_pid" 2>/dev/null || true
@@ -6614,7 +6626,7 @@ EOF
     if [ -n "$why" ]; then
       failures+=("$note: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 nope|non-numeric ts
 missing|missing ts
 ROWS
@@ -7964,7 +7976,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   stub_launch_bins
   local -a failures=()
   local path_saved="$PATH" root parent link want frag title base victim why row_output
-  while IFS='|' read -r root parent link want frag title; do
+  while IFS='|' read -r root parent link want frag title <&3; do
     case "$root" in '' | '#'*) continue ;; esac
     export PATH="$path_saved"
     export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
@@ -7990,7 +8002,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
-  done <<'ROWS'
+  done 3<<'ROWS'
 repo|.git/crew/protocol-dirs|.git/crew/protocol-dirs/feat|1|refusing to write the protocol-dirs record|dirs record
 xdg|crew|crew/worktrees|0|is a symlink or the wrong type — not writing|anchor symlink
 ROWS
