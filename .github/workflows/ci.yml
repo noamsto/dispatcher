@@ -16,6 +16,11 @@ jobs:
         run: |
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
+      # Proves every !timing case is covered by exactly one shard unit and the
+      # checked-in weights still match the suite's families. Fails loudly with
+      # the regeneration command when a PR adds a new family to a weighted file.
+      - name: shard plan covers the suite
+        run: nix develop -c bash scripts/bats-shard.sh --check
 
   # module.bats's setup_file does a multi-output nix build and a fresh
   # <nixpkgs> import. That races inside nix on a cold git-fetcher cache,
@@ -41,12 +46,41 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: bats (shard ${{ matrix.shard }})
         shell: bash
+        env:
+          BATS_SHARD: ${{ matrix.shard }}
         run: |
-          if ! nix develop -c bash -c 'command -v parallel' >/dev/null; then
-            echo "::error::GNU parallel not found in the nix devshell (required for bats --jobs)"
-            exit 1
-          fi
-          nix develop -c bash -c 'bats --jobs 16 --filter-tags "!timing" $(./scripts/bats-shard.sh ${{ matrix.shard }} 4)'
+          nix develop -c bash -euo pipefail <<'SHARD'
+            set -euo pipefail
+            if ! command -v parallel >/dev/null; then
+              echo "::error::GNU parallel not found in the nix devshell (required for bats --jobs)"
+              exit 1
+            fi
+            shopt -s lastpipe
+            ./scripts/bats-shard.sh "$BATS_SHARD" 4 | mapfile -t units
+            fail=0
+            whole=()
+            filtered_files=()
+            filtered_regexes=()
+            for unit in "${units[@]+"${units[@]}"}"; do
+              [[ -n $unit ]] || continue
+              if [[ $unit == *$'\t'* ]]; then
+                filtered_files+=("${unit%%$'\t'*}")
+                filtered_regexes+=("${unit#*$'\t'}")
+              else
+                whole+=("$unit")
+              fi
+            done
+            if ((${#whole[@]} > 0)); then
+              bats --jobs 16 --filter-tags '!timing' "${whole[@]}" || fail=1
+            fi
+            if ((${#filtered_files[@]} > 0)); then
+              for i in "${!filtered_files[@]}"; do
+                bats --jobs 16 --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
+                  "${filtered_files[$i]}" || fail=1
+              done
+            fi
+            exit "$fail"
+          SHARD
 
   bats-timing:
     runs-on: ubuntu-latest

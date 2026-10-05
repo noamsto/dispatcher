@@ -1,45 +1,53 @@
 #!/usr/bin/env bats
 
 setup() {
+  bats_require_minimum_version 1.5.0
   SHARD_SCRIPT="$BATS_TEST_DIRNAME/../scripts/bats-shard.sh"
+  WEIGHTS_SCRIPT="$BATS_TEST_DIRNAME/../scripts/bats-shard-weights.sh"
   expected="$(find "$BATS_TEST_DIRNAME" -maxdepth 1 -name '*.bats' ! -name module.bats -print | sort)"
+  FIXTURE="$BATS_TEST_TMPDIR/suite"
+  mkdir -p "$FIXTURE"
 }
 
-@test "bats shards are exhaustive, disjoint, and balanced" {
-  local shard output all min max count largest
-  all=''
-  min=-1
-  max=0
-  largest=0
+write_case() {
+  local file=$1 name=$2 tag=${3:-}
+  if [[ -n $tag ]]; then
+    printf '# bats test_tags=%s\n' "$tag" >>"$file"
+  fi
+  printf '@test "%s" {\n  true\n}\n' "$name" >>"$file"
+}
 
+write_weights_header() {
+  printf 'file\tfamily\tfilter\tweight_ms\n' >"$FIXTURE/weights.tsv"
+}
+
+add_weight() {
+  printf '%s\t%s\t%s\t%s\n' "$@" >>"$FIXTURE/weights.tsv"
+}
+
+shard() {
+  run --separate-stderr "$SHARD_SCRIPT" --weights "$FIXTURE/weights.tsv" "$@"
+}
+
+@test "live suite shards exit 0 and partition every file" {
+  local shard all
+  all=''
   for shard in 1 2 3 4; do
-    run "$SHARD_SCRIPT" "$shard" 4 "$BATS_TEST_DIRNAME"
+    run --separate-stderr "$SHARD_SCRIPT" "$shard" 4 "$BATS_TEST_DIRNAME"
     [ "$status" -eq 0 ]
     all+=$'\n'"$output"
-    count=0
-    while IFS= read -r file; do
-      [ -n "$file" ] || continue
-      tests=$(bats --count "$file")
-      count=$((count + tests))
-      [ "$tests" -gt "$largest" ] && largest=$tests
-    done <<<"$output"
-    if [ "$min" -lt 0 ] || [ "$count" -lt "$min" ]; then
-      min=$count
-    fi
-    if [ "$count" -gt "$max" ]; then
-      max=$count
-    fi
   done
 
-  [ "$(printf '%s\n' "$all" | sed '/^$/d' | sort)" = "$expected" ]
-  [ "$(printf '%s\n' "$all" | sed '/^$/d' | sort | uniq -d)" = '' ]
-  [ $((max - min)) -le "$largest" ]
+  # Split files appear once per shard as file<TAB>regex units, so dedupe:
+  # file-level coverage is "every file appears", case-level exactness is
+  # --check's job (it runs in the CI lint job).
+  [ "$(printf '%s\n' "$all" | sed '/^$/d; s/\t.*$//' | sort -u)" = "$expected" ]
 }
 
 @test "module bats is not sharded" {
-  run "$SHARD_SCRIPT" 1 4 "$BATS_TEST_DIRNAME"
+  run --separate-stderr "$SHARD_SCRIPT" 1 4 "$BATS_TEST_DIRNAME"
   [ "$status" -eq 0 ]
-  [[ "$output" != *module.bats* ]]
+  [[ $output != *module.bats* ]]
 }
 
 @test "bats shard rejects invalid arguments" {
@@ -51,6 +59,216 @@ setup() {
   [ "$status" -ne 0 ]
   run "$SHARD_SCRIPT"
   [ "$status" -ne 0 ]
+  run "$SHARD_SCRIPT" --plan --check
+  [ "$status" -ne 0 ]
+  run "$SHARD_SCRIPT" --weights "$FIXTURE/missing.tsv" 1 2 "$FIXTURE"
+  [ "$status" -ne 0 ]
+}
+
+@test "shard assignment is weight-balanced" {
+  local heavy="$FIXTURE/a100.bats" mid="$FIXTURE/b060.bats" light="$FIXTURE/c050.bats"
+  write_case "$heavy" "heavy one"
+  write_case "$mid" "mid one"
+  write_case "$light" "light one"
+  write_weights_header
+  add_weight "$heavy" '*' '!timing' 100
+  add_weight "$mid" '*' '!timing' 60
+  add_weight "$light" '*' '!timing' 50
+
+  local shard sum max=0 min=0 largest=100 loads
+  loads=()
+  for shard in 1 2; do
+    shard "$shard" 2 "$FIXTURE"
+    [ "$status" -eq 0 ]
+    sum=0
+    while IFS= read -r file; do
+      [[ -n $file ]] || continue
+      case $file in
+      "$heavy") sum=$((sum + 100)) ;;
+      "$mid") sum=$((sum + 60)) ;;
+      "$light") sum=$((sum + 50)) ;;
+      *)
+        echo "unexpected unit $file" >&2
+        return 1
+        ;;
+      esac
+    done <<<"$output"
+    loads[$shard]=$sum
+    if ((shard == 1 || sum < min)); then min=$sum; fi
+    if ((sum > max)); then max=$sum; fi
+  done
+
+  [ "${loads[1]}" -eq 100 ]
+  [ "${loads[2]}" -eq 110 ]
+  [ $((max - min)) -le "$largest" ]
+}
+
+@test "shards prefer measured family weights over test counts" {
+  local heavy="$FIXTURE/heavy.bats" grouped="$FIXTURE/grouped.bats"
+  write_case "$heavy" "heavy one"
+  write_case "$grouped" "medium: one"
+  write_case "$grouped" "light: one"
+  write_weights_header
+  add_weight "$heavy" '*' '!timing' 100
+  add_weight "$grouped" medium '!timing' 60
+  add_weight "$grouped" light '!timing' 40
+
+  shard 1 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$heavy" ]
+
+  shard 2 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$grouped" ]
+
+  shard --check "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+
+  printf 'file\tfamily\tfilter\tweight_ms\n' >"$FIXTURE/empty.tsv"
+  run --separate-stderr "$SHARD_SCRIPT" --weights "$FIXTURE/empty.tsv" 1 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$grouped" ]
+}
+
+@test "check rejects an uncovered family" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "alpha: first"
+  write_case "$file" "beta: second"
+  write_weights_header
+  add_weight "$file" alpha '!timing' 10
+
+  shard --check "$FIXTURE"
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"$file"* ]]
+  [[ $stderr == *beta* ]]
+  [[ $stderr == *bats-shard-weights.sh* ]]
+}
+
+@test "check rejects a weights row that names no case" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "alpha: first"
+  write_weights_header
+  add_weight "$file" alpha '!timing' 10
+  add_weight "$file" nope '!timing' 4
+
+  shard --check "$FIXTURE"
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"names no case"* ]]
+  [[ $stderr == *nope* ]]
+}
+
+@test "timing-tagged cases never appear in shard output" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "alpha: first"
+  write_case "$file" "beta: second"
+  write_case "$file" "security: slow" timing
+  write_weights_header
+  add_weight "$file" alpha '!timing' 10
+  add_weight "$file" beta '!timing' 10
+  add_weight "$file" security timing 12
+
+  local shard all=''
+  for shard in 1 2; do
+    shard "$shard" 2 "$FIXTURE"
+    [ "$status" -eq 0 ]
+    all+=$'\n'"$output"
+  done
+  [[ $all != *security* ]]
+  [[ $all == *"^(alpha):"* ]]
+  [[ $all == *"^(beta):"* ]]
+
+  shard --check "$FIXTURE"
+  [ "$status" -eq 0 ]
+}
+
+@test "family filters escape regex metacharacters" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "a.b: one"
+  write_case "$file" "c: two"
+  write_weights_header
+  add_weight "$file" 'a.b' '!timing' 100
+  add_weight "$file" c '!timing' 1
+
+  shard 1 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = $file$'\t''^(a\.b):' ]
+}
+
+@test "a split star family selects names with no colon" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "plain one"
+  write_case "$file" "grid: two"
+  write_weights_header
+  add_weight "$file" '*' '!timing' 100
+  add_weight "$file" grid '!timing' 1
+
+  shard 1 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = $file$'\t''^[^:]+$' ]
+  shard 2 2 "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$output" = $file$'\t''^(grid):' ]
+}
+
+@test "equal weights break ties by unit name" {
+  local first="$FIXTURE/a.bats" second="$FIXTURE/b.bats"
+  write_case "$first" "one"
+  write_case "$second" "two"
+  write_weights_header
+  add_weight "$first" '*' '!timing' 10
+  add_weight "$second" '*' '!timing' 10
+
+  shard 1 2 "$FIXTURE"
+  [ "$output" = "$first" ]
+  shard 2 2 "$FIXTURE"
+  [ "$output" = "$second" ]
+}
+
+@test "plan lists every unit and its shard weight" {
+  local heavy="$FIXTURE/heavy.bats" grouped="$FIXTURE/grouped.bats"
+  write_case "$heavy" "heavy one"
+  write_case "$grouped" "medium: one"
+  write_case "$grouped" "light: one"
+  write_weights_header
+  add_weight "$heavy" '*' '!timing' 100
+  add_weight "$grouped" medium '!timing' 60
+  add_weight "$grouped" light '!timing' 40
+
+  shard --plan "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$(head -n 1 <<<"$output")" = $'shard\tunit\tfile\tfamily\tweight_ms\tshard_weight_ms' ]
+  [ "$(awk -F '\t' 'NR > 1 { print $3, $4, $5, $6 }' <<<"$output" | sort)" = "$(
+    printf '%s\n' \
+      "$grouped light 40 40" \
+      "$grouped medium 60 60" \
+      "$heavy * 100 100"
+  )" ]
+}
+
+@test "weights aggregate families and reject a red run" {
+  local out
+  out=$(
+    printf '%s\n' \
+      $'tests/a.bats\tok\t4\tno colon here' \
+      $'tests/crew.bats\tok\t10\tstall-watch: a' \
+      $'tests/crew.bats\tok\t5\tstall-watch: b' \
+      $'tests/module.bats\tok\t99\tmod' \
+      $'tests/secret-read-guard.bats[timing]\tok\t7\tsecret: slow' \
+      | "$WEIGHTS_SCRIPT"
+  )
+  [ "$out" = "$(
+    printf '%s\n' \
+      $'file\tfamily\tfilter\tweight_ms' \
+      $'tests/a.bats\t*\t!timing\t4' \
+      $'tests/crew.bats\tstall-watch\t!timing\t15' \
+      $'tests/secret-read-guard.bats\tsecret\ttiming\t7'
+  )" ]
+
+  printf 'tests/a.bats\tnot-ok\t3\tboom\n' >"$FIXTURE/red.tsv"
+  run --separate-stderr "$WEIGHTS_SCRIPT" <"$FIXTURE/red.tsv"
+  [ "$status" -ne 0 ]
+  [[ $stderr == *not-ok* ]]
 }
 
 ci_module_bats_job_ok() {
