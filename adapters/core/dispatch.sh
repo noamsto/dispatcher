@@ -2038,9 +2038,8 @@ if [ "${1:-}" = "--role-watch" ]; then
     _codex_composer "$1" 'Ask Codex to do anything'
   }
 
-  # Cursor's captured composer has no box either. A narrow pane scrolls the
-  # product banner off and wraps the footer, so the version row, one mode
-  # footer, and the status lines under it are the anchors — not the banner.
+  # Cursor's composer is not bordered. The version row, one mode footer,
+  # and the status lines under that footer are what make it writable.
   _cursor_composer() {
     local text="$1" composer="$2" line value footer_i start_i i n path=0
     local -a rows

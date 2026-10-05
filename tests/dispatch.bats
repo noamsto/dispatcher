@@ -10677,10 +10677,9 @@ rw_frame_claude_spinner_empty() {
   run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
 }
 
-# #725 / #720 — codex and cursor post-turn idle, pi held-draft retype, dead pane.
-# Each test writes its own tmux stub. Frames below are the real captures with
-# trailing blank lines trimmed; the two blank rows between the cursor composer
-# and its footer are part of the capture.
+# Post-turn idle frames, a held pi draft, and a dead pane. Each test writes
+# its own tmux stub. The two blank rows between the cursor composer and its
+# footer are part of the capture.
 
 rw725_codex_post_turn() {
   cat <<'EOF'
