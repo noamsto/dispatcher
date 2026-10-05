@@ -138,7 +138,8 @@ tests/hold.bats	hold release	!timing	588
 tests/model-map-doc.bats	*	!timing	1553
 tests/model-map.bats	model map	!timing	153520
 tests/permission-check.bats	permission-check	!timing	39946
-tests/pr-watch.bats	*	!timing	23267
+tests/pr-watch.bats	*	!timing	2627
+tests/pr-watch.bats	default clock	!timing	1133
 tests/public-leak-guard.bats	public-leak-guard	!timing	3706
 tests/rate-autosweep.bats	autosweep	!timing	16836
 tests/rate-autosweep.bats	guard	!timing	146

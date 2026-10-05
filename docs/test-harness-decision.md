@@ -172,10 +172,13 @@ from the split data and weights:
    spawning one dispatch.sh per table cell. A clock does nothing here; the
    lever is fewer subprocess spawns per cell or a compiled harness (Go's −41%
    on the 31-case sample is mostly this bucket's cost shape).
-3. **pr-watch virtual clock** — 16.07 s of 31.16 s profiled wall is
-   production-internal sleep. File weight 23.3 s → est. 7–9 s (save ~15 s).
-   Small in absolute terms; also the proof case that the CREW_STALL_CLOCK
-   pattern ports cleanly to a second script. **This branch's first slice.**
+3. **pr-watch virtual clock** — 16.07 s of 31.16 s profiled wall was
+   production-internal sleep. **Landed on this branch** (`PR_WATCH_CLOCK`,
+   mirroring `CREW_STALL_CLOCK`): post-seam split shows wait 16.07 s → 1.00 s
+   (the residue is exactly the new default-path regression's intentional real
+   1 s park), file weight 23.3 s → 3.8 s, `bats tests/pr-watch.bats` 23 s →
+   4.1 s. Estimate said save ~15 s; measured save 19.5 s of file weight. The
+   pattern ports cleanly to a second script.
 4. **crew await + hold timers** — crew.bats await families ≈ 49 s, pr_open 36 s;
    event-waits replacing test-side fixed sleeps.
 5. **secret-read-guard** — 246 s, timing-tagged and serial by fence; event-waits
@@ -211,8 +214,8 @@ if Go's build step ever blocks the devshell.
 1. Weight-aware shard rebalance + `--check` lint gate (this branch, landed).
 2. Slow-family sample addition + role-watch wait profile (this branch, landed —
    evidence only, no behavior change).
-3. pr-watch virtual clock (this branch, first seam slice; smallest wait-heavy
-   family, proves the CREW_STALL_CLOCK pattern ports to a second script).
+3. pr-watch virtual clock (this branch, landed: `PR_WATCH_CLOCK`; wait
+   16.07 s → 1.00 s, file 23.3 s → 3.8 s; default-path regression included).
 4. role-watch / dispatch.bats clock seams (ranked 1 by measured savings;
    needs dispatcher sign-off because this issue's plan scopes H12 away from
    role-watch paths), then crew await event-waits.
