@@ -124,9 +124,23 @@ CI candidate numbers (`harness-bench` job, run 37304440476, 26-case manifest,
 | ShellSpec   | 350     | 1460     | 340            |
 
 CI reproduces the local ranking and spread (Go −17% on pr-watch wall, −59% on
-crew-id wall vs bats compat), on quieter hardware. The 31-case CI run lands
-with this branch's next push; the local 31-case table above is the
-slow-family evidence.
+crew-id wall vs bats compat), on quieter hardware.
+
+CI run-wall medians over the 31-case manifest (run 37312458935, 5 reps, 0
+failures in every harness):
+
+| harness            | run wall median ms | vs bats compat |
+| ------------------ | ------------------ | -------------- |
+| bats compatibility | 79050              | —              |
+| bats tuned         | 79040              | −0.0%          |
+| ShellSpec          | 48680              | −38%           |
+| pytest + xdist     | 42360              | −46%           |
+| Go testing         | 37880              | −52%           |
+
+The slow family widens Go's lead on CI even more than locally (−52% vs −41%):
+the runner's slower cores amplify bats' per-case interpreter cost while the
+waits stay constant. Ranking is identical local and CI; pytest ran 0 failures
+in both CI runs, closing the validity question for good.
 
 ShellSpec micro-benchmarks (`tests/harness/shellspec/measure.sh`): noop example
 overhead ≈ 15 ms/example vs bats ≈ 23 ms/test, but ShellSpec function mocks cost
