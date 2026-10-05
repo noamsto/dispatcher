@@ -2436,6 +2436,133 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
   [[ "$output" != *"quota exhausted"* ]]
 }
 
+# #669 local-model lane. local_lane_fixture writes a user-layer localModels
+# entry plus a curl stub standing in for its endpoint — no test may reach a real
+# one. local_holder_tmux wraps whatever tmux stub is in place (call it after the
+# stub it wraps) so the holder scan sees one live pi pane on the id.
+local_lane_fixture() {
+  LOCAL_ID=lemonade/Qwen3.8-Flash-Next-MTP
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"localModels":{"%s":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072}}}\n' "$LOCAL_ID" \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cat >"$STUB_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$STUB_LOG"
+[ -z "${CURL_FAIL:-}" ] || exit 7
+if [ -n "${CURL_BODY:-}" ]; then
+  printf '%s\n' "$CURL_BODY"
+else
+  printf '%s\n' '{"data":[{"id":"Qwen3.8-Flash-Next-MTP"}]}'
+fi
+EOF
+  chmod +x "$STUB_DIR/curl"
+}
+
+local_holder_tmux() {
+  mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = list-panes ] && [ "$2" = -a ] && [[ $* == *@crew_model* ]]; then
+  printf '%s\n' "$*" >>"$STUB_LOG"
+  printf 'lemonade/Qwen3.8-Flash-Next-MTP\x1fpi\x1fslate\x1ffeat/1-x\x1f\n'
+  exit 0
+fi
+exec "$STUB_DIR/tmux-inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "local lane: a local id passes at an allowed tier and probes its endpoint" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'http://halo.test:13305/v1/models' "$STUB_LOG"
+}
+
+@test "local lane: a tier outside the entry is refused; --ignore-map admits it" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' is not allowed at deep — its localModels entry allows trivial, standard; pass --ignore-map (the human's model decision)."* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "local lane: a live holder fills the slot; --ignore-budget skips the cap with a notice" {
+  local_lane_fixture
+  local_holder_tmux
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead)) — wait for it to finish, pick a hosted pi model, or pass --ignore-budget"* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --ignore-budget --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: local slot cap skipped (--ignore-budget) — '$LOCAL_ID' 1/1 in use"* ]]
+}
+
+@test "local lane: an unreachable endpoint or an unlisted model is refused" {
+  local_lane_fixture
+  CURL_FAIL=1 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' is unavailable — http://halo.test:13305/v1/models unreachable; start the server or load the model, or pick a hosted pi model"* ]]
+
+  CURL_BODY='{"data":[{"id":"Other"}]}' DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is unavailable — http://halo.test:13305/v1/models did not list 'Qwen3.8-Flash-Next-MTP'"* ]]
+}
+
+@test "local lane: hosted pi gates skip a local lead but keep its hosted default roles" {
+  local_lane_fixture
+  budget_json_at pi 97 3600
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'plan-critic' (pi) quota exhausted"* ]]
+}
+
+@test "local lane: an explicit role on the lead's local id shares its slot" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium \
+    --roles "plan-critic,reviewer=pi:$LOCAL_ID" --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: role 'reviewer' (pi) local model '$LOCAL_ID' has no free slot (0/1 in use: this dispatch)"* ]]
+}
+
+@test "local lane: launch gives bare roles the hosted rung and stamps @crew_model" {
+  stub_launch_bins
+  local_lane_fixture
+  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "local launch"
+  [ "$status" -eq 0 ]
+  grep -F -- "pi --name iris --model $LOCAL_ID " <(launch_log)
+  grep -F -- 'pi --name iris-plan-critic --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
+  grep -F -- 'pi --name iris-reviewer --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
+  grep -qxF -- "set-option -p -t %1 @crew_model $LOCAL_ID" "$STUB_LOG"
+}
+
+@test "local lane: --spawn-role on a held local id is refused before any pane" {
+  _spawn_role_fixture
+  local_lane_fixture
+  local_holder_tmux
+  run run_dispatch --spawn-role reviewer --model "$LOCAL_ID"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: role 'reviewer' (pi) local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead))"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "local lane: --spawn-role on a free local id skips hosted gates and probes" {
+  _spawn_role_fixture
+  local_lane_fixture
+  budget_json_at pi 97 3600
+  run run_dispatch --spawn-role reviewer --model "$LOCAL_ID"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'http://halo.test:13305/v1/models' "$STUB_LOG"
+  grep -qxF -- "set-option -p -t %6 @crew_model $LOCAL_ID" "$STUB_LOG"
+}
+
 @test "worker window starts at the invoking client size" {
   stub_launch_bins
 
