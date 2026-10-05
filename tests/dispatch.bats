@@ -10554,8 +10554,8 @@ rw_frame_claude_spinner_empty() {
     sleep 0.1
   done
   sleep 1.5
-  # initial Enter + 2 retries, then it stops
-  [ "$(_rw_enters)" -eq 3 ]
+  # first budget (initial Enter + 2 retries), one retype, then a second budget
+  [ "$(_rw_enters)" -eq 6 ]
   # one msg to the lead, one to the dispatcher, naming pane and role
   grep -q '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_unsubmitted' "$STUB_LOG"
   grep -q '^msg role:feat/9-x:reviewer dispatcher:c1 .*assignment_unsubmitted' "$STUB_LOG"
@@ -10564,7 +10564,7 @@ rw_frame_claude_spinner_empty() {
   [ "$(_rw_unsubmitted)" -eq 2 ]
   # the text stays in the box, exactly once, and the queue does not advance
   [ "$(_rw_copies)" -eq 1 ]
-  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 2 ]
   [ "$(grep -c '^paste Assignment: two' "$STUB_LOG" || true)" -eq 0 ]
   # the lead submits it by hand: the queue then moves on
   : >"$STUB_DIR/input"
@@ -10684,6 +10684,472 @@ rw_frame_claude_spinner_empty() {
   _rw_stop
   grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
   run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
+}
+
+# Post-turn idle frames, a held pi draft, and a dead pane. Each test writes
+# its own tmux stub. The two blank rows between the cursor composer and its
+# footer are part of the capture.
+
+rw725_codex_post_turn() {
+  cat <<'EOF'
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2
+EOF
+}
+
+rw725_codex_lookalike() {
+  rw725_codex_post_turn | sed 's/^  ? for shortcuts.*$/  $ /'
+}
+
+rw725_cursor_post_turn() {
+  cat <<'EOF'
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+EOF
+}
+
+rw725_cursor_startup_placeholder() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ Plan, search, build anything/'
+}
+
+rw725_cursor_no_version() {
+  rw725_cursor_post_turn | sed '/^  v2026\.10\.01-e373342$/d'
+}
+
+rw725_cursor_lookalike() {
+  rw725_cursor_post_turn | sed '/256K Low/,$d'
+}
+
+rw725_cursor_draft() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ draft unsent text/'
+}
+
+rw725_cursor_dialog() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ Assignment: go/'
+  printf '\n  Dialog overlay: Enter to confirm\n'
+}
+
+rw725_cursor_status_prompt() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  High — allow this command?'
+}
+
+rw725_cursor_status_path() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  write /tmp/out?'
+}
+
+# Swap only the composer line. Footer and status rows stay the capture's.
+_rw725_assignment_swap() {
+  sed -e 's/› Ask Codex to do anything/› Assignment: go/' \
+      -e 's/→ Add a follow-up/→ Assignment: go/' \
+      -e 's/→ Plan, search, build anything/→ Assignment: go/'
+}
+
+# display-message / show-options / capture-pane / paste-buffer, same answers as
+# the role-watch stub. Paste installs $STUB_DIR/frame_after only when a test
+# wrote one (ready frames). Look-alikes and drafts leave it absent.
+_rw725_cc_stub() {
+  "$1" >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  if [ -f "$STUB_DIR/frame_after" ]; then
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+_rw725_poll_sends() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_sends)" -ge 1 ] && return 0
+    sleep 0.1
+  done
+}
+
+_rw725_poll_captures() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_captures)" -ge 2 ] && return 0
+    sleep 0.1
+  done
+}
+
+@test "role-watch: #725 codex post-turn idle is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_codex_post_turn
+  rw725_codex_post_turn | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start codex
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor post-turn idle is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_post_turn
+  rw725_cursor_post_turn | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor startup placeholder is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_startup_placeholder
+  rw725_cursor_startup_placeholder | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 codex look-alike defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_codex_lookalike
+  _rw_start codex
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor frame without a version row defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_no_version
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor footer with no path defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_lookalike
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor non-empty draft defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_draft
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor dialog overlay gets no Enter" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_dialog
+  rw725_cursor_dialog >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor status line that is a prompt defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_prompt
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor status line with an embedded path defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_path
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+# Held pi frame: lower rule, exactly two non-empty rows after it, upper rule
+# in the `↑ 2 more` shape. Paste shows it. Enter leaves it in place until
+# $STUB_DIR/retyped exists, then the next Enter installs rw_frame_pi_live.
+# cu_mode clear (the success test) is the only path that creates retyped.
+_rw725_pi_stub() {
+  local cu_mode="$1"
+  rw_frame_pi_idle >"$STUB_DIR/frame"
+  rw_frame_pi_idle >"$STUB_DIR/idle_frame"
+  rw_frame_pi_live >"$STUB_DIR/live_frame"
+  rm -f "$STUB_DIR/retyped"
+  printf '%s\n' "$cu_mode" >"$STUB_DIR/cu_mode"
+  cat >"$STUB_DIR/held_frame" <<'EOF'
+ pi v1.0.2
+───────────────── ↑ 2 more ──────────────────
+Assignment: go
+──────────────────────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+EOF
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  cp "$STUB_DIR/held_frame" "$STUB_DIR/frame"
+  ;;
+send-keys)
+  case "$*" in
+  'send-keys -t %6 C-u')
+    [ "$(cat "$STUB_DIR/cu_mode")" = clear ] || exit 0
+    cp "$STUB_DIR/idle_frame" "$STUB_DIR/frame"
+    touch "$STUB_DIR/retyped"
+    ;;
+  'send-keys -t %6 Enter')
+    if [ -e "$STUB_DIR/retyped" ]; then
+      cp "$STUB_DIR/live_frame" "$STUB_DIR/frame"
+    fi
+    ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+_rw725_paste_go() { grep -c '^paste Assignment: go$' "$STUB_LOG" || true; }
+
+@test "role-watch: #725 a held pi draft is cleared and retyped once, then submitted" {
+  _spawn_role_fixture
+  _rw725_pi_stub clear
+  RW_EXTRA='--submit-retries 1' _rw_start pi
+  local n
+  for n in $(seq 1 80); do
+    cmp -s "$STUB_DIR/live_frame" "$STUB_DIR/frame" && break
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ "$(_rw725_paste_go)" -eq 2 ]
+  [ "$(grep -cx 'send-keys -t %6 C-u' "$STUB_LOG" || true)" -eq 1 ]
+  cmp -s "$STUB_DIR/live_frame" "$STUB_DIR/frame"
+}
+
+@test "role-watch: #725 a held pi draft that stays swallowed after retype escalates once" {
+  _spawn_role_fixture
+  _rw725_pi_stub noop
+  RW_EXTRA='--submit-retries 1' _rw_start pi
+  local n
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  # one escalation: the lead and the dispatcher (inflight sender is the lead).
+  # A swallowed draft is pasted once today; the one-shot retype adds a second
+  # paste and must not add a third.
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  [ "$(_rw725_paste_go)" -eq 2 ]
+}
+
+# Held codex frame: paste swaps the empty composer to the assignment and
+# leaves it there. Every Enter is swallowed, so the draft stays held.
+_rw725_codex_held_stub() {
+  rw725_codex_post_turn >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  sed -e 's/› Ask Codex to do anything/› Assignment: go/' "$STUB_DIR/frame" >"$STUB_DIR/frame.next"
+  mv "$STUB_DIR/frame.next" "$STUB_DIR/frame"
+  ;;
+send-keys) ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "role-watch: #725 codex held exhaustion still escalates" {
+  _spawn_role_fixture
+  _rw725_codex_held_stub
+  RW_EXTRA='--submit-retries 1' _rw_start codex
+  local n
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 2 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  [ "$(_rw725_paste_go)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  [ "$(grep -cx 'send-keys -t %6 C-u' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+# #{pane_id} is %6 until $STUB_DIR/dead exists, then empty stdout and exit 0.
+# @crew_branch must answer or startup exits before the loop.
+_rw725_dead_stub() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    if [ -e "$STUB_DIR/dead" ]; then
+      exit 0
+    fi
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "role-watch: #720 the watcher exits when display-message prints nothing" {
+  _spawn_role_fixture
+  _rw725_dead_stub
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  touch "$STUB_DIR/dead"
+  local rw_alive=1 n
+  for n in $(seq 1 20); do
+    if ! kill -0 "$RW_PID" 2>/dev/null; then
+      rw_alive=0
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$rw_alive" -eq 1 ] && ! kill -0 "$RW_PID" 2>/dev/null; then
+    rw_alive=0
+  fi
+  kill "$RW_PID" 2>/dev/null || true
+  wait "$RW_PID" 2>/dev/null || true
+  [ "$rw_alive" -eq 0 ]
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {

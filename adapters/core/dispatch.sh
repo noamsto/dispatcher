@@ -2022,12 +2022,11 @@ if [ "${1:-}" = "--role-watch" ]; then
     [ "$value" = "$expected" ]
   }
 
-  # Codex's composer is not bordered. The captured idle frame has its product
-  # banner and Vim status line around the composer; preserve all three anchors
+  # Codex's composer is not bordered. The captured idle frame has its Vim
+  # status line around the composer; keep that anchor and the live-turn vetoes
   # so another terminal's `›` line cannot become writable.
   _codex_composer() {
     local text="$1" composer="$2"
-    printf '%s\n' "$text" | grep -qE '^[[:space:]]*│ >_ OpenAI Codex \(v[0-9]' || return 1
     _footer_composer_equal "$text" '› ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Vim:[[:space:]]Insert$' 1 "$composer" \
       '^[[:space:]]{2}.*(for shortcuts|warnings).*$' || return 1
     printf '%s\n' "$text" | grep -qF 'esc to interrupt' && return 1
@@ -2039,21 +2038,66 @@ if [ "${1:-}" = "--role-watch" ]; then
     _codex_composer "$1" 'Ask Codex to do anything'
   }
 
-  # Cursor's captured composer has no box either. Its identity, version and
-  # mode rows are all required in addition to the exact empty prompt.
+  # Cursor's composer is not bordered. The version row, one mode footer,
+  # and the status lines under that footer are what make it writable.
   _cursor_composer() {
-    local text="$1" composer="$2"
-    printf '%s\n' "$text" | grep -qFx '  Cursor Agent' || return 1
+    local text="$1" composer="$2" line value footer_i start_i i n path=0
+    local -a rows
+    local footer_re='^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$'
+    local path_re='^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/)'
+    local branch_re='^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$'
+    local model_re='^[[:space:]]+(256K Low|High)[[:space:]]*%?[[:space:]]*$'
     printf '%s\n' "$text" | grep -qE '^[[:space:]]*v[0-9][0-9.]*-' || return 1
-    _footer_composer_equal "$text" '  → ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$' 2 "$composer" \
-      '^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/).*' '^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$' || return 1
+    case "$composer" in
+    *$'\n'*) return 1 ;;
+    esac
+    mapfile -t rows <<<"$text"
+    footer_i=-1
+    for ((i = 0; i < ${#rows[@]}; i++)); do
+      [[ ${rows[i]} =~ $footer_re ]] || continue
+      [ "$footer_i" -eq -1 ] || return 1
+      footer_i=$i
+    done
+    [ "$footer_i" -gt 2 ] || return 1
+    for ((i = 1; i <= 2; i++)); do
+      [ -z "${rows[footer_i - i]}" ] || return 1
+    done
+    start_i=$((footer_i - 3))
+    [ -n "${rows[start_i]}" ] || return 1
+    while [ "$start_i" -gt 0 ] && [ -n "${rows[start_i - 1]}" ]; do
+      start_i=$((start_i - 1))
+    done
+    line="${rows[start_i]}"
+    [[ $line == "  → "* ]] || return 1
+    value="${line#"  → "}"
+    for ((i = start_i + 1; i < footer_i - 2; i++)); do
+      value+="${rows[i]}"
+    done
+    [ "$value" = "$composer" ] || return 1
+    n=0
+    for ((i = footer_i + 1; i < ${#rows[@]}; i++)); do
+      [ -n "${rows[i]}" ] || continue
+      n=$((n + 1))
+      [ "$n" -le 6 ] || return 1
+      if [[ ${rows[i]} =~ $path_re ]]; then
+        path=1
+      elif [[ ${rows[i]} =~ $branch_re ]]; then
+        :
+      elif [[ ${rows[i]} =~ $model_re ]]; then
+        :
+      else
+        return 1
+      fi
+    done
+    [ "$n" -ge 1 ] && [ "$path" -eq 1 ] || return 1
     printf '%s\n' "$text" | grep -qF 'ctrl+c to stop' && return 1
     printf '%s\n' "$text" | grep -qE 'Thinking[[:space:]]+[0-9]+ tokens' && return 1
     return 0
   }
 
   _cursor_idle_box() {
-    _cursor_composer "$1" 'Plan, search, build anything'
+    _cursor_composer "$1" 'Plan, search, build anything' ||
+      _cursor_composer "$1" 'Add a follow-up'
   }
 
   # _role_pane_ready <text> [colored] [own] — the only gate in front of
@@ -2232,9 +2276,11 @@ if [ "${1:-}" = "--role-watch" ]; then
   # (`_role_submit_state`). While it is still held, only Enter is re-sent —
   # never the paste, which would duplicate the text — up to `submit_retries`
   # times, waiting 2, 4, 8… ticks between. A frame that is neither held nor
-  # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks, or
-  # once the retries run out, it is escalated once (`assignment_unsubmitted`)
-  # and left in place: nothing else is typed until the box clears.
+  # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks
+  # it is escalated once. A held pi draft is retyped once per assignment, and a
+  # second exhaustion of that same assignment escalates. Codex and cursor
+  # escalate on the first exhaustion (`assignment_unsubmitted`) and are left
+  # in place: nothing else is typed until the box clears.
   # `pending_from` runs parallel to `pending` so the escalation reaches the
   # sender of the assignment that stalled.
   pending=()
@@ -2248,6 +2294,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   unknown_ticks=0
   unknown_max=5
   escalated=0
+  retyped=0
   verdict_seen=0
   cooldown=0
   unsent=0
@@ -2256,7 +2303,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   deferred_told=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
-  while tmux display-message -p -t "$watch_pane" '#{pane_id}' >/dev/null 2>&1; do
+  while [ "$(tmux display-message -p -t "$watch_pane" '#{pane_id}' 2>/dev/null || true)" = "$watch_pane" ]; do
     watch_exited && break
     if [ -f "$log" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
@@ -2312,6 +2359,7 @@ if [ "${1:-}" = "--role-watch" ]; then
         submit_tries=0
         unknown_ticks=0
         escalated=0
+        retyped=0
         cooldown=1
         [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ] && watch_set_state idle
         verdict_seen=0
@@ -2323,6 +2371,17 @@ if [ "${1:-}" = "--role-watch" ]; then
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           submit_tries=$((submit_tries + 1))
           cooldown=$((1 << submit_tries))
+        elif [ "$engine" = pi ] && [ "$retyped" -eq 0 ] && [ "$escalated" -eq 0 ]; then
+          # The next delivery already sends C-u when unsent=1. A C-u here
+          # would clear the re-paste before Enter.
+          pending=("$inflight" "${pending[@]}")
+          pending_from=("$inflight_from" "${pending_from[@]}")
+          inflight=""
+          inflight_from=""
+          submitting=0
+          submit_tries=0
+          unsent=1
+          retyped=1
         elif [ "$escalated" -eq 0 ]; then
           _rw_escalate "still in the input box after $submit_retries Enter retries"
         fi
