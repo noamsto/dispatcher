@@ -7142,6 +7142,26 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$status" -eq 0 ]
 }
 
+# The object row sits at the cursor, so the selected re-stamp is what reads it
+# (as prev). An empty re-stamp normalizes equal and stays quiet; the other
+# session's done must still arrive. The old predicate aborts in gsub instead.
+@test "watch: an object blocked detail does not drop a later done" {
+  t="$(($(date +%s) * 1000))"
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --argjson ts "$t" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/x#s1-1", to:"dispatcher:c1", kind:"status",
+      body:{state:"blocked", detail:{k:true}}}' >>"$logf"
+  seed_raw "worker:feat/x#s1-1" blocked "" "" "$((t + 1000))"
+  seed_raw "worker:feat/x#s2-2" done "" "" "$((t + 2000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e --argjson ts "$((t + 2000))" \
+    '(.events | length) == 1 and .events[0].body.state == "done" and .events[0].from == "worker:feat/x#s2-2" and .events[0].ts == $ts' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "roster: a suppressed re-stamp still refreshes age_s" {
   now_ms="$(($(date +%s) * 1000))"
   seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$((now_ms - 30000))"
@@ -7222,6 +7242,17 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   run --separate-stderr run_crew watch --crew c1 --since "$t2" --timeout 1 --interval 1
   [ "$status" -eq 0 ]
   run jq -e '(.events | length) == 1 and .events[0].body.detail == "other question"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "status: -- stores a detail that starts with dashes" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" blocked -- '--not-a-flag'
+  [ "$status" -eq 0 ]
+  run jq -s -e \
+    '[.[] | select(.body.state == "blocked" and .body.detail == "--not-a-flag")] | length == 1' \
+    "$log"
   [ "$status" -eq 0 ]
 }
 
