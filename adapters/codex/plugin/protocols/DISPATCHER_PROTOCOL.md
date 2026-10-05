@@ -80,6 +80,12 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   perspective is useful (DeepSeek, Moonshot, Z.ai, Qwen — all through
   OpenRouter). Standard and deep pi workers automatically receive role-grid
   critic/reviewer panes because pi has no native subagents.
+- pi's **local lane** (a `localModels` id, run through `--agent pi`) fits
+  mechanical, bounded `trivial`/`standard` work — not security-adjacent, UI, or
+  underspecified work. Its slot is shared with the host's other consumers of
+  the model: check the `local:` line of `refresh-budget` before fanning out,
+  and expect a refusal naming the holder when it's full. See
+  `dispatch-orchestration.md` → "Local models".
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the

@@ -73,6 +73,7 @@ review depth.
 | `deep`     | **opus** → **sonnet** → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
 | `standard` | **sonnet** @**medium** → **sonnet** → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled) | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
 | `trivial`  | **sonnet** @**low** → escalated **opus** @**low** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
+| local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
 On claude `standard`/`trivial`, sonnet leads at the tier-typical effort (`medium` / `low`), and an opus escalation runs at that same effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
 
@@ -282,6 +283,57 @@ grammar follows on the next rebuild. This skip var covers the Model gate
 model that is also a new tier's row additionally needs `--ignore-map` until
 its row in `adapters/core/defaults.json` is updated and rebuilt
 (`scripts/gen-adapters.sh` regenerates the tables).
+
+### Local models
+
+A pi lane for a self-hosted OpenAI-compatible endpoint (Lemonade, llama.cpp,
+vLLM). It is declared by the `localModels` setting, keyed by the pi dispatch id
+`<provider>/<model>`, and layers like `repoTrackers` — per key across layers,
+a locked entry winning per field:
+
+```json
+"localModels": {
+  "lemonade/Qwen3.8-Flash-Next-MTP": {
+    "baseUrl": "http://halo:13305/v1",
+    "contextWindow": 131072,
+    "maxConcurrent": 1,
+    "tiers": ["trivial", "standard"]
+  }
+}
+```
+
+`baseUrl` is `http(s)://…` with no trailing slash; `maxConcurrent` defaults to
+`1` and `tiers` to `trivial` + `standard`. Declare entries in the locked
+home-manager layer (`programs.dispatcher.localModels`) so a stray user file
+can't widen the cap.
+
+- **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
+  entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
+  pi's OpenRouter budget gates skip a local target — it costs no OpenRouter
+  spend.
+- **Probe.** Before scaffolding, `dispatch` fetches `<baseUrl>/models` (5s) and
+  refuses unless the response lists the model id.
+- **Cap.** `dispatch` counts the live lead and role panes stamped `@crew_model`
+  = the id whose engine runs, and refuses past `maxConcurrent`:
+  `dispatch: local model '<id>' has no free slot (1/1 in use: <holders>) — wait
+  for it to finish, pick a hosted pi model, or pass --ignore-budget`.
+  `--ignore-budget` bypasses it with a stderr notice. The check is not a lock:
+  two simultaneous dispatches can both pass it.
+- **Roles.** A local lead's role panes with no explicit model default to hosted
+  pi at the tier's `modelMap` default — a cross-model review that needs no
+  second engine and doesn't take the slot; those hosted roles keep pi's
+  OpenRouter gates. An explicit role on a local id shares the cap. Lazy roles
+  count when they are dispatched.
+- **Slot use.** `refresh-budget` (a probing run, not `--report`) prints
+  `local: <id> <n>/<max> in use`.
+- **Not counted.** The endpoint's other consumers — a chat bot, an interactive
+  pi, a dispatcher session on the local id. Size `maxConcurrent` for them.
+- **Worker dir.** `crew pi-agent-dir` generates
+  `~/.pi/dispatcher-worker/models.json` from the setting, with a dummy
+  `apiKey`.
+- **Ratings.** `crew rate` groups by `[engine, model, tier]` and the id differs
+  from every `openrouter/…` rung, so local runs rate separately with no extra
+  tag.
 
 ### Tier map
 
