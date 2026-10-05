@@ -10,8 +10,10 @@ setup_file() {
   fi
 }
 
+
 setup() {
   load helpers
+  unset NO_COLOR FORCE_COLOR CLICOLOR CLICOLOR_FORCE COLORTERM
   CREW_DASH_BIN="${CREW_DASH_BIN:-$BATS_FILE_TMPDIR/crew-dash}"
   export CREW_DASH_BIN
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
@@ -275,4 +277,3 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"no retro notes yet"* ]]
 }
-
