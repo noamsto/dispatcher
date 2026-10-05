@@ -124,13 +124,13 @@ if ! diff -u \
       }
     ' "$manifest" \
       tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats \
-      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats \
-      | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
+      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats |
+      LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
   ) \
   <(
-    tail -n +2 "$assertions" \
-      | cut -f1,3,4,6 \
-      | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
+    tail -n +2 "$assertions" |
+      cut -f1,3,4,6 |
+      LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
   ); then
   echo "harness-inventory: assertion inventory is stale or incomplete" >&2
   exit 1
