@@ -74,7 +74,8 @@ reduce_trace() {
 
 note_disk() {
   local sz cur
-  sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }')
+  # du races the janitors' rm under pipefail: a vanished entry exits 1.
+  sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }') || true
   [[ -n ${sz:-} ]] || return 0
   {
     flock 9
@@ -262,7 +263,7 @@ start_sampler() {
   (
     local peak=0 sz
     while true; do
-      sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }')
+      sz=$(du -sb "$WORK" 2>/dev/null | awk 'NR == 1 { print $1 }') || true
       if [[ -n ${sz:-} ]] && ((sz > peak)); then
         peak=$sz
         printf '%s\n' "$peak" >"$WORK/peak.sampler"

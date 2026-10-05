@@ -542,7 +542,7 @@ a fresh `XDG_DATA_HOME` under `$BATS_TEST_TMPDIR`, `PATH` restored, the bus
 log truncated). Every row runs. Failures are accumulated and named. No
 assertion was weakened.
 
-48 families folded (17 in `crew.bats`, 11 in `dispatch.bats`, 20 elsewhere).
+49 families folded (17 in `crew.bats`, 11 in `dispatch.bats`, 21 elsewhere).
 Line count rose by 905: per-row isolation and failure-accumulation scaffolding
 costs more lines than the folded duplicates saved. The win is growth shape (a
 new case is one row, not one test) and per-case failure naming, not line count.
