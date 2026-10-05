@@ -298,29 +298,37 @@ the main worktree.
 
 Landed on this branch:
 
-1. Weight-aware shard rebalance + `--check` lint gate.
+1. Weight-aware shard rebalance + `--check` lint gate (warn-on-stale: an
+   unweighted family falls back to a median-rate weight and is still
+   scheduled — a PR that adds a family can never break or drop tests).
 2. Slow-family sample addition + role-watch wait profile (evidence only).
 3. pr-watch virtual clock (`PR_WATCH_CLOCK`; wait 16.07 s → 1.00 s, file
    23.3 s → 3.8 s; default-path regression included).
 
-Future slices — one named family and one PR each, ordered by measured saving:
+Future slices — one named family and one PR each, ordered by measured saving.
+The owner accepted this recommendation and split the next slices into
+parallel workers under #724:
 
-4. **role-watch clock seam** (dispatch.bats role-watch family; 188 s weight,
-   measured 60–80% wait share → est. save 110–150 s, the largest lever).
-   Dependency: dispatcher sign-off — this issue's plan scoped H12 away from
-   role-watch production paths, and the seam touches dispatch.sh's watcher
-   loop. Retained coverage: the 5 role-watch manifest cases run in all four
+4. **role-watch clock seam → #736** (dispatch.bats role-watch family; 188 s
+   weight, measured 60–80% wait share → est. save 110–150 s, the largest
+   lever). Retained coverage: the 5 role-watch manifest cases run in all four
    harnesses; per-slice mutation checks per the table above.
-5. **secret-read-guard event-waits** (246 s, timing-tagged and serial by
+5. **spawn reduction in the dispatch.bats tier-gate sweeps → #737** (the
+   fork/CPU-bound `*` bucket, 443 s: table-driven sweeps spawning one
+   dispatch.sh per cell; the lever is fewer subprocess spawns per cell, not a
+   clock).
+6. **module.bats off every shard's critical path → landed as #744** (its
+   multi-output nix build raced on a cold git-fetcher cache; now one
+   unsharded job).
+7. **secret-read-guard event-waits** (246 s, timing-tagged and serial by
    fence). Dependency: a wait-profile run first — its wait share is
    unmeasured, and its guards are timing-sensitive, so this is event-waits
-   rather than a virtual clock. Retained coverage: the file's timing phase
-   stays serial; shard weights re-measured in the same PR.
-6. **crew await + hold event-waits** (crew.bats await families ≈ 49 s,
+   rather than a virtual clock. Unassigned as yet.
+8. **crew await + hold event-waits** (crew.bats await families ≈ 49 s,
    pr_open ≈ 36 s). Dependency: none. Retained coverage: CREW_STALL_CLOCK
    already proves the pattern in this file (#712: 622 s → 49 s on
-   stall-watch).
-7. **Harness re-decision gate**: re-run this benchmark with the seams landed.
+   stall-watch). Unassigned as yet.
+9. **Harness re-decision gate**: re-run this benchmark with the seams landed.
    If harness+residual then dominates the remaining profile, port to Go —
    devshell wiring, runner, CI step, affected-selection, then manifest-case
    ports with bats originals removed only after parity (assertion map +
