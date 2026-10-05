@@ -8,3 +8,4 @@ result-*
 /SPEC.md
 /PLAN.md
 /WORKER_TASK.md
+__pycache__/
