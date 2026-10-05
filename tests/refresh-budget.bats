@@ -1796,6 +1796,42 @@ EOF
   [ "$status" -eq 0 ]
 }
 
+write_local_models_settings() {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  cat >"$XDG_CONFIG_HOME/dispatcher/settings.json" <<'EOF'
+{"localModels":{
+  "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072,"maxConcurrent":2},
+  "lemonade/Idle":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}
+}}
+EOF
+}
+
+@test "local slots: the probing run prints each localModels entry's slot use" {
+  write_local_models_settings
+  SHIM_TMUX_PANES=$'lemonade/Qwen3.8-Flash-Next-MTP\x1fpi\x1fslate\x1ffeat/1-x\x1f' run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"local: lemonade/Qwen3.8-Flash-Next-MTP 1/2 in use (slate (feat/1-x lead))"* ]]
+  [[ "$output" == *"local: lemonade/Idle 0/1 in use"* ]]
+  [[ "$output" != *"local: lemonade/Idle 0/1 in use ("* ]]
+}
+
+@test "local slots: no localModels prints no local line" {
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"local:"* ]]
+}
+
+@test "local slots: --report never prints a local line" {
+  write_local_models_settings
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/engine-budget.json" <<'EOF'
+{"fetched_at":"2026-01-01T00:00:00Z","fetched_epoch":1700000000,"engines":{"claude":null,"codex":null,"cursor":null,"pi":null}}
+EOF
+  run bash "$SCRIPT" --report
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"local:"* ]]
+}
+
 @test "--report usage: --json alone or an unknown flag exits 2" {
   run --separate-stderr bash "$SCRIPT" --json
   [ "$status" -eq 2 ]
