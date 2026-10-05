@@ -159,15 +159,21 @@ printf '%s' "$prev" | jq -e type >/dev/null 2>&1 || prev=""
 # only moves forward. The emitted event's ts stays real — it is the
 # caller-facing record of when the change was observed, not loop bookkeeping.
 _pw_now_ms() {
-  [ -n "${PR_WATCH_CLOCK:-}" ] || { jq -nc 'now*1000|floor'; return; }
+  [ -n "${PR_WATCH_CLOCK:-}" ] || {
+    jq -nc 'now*1000|floor'
+    return
+  }
   [ -s "$PR_WATCH_CLOCK" ] || jq -nc 'now*1000|floor' >"$PR_WATCH_CLOCK"
   cat "$PR_WATCH_CLOCK"
 }
 _pw_sleep() {
-  [ -n "${PR_WATCH_CLOCK:-}" ] || { sleep "$1"; return; }
+  [ -n "${PR_WATCH_CLOCK:-}" ] || {
+    sleep "$1"
+    return
+  }
   local s="${1%%.*}"
   [ "$s" = "$1" ] || s=$((${s:-0} + 1))
-  printf '%s\n' "$(( $(_pw_now_ms) + s * 1000 ))" >"$PR_WATCH_CLOCK"
+  printf '%s\n' "$(($(_pw_now_ms) + s * 1000))" >"$PR_WATCH_CLOCK"
 }
 
 start=$(_pw_now_ms)

@@ -13,8 +13,10 @@ readonly files=(
 
 # Optional per-file ERE limiting which tests enter the sample (empty = whole
 # file). dispatch.bats is 785 tests; only this role-watch slice is sampled.
+# Quoted key: shfmt parses an unquoted subscript as arithmetic and chokes on
+# the dot in the filename.
 declare -A file_filter=(
-  [tests/dispatch.bats]='^role-watch: (a permission dialog receives no keys|option-select, quota|an idle claude input box|queued assignments go out|a dialog raised after the text)'
+  ["tests/dispatch.bats"]='^role-watch: (a permission dialog receives no keys|option-select, quota|an idle claude input box|queued assignments go out|a dialog raised after the text)'
 )
 
 usage() {
