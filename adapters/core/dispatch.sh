@@ -3626,6 +3626,7 @@ for id in "${local_ids[@]}"; do
 done
 
 required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
+[ "$agent" = claude ] && required_protocol_files+=(WORKER_PROTOCOL.claude.md)
 [ -n "$roles_stamp" ] && required_protocol_files+=(GRID_PROTOCOL.md)
 _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" dispatch
@@ -4927,7 +4928,7 @@ else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

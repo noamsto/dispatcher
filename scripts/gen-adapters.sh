@@ -37,6 +37,9 @@ ccs="$root/adapters/claude-code/plugin/skills"
 # directory is copied into each plugin tree below.
 bash "$root/scripts/gen-model-map-doc.sh"
 
+# The claude lead appends this render; codex, cursor and pi read the core file.
+bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$protocols/WORKER_PROTOCOL.claude.md"
+
 # The protocol revision marker (#184, #193) is no longer a committed file:
 # the content hash of adapters/core/protocols (sorted `name:sha256;` entries,
 # sha256 of the concatenation, first 16 hex chars) is what flake.nix bakes
@@ -119,6 +122,9 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   cp -r "$protocols" "$d/protocols"
   cp -r "$reviewers" "$d/reviewers"
 done
+
+# The claude plugin's local fallback is claude-only; codex keeps the core copy.
+cp "$protocols/WORKER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
 
 # codex reads a critic the way it reads a reviewer — body into a subagent
 # prompt. claude is not in this loop: its copy IS the agents/ registry below.

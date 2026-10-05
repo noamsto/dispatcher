@@ -294,6 +294,7 @@ setup() {
   dir="$(grep -o '/nix/store/[^"}]*' "$OUT_DISPATCH/bin/dispatch" | grep -i protocol | head -1)"
   [ -n "$dir" ]
   [ -f "$dir/WORKER_PROTOCOL.md" ]
+  [ -f "$dir/WORKER_PROTOCOL.claude.md" ]
   [ -f "$dir/DISPATCHER_PROTOCOL.md" ]
   # dispatch --review resolves this one at dispatch time and aborts without it.
   [ -f "$dir/REVIEW_TASK.md" ]
