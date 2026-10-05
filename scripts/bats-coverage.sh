@@ -210,10 +210,10 @@ cover_file() {
     printf 'bats-coverage: %s: reduced-record count %s != TAP test count %s\n' "$file" "$reduced" "$want" >&2
     return 1
   fi
-  local leftover
-  shopt -s nullglob
-  leftover=("$WORK/$base".[0-9]*.trace)
-  shopt -u nullglob
+  local leftover=() t
+  while IFS= read -r t; do
+    leftover+=("$t")
+  done < <(compgen -G "$WORK/$base.[0-9]*.trace" || true)
   if [[ ${#leftover[@]} -gt 0 ]]; then
     printf 'bats-coverage: %s: %s raw trace(s) left behind\n' "$file" "${#leftover[@]}" >&2
     return 1
@@ -406,35 +406,35 @@ reduce_only=""
 files=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --out)
-      [[ $# -ge 2 ]] || {
-        printf 'bats-coverage: --out needs a directory\n' >&2
-        exit 2
-      }
-      out="$2"
-      shift 2
-      ;;
-    --reduce-only)
-      [[ $# -ge 2 ]] || {
-        printf 'bats-coverage: --reduce-only needs a directory\n' >&2
-        exit 2
-      }
-      reduce_only="$2"
-      shift 2
-      ;;
-    --)
-      shift
-      files+=("$@")
-      break
-      ;;
-    -*)
-      printf 'bats-coverage: unknown option %s\n' "$1" >&2
+  --out)
+    [[ $# -ge 2 ]] || {
+      printf 'bats-coverage: --out needs a directory\n' >&2
       exit 2
-      ;;
-    *)
-      files+=("$1")
-      shift
-      ;;
+    }
+    out="$2"
+    shift 2
+    ;;
+  --reduce-only)
+    [[ $# -ge 2 ]] || {
+      printf 'bats-coverage: --reduce-only needs a directory\n' >&2
+      exit 2
+    }
+    reduce_only="$2"
+    shift 2
+    ;;
+  --)
+    shift
+    files+=("$@")
+    break
+    ;;
+  -*)
+    printf 'bats-coverage: unknown option %s\n' "$1" >&2
+    exit 2
+    ;;
+  *)
+    files+=("$1")
+    shift
+    ;;
   esac
 done
 

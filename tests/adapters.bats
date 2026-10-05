@@ -184,9 +184,71 @@ teardown() {
   done
 }
 
-@test "the engine-neutral commands reach cursor" {
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
+}
+
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
+
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+# F01: engine-neutral dispatcher and autopilot commands reach cursor and codex.
+# Read-only file checks; no per-row reset.
+@test "the engine-neutral commands reach cursor and codex" {
+  begin_rows
+  local row path
+  while IFS='|' read -r row path; do
+    [ -n "$row" ] || continue
+    keep_row "$row" commands_reach_row "$path"
+  done <<'ROWS'
+cursor|$ROOT/adapters/cursor/commands/$n.md
+codex|$ROOT/adapters/codex/plugin/skills/$n/SKILL.md
+ROWS
+  finish_rows 2
+}
+
+commands_reach_row() { # path template containing $ROOT and $n
+  local n path
   for n in dispatcher autopilot; do
-    [ -f "$ROOT/adapters/cursor/commands/$n.md" ]
+    path=$1
+    path=${path//\$ROOT/$ROOT}
+    path=${path//\$n/$n}
+    [ -f "$path" ]
   done
 }
 
@@ -195,12 +257,6 @@ teardown() {
     for source in "$ROOT"/adapters/core/protocols/*.md; do
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
-  done
-}
-
-@test "the engine-neutral commands reach codex as skills" {
-  for n in dispatcher autopilot; do
-    [ -f "$ROOT/adapters/codex/plugin/skills/$n/SKILL.md" ]
   done
 }
 
@@ -269,13 +325,29 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "the secret-read guard ships executable and byte-identical in all three generated trees" {
+# F02: secret-read-guard and public-leak-guard ship executable and byte-identical
+# in the three generated trees. Read-only; no per-row reset.
+@test "generated guards ship executable and byte-identical in all three trees" {
+  begin_rows
+  local row name
+  while IFS='|' read -r row name; do
+    [ -n "$row" ] || continue
+    keep_row "$row" guard_ships_row "$name"
+  done <<'ROWS'
+secret-read|secret-read-guard.sh
+public-leak|public-leak-guard.sh
+ROWS
+  finish_rows 2
+}
+
+guard_ships_row() { # script basename
+  local copy
   for copy in \
-    "$ROOT/adapters/claude-code/plugin/scripts/secret-read-guard.sh" \
-    "$ROOT/adapters/codex/plugin/scripts/secret-read-guard.sh" \
-    "$ROOT/adapters/cursor/scripts/secret-read-guard.sh"; do
+    "$ROOT/adapters/claude-code/plugin/scripts/$1" \
+    "$ROOT/adapters/codex/plugin/scripts/$1" \
+    "$ROOT/adapters/cursor/scripts/$1"; do
     [ -x "$copy" ]
-    run cmp -s "$ROOT/adapters/core/secret-read-guard.sh" "$copy"
+    run cmp -s "$ROOT/adapters/core/$1" "$copy"
     [ "$status" -eq 0 ]
   done
 }
@@ -291,17 +363,6 @@ teardown() {
   [ "$status" -eq 0 ]
   run jq -e '.hooks.PreToolUse[1] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("$PLUGIN_ROOT")) and ($p.hooks[0].command | contains("scripts/public-leak-guard.sh"))' "$ROOT/adapters/codex/plugin/hooks/hooks.json"
   [ "$status" -eq 0 ]
-}
-
-@test "the public-leak guard ships executable and byte-identical in all three generated trees" {
-  for copy in \
-    "$ROOT/adapters/claude-code/plugin/scripts/public-leak-guard.sh" \
-    "$ROOT/adapters/codex/plugin/scripts/public-leak-guard.sh" \
-    "$ROOT/adapters/cursor/scripts/public-leak-guard.sh"; do
-    [ -x "$copy" ]
-    run cmp -s "$ROOT/adapters/core/public-leak-guard.sh" "$copy"
-    [ "$status" -eq 0 ]
-  done
 }
 
 @test "hookyard.json wires the public-leak guard for pi" {

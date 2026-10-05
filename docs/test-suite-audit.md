@@ -439,3 +439,155 @@ and prints the bats files to run, one per line.
 Workers use it at every gate, including the last one before push, and never run
 the full suite locally. CI runs the full suite and is where a shared-code
 regression surfaces; workers fix CI failures from its log.
+
+## Unique coverage (#714)
+
+Measured at `d321f8f` (pre-conversion). Reproduce with `scripts/bats-coverage.sh --out <dir>`.
+
+Each test is line-traced with bash xtrace from `tests/coverage.bash`, which stays
+inert unless `BATS_COVERAGE_DIR` is set. Child bash processes inherit the trace
+through `BASH_ENV` (`tests/coverage-env.bash`), which opens the trace file by
+path, so no file descriptor is inherited. `scripts/bats-coverage.sh` runs each
+file once untraced (the pass/fail baseline, and the number→name map) and once
+traced, and reduces a test's trace when its TAP line lands. Peak disk is
+therefore bounded by parallelism, not by suite size.
+
+Validity: **0 outcome mismatches** between the traced and untraced runs (the
+traced run reproduced the untraced pass/fail set). Peak disk **2.06 GB**
+(2,058,961,963 bytes), wall **2266s** at `-j16`. Raw trace sizes over 2,861
+tests: min 129,213 bytes, median 1,478,071 bytes (1.48 MB), p90 11,695,391
+bytes (11.7 MB), max 1,951,065,614 bytes (1.95 GB).
+
+Blind spots:
+
+- Lines executed are not behaviours asserted.
+- Granularity is per command, not per branch.
+- A partial `env -i` scrub inside an otherwise-traced test is invisible (for example `secret-read-guard.bats:909`).
+- Detached `nohup` children (`dispatch.sh` role-watch and stall-watch) can append after the janitor has reduced the trace.
+- `writeShellApplication` wrappers inflate covered lines with their PATH setup.
+- `module.bats` and `smoke.bats` measure as `no-lines` because nix builds run in a sandbox.
+- The measurement indexes only the stamped commit.
+
+| file                   | tests | measured | unmeasured | zero-unique share |
+| ---------------------- | ----: | -------: | ---------: | ----------------: |
+| adapters.bats          |   131 |       39 |         92 |            0.8462 |
+| bats-affected.bats     |    21 |       21 |          0 |            0.9048 |
+| crew.bats              |   539 |      539 |          0 |            0.8479 |
+| crew-dash.bats         |    12 |       11 |          1 |            0.9091 |
+| crew-id.bats           |     5 |        5 |          0 |            1.0000 |
+| crews.bats             |    63 |       63 |          0 |            0.8889 |
+| dispatch.bats          |   800 |      780 |         20 |            0.8167 |
+| dispatch-comment.bats  |    10 |       10 |          0 |            1.0000 |
+| dispatch-config.bats   |    40 |       37 |          3 |            0.9189 |
+| dispatcher.bats        |    39 |       39 |          0 |            0.8205 |
+| dispatch-notify.bats   |    15 |       15 |          0 |            0.9333 |
+| dispatch-resume.bats   |   162 |      157 |          5 |            0.8471 |
+| hold.bats              |    24 |       24 |          0 |            0.7083 |
+| model-map.bats         |     6 |        6 |          0 |            1.0000 |
+| model-map-doc.bats     |     9 |        9 |          0 |            0.8889 |
+| module.bats            |    39 |        0 |         39 |                na |
+| permission-check.bats  |   147 |      146 |          1 |            0.9384 |
+| pr-watch.bats          |    17 |       17 |          0 |            0.6471 |
+| public-leak-guard.bats |    16 |       16 |          0 |            0.7500 |
+| rate-autosweep.bats    |    21 |       20 |          1 |            0.9500 |
+| rate.bats              |    44 |       44 |          0 |            0.8864 |
+| rate-sweep-all.bats    |    11 |       11 |          0 |            0.6364 |
+| reap-race.bats         |     6 |        6 |          0 |            1.0000 |
+| refresh-budget.bats    |   100 |      100 |          0 |            0.9300 |
+| refresh-models.bats    |     4 |        4 |          0 |            0.5000 |
+| refresh-scores.bats    |     6 |        6 |          0 |            0.6667 |
+| retro.bats             |    29 |       29 |          0 |            0.9310 |
+| secret-read-guard.bats |   483 |      479 |          4 |            0.9958 |
+| smoke.bats             |     3 |        0 |          3 |                na |
+| worktree-git.bats      |    59 |       59 |          0 |            0.8983 |
+
+With ~2,850 tests sharing entry paths, zero-unique reads high everywhere
+(0.65–1.00 on 25 of 28 measured files; `pr-watch.bats` is 0.6471,
+`rate-sweep-all.bats` is 0.6364, `refresh-models.bats` is 0.5000). The table
+is descriptive: it finds tests with large unique sets worth protecting and
+feeds the candidate list. It is not a cut signal by itself.
+
+Unmeasured: **169 tests, all `no-lines`** (zero `outcome` mismatches). Dominated
+by `adapters.bats` structure and doc tests (92) that grep or `cmp` files
+without executing production bash, and by `module.bats` (39, nix sandbox).
+These 169 are excluded from the zero-unique share and from the cut candidates.
+
+## Cut candidates (#714)
+
+A candidate needs zero unique lines and a sibling test with the same input
+class and the same assertion. Security regressions (`secret-read-guard`,
+`permission-check`, the git-config guard, grant checks) stay even when
+line-redundant: each pins a specific bypass input.
+
+Cross-referencing the 2,358 measured zero-unique tests at `d321f8f` with the
+converted families finds **no applied cuts**. #712 already removed the exact
+duplicates. Of those 2,358, 159 names are gone because they were folded into
+table rows; the other 2,199 are still standalone. Near-duplicate family
+members differ in input, so they became table rows. The rows
+below were read in full; none is the same input class and the same assertion
+as its sibling.
+
+| candidate                                                                                    | decision | reason                                                                                                                                                                                             |
+| -------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr_open: a pi accept then one non-verdict message is refused` (five rows)                   | kept     | Same assertion (`_refused "no review seam"`) after one planted accept, but each row's bus body is a different bypass (unparseable, fenced JSON, JSON array, a `tag` key, `final` plus a question). |
+| `msg: rejects a recipient prefix with an empty id` (`dispatcher:` / `worker:` / `retro:`)    | kept     | Same status-1 assertion and the same "missing an id" fragment; the recipient prefix is the input under test.                                                                                       |
+| `claim: '#42' canonicalises to issue 42` and `claim: a bare '42' stays issue 42`             | kept     | Both end at issue 42. The inputs are `#42` and `42`; only the hash form asserts the `claim-issue` bus row.                                                                                         |
+| `secret-read-guard: denies cat .env` / `denies grep KEY .env` / `denies rg TOKEN .env.local` | kept     | File zero-unique share is 0.9958. Each row is a different command. Security regression.                                                                                                            |
+| `budget rung and exhaustion gates refuse codex sol by 7d percent` (70 / 84 / 95)             | kept     | Same dispatch invocation shape; the percent and the expected refusal fragment change (70 and 84 name `gpt-5.6-terra` and forbid "quota exhausted"; 95 is the exhaustion row).                      |
+
+## Table-driven families (#714)
+
+Conversion rules: each row isolates its fixture (unset `STUB_DIR`/`STUB_LOG`,
+a fresh `XDG_DATA_HOME` under `$BATS_TEST_TMPDIR`, `PATH` restored, the bus
+log truncated). Every row runs. Failures are accumulated and named. No
+assertion was weakened.
+
+48 families folded (17 in `crew.bats`, 11 in `dispatch.bats`, 20 elsewhere).
+Line count rose by 905: per-row isolation and failure-accumulation scaffolding
+costs more lines than the folded duplicates saved. The win is growth shape (a
+new case is one row, not one test) and per-case failure naming, not line count.
+
+| file                   | tests before | tests after | lines before | lines after |
+| ---------------------- | -----------: | ----------: | -----------: | ----------: |
+| crew.bats              |          539 |         508 |         8999 |        9361 |
+| dispatch.bats          |          800 |         785 |        13301 |       13448 |
+| secret-read-guard.bats |          483 |         475 |         3676 |        3742 |
+| refresh-budget.bats    |          100 |          92 |         2014 |        2042 |
+| permission-check.bats  |          147 |         144 |         1340 |        1382 |
+| dispatch-config.bats   |           40 |          36 |          470 |         519 |
+| dispatcher.bats        |           39 |          37 |          391 |         454 |
+| model-map-doc.bats     |            9 |           7 |           93 |         137 |
+| module.bats            |           39 |          36 |          725 |         768 |
+| adapters.bats          |          131 |         129 |         2163 |        2224 |
+| **total**              |     **2861** |    **2783** |    **42090** |   **42995** |
+
+Before counts are `d321f8f`. After counts are `grep -c '^@test'` and `wc -l`
+on `tests/*.bats` at this tree. Unconverted files are unchanged and included
+in the total only.
+
+### Mutation and contamination proofs
+
+Each proof broke one row's expected fragment (or planted a contamination
+assertion) and re-ran that test. The suite named the broken row and failed;
+a passing neighbour did not hide it.
+
+| family                                                                | break                                                       | result                                    |
+| --------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------- |
+| F04 `msg: rejects a recipient prefix with an empty id`                | expected fragment replaced so the `retro:` row cannot match | `not ok`; the failure names the retro row |
+| F12 `pr_open: a pi accept then one non-verdict message is refused`    | expected fragment broken on the JSON-array row              | failure names the JSON-array row          |
+| F12 contamination                                                     | a row greps for a previous row's bus marker                 | failed (no leak)                          |
+| F12 contamination                                                     | a row expects `no deslop seam` without planting an accept   | failed (no leak)                          |
+| F33 `codex absolute limit refuses each absolute-limit signal`         | expected fragment broken on one signal row                  | failure names that row                    |
+| F33 contamination                                                     | a row expects a previous row's refusal text                 | failed                                    |
+| F32 `budget rung and exhaustion gates refuse codex sol by 7d percent` | expected fragment broken on one percent row                 | failure names that row                    |
+| F32 contamination                                                     | a row expects a previous row's refusal text                 | failed                                    |
+| `secret-read-guard.bats` direnv family                                | one deny row flipped to `allow_cmd`                         | failure names `direnv-dot-env`            |
+
+### Examined, not converted
+
+| family                                     | reason                                                                                  |
+| ------------------------------------------ | --------------------------------------------------------------------------------------- |
+| dispatch.bats F30, F31, F38, F39, F40, F43 | Shared success-path worktree names: a second row would resume the first row's worktree. |
+| dispatch.bats F46                          | Fenced: the tests drive `dispatch --role-watch`.                                        |
+| permission-check.bats F60–F67              | Append-only stub logs contaminate row 2.                                                |
+| refresh-budget.bats F72                    | Classifier false pair: bodies truncated at the heredoc `}}`.                            |

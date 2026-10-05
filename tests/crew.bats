@@ -17,6 +17,8 @@ setup() {
   # stall-watch runs on a virtual clock: its waits advance this file instead
   # of sleeping. Nothing else in crew reads it.
   export CREW_STALL_CLOCK="$BATS_TEST_TMPDIR/stall-clock"
+  # Table-driven rows restore this before each row's stubs.
+  _ROW_BASE_PATH="$PATH"
 }
 
 teardown() {
@@ -27,6 +29,35 @@ teardown() {
     kill -KILL "$HOLDER_PID" 2>/dev/null || true
   fi
   teardown_repo
+}
+
+# Table-driven rows share one bats test, so each row re-seeds the fixture
+# setup() built. stub_bin/stub_tmux memoize STUB_DIR (helpers.bash), and
+# teardown_repo only removes the last $TEST_REPO.
+_reset_row_fixture() { # <id>
+  local id="$1" stub log stub_path
+  stub="$BATS_TEST_TMPDIR/row-stub-dir"
+  if [ -f "$stub" ]; then
+    stub_path="$(cat "$stub")"
+    rm -rf "$stub_path"
+    rm -f "$stub"
+  fi
+  if [ -n "${STUB_DIR:-}" ] && [ -d "$STUB_DIR" ]; then
+    rm -rf "$STUB_DIR"
+  fi
+  export PATH="$_ROW_BASE_PATH"
+  unset STUB_DIR STUB_LOG
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$id"
+  assert_isolated_xdg_data_home
+  log="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  rm -f "$log"
+  rm -f "$TEST_REPO/WORKER_TASK.md"
+}
+
+_note_row_stub() {
+  if [ -n "${STUB_DIR:-}" ]; then
+    printf '%s\n' "$STUB_DIR" >"$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
 }
 
 # Real tmux pane_current_path is kernel-canonical (pwd -P); git worktree paths
@@ -456,24 +487,47 @@ EOF
   [ "$output" = "alice|bob|ship it" ]
 }
 
+# F04: folded family — msg rejects an empty id after dispatcher:/worker:/retro:.
 # #46: a shell expanding an unset $CREW_ID into "dispatcher:$CREW_ID" leaves
 # a bare trailing colon — msg must fail loudly instead of logging it.
-@test "msg: rejects dispatcher: with an empty id" {
-  CREW_ID=c1 run run_crew msg worker "dispatcher:" "hi"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"missing an id after the colon"* ]]
-}
-
-@test "msg: rejects worker: with an empty id" {
-  CREW_ID=c1 run run_crew msg dispatcher:c1 "worker:" "hi"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"missing an id after the colon"* ]]
-}
-
-@test "msg: rejects retro: with an empty id" {
-  CREW_ID=c1 run run_crew msg worker "retro:" "hi"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"missing an id after the colon"* ]]
+# The worker: row's from is dispatcher:c1; only from and to change.
+@test "msg: rejects a recipient prefix with an empty id" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to expect rc
+  while IFS='|' read -r label from to expect; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      CREW_ID=c1 run run_crew msg "$from" "$to" "hi"
+      [ "$status" -eq 1 ]
+      [[ "$output" == *"$expect"* ]]
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+msg: rejects dispatcher: with an empty id|worker|dispatcher:|missing an id after the colon
+msg: rejects worker: with an empty id|dispatcher:c1|worker:|missing an id after the colon
+msg: rejects retro: with an empty id|worker|retro:|missing an id after the colon
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "msg: still accepts every currently-valid recipient shape" {
@@ -704,39 +758,50 @@ EOF
   [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
 }
 
-@test "occupants: a nix-wrapped claude pane is an engine" {
-  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\t.claude-wrapped\n')"
-  run run_crew occupants /wt/a
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
-  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
-}
-
-@test "occupants: a cursor-agent pane reports node and is an engine" {
-  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\tnode\n')"
-  run run_crew occupants /wt/a
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
-  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
-}
-
+# F06: folded family — a known engine pane command is an engine.
 # Measured on a live Nix pane (`tmux display -p '#{pane_current_command}'` on a
 # running codex worker): unlike claude/cursor-agent, codex's Nix wrapper
 # re-execs under its own literal name, so no wrapper-strip is needed for it.
-@test "occupants: a codex pane reports its own literal name and is an engine" {
-  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\tcodex\n')"
-  run run_crew occupants /wt/a
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
-  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
-}
-
-@test "occupants: a pi pane reports its own literal name and is an engine" {
-  stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\tpi\n')"
-  run run_crew occupants /wt/a
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
-  [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
+@test "occupants: a known engine pane command is an engine" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label cmd rc
+  while IFS='|' read -r label cmd; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    stub_tmux "$(printf '@1\tsage\t/wt/a\n')" "$(printf '@1\t%%1\t%s\n' "$cmd")"
+    set +e
+    (
+      set -e
+      run run_crew occupants /wt/a
+      [ "$status" -eq 0 ]
+      [ "$(echo "$output" | jq -r '.[0].engine')" = "true" ]
+      [ "$(echo "$output" | jq -r '.[0].pane')" = "%1" ]
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+occupants: a nix-wrapped claude pane is an engine|.claude-wrapped
+occupants: a cursor-agent pane reports node and is an engine|node
+occupants: a codex pane reports its own literal name and is an engine|codex
+occupants: a pi pane reports its own literal name and is an engine|pi
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "occupants: a finished agent that dropped to a shell is still an occupant" {
@@ -7682,10 +7747,44 @@ _refused() {
 }
 _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"deslop"}'; }
 
-@test "pr_open: standard with no review seam is refused and not written" {
-  _task_doc standard
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "no review seam"
+# Folded family — standard or deep with no review seam is refused and not written.
+# The done: sibling stays its own test; the status verb differs.
+@test "pr_open: standard or deep with no review seam is refused and not written" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label tier rc
+  while IFS='|' read -r label tier; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc "$tier"
+      run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: standard with no review seam is refused and not written|standard
+pr_open: deep with no review seam is refused and not written|deep
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "done: standard with no review seam is refused and not written" {
@@ -7694,20 +7793,47 @@ _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"d
   _refused "no review seam"
 }
 
-@test "pr_open: deep with no review seam is refused and not written" {
-  _task_doc deep
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "no review seam"
-}
-
-@test "pr_open: standard with a review seam posts silently" {
-  _task_doc standard
-  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"full"}'
-  _deslop_seam
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
-  [ "$status" -eq 0 ]
-  [ -z "$stderr" ]
-  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+# Folded family — a full or downgraded review seam posts silently.
+@test "pr_open: a full or downgraded review seam posts silently" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label body rc
+  while IFS='|' read -r label body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard
+      run_crew msg "worker:feat/x#s1-1" "review:c1" "$body"
+      _deslop_seam
+      run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
+      [ "$status" -eq 0 ]
+      [ -z "$stderr" ]
+      [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: standard with a review seam posts silently|{"seam":"review","review_mode":"full"}
+pr_open: a downgraded review seam counts like a full one|{"seam":"review","review_mode":"downgraded"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a resumed session inherits the branch's earlier review seam" {
@@ -7750,18 +7876,46 @@ _allowed() {
   [ "$(_status_rows)" -eq 1 ]
 }
 
-@test "pr_open: a pi reviewer revise alone is refused" {
-  _task_doc standard implement pi
-  _verdict revise
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi reviewer reject alone is refused" {
-  _task_doc standard implement pi
-  _verdict reject
-  _gate
-  _refused "no review seam"
+# Folded family — a pi lone verdict that is not an accept to this worker.
+@test "pr_open: a pi lone verdict that is not an accept to this worker is refused" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label verdict to rc
+  while IFS='|' read -r label verdict to; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict "$verdict" "$to"
+      _gate
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi reviewer revise alone is refused|revise|worker:feat/x#s1-1
+pr_open: a pi reviewer reject alone is refused|reject|worker:feat/x#s1-1
+pr_open: a pi accept addressed to another worker as the only verdict is refused|accept|dispatcher:c1
+pr_open: a pi verdict addressed to another branch's worker is refused|accept|worker:feat/other#s1-1
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a pi reject is not cleared by the lead's own review seam" {
@@ -7809,12 +7963,46 @@ _allowed() {
   _allowed
 }
 
-@test "pr_open: a pi accept followed by a later reject is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  _verdict reject
-  _gate
-  _refused "no review seam"
+# Folded family — a pi accept then a non-accept verdict is refused.
+@test "pr_open: a pi accept then a non-accept verdict is refused" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label verdict to rc
+  while IFS='|' read -r label verdict to; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict accept
+      _verdict "$verdict" "$to"
+      _gate
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi accept followed by a later reject is refused|reject|worker:feat/x#s1-1
+pr_open: a pi accept then a reject addressed to the dispatcher is refused|reject|dispatcher:c1
+pr_open: a pi accept then a wrong-case Reject verdict is refused|Reject|worker:feat/x#s1-1
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a pi verdict for an older head (review re-requested) is refused" {
@@ -7895,14 +8083,6 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "no review seam"
 }
 
-@test "pr_open: a pi accept then a reject addressed to the dispatcher is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  _verdict reject dispatcher:c1
-  _gate
-  _refused "no review seam"
-}
-
 @test "pr_open: a pi reject then a revise addressed to the dispatcher stays refused" {
   _task_doc standard implement pi
   _verdict reject
@@ -7912,100 +8092,224 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "no review seam"
 }
 
-@test "pr_open: a pi accept then an unparseable lead assignment to the reviewer is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" 'not json'
-  _gate
-  _refused "no review seam"
+# F12: folded family — a pi accept then one non-verdict message is refused.
+@test "pr_open: a pi accept then one non-verdict message is refused" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to body expect rc
+  while IFS='|' read -r label from to body expect; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict accept
+      run_crew msg "$from" "$to" "$body"
+      _gate
+      _refused "$expect"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi accept then an unparseable lead assignment to the reviewer is refused|worker:feat/x#s1-1|role:feat/x:reviewer|not json|no review seam
+pr_open: a pi accept then a markdown-fenced reviewer reject is refused|role:feat/x:reviewer|worker:feat/x#s1-1|```json {"seam":"review","verdict":"reject"} ```|no review seam
+pr_open: a pi accept then a reviewer msg whose body is a JSON array is refused|role:feat/x:reviewer|worker:feat/x#s1-1|[{"seam":"review","verdict":"reject"}]|no review seam
+pr_open: a pi accept then a reject carrying a tag key is refused|role:feat/x:reviewer|worker:feat/x#s1-1|{"role":"reviewer","seam":"review","verdict":"reject","tag":"x"}|no review seam
+pr_open: a pi accept then a final release that also carries a question is refused|worker:feat/x#s1-1|role:feat/x:reviewer|{"final":true,"question":"re-review please"}|no review seam
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
-@test "pr_open: a pi accept then a markdown-fenced reviewer reject is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '```json {"seam":"review","verdict":"reject"} ```'
-  _gate
-  _refused "no review seam"
+# Folded family — a pi accept survives two non-cancelling bus objects.
+@test "pr_open: a pi accept survives two non-cancelling bus objects" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from1 to1 body1 from2 to2 body2 rc
+  while IFS='|' read -r label from1 to1 body1 from2 to2 body2; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict accept
+      run_crew msg "$from1" "$to1" "$body1"
+      run_crew msg "$from2" "$to2" "$body2"
+      _deslop_seam
+      _gate
+      _allowed
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi accept survives role_exited and final objects on the bus|role:feat/x:reviewer|worker:feat/x#s1-1|{"event":"role_exited"}|worker:feat/x#s1-1|dispatcher:c1|{"final":true}
+pr_open: a pi accept survives a lead release that carries only final|worker:feat/x#s1-1|role:feat/x:reviewer|{"final":true}|worker:feat/x#s1-1|role:feat/other:reviewer|{"question":"another branch"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
-@test "pr_open: a pi accept then a reviewer msg whose body is a JSON array is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '[{"seam":"review","verdict":"reject"}]'
-  _gate
-  _refused "no review seam"
+# Folded family — a cancelling message after a pi accept is refused until a
+# fresh accept. #392: a verdict-less reviewer reply on the pi path fails closed,
+# so an earlier accept must not survive it; the next exact accept clears it.
+# A re-request is any lead -> reviewer msg except the release: it does not have
+# to carry seam or artifact.
+@test "pr_open: a cancelling message after a pi accept is refused until a fresh accept" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to body rc
+  while IFS='|' read -r label from to body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict accept
+      run_crew msg "$from" "$to" "$body"
+      _gate
+      _refused "no review seam"
+      _verdict accept
+      _deslop_seam
+      _gate
+      _allowed
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi accept then a reviewer object with neither seam nor verdict is refused|role:feat/x:reviewer|worker:feat/x#s1-1|{"decision":"reject"}
+pr_open: a pi accept then a lead question to the reviewer with no seam or artifact is refused|worker:feat/x#s1-1|role:feat/x:reviewer|{"question":"look again please"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
-@test "pr_open: a pi accept survives role_exited and final objects on the bus" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"event":"role_exited"}'
-  run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" '{"final":true}'
-  _deslop_seam
-  _gate
-  _allowed
+# Folded family — one message that is not a pi review seam is refused.
+@test "pr_open: one message that is not a pi review seam is refused" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label body rc
+  while IFS='|' read -r label body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" "$body"
+      _gate
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi reviewer object with neither seam nor verdict alone is refused|{"decision":"accept"}
+pr_open: a reviewer retro-style note is not a review seam|{"seam":"review","tag":"other","detail":"x"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
-@test "pr_open: a pi accept then a reviewer object with neither seam nor verdict is refused" {
-  # #392: a verdict-less reviewer reply on the pi path fails closed, so an
-  # earlier accept must not survive it; the next exact accept clears it.
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"decision":"reject"}'
-  _gate
-  _refused "no review seam"
-  _verdict accept
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a pi reviewer object with neither seam nor verdict alone is refused" {
-  _task_doc standard implement pi
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"decision":"accept"}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi accept survives a reviewer role_exited event with no seam or verdict" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"role":"reviewer","event":"role_exited","pane":"%3","detail":"engine exited before a verdict"}'
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a pi accept survives a reviewer tag-only note with no seam" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"tag":"other","detail":"x"}'
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a pi accept then a wrong-case Reject verdict is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  _verdict Reject
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi accept then a reject carrying a tag key is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"role":"reviewer","seam":"review","verdict":"reject","tag":"x"}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi accept addressed to another worker as the only verdict is refused" {
-  _task_doc standard implement pi
-  _verdict accept dispatcher:c1
-  _gate
-  _refused "no review seam"
+# F16: folded family — a pi accept survives one non-cancelling message.
+@test "pr_open: a pi accept survives one non-cancelling message" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to body rc
+  while IFS='|' read -r label from to body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _verdict accept
+      run_crew msg "$from" "$to" "$body"
+      _deslop_seam
+      _gate
+      _allowed
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi accept survives a reviewer role_exited event with no seam or verdict|role:feat/x:reviewer|worker:feat/x#s1-1|{"role":"reviewer","event":"role_exited","pane":"%3","detail":"engine exited before a verdict"}
+pr_open: a pi accept survives a reviewer tag-only note with no seam|role:feat/x:reviewer|worker:feat/x#s1-1|{"tag":"other","detail":"x"}
+pr_open: a lead final release to the reviewer does not cancel an accept|worker:feat/x#s1-1|role:feat/x:reviewer|{"final":true}
+pr_open: a pi accept survives a reviewer retro-style note|role:feat/x:reviewer|worker:feat/x#s1-1|{"seam":"review","tag":"other","detail":"x"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a pi accept then a mis-addressed accept still stands" {
@@ -8054,21 +8358,45 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _allowed
 }
 
-@test "pr_open: a pi assignment with an elided artifact still cancels the lead's seam" {
-  _task_doc standard implement pi
-  _lead_seam
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"artifact":"…[elided]"}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a lead final release to the reviewer does not cancel an accept" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
-  _deslop_seam
-  _gate
-  _allowed
+# Folded family — a later lead-to-reviewer message cancels the lead's own seam.
+@test "pr_open: a later lead-to-reviewer message cancels the lead seam" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label body rc
+  while IFS='|' read -r label body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard implement pi
+      _lead_seam
+      run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" "$body"
+      _gate
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a pi assignment with an elided artifact still cancels the lead's seam|{"artifact":"…[elided]"}
+pr_open: a pi lead question to the reviewer cancels the lead's own review seam|{"question":"look again please"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a scalar JSON line in the log is tolerated" {
@@ -8149,61 +8477,6 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   [ "$status" -eq 0 ]
 }
 
-# A re-request is any lead -> reviewer msg except the release: it does not
-# have to carry seam or artifact.
-@test "pr_open: a pi accept then a lead question to the reviewer with no seam or artifact is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"question":"look again please"}'
-  _gate
-  _refused "no review seam"
-  _verdict accept
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a pi lead question to the reviewer cancels the lead's own review seam" {
-  _task_doc standard implement pi
-  _lead_seam
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"question":"look again please"}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi accept survives a lead release that carries only final" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true}'
-  run_crew msg "worker:feat/x#s1-1" "role:feat/other:reviewer" '{"question":"another branch"}'
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a pi accept then a final release that also carries a question is refused" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "worker:feat/x#s1-1" "role:feat/x:reviewer" '{"final":true,"question":"re-review please"}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi accept survives a reviewer retro-style note" {
-  _task_doc standard implement pi
-  _verdict accept
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","tag":"other","detail":"x"}'
-  _deslop_seam
-  _gate
-  _allowed
-}
-
-@test "pr_open: a reviewer retro-style note is not a review seam" {
-  _task_doc standard implement pi
-  run_crew msg "role:feat/x:reviewer" "worker:feat/x#s1-1" '{"seam":"review","tag":"other","detail":"x"}'
-  _gate
-  _refused "no review seam"
-}
 
 @test "pr_open: off pi a pane reject or accept alone is refused" {
   _task_doc standard implement claude
@@ -8230,13 +8503,6 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _gate
   _refused "no review seam"
   _lead_seam '{"seam":"review","review_mode":null}'
-  _gate
-  _refused "no review seam"
-}
-
-@test "pr_open: a pi verdict addressed to another branch's worker is refused" {
-  _task_doc standard implement pi
-  _verdict accept worker:feat/other#s1-1
   _gate
   _refused "no review seam"
 }
@@ -8288,11 +8554,46 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   _refused "no review seam"
 }
 
-@test "pr_open: a tagged retro note is not a review seam" {
-  _task_doc standard
-  run_crew msg "worker:feat/x#s1-1" "retro:c1" '{"seam":"review","tag":"other","detail":"x"}'
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "no review seam"
+# F18: folded family — a review seam addressed away from review: does not
+# count (a tagged retro note, metrics, or another branch).
+@test "pr_open: a review seam addressed away from review: does not count" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to body rc
+  while IFS='|' read -r label from to body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard
+      run_crew msg "$from" "$to" "$body"
+      run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
+      _refused "no review seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a tagged retro note is not a review seam|worker:feat/x#s1-1|retro:c1|{"seam":"review","tag":"other","detail":"x"}
+pr_open: a review seam sent to metrics does not count|worker:feat/x#s1-1|metrics:c1|{"seam":"review","review_mode":"full"}
+pr_open: a review seam from another branch does not count|worker:feat/other#s1-1|review:c1|{"seam":"review"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a review seam with review_mode none or unavailable does not count" {
@@ -8303,30 +8604,6 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"unavailable"}'
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
   _refused "no review seam"
-}
-
-@test "pr_open: a review seam sent to metrics does not count" {
-  _task_doc standard
-  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"review","review_mode":"full"}'
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "no review seam"
-}
-
-@test "pr_open: a review seam from another branch does not count" {
-  _task_doc standard
-  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"review"}'
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "no review seam"
-}
-
-@test "pr_open: a downgraded review seam counts like a full one" {
-  _task_doc standard
-  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"review","review_mode":"downgraded"}'
-  _deslop_seam
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
-  [ "$status" -eq 0 ]
-  [ -z "$stderr" ]
-  [ "$(jq -r 'select(.kind=="status") | .body.state' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = pr_open ]
 }
 
 @test "pr_open: a reviewer verdict posted under a different crew does not count" {
@@ -8380,24 +8657,51 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   [ "$(_status_rows)" -eq 1 ]
 }
 
-@test "pr_open: standard with a review seam but no deslop seam is refused" {
-  _task_doc standard
-  _lead_seam
-  _gate
-  _refused "no deslop seam"
+# Folded family — standard or deep with a review seam but no deslop seam.
+# The done: sibling stays its own test; the status verb differs.
+@test "pr_open: standard or deep with a review seam but no deslop seam is refused" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label tier rc
+  while IFS='|' read -r label tier; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc "$tier"
+      _lead_seam
+      _gate
+      _refused "no deslop seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: standard with a review seam but no deslop seam is refused|standard
+pr_open: deep with a review seam but no deslop seam is refused|deep
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "done: standard with a review seam but no deslop seam is refused" {
   _task_doc standard
   _lead_seam
   run --separate-stderr run_crew status "worker:feat/x#s1-1" done "" https://example.com/pr/1
-  _refused "no deslop seam"
-}
-
-@test "pr_open: deep with a review seam but no deslop seam is refused" {
-  _task_doc deep
-  _lead_seam
-  _gate
   _refused "no deslop seam"
 }
 
@@ -8422,28 +8726,47 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   [ "$status" -eq 0 ]
 }
 
-@test "pr_open: a deslop seam sent to metrics does not count" {
-  _task_doc standard
-  _lead_seam
-  run_crew msg "worker:feat/x#s1-1" "metrics:c1" '{"seam":"deslop"}'
-  _gate
-  _refused "no deslop seam"
-}
-
-@test "pr_open: a deslop seam from another branch does not count" {
-  _task_doc standard
-  _lead_seam
-  run_crew msg "worker:feat/other#s1-1" "review:c1" '{"seam":"deslop"}'
-  _gate
-  _refused "no deslop seam"
-}
-
-@test "pr_open: a tagged deslop seam does not count" {
-  _task_doc standard
-  _lead_seam
-  run_crew msg "worker:feat/x#s1-1" "review:c1" '{"seam":"deslop","tag":"x"}'
-  _gate
-  _refused "no deslop seam"
+# F19: folded family — a deslop seam addressed away from the deslop shape
+# does not count (metrics, another branch, or a tag).
+@test "pr_open: a deslop seam addressed away from the deslop shape does not count" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label from to body rc
+  while IFS='|' read -r label from to body; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc standard
+      _lead_seam
+      run_crew msg "$from" "$to" "$body"
+      _gate
+      _refused "no deslop seam"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a deslop seam sent to metrics does not count|worker:feat/x#s1-1|metrics:c1|{"seam":"deslop"}
+pr_open: a deslop seam from another branch does not count|worker:feat/other#s1-1|review:c1|{"seam":"deslop"}
+pr_open: a tagged deslop seam does not count|worker:feat/x#s1-1|review:c1|{"seam":"deslop","tag":"x"}
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: a deslop seam alone without a review seam is refused for the review seam first" {
@@ -8583,44 +8906,96 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   [[ "$stderr" != *'no acceptance list'* ]]
 }
 
-@test "pr_open: a ### Acceptance criteria list keeps the ledger hint (not the empty-detail steer)" {
-  # Widened detection: a `###` heading is an acceptance list, so a free-text
-  # detail keeps the ledger grammar and an empty detail is refused.
-  _task_doc trivial
-  printf '\n### Acceptance criteria\n- AC1\n' >>WORKER_TASK.md
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
-  _refused "every acceptance ledger item"
-  [[ "$stderr" != *'no acceptance list'* ]]
-  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
-  _refused "acceptance list"
+# F20: folded family — an acceptance heading keeps the ledger hint and
+# refuses an empty detail. #386: bold spellings are equivalent lists.
+# #395: a heading that wraps the word in bold on the same line is a list.
+# A ### heading is an acceptance list, so a free-text detail keeps the ledger
+# grammar and an empty detail is refused.
+@test "pr_open: an acceptance heading keeps the ledger hint and refuses an empty detail" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label heading rc
+  while IFS='|' read -r label heading; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc trivial
+      printf '\n%s\n- AC1\n' "$heading" >>WORKER_TASK.md
+      run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+      _refused "every acceptance ledger item"
+      [[ "$stderr" != *'no acceptance list'* ]]
+      run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
+      _refused "acceptance list"
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a ### Acceptance criteria list keeps the ledger hint (not the empty-detail steer)|### Acceptance criteria
+pr_open: a bold **Acceptance:** list keeps the ledger hint (not the empty-detail steer)|**Acceptance:**
+pr_open: an inline-bold ### **Acceptance criteria** heading is detected|### **Acceptance criteria**
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
-@test "pr_open: a bold **Acceptance:** list keeps the ledger hint (not the empty-detail steer)" {
-  # #386: bold spellings are equivalent acceptance lists, so a free-text
-  # detail keeps the ledger grammar and an empty detail is refused.
-  _task_doc trivial
-  printf '\n**Acceptance:**\n- AC1\n' >>WORKER_TASK.md
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
-  _refused "every acceptance ledger item"
-  [[ "$stderr" != *'no acceptance list'* ]]
-  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
-  _refused "acceptance list"
-}
-
-@test "pr_open: a bold **Acceptance criteria** list keeps the ledger hint" {
-  _task_doc trivial
-  printf '\n**Acceptance criteria**\n- AC1\n' >>WORKER_TASK.md
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
-  _refused "every acceptance ledger item"
-  [[ "$stderr" != *'no acceptance list'* ]]
-}
-
-@test "pr_open: a line-start Acceptance: is detected case-insensitively" {
-  _task_doc trivial
-  printf '\nacceptance: AC1 pass(x)\n' >>WORKER_TASK.md
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
-  _refused "every acceptance ledger item"
-  [[ "$stderr" != *'no acceptance list'* ]]
+# F21: folded family — an acceptance marker keeps the ledger hint.
+# a bold **Acceptance criteria** list keeps the ledger hint
+# a line-start Acceptance: is detected case-insensitively
+@test "pr_open: an acceptance marker keeps the ledger hint" {
+  _ROW_FAILURES=()
+  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  local n=0 label block rc
+  while IFS='|' read -r label block; do
+    [ -n "$label" ] || continue
+    case "$label" in '#'*) continue ;; esac
+    n=$((n + 1))
+    _reset_row_fixture "$n"
+    set +e
+    (
+      set -e
+      _task_doc trivial
+      block="${block//\\n/$'\n'}"
+      printf '%s' "$block" >>WORKER_TASK.md
+      run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
+      _refused "every acceptance ledger item"
+      [[ "$stderr" != *'no acceptance list'* ]]
+      _note_row_stub
+    )
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      _ROW_FAILURES+=("$label")
+      printf 'row failed: %s\n' "$label" >&2
+    fi
+  done <<'ROWS'
+pr_open: a bold **Acceptance criteria** list keeps the ledger hint|\n**Acceptance criteria**\n- AC1\n
+pr_open: a line-start Acceptance: is detected case-insensitively|\nacceptance: AC1 pass(x)\n
+ROWS
+  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
+    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
+    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
+  fi
+  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
+    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
+    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pr_open: an acceptance word mid-sentence is not read as a list" {
@@ -8635,19 +9010,6 @@ _events() { printf '%s' "$(git rev-parse --git-common-dir)/crew/events.jsonl"; }
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
   [ "$(_status_rows)" -eq 1 ]
-}
-
-@test "pr_open: an inline-bold ### **Acceptance criteria** heading is detected" {
-  # #395: a heading that wraps the word in bold on the same line is an
-  # acceptance list, so a free-text detail keeps the ledger grammar and an
-  # empty detail is refused.
-  _task_doc trivial
-  printf '\n### **Acceptance criteria**\n- AC1\n' >>WORKER_TASK.md
-  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "PR opened" https://example.com/pr/1
-  _refused "every acceptance ledger item"
-  [[ "$stderr" != *'no acceptance list'* ]]
-  run --separate-stderr run_crew status "worker:feat/x#s2-2" pr_open "" https://example.com/pr/1
-  _refused "acceptance list"
 }
 
 @test "pr_open: a heading whose bold word only resembles Acceptance is not a list" {

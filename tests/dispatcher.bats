@@ -60,19 +60,89 @@ teardown() {
   [[ "$output" == *"crew id: 1720800000-99"* ]]
 }
 
-@test "passes the protocol to claude as an appended system prompt" {
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
+}
+
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
+
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+
+# The launch appends to STUB_LOG. Truncate it per row so a needle from the
+# previous launch cannot satisfy this one. setup()'s stubs stay; these rows
+# do not call stub_bin. PATH is not modified.
+launcher_log_row() { # needle
+  : >"$STUB_LOG"
   CREW_ID=c1 run_launcher
-  run grep -F -- '--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
+  run grep -F -- "$1" "$STUB_LOG"
   [ "$status" -eq 0 ]
 }
 
-@test "pins the claude orchestrator model and effort" {
-  # Unpinned, the launcher inherited the persisted /model and /effort toggles,
-  # so a dispatcher could silently judge a whole fan-out on a cheap session's
-  # leftovers. codex and cursor were already pinned; claude was the gap.
-  CREW_ID=c1 run_launcher
-  run grep -F -- '--model opus --effort high' "$STUB_LOG"
+protocol_dir_kept_row() { # kind relpath content
+  : >"$STUB_LOG"
+  _store_launcher
+  case "$1" in
+    store) export DISPATCHER_PROTOCOL_DIR="$STORE/$2" ;;
+    checkout) export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/$2" ;;
+    *) printf 'bad kind %s\n' "$1" >&2; return 1 ;;
+  esac
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  printf '%s\n' "$3" >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"ignoring stale"* ]]
+  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+}
+
+# F53: the claude launch line carries the protocol file and the model/effort
+# pin. Unpinned, the launcher inherited persisted /model and /effort toggles.
+@test "the claude launch line carries the protocol file and the model pin" {
+  begin_rows
+  local row needle
+  while IFS='|' read -r row needle; do
+    [ -n "$row" ] || continue
+    keep_row "$row" launcher_log_row "$needle"
+  done <<'ROWS'
+protocol-file|--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.md
+model-pin|--model opus --effort high
+ROWS
+  finish_rows 2
 }
 
 @test "an explicit model and effort still override the claude pins" {
@@ -280,26 +350,19 @@ EOF
   grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
 }
 
-@test "a store-path DISPATCHER_PROTOCOL_DIR with the baked content is kept silently" {
-  _store_launcher
-  export DISPATCHER_PROTOCOL_DIR="$STORE/h-cur-source/adapters/core/protocols"
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  printf 'new\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
-  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"ignoring stale"* ]]
-  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
-}
-
-@test "a checkout override outside the store wins over the baked dir" {
-  _store_launcher
-  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/checkout/protocols"
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  printf 'dev\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
-  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"ignoring stale"* ]]
-  grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR" "$STUB_LOG"
+# F54: a store path whose content matches the bake, and a checkout path
+# outside the store, are both kept. STUB_LOG is truncated per row.
+@test "a matching store dir and a checkout override are both kept" {
+  begin_rows
+  local row kind rel content
+  while IFS='|' read -r row kind rel content; do
+    [ -n "$row" ] || continue
+    keep_row "$row" protocol_dir_kept_row "$kind" "$rel" "$content"
+  done <<'ROWS'
+store-match|store|h-cur-source/adapters/core/protocols|new
+checkout-override|checkout|checkout/protocols|dev
+ROWS
+  finish_rows 2
 }
 
 # #375: the launcher resolves all four DISPATCHER_*_DIR and pins the resolved

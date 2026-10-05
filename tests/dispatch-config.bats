@@ -166,21 +166,92 @@ locked_settings() {
   [[ "$stderr" == *openrouter* ]]
 }
 
-@test "a malformed modelMap row is refused, naming the user layer and the path" {
-  user_settings '{"modelMap":{"claude":{"deep":{"models":"x"}}}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"$USER_FILE (user layer): modelMap.claude.deep.models must be an array of strings"* ]]
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
+}
 
-  user_settings '{"modelMap":{"claude":{"deep":{"default":1}}}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"modelMap.claude.deep.default must be a string"* ]]
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
 
-  user_settings '{"modelMap":{"claude":"x"}}'
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+
+# Each row overwrites the user settings file (user_settings truncates it).
+# These rows do not touch STUB_DIR or PATH.
+shape_refuse_row() { # json fragment
+  local fragment=$2
+  fragment=${fragment//@USER_FILE@/$USER_FILE}
+  user_settings "$1"
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"modelMap.claude must be an object"* ]]
+  [[ "$stderr" == *"$fragment"* ]]
+}
+
+shape_accept_row() { # json jq1 jq2
+  user_settings "$1"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e "$2" <<<"$output"
+  jq -e "$3" <<<"$output"
+}
+
+tracker_row() { # env jq
+  DISPATCH_REPO_TRACKERS="$1" run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e "$2" <<<"$output"
+}
+
+# F22: malformed modelMap and paceDowngrades values, each refused with status 1
+# and a path fragment. The first row of each group names the user layer.
+@test "a malformed modelMap or paceDowngrades value is refused" {
+  begin_rows
+  local row json fragment
+  while IFS='|' read -r row json fragment; do
+    [ -n "$row" ] || continue
+    keep_row "$row" shape_refuse_row "$json" "$fragment"
+  done <<'ROWS'
+models-type|{"modelMap":{"claude":{"deep":{"models":"x"}}}}|@USER_FILE@ (user layer): modelMap.claude.deep.models must be an array of strings
+default-type|{"modelMap":{"claude":{"deep":{"default":1}}}}|modelMap.claude.deep.default must be a string
+map-object|{"modelMap":{"claude":"x"}}|modelMap.claude must be an object
+pace-array|{"paceDowngrades":{"claude":{"models":["opus"],"to":"sonnet"}}}|@USER_FILE@ (user layer): paceDowngrades.claude must be an array
+pace-to|{"paceDowngrades":{"claude":[{"models":["opus"]}]}}|paceDowngrades.claude[0].to must be a string
+pace-models|{"paceDowngrades":{"claude":[{"models":"opus","to":"sonnet"}]}}|paceDowngrades.claude[0].models must be an array of strings
+ROWS
+  finish_rows 6
 }
 
 @test "a malformed escalation rule is refused, naming the locked layer and the path" {
@@ -193,23 +264,6 @@ locked_settings() {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"escalation.claude.deep[0].failed must be an array of strings"* ]]
-}
-
-@test "a paceDowngrades object is refused, not silently skipped" {
-  user_settings '{"paceDowngrades":{"claude":{"models":["opus"],"to":"sonnet"}}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"$USER_FILE (user layer): paceDowngrades.claude must be an array"* ]]
-
-  user_settings '{"paceDowngrades":{"claude":[{"models":["opus"]}]}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"paceDowngrades.claude[0].to must be a string"* ]]
-
-  user_settings '{"paceDowngrades":{"claude":[{"models":"opus","to":"sonnet"}]}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"paceDowngrades.claude[0].models must be an array of strings"* ]]
 }
 
 @test "a malformed burnClasses table is refused, naming the layer and the path" {
@@ -266,13 +320,19 @@ locked_settings() {
   [[ "$stderr" == *"orchestratorDefaults.claude.effort must be a string"* ]]
 }
 
-@test "a well-shaped partial burnClasses / orchestratorDefaults layer is accepted" {
-  user_settings '{"burnClasses":[{"match":"*opus*","byEffort":{"low":{"class":"standard","weight":2},"default":{"class":"premium","weight":4}}}],"orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4-flash"}}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 0 ]
-  jq -e '.orchestratorDefaults.pi.model == "openrouter/deepseek/deepseek-v4-flash"' <<<"$output"
-  # user overrides only the model; the base effort survives the deep merge.
-  jq -e '.orchestratorDefaults.pi.effort == "high"' <<<"$output"
+# F23: a well-shaped partial layer is accepted. The burnClasses row overrides
+# only the model; the base effort survives the deep merge.
+@test "a well-shaped partial layer is accepted" {
+  begin_rows
+  local row json jq1 jq2
+  while IFS='|' read -r row json jq1 jq2; do
+    [ -n "$row" ] || continue
+    keep_row "$row" shape_accept_row "$json" "$jq1" "$jq2"
+  done <<'ROWS'
+burn-orch|{"burnClasses":[{"match":"*opus*","byEffort":{"low":{"class":"standard","weight":2},"default":{"class":"premium","weight":4}}}],"orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4-flash"}}}|.orchestratorDefaults.pi.model == "openrouter/deepseek/deepseek-v4-flash"|.orchestratorDefaults.pi.effort == "high"
+map-pace|{"modelMap":{"cursor":{"deep":{"regex":["^x$"]}}},"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["opus"]}]}},"paceDowngrades":{"claude":[{"models":["opus"],"to":"sonnet"}]}}|.modelMap.cursor.deep.regex == ["^x$"]|.paceDowngrades.claude == [{"models":["opus"],"to":"sonnet"}]
+ROWS
+  finish_rows 2
 }
 
 @test "a malformed base defaults file is refused, naming the base layer" {
@@ -284,14 +344,6 @@ locked_settings() {
   run --separate-stderr "$baked"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"$bad (base layer): modelMap.claude.deep.models must be an array of strings"* ]]
-}
-
-@test "a well-shaped partial modelMap / escalation / paceDowngrades layer is accepted" {
-  user_settings '{"modelMap":{"cursor":{"deep":{"regex":["^x$"]}}},"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["opus"]}]}},"paceDowngrades":{"claude":[{"models":["opus"],"to":"sonnet"}]}}'
-  run --separate-stderr "$CONFIG"
-  [ "$status" -eq 0 ]
-  jq -e '.modelMap.cursor.deep.regex == ["^x$"]' <<<"$output"
-  jq -e '.paceDowngrades.claude == [{"models":["opus"],"to":"sonnet"}]' <<<"$output"
 }
 
 @test "a jq failure during shape validation fails closed, naming the layer" {
@@ -351,22 +403,19 @@ EOF
   jq -e '.orgTrackers == {"org":"linear:X"}' <<<"$output"
 }
 
-@test "a tracker entry without '=' maps to itself, never a valid tracker" {
-  DISPATCH_REPO_TRACKERS='junk a/b=github' run --separate-stderr "$CONFIG"
-  [ "$status" -eq 0 ]
-  jq -e '.repoTrackers == {"junk":"junk","a/b":"github"}' <<<"$output"
-}
-
-@test "a tracker key repeated in one env var is last-wins" {
-  DISPATCH_REPO_TRACKERS='a/b=github a/b=linear:X' run --separate-stderr "$CONFIG"
-  [ "$status" -eq 0 ]
-  jq -e '.repoTrackers["a/b"] == "linear:X"' <<<"$output"
-}
-
-@test "a tracker key repeated with different case in one env var is still last-wins" {
-  DISPATCH_REPO_TRACKERS='a/b=github A/B=linear:X a/b=github' run --separate-stderr "$CONFIG"
-  [ "$status" -eq 0 ]
-  jq -e '.repoTrackers == {"a/b":"github"}' <<<"$output"
+# F24: one DISPATCH_REPO_TRACKERS value, one repoTrackers object.
+@test "repo tracker env entries resolve per row" {
+  begin_rows
+  local row env expr
+  while IFS='|' read -r row env expr; do
+    [ -n "$row" ] || continue
+    keep_row "$row" tracker_row "$env" "$expr"
+  done <<'ROWS'
+no-equals|junk a/b=github|.repoTrackers == {"junk":"junk","a/b":"github"}
+last-wins|a/b=github a/b=linear:X|.repoTrackers["a/b"] == "linear:X"
+case-fold|a/b=github A/B=linear:X a/b=github|.repoTrackers == {"a/b":"github"}
+ROWS
+  finish_rows 3
 }
 
 @test "a whitespace-only tracker env var contributes nothing" {

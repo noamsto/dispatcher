@@ -757,10 +757,28 @@ EOF
   [[ "$output" == *"is not enabled here"* ]]
 }
 
-@test "rejects an invalid role name" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer,bad role" --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"invalid role 'bad role'"* ]]
+# Folded family F27: early --roles usage rejects.
+@test "rejects an invalid role name or an empty model on an explicit engine" {
+  local -a failures=()
+  local roles frag why row_output
+  while IFS='|' read -r roles frag; do
+    case "$roles" in '' | '#'*) continue ;; esac
+    run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "$roles" --effort high --crew-id c1 "title"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"$frag"* ]] || why="${why:+$why; }missing [$frag]"
+    if [ -n "$why" ]; then
+      failures+=("$roles: $why")
+    fi
+  done <<'ROWS'
+reviewer,bad role|invalid role 'bad role'
+reviewer=claude:|needs a model after 'claude:'
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "rejects empty and duplicate role entries" {
@@ -1918,12 +1936,35 @@ EOF
   grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
 }
 
-@test "--roles reviewer on a claude deep lead adds an additive pane, not a substitute" {
+# Folded family F29: --roles reviewer stamped on the worker task.
+@test "--roles reviewer is recorded on the worker task" {
   stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "additive reviewer pane"
-  [ "$status" -eq 0 ]
-  task="$TEST_REPO/.dispatch-wt/feat-42-additive-reviewer-pane/WORKER_TASK.md"
-  grep -Fx 'roles: reviewer' "$task"
+  local -a failures=()
+  local path_saved="$PATH" title slug task why
+  while IFS='|' read -r title slug; do
+    case "$title" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$slug"
+    mkdir -p "$XDG_DATA_HOME"
+    : >"$STUB_LOG"
+    DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "$title"
+    task="$TEST_REPO/.dispatch-wt/$slug/WORKER_TASK.md"
+    why=
+    [ "$status" -eq 0 ] || why="status=$status"
+    if ! grep -Fx 'roles: reviewer' "$task"; then
+      why="${why:+$why; }roles line missing in $task"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+additive reviewer pane|feat-42-additive-reviewer-pane
+roles override default|feat-42-roles-override-default
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "standard claude has no default grid" {
@@ -1973,25 +2014,11 @@ EOF
   [[ "$output" == *"--no-grid conflicts with --grid/--roles"* ]]
 }
 
-@test "--roles still overrides the default grid" {
-  stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles reviewer --effort high --crew-id c1 42 "roles override default"
-  [ "$status" -eq 0 ]
-  task="$TEST_REPO/.dispatch-wt/feat-42-roles-override-default/WORKER_TASK.md"
-  grep -Fx 'roles: reviewer' "$task"
-}
-
 @test "a role spec can pick its own engine and model" {
   run grep -F -- 'role_agent="${rest%%:*}"' "$DISPATCH"
   [ "$status" -eq 0 ]
   run grep -F -- '--append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md' "$DISPATCH"
   [ "$status" -eq 0 ]
-}
-
-@test "a role spec rejects an empty model for an explicit engine" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --roles "reviewer=claude:" --effort high --crew-id c1 "title"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"needs a model after 'claude:'"* ]]
 }
 
 @test "a role spec rejects shell syntax in a model" {
@@ -3286,60 +3313,65 @@ TABLE
   done
 }
 
-@test "budget rung gate refuses codex sol at 70% 7d" {
-  codex_budget_json 70 "$(date +%s)"
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung refuse 70"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"gpt-5.6-terra"* ]]
-  [[ "$output" != *"quota exhausted"* ]]
+# Folded family F32: codex 7d budget-rung and exhaustion refusals.
+@test "budget rung and exhaustion gates refuse codex sol by 7d percent" {
+  local -a failures=()
+  local path_saved="$PATH" pct title contain forbid why row_output
+  while IFS='|' read -r pct title contain forbid; do
+    case "$pct" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME"
+    codex_budget_json "$pct" "$(date +%s)"
+    DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "$title"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"$contain"* ]] || why="${why:+$why; }missing [$contain]"
+    [[ "$row_output" != *"$forbid"* ]] || why="${why:+$why; }unexpected [$forbid]"
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+70|rung refuse 70|gpt-5.6-terra|quota exhausted
+84|rung refuse 84|gpt-5.6-terra|quota exhausted
+95|rung vs exhaustion 95|quota exhausted|the premium rung
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
-@test "budget rung gate refuses codex sol at 84% 7d" {
-  codex_budget_json 84 "$(date +%s)"
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung refuse 84"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"gpt-5.6-terra"* ]]
-  [[ "$output" != *"quota exhausted"* ]]
-}
-
-@test "the exhaustion gate outranks the budget rung gate at 95%" {
-  codex_budget_json 95 "$(date +%s)"
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "rung vs exhaustion 95"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"quota exhausted"* ]]
-  [[ "$output" != *"the premium rung"* ]]
-}
-
-@test "codex absolute limit refuses on a named rate-limit-reached type" {
-  codex_limit_json '{rate_limit_reached_type: "workspace_owner_credits_depleted"}'
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs rate limit reached"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"quota exhausted (absolute limit: workspace_owner_credits_depleted)"* ]]
-  [[ "$output" == *"--ignore-budget"* ]]
-}
-
-@test "codex absolute limit refuses on a zeroed individual spend limit" {
-  codex_limit_json '{individual_remaining_percent: 0}'
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs individual drained"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"quota exhausted (absolute limit: spend control: 0% remaining)"* ]]
-  [[ "$output" == *"--ignore-budget"* ]]
-}
-
-@test "codex absolute limit refuses on spend control reached" {
-  codex_limit_json '{spend_control_reached: true}'
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs spend control"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"quota exhausted (absolute limit: spend control reached)"* ]]
-  [[ "$output" == *"--ignore-budget"* ]]
-}
-
-@test "codex absolute limit refuses when ordinary use is denied" {
-  codex_limit_json '{ordinary_usage_allowed: false}'
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "abs ordinary denied"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"quota exhausted (absolute limit: ordinary use not allowed)"* ]]
-  [[ "$output" == *"--ignore-budget"* ]]
+# Folded family F33: codex absolute-limit refusals.
+@test "codex absolute limit refuses each absolute-limit signal" {
+  local -a failures=()
+  local path_saved="$PATH" payload title frag why row_output
+  while IFS='|' read -r payload title frag; do
+    case "$payload" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME"
+    codex_limit_json "$payload"
+    DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "$title"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"$frag"* ]] || why="${why:+$why; }missing [$frag]"
+    [[ "$row_output" == *"--ignore-budget"* ]] || why="${why:+$why; }missing [--ignore-budget]"
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+{rate_limit_reached_type: "workspace_owner_credits_depleted"}|abs rate limit reached|quota exhausted (absolute limit: workspace_owner_credits_depleted)
+{individual_remaining_percent: 0}|abs individual drained|quota exhausted (absolute limit: spend control: 0% remaining)
+{spend_control_reached: true}|abs spend control|quota exhausted (absolute limit: spend control reached)
+{ordinary_usage_allowed: false}|abs ordinary denied|quota exhausted (absolute limit: ordinary use not allowed)
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "codex absolute-limit gate passes when the signals are healthy" {
@@ -3397,15 +3429,36 @@ pi_limit_json() { # <limit_reached jq literal>
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-@test "a stale codex cache with an absolute limit fails open" {
+# Folded family F34: a stale absolute-limit cache and a 5h spike both launch.
+@test "a stale codex absolute limit and a 5h spike with low 7d both launch" {
   stub_launch_bins
-  mkdir -p "$XDG_DATA_HOME/crew"
-  jq -n --argjson epoch "$(($(date +%s) - 10000))" \
-    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {}, limit_reached: {ordinary_usage_allowed: false}}, cursor: null}}' \
-    >"$XDG_DATA_HOME/crew/engine-budget.json"
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "stale abs limit"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
+  local -a failures=()
+  local path_saved="$PATH" age title program epoch why
+  while IFS='|' read -r age title program; do
+    case "$age" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME/crew"
+    : >"$STUB_LOG"
+    epoch="$(($(date +%s) - age))"
+    jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
+    DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "$title"
+    why=
+    [ "$status" -eq 0 ] || why="status=$status"
+    if ! grep -q 'send-keys' "$STUB_LOG"; then
+      why="${why:+$why; }no send-keys"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+10000|stale abs limit|{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {}, limit_reached: {ordinary_usage_allowed: false}}, cursor: null}}
+0|5h spike 7d low|{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"5h": {used_pct: 90, resets_at: null}, "7d": {used_pct: 30, resets_at: null}}}, cursor: null}}
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "cursor absolute limit refuses on a plan pool at 100% with no window" {
@@ -3432,34 +3485,44 @@ pi_limit_json() { # <limit_reached jq literal>
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-@test "a stale cursor cache with an absolute limit fails open" {
+# Folded family F35: stale and unknown cursor quotas both launch.
+@test "a stale cursor absolute limit and an unknown cursor quota both launch" {
   stub_launch_bins
-  mkdir -p "$XDG_DATA_HOME/crew"
-  jq -n --argjson epoch "$(($(date +%s) - 10000))" \
-    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "usage_summary", windows: {}, limit_reached: {reason: "plan usage at 100%", resets_at: null}}}}' \
-    >"$XDG_DATA_HOME/crew/engine-budget.json"
-  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs stale"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"quota exhausted"* ]]
-  grep -q 'send-keys' "$STUB_LOG"
+  local -a failures=()
+  local path_saved="$PATH" age title program epoch why row_output
+  while IFS='|' read -r age title program; do
+    case "$age" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME/crew"
+    : >"$STUB_LOG"
+    epoch="$(($(date +%s) - age))"
+    jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
+    DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "$title"
+    row_output=$output
+    why=
+    [ "$status" -eq 0 ] || why="status=$status"
+    [[ "$row_output" != *"quota exhausted"* ]] || why="${why:+$why; }unexpected [quota exhausted]"
+    if ! grep -q 'send-keys' "$STUB_LOG"; then
+      why="${why:+$why; }no send-keys"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+10000|cursor abs stale|{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: {source: "usage_summary", windows: {}, limit_reached: {reason: "plan usage at 100%", resets_at: null}}}}
+0|cursor abs unknown|{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "a cursor absolute limit already past its resets_at fails open" {
   stub_launch_bins
   cursor_limit_json "{reason: \"plan usage at 100%\", resets_at: $(($(date +%s) - 60))}"
   DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs past reset"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"quota exhausted"* ]]
-  grep -q 'send-keys' "$STUB_LOG"
-}
-
-@test "an unknown cursor quota (engines.cursor null) does not refuse" {
-  stub_launch_bins
-  mkdir -p "$XDG_DATA_HOME/crew"
-  jq -n --argjson epoch "$(date +%s)" \
-    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}' \
-    >"$XDG_DATA_HOME/crew/engine-budget.json"
-  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs unknown"
   [ "$status" -eq 0 ]
   [[ "$output" != *"quota exhausted"* ]]
   grep -q 'send-keys' "$STUB_LOG"
@@ -3587,17 +3650,6 @@ pi_limit_json() { # <limit_reached jq literal>
   [ "$status" -eq 0 ]
 }
 
-@test "a 5h spike with 7d low does not trigger the budget rung gate" {
-  stub_launch_bins
-  mkdir -p "$XDG_DATA_HOME/crew"
-  jq -n --argjson epoch "$(date +%s)" \
-    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"5h": {used_pct: 90, resets_at: null}, "7d": {used_pct: 30, resets_at: null}}}, cursor: null}}' \
-    >"$XDG_DATA_HOME/crew/engine-budget.json"
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "5h spike 7d low"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
-}
-
 @test "a drifted window key with no 7d does not trigger the budget rung gate" {
   stub_launch_bins
   mkdir -p "$XDG_DATA_HOME/crew"
@@ -3635,14 +3687,34 @@ pi_limit_json() { # <limit_reached jq literal>
   [[ "$output" != *"quota exhausted"* ]]
 }
 
-@test "budget rung gate refuses when 7d burn is ahead of pace" {
-  # 77% used, 4 days left on the 7-day window: 43% elapsed, +34 ahead —
-  # #113's live case, and the pace rule's own worked example.
-  budget_json_at claude 77 345600
-  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "pace ahead refuses"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"sonnet"* ]]
-  [[ "$output" == *"34 points ahead of pace"* ]]
+# Folded family F36. Pace row: 77% used, 4 days left on the 7-day window
+# (43% elapsed, +34 ahead) — #113's live case and the pace rule's worked example.
+@test "pace-ahead and ignore-rung refusals name their downgrade" {
+  local -a failures=()
+  local path_saved="$PATH" pct resets title frag1 frag2 why row_output
+  while IFS='|' read -r pct resets title frag1 frag2; do
+    case "$pct" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME"
+    budget_json_at claude "$pct" "$resets"
+    run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "$title"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"$frag1"* ]] || why="${why:+$why; }missing [$frag1]"
+    [[ "$row_output" == *"$frag2"* ]] || why="${why:+$why; }missing [$frag2]"
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+77|345600|pace ahead refuses|sonnet|34 points ahead of pace
+77|345600|message names ignore rung|DISPATCH_IGNORE_RUNG=opus|--ignore-budget
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "pace gate refuses premium effort, but allows high and --ignore-budget" {
@@ -3706,28 +3778,36 @@ pi_limit_json() { # <limit_reached jq literal>
   if [ -f "$STUB_LOG" ]; then run ! grep -qE 'split-window|send-keys' "$STUB_LOG"; fi
 }
 
-@test "budget rung gate allows 7d burn that is at or behind pace" {
+# Folded family F37: budget rung allows at pace, near reset, and below the floor.
+@test "budget rung gate allows burn at pace, near reset, and below the floor" {
   stub_launch_bins
-  budget_json_at claude 77 86400
-  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "at pace allows"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
-}
-
-@test "budget rung gate allows a high 7d window near its reset" {
-  stub_launch_bins
-  budget_json_at claude 94 7200
-  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "near reset allows"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
-}
-
-@test "budget rung gate allows below the 70% floor regardless of pace" {
-  stub_launch_bins
-  budget_json_at claude 69 432000
-  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "below floor allows"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
+  local -a failures=()
+  local path_saved="$PATH" pct resets title why
+  while IFS='|' read -r pct resets title; do
+    case "$pct" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME"
+    : >"$STUB_LOG"
+    budget_json_at claude "$pct" "$resets"
+    run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "$title"
+    why=
+    [ "$status" -eq 0 ] || why="status=$status"
+    if ! grep -q 'send-keys' "$STUB_LOG"; then
+      why="${why:+$why; }no send-keys"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+77|86400|at pace allows
+94|7200|near reset allows
+69|432000|below floor allows
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "budget rung gate falls back to the flat rule when resets_at is null" {
@@ -3770,14 +3850,6 @@ pi_limit_json() { # <limit_reached jq literal>
   DISPATCH_IGNORE_RUNG=opus run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "ignore rung vs exhaustion"
   [ "$status" -eq 1 ]
   [[ "$output" == *"quota exhausted"* ]]
-}
-
-@test "the rung refusal message names DISPATCH_IGNORE_RUNG" {
-  budget_json_at claude 77 345600
-  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "message names ignore rung"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"DISPATCH_IGNORE_RUNG=opus"* ]]
-  [[ "$output" == *"--ignore-budget"* ]]
 }
 
 @test "the pace clause is present on the pace path and absent on the flat path" {
@@ -6326,20 +6398,45 @@ spawn_claimant() {
   assert_claim_refused "origin branch feat/42-something-else"
 }
 
-@test "claim: a dispatched label is refused when a dispatch row names the exact branch" {
+# Folded family F41: a dispatch row for the exact branch or a sibling refuses the claim.
+@test "claim: a dispatched label is refused when a dispatch row names the branch" {
   stub_launch_bins
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}'
-  stub_gh_claim dispatched ""
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  assert_claim_refused "dispatch row for feat/42-do-a-thing"
-}
-
-@test "claim: a dispatched label is refused when a dispatch row names only a sibling branch" {
-  stub_launch_bins
-  seed_claim_row '{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-something-else"}'
-  stub_gh_claim dispatched ""
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  assert_claim_refused "dispatch row for feat/42-something-else"
+  local -a failures=()
+  local path_saved="$PATH" bus json note frag why row_output
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r json note frag; do
+    case "$json" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$note"
+    mkdir -p "$XDG_DATA_HOME"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
+    : >"$STUB_LOG"
+    seed_claim_row "$json"
+    stub_gh_claim dispatched ""
+    DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"already claimed"* ]] || why="${why:+$why; }missing [already claimed]"
+    [[ "$row_output" == *"$frag"* ]] || why="${why:+$why; }missing [$frag]"
+    if ! run ! grep -q 'add-label' "$STUB_LOG"; then
+      why="${why:+$why; }add-label present"
+    fi
+    if ! run ! grep -q 'new-window' "$STUB_LOG"; then
+      why="${why:+$why; }new-window present"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$note: $why")
+    fi
+  done <<'ROWS'
+{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-do-a-thing"}|exact branch|dispatch row for feat/42-do-a-thing
+{"ts":1,"crew_id":"c0","kind":"dispatch","branch":"feat/42-something-else"}|sibling branch|dispatch row for feat/42-something-else
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "claim: a torn line in the bus does not hide a dispatch row or wedge the gate" {
@@ -6472,26 +6569,59 @@ EOF
 
 # #322: the row's ts is what bounds reuse; without a usable one the helper can
 # not tell a claimant from a reused pid, so it must fail closed (live).
-@test "claim: a claim row with a non-numeric ts fails closed as live (#322)" {
+# Folded family F42 (#322): a non-numeric or missing claim-row ts fails closed.
+@test "claim: a claim row with a non-numeric or missing ts fails closed as live (#322)" {
   stub_launch_bins
-  spawn_claimant
-  seed_claim_row "{\"ts\":\"nope\",\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
-  stub_gh_claim dispatched ""
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  kill "$live_pid" 2>/dev/null || true
-  wait "$live_pid" 2>/dev/null || true
-  assert_claim_refused "dispatch in progress (pid $live_pid)"
-}
-
-@test "claim: a claim row with a missing ts fails closed as live (#322)" {
-  stub_launch_bins
-  spawn_claimant
-  seed_claim_row "{\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
-  stub_gh_claim dispatched ""
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  kill "$live_pid" 2>/dev/null || true
-  wait "$live_pid" 2>/dev/null || true
-  assert_claim_refused "dispatch in progress (pid $live_pid)"
+  local -a failures=()
+  local path_saved="$PATH" bus ts note json frag why row_output
+  bus="$TEST_REPO/.git/crew/events.jsonl"
+  while IFS='|' read -r ts note; do
+    case "$ts" in '' | '#'*) continue ;; esac
+    if [ -n "${live_pid:-}" ]; then
+      kill "$live_pid" 2>/dev/null || true
+      wait "$live_pid" 2>/dev/null || true
+    fi
+    rm -f "$BATS_TEST_TMPDIR/claimant.fifo"
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$note"
+    mkdir -p "$XDG_DATA_HOME"
+    mkdir -p "$(dirname "$bus")"
+    : >"$bus"
+    : >"$STUB_LOG"
+    spawn_claimant
+    if [ "$ts" = missing ]; then
+      json="{\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+    else
+      json="{\"ts\":\"$ts\",\"crew_id\":\"c0\",\"kind\":\"claim-issue\",\"issue\":\"42\",\"branch\":\"feat/42-do-a-thing\",\"pid\":$live_pid}"
+    fi
+    seed_claim_row "$json"
+    stub_gh_claim dispatched ""
+    DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+    kill "$live_pid" 2>/dev/null || true
+    wait "$live_pid" 2>/dev/null || true
+    frag="dispatch in progress (pid $live_pid)"
+    row_output=$output
+    why=
+    [ "$status" -eq 1 ] || why="status=$status"
+    [[ "$row_output" == *"already claimed"* ]] || why="${why:+$why; }missing [already claimed]"
+    [[ "$row_output" == *"$frag"* ]] || why="${why:+$why; }missing [$frag]"
+    if ! run ! grep -q 'add-label' "$STUB_LOG"; then
+      why="${why:+$why; }add-label present"
+    fi
+    if ! run ! grep -q 'new-window' "$STUB_LOG"; then
+      why="${why:+$why; }new-window present"
+    fi
+    if [ -n "$why" ]; then
+      failures+=("$note: $why")
+    fi
+  done <<'ROWS'
+nope|non-numeric ts
+missing|missing ts
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 # #322: the claim row is written before the label, so a failed `gh issue edit`
@@ -7829,16 +7959,45 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ -L "$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record" ]
 }
 
-@test "protocol-dirs record: a symlinked protocol-dirs/feat parent is refused, nothing created in the target" {
+# Folded family F47: a symlink at a record parent is not written through.
+@test "a symlinked protocol-dirs parent or worktrees dir is not written through" {
   stub_launch_bins
-  victim="$BATS_TEST_TMPDIR/victim"
-  mkdir -p "$victim" "$TEST_REPO/.git/crew/protocol-dirs"
-  ln -s "$victim" "$TEST_REPO/.git/crew/protocol-dirs/feat"
-  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"refusing to write the protocol-dirs record"* ]]
-  [ -z "$(ls -A "$victim")" ]
-  [ -L "$TEST_REPO/.git/crew/protocol-dirs/feat" ]
+  local -a failures=()
+  local path_saved="$PATH" root parent link want frag title base victim why row_output
+  while IFS='|' read -r root parent link want frag title; do
+    case "$root" in '' | '#'*) continue ;; esac
+    export PATH="$path_saved"
+    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
+    mkdir -p "$XDG_DATA_HOME"
+    case "$root" in
+    repo) base="$TEST_REPO" ;;
+    xdg) base="$XDG_DATA_HOME" ;;
+    esac
+    # The protocol-dirs symlink lives in the shared repo, not under the row's XDG.
+    rm -rf "$TEST_REPO/.git/crew/protocol-dirs"
+    victim="$BATS_TEST_TMPDIR/victim-$title"
+    rm -rf "$victim"
+    mkdir -p "$victim" "$base/$parent"
+    ln -s "$victim" "$base/$link"
+    : >"$STUB_LOG"
+    DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "$title"
+    row_output=$output
+    why=
+    [ "$status" -eq "$want" ] || why="status=$status want=$want"
+    [[ "$row_output" == *"$frag"* ]] || why="${why:+$why; }missing [$frag]"
+    [ -z "$(ls -A "$victim")" ] || why="${why:+$why; }victim not empty"
+    [ -L "$base/$link" ] || why="${why:+$why; }link missing"
+    if [ -n "$why" ]; then
+      failures+=("$title: $why")
+    fi
+  done <<'ROWS'
+repo|.git/crew/protocol-dirs|.git/crew/protocol-dirs/feat|1|refusing to write the protocol-dirs record|dirs record
+xdg|crew|crew/worktrees|0|is a symlink or the wrong type — not writing|anchor symlink
+ROWS
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 # #518: the anchor `dispatch resume` verifies its git discovery against.
@@ -7902,18 +8061,6 @@ EOF
   mapfile -t lines <"$anchor"
   [ "${lines[3]}" = "$genuine" ]
   [[ "${lines[3]}" != "$fake" ]]
-}
-
-@test "worktree anchor: a symlinked worktrees dir is refused, dispatch still succeeds" {
-  stub_launch_bins
-  victim="$BATS_TEST_TMPDIR/victim"
-  mkdir -p "$victim" "$XDG_DATA_HOME/crew"
-  ln -s "$victim" "$XDG_DATA_HOME/crew/worktrees"
-  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor symlink"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"is a symlink or the wrong type — not writing"* ]]
-  [ -z "$(ls -A "$victim")" ]
-  [ -L "$XDG_DATA_HOME/crew/worktrees" ]
 }
 
 @test "add-dir: a symlinked artifacts parent of a slashed branch is not granted and its target stays empty" {
