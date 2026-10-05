@@ -67,10 +67,25 @@ fi
 
 if ! diff -u \
   <(
-    awk -F '\t' '
+    awk -F '\t' -v sq="'" '
       function is_assertion(line) {
         return (line ~ /^[[:space:]]*(\[ |\[\[ )/ && line !~ /\][[:space:]]*&&[[:space:]]*(continue|break|return)/) || \
           line ~ /(^[[:space:]]*|[|;][[:space:]]*)jq[[:space:]]+-e([[:space:]]|$)/
+      }
+      # Heredoc bodies are data, not code: track the delimiter and skip the
+      # body, or stub scripts written by fixtures get misread as assertions.
+      # (Dynamic regexes: a literal single quote would end the shell string.)
+      function track_heredoc(line) {
+        if (heredoc != "") {
+          if (line ~ ("^[[:space:]]*" heredoc "[[:space:]]*$")) heredoc = ""
+          return 1
+        }
+        if (line ~ ("<<-?[[:space:]]*[" sq "]?[A-Za-z_][A-Za-z0-9_]*[" sq "]?[[:space:]]*$")) {
+          heredoc = line
+          sub(".*<<-?[[:space:]]*[" sq "]?", "", heredoc)
+          sub("[" sq "]?[[:space:]]*$", "", heredoc)
+        }
+        return 0
       }
       function emit(case_id, file, line, expression) {
         sub(/^[[:space:]]+/, "", expression)
@@ -85,6 +100,7 @@ if ! diff -u \
       FNR == 1 { pass[FILENAME]++ }
 
       pass[FILENAME] == 1 {
+        if (track_heredoc($0)) next
         if ($0 ~ /^[[:alnum:]_]+\(\)[[:space:]]*\{[[:space:]]*$/) {
           helper = $0
           sub(/\(\).*/, "", helper)
@@ -112,6 +128,7 @@ if ! diff -u \
         next
       }
       current_case != "" {
+        if (track_heredoc($0)) next
         if (is_assertion($0)) emit(current_case, FILENAME, FNR, $0)
 
         call = $0
@@ -123,8 +140,8 @@ if ! diff -u \
         }
       }
     ' "$manifest" \
-      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats \
-      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats |
+      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats \
+      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats |
       LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
   ) \
   <(

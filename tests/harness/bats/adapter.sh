@@ -44,7 +44,8 @@ while IFS=$'\t' read -r case_id source_file _ family test_name _; do
     "$case_runner" "$mode" "$source_file" "$test_name"
 done <"$manifest"
 
-((rows == 26)) || {
-  echo "bats adapter: expected 26 manifest cases, found $rows" >&2
+expected=$(($(wc -l <"$manifest") - 1))
+((rows == expected)) || {
+  echo "bats adapter: expected $expected manifest cases, found $rows" >&2
   exit 1
 }
