@@ -20,8 +20,7 @@ jobs:
   # module.bats's setup_file does a multi-output nix build and a fresh
   # <nixpkgs> import. That races inside nix on a cold git-fetcher cache,
   # so this file runs alone, once, on this runner. Shard jobs still
-  # `nix develop` (the same cold eval lint, bats-timing, and flake-check
-  # already do); their bats files do not run this build, and runners do
+  # `nix develop`; their bats files do not run this build, and runners do
   # not share a store.
   bats-module:
     runs-on: ubuntu-latest
