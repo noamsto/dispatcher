@@ -176,6 +176,15 @@ def pr_watch(h, case_id):
         expect("pw-derived-repo-status", result.returncode == 0)
         expect("pw-derived-repo-cursor", cursor(h, "o/derived").is_file())
         return
+    if "default-clock" in case_id:
+        h.env.pop("PR_WATCH_CLOCK", None)
+        started = time.monotonic()
+        result = h.pr_watch("42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+        elapsed = time.monotonic() - started
+        expect("pw-default-clock-status", result.returncode == 0)
+        expect("pw-default-clock-timeout-stderr", "park ended after 1s" in result.stderr)
+        expect("pw-default-clock-elapsed", elapsed >= 1.0)
+        return
 
     prefixes = {
         "first-park": "pw",

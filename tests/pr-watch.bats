@@ -9,6 +9,8 @@ setup() {
   setup_repo
   # The cursor lives under $XDG_DATA_HOME — keep it out of the developer's own.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  # Virtual clock: parks advance instantly instead of sleeping real seconds.
+  export PR_WATCH_CLOCK="$BATS_TEST_TMPDIR/clock"
   unset CREW_ID
   stub_gh
 }
@@ -208,4 +210,13 @@ EOF
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   [ ! -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ]
+}
+
+@test "default clock: a 1s park really waits" {
+  unset PR_WATCH_CLOCK
+  t0=$SECONDS
+  run --separate-stderr run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"park ended after 1s"* ]]
+  [ $((SECONDS - t0)) -ge 1 ]
 }

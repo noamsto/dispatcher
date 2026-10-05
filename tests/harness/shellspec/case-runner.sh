@@ -142,6 +142,7 @@ setup_repo() {
   mkdir -p "$TEST_REPO" "$STUB_DIR" "$CASE_TMP/data" "$CASE_TMP/config" "$CASE_TMP/tmux"
   export TEST_REPO STUB_DIR STUB_LOG
   export XDG_DATA_HOME="$CASE_TMP/data" XDG_CONFIG_HOME="$CASE_TMP/config" TMUX_TMPDIR="$CASE_TMP/tmux"
+  export PR_WATCH_CLOCK="$CASE_TMP/clock"
   export GIT_CONFIG_GLOBAL=/dev/null CREW_RATE_AUTOSWEEP=0
   export WORKTREE_GIT_LIB="$ROOT/adapters/core/worktree-git.sh"
   unset CREW_ID CREW_WORKER_ID CREW_ROLE_ID TMUX TMUX_PANE DISPATCH_ENGINES
@@ -320,7 +321,7 @@ EOF
 }
 
 run_pr_watch_cases() {
-  local common log bus_row
+  local common log bus_row t0
   setup_pr_watch
   case "$CASE_ID" in
   pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing)
@@ -451,6 +452,14 @@ EOF
     log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ||
       fail "pw-crew-timeout-no-bus-row: git rev-parse failed"
     check_no_path pw-crew-timeout-no-bus-row "$log"
+    ;;
+  pr-watch-default-clock-a-1s-park-really-waits)
+    unset PR_WATCH_CLOCK
+    t0=$SECONDS
+    run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+    check_eq pw-default-clock-status "$CAPTURE_STATUS" 0
+    check_contains pw-default-clock-timeout-stderr "$CAPTURE_STDERR" 'park ended after 1s'
+    check_ge pw-default-clock-elapsed "$((SECONDS - t0))" 1
     ;;
   esac
 }

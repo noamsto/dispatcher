@@ -23,7 +23,7 @@ awk -F '\t' '
   NF != 10 || $1 != "go" || $2 != "prototype" || $3 != 1 || $7 != 0 { exit 1 }
   !($4 in expected) || seen[$4]++ { exit 1 }
   END {
-    if (length(expected) != 31 || length(seen) != 31) exit 1
+    if (length(expected) != 32 || length(seen) != 32) exit 1
     for (id in expected) if (!(id in seen)) exit 1
   }
 ' "$manifest" "$output"
@@ -36,4 +36,4 @@ while IFS=$'\t' read -r _ assert_id _; do
   }
 done <"$assertions"
 
-echo "go harness: verified 31 result rows and assertion metadata" >&2
+echo "go harness: verified 32 result rows and assertion metadata" >&2

@@ -8,23 +8,24 @@ refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-sh
 refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path	tests/refresh-models.bats	57	refresh-models	the write is atomic and lands at the cursor models cache path	fork-heavy
 refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	69	refresh-models	a stubbed cursor-agent failure exits nonzero and leaves an existing cache untouched	fork-heavy
 refresh-models-cursor-agent-absent-from-path-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	80	refresh-models	cursor-agent absent from PATH exits nonzero and leaves an existing cache untouched	fork-heavy
-pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing	tests/pr-watch.bats	60	pr-watch	the first park seeds the cursor and reports nothing	slow
-pr-watch-fires-on-a-head-sha-move	tests/pr-watch.bats	65	pr-watch	fires on a head SHA move	slow
-pr-watch-fires-on-a-new-review-thread-reply	tests/pr-watch.bats	74	pr-watch	fires on a new review-thread reply	slow
-pr-watch-fires-when-the-check-rollup-conclusion-flips	tests/pr-watch.bats	83	pr-watch	fires when the check rollup conclusion flips	slow
-pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	tests/pr-watch.bats	91	pr-watch	one in-flight check keeps the rollup pending, not successful	slow
-pr-watch-fires-when-the-pr-merges	tests/pr-watch.bats	102	pr-watch	fires when the PR merges	slow
-pr-watch-an-unchanged-poll-reports-nothing-and-exits-0	tests/pr-watch.bats	110	pr-watch	an unchanged poll reports nothing and exits 0	slow
-pr-watch-the-cursor-prevents-re-delivery-across-restarts	tests/pr-watch.bats	117	pr-watch	the cursor prevents re-delivery across restarts	slow
-pr-watch-runs-with-crew-id-unset-and-never-touches-the-bus	tests/pr-watch.bats	129	pr-watch	runs with CREW_ID unset and never touches the bus	slow
-pr-watch-works-with-no-git-repo-at-all-when-repo-is-given	tests/pr-watch.bats	138	pr-watch	works with no git repo at all when --repo is given	slow
-pr-watch-derives-the-repo-from-the-origin-remote	tests/pr-watch.bats	145	pr-watch	derives the repo from the origin remote	slow
-pr-watch-aborts-without-a-pr-number	tests/pr-watch.bats	152	pr-watch	aborts without a PR number	slow
-pr-watch-rejects-an-unbounded-park	tests/pr-watch.bats	158	pr-watch	rejects an unbounded park	slow
-pr-watch-rejects-an-unknown-flag	tests/pr-watch.bats	164	pr-watch	rejects an unknown flag	slow
-pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly	tests/pr-watch.bats	170	pr-watch	a first poll that cannot read the PR fails loudly	slow
-pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher	tests/pr-watch.bats	181	pr-watch	crew pr-watch posts the event to the crew's dispatcher	slow
-pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out	tests/pr-watch.bats	199	pr-watch	crew pr-watch posts nothing when the park times out	slow
+pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing	tests/pr-watch.bats	62	pr-watch	the first park seeds the cursor and reports nothing	slow
+pr-watch-fires-on-a-head-sha-move	tests/pr-watch.bats	67	pr-watch	fires on a head SHA move	slow
+pr-watch-fires-on-a-new-review-thread-reply	tests/pr-watch.bats	76	pr-watch	fires on a new review-thread reply	slow
+pr-watch-fires-when-the-check-rollup-conclusion-flips	tests/pr-watch.bats	85	pr-watch	fires when the check rollup conclusion flips	slow
+pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	tests/pr-watch.bats	93	pr-watch	one in-flight check keeps the rollup pending, not successful	slow
+pr-watch-fires-when-the-pr-merges	tests/pr-watch.bats	104	pr-watch	fires when the PR merges	slow
+pr-watch-an-unchanged-poll-reports-nothing-and-exits-0	tests/pr-watch.bats	112	pr-watch	an unchanged poll reports nothing and exits 0	slow
+pr-watch-the-cursor-prevents-re-delivery-across-restarts	tests/pr-watch.bats	119	pr-watch	the cursor prevents re-delivery across restarts	slow
+pr-watch-runs-with-crew-id-unset-and-never-touches-the-bus	tests/pr-watch.bats	131	pr-watch	runs with CREW_ID unset and never touches the bus	slow
+pr-watch-works-with-no-git-repo-at-all-when-repo-is-given	tests/pr-watch.bats	140	pr-watch	works with no git repo at all when --repo is given	slow
+pr-watch-derives-the-repo-from-the-origin-remote	tests/pr-watch.bats	147	pr-watch	derives the repo from the origin remote	slow
+pr-watch-aborts-without-a-pr-number	tests/pr-watch.bats	154	pr-watch	aborts without a PR number	slow
+pr-watch-rejects-an-unbounded-park	tests/pr-watch.bats	160	pr-watch	rejects an unbounded park	slow
+pr-watch-rejects-an-unknown-flag	tests/pr-watch.bats	166	pr-watch	rejects an unknown flag	slow
+pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly	tests/pr-watch.bats	172	pr-watch	a first poll that cannot read the PR fails loudly	slow
+pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher	tests/pr-watch.bats	183	pr-watch	crew pr-watch posts the event to the crew's dispatcher	slow
+pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out	tests/pr-watch.bats	201	pr-watch	crew pr-watch posts nothing when the park times out	slow
+pr-watch-default-clock-a-1s-park-really-waits	tests/pr-watch.bats	215	pr-watch	default clock: a 1s park really waits	slow
 role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	9702	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
 role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	9717	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
 role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	9752	role-watch	role-watch: an idle claude input box receives the assignment	slow

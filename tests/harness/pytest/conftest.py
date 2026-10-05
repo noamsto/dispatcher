@@ -31,6 +31,7 @@ def harness(tmp_path, monkeypatch):
     env = os.environ.copy()
     env.update({
         "XDG_DATA_HOME": str(data),
+        "PR_WATCH_CLOCK": str(tmp_path / "clock"),
         "XDG_CONFIG_HOME": str(config),
         "TMUX_TMPDIR": str(tmux),
         "CREW_RATE_AUTOSWEEP": "0",

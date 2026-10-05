@@ -153,7 +153,24 @@ printf '%s' "$prev" | jq -e type >/dev/null 2>&1 || prev=""
   prev="$cur"
 }
 
-start=$(jq -nc 'now*1000|floor')
+# PR_WATCH_CLOCK=<file> is a test-only virtual clock, same pattern as
+# crew.sh's CREW_STALL_CLOCK: _pw_now_ms reads epoch milliseconds from it and
+# _pw_sleep advances it instead of waiting. It starts at the real time and
+# only moves forward. The emitted event's ts stays real — it is the
+# caller-facing record of when the change was observed, not loop bookkeeping.
+_pw_now_ms() {
+  [ -n "${PR_WATCH_CLOCK:-}" ] || { jq -nc 'now*1000|floor'; return; }
+  [ -s "$PR_WATCH_CLOCK" ] || jq -nc 'now*1000|floor' >"$PR_WATCH_CLOCK"
+  cat "$PR_WATCH_CLOCK"
+}
+_pw_sleep() {
+  [ -n "${PR_WATCH_CLOCK:-}" ] || { sleep "$1"; return; }
+  local s="${1%%.*}"
+  [ "$s" = "$1" ] || s=$((${s:-0} + 1))
+  printf '%s\n' "$(( $(_pw_now_ms) + s * 1000 ))" >"$PR_WATCH_CLOCK"
+}
+
+start=$(_pw_now_ms)
 deadline=$((start + timeout * 1000))
 while :; do
   changed=$(jq -nc --argjson a "$prev" --argjson b "$cur" \
@@ -168,10 +185,10 @@ while :; do
     _save "$cur"
     exit 0
   }
-  [ "$(jq -nc 'now*1000|floor')" -ge "$deadline" ] && {
+  [ "$(_pw_now_ms)" -ge "$deadline" ] && {
     echo "pr-watch: park ended after ${timeout}s — PR $pr unchanged" >&2
     exit 0
   }
-  sleep "$interval"
+  _pw_sleep "$interval"
   if next=$(_poll); then cur="$next"; fi
 done

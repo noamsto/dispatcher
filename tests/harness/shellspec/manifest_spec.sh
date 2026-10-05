@@ -183,6 +183,13 @@ The output should be blank
 The stderr should be blank
 End
 
+It 'pr-watch-default-clock-a-1s-park-really-waits'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-default-clock-a-1s-park-really-waits"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
 It 'role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once'
 When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once"
 The status should be success

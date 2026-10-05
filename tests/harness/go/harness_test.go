@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 type testCase struct {
@@ -108,8 +109,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 31 || len(wantCases) != 31 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 31 each", len(cases), len(wantCases))
+	if len(cases) != 32 || len(wantCases) != 32 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 32 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -215,7 +216,8 @@ func newRepoFixture(t *caseTest) *repoFixture {
 	}
 	f.env = cleanEnv(map[string]string{
 		"XDG_DATA_HOME": f.data, "XDG_CONFIG_HOME": filepath.Join(base, "config"),
-		"TMUX_TMPDIR": filepath.Join(base, "tmux"), "GIT_CONFIG_GLOBAL": "/dev/null",
+		"PR_WATCH_CLOCK": filepath.Join(base, "clock"),
+		"TMUX_TMPDIR":    filepath.Join(base, "tmux"), "GIT_CONFIG_GLOBAL": "/dev/null",
 		"STUB_DIR": f.stubDir, "STUB_LOG": f.stubLog,
 		"PATH":                f.stubDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"CREW_RATE_AUTOSWEEP": "0",
@@ -549,6 +551,21 @@ func prCase(kind string) func(*caseTest) {
 			t.check("pw-crew-timeout-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
 			t.check("pw-crew-timeout-empty-stdout", r.stdout == "", "stdout=%q", r.stdout)
 			t.check("pw-crew-timeout-no-bus-row", !exists(filepath.Join(f.dir, ".git/crew/events.jsonl")), "events file exists")
+		case "default-clock":
+			env := make([]string, 0, len(f.env))
+			for _, entry := range f.env {
+				name, _, _ := strings.Cut(entry, "=")
+				if name == "PR_WATCH_CLOCK" {
+					continue
+				}
+				env = append(env, entry)
+			}
+			started := time.Now()
+			r := runCommand(f.dir, env, "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/pr-watch.sh"), "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+			elapsed := time.Since(started)
+			t.check("pw-default-clock-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-default-clock-timeout-stderr", strings.Contains(r.stderr, "park ended after 1s"), "stderr=%q", r.stderr)
+			t.check("pw-default-clock-elapsed", elapsed >= time.Second, "elapsed=%s", elapsed)
 		}
 	}
 }
@@ -633,6 +650,7 @@ func manifestCases() []testCase {
 		{"pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly", ids("pw-gh-failure-status", "pw-gh-failure-message"), prCase("gh-failure")},
 		{"pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher", ids("pw-crew-event-seed-status", "pw-crew-event-seed-empty-stdout", "pw-crew-event-seed-timeout-stderr", "pw-crew-event-status", "pw-crew-event-stdout", "pw-crew-event-bus-row"), prCase("crew-event")},
 		{"pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out", ids("pw-crew-timeout-seed-status", "pw-crew-timeout-seed-empty-stdout", "pw-crew-timeout-seed-timeout-stderr", "pw-crew-timeout-status", "pw-crew-timeout-empty-stdout", "pw-crew-timeout-no-bus-row"), prCase("crew-timeout")},
+		{"pr-watch-default-clock-a-1s-park-really-waits", ids("pw-default-clock-status", "pw-default-clock-timeout-stderr", "pw-default-clock-elapsed"), prCase("default-clock")},
 		{"role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once", ids("rw-dialog-clear-no-sends", "rw-dialog-clear-one-send"), roleWatchCase("dialog-clear")},
 		{"role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer", ids("rw-defer-frames-captured"), roleWatchCase("defer-frames")},
 		{"role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment", ids("rw-idle-deliver-one-send"), roleWatchCase("idle")},
