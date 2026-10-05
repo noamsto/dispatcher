@@ -25,7 +25,10 @@ self: {
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
-    // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;};
+    // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (cfg.localModels != null) {
+      localModels = lib.mapAttrs (_: lib.filterAttrs (_: v: v != null)) cfg.localModels;
+    };
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -101,6 +104,50 @@ in {
         login, case-insensitive. Values match repoTrackers, and merge with
         the user settings file's `orgTrackers` the same way, per key. Used
         when the repo has no repoTrackers entry.
+      '';
+    };
+
+    localModels = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
+        options = {
+          baseUrl = lib.mkOption {
+            type = lib.types.strMatching "https?://[^[:space:]]*[^/[:space:]]";
+            example = "http://halo:13305/v1";
+            description = "The endpoint's OpenAI-compatible base URL, without a trailing slash.";
+          };
+          contextWindow = lib.mkOption {
+            type = lib.types.ints.positive;
+            example = 131072;
+            description = "The model's context window in tokens.";
+          };
+          maxConcurrent = lib.mkOption {
+            type = lib.types.nullOr lib.types.ints.positive;
+            default = null;
+            description = "Concurrent dispatch workers allowed on this model. Null defaults to 1 at runtime.";
+          };
+          tiers = lib.mkOption {
+            type = lib.types.nullOr (lib.types.nonEmptyListOf (lib.types.enum ["trivial" "standard" "deep"]));
+            default = null;
+            description = "Tiers this model may serve. Null defaults to trivial and standard at runtime.";
+          };
+        };
+      }));
+      default = null;
+      example = {
+        "lemonade/Qwen3.8-Flash-Next-MTP" = {
+          baseUrl = "http://halo:13305/v1";
+          contextWindow = 131072;
+        };
+      };
+      description = ''
+        Local pi models, served from your own endpoint. Keys are pi dispatch
+        ids `<provider>/<model>`, validated by dispatch-config at runtime.
+        Null `maxConcurrent` and `tiers` are omitted, so the runtime defaults
+        apply (1; trivial and standard). Size `maxConcurrent` for the
+        endpoint's other consumers (chat bots, interactive sessions), which
+        dispatch does not count. Set, it lands in the locked settings layer
+        and wins per field over the user settings file's `localModels`;
+        unset, the key is left out and the user file governs alone.
       '';
     };
 

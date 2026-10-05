@@ -253,6 +253,10 @@ programs.dispatcher = {
     monthlyTarget = 50;
     keyFile = "/run/agenix/openrouter";
   };
+  localModels."lemonade/Qwen3.8-Flash-Next-MTP" = {
+    baseUrl = "http://halo:13305/v1";
+    contextWindow = 131072;
+  };
   userSettings = "/home/me/nix-config/home/ai/dispatcher/settings.json";
 };
 ```
@@ -264,7 +268,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `repoTrackers`, `orgTrackers`,
-`openrouter`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -313,6 +317,14 @@ codex and cursor artifacts regardless. Upgrading from a version that defaulted
 to `["claude" "pi"]`: set `programs.dispatcher.engines` explicitly to keep that
 roster and avoid the new cursor `home.file` entries colliding with any
 hand-managed `~/.cursor` files.
+
+`localModels` declares self-hosted models for the pi lane, keyed by the pi
+dispatch id `<provider>/<model>` (`baseUrl`, `contextWindow`, optional
+`maxConcurrent` and `tiers`). It merges per key across layers, and a locked
+entry wins per field, so declare entries through
+`programs.dispatcher.localModels`. `dispatch` caps live panes on each id at
+`maxConcurrent`; it does not see the endpoint's other consumers, so size it for
+them. See `dispatch-orchestration.md` → "Local models".
 
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
 settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case
