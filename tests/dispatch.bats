@@ -9531,6 +9531,15 @@ _rw_wait_captures() {
   return 1
 }
 
+_rw_wait_deferred() {
+  local n
+  for n in $(seq 1 60); do
+    grep -q 'assignment_deferred' "$STUB_LOG" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 @test "role-watch: a permission dialog receives no keys until it clears, then the assignment lands once" {
   _spawn_role_fixture
   _rw_stub rw_frame_permission
@@ -9993,7 +10002,7 @@ _rw_wait_captures() {
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
-  sleep 3.5
+  _rw_wait_deferred
   _rw_stop
   [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
