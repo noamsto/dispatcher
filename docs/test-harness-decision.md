@@ -214,11 +214,29 @@ from the split data and weights:
 5. **secret-read-guard** — 246 s, timing-tagged and serial by fence; event-waits
    rather than a clock, since its guards are timing-sensitive.
 
-Serial floors that bound any projection: module.bats ≈ 1m50 per shard runner
-(cache warming), the timing job ≈ 2m28. A sub-3-minute sharded suite requires
-the seams above; no candidate harness gets there alone (best case, Go at the
-observed 31-case delta projects to roughly −40% on fork/CPU-bound files and
-~nothing on wait-heavy ones until their seams land).
+Serial floors that bound any projection: module.bats ≈ 1m50 (moved off the
+shard critical path by #744), the timing job ≈ 2m28. A sub-3-minute sharded
+suite requires the seams above; no candidate harness gets there alone (best
+case, Go at the observed 31-case delta projects to roughly −40% on
+fork/CPU-bound files and ~nothing on wait-heavy ones until their seams land).
+
+Projected CI test time, staged (shard critical path; today's main ≈ 7m48s
+with module.bats repeated per shard, ≈ 6m once #744's single module job is
+the only place it runs):
+
+| stage                                           | critical path |
+| ----------------------------------------------- | ------------- |
+| main post-#727+#744 (measured)                  | ≈ 6m          |
+| + this branch's weight-balanced shards          | ≈ 5m30–6m     |
+| + pr-watch seam (landed here, −15 s suite-wide) | ≈ 5m15–5m45   |
+| + role-watch seam (slice 4, −110–150 s suite)   | ≈ 4m45–5m15   |
+| + secret-read-guard + crew event-waits (5, 6)   | ≈ 4m–4m30     |
+| + Go port if the re-decision gate (7) says so   | ≈ 2m45–3m15   |
+
+The last row straddles the 3-minute goal; the honest statement is that sub-3
+is reachable only if the Go re-run after the seams shows the −40–60% harness
+delta holding on the post-seam profile. Every stage before it is measured or
+estimated from measured wait shares, not hoped for.
 
 ## Recommendation
 
