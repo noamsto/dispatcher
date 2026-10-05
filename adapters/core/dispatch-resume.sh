@@ -1398,7 +1398,7 @@ else
   claude_sid=""
   [ -z "$lead_sid" ] || claude_sid=" --session-id $lead_sid"
   # Re-passing --append-system-prompt-file matters on a continue: it forces
-  # --system-prompt-snapshot off, so WORKER_PROTOCOL.md is applied fresh rather
+  # --system-prompt-snapshot off, so the worker protocol is applied fresh rather
   # than replayed from the conversation's recorded prompt.
   launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi

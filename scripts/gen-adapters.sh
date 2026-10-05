@@ -38,7 +38,7 @@ ccs="$root/adapters/claude-code/plugin/skills"
 bash "$root/scripts/gen-model-map-doc.sh"
 
 # The claude lead appends this render; codex, cursor and pi read the core file.
-# The tmp name is dotted but still inside the hashed tree, so it must never survive.
+# The tmp file sits inside the rev-hashed protocol dir, so a failed render removes it.
 tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
 if ! bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp"; then
   rm -f "$tmp"
