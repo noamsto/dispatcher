@@ -33,7 +33,7 @@ valid_role_model() {
   claude) [[ $role_model =~ ^(opus|sonnet|haiku|fable|claude-[a-z0-9][a-z0-9.-]*)$ ]] ;;
   codex) [[ $role_model =~ ^gpt-[0-9]+(\.[0-9]+)*(-[a-z0-9][a-z0-9.-]*)?$ ]] ;;
   cursor) [[ $role_model =~ ^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$ ]] ;;
-  pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] ;;
+  pi) [[ $role_model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || _local_id "$role_model" ;;
   *) return 1 ;;
   esac
 }
@@ -738,6 +738,56 @@ if [ ! -f "$claude_worker_settings_lib" ]; then
 fi
 # shellcheck source=/dev/null
 . "$claude_worker_settings_lib"
+
+# The localModels lane helpers, shared with crew and refresh-budget.
+# shellcheck source=/dev/null
+. "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+
+# _local_id <model> — true when <model> is a configured localModels id (a pi
+# target). Reads $settings.
+_local_id() {
+  [ -n "$(_local_entry "$settings" "$1")" ]
+}
+
+# local_slot_cap <id> <target>... — refuse when the id's live holders plus this
+# dispatch's targets on it (in order; "" is the lead, else a role name) exceed
+# its maxConcurrent, naming the first target past the cap. --ignore-budget
+# skips the refusal with a notice. A check, not a lock: two dispatches racing
+# can both pass. The endpoint's other consumers (chat bots, interactive pi) are
+# not counted — the operator sizes maxConcurrent for them.
+local_slot_cap() {
+  local id="$1" max holders=() in_use demand=0 target who
+  shift
+  max="$(_local_entry "$settings" "$id" | jq -r .maxConcurrent)"
+  mapfile -t holders < <(_local_holders "$id")
+  in_use="${#holders[@]}"
+  for target; do
+    demand=$((demand + 1))
+    [ $((in_use + demand)) -gt "$max" ] || continue
+    if [ -n "${ignore_budget:-}" ]; then
+      echo "dispatch: local slot cap skipped (--ignore-budget) — '$id' $in_use/$max in use" >&2
+      return 0
+    fi
+    who="this dispatch"
+    if [ "$in_use" -gt 0 ]; then
+      printf -v who '%s, ' "${holders[@]}"
+      who="${who%, }"
+    fi
+    [ -z "$target" ] || target="role '$target' (pi) "
+    echo "dispatch: ${target}local model '$id' has no free slot ($in_use/$max in use: $who) — wait for it to finish (a finished worker holds its slot until \`crew reap\` closes its window), pick a hosted pi model, or pass --ignore-budget" >&2
+    exit 1
+  done
+}
+
+# local_probe_gate <id> — refuse unless the id's endpoint answers /models and
+# lists the model.
+local_probe_gate() {
+  local base reason
+  base="$(_local_entry "$settings" "$1" | jq -r .baseUrl)"
+  reason="$(_local_probe "$base" "${1#*/}")" && return 0
+  echo "dispatch: local model '$1' is unavailable — $base/models $reason; start the server or load the model, or pick a hosted pi model" >&2
+  exit 1
+}
 
 # ssh Host aliases are written github.com-<name>. Anything else (a lookalike
 # host, an extra @, a slash) is not GitHub.
@@ -1645,6 +1695,7 @@ launch_role() {
   esac
   write_launch_script launch_line "$cmd"
   write_launch_script exit_line "$exit_cmd" exit
+  tmux set-option -p -t "$pane" @crew_model "$r_model" 2>/dev/null || true
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
@@ -2034,12 +2085,11 @@ if [ "${1:-}" = "--role-watch" ]; then
     [ "$value" = "$expected" ]
   }
 
-  # Codex's composer is not bordered. The captured idle frame has its product
-  # banner and Vim status line around the composer; preserve all three anchors
+  # Codex's composer is not bordered. The captured idle frame has its Vim
+  # status line around the composer; keep that anchor and the live-turn vetoes
   # so another terminal's `›` line cannot become writable.
   _codex_composer() {
     local text="$1" composer="$2"
-    printf '%s\n' "$text" | grep -qE '^[[:space:]]*│ >_ OpenAI Codex \(v[0-9]' || return 1
     _footer_composer_equal "$text" '› ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Vim:[[:space:]]Insert$' 1 "$composer" \
       '^[[:space:]]{2}.*(for shortcuts|warnings).*$' || return 1
     printf '%s\n' "$text" | grep -qF 'esc to interrupt' && return 1
@@ -2051,21 +2101,66 @@ if [ "${1:-}" = "--role-watch" ]; then
     _codex_composer "$1" 'Ask Codex to do anything'
   }
 
-  # Cursor's captured composer has no box either. Its identity, version and
-  # mode rows are all required in addition to the exact empty prompt.
+  # Cursor's composer is not bordered. The version row, one mode footer,
+  # and the status lines under that footer are what make it writable.
   _cursor_composer() {
-    local text="$1" composer="$2"
-    printf '%s\n' "$text" | grep -qFx '  Cursor Agent' || return 1
+    local text="$1" composer="$2" line value footer_i start_i i n path=0
+    local -a rows
+    local footer_re='^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$'
+    local path_re='^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/)'
+    local branch_re='^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$'
+    local model_re='^[[:space:]]+(256K Low|High)[[:space:]]*%?[[:space:]]*$'
     printf '%s\n' "$text" | grep -qE '^[[:space:]]*v[0-9][0-9.]*-' || return 1
-    _footer_composer_equal "$text" '  → ' '^[[:space:]]{2}[^[:space:]].*[[:space:]]Run Everything -- INSERT --$' 2 "$composer" \
-      '^[[:space:]]{2}([~/]|[[:alnum:]_.-]+/).*' '^[[:space:]]*.*[[:space:]]·[[:space:]][^[:space:]]+$' || return 1
+    case "$composer" in
+    *$'\n'*) return 1 ;;
+    esac
+    mapfile -t rows <<<"$text"
+    footer_i=-1
+    for ((i = 0; i < ${#rows[@]}; i++)); do
+      [[ ${rows[i]} =~ $footer_re ]] || continue
+      [ "$footer_i" -eq -1 ] || return 1
+      footer_i=$i
+    done
+    [ "$footer_i" -gt 2 ] || return 1
+    for ((i = 1; i <= 2; i++)); do
+      [ -z "${rows[footer_i - i]}" ] || return 1
+    done
+    start_i=$((footer_i - 3))
+    [ -n "${rows[start_i]}" ] || return 1
+    while [ "$start_i" -gt 0 ] && [ -n "${rows[start_i - 1]}" ]; do
+      start_i=$((start_i - 1))
+    done
+    line="${rows[start_i]}"
+    [[ $line == "  → "* ]] || return 1
+    value="${line#"  → "}"
+    for ((i = start_i + 1; i < footer_i - 2; i++)); do
+      value+="${rows[i]}"
+    done
+    [ "$value" = "$composer" ] || return 1
+    n=0
+    for ((i = footer_i + 1; i < ${#rows[@]}; i++)); do
+      [ -n "${rows[i]}" ] || continue
+      n=$((n + 1))
+      [ "$n" -le 6 ] || return 1
+      if [[ ${rows[i]} =~ $path_re ]]; then
+        path=1
+      elif [[ ${rows[i]} =~ $branch_re ]]; then
+        :
+      elif [[ ${rows[i]} =~ $model_re ]]; then
+        :
+      else
+        return 1
+      fi
+    done
+    [ "$n" -ge 1 ] && [ "$path" -eq 1 ] || return 1
     printf '%s\n' "$text" | grep -qF 'ctrl+c to stop' && return 1
     printf '%s\n' "$text" | grep -qE 'Thinking[[:space:]]+[0-9]+ tokens' && return 1
     return 0
   }
 
   _cursor_idle_box() {
-    _cursor_composer "$1" 'Plan, search, build anything'
+    _cursor_composer "$1" 'Plan, search, build anything' ||
+      _cursor_composer "$1" 'Add a follow-up'
   }
 
   # _role_pane_ready <text> [colored] [own] — the only gate in front of
@@ -2244,9 +2339,11 @@ if [ "${1:-}" = "--role-watch" ]; then
   # (`_role_submit_state`). While it is still held, only Enter is re-sent —
   # never the paste, which would duplicate the text — up to `submit_retries`
   # times, waiting 2, 4, 8… ticks between. A frame that is neither held nor
-  # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks, or
-  # once the retries run out, it is escalated once (`assignment_unsubmitted`)
-  # and left in place: nothing else is typed until the box clears.
+  # positively submitted (a dialog excepted) is never acted on; after `unknown_max` such ticks
+  # it is escalated once. A held pi draft is retyped once per assignment, and a
+  # second exhaustion of that same assignment escalates. Codex and cursor
+  # escalate on the first exhaustion (`assignment_unsubmitted`) and are left
+  # in place: nothing else is typed until the box clears.
   # `pending_from` runs parallel to `pending` so the escalation reaches the
   # sender of the assignment that stalled.
   pending=()
@@ -2260,6 +2357,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   unknown_ticks=0
   unknown_max=5
   escalated=0
+  retyped=0
   verdict_seen=0
   cooldown=0
   unsent=0
@@ -2268,7 +2366,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   deferred_told=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
-  while tmux display-message -p -t "$watch_pane" '#{pane_id}' >/dev/null 2>&1; do
+  while [ "$(tmux display-message -p -t "$watch_pane" '#{pane_id}' 2>/dev/null || true)" = "$watch_pane" ]; do
     watch_exited && break
     if [ -f "$log" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
@@ -2324,6 +2422,7 @@ if [ "${1:-}" = "--role-watch" ]; then
         submit_tries=0
         unknown_ticks=0
         escalated=0
+        retyped=0
         cooldown=1
         [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ] && watch_set_state idle
         verdict_seen=0
@@ -2335,6 +2434,17 @@ if [ "${1:-}" = "--role-watch" ]; then
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           submit_tries=$((submit_tries + 1))
           cooldown=$((1 << submit_tries))
+        elif [ "$engine" = pi ] && [ "$retyped" -eq 0 ] && [ "$escalated" -eq 0 ]; then
+          # The next delivery already sends C-u when unsent=1. A C-u here
+          # would clear the re-paste before Enter.
+          pending=("$inflight" "${pending[@]}")
+          pending_from=("$inflight_from" "${pending_from[@]}")
+          inflight=""
+          inflight_from=""
+          submitting=0
+          submit_tries=0
+          unsent=1
+          retyped=1
         elif [ "$escalated" -eq 0 ]; then
           _rw_escalate "still in the input box after $submit_retries Enter retries"
         fi
@@ -2562,9 +2672,15 @@ if [ "${1:-}" = "--spawn-role" ]; then
     echo "dispatch: --spawn-role: no worker_id/crew_id in the environment or WORKER_TASK.md — a role pane without them runs as a personal session" >&2
     exit 1
   fi
-  pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
-  budget_stop "$spawn_agent" "$role"
-  absolute_limit_stop "$spawn_agent" "$role"
+  # A local id spends no OpenRouter quota; its budget is the endpoint's slots.
+  if [ "$spawn_agent" = pi ] && _local_id "$spawn_model"; then
+    local_slot_cap "$spawn_model" "$role"
+    local_probe_gate "$spawn_model"
+  else
+    pace_rule_target "$spawn_agent" "$spawn_model" "$effort"
+    budget_stop "$spawn_agent" "$role"
+    absolute_limit_stop "$spawn_agent" "$role"
+  fi
   [ "$spawn_agent" = pi ] && seed_pi_agent_dir
   sig_before="$(grid_refit_sig "$win")"
   role_pane="$(split_role_pane "$win" "$wt_root" "$role" "$spawn_worker_id" "$spawn_crew_id")"
@@ -3054,6 +3170,10 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 # engines — it is still read below for the work+claude+deep rung.
 _settings_load
 profile="$(jq -r '.profile // "personal"' <<<"$settings")"
+# A configured localModels id: its entry, not modelMap, admits it, and its
+# endpoint's slots, not OpenRouter quota, are its budget.
+local_entry=""
+[ "$agent" = pi ] && local_entry="$(_local_entry "$settings" "$model")"
 
 check_engine "$agent" "--agent $agent"
 
@@ -3155,7 +3275,8 @@ else
     fi
     ;;
   pi)
-    if [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
+    # Local ids may be mixed case; dispatch-config already checked their shape.
+    if [ -z "$local_entry" ] && [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
       echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4.1-flash). See dispatch-orchestration.md \"Model gate\"." >&2
       exit 1
     fi
@@ -3248,8 +3369,14 @@ fi
 # "Tier map". The rows live in defaults.json's modelMap, read through the
 # settings resolver; a tier without a row admits nothing (fail closed).
 # DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
-# about shape/cache staleness, not tier); --ignore-map does.
-if [ -z "$ignore_map" ]; then
+# about shape/cache staleness, not tier); --ignore-map does. A local id's
+# entry lists its tiers; it has no modelMap row and no escalation rung.
+if [ -n "$local_entry" ]; then
+  if [ -z "$ignore_map" ] && ! jq -e --arg t "$tier" '.tiers | index($t)' <<<"$local_entry" >/dev/null; then
+    echo "dispatch: local model '$model' is not allowed at $tier — its localModels entry allows $(jq -r '.tiers | join(", ")' <<<"$local_entry"); pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Local models\"." >&2
+    exit 1
+  fi
+elif [ -z "$ignore_map" ]; then
   tier_ok=0
   _model_in_row "$agent" "$tier" "$model" && tier_ok=1
   if [ "$tier_ok" = 0 ]; then
@@ -3275,7 +3402,7 @@ fi
 
 # Record-only escalation: model already in tier's row but one rung up from failed.
 # Stamp WORKER_TASK.md only (dispatch event skips it — the gate already passed).
-if [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
+if [ -z "$local_entry" ] && [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map" ] && [ "$tier_ok" = 1 ] && [ -n "${_escalation_branch:-}" ]; then
   failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
   if [ -n "$failed_model" ]; then
     record_from="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" inRow)"
@@ -3300,7 +3427,7 @@ fi
 # the claude-blind warning and absolute_limit_stop below add the rest.
 # --ignore-budget is the manual escape hatch (e.g. credits cover it).
 budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
-budget_stop "$agent"
+[ -n "$local_entry" ] || budget_stop "$agent"
 if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   now_ts="$(date +%s)"
   stale_before=$((now_ts - 7200))
@@ -3311,7 +3438,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
 fi
 
 # Codex/cursor/pi absolute-limit gate, lead and (#636) role targets.
-absolute_limit_stop "$agent"
+[ -n "$local_entry" ] || absolute_limit_stop "$agent"
 
 # Role grid. Resolve the topology before scaffolding so a bad spec can't leave a
 # half-built grid. `--roles` is explicit and wins; `--grid` derives the topology
@@ -3410,6 +3537,10 @@ if [ -n "$grid_roles" ]; then
     done
     role_agent="$agent"
     role_model="$model"
+    # A local lead's bare roles take the tier's hosted pi rung, off its slot.
+    if [ -n "$local_entry" ] && [ -z "$rest" ]; then
+      role_model="$(jq -r --arg t "$tier" '.modelMap.pi[$t].default' <<<"$settings")"
+    fi
     if [ -n "$rest" ]; then
       case "${rest%%:*}" in
       claude | codex | cursor | pi)
@@ -3454,14 +3585,45 @@ fi
 
 # All launch targets are resolved now. Validate the lead and every eager role
 # before any pane is created; lazy roles validate their final override later.
-pace_rule_target "$agent" "$model" "$effort"
+[ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort"
 if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
+    if [ "${role_agents[$i]}" = pi ] && _local_id "${role_models[$i]}"; then continue; fi
     pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
     budget_stop "${role_agents[$i]}" "${role_names[$i]}"
     absolute_limit_stop "${role_agents[$i]}" "${role_names[$i]}"
   done
 fi
+
+# Local-model slots: the lead (if local), then every role on a local id — lazy
+# ones too, since a lazy local role will need its slot later. Every cap runs
+# before any probe (cheap, local checks first).
+local_target_ids=()
+local_target_names=()
+if [ -n "$local_entry" ]; then
+  local_target_ids+=("$model")
+  local_target_names+=("")
+fi
+for i in "${!role_names[@]}"; do
+  if [ "${role_agents[$i]}" = pi ] && _local_id "${role_models[$i]}"; then
+    local_target_ids+=("${role_models[$i]}")
+    local_target_names+=("${role_names[$i]}")
+  fi
+done
+local_ids=()
+for id in "${local_target_ids[@]}"; do
+  [[ " ${local_ids[*]} " == *" $id "* ]] || local_ids+=("$id")
+done
+for id in "${local_ids[@]}"; do
+  id_targets=()
+  for j in "${!local_target_ids[@]}"; do
+    if [ "${local_target_ids[$j]}" = "$id" ]; then id_targets+=("${local_target_names[$j]}"); fi
+  done
+  local_slot_cap "$id" "${id_targets[@]}"
+done
+for id in "${local_ids[@]}"; do
+  local_probe_gate "$id"
+done
 
 required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
 [ -n "$roles_stamp" ] && required_protocol_files+=(GRID_PROTOCOL.md)
@@ -4616,6 +4778,8 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
+# The localModels slot count reads this, so it is stamped for every model.
+tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"

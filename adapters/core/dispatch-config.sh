@@ -23,6 +23,9 @@
 # they are honoured only from the locked layer or the environment — a copy in
 # the base or user layer is dropped with a warning on stderr.
 #
+# localModels maps "<provider>/<model>" dispatch ids to local OpenAI-compatible
+# endpoints for pi; it is validated on the merged tree and has no env var.
+#
 # Tracker map keys (repoTrackers/orgTrackers) are lowercased within each layer
 # before the merge, so a later layer's entry for the same key (any case)
 # collapses and wins.
@@ -247,10 +250,33 @@ env_layer=$(jq -cn '
 
 printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_origin "$show_origin" "$jq_defs"'
   def string_array: type == "array" and all(.[]; type == "string");
+  def die($p; $what): "dispatch-config: \($p | join(".")) must be \($what) (merged settings)\n" | halt_error(1);
   def need($p; $what; ok):
-    if holds($p) and (getpath($p) | ok | not)
-    then "dispatch-config: \($p | join(".")) must be \($what) (merged settings)\n" | halt_error(1)
-    else . end;
+    if holds($p) and (getpath($p) | ok | not) then die($p; $what) else . end;
+  def pos_int: type == "number" and . == floor and . > 0;
+  # One [path, what] per violation in .localModels, entries in key order.
+  def local_model_violations:
+    (["openrouter"] + [.modelMap.pi[]?.models[]? | split("/")[0]] | map(ascii_downcase)) as $reserved
+    | .localModels as $all
+    | if ($all | type) != "object" then [["localModels"], "an object"]
+      else
+        ($all | to_entries[]) as {key: $k, value: $v}
+        | ($k | split("/")[0] | ascii_downcase) as $prov
+        | ["localModels", $k] as $p
+        | if ($k | test("^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*$") | not)
+          then [$p, "keyed <provider>/<model> with letters, digits, \".\", \"_\", \"-\" and \"/\" (no \":\")"]
+          elif ($v | type) != "object" then [$p, "an object"]
+          else
+            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers"]),
+            ($v.baseUrl | select(type != "string" or (test("^https?://[^[:space:]]*[^/[:space:]]$") | not)) | [$p + ["baseUrl"], "an http(s) URL without whitespace or a trailing \"/\""]),
+            ($v.contextWindow | select(pos_int | not) | [$p + ["contextWindow"], "a positive integer"]),
+            ($v | select(has("maxConcurrent") and (.maxConcurrent | pos_int | not)) | [$p + ["maxConcurrent"], "a positive integer"]),
+            ($v | select(has("tiers") and ((.tiers | type == "array" and length > 0 and all(.[]; IN("trivial", "standard", "deep"))) | not)) | [$p + ["tiers"], "a non-empty array of trivial, standard or deep"]),
+            ($prov | select(IN($reserved[])) | [$p, "a provider outside the hosted pi ladder (\($prov) is reserved for it)"]),
+            ([$all | to_entries[] | select(.key | split("/")[0] | ascii_downcase == $prov)][0].value.baseUrl as $first
+              | select($first != $v.baseUrl) | [$p + ["baseUrl"], "the same URL as the other \($prov) entries"])
+          end
+      end;
   def tag($layers; $p):
     if type == "object" and length > 0
     then with_entries(.key as $k | .value |= tag($layers; $p + [$k]))
@@ -269,4 +295,5 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["profile"]; "a string"; type == "string")
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
+  | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'

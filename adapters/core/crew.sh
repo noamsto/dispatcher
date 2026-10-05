@@ -1162,9 +1162,11 @@ _copy_if_changed() { # $1=target $2=source
 # every oauth entry, which on an OAuth-login machine is all of them, leaving
 # workers with no credential at all (#198). models-store.json is copied instead —
 # it is a cache pi rewrites on refresh, and every worker shares this dir, so a
-# link would aim N concurrent writers at the user's real catalog.
+# link would aim N concurrent writers at the user's real catalog. models.json is
+# generated from localModels on every seed — dispatcher-owned, so a removed entry
+# stops being reachable — with a dummy apiKey (local endpoints ignore it).
 _pi_agent_dir() {
-  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings probe bridge bridge_entry
+  local dir="$HOME/.pi/dispatcher-worker" dir_real ambient ambient_real settings dsettings clash probe bridge bridge_entry
   ambient="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
   case "$ambient" in \~/*) ambient="$HOME/${ambient#\~/}" ;; esac
   ambient="${ambient%/}"
@@ -1269,6 +1271,24 @@ _pi_agent_dir() {
   if [ -f "$ambient/models-store.json" ]; then
     _copy_if_changed "$dir/models-store.json" "$ambient/models-store.json"
   fi
+
+  # shellcheck source=/dev/null
+  . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+  dsettings=$("${DISPATCH_CONFIG_BIN:-dispatch-config}") || {
+    echo "crew: could not resolve the dispatcher settings for the pi worker models.json — refusing to seed pi worker dir" >&2
+    exit 1
+  }
+  # pi prefers a stored auth.json credential over a models.json apiKey, and the
+  # worker's auth.json links the user's real one — a clashing provider name
+  # would send that credential to the local endpoint.
+  clash=$(jq -nr --argjson s "$dsettings" --slurpfile a "$dir/auth.json" \
+    '($a[0] | keys | map(ascii_downcase)) as $stored
+     | [($s.localModels // {}) | keys[] | split("/")[0] | select(ascii_downcase | IN($stored[]))][0] // empty')
+  if [ -n "$clash" ]; then
+    echo "crew: localModels provider '$clash' has a stored pi credential in auth.json — rename the provider so the credential is never sent to a local endpoint" >&2
+    exit 1
+  fi
+  _write_if_changed "$dir/models.json" 644 "$(_local_pi_models_json "$dsettings")"
 
   printf '%s\n' "$dir"
 }

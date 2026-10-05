@@ -188,6 +188,18 @@ EOF
   [ "$cross_tab" = "$expected_cross_tab" ]
 }
 
+@test "rate --report: a local pi model and an openrouter pi model at one tier land in separate groups" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'
+{"repo":"acme/widgets","run_id":"l1","engine":"pi","model":"lemonade/Qwen3.8-Flash-Next-MTP","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":null,"swept_at":1}
+{"repo":"acme/widgets","run_id":"l2","engine":"pi","model":"openrouter/deepseek/deepseek-v4.1-flash","tier":"standard","outcome":"merged","reached_pr":true,"time_to_pr_ms":100,"pr_state":"MERGED","time_to_merge_ms":200,"rework_count":0,"review_high":null,"review_mode":null,"review_rounds":0,"blocked_count":0,"watchdog_blocked_count":0,"first_ci_green":true,"unresolved_notes":0,"reverted":false,"cost_proxy":null,"swept_at":1}
+EOF
+  run run_crew rate --report --json
+  [ "$status" -eq 0 ]
+  run jq -e 'length == 2 and ([.[].model] | sort) == ["lemonade/Qwen3.8-Flash-Next-MTP", "openrouter/deepseek/deepseek-v4.1-flash"]' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "rate --report --pooled: aggregates across every repo, footer names them" {
   mkdir -p "$XDG_DATA_HOME/crew"
   cat >"$XDG_DATA_HOME/crew/ratings.jsonl" <<'EOF'

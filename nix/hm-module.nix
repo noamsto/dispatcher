@@ -25,7 +25,15 @@ self: {
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
-    // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;};
+    // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (cfg.localModels != null) {inherit (cfg) localModels;};
+  localModelKeyValid = k:
+    builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*" k
+    != null
+    && lib.toLower (lib.head (lib.splitString "/" k)) != "openrouter";
+  badLocalModelKeys =
+    lib.optionals (cfg.localModels != null)
+    (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -104,6 +112,50 @@ in {
       '';
     };
 
+    localModels = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
+        options = {
+          baseUrl = lib.mkOption {
+            type = lib.types.strMatching "https?://[^[:space:]]*[^/[:space:]]";
+            example = "http://halo:13305/v1";
+            description = "The endpoint's OpenAI-compatible base URL, without a trailing slash.";
+          };
+          contextWindow = lib.mkOption {
+            type = lib.types.ints.positive;
+            example = 131072;
+            description = "The model's context window in tokens.";
+          };
+          maxConcurrent = lib.mkOption {
+            type = lib.types.ints.positive;
+            default = 1;
+            description = "Concurrent dispatch workers allowed on this model.";
+          };
+          tiers = lib.mkOption {
+            type = lib.types.nonEmptyListOf (lib.types.enum ["trivial" "standard" "deep"]);
+            default = ["trivial" "standard"];
+            description = "Tiers this model may serve.";
+          };
+        };
+      }));
+      default = null;
+      example = {
+        "lemonade/Qwen3.8-Flash-Next-MTP" = {
+          baseUrl = "http://halo:13305/v1";
+          contextWindow = 131072;
+        };
+      };
+      description = ''
+        Local pi models, served from your own endpoint. Keys are pi dispatch
+        ids `<provider>/<model>`; a malformed key or an `openrouter` provider
+        fails the build. Size `maxConcurrent` for the endpoint's other
+        consumers (chat bots, interactive sessions), which dispatch does not
+        count. Set, each declared entry pins all four fields in the locked
+        settings layer, so the user settings file cannot change them; it can
+        still add other ids (the locked layer only governs the ids it
+        declares). Unset, the key is left out and the user file governs alone.
+      '';
+    };
+
     openrouter = {
       monthlyTarget = lib.mkOption {
         type = lib.types.nullOr lib.types.numbers.positive;
@@ -176,6 +228,13 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = badLocalModelKeys == [];
+        message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+    ];
+
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {

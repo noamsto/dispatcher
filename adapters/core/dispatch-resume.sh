@@ -1401,6 +1401,8 @@ else
   launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
+# dispatch's localModels slot count reads this off the lead pane.
+tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
 tmux send-keys -t "$pane" "$launch_line" Enter
 

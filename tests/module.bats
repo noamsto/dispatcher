@@ -79,6 +79,10 @@ let
         type = lib.types.attrsOf lib.types.raw;
         default = {};
       };
+      assertions = lib.mkOption {
+        type = lib.types.listOf lib.types.raw;
+        default = [];
+      };
     };
     config.lib.file.mkOutOfStoreSymlink = p: "out-of-store:" + p;
   };
@@ -142,6 +146,11 @@ let
       monthlyTarget = 50;
       keyFile = "/run/agenix/openrouter";
     };
+    localModels."lemonade/Qwen3.8-Flash-Next-MTP" = {
+      baseUrl = "http://halo:13305/v1";
+      contextWindow = 131072;
+      maxConcurrent = 1;
+    };
     userSettings = "/home/u/cfg/settings.json";
   };
 
@@ -180,6 +189,18 @@ in {
   cursorless = mkResult cursorlessCfg;
   float = mkResult floatCfg;
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
+  # A malformed or openrouter-provider localModels key must trip an HM
+  # assertion (its message names the keys), not wait for dispatch-config to
+  # refuse it at runtime.
+  badLocalModelAsserts = map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+    enable = true;
+    localModels = {
+      "no-slash" = {baseUrl = "http://h/v1"; contextWindow = 1;};
+      "OpenRouter/m" = {baseUrl = "http://h/v1"; contextWindow = 1;};
+      "ok/model" = {baseUrl = "http://h/v1"; contextWindow = 1;};
+    };
+  }).assertions);
+  goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
   # `engines = []` must be a type error, not a silently-accepted value that
   # bakes `"engines": []` into the locked settings file (dispatch-config dies
   # on that at runtime).
@@ -361,8 +382,8 @@ placeholder_two_row() { # token
   grep -q '^cross_repo_hint() {' "$lib"
 }
 
-# F57: @worktreeGitLib@ (#539) and @grantCheckLib@ (#536) are substituted in
-# each consumer. An unsubstituted token is not a readable path, so the source
+# F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
+# substituted in each consumer. An unsubstituted token is not a readable path, so the source
 # would abort under set -e. Read-only greps; no per-row reset.
 @test "shared-lib placeholders are substituted in each consumer" {
   begin_rows
@@ -373,8 +394,9 @@ placeholder_two_row() { # token
   done <<ROWS
 worktree-git|@worktreeGitLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
+local-models|@localModelsLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
-  finish_rows 2
+  finish_rows 3
 }
 
 placeholder_three_row() { # token bin bin bin
@@ -494,6 +516,15 @@ placeholder_three_row() { # token bin bin bin
   [ "$status" -eq 0 ]
   run jq -e '(.options | index("userSettings")) != null' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '(.options | index("localModels")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the module declares an assertion that rejects bad localModels keys" {
+  run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and (contains("ok/model") | not))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.goodLocalModelAsserts == []' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module declares the engines option" {
@@ -546,6 +577,8 @@ placeholder_three_row() { # token bin bin bin
   run jq -e '.full.locked.openrouter.keyFile == "/run/agenix/openrouter"' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Every routing option left unset: the locked layer holds only the two

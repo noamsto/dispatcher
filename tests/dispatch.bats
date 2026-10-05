@@ -2437,6 +2437,164 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
   [[ "$output" != *"quota exhausted"* ]]
 }
 
+# #669 local-model lane. local_lane_fixture writes a user-layer localModels
+# entry plus a curl stub standing in for its endpoint — no test may reach a real
+# one. local_holder_tmux wraps whatever tmux stub is in place (call it after the
+# stub it wraps) so the holder scan sees $HOLDERS (default 1) live pi panes on
+# the id. local_lane_fixture's optional argument is extra entry fields, e.g.
+# ',"maxConcurrent":2'.
+local_lane_fixture() {
+  LOCAL_ID=lemonade/Qwen3.8-Flash-Next-MTP
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"localModels":{"%s":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072%s}}}\n' "$LOCAL_ID" "${1:-}" \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cat >"$STUB_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$STUB_LOG"
+[ -z "${CURL_FAIL:-}" ] || exit "${CURL_RC:-7}"
+if [ -n "${CURL_BODY:-}" ]; then
+  printf '%s\n' "$CURL_BODY"
+else
+  printf '%s\n' '{"data":[{"id":"Qwen3.8-Flash-Next-MTP"}]}'
+fi
+EOF
+  chmod +x "$STUB_DIR/curl"
+}
+
+local_holder_tmux() {
+  mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = list-panes ] && [ "$2" = -a ] && [[ $* == *@crew_model* ]]; then
+  printf '%s\n' "$*" >>"$STUB_LOG"
+  for ((i = 0; i < ${HOLDERS:-1}; i++)); do
+    printf 'lemonade/Qwen3.8-Flash-Next-MTP\x1fpi\x1fslate%s\x1ffeat/1-x\x1f\n' "${i#0}"
+  done
+  exit 0
+fi
+exec "$STUB_DIR/tmux-inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "local lane: a local id passes at an allowed tier and probes its endpoint" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'http://halo.test:13305/v1/models' "$STUB_LOG"
+}
+
+@test "local lane: a tier outside the entry is refused; --ignore-map admits it" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' is not allowed at deep — its localModels entry allows trivial, standard; pass --ignore-map (the human's model decision)."* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+
+  # An explicit tiers list replaces the default.
+  local_lane_fixture ',"tiers":["deep"]'
+  DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not allowed at standard — its localModels entry allows deep;"* ]]
+}
+
+@test "local lane: a live holder fills the slot; --ignore-budget skips the cap with a notice" {
+  local_lane_fixture
+  local_holder_tmux
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead)) — wait for it to finish (a finished worker holds its slot until \`crew reap\` closes its window), pick a hosted pi model, or pass --ignore-budget"* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --ignore-budget --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: local slot cap skipped (--ignore-budget) — '$LOCAL_ID' 1/1 in use"* ]]
+
+  # A decimal maxConcurrent (dispatch-config accepts 1.0) must still cap.
+  local_lane_fixture ',"maxConcurrent":1.0'
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no free slot (1/1 in use: slate (feat/1-x lead))"* ]]
+
+  # maxConcurrent 2: one holder leaves a slot, two fill it.
+  local_lane_fixture ',"maxConcurrent":2'
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  HOLDERS=2 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"has no free slot (2/2 in use: slate (feat/1-x lead), slate1 (feat/1-x lead))"* ]]
+}
+
+@test "local lane: an unreachable endpoint or an unlisted model is refused" {
+  local_lane_fixture
+  CURL_FAIL=1 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: local model '$LOCAL_ID' is unavailable — http://halo.test:13305/v1/models unreachable; start the server or load the model, or pick a hosted pi model"* ]]
+
+  CURL_BODY='{"data":[{"id":"Other"}]}' DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is unavailable — http://halo.test:13305/v1/models did not list 'Qwen3.8-Flash-Next-MTP'"* ]]
+
+  # curl -f exits 22 on an HTTP 4xx/5xx: the server answered, so not "unreachable".
+  CURL_FAIL=1 CURL_RC=22 DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"http://halo.test:13305/v1/models returned an HTTP error; start the server"* ]]
+}
+
+@test "local lane: hosted pi gates skip a local lead but keep its hosted default roles" {
+  local_lane_fixture
+  budget_json_at pi 97 3600
+  DISPATCH_PRECHECK=1 run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'plan-critic' (pi) quota exhausted"* ]]
+}
+
+@test "local lane: an explicit role on the lead's local id shares its slot" {
+  local_lane_fixture
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium \
+    --roles "plan-critic,reviewer=pi:$LOCAL_ID" --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: role 'reviewer' (pi) local model '$LOCAL_ID' has no free slot (0/1 in use: this dispatch)"* ]]
+}
+
+@test "local lane: launch gives bare roles the hosted rung and stamps @crew_model" {
+  stub_launch_bins
+  local_lane_fixture
+  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "local launch"
+  [ "$status" -eq 0 ]
+  grep -F -- "pi --name iris --model $LOCAL_ID " <(launch_log)
+  grep -F -- 'pi --name iris-plan-critic --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
+  grep -F -- 'pi --name iris-reviewer --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
+  grep -qxF -- "set-option -p -t %1 @crew_model $LOCAL_ID" "$STUB_LOG"
+}
+
+@test "local lane: --spawn-role on a held local id is refused before any pane" {
+  _spawn_role_fixture
+  local_lane_fixture
+  local_holder_tmux
+  run run_dispatch --spawn-role reviewer --model "$LOCAL_ID"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: role 'reviewer' (pi) local model '$LOCAL_ID' has no free slot (1/1 in use: slate (feat/1-x lead))"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+}
+
+@test "local lane: --spawn-role on a free local id skips hosted gates and probes" {
+  _spawn_role_fixture
+  local_lane_fixture
+  budget_json_at pi 97 3600
+  run run_dispatch --spawn-role reviewer --model "$LOCAL_ID"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'http://halo.test:13305/v1/models' "$STUB_LOG"
+  grep -qxF -- "set-option -p -t %6 @crew_model $LOCAL_ID" "$STUB_LOG"
+}
+
 @test "worker window starts at the invoking client size" {
   stub_launch_bins
 
@@ -10555,8 +10713,8 @@ rw_frame_claude_spinner_empty() {
     sleep 0.1
   done
   sleep 1.5
-  # initial Enter + 2 retries, then it stops
-  [ "$(_rw_enters)" -eq 3 ]
+  # first budget (initial Enter + 2 retries), one retype, then a second budget
+  [ "$(_rw_enters)" -eq 6 ]
   # one msg to the lead, one to the dispatcher, naming pane and role
   grep -q '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_unsubmitted' "$STUB_LOG"
   grep -q '^msg role:feat/9-x:reviewer dispatcher:c1 .*assignment_unsubmitted' "$STUB_LOG"
@@ -10565,7 +10723,7 @@ rw_frame_claude_spinner_empty() {
   [ "$(_rw_unsubmitted)" -eq 2 ]
   # the text stays in the box, exactly once, and the queue does not advance
   [ "$(_rw_copies)" -eq 1 ]
-  [ "$(_rw_deliveries)" -eq 1 ]
+  [ "$(_rw_deliveries)" -eq 2 ]
   [ "$(grep -c '^paste Assignment: two' "$STUB_LOG" || true)" -eq 0 ]
   # the lead submits it by hand: the queue then moves on
   : >"$STUB_DIR/input"
@@ -10685,6 +10843,472 @@ rw_frame_claude_spinner_empty() {
   _rw_stop
   grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
   run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
+}
+
+# Post-turn idle frames, a held pi draft, and a dead pane. Each test writes
+# its own tmux stub. The two blank rows between the cursor composer and its
+# footer are part of the capture.
+
+rw725_codex_post_turn() {
+  cat <<'EOF'
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2
+EOF
+}
+
+rw725_codex_lookalike() {
+  rw725_codex_post_turn | sed 's/^  ? for shortcuts.*$/  $ /'
+}
+
+rw725_cursor_post_turn() {
+  cat <<'EOF'
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+EOF
+}
+
+rw725_cursor_startup_placeholder() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ Plan, search, build anything/'
+}
+
+rw725_cursor_no_version() {
+  rw725_cursor_post_turn | sed '/^  v2026\.10\.01-e373342$/d'
+}
+
+rw725_cursor_lookalike() {
+  rw725_cursor_post_turn | sed '/256K Low/,$d'
+}
+
+rw725_cursor_draft() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ draft unsent text/'
+}
+
+rw725_cursor_dialog() {
+  rw725_cursor_post_turn | sed 's/→ Add a follow-up/→ Assignment: go/'
+  printf '\n  Dialog overlay: Enter to confirm\n'
+}
+
+rw725_cursor_status_prompt() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  High — allow this command?'
+}
+
+rw725_cursor_status_path() {
+  rw725_cursor_post_turn
+  printf '%s\n' '  write /tmp/out?'
+}
+
+# Swap only the composer line. Footer and status rows stay the capture's.
+_rw725_assignment_swap() {
+  sed -e 's/› Ask Codex to do anything/› Assignment: go/' \
+      -e 's/→ Add a follow-up/→ Assignment: go/' \
+      -e 's/→ Plan, search, build anything/→ Assignment: go/'
+}
+
+# display-message / show-options / capture-pane / paste-buffer, same answers as
+# the role-watch stub. Paste installs $STUB_DIR/frame_after only when a test
+# wrote one (ready frames). Look-alikes and drafts leave it absent.
+_rw725_cc_stub() {
+  "$1" >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  if [ -f "$STUB_DIR/frame_after" ]; then
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+_rw725_poll_sends() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_sends)" -ge 1 ] && return 0
+    sleep 0.1
+  done
+}
+
+_rw725_poll_captures() {
+  local n
+  for n in $(seq 1 40); do
+    [ "$(_rw_captures)" -ge 2 ] && return 0
+    sleep 0.1
+  done
+}
+
+@test "role-watch: #725 codex post-turn idle is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_codex_post_turn
+  rw725_codex_post_turn | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start codex
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor post-turn idle is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_post_turn
+  rw725_cursor_post_turn | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor startup placeholder is typed into" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_startup_placeholder
+  rw725_cursor_startup_placeholder | _rw725_assignment_swap >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_sends
+  _rw_stop
+  [ "$(_rw_sends)" -eq 1 ]
+  grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+@test "role-watch: #725 codex look-alike defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_codex_lookalike
+  _rw_start codex
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor frame without a version row defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_no_version
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor footer with no path defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_lookalike
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor non-empty draft defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_draft
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor dialog overlay gets no Enter" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_dialog
+  rw725_cursor_dialog >"$STUB_DIR/frame_after"
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  run ! grep -q '^send-keys' "$STUB_LOG"
+}
+
+@test "role-watch: #725 cursor status line that is a prompt defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_prompt
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+@test "role-watch: #725 cursor status line with an embedded path defers" {
+  _spawn_role_fixture
+  _rw725_cc_stub rw725_cursor_status_path
+  _rw_start cursor
+  _rw725_poll_captures
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ]
+  [ "$(grep -c '^paste-buffer' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+# Held pi frame: lower rule, exactly two non-empty rows after it, upper rule
+# in the `↑ 2 more` shape. Paste shows it. Enter leaves it in place until
+# $STUB_DIR/retyped exists, then the next Enter installs rw_frame_pi_live.
+# cu_mode clear (the success test) is the only path that creates retyped.
+_rw725_pi_stub() {
+  local cu_mode="$1"
+  rw_frame_pi_idle >"$STUB_DIR/frame"
+  rw_frame_pi_idle >"$STUB_DIR/idle_frame"
+  rw_frame_pi_live >"$STUB_DIR/live_frame"
+  rm -f "$STUB_DIR/retyped"
+  printf '%s\n' "$cu_mode" >"$STUB_DIR/cu_mode"
+  cat >"$STUB_DIR/held_frame" <<'EOF'
+ pi v1.0.2
+───────────────── ↑ 2 more ──────────────────
+Assignment: go
+──────────────────────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+EOF
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  cp "$STUB_DIR/held_frame" "$STUB_DIR/frame"
+  ;;
+send-keys)
+  case "$*" in
+  'send-keys -t %6 C-u')
+    [ "$(cat "$STUB_DIR/cu_mode")" = clear ] || exit 0
+    cp "$STUB_DIR/idle_frame" "$STUB_DIR/frame"
+    touch "$STUB_DIR/retyped"
+    ;;
+  'send-keys -t %6 Enter')
+    if [ -e "$STUB_DIR/retyped" ]; then
+      cp "$STUB_DIR/live_frame" "$STUB_DIR/frame"
+    fi
+    ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+_rw725_paste_go() { grep -c '^paste Assignment: go$' "$STUB_LOG" || true; }
+
+@test "role-watch: #725 a held pi draft is cleared and retyped once, then submitted" {
+  _spawn_role_fixture
+  _rw725_pi_stub clear
+  RW_EXTRA='--submit-retries 1' _rw_start pi
+  local n
+  for n in $(seq 1 80); do
+    cmp -s "$STUB_DIR/live_frame" "$STUB_DIR/frame" && break
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ "$(_rw725_paste_go)" -eq 2 ]
+  [ "$(grep -cx 'send-keys -t %6 C-u' "$STUB_LOG" || true)" -eq 1 ]
+  cmp -s "$STUB_DIR/live_frame" "$STUB_DIR/frame"
+}
+
+@test "role-watch: #725 a held pi draft that stays swallowed after retype escalates once" {
+  _spawn_role_fixture
+  _rw725_pi_stub noop
+  RW_EXTRA='--submit-retries 1' _rw_start pi
+  local n
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 1 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  # one escalation: the lead and the dispatcher (inflight sender is the lead).
+  # A swallowed draft is pasted once today; the one-shot retype adds a second
+  # paste and must not add a third.
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  [ "$(_rw725_paste_go)" -eq 2 ]
+}
+
+# Held codex frame: paste swaps the empty composer to the assignment and
+# leaves it there. Every Enter is swallowed, so the draft stays held.
+_rw725_codex_held_stub() {
+  rw725_codex_post_turn >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane) cat "$STUB_DIR/frame" ;;
+load-buffer) cat >"$STUB_DIR/paste_payload" ;;
+paste-buffer)
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  sed -e 's/› Ask Codex to do anything/› Assignment: go/' "$STUB_DIR/frame" >"$STUB_DIR/frame.next"
+  mv "$STUB_DIR/frame.next" "$STUB_DIR/frame"
+  ;;
+send-keys) ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "role-watch: #725 codex held exhaustion still escalates" {
+  _spawn_role_fixture
+  _rw725_codex_held_stub
+  RW_EXTRA='--submit-retries 1' _rw_start codex
+  local n
+  for n in $(seq 1 80); do
+    [ "$(_rw_unsubmitted)" -ge 2 ] && break
+    sleep 0.1
+  done
+  sleep 1
+  _rw_stop
+  [ "$(_rw725_paste_go)" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 2 ]
+  [ "$(grep -cx 'send-keys -t %6 C-u' "$STUB_LOG" || true)" -eq 0 ]
+}
+
+# #{pane_id} is %6 until $STUB_DIR/dead exists, then empty stdout and exit 0.
+# @crew_branch must answer or startup exits before the loop.
+_rw725_dead_stub() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    if [ -e "$STUB_DIR/dead" ]; then
+      exit 0
+    fi
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "role-watch: #720 the watcher exits when display-message prints nothing" {
+  _spawn_role_fixture
+  _rw725_dead_stub
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  touch "$STUB_DIR/dead"
+  local rw_alive=1 n
+  for n in $(seq 1 20); do
+    if ! kill -0 "$RW_PID" 2>/dev/null; then
+      rw_alive=0
+      break
+    fi
+    sleep 0.1
+  done
+  if [ "$rw_alive" -eq 1 ] && ! kill -0 "$RW_PID" 2>/dev/null; then
+    rw_alive=0
+  fi
+  kill "$RW_PID" 2>/dev/null || true
+  wait "$RW_PID" 2>/dev/null || true
+  [ "$rw_alive" -eq 0 ]
 }
 
 @test "grid: --spawn-role uses persisted effort, CLI override, and legacy task fallback" {

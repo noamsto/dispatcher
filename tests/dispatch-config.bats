@@ -229,6 +229,14 @@ shape_accept_row() { # json jq1 jq2
   jq -e "$3" <<<"$output"
 }
 
+localmodels_refuse_row() { # json fragment
+  user_settings "$1"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *localModels* ]]
+  [[ "$stderr" == *"$2"* ]]
+}
+
 tracker_row() { # env jq
   DISPATCH_REPO_TRACKERS="$1" run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
@@ -451,6 +459,50 @@ ROWS
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *orgTrackers* ]]
+}
+
+@test "localModels merges per entry across layers and is validated" {
+  user_settings '{"localModels":{
+    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072},
+    "lemonade/Other":{"baseUrl":"http://halo:13305/v1","contextWindow":4096}}}'
+  locked_settings '{"localModels":{"lemonade/Qwen3.8-Flash-Next-MTP":{"maxConcurrent":2}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.localModels == {
+    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072,"maxConcurrent":2},
+    "lemonade/Other":{"baseUrl":"http://halo:13305/v1","contextWindow":4096}}' <<<"$output"
+
+  unset DISPATCH_LOCKED_SETTINGS
+  user_settings '{"localModels":{"lemonade/deep-one":{"baseUrl":"http://h:1/v1","contextWindow":8192,"maxConcurrent":3,"tiers":["deep"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+}
+
+@test "malformed localModels is refused, naming the path" {
+  local ok='"baseUrl":"http://h:1/v1","contextWindow":8192'
+  begin_rows
+  local json fragment
+  while IFS='|' read -r json fragment; do
+    [ -n "$json" ] || continue
+    keep_row "$fragment" localmodels_refuse_row "{\"localModels\":$json}" "$fragment"
+  done <<EOF
+{"lemonade/q:7b":{$ok}}|lemonade/q:7b
+{"qwen":{$ok}}|qwen
+{"lemonade/q":{"contextWindow":8192}}|lemonade/q.baseUrl
+{"lemonade/q":{"baseUrl":"ftp://x","contextWindow":8192}}|lemonade/q.baseUrl
+{"lemonade/q":{"baseUrl":"http://h:1/v1/","contextWindow":8192}}|lemonade/q.baseUrl
+{"lemonade/q":{"baseUrl":"http://h:1/v1"}}|lemonade/q.contextWindow
+{"lemonade/q":{"baseUrl":"http://h:1/v1","contextWindow":0}}|lemonade/q.contextWindow
+{"lemonade/q":{$ok,"maxConcurrent":1.5}}|lemonade/q.maxConcurrent
+{"lemonade/q":{$ok,"tiers":[]}}|lemonade/q.tiers
+{"lemonade/q":{$ok,"tiers":["huge"]}}|lemonade/q.tiers
+{"lemonade/q":{$ok,"maxconcurrent":1}}|lemonade/q
+{"openrouter/foo":{$ok}}|openrouter/foo
+{"OpenRouter/foo":{$ok}}|OpenRouter/foo
+{"lemonade/a":{$ok},"lemonade/b":{"baseUrl":"http://other:1/v1","contextWindow":8192}}|lemonade/b
+[]|localModels
+EOF
+  finish_rows 15
 }
 
 @test "a baked build ignores DISPATCH_LOCKED_SETTINGS, warning when it differs" {
