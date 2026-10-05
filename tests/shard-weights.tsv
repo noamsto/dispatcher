@@ -1,17 +1,17 @@
 file	family	filter	weight_ms
-tests/adapters.bats	*	!timing	6495
-tests/adapters.bats	Base ref snippets	!timing	108
-tests/adapters.bats	autopilot Base ref	!timing	711
-tests/adapters.bats	autopilot Stack base	!timing	1288
-tests/adapters.bats	autopilot Stack maintenance	!timing	253
-tests/adapters.bats	autopilot Step 4	!timing	128
-tests/adapters.bats	autopilot parent branch	!timing	141
-tests/adapters.bats	finish-prs Setup	!timing	158
-tests/adapters.bats	resolver	!timing	11565
-tests/adapters.bats	worker Base ref	!timing	125
+tests/adapters.bats	*	!timing	10297
+tests/adapters.bats	Base ref snippets	!timing	172
+tests/adapters.bats	autopilot Base ref	!timing	965
+tests/adapters.bats	autopilot Stack base	!timing	1988
+tests/adapters.bats	autopilot Stack maintenance	!timing	378
+tests/adapters.bats	autopilot Step 4	!timing	185
+tests/adapters.bats	autopilot parent branch	!timing	191
+tests/adapters.bats	finish-prs Setup	!timing	227
+tests/adapters.bats	resolver	!timing	17674
+tests/adapters.bats	worker Base ref	!timing	204
 tests/bats-affected.bats	affected	!timing	1442
 tests/bats-affected.bats	affected git	!timing	612
-tests/bats-shard.bats	*	!timing	96889
+tests/bats-shard.bats	*	!timing	56513
 tests/crew-dash.bats	*	!timing	7454
 tests/crew-dash.bats	--json shape	!timing	736
 tests/crew-id.bats	crew id	!timing	1015
