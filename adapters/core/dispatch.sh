@@ -731,7 +731,9 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # separate --settings layer so the Nix wrapper's settings overlay still wins
 # for hooks and other centrally managed configuration.
 claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
-if [ "$claude_worker_settings_lib" = '@claudeWorkerSettingsLib@' ]; then
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$claude_worker_settings_lib" ]; then
   claude_worker_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/claude-worker-settings.sh"
 fi
 # shellcheck source=/dev/null
