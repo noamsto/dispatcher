@@ -486,10 +486,65 @@ cursor_individual_usage() {
   [ "$output" -le $((now + 7320)) ]
 }
 
-@test "pane-scrape excludes the dispatcher's own window even when it renders a statusline" {
-  SHIM_TMUX_WINDOWS=$'@1\tdispatcher' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 97% (1m)' \
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
+}
+
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
+
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+
+# Pane-scrape rows share the quota-unknown or used_pct assertions. Each row
+# gets its own XDG_DATA_HOME so a previous row's engine-budget.json cannot
+# satisfy the next. The tmux/curl shims come from setup(); these rows do not
+# call stub_bin, and they do not change PATH (the row body runs in keep_row's
+# subshell).
+quota_unknown_row() { # windows panes capture id
+  local windows panes capture
+  windows=$(printf '%b' "$1")
+  panes=$(printf '%b' "$2")
+  capture=$(printf '%b' "$3")
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$4"
+  mkdir -p "$XDG_DATA_HOME"
+  SHIM_TMUX_WINDOWS="$windows" \
+    SHIM_TMUX_PANES="$panes" \
+    SHIM_TMUX_CAPTURE_P10="$capture" \
     SHIM_CLAUDE_429=1 run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"claude quota unknown"* ]]
@@ -497,15 +552,68 @@ cursor_individual_usage() {
   [ "$output" = "null" ]
 }
 
-@test "pane-scrape ignores a stray ⚡NN% sitting above the anchored tail" {
+used_pct_row() { # pct capture id
+  local capture
+  capture=$(printf '%b' "$2")
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$3"
+  mkdir -p "$XDG_DATA_HOME"
   SHIM_TMUX_WINDOWS=$'@1\tnova' \
     SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'Reading WORKER_TASK.md — example line: ⚡ 97% (2h53m → 00:20)\n  ⎿  Done (3 tool uses)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
+    SHIM_TMUX_CAPTURE_P10="$capture" \
     SHIM_CLAUDE_429=1 run bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"claude quota unknown"* ]]
-  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
+  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "$1" ]
+}
+
+# 22350s / 2310s sit off the exact minute boundary so probe_codex's own later
+# date cannot round the rendered reset down a minute.
+codex_hold_row() { # mins resets fragment id
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$4"
+  mkdir -p "$XDG_DATA_HOME"
+  SHIM_CLAUDE_429=1 SHIM_CODEX_CUSTOM=1 SHIM_CODEX_USED_PCT=99 \
+    SHIM_CODEX_WINDOW_MINS="$1" SHIM_CODEX_RESETS_IN="$2" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$3"* ]]
+}
+
+# Offsets are seconds from now. 4d3h = 356400s (row day-form, checked on 7d).
+# "08m" is 480s (row zero-pad, checked on 5h) — a leading zero must not crash.
+countdown_row() { # window pct lo hi capture id
+  local window=$1 pct=$2 lo=$3 hi=$4 capture now cache
+  capture=$(printf '%b' "$5")
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$6"
+  mkdir -p "$XDG_DATA_HOME"
+  now=$(date +%s)
+  SHIM_TMUX_WINDOWS=$'@1\tnova' \
+    SHIM_TMUX_PANES=$'@1\t%10' \
+    SHIM_TMUX_CAPTURE_P10="$capture" \
+    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  run jq --arg w "$window" '.engines.claude.windows[$w].used_pct' "$cache"
+  [ "$output" = "$pct" ]
+  run jq --arg w "$window" '.engines.claude.windows[$w].resets_at' "$cache"
+  [ "$output" -ge $((now + lo)) ]
+  [ "$output" -le $((now + hi)) ]
+}
+
+# F69: captures that must not yield a quota. The oversized row is the value
+# "10#$p" wraps to 42; a 4-digit run never matches the {1,3} marker. Per-row
+# XDG_DATA_HOME (see quota_unknown_row).
+@test "pane-scrape reports quota unknown for a non-reading capture" {
+  begin_rows
+  local row windows panes capture
+  while IFS='|' read -r row windows panes capture; do
+    [ -n "$row" ] || continue
+    keep_row "$row" quota_unknown_row "$windows" "$panes" "$capture" "$row"
+  done <<'ROWS'
+dispatcher|@1\tdispatcher|@1\t%10|  ⚡ 97% (1m)
+stray|@1\tnova|@1\t%10|Reading WORKER_TASK.md — example line: ⚡ 97% (2h53m → 00:20)\n  ⎿  Done (3 tool uses)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)
+oversize|@1\tnova|@1\t%10|  ⚡ 55340232221128654890% (10m)
+four-digit|@1\tnova|@1\t%10|  ⚡ 1234% (10m)
+ROWS
+  finish_rows 4
 }
 
 # Fixtures below are trimmed from live claude worker panes
@@ -548,14 +656,18 @@ cursor_individual_usage() {
   [ "$output" -le $((now + 309700)) ]
 }
 
-@test "pane-scrape reads the statusline of a pane with no subagent rows and no 7d" {
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 31% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "31" ]
+# F70: one anchored 5h percentage. Per-row XDG_DATA_HOME (see used_pct_row).
+@test "pane-scrape reads a single 5h percentage from the anchored statusline" {
+  begin_rows
+  local row pct capture
+  while IFS='|' read -r row pct capture; do
+    [ -n "$row" ] || continue
+    keep_row "$row" used_pct_row "$pct" "$capture" "$row"
+  done <<'ROWS'
+no-subagents|31|  🤖 Sonnet 5 🧠 med | 📊 120k/1M | ⚡ 31% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)
+mode-glyph|44|  🤖 Sonnet 5 | ⚡ 44% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n\n  ● main\n  ◯ go-reviewer  saw ⏵⏵ in output        9s
+ROWS
+  finish_rows 2
 }
 
 @test "pane-scrape reads the bottom block, not a pasted statusline higher in the scrollback" {
@@ -569,16 +681,6 @@ cursor_individual_usage() {
   [ "$output" = "13" ]
   run jq '.engines.claude.windows | has("7d")' "$cache"
   [ "$output" = "false" ]
-}
-
-@test "pane-scrape is not moved by a mode glyph inside a subagent row" {
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  🤖 Sonnet 5 | ⚡ 44% (1h0m → 13:10)\n  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)\n\n  ● main\n  ◯ go-reviewer  saw ⏵⏵ in output        9s' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  run jq '.engines.claude.windows["5h"].used_pct' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "44" ]
 }
 
 @test "pane-scrape degrades to unknown with no error when no worker windows exist" {
@@ -672,41 +774,34 @@ EOF
   [[ "$output" == *"budget lever: claude 7d at 96% (resets in 3d 11h"*"binding window; not holdable"* ]]
 }
 
-@test "an unsized window at >=95% is unholdable even with a real reset time" {
-  # 1440min (1d bucket) has no wsecs entry, so rule 2 fires despite a
-  # perfectly good future resetsAt — nominal length, not deadline, is what's
-  # missing here. 22350s (not the exact 6h12m boundary) leaves margin so the
-  # sleeps inside the real probe_codex's pipe can't round it down to 6h11m.
-  SHIM_CLAUDE_429=1 SHIM_CODEX_CUSTOM=1 SHIM_CODEX_USED_PCT=99 \
-    SHIM_CODEX_WINDOW_MINS=1440 SHIM_CODEX_RESETS_IN=22350 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"budget lever: codex 1d at 99% (resets in 6h 12m) — not holdable: window has no nominal length, hand the task back"* ]]
+# F73: unsized 1d window is unholdable; a sized 5h window inside its last 15%
+# is holdable. Per-row XDG_DATA_HOME (see codex_hold_row).
+@test "codex hold wording follows nominal length and the last 15 percent" {
+  begin_rows
+  local row mins resets fragment
+  while IFS='|' read -r row mins resets fragment; do
+    [ -n "$row" ] || continue
+    keep_row "$row" codex_hold_row "$mins" "$resets" "$fragment" "$row"
+  done <<'ROWS'
+unsized|1440|22350|budget lever: codex 1d at 99% (resets in 6h 12m) — not holdable: window has no nominal length, hand the task back
+holdable|300|2310|budget lever: codex 5h at 99% (resets in 38m) — binding window; holdable: inside the window's last 15%, wait past the reset
+ROWS
+  finish_rows 2
 }
 
-@test "a >=95% window inside its last 15% is the holdable case" {
-  # A sized 5h window, 99% used, ~38m to reset —
-  # elapsed_pct lands north of the 85 floor, so it's holdable. 2310s (not
-  # the exact 38m boundary) leaves the same rounding margin as above.
-  SHIM_CLAUDE_429=1 SHIM_CODEX_CUSTOM=1 SHIM_CODEX_USED_PCT=99 \
-    SHIM_CODEX_WINDOW_MINS=300 SHIM_CODEX_RESETS_IN=2310 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"budget lever: codex 5h at 99% (resets in 38m) — binding window; holdable: inside the window's last 15%, wait past the reset"* ]]
-}
-
-@test "pane-scrape parses a day-form countdown" {
-  now=$(date +%s)
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 50% (2h) 7d 91% (4d3h)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  run jq '.engines.claude.windows["7d"].used_pct' "$cache"
-  [ "$output" = "91" ]
-  # 4d3h = 4*86400 + 3*3600 = 356400s, inside the 604800s 7d window.
-  run jq '.engines.claude.windows["7d"].resets_at' "$cache"
-  [ "$output" -ge $((now + 356280)) ]
-  [ "$output" -le $((now + 356520)) ]
+# F74: a day-form countdown and a zero-padded minute countdown. Per-row
+# XDG_DATA_HOME (see countdown_row).
+@test "pane-scrape parses a countdown into used_pct and resets_at" {
+  begin_rows
+  local row window pct lo hi capture
+  while IFS='|' read -r row window pct lo hi capture; do
+    [ -n "$row" ] || continue
+    keep_row "$row" countdown_row "$window" "$pct" "$lo" "$hi" "$capture" "$row"
+  done <<'ROWS'
+day-form|7d|91|356280|356520|  ⚡ 50% (2h) 7d 91% (4d3h)
+zero-pad|5h|42|420|540|  ⚡ 42% (08m)
+ROWS
+  finish_rows 2
 }
 
 @test "pane-scrape leaves resets_at null when no countdown parenthetical is present" {
@@ -748,31 +843,21 @@ EOF
   [ "$output" = "null" ]
 }
 
-@test "pane-scrape parses a zero-padded countdown without crashing" {
-  now=$(date +%s)
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 42% (08m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
-  [ "$output" = "42" ]
-  # "08m" must parse as 8 minutes (480s), not crash on the leading zero.
-  run jq '.engines.claude.windows["5h"].resets_at' "$cache"
-  [ "$output" -ge $((now + 420)) ]
-  [ "$output" -le $((now + 540)) ]
-}
-
-@test "pane-scrape parses a zero-padded percentage without crashing" {
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 08% (10m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
-  [ "$output" = "8" ]
+# F75: padded, clamped, and one-digit 5h percentages. The one-digit row keeps
+# the {1,3} marker from dropping the short end of the range. Per-row
+# XDG_DATA_HOME (see used_pct_row).
+@test "pane-scrape reads a padded clamped or one-digit 5h percentage" {
+  begin_rows
+  local row pct capture
+  while IFS='|' read -r row pct capture; do
+    [ -n "$row" ] || continue
+    keep_row "$row" used_pct_row "$pct" "$capture" "$row"
+  done <<'ROWS'
+zero-padded|8|  ⚡ 08% (10m)
+clamped|100|  ⚡ 999% (10m)
+one-digit|5|  ⚡ 5% (10m)
+ROWS
+  finish_rows 3
 }
 
 @test "pane-scrape treats a leading-zero multi-digit component as base 10" {
@@ -803,17 +888,6 @@ EOF
   [ "$output" = "null" ]
 }
 
-@test "pane-scrape clamps a percentage over 100" {
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 999% (10m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
-  [ "$output" = "100" ]
-}
-
 @test "pane-scrape tie-break picks the larger remaining when percentages match" {
   now=$(date +%s)
   SHIM_TMUX_WINDOWS=$'@1\tnova\n@2\tember' \
@@ -830,52 +904,6 @@ EOF
   run jq '.engines.claude.windows["5h"].resets_at' "$cache"
   [ "$output" -ge $((now + 1140)) ]
   [ "$output" -le $((now + 1260)) ]
-}
-
-@test "pane-scrape rejects an oversized percentage instead of wrapping through 10#" {
-  # 55340232221128654890 is the value that "10#$p" silently wraps to 42
-  # (verified: bash -c 'p=55340232221128654890; echo $((10#$p))' -> 42).
-  # A garbled render that wraps into the middle of the range would be
-  # indistinguishable from a real 42% reading and could mask an exhausted
-  # budget — the marker must be skipped instead, same as an unparseable
-  # countdown already is.
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 55340232221128654890% (10m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"claude quota unknown"* ]]
-  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-}
-
-@test "pane-scrape rejects a 4-digit percentage" {
-  # Deliberate choice: the marker regex is bounded to {1,3} digits, so a
-  # 4-digit run (even one well within int64 range) fails the same way the
-  # oversized run above does — it never reaches arithmetic to be judged
-  # "too large", it just doesn't match.
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 1234% (10m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"claude quota unknown"* ]]
-  run jq '.engines.claude' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-}
-
-@test "pane-scrape still parses a one-digit percentage" {
-  # Regression check alongside the existing 2-digit ("08%", zero-padded)
-  # and 3-digit ("999%", clamped) cases: the {1,3} bound must not exclude
-  # the short end of the legitimate range.
-  SHIM_TMUX_WINDOWS=$'@1\tnova' \
-    SHIM_TMUX_PANES=$'@1\t%10' \
-    SHIM_TMUX_CAPTURE_P10=$'  ⚡ 5% (10m)' \
-    SHIM_CLAUDE_429=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  run jq '.engines.claude.windows["5h"].used_pct' "$cache"
-  [ "$output" = "5" ]
 }
 
 @test "no OpenRouter key leaves pi unknown without blocking" {

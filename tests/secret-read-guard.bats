@@ -1190,18 +1190,63 @@ run_guard_bare() {
   assert_allow
 }
 
-@test "secret-read-guard: denies egrep and zgrep without a quiet flag" {
-  run run_guard <<<"$(claude_bash 'egrep KEY .env')"
-  assert_deny_claude
-  run run_guard <<<"$(claude_bash 'zgrep KEY .env')"
-  assert_deny_claude
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
 }
 
-@test "secret-read-guard: denies rg -L and rg -rl (-L follows, -r replaces)" {
-  run run_guard <<<"$(claude_bash 'rg -L KEY .env')"
-  assert_deny_claude
-  run run_guard <<<"$(claude_bash 'rg -rl KEY .env')"
-  assert_deny_claude
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
+
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+# F76: egrep/zgrep and rg -L/-rl, folded. Stateless: run_guard, no shared fixture.
+@test "secret-read-guard: denies egrep zgrep rg -L and rg -rl" {
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" deny_cmd "$cmd"
+  done <<'ROWS'
+egrep|egrep KEY .env
+zgrep|zgrep KEY .env
+rg-L|rg -L KEY .env
+rg-rl|rg -rl KEY .env
+ROWS
+  finish_rows 4
 }
 
 @test "secret-read-guard: allows grep -lr KEY .env" {
@@ -1518,10 +1563,30 @@ allow_cmd() { # <command>
   allow_cmd 'echo "$(echo env)"'
 }
 
-@test "secret-read-guard: denies a dump behind direnv exec" {
-  deny_cmd 'direnv exec . env'
-  deny_cmd 'direnv exec . printenv'
-  deny_cmd 'direnv exec "$PWD" env'
+# F77: deny_cmd rows folded from direnv exec, a shell-variable dump followed by
+# a comment, a dump followed by a comment or a descriptor redirect, and a
+# relative dumper path without '='. Stateless: run_guard, no shared fixture.
+@test "secret-read-guard: denies direnv comment redirect and relative-path dumps" {
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" deny_cmd "$cmd"
+  done <<'ROWS'
+direnv-dot-env|direnv exec . env
+direnv-dot-printenv|direnv exec . printenv
+direnv-pwd-env|direnv exec "$PWD" env
+set-comment|set # list
+declare-p-comment|declare -p # list
+export-p-comment|export -p # list
+env-comment|env # show vars
+env-fd-redirect|env 2>&1
+printenv-devnull|printenv 2>/dev/null
+bin-env|bin/env
+bin-printenv|bin/printenv
+x-env|x/env
+ROWS
+  finish_rows 12
 }
 
 @test "secret-read-guard: allows direnv without a dump" {
@@ -1530,13 +1595,29 @@ allow_cmd() { # <command>
   allow_cmd 'direnv exec . env FOO=1 mycmd'
 }
 
-@test "secret-read-guard: denies env and printenv options with no command" {
-  deny_cmd 'env -0'
-  deny_cmd 'env -u X'
-  deny_cmd 'env -C /tmp'
-  deny_cmd 'env FOO=1'
-  deny_cmd 'env -i FOO=1 | sort'
-  deny_cmd 'printenv -0'
+# F78: deny_cmd rows folded from env/printenv options with no command, and a
+# dumper behind env and sudo. Stateless: run_guard, no shared fixture.
+@test "secret-read-guard: denies option-only env and wrapped dumpers" {
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" deny_cmd "$cmd"
+  done <<'ROWS'
+env-0|env -0
+env-u|env -u X
+env-C|env -C /tmp
+env-assign|env FOO=1
+env-i-sort|env -i FOO=1 | sort
+printenv-0|printenv -0
+env-u-env|env -u X env
+env-assign-printenv|env FOO=1 printenv
+sudo-u-root|sudo -u root env
+sudo-Eu|sudo -Eu root env
+sudo-declare|sudo -u root declare -p X
+sudo-quoted-root|sudo -u "root" env
+ROWS
+  finish_rows 12
 }
 
 @test "secret-read-guard: a comment right after a closing parenthesis cannot hide a dump" {
@@ -1580,11 +1661,30 @@ allow_cmd() { # <command>
   deny_cmd $'bash <<\'EOF\'\nit\'s\nprintenv `echo` GITHUB_TOKEN\nEOF'
 }
 
-@test "secret-read-guard: denies a wrapper with a backticked argument" {
-  deny_cmd 'sudo -u `whoami` env'
-  deny_cmd 'direnv exec `pwd` env'
-  deny_cmd 'env -C `pwd` env'
-  deny_cmd 'printenv `echo` GITHUB_TOKEN'
+# F79: deny_cmd rows folded from a wrapper with a backticked argument, a
+# wrapper whose option argument is a substitution (#452, #484), and a relative
+# dumper path holding '=' (#683). Stateless: run_guard, no shared fixture.
+@test "secret-read-guard: denies substituted wrapper args and equals-paths" {
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" deny_cmd "$cmd"
+  done <<'ROWS'
+sudo-backtick|sudo -u `whoami` env
+direnv-backtick|direnv exec `pwd` env
+env-backtick|env -C `pwd` env
+printenv-backtick|printenv `echo` GITHUB_TOKEN
+sudo-sub-un|sudo -u $(id -un) env
+sudo-sub-id|sudo -u $(id) env
+direnv-sub|direnv exec $(pwd) env
+printenv-sub|printenv $(echo) GITHUB_TOKEN
+rel-dot-eq|./a=b/env
+rel-tilde-eq|~/a=b/env
+rel-mid-eq|a/b=c/env
+rel-digit-eq|1a=b/env
+ROWS
+  finish_rows 12
 }
 
 @test "secret-read-guard: denies a dump inside three and four levels of escaped backticks" {
@@ -1626,11 +1726,25 @@ allow_cmd() { # <command>
   allow_cmd $'echo `echo \\`echo \\\\\\`date\\\\\\`\\``'
 }
 
-@test "secret-read-guard: allows a redirected command that is not a dump" {
-  allow_cmd 'env -i mycmd >&2'
-  allow_cmd 'set -euo pipefail >&2'
-  allow_cmd 'export FOO=1 >&2'
-  allow_cmd 'declare -a a 2>/dev/null'
+# F80: allow_cmd rows folded from a redirected command that is not a dump, and
+# env/sudo running a command. Stateless: run_guard, no shared fixture.
+@test "secret-read-guard: allows redirected and wrapped non-dump commands" {
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" allow_cmd "$cmd"
+  done <<'ROWS'
+env-i-redir|env -i mycmd >&2
+set-redir|set -euo pipefail >&2
+export-redir|export FOO=1 >&2
+declare-redir|declare -a a 2>/dev/null
+env-u-cmd|env -u X mycmd
+env-i-cmd|env -i mycmd
+env-0-cmd|env -0 mycmd
+sudo-n-ls|sudo -n ls
+ROWS
+  finish_rows 8
 }
 
 # backtick_level <k> — the backtick that opens or closes nesting level k: bash
@@ -1855,34 +1969,6 @@ assert_allow_within_each_awk() {
   deny_cmd 'printenv --'
 }
 
-@test "secret-read-guard: denies a shell-variable dump followed by a comment" {
-  deny_cmd 'set # list'
-  deny_cmd 'declare -p # list'
-  deny_cmd 'export -p # list'
-}
-
-@test "secret-read-guard: denies a dump followed by a comment or a descriptor redirect" {
-  deny_cmd 'env # show vars'
-  deny_cmd 'env 2>&1'
-  deny_cmd 'printenv 2>/dev/null'
-}
-
-@test "secret-read-guard: denies a dumper behind env and sudo wrappers" {
-  deny_cmd 'env -u X env'
-  deny_cmd 'env FOO=1 printenv'
-  deny_cmd 'sudo -u root env'
-  deny_cmd 'sudo -Eu root env'
-  deny_cmd 'sudo -u root declare -p X'
-  deny_cmd 'sudo -u "root" env'
-}
-
-@test "secret-read-guard: allows env and sudo running a command" {
-  allow_cmd 'env -u X mycmd'
-  allow_cmd 'env -i mycmd'
-  allow_cmd 'env -0 mycmd'
-  allow_cmd 'sudo -n ls'
-}
-
 @test "secret-read-guard: denies a negated dump" {
   deny_cmd '! env'
   deny_cmd $'!\tenv'
@@ -1925,13 +2011,6 @@ assert_allow_within_each_awk() {
 @test "secret-read-guard: rule 2 — denies path-qualified and builtin dumpers (#452)" {
   deny_cmd '/usr/bin/env'
   deny_cmd 'builtin set'
-}
-
-@test "secret-read-guard: rule 2 — denies a wrapper whose option argument is a substitution (#452, #484)" {
-  deny_cmd 'sudo -u $(id -un) env'
-  deny_cmd 'sudo -u $(id) env'
-  deny_cmd 'direnv exec $(pwd) env'
-  deny_cmd 'printenv $(echo) GITHUB_TOKEN'
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper in a case arm (#452)" {
@@ -3656,19 +3735,6 @@ big_bash() { printf '%s' "$1" | jq -Rsc '{hook_event_name:"PreToolUse",tool_name
 @test "secret-read-guard: nine option-with-argument words ahead of -c still deny" {
   deny_cmd "bash$(printf ' -o pipefail%.0s' $(seq 1 9)) -c 'env'"
   deny_cmd "bash$(printf ' -O extglob%.0s' $(seq 1 9)) -c 'env'"
-}
-
-@test "secret-read-guard: #683 a relative dumper path holding = denies" {
-  deny_cmd './a=b/env'
-  deny_cmd '~/a=b/env'
-  deny_cmd 'a/b=c/env'
-  deny_cmd '1a=b/env'
-}
-
-@test "secret-read-guard: a relative dumper path without = denies" {
-  deny_cmd 'bin/env'
-  deny_cmd 'bin/printenv'
-  deny_cmd 'x/env'
 }
 
 @test "secret-read-guard: an underscore-led assignment ending in /env stays allowed" {

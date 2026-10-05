@@ -64,7 +64,7 @@ map_file() {
     full_suite "full suite: $f is a shared source"
     ;;
   scripts/bats-affected.sh) add bats-affected ;;
-  scripts/bats-timing.sh | scripts/bats-classify.sh) ;;
+  scripts/bats-timing.sh | scripts/bats-classify.sh | scripts/bats-coverage.sh) ;;
   adapters/core/crew.sh) add "${crew_set[@]}" ;;
   adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;

@@ -52,7 +52,7 @@ Only when the script can run on macOS (a Nix flake targeting `*-darwin`, a dotfi
   - `tac` (GNU) → `tail -r` (BSD)
 
 #### Test Quality
-- **Coverage on the changed branch**: a bug-fix needs a test (bats or equivalent) exercising *that branch* — not just a still-green suite
+- **Coverage on the changed branch**: a bug-fix needs a test (bats or equivalent) exercising *that branch* — not just a still-green suite; flag a new narrow test when an existing test or table row already covers that path — the fix is a row or an assertion on that test
 - **Untested impure paths**: if pure logic is unit-tested but the risky change is in an impure script (network, tmux, filesystem), say so explicitly — flag the gap rather than implying coverage
 
 ### MEDIUM

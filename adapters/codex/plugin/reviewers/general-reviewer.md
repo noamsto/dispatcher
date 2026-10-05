@@ -27,6 +27,7 @@ Get the complete diff before judging any of it; if the output is truncated, read
 - **Information disclosure**: internal errors, stack traces or timing differences returned to a caller who should not see them
 - **DoS**: an unbounded loop, allocation or request fan-out, or a missing limit on work driven by outside input
 - **Business-logic edges**: state-machine violations, numeric overflow, an empty, zero or negative input the code never considered
+- **A new narrow test duplicating existing coverage**: when an existing test or table row already covers that path, the fix is a row or an assertion on that test, not a new test
 
 ### MEDIUM
 

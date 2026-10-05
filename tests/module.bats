@@ -12,6 +12,9 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 # others.
 export BATS_NO_PARALLELIZE_WITHIN_FILE=true
 
+# shellcheck source=/dev/null
+source "$BATS_TEST_DIRNAME/coverage.bash"
+
 # setup_file runs once per file, before any test in it. Every test below used
 # to `nix build`/`nix eval` on its own -- each invocation is a full flake
 # evaluation, and the nine-way build alone dominates a worker's edit loop.
@@ -276,12 +279,71 @@ setup() {
   [ -f "$dir/EVIDENCE_REVIEW.md" ]
 }
 
-@test "the skills placeholder is substituted in dispatch and dispatch-resume" {
-  # pi is handed this path with --skill; unsubstituted it is not a directory,
-  # so the launch would silently drop the harness skills instead of failing.
-  run grep -c '@skillsDir@' "$OUT_DISPATCH/bin/dispatch"
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
+}
+
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
+}
+
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
+}
+
+# F56: @skillsDir@, @crossRepoHintLib@ (#398/#420), and @protocolRev@ are
+# substituted in dispatch and dispatch-resume. An unsubstituted token is not a
+# readable path (pi --skill would drop the harness skills; the lane hint would
+# be skipped). Read-only greps of the build outputs; no per-row reset.
+@test "placeholders are substituted in dispatch and dispatch-resume" {
+  begin_rows
+  local row token
+  while IFS='|' read -r row token; do
+    [ -n "$row" ] || continue
+    keep_row "$row" placeholder_two_row "$token"
+  done <<'ROWS'
+skills|@skillsDir@
+cross-repo|@crossRepoHintLib@
+protocol-rev|@protocolRev@
+ROWS
+  finish_rows 3
+}
+
+placeholder_two_row() { # token
+  run grep -c "$1" "$OUT_DISPATCH/bin/dispatch"
   [ "$output" = "0" ]
-  run grep -c '@skillsDir@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
+  run grep -c "$1" "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
   [ "$output" = "0" ]
 }
 
@@ -292,15 +354,6 @@ setup() {
   [ -f "$dir/deslop/SKILL.md" ]
 }
 
-@test "the cross-repo hint lib placeholder is substituted in dispatch and dispatch-resume" {
-  # The lane hint is a sourced shared lib (#398/#420); an unsubstituted token is
-  # not a readable path, so the guarded call site silently drops the hint.
-  run grep -c '@crossRepoHintLib@' "$OUT_DISPATCH/bin/dispatch"
-  [ "$output" = "0" ]
-  run grep -c '@crossRepoHintLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
-  [ "$output" = "0" ]
-}
-
 @test "the substituted cross-repo hint lib exists and defines the helper" {
   lib="$(grep -o '/nix/store/[^"}]*cross-repo-hint[^"}]*' "$OUT_DISPATCH/bin/dispatch" | head -1)"
   [ -n "$lib" ]
@@ -308,35 +361,28 @@ setup() {
   grep -q '^cross_repo_hint() {' "$lib"
 }
 
-@test "the worktree-git lib placeholder is substituted in crew, dispatch and dispatch-resume" {
-  # The anchored-git helper (#539) is a sourced shared lib; an unsubstituted
-  # token is not a readable path, so reap/dispatch/resume would abort under
-  # `set -e` the moment they source it.
-  run grep -c '@worktreeGitLib@' "$OUT_CREW/bin/crew"
-  [ "$output" = "0" ]
-  run grep -c '@worktreeGitLib@' "$OUT_DISPATCH/bin/dispatch"
-  [ "$output" = "0" ]
-  run grep -c '@worktreeGitLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
-  [ "$output" = "0" ]
+# F57: @worktreeGitLib@ (#539) and @grantCheckLib@ (#536) are substituted in
+# each consumer. An unsubstituted token is not a readable path, so the source
+# would abort under set -e. Read-only greps; no per-row reset.
+@test "shared-lib placeholders are substituted in each consumer" {
+  begin_rows
+  local row token b1 b2 b3
+  while IFS='|' read -r row token b1 b2 b3; do
+    [ -n "$row" ] || continue
+    keep_row "$row" placeholder_three_row "$token" "$b1" "$b2" "$b3"
+  done <<ROWS
+worktree-git|@worktreeGitLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
+ROWS
+  finish_rows 2
 }
 
-@test "the grant-check lib placeholder is substituted in dispatch, dispatch-resume and permission-check" {
-  # The --add-dir grant validator (#536) is a sourced shared lib; an
-  # unsubstituted token is not a readable path, so any of the three would
-  # abort under `set -e` the moment they source it.
-  run grep -c '@grantCheckLib@' "$OUT_DISPATCH/bin/dispatch"
-  [ "$output" = "0" ]
-  run grep -c '@grantCheckLib@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
-  [ "$output" = "0" ]
-  run grep -c '@grantCheckLib@' "$OUT_PERMISSION_CHECK/bin/permission-check"
-  [ "$output" = "0" ]
-}
-
-@test "the protocol revision placeholder is substituted in dispatch and dispatch-resume" {
-  run grep -c '@protocolRev@' "$OUT_DISPATCH/bin/dispatch"
-  [ "$output" = "0" ]
-  run grep -c '@protocolRev@' "$OUT_DISPATCH_RESUME/bin/dispatch-resume"
-  [ "$output" = "0" ]
+placeholder_three_row() { # token bin bin bin
+  local bin
+  for bin in "$2" "$3" "$4"; do
+    run grep -c "$1" "$bin"
+    [ "$output" = "0" ]
+  done
 }
 
 @test "the built scripts and the built protocol dir carry the same revision" {

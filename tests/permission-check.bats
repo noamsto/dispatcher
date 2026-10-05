@@ -1292,26 +1292,68 @@ assert_pane_refused() {
   [[ "$output" == "human: usage: --projects-dir"* ]]
 }
 
-@test "permission-check: --pane '{last}' is a usage error" {
-  run --separate-stderr bash "$CHECK" --pane '{last}' --branch "$BRANCH" --crew-dir "$CREW"
-  [ "$status" -eq 2 ]
-  [ "$output" = "human: usage: --pane must be a %id" ]
+# keep_row runs one row under set -e and keeps going. finish_rows fails once,
+# naming every row that failed. A short read must not pass with zero rows.
+begin_rows() {
+  ROW_FAILS=()
+  ROW_N=0
 }
 
-@test "permission-check: --pane '!' is a usage error" {
-  run --separate-stderr bash "$CHECK" --pane '!' --branch "$BRANCH" --crew-dir "$CREW"
-  [ "$status" -eq 2 ]
-  [ "$output" = "human: usage: --pane must be a %id" ]
+keep_row() {
+  local id=$1 err rc
+  shift
+  local -a cmd=("$@")
+  ROW_N=$((ROW_N + 1))
+  set +e
+  err=$(
+    set -e
+    trap - ERR
+    "${cmd[@]}" 2>&1
+  )
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    ROW_FAILS+=("$id")
+    printf 'row %s failed\n' "$id" >&2
+    if [ -n "$err" ]; then
+      printf '%s\n' "$err" >&2
+    fi
+    BATS_ERROR_STATUS=
+    BATS_ERROR_SUFFIX=
+  fi
 }
 
-@test "permission-check: --pane 'sess:' is a usage error" {
-  run --separate-stderr bash "$CHECK" --pane 'sess:' --branch "$BRANCH" --crew-dir "$CREW"
-  [ "$status" -eq 2 ]
-  [ "$output" = "human: usage: --pane must be a %id" ]
+finish_rows() {
+  local want=$1
+  if [ "$ROW_N" -ne "$want" ]; then
+    printf 'expected %s rows, ran %s\n' "$want" "$ROW_N" >&2
+    return 1
+  fi
+  if [ "${#ROW_FAILS[@]}" -gt 0 ]; then
+    printf 'failed rows: %s\n' "${ROW_FAILS[*]}" >&2
+    return 1
+  fi
 }
 
-@test "permission-check: --pane '%9x' is a usage error" {
-  run --separate-stderr bash "$CHECK" --pane '%9x' --branch "$BRANCH" --crew-dir "$CREW"
+# F68: pane tokens that are not a %id. Stateless: each call is a fresh
+# process and the assertion is the usage line; nothing is appended.
+@test "permission-check: a pane token that is not a percent-id is a usage error" {
+  begin_rows
+  local row token
+  while IFS='|' read -r row token; do
+    [ -n "$row" ] || continue
+    keep_row "$row" pane_token_row "$token"
+  done <<'ROWS'
+brace-last|{last}
+bang|!
+sess|sess:
+pct-junk|%9x
+ROWS
+  finish_rows 4
+}
+
+pane_token_row() {
+  run --separate-stderr bash "$CHECK" --pane "$1" --branch "$BRANCH" --crew-dir "$CREW"
   [ "$status" -eq 2 ]
   [ "$output" = "human: usage: --pane must be a %id" ]
 }

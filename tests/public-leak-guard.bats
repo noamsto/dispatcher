@@ -3,6 +3,9 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 # adapters/core/public-leak-guard.sh: per-engine parsing and verdict shape,
 # private-repo matching, body files, and the betterleaks scan.
 
+# shellcheck source=/dev/null
+source "$BATS_TEST_DIRNAME/coverage.bash"
+
 setup() {
   GUARD="$BATS_TEST_DIRNAME/../adapters/core/public-leak-guard.sh"
   export XDG_CACHE_HOME="$BATS_TEST_TMPDIR/cache"
