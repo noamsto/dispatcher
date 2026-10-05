@@ -17,11 +17,10 @@ jobs:
           nix develop -c ./scripts/gen-adapters.sh
           git diff --exit-code
 
-  # module.bats's setup_file does a multi-output nix build and a fresh
-  # <nixpkgs> import. That races inside nix on a cold git-fetcher cache,
-  # so this file runs alone, once, on this runner. Shard jobs still
-  # `nix develop`; their bats files do not run this build, and runners do
-  # not share a store.
+  # module.bats's setup_file does a multi-output nix build of this flake.
+  # On a cold git-fetcher cache that races inside nix, so this file runs
+  # alone, once, on this runner. Shard jobs still `nix develop`; their
+  # bats files do not run this build, and runners do not share a store.
   bats-module:
     runs-on: ubuntu-latest
     steps:

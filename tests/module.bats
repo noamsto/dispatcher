@@ -1,9 +1,9 @@
 bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 # Every test here runs a real `nix build`/`nix eval`/`nix store` against the
-# shared local flake -- including one `nix build` of 9 outputs at once and a
-# fresh <nixpkgs> resolution. On a cold git-fetcher cache that races inside
-# nix, independent of bats-level concurrency. CI runs this file exactly once,
+# shared local flake -- including one `nix build` of many outputs at once.
+# On a cold git-fetcher cache that races inside nix, independent of
+# bats-level concurrency. CI runs this file exactly once,
 # in the non-matrix job bats-module, alone on that runner. Shards exclude it
 # (bats-shard.sh) and do not share that runner's store.
 # BATS_NO_PARALLELIZE_WITHIN_FILE stays for any direct/ad-hoc `bats --jobs`
@@ -41,12 +41,15 @@ setup_file() {
 let
   root = @ROOT@;
   self = builtins.getFlake (toString root);
-  nixlib = (import <nixpkgs> {}).lib;
+  # Locked flake input, not <nixpkgs>. The channel is a second, unlocked
+  # nixpkgs fetch and eval on a cold runner.
+  nixpkgs = self.inputs.nixpkgs;
+  nixlib = nixpkgs.lib;
   # hm.dag.entryAfter is the only home-manager lib helper the module calls;
   # stub it to the DAG-free shape the module's own comments already treat it
   # as ({ inherit data; }) rather than pull in home-manager as a dependency.
   extLib = nixlib.extend (_: _: {hm.dag.entryAfter = _: data: {inherit data;};});
-  pkgs = import <nixpkgs> {};
+  pkgs = nixpkgs.legacyPackages.${builtins.currentSystem};
 
   # Declares just enough of the home-manager option surface for the module
   # to write into for real: home.packages/sessionVariables/file/activation,
