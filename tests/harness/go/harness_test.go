@@ -108,8 +108,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 26 || len(wantCases) != 26 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 26 each", len(cases), len(wantCases))
+	if len(cases) != 31 || len(wantCases) != 31 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 31 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -633,5 +633,10 @@ func manifestCases() []testCase {
 		{"pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly", ids("pw-gh-failure-status", "pw-gh-failure-message"), prCase("gh-failure")},
 		{"pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher", ids("pw-crew-event-seed-status", "pw-crew-event-seed-empty-stdout", "pw-crew-event-seed-timeout-stderr", "pw-crew-event-status", "pw-crew-event-stdout", "pw-crew-event-bus-row"), prCase("crew-event")},
 		{"pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out", ids("pw-crew-timeout-seed-status", "pw-crew-timeout-seed-empty-stdout", "pw-crew-timeout-seed-timeout-stderr", "pw-crew-timeout-status", "pw-crew-timeout-empty-stdout", "pw-crew-timeout-no-bus-row"), prCase("crew-timeout")},
+		{"role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once", ids("rw-dialog-clear-no-sends", "rw-dialog-clear-one-send"), roleWatchCase("dialog-clear")},
+		{"role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer", ids("rw-defer-frames-captured"), roleWatchCase("defer-frames")},
+		{"role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment", ids("rw-idle-deliver-one-send"), roleWatchCase("idle")},
+		{"role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order", ids("rw-queue-order-first-send", "rw-queue-order-second-once", "rw-queue-order-ordering"), roleWatchCase("queue")},
+		{"role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed", ids("rw-late-dialog-sends-two", "rw-late-dialog-single-enter"), roleWatchCase("late-dialog")},
 	}
 }

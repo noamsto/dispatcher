@@ -183,4 +183,39 @@ The output should be blank
 The stderr should be blank
 End
 
+It 'role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
 End

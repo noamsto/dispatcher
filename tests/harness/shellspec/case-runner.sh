@@ -7,6 +7,7 @@ readonly ROOT
 readonly MANIFEST="$ROOT/tests/harness/manifest.tsv"
 readonly ASSERTIONS="$ROOT/tests/harness/assertions.tsv"
 readonly CREW="$ROOT/adapters/core/crew.sh"
+readonly DISPATCH="$ROOT/adapters/core/dispatch.sh"
 readonly REFRESH_MODELS="$ROOT/adapters/core/refresh-models.sh"
 readonly PR_WATCH="$ROOT/adapters/core/pr-watch.sh"
 CASE_TMP=$(mktemp -d)
@@ -16,8 +17,14 @@ readonly STDOUT_FILE="$CASE_TMP/stdout"
 readonly STDERR_FILE="$CASE_TMP/stderr"
 touch "$ACTUAL_IDS"
 failures=0
+RW_PID=""
 
 cleanup() {
+  if [[ -n $RW_PID ]]; then
+    kill "$RW_PID" 2>/dev/null || true
+    wait "$RW_PID" 2>/dev/null || true
+  fi
+  cd / || true
   XDG_DATA_HOME="$(dirname "$CASE_TMP")/shellspec-trash" gtrash put "$CASE_TMP"
 }
 trap cleanup EXIT
@@ -35,6 +42,34 @@ check_eq() {
   local id=$1 actual=$2 expected=$3
   record "$id"
   [[ $actual == "$expected" ]] || fail "$id: expected '$expected', got '$actual'"
+}
+
+check_ge() {
+  local id=$1 actual=$2 expected=$3
+  record "$id"
+  [[ $actual =~ ^[0-9]+$ && $actual -ge $expected ]] || fail "$id: expected >= $expected, got '$actual'"
+}
+
+check_lt() {
+  local id=$1 actual=$2 bound=$3
+  record "$id"
+  [[ $actual =~ ^[0-9]+$ && $bound =~ ^[0-9]+$ && $actual -lt $bound ]] ||
+    fail "$id: expected $actual < $bound"
+}
+
+# Bats assertions that assertions.tsv does not map. Checked, not recorded.
+expect_absent() {
+  local detail=$1
+  shift
+  if "$@"; then
+    fail "$detail"
+  fi
+}
+
+expect_present() {
+  local detail=$1
+  shift
+  "$@" || fail "$detail"
 }
 
 check_ne() {
@@ -420,6 +455,390 @@ EOF
   esac
 }
 
+rw_frame_permission() {
+  cat <<'EOF'
+
+● Waiting on the shell reviewer and test-runner.
+
+✻ Waiting for 1 background agent to finish
+
+› Message from @a6fd725715048d707 (ctrl+o to expand)
+
+● The test-runner confirmed every acceptance criterion passes on the branch, and
+  the allowlist tests fail on main. Only the shell reviewer is still out.
+
+✻ Waiting for 2 background agents to finish
+
+● Agent "Review: targeted test-runner" finished · 16m 44s
+
+● Waiting on the shell reviewer.
+
+✻ Waiting for 1 background agent to finish
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+
+ │ Auto mode classifier requires confirmation for this command.
+ │ 3 consecutive actions were blocked. Please review the transcript before
+ │ continuing.
+ │
+ │ Latest blocked action: [Irreversible Local Destruction]
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+EOF
+}
+
+rw_frame_select() {
+  cat <<'EOF'
+  2. Gate everything on 3.8
+     Detect tmux version once in tmux-remux.tmux; emit the 3.8 hook set.
+  3. Require 3.8, drop legacy
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+EOF
+}
+
+rw_frame_quota() {
+  cat <<'EOF'
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+  3. Upgrade to Team plan
+Enter to select · Esc to cancel
+EOF
+}
+
+rw_frame_idle() {
+  cat <<'EOF'
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+}
+
+# fx_subbatch shape above a bordered idle box: a live turn keeps the box drawn.
+rw_frame_live() {
+  cat <<'EOF'
+  ⎿  Done (15 tool uses · 77.2k tokens · 5m 53s)
+✶ Hatching… (6m 1s · ↓ 73.2k tokens)
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
+# Not a prompt and not a box: a claude frame nothing recognises must not be typed into.
+rw_frame_unknown() {
+  cat <<'EOF'
+● Some transcript line
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+EOF
+}
+
+# _rw_stub <frame-fn> — tmux stub: capture-pane prints $STUB_DIR/frame, the
+# pane exists until $STUB_DIR/stop appears, and every call is logged.
+_rw_stub() {
+  "$1" >"$STUB_DIR/frame"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+esc=$'\033'
+case "$1" in
+display-message)
+  case "$*" in
+  *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *)
+    [ -e "$STUB_DIR/stop" ] && exit 1
+    printf '%s\n' '%6'
+    ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_id) [ -e "$STUB_DIR/no_crew_id" ] || printf '%s\n' c1 ;;
+  esac
+  ;;
+capture-pane)
+  case " $* " in
+  *' -e '*) cat "$STUB_DIR/frame" ;;
+  *) sed -E "s/${esc}\\[[0-9;]*m//g" "$STUB_DIR/frame" ;;
+  esac
+  ;;
+send-keys)
+  # dispatch.sh no longer types the assignment via send-keys -l (delivery is
+  # paste-buffer below), but the flip trigger stays here too so a fixture that
+  # still exercises literal typing (e.g. the bare Enter/C-u keystrokes) has a
+  # frame-swap path to hook into.
+  if [ "$2 $3 $4" = "-t %6 -l" ] && [ -e "$STUB_DIR/flip" ]; then
+    rm -f "$STUB_DIR/flip"
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  [ -x "$STUB_DIR/hook" ] && "$STUB_DIR/hook" "$@"
+  ;;
+load-buffer)
+  [ -e "$STUB_DIR/load_buffer_fail" ] && exit 1
+  cat >"$STUB_DIR/paste_payload"
+  ;;
+paste-buffer)
+  [ -e "$STUB_DIR/paste_buffer_fail" ] && exit 1
+  printf 'paste %s\n' "$(cat "$STUB_DIR/paste_payload" 2>/dev/null)" >>"$STUB_LOG"
+  if [ -e "$STUB_DIR/flip" ]; then
+    rm -f "$STUB_DIR/flip"
+    cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
+  fi
+  [ -x "$STUB_DIR/hook" ] && "$STUB_DIR/hook" "$@"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+setup_role_watch() {
+  setup_repo
+  export HOME="$TEST_REPO"
+  export STUB_PANE_PID=$$
+  export CREW_REAL="$ROOT/adapters/core/crew.sh"
+  export GRANT_CHECK_LIB="$ROOT/adapters/core/grant-check.sh"
+  export DISPATCH_CONFIG_BIN="$ROOT/adapters/core/dispatch-config.sh"
+  export CROSS_REPO_HINT_LIB="$ROOT/adapters/core/cross-repo-hint.sh"
+  unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC \
+    DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
+    DISPATCH_GRANT_ROOTS DISPATCH_CLAUDE_CONNECTORS DISPATCH_LOCKED_SETTINGS \
+    DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR RW_EXTRA
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
+  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
+  mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
+  printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \
+    >"$DISPATCHER_SKILLS_DIR/spec-plan-critic/SKILL.md"
+  stub_bin tmux
+  stub_bin crew
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  stub_bin gh
+  stub_bin wt
+  stub_bin direnv
+}
+
+# _write_dirs_record <protocol> <skills> <reviewers> <critics> — the
+# protocol-dirs record dispatch writes for feat/9-x, bound to this worktree.
+_write_dirs_record() {
+  local protocol=$1 skills=$2 reviewers=$3 critics=$4 common_dir
+  common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common_dir/crew/protocol-dirs/feat"
+  printf '%s\n' "$protocol" "$skills" "$reviewers" "$critics" "$(realpath "$PWD")" \
+    >"$common_dir/crew/protocol-dirs/feat/9-x"
+}
+
+_spawn_role_fixture() {
+  git commit -q --allow-empty -m init || return 1
+  git worktree add -q -b feat/9-x "$TEST_REPO/.dispatch-wt/feat-9-x" || return 1
+  cd "$TEST_REPO/.dispatch-wt/feat-9-x" || return 1
+  printf 'agent_name: iris\neffort: high\nworker_id: worker:feat/9-x#s1-1\ncrew_id: c1\n' >WORKER_TASK.md
+  export TMUX_PANE=%5
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  roles_dir="$common/crew/artifacts/feat/9-x"
+  mkdir -p "$roles_dir"
+  printf '{"reviewer":{"agent":"pi","model":"openrouter/deepseek/deepseek-v4-flash"}}\n' >"$roles_dir/roles.json"
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" ""
+  # The window options dispatch stamps; --spawn-role's only anchor.
+  export STUB_CREW_DIR="$common/crew" STUB_CREW_BRANCH=feat/9-x
+
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
+list-panes) ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# _rw_start <engine> [body] — run the watcher in the background, then post one
+# assignment to the role from the lead. $2 defaults to "go".
+_rw_start() {
+  local engine=$1 body=${2:-go}
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$engine" --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  sleep 0.6
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc --arg body "$body" '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: $body}' >>"$common/crew/events.jsonl"
+}
+
+_rw_stop() {
+  touch "$STUB_DIR/stop"
+  wait "$RW_PID" 2>/dev/null || true
+  RW_PID=""
+}
+
+_rw_sends() { grep -cE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" || true; }
+_rw_captures() { grep -c '^capture-pane' "$STUB_LOG" || true; }
+
+_rw_wait_until() {
+  local tries=$1
+  shift
+  local i=0
+  while ((i < tries)); do
+    i=$((i + 1))
+    "$@" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+_rw_wait_sends() {
+  local want=$1 i=0
+  while ((i < 40)); do
+    i=$((i + 1))
+    [[ $(_rw_sends) -ge $want ]] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+_rw_wait_captures() {
+  local want=$1 i=0
+  while ((i < 60)); do
+    i=$((i + 1))
+    [[ $(_rw_captures) -ge $want ]] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+_rw_send_count() {
+  local pattern=$1
+  grep -cE "$pattern" "$STUB_LOG" || true
+}
+
+_rw_send_line() {
+  local pattern=$1
+  grep -nE "$pattern" "$STUB_LOG" | head -1 | cut -d: -f1 || true
+}
+
+run_role_watch_cases() {
+  local fn captures min_captures go_line two_line
+  setup_role_watch
+  _spawn_role_fixture || return 1
+  case "$CASE_ID" in
+  role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once)
+    _rw_stub rw_frame_permission
+    _rw_start claude
+    expect_present "permission dialog: timed out waiting for captures" _rw_wait_captures 3
+    check_eq rw-dialog-clear-no-sends "$(_rw_sends)" 0
+    expect_absent "permission dialog received send-keys" grep -q '^send-keys' "$STUB_LOG"
+    rw_frame_idle >"$STUB_DIR/frame"
+    expect_present "permission dialog: assignment was not delivered" _rw_wait_sends 1
+    sleep 0.8
+    _rw_stop
+    check_eq rw-dialog-clear-one-send "$(_rw_sends)" 1
+    expect_present "permission dialog: missing Enter" grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+    ;;
+  role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer)
+    min_captures=""
+    for fn in rw_frame_select rw_frame_quota rw_frame_live rw_frame_unknown; do
+      : >"$STUB_LOG"
+      rm -f "$STUB_DIR/stop"
+      _rw_stub "$fn"
+      _rw_start claude
+      if ! _rw_wait_captures 2; then
+        fail "$fn: timed out waiting for captures"
+      fi
+      _rw_stop
+      captures=$(_rw_captures)
+      if [[ -z $min_captures || $captures -lt $min_captures ]]; then
+        min_captures=$captures
+      fi
+      if ((captures < 2)); then
+        fail "$fn: never captured"
+      fi
+      expect_absent "$fn: deferred frame received keys" grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+      rm -f "$common/crew/events.jsonl"
+    done
+    check_ge rw-defer-frames-captured "${min_captures:-0}" 2
+    ;;
+  role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment)
+    _rw_stub rw_frame_idle
+    _rw_start claude
+    expect_present "idle box: assignment was not delivered" _rw_wait_sends 1
+    sleep 0.8
+    _rw_stop
+    check_eq rw-idle-deliver-one-send "$(_rw_sends)" 1
+    ;;
+  role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order)
+    _rw_stub rw_frame_idle
+    _rw_start claude
+    jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
+    expect_present "queue: first assignment was not delivered" _rw_wait_sends 1
+    _rw_wait_until 150 grep -qE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG" || true
+    sleep 1.2
+    _rw_stop
+    go_line=$(_rw_send_line '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$')
+    two_line=$(_rw_send_line '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$')
+    check_eq rw-queue-order-first-send "$(_rw_sends)" 1
+    check_eq rw-queue-order-second-once "$(_rw_send_count '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$')" 1
+    check_lt rw-queue-order-ordering "$go_line" "$two_line"
+    ;;
+  role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed)
+    _rw_stub rw_frame_idle
+    rw_frame_permission >"$STUB_DIR/frame_after"
+    touch "$STUB_DIR/flip"
+    _rw_start claude
+    expect_present "late dialog: assignment was not typed" _rw_wait_sends 1
+    sleep 0.8
+    expect_absent "late dialog confirmed the permission prompt" grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+    rw_frame_idle >"$STUB_DIR/frame"
+    _rw_wait_until 40 grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" || true
+    _rw_stop
+    expect_present "late dialog: missing Enter" grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+    expect_present "late dialog: missing C-u" grep -qx 'send-keys -t %6 C-u' "$STUB_LOG"
+    check_eq rw-late-dialog-sends-two "$(_rw_sends)" 2
+    check_eq rw-late-dialog-single-enter "$(_rw_send_count '^send-keys -t %6 Enter$')" 1
+    ;;
+  esac
+}
+
 validate_assertion_ids() {
   local expected="$CASE_TMP/expected-ids" actual="$CASE_TMP/actual-ids-sorted"
   awk -F '\t' -v case_id="$CASE_ID" 'NR > 1 && $1 == case_id { print $2 }' "$ASSERTIONS" | sort >"$expected"
@@ -438,6 +857,7 @@ case "$CASE_ID" in
 crew-id-*) run_crew_id_cases ;;
 refresh-models-*) run_refresh_models_cases ;;
 pr-watch-*) run_pr_watch_cases ;;
+role-watch-*) run_role_watch_cases ;;
 esac
 
 validate_assertion_ids

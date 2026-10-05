@@ -14,7 +14,7 @@ awk -F '\t' '
   }
   NF != 10 || $1 != "pytest" || $2 != "prototype" || $7 != 0 || !($4 in expected) || seen[$4]++ { exit 1 }
   END {
-    if (length(seen) != 26 || length(expected) != 26) exit 1
+    if (length(seen) != 31 || length(expected) != 31) exit 1
     for (id in expected) if (!(id in seen)) exit 1
   }
 ' "$manifest" "$results"
