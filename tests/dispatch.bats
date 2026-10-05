@@ -2169,6 +2169,15 @@ ROWS
   [ "$output" = "0" ]
 }
 
+# Eval column-0 functions out of dispatch.sh. Same extract model-map.bats uses;
+# sourcing the file would run main.
+load_dispatch_fns() {
+  local fn
+  for fn in "$@"; do
+    eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
+  done
+}
+
 # Write a budget cache with one claude 7d window at the given utilization.
 budget_json() {
   mkdir -p "$XDG_DATA_HOME/crew"
@@ -3044,87 +3053,84 @@ assert_gate_silent() { # <engine> <model> [profile]
 }
 
 @test "tier gate accepts every claude table cell" {
-  # Distinct titles: see the claude-alias test at :549.
+  load_dispatch_fns _settings_load _model_in_row
+  _settings_load
+  local failures=() tier model
+  while IFS='|' read -r tier model; do
+    _model_in_row claude "$tier" "$model" || failures+=("claude $tier $model: not in row")
+  done <<'TABLE'
+deep|opus
+deep|claude-opus-5-1
+deep|sonnet
+deep|claude-sonnet-4-5
+deep|fable
+deep|claude-fable-5-1
+standard|sonnet
+standard|claude-sonnet-4-5
+trivial|sonnet
+trivial|haiku
+TABLE
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
   stub_launch_bins
   run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "tier claude deep opus"
-  [ "$status" -eq 0 ]
-  run run_dispatch deep claude-opus-5-1 --agent claude --effort high --crew-id c1 42 "tier claude deep opus pinned"
-  [ "$status" -eq 0 ]
-  run run_dispatch deep sonnet --agent claude --effort high --crew-id c1 42 "tier claude deep sonnet"
-  [ "$status" -eq 0 ]
-  run run_dispatch deep claude-sonnet-4-5 --agent claude --effort high --crew-id c1 42 "tier claude deep sonnet pinned"
-  [ "$status" -eq 0 ]
-  run run_dispatch deep fable --agent claude --effort high --crew-id c1 42 "tier claude deep fable"
-  [ "$status" -eq 0 ]
-  run run_dispatch deep claude-fable-5-1 --agent claude --effort high --crew-id c1 42 "tier claude deep fable pinned"
-  [ "$status" -eq 0 ]
-  run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet"
-  [ "$status" -eq 0 ]
-  run run_dispatch standard claude-sonnet-4-5 --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet pinned"
-  [ "$status" -eq 0 ]
-  run run_dispatch trivial sonnet --agent claude --effort low --crew-id c1 42 "tier claude trivial sonnet"
-  [ "$status" -eq 0 ]
-  run run_dispatch trivial haiku --agent claude --effort low --crew-id c1 42 "tier claude trivial haiku"
   [ "$status" -eq 0 ]
 }
 
 @test "tier gate accepts every codex table cell" {
-  stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "tier codex deep sol"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-terra --agent codex --effort high --crew-id c1 42 "tier codex deep terra"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.5 --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.5"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.4 --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.4"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.4-mini --agent codex --effort high --crew-id c1 42 "tier codex deep legacy 5.4 mini"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 42 "tier codex standard terra"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.6-luna --agent codex --effort medium --crew-id c1 42 "tier codex standard luna"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.5 --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.5"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.4 --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.4"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard gpt-5.4-mini --agent codex --effort medium --crew-id c1 42 "tier codex standard legacy 5.4 mini"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.6-luna --agent codex --effort low --crew-id c1 42 "tier codex trivial luna"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.5 --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.5"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.4 --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.4"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial gpt-5.4-mini --agent codex --effort low --crew-id c1 42 "tier codex trivial legacy 5.4 mini"
-  [ "$status" -eq 0 ]
+  load_dispatch_fns _settings_load _model_in_row
+  _settings_load
+  local failures=() tier model
+  while IFS='|' read -r tier model; do
+    _model_in_row codex "$tier" "$model" || failures+=("codex $tier $model: not in row")
+  done <<'TABLE'
+deep|gpt-5.6-sol
+deep|gpt-5.6-terra
+deep|gpt-5.5
+deep|gpt-5.4
+deep|gpt-5.4-mini
+standard|gpt-5.6-terra
+standard|gpt-5.6-luna
+standard|gpt-5.5
+standard|gpt-5.4
+standard|gpt-5.4-mini
+trivial|gpt-5.6-luna
+trivial|gpt-5.5
+trivial|gpt-5.4
+trivial|gpt-5.4-mini
+TABLE
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "tier gate accepts every cursor table cell" {
-  stub_launch_bins
-  DISPATCH_PROFILE=work run run_dispatch deep kimi-k3-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep kimi"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-medium --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok medium"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep grok-4.7-high --agent cursor --effort high --crew-id c1 42 "tier cursor deep grok high"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep composer-2.5 --agent cursor --effort high --crew-id c1 42 "tier cursor deep composer"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch deep 'claude-opus-5[context=1m,effort=high,fast=false]' --agent cursor --effort high --crew-id c1 42 "tier cursor deep bracket opus"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard grok-4.7-medium --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok medium"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard grok-4.7-low --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok low"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort medium --crew-id c1 42 "tier cursor standard composer"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial grok-4.7-low --agent cursor --effort low --crew-id c1 42 "tier cursor trivial grok low"
-  [ "$status" -eq 0 ]
-  DISPATCH_PROFILE=work run run_dispatch trivial composer-2.5 --agent cursor --effort low --crew-id c1 42 "tier cursor trivial composer"
-  [ "$status" -eq 0 ]
+  load_dispatch_fns _settings_load _model_in_row
+  _settings_load
+  local failures=() tier model
   # 4.6 keeps its old cursor- prefix and stays dispatchable after the move to 4.7.
-  DISPATCH_PROFILE=work run run_dispatch standard cursor-grok-4.6-medium --agent cursor --effort medium --crew-id c1 42 "tier cursor standard grok 4.6"
-  [ "$status" -eq 0 ]
+  while IFS='|' read -r tier model; do
+    _model_in_row cursor "$tier" "$model" || failures+=("cursor $tier $model: not in row")
+  done <<'TABLE'
+deep|kimi-k3-high
+deep|grok-4.7-medium
+deep|grok-4.7-high
+deep|composer-2.5
+deep|claude-opus-5[context=1m,effort=high,fast=false]
+standard|grok-4.7-medium
+standard|grok-4.7-low
+standard|composer-2.5
+trivial|grok-4.7-low
+trivial|composer-2.5
+standard|cursor-grok-4.6-medium
+TABLE
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "every profile refuses the retired opencode route on pi" {
@@ -3141,23 +3147,26 @@ assert_gate_silent() { # <engine> <model> [profile]
 }
 
 @test "tier gate accepts every pi table cell on both profiles" {
-  stub_launch_bins
+  load_dispatch_fns _settings_load _model_in_row
+  local failures=() p tier model
   for p in work personal; do
-    DISPATCH_PROFILE=$p run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi deep v41 flash $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi standard v41 flash $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi standard flash $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/z-ai/glm-5.3-flash --agent pi --effort high --crew-id c1 42 "tier pi standard glm $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch standard openrouter/qwen/qwen3.8-flash --agent pi --effort high --crew-id c1 42 "tier pi standard qwen $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial flash $p"
-    [ "$status" -eq 0 ]
-    DISPATCH_PROFILE=$p run run_dispatch trivial openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "tier pi trivial v41 flash $p"
-    [ "$status" -eq 0 ]
+    DISPATCH_PROFILE=$p _settings_load
+    while IFS='|' read -r tier model; do
+      _model_in_row pi "$tier" "$model" || failures+=("pi $p $tier $model: not in row")
+    done <<'TABLE'
+deep|openrouter/deepseek/deepseek-v4.1-flash
+standard|openrouter/deepseek/deepseek-v4.1-flash
+standard|openrouter/deepseek/deepseek-v4-flash
+standard|openrouter/z-ai/glm-5.3-flash
+standard|openrouter/qwen/qwen3.8-flash
+trivial|openrouter/deepseek/deepseek-v4-flash
+trivial|openrouter/deepseek/deepseek-v4.1-flash
+TABLE
   done
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
 }
 
 @test "tier gate refuses the dropped pi v4-pro row, naming the new expected set" {
@@ -3304,16 +3313,20 @@ assert_gate_silent() { # <engine> <model> [profile]
 # premium-rung refusal, EFFORT = premium-effort refusal, ALLOW = launched.
 # Cursor never takes EFFORT (#629): its --effort is accepted and ignored.
 @test "pace decisions hold across every claude/codex/cursor model and effort (#605)" {
-  stub_launch_bins
-  n=1000
+  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
+  _settings_load
+  # Read by the eval'd pace_rule_target, not by this function body.
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
   while IFS='|' read -r agent model decisions; do
     case "$agent" in '' | '#'*) continue ;; esac
     for effort in low medium high xhigh max; do
       expected="${decisions%%,*}"
       decisions="${decisions#*,}"
-      n=$((n + 1))
       budget_json_at "$agent" 77 345600
-      run run_dispatch deep "$model" --agent "$agent" --effort "$effort" --no-grid --ignore-map --crew-id c1 "$n" "pace-table-$n"
+      run pace_rule_target "$agent" "$model" "$effort"
       case "$output" in
       *"the premium rung"*) got=MODEL ;;
       *"premium effort"*) got=EFFORT ;;
@@ -3321,7 +3334,6 @@ assert_gate_silent() { # <engine> <model> [profile]
       esac
       [ "$got" = "$expected" ] || {
         echo "pace decision drifted for $agent $model @ $effort: expected $expected, got $got" >&2
-        echo "$output" >&2
         return 1
       }
       if [ "$expected" = ALLOW ]; then [ "$status" -eq 0 ]; else [ "$status" -eq 1 ]; fi
@@ -3345,6 +3357,11 @@ cursor|composer-2.5|ALLOW,ALLOW,ALLOW,ALLOW,ALLOW
 cursor|grok-4.7-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 cursor|cursor-grok-4.6-high[effort=high]|MODEL,MODEL,MODEL,MODEL,MODEL
 TABLE
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  run run_dispatch deep opus --agent claude --effort low --no-grid --ignore-map --crew-id c1 1000 "pace-e2e"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 # An edit to burnClasses must move the gate: a user-layer override raising
