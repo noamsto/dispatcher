@@ -7,11 +7,11 @@ cd "$root"
 
 case ${1:-serial} in
 serial)
-  (($# == 1)) || exit 2
+  (($# <= 1)) || exit 2
   exec pytest -q tests/harness/pytest
   ;;
 xdist)
-  (($# == 1)) || exit 2
+  (($# <= 1)) || exit 2
   exec pytest -q -n 4 --dist load tests/harness/pytest
   ;;
 case)

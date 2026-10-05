@@ -182,7 +182,9 @@ func runCommand(dir string, env []string, name string, args ...string) commandRe
 			status = -1
 		}
 	}
-	return commandResult{strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), status}
+	// bats `run` strips trailing newlines only (command-substitution semantics);
+	// TrimSpace would also forgive leading/interior whitespace drift.
+	return commandResult{strings.TrimRight(stdout.String(), "\r\n"), strings.TrimRight(stderr.String(), "\r\n"), status}
 }
 
 func writeExecutable(t *testing.T, path, contents string) {
@@ -563,18 +565,37 @@ func eventRow(t *caseTest, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var event map[string]any
-		if json.Unmarshal([]byte(line), &event) != nil || event["kind"] != "msg" {
-			continue
-		}
-		var body map[string]any
-		if json.Unmarshal([]byte(event["body"].(string)), &body) != nil {
-			continue
-		}
-		return fmt.Sprintf("%s|%s|%s", event["from"], event["to"], body["changed"].([]any)[0])
+	// The bats oracle is `jq -r 'select(.kind=="msg") | ...'` compared against the
+	// full stdout: every line must parse, every msg body must be a JSON string
+	// with a changed list, and all rows join with newlines — not first-row-wins.
+	trimmed := strings.TrimRight(string(data), "\r\n")
+	if trimmed == "" {
+		return ""
 	}
-	return ""
+	var rows []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("event log line is not JSON: %v", err)
+		}
+		if event["kind"] != "msg" {
+			continue
+		}
+		body, ok := event["body"].(string)
+		if !ok {
+			t.Fatalf("msg event body is not a string: %v", event["body"])
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Fatalf("msg event body is not JSON: %v", err)
+		}
+		changed, ok := parsed["changed"].([]any)
+		if !ok || len(changed) == 0 {
+			t.Fatalf("msg event body has no changed list: %v", parsed)
+		}
+		rows = append(rows, fmt.Sprintf("%s|%s|%s", event["from"], event["to"], changed[0]))
+	}
+	return strings.Join(rows, "\n")
 }
 
 func ids(values ...string) []string { return values }

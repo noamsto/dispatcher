@@ -12,7 +12,7 @@ usage() {
   exit 2
 }
 
-output="${TMPDIR:-/tmp}/dispatcher-harness-profile"
+output=""
 declare -a requested=()
 while (($#)); do
   case "$1" in
@@ -47,6 +47,9 @@ if [[ -z $time_bin ]]; then
   exit 1
 fi
 
+if [[ -z $output ]]; then
+  output=$(mktemp -d "${TMPDIR:-/tmp}/dispatcher-harness-profile.XXXXXX")
+fi
 mkdir -p "$output/cases"
 results="$output/cases.tsv"
 printf '%s\n' 'case_id	source_file	family	status	wall_s	user_s	sys_s	bucket_harness_s	bucket_production_s	bucket_wait_s	bucket_residual_s	diagnostic_production_wait_s	diagnostic_sleep_s	diagnostic_timeout_s	diagnostic_git_s	diagnostic_jq_s	diagnostic_tmux_s	diagnostic_shell_script_s' >"$results"

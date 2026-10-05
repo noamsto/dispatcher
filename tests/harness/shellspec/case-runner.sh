@@ -354,7 +354,8 @@ EOF
     run_pr_watch 42 --repo o/r --timeout 30 --interval 1
     check_eq pw-no-crew-status "$CAPTURE_STATUS" 0
     check_ne pw-no-crew-event "$CAPTURE_STDOUT" ''
-    common=$(git rev-parse --path-format=absolute --git-common-dir)
+    common=$(git rev-parse --path-format=absolute --git-common-dir) ||
+      fail "pw-no-crew-no-bus: git rev-parse failed"
     check_no_path pw-no-crew-no-bus "$common/crew"
     ;;
   pr-watch-works-with-no-git-repo-at-all-when-repo-is-given)
@@ -412,7 +413,8 @@ EOF
     capture env CREW_ID=c1 bash -euo pipefail "$CREW" pr-watch 42 --repo o/r --timeout 1 --interval 1
     check_eq pw-crew-timeout-status "$CAPTURE_STATUS" 0
     check_eq pw-crew-timeout-empty-stdout "$CAPTURE_STDOUT" ''
-    log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+    log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ||
+      fail "pw-crew-timeout-no-bus-row: git rev-parse failed"
     check_no_path pw-crew-timeout-no-bus-row "$log"
     ;;
   esac

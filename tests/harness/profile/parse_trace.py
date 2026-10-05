@@ -19,6 +19,8 @@ EXEC = re.compile(r'^execve\("((?:\\.|[^"\\])*)"')
 CHILD = re.compile(r"\)\s+=\s+(\d+)\s+<")
 DURATION = re.compile(r"<([0-9.]+)>$")
 QUOTED = re.compile(r'"(?:\\.|[^"\\])*"')
+RESUMED = re.compile(r"^<\.\.\. (\w+) resumed>(.*)$")
+UNFINISHED = "<unfinished ...>"
 
 HEADER = [
     "case_id",
@@ -133,7 +135,37 @@ def is_production_call(call: str, repo_root: str) -> bool:
     return interpreter and any(production_path(argument, repo_root) for argument in arguments[1:])
 
 
-def parse_trace(path: Path) -> tuple[list[Segment], dict[int, int], int, float, float]:
+def stitched_events(path: Path) -> list[tuple[int, float, str]]:
+    # strace -f splits a syscall into `<unfinished ...>` / `<... name resumed>`
+    # halves whenever another thread reports mid-call; neither half alone matches
+    # the exec or sleep patterns, so they must be rejoined before classifying.
+    events: list[tuple[int, float, str]] = []
+    pending: dict[int, tuple[float, str]] = {}
+    for raw_line in path.read_text().splitlines():
+        match = LINE.match(raw_line)
+        if not match:
+            continue
+        pid = int(match.group(1))
+        timestamp = float(match.group(2))
+        call = match.group(3)
+        if call.endswith(UNFINISHED):
+            pending[pid] = (timestamp, call[: -len(UNFINISHED)])
+            continue
+        resumed = RESUMED.match(call)
+        if resumed and pid in pending:
+            start, partial = pending.pop(pid)
+            if partial.startswith(resumed.group(1) + "("):
+                events.append((pid, start, partial + resumed.group(2)))
+            else:
+                events.append((pid, start, partial + UNFINISHED))
+                events.append((pid, timestamp, call))
+            continue
+        events.append((pid, timestamp, call))
+    events.extend((pid, start, partial + UNFINISHED) for pid, (start, partial) in pending.items())
+    return events
+
+
+def parse_trace(events: list[tuple[int, float, str]]) -> tuple[list[Segment], dict[int, int], int, float, float]:
     parents: dict[int, int] = {}
     active: dict[int, tuple[float, str, str]] = {}
     segments: list[Segment] = []
@@ -147,13 +179,7 @@ def parse_trace(path: Path) -> tuple[list[Segment], dict[int, int], int, float, 
             start, command, call = current
             segments.append(Segment(pid, start, timestamp, command, call))
 
-    for raw_line in path.read_text().splitlines():
-        match = LINE.match(raw_line)
-        if not match:
-            continue
-        pid = int(match.group(1))
-        timestamp = float(match.group(2))
-        call = match.group(3)
+    for pid, timestamp, call in events:
         first = min(first, timestamp)
         duration = DURATION.search(call)
         last = max(last, timestamp + (float(duration.group(1)) if duration else 0.0))
@@ -191,7 +217,8 @@ def parse_trace(path: Path) -> tuple[list[Segment], dict[int, int], int, float, 
 
 
 def analyze(trace: Path, wall: float, repo_root: str) -> dict[str, float]:
-    segments, parents, root_pid, trace_start, _ = parse_trace(trace)
+    events = stitched_events(trace)
+    segments, parents, root_pid, trace_start, _ = parse_trace(events)
     wall_end = trace_start + wall
     bounds = (trace_start, wall_end)
 
@@ -260,15 +287,9 @@ def analyze(trace: Path, wall: float, repo_root: str) -> dict[str, float]:
         if re.search(r'\.sh(?:"|\\")', segment.call):
             tools["shell_script"].append(interval)
 
-    for raw_line in trace.read_text().splitlines():
-        match = LINE.match(raw_line)
-        if not match:
-            continue
-        pid = int(match.group(1))
+    for pid, timestamp, call in events:
         if pid not in descendants:
             continue
-        timestamp = float(match.group(2))
-        call = match.group(3)
         if call.startswith(("nanosleep(", "clock_nanosleep(")):
             duration = DURATION.search(call)
             if duration:

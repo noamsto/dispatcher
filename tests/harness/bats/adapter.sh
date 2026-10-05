@@ -23,7 +23,12 @@ if [[ $mode == tuned ]]; then
   tuned_tmpdir=$(mktemp -d)
   readonly tuned_tmpdir
   cleanup() {
-    gtrash put "$tuned_tmpdir" >&2
+    # CI's nix develop shell has no gtrash; the dir is our own mktemp either way.
+    if command -v gtrash >/dev/null 2>&1; then
+      gtrash put "$tuned_tmpdir" >&2
+    else
+      rm -rf "$tuned_tmpdir"
+    fi
   }
   trap cleanup EXIT
   export TMPDIR=$tuned_tmpdir
