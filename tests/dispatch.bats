@@ -47,6 +47,7 @@ EOF
   # The cross-repo lane hint is a sourced shared lib; raw runs point the
   # override at the repo copy (flake.nix bakes the store path for builds).
   export CROSS_REPO_HINT_LIB="$BATS_TEST_DIRNAME/../adapters/core/cross-repo-hint.sh"
+  export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
 }
 
 teardown() {
@@ -14065,6 +14066,18 @@ setup_bundle_resume() {
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
 }
 
+@test "lean: a claude lead launch disables only the worker's unused plugins" {
+  stub_launch_bins
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  [[ "$line" == *"--settings $settings --add-dir "* ]]
+  [[ "$line" != *disableAllHooks* ]]
+  [[ "$line" != *gopls-lsp* ]]
+}
+
 @test "lean: DISPATCH_CLAUDE_CONNECTORS=1 opts out" {
   stub_launch_bins
   DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
@@ -14090,4 +14103,8 @@ setup_bundle_resume() {
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris-reviewer "* ]]
+  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  [[ "$line" == *"--settings $settings --add-dir "* ]]
+  [[ "$line" != *disableAllHooks* ]]
+  [[ "$line" != *gopls-lsp* ]]
 }

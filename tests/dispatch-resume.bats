@@ -54,6 +54,7 @@ EOF
   # The cross-repo lane hint is a sourced shared lib; raw runs point the
   # override at the repo copy (flake.nix bakes the store path for builds).
   export CROSS_REPO_HINT_LIB="$BATS_TEST_DIRNAME/../adapters/core/cross-repo-hint.sh"
+  export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
   git commit --allow-empty -qm init
 }
 
@@ -1007,6 +1008,20 @@ EOF
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+}
+
+@test "claude resume disables only the worker's unused plugins" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  [[ "$line" == *"--settings $settings --add-dir "* ]]
+  [[ "$line" != *disableAllHooks* ]]
+  [[ "$line" != *gopls-lsp* ]]
 }
 
 @test "claude resume drops the claude.ai connectors unless DISPATCH_CLAUDE_CONNECTORS=1" {

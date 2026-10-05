@@ -727,6 +727,18 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # shellcheck source=/dev/null
 . "$grant_check_lib"
 
+# Worker-only plugin disablement is shared with dispatch-resume.  It is a
+# separate --settings layer so the Nix wrapper's settings overlay still wins
+# for hooks and other centrally managed configuration.
+claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$claude_worker_settings_lib" ]; then
+  claude_worker_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/claude-worker-settings.sh"
+fi
+# shellcheck source=/dev/null
+. "$claude_worker_settings_lib"
+
 # The localModels lane helpers, shared with crew and refresh-budget.
 # shellcheck source=/dev/null
 . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
@@ -1677,7 +1689,7 @@ launch_role() {
     printf -v quoted_dir '%q' "$pi_agent_dir"
     cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $r_effort --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
   codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -4915,7 +4927,7 @@ else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks
