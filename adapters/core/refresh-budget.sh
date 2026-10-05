@@ -13,6 +13,9 @@
 # same per-window figures (plus pi's openrouter fields) as one JSON document
 # instead. Both exit 1 when no cache exists yet.
 #
+# The probing run also prints live slot use per localModels entry, counted
+# from the tmux pane stamps; --report does not (no tmux/dispatch-config call).
+#
 #   claude — GET /api/oauth/usage with the access token from
 #     ~/.claude/.credentials.json (stays local, never printed). Fallback 1: a
 #     statusline-dumped rate_limits payload at $XDG_DATA_HOME/crew/claude-
@@ -782,6 +785,21 @@ main() {
   printf '%s\n' "$OUT"
 
   report
+
+  # shellcheck source=/dev/null
+  . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+  local id max joined
+  local -a holders
+  while IFS= read -r id; do
+    max=$(_local_entry "$settings" "$id" | jq -r '.maxConcurrent')
+    mapfile -t holders < <(_local_holders "$id")
+    printf 'local: %s %s/%s in use' "$id" "${#holders[@]}" "$max"
+    if ((${#holders[@]})); then
+      printf -v joined '%s, ' "${holders[@]}"
+      printf ' (%s)' "${joined%, }"
+    fi
+    printf '\n'
+  done < <(jq -r '.localModels // {} | keys[]' <<<"$settings")
 }
 
 if [[ $report_mode == true ]]; then

@@ -60,7 +60,7 @@ map_file() {
     if [[ -f "$root/$f" ]]; then selected+=("$f"); fi
     ;;
   tests/*) full_suite "full suite: $f is a shared test helper or fixture" ;;
-  adapters/core/dispatch-config.sh | adapters/core/grant-check.sh | adapters/core/defaults.json | adapters/core/worktree-git.sh | flake.nix | flake.lock | nix/* | .github/workflows/*)
+  adapters/core/dispatch-config.sh | adapters/core/grant-check.sh | adapters/core/local-models.sh | adapters/core/defaults.json | adapters/core/worktree-git.sh | flake.nix | flake.lock | nix/* | .github/workflows/*)
     full_suite "full suite: $f is a shared source"
     ;;
   scripts/bats-affected.sh) add bats-affected ;;

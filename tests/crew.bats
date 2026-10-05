@@ -909,6 +909,48 @@ EOF
   [ "$(jq -r .defaultProjectTrust "$WORKER/settings.json")" = never ]
 }
 
+@test "pi-agent-dir: generates models.json from localModels" {
+  _pi_fixture
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  cat >"$XDG_CONFIG_HOME/dispatcher/settings.json" <<'EOF'
+{"localModels": {
+  "lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 131072},
+  "lemonade/Alpha": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 4096}
+}}
+EOF
+  run_crew pi-agent-dir >/dev/null
+  jq -e '. == {providers: {lemonade: {baseUrl: "http://halo.test:13305/v1", api: "openai-completions", apiKey: "lemonade", models: [{id: "Alpha", contextWindow: 4096}, {id: "Qwen3.8-Flash-Next-MTP", contextWindow: 131072}]}}}' "$WORKER/models.json"
+  # dispatcher-owned: dropping the entry must stop it being reachable.
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run_crew pi-agent-dir >/dev/null
+  jq -e '. == {providers: {}}' "$WORKER/models.json"
+}
+
+@test "pi-agent-dir: a localModels provider with a stored credential is refused" {
+  _pi_fixture
+  printf '{"openai":{"type":"api_key","key":"sk-test-fixture"}}\n' >"$AMBIENT/auth.json"
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"localModels":{"OpenAI/gpt-oss-120b":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}\n' \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"localModels provider 'OpenAI' has a stored pi credential"* ]]
+  [[ "$stderr" != *sk-test-fixture* ]]
+  [ ! -e "$WORKER/models.json" ]
+}
+
+@test "pi-agent-dir: invalid dispatcher settings refuse to seed models.json" {
+  _pi_fixture
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"localModels":{"lemonade/Alpha":{"contextWindow":4096}}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_crew pi-agent-dir
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"models.json"* ]]
+  [ ! -e "$WORKER/models.json" ]
+}
+
 @test "pi-agent-dir: auth links to the ambient file, never copies it" {
   _pi_fixture
   run_crew pi-agent-dir >/dev/null
