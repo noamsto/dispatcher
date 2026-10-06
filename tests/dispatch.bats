@@ -530,6 +530,71 @@ EOF
   [[ "$output" == $'claude\npi' ]]
 }
 
+@test "--engines --in-budget drops an exhausted engine and says why on stderr" {
+  codex_budget_json 100 "$(date +%s)"
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\npi' ]
+  [[ "$stderr" == *"dispatch: --engines --in-budget: dropping codex"* ]]
+  [ "$(grep -c 'dropping' <<<"$stderr")" -eq 1 ]
+}
+
+@test "--engines --in-budget keeps every engine when the cache is stale" {
+  codex_budget_json 100 "$(($(date +%s) - 7300))"
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\ncodex\npi' ]
+  [[ "$stderr" != *"dropping"* ]]
+}
+
+@test "--engines --in-budget keeps every engine when there is no cache" {
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\ncodex\npi' ]
+  [[ "$stderr" != *"dropping"* ]]
+}
+
+@test "--engines --in-budget keeps an engine whose window already reset" {
+  budget_json_at codex 100 -3600
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\ncodex\npi' ]
+  [[ "$stderr" != *"dropping"* ]]
+}
+
+@test "--engines --in-budget drops an engine at a codex absolute limit with windows under 95%" {
+  codex_limit_json '{ordinary_usage_allowed: false, rate_limit_reached_type: null, spend_control_reached: true, individual_remaining_percent: 0}'
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\npi' ]
+  [[ "$stderr" == *"dispatch: --engines --in-budget: dropping codex"* ]]
+}
+
+@test "--engines --in-budget drops a pi engine at an absolute limit" {
+  pi_limit_json '{reason: "key limit reached"}'
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\ncodex' ]
+  [[ "$stderr" == *"dispatch: --engines --in-budget: dropping pi"* ]]
+}
+
+@test "--engines --in-budget still omits an engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  codex_budget_json 100 "$(date +%s)"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines --in-budget
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\npi' ]
+  [[ "$stderr" != *"dropping"* ]]
+}
+
+@test "plain --engines never drops an engine for budget" {
+  codex_budget_json 100 "$(date +%s)"
+  DISPATCH_ENGINES="claude codex pi" run --separate-stderr run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [ "$output" = $'claude\ncodex\npi' ]
+  [[ "$stderr" != *"dropping"* ]]
+}
+
 @test "--engines needs no crew id, worktree or tmux" {
   run run_dispatch --engines
   [ "$status" -eq 0 ]
@@ -4686,6 +4751,40 @@ EOF
   wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
 }
 
+@test "--ignore-budget: the lead's stall-watch is told --no-budget" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 --ignore-budget "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane [^ ]* --engine claude --no-budget$'
+}
+
+@test "without --ignore-budget the lead's stall-watch has no --no-budget" {
+  stub_launch_bins
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \
+    standard sonnet --effort medium 42 --crew-id c1 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
+  run ! grep -q -- '--no-budget' "$STUB_LOG"
+}
+
+@test "--ignore-budget: every eager role's stall-watch is told --no-budget too" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "plan-critic=codex:gpt-5.6-terra,reviewer=claude:sonnet" --effort high --crew-id c1 --ignore-budget 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/42-do-a-thing:reviewer --pane %6 --engine claude --no-budget$'
+  wait_for_log 'stall-watch role:feat/42-do-a-thing:plan-critic --pane [^ ]* --engine codex --no-budget$'
+  wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane [^ ]* --engine claude --no-budget$'
+}
+
+@test "--ignore-budget: a --spawn-role role's stall-watch is told --no-budget" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet --ignore-budget
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/9-x:reviewer --pane %6 --engine claude --no-budget$'
+}
+
 @test "session: a minted id is epoch-pid shaped" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch \
@@ -8068,16 +8167,14 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [[ "$line" == *"$r"* ]]
 }
 
-@test "add-dir: an eager claude role gets a prompt-only stall-watch, a codex role none" {
+@test "add-dir: every eager role gets a stall-watch under its own engine" {
   stub_launch_bins
   _grid_tmux_stub
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "plan-critic=codex:gpt-5.6-terra,reviewer=claude:sonnet" --effort high --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch role:feat/42-do-a-thing:reviewer --pane %6 --engine claude'
-  # The lead's own watch is spawned after the role loop, so once it is logged
-  # the codex role's would have been too.
+  wait_for_log 'stall-watch role:feat/42-do-a-thing:plan-critic --pane [^ ]* --engine codex'
   wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane'
-  run ! grep -q 'stall-watch role:feat/42-do-a-thing:plan-critic' "$STUB_LOG"
 }
 
 @test "add-dir: a --spawn-role claude role gets a prompt-only stall-watch" {

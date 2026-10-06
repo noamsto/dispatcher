@@ -207,7 +207,7 @@ Session identity never carries forward across a resume: a resume mints a new `wo
 Check Resuming a killed run first. Unless resuming, before the plan phase decide once, in the worktree (never at dispatch time), whether a top-tier consultant decomposes the task, and which.
 
 1. Survey (cheap, in-worktree): modules/packages touched, blast radius (shared interfaces, cross-cutting seams). One boolean: _does this need a stronger decomposition than an opus plan alone?_ A few `Grep`/`Glob` passes, no subagent.
-2. If it trips, pick a consultant and consult. Judge fit per task; one line in the plan seam: which, why. Only consultants whose engine (in parentheses) passes the `dispatch --engines` gate; neutral fit → opus if `claude` is in the roster, else the first available. One-shots work from any lead.
+2. If it trips, pick a consultant and consult. Judge fit per task; one line in the plan seam: which, why. Only consultants whose engine (in parentheses) passes the `dispatch --engines --in-budget` gate; neutral fit → opus if `claude` is in the roster, else the first available. One-shots work from any lead.
 
    | consultant | mechanism | lean |
    | ---------- | --------- | ---- |
@@ -217,7 +217,7 @@ Check Resuming a killed run first. Unless resuming, before the plan phase decide
    | grok-4.7-high (`cursor`) | cursor one-shot | third-family perspective |
 
    Commands and gate: Cross-engine one-shots. `consult_engine` names the family (`opus`|`fable`|`codex`|`cursor`). Same ask for every mechanism: read `WORKER_TASK.md` and the relevant code, produce the `DECOMPOSITION.md` body as `components` (each a stable id + one-line + `boundaries` may/must-not-touch + `risk` tag), `ordering` (dependency order, `∥` = parallel-safe), `interfaces` (contracts stable across the split). The Agent-tool form writes `DECOMPOSITION.md` at the worktree root itself; otherwise you write it there from the reply. A decomposition, not the plan: no plan-schema step tags. `DECOMPOSITION.md` must not name its author or the consulting engine (plan-critic reads it author-less; rule 2).
-3. Fallback, a should, not a blocker: refusal, timeout or unavailable engine (not in `dispatch --engines`) → drop the consult; plain plan path (`spec-plan-critic` plan schema), byte-identical to a non-consulted deep worker. A failed codex/cursor pick may first retry once with `opus` (`fable` if architecture-heavy) if `claude` is in `dispatch --engines`. Never fail the worker on a missing consult (as the diverse-engine reviewer, "Code review gate"). Write a `consult_failed` retro note: consultant, reason.
+3. Fallback, a should, not a blocker: refusal, timeout or unavailable engine (not in `dispatch --engines --in-budget`) → drop the consult; plain plan path (`spec-plan-critic` plan schema), byte-identical to a non-consulted deep worker. A failed codex/cursor pick may first retry once with `opus` (`fable` if architecture-heavy) if `claude` is in `dispatch --engines --in-budget`. Never fail the worker on a missing consult (as the diverse-engine reviewer, "Code review gate"). Write a `consult_failed` retro note: consultant, reason.
 4. Seed the plan: an existing `DECOMPOSITION.md` is a hard constraint for the `spec-plan-critic` plan phase; `plan-critic` checks conformance. You do not hand-author the plan.
 5. False-negative recovery: no trip, then the plain plan exhausts the revision cap (rule 3) unaccepted → consult once now, re-plan from `DECOMPOSITION.md`: one attempt beyond the cap (cap + 1 total). Already consulted and cap exhausted → `escalations[]`, no extra attempt. Recovery consult refuses or times out → `escalations[]` and stop, no plain-path re-loop.
 
@@ -225,7 +225,7 @@ Check Resuming a killed run first. Unless resuming, before the plan phase decide
 
 Any lead can reach another engine's model as a stateless, read-only shell one-shot, for the Orchestration consult and the diverse-engine reviewer ("Code review gate").
 
-- Gate: `dispatch --engines | grep -qx <engine>` (one per line, enabled and installed here). Absent engine, or a refusal, timeout, sandbox, network or auth failure → unavailable, a should, not a blocker: drop it (consult step 3; diverse-engine reviewer bullet).
+- Gate: `dispatch --engines --in-budget | grep -qx <engine>` (one per line, enabled and installed here, and not at ≥95% of a quota window or a limit per the budget cache). Absent engine, or a refusal, timeout, sandbox, network or auth failure → unavailable, a should, not a blocker: drop it (consult step 3; diverse-engine reviewer bullet).
 - Read-only by construction; run from the worktree root. Keep the `env -u` prefix (else the nested SessionEnd/stop hook, `dispatch-notify.sh`, posts `exited` for the lead) and coreutils `timeout 540` (`gtimeout` on macOS; neither on PATH → unavailable). Shell tool timeout above it: 600000 ms on Claude Code, its maximum; lower ceiling → background and poll. Prompt as argument, context (a diff) on stdin (the claude one-shot has no Bash): `git diff "$base_ref"...HEAD | <one-shot> '<prompt>'`. The final message is stdout. Every prompt carries: never read `.env*`, credentials, or keys; never print a secret value.
 
   | engine | one-shot |
@@ -235,7 +235,7 @@ Any lead can reach another engine's model as a stateless, read-only shell one-sh
   | cursor | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 cursor-agent -p --mode ask --trust --model grok-4.7-high '<prompt>'`; `--mode ask` keeps it read-only; never add `--force` (not read-only) |
 
 - Consult use: the prompt is the consult step 2 ask (read `WORKER_TASK.md` and the relevant code); the reply is the `DECOMPOSITION.md` body itself (`components` / `ordering` / `interfaces`), not a plan-mode plan. You write `DECOMPOSITION.md` from it, author- and engine-free.
-- Diverse reviewer pick: a different family from the lead, first available in `dispatch --engines`. A reply citing no changed file is a failed one-shot: drop it.
+- Diverse reviewer pick: a different family from the lead, first available in `dispatch --engines --in-budget`. A reply citing no changed file is a failed one-shot: drop it.
   - claude lead → codex (`gpt-5.6-sol`), else cursor (`grok-4.7-high`).
 <!-- only:codex -->
   - codex lead → claude (`--model opus`), else cursor.
@@ -469,7 +469,7 @@ Right before every stopping path (done; terminal failure of spec, plan, consult 
 - terminal failure (gate won't pass, etc.): `crew status "$CREW_WORKER_ID" failed "<why>"` → snapshot → stop.
 - Never use an interactive question tool (`AskUserQuestion`, any engine's option-select prompt): nobody watches your pane, so it is invisible to the bus and waits forever. Ask only via `crew status blocked` + `crew msg` + `crew await`: durable, wakes the dispatcher, resumes you in place.
 - Heartbeat at the seams: re-stamp `crew status "$CREW_WORKER_ID" working "<stage>"` at each checkpoint-peek seam (pre-PR and pre-done completion peeks: only when a directive re-opens the pipeline, the re-entry signal). Free; no dispatcher wake (`crew watch` ignores `working`); keeps roster `age_s` "time since last sign of life"; damps the watchdog. It cannot fire inside a long tool call; a subagent batch relies on the watchdog's own conjuncts.
-- A watchdog may post on your behalf: `dispatch` spawns one `crew stall-watch` per worker; it samples your pane and may append, under your session id, `blocked` with `body.source:"watchdog"` and `detail` prefix `prompt:`, `turn-stall:`, `quiet:`, `stalled:`, `load:` or `runaway:`, or `failed` with `dead:` if the evidence holds 30 minutes later. Never a `msg` or a prompt answer. A watchdog `blocked` in your history means you are alive: re-stamp `working`, carry on; no reply is owed or waiting in `crew await`.
+- A watchdog may post on your behalf: `dispatch` spawns one `crew stall-watch` per worker; it samples your pane and may append, under your session id, `blocked` with `body.source:"watchdog"` and `detail` prefix `prompt:`, `turn-stall:`, `quiet:`, `stalled:`, `load:`, `runaway:` or `budget:`, or `failed` with `dead:` if the evidence holds 30 minutes later. Never a `msg` or a prompt answer. A watchdog `blocked` in your history means you are alive: re-stamp `working`, carry on; no reply is owed or waiting in `crew await`.
 - Two things a fresh worktree does to you. Claude Code's workspace-trust question (`Quick safety check: Is this a project you created or one you trust?`) may come first and blocks everything until answered at the pane, not by you. A blocked `.envrc` (``direnv: error .envrc is blocked. Run `direnv allow` ``) leaves no devshell (`bats`, `yq-go`, `jq`): run `direnv allow` in the worktree root before concluding anything is broken.
 
 ## Rules
