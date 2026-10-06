@@ -76,6 +76,8 @@ expected_inventory() {
       if ($0 !~ /^@test ".*" \{[[:space:]]*$/) { exit 1 }
       tags = file_tags "," test_tags
       name = $0; sub(/^@test "/, "", name); sub(/" \{[[:space:]]*$/, "", name)
+      # JUnit reports the name after shell unquoting.
+      gsub(/\\\\/, "\001", name); gsub(/\\"/, "\"", name); gsub(/\\\$/, "$", name); gsub(/\\`/, "`", name); gsub(/\001/, "\\", name)
       if (tags !~ /(^|,)[[:space:]]*timing([[:space:]]*,|$)/) print FILENAME "\t" name
       test_tags = ""
     }
@@ -118,7 +120,7 @@ for run in "${runs[@]}"; do
   sample="$work/$run"
   mkdir -p "$sample"
   for shard in 1 2 3 4; do
-    gh run download "$run" -n "bats-timing-shard-$shard" --dir "$sample"
+    gh run download "$run" -n "bats-timing-shard-$shard" --dir "$sample/shard-$shard"
   done
   mapfile -t reports < <(find "$sample" -name '*.xml' -type f | LC_ALL=C sort)
   ((${#reports[@]})) || {

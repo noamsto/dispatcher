@@ -398,6 +398,7 @@ find tests -maxdepth 1 -name '*.bats' ! -name module.bats -print0 | LC_ALL=C sor
   /^@test / {
     tags = file_tags "," test_tags
     name = $0; sub(/^@test "/, "", name); sub(/" \{[[:space:]]*$/, "", name)
+    gsub(/\\\\/, "\001", name); gsub(/\\"/, "\"", name); gsub(/\\\$/, "$", name); gsub(/\\`/, "`", name); gsub(/\001/, "\\", name)
     if (tags !~ /(^|,)[[:space:]]*timing([[:space:]]*,|$)/) print "<testcase name=\"" xml(name) "\" time=\"0.001\"/>"
     test_tags = ""
   }
@@ -522,5 +523,32 @@ ci_module_bats_job_ok() {
 
 @test "module bats runs once on unsharded bats-module and check needs it" {
   run ci_module_bats_job_ok "$BATS_TEST_DIRNAME/../.github/workflows/ci.yml"
+  [ "$status" -eq 0 ]
+}
+
+@test "an oversized family is split by test name and every case runs exactly once" {
+  local n tmp shard unit file regex total=0 count
+  for n in 1 2 3 4 5 6; do
+    write_case "$FIXTURE/big.bats" "case $n \$HOME \"quoted\" (x)"
+  done
+  write_case "$FIXTURE/small.bats" "lone"
+  write_weights_header
+  add_weight "$FIXTURE/big.bats" '*' '!timing' 600000
+  add_weight "$FIXTURE/small.bats" '*' '!timing' 10000
+  for shard in 1 2; do
+    shard "$shard" 2 "$FIXTURE"
+    [ "$status" -eq 0 ]
+    while IFS=$'\t' read -r file regex; do
+      [ -n "$file" ] || continue
+      if [ -n "$regex" ]; then
+        count=$(bats --count --filter "$regex" "$file")
+      else
+        count=$(bats --count "$file")
+      fi
+      total=$((total + count))
+    done <<<"$output"
+  done
+  [ "$total" -eq 7 ]
+  run --separate-stderr "$SHARD_SCRIPT" --weights "$FIXTURE/weights.tsv" --check "$FIXTURE"
   [ "$status" -eq 0 ]
 }

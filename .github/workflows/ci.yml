@@ -71,19 +71,28 @@ jobs:
                 whole+=("$unit")
               fi
             done
+            # Every unit runs at once; the 16 job slots are split between the
+            # invocations (floor 2) instead of each unit waiting for the last.
+            n=$(( ${#filtered_files[@]} + (${#whole[@]} > 0 ? 1 : 0) ))
+            jobs=$(( n > 0 ? 16 / n : 16 ))
+            ((jobs >= 2)) || jobs=2
+            pids=()
             if ((${#whole[@]} > 0)); then
               mkdir -p "$junit_dir/whole"
-              bats --jobs 16 --filter-tags '!timing' --report-formatter junit \
-                --output "$junit_dir/whole" "${whole[@]}" || fail=1
+              bats --jobs "$jobs" --filter-tags '!timing' --report-formatter junit \
+                --output "$junit_dir/whole" "${whole[@]}" &
+              pids+=($!)
             fi
-            if ((${#filtered_files[@]} > 0)); then
-              for i in "${!filtered_files[@]}"; do
-                mkdir -p "$junit_dir/filter-$i"
-                bats --jobs 16 --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
-                  --report-formatter junit --output "$junit_dir/filter-$i" \
-                  "${filtered_files[$i]}" || fail=1
-              done
-            fi
+            for i in "${!filtered_files[@]}"; do
+              mkdir -p "$junit_dir/filter-$i"
+              bats --jobs "$jobs" --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
+                --report-formatter junit --output "$junit_dir/filter-$i" \
+                "${filtered_files[$i]}" &
+              pids+=($!)
+            done
+            for pid in "${pids[@]+"${pids[@]}"}"; do
+              wait "$pid" || fail=1
+            done
             exit "$fail"
           SHARD
       - name: upload bats timings (shard ${{ matrix.shard }})
