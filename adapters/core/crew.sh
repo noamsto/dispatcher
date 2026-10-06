@@ -1669,8 +1669,11 @@ status | msg)
           ci_re='(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)'
           run_re='actions/runs/[0-9]+|(^|[^[:alnum:]_-])[Rr]un([ _-]?[Ii][Dd])?[ :#=]*[0-9]{6,}'
           accept_items=$(awk '
+            /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+            fence { next }
             tolower($0) ~ /^[[:space:]]*(##+[[:space:]]+[*_]*acceptance|[*_][*_]?acceptance|acceptance:)/ { on = 1; next }
             on && /^[[:space:]]*#+[[:space:]]/ { on = 0 }
+            on && tolower($0) ~ /^[[:space:]]*[*_]+out[ -]of[ -]scope/ { on = 0 }
             on && /^([-*+]|[0-9]+[.)])[[:space:]]/ {
               sub(/^([-*+]|[0-9]+[.)])[[:space:]]+/, ""); print }
           ' "$top/WORKER_TASK.md") || {
@@ -1684,7 +1687,6 @@ status | msg)
             echo "crew: refusing pr_open for $from — could not parse the acceptance ledger items" >&2
             exit 1
           }
-          have_waiver=""
           idx=0
           while IFS=$'\x1f' read -r iid ikind iev; do
             [ -n "$ikind" ] || continue
@@ -1715,17 +1717,25 @@ status | msg)
                 exit 1
               fi
             else
-              if [ -z "$have_waiver" ]; then
-                have_waiver=false
-                if [ -f "$log" ] && jq -e -n -R --arg c "$crew" --arg f "$from" '
-                  [inputs | (try fromjson catch null) | select(type == "object"
-                    and .crew_id == $c and .kind == "msg" and .from == ("dispatcher:" + $c)
-                    and .to == $f and ((.body // "") | tostring | test("waive"; "i")))] | length > 0' "$log" >/dev/null 2>&1; then
-                  have_waiver=true
-                fi
+              # One clause (split on . ; ! ? newline and " but ") waives an id when it has
+              # a waive word and the id as a token, and no negation anywhere in it.
+              if [ -z "$iid" ]; then
+                echo "crew: refusing pr_open for $from — a waived(dispatcher) item needs its acceptance id (e.g. AC3 waived(dispatcher)) so the dispatcher's waiver can name it." >&2
+                exit 1
               fi
-              [ "$have_waiver" = true ] && continue
-              echo "crew: refusing pr_open for $from — waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session ($from) containing \"waive\" (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself." >&2
+              if [ -f "$log" ] && jq -e -n -R --arg c "$crew" --arg f "$from" --arg id "$iid" '
+                ($id | ascii_downcase | gsub("(?<ch>[^a-z0-9_ -])"; "\\\(.ch)")) as $ide
+                | [inputs | (try fromjson catch null) | select(type == "object"
+                  and .crew_id == $c and .kind == "msg" and .from == ("dispatcher:" + $c)
+                  and .to == $f)
+                  | (.body // "") | tostring | ascii_downcase
+                  | split("(?:[.;!?](?=\\s|$)|\\n|\\bbut\\b)"; "g")[]
+                  | select(test("\\bwaiv(?:e|es|ed|ing|er)\\b")
+                    and (test("(?:\\b(?:not|never|no|cannot|without)\\b|n(?:\u0027|\u2019)t\\b)[^\\n]*\\bwaiv") | not)
+                    and test("(?:^|[^a-z0-9_.-])" + $ide + "(?:$|[^a-z0-9_.-])"))] | length > 0' "$log" >/dev/null 2>&1; then
+                continue
+              fi
+              echo "crew: refusing pr_open for $from — waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session ($from) that names the item ('${iid:-?}') in a waive phrase, e.g. \"waive ${iid:-<id>}\"; a negation (\"will not waive\") does not count (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself." >&2
               exit 1
             fi
           done <<<"$items"
