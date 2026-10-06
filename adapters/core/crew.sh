@@ -1660,12 +1660,12 @@ status | msg)
             echo "crew: refusing pr_open for $from — the task doc has an acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
             exit 1
           fi
-          # CI evidence and waivers are checked on content, not just form: a
-          # local gate is not a CI run, and only a real dispatcher reply waives.
-          # An item is a CI item when its evidence, or its task-doc Acceptance
-          # entry (by id, else the id's number, else the item's ledger position = nth entry), names CI as a word ("Non-CI"
-          # does not). The waiver check is presence-only, not authentication: any
-          # process can post as dispatcher:<crew>.
+          # Content checks beyond the form: a local gate is not a CI run, and only a
+          # dispatcher reply waives. An item is a CI item when its evidence, or its
+          # task-doc Acceptance entry (matched by id, else the id's number, else the
+          # item's ledger position), names CI as a word ("Non-CI" does not). The
+          # waiver check is presence-only, not authentication: any process can post
+          # as dispatcher:<crew>.
           ci_re='(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)'
           run_re='actions/runs/[0-9]+|(^|[^[:alnum:]_-])[Rr]un([ _-]?[Ii][Dd])?[ :#=]*[0-9]{6,}'
           accept_items=$(awk '
