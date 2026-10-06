@@ -219,25 +219,42 @@ events_log() {
 }
 
 @test "hold due: matures at exactly resets_at, not one second later (<=, not <)" {
-  now=$(date +%s)
-  resets_at=$((now + 2))
+  export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
+  resets_at=1800000000
+  printf '%s\n' "$((resets_at - 1))" >"$CREW_CLOCK"
   run_crew hold add --engine claude --window 5h --resets-at "$resets_at" \
     --agent codex --ref r1 --branch b1 --tier standard --model sonnet \
     --effort medium --crew c1 "title" >/dev/null
-  # Bounded, tight poll (never a fixed sleep) so the observed maturity
-  # instant pins the boundary instead of merely landing sometime after it.
-  observed=""
-  i=0
-  while [ "$i" -lt 200 ]; do
-    if run_crew hold due --crew c1 >/dev/null 2>&1; then
-      observed=$(date +%s)
-      break
-    fi
-    sleep 0.02
-    i=$((i + 1))
-  done
-  [ -n "$observed" ]
-  [ "$observed" -eq "$resets_at" ]
+  run run_crew hold due --crew c1
+  [ "$status" -eq 1 ]
+  printf '%s\n' "$resets_at" >"$CREW_CLOCK"
+  run run_crew hold due --crew c1
+  [ "$status" -eq 0 ]
+}
+
+@test "hold park: remaining time comes from the virtual clock when set" {
+  export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
+  printf '%s\n' 1800000000 >"$CREW_CLOCK"
+  seed_hold c1 h1 1800000030
+  run run_crew hold park 1000 --crew c1
+  [ "$status" -eq 0 ]
+  [ "$output" -eq 30 ]
+}
+
+@test "crew clock: unset, await and hold still use real time" {
+  unset CREW_CLOCK
+  start=$(date +%s%N)
+  CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s1-1" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ $((($(date +%s%N) - start) / 1000000)) -ge 900 ]
+  seed_hold c1 h1 "$(($(date +%s) - 10))"
+  run run_crew hold due --crew c1
+  [ "$status" -eq 0 ]
+  resets_at=$(($(date +%s) + 30))
+  seed_hold c2 h2 "$resets_at"
+  run run_crew hold park 1000 --crew c2
+  [ "$output" -ge 1 ]
+  [ "$output" -le 30 ]
 }
 
 @test "hold park: returns the default when nothing is outstanding" {

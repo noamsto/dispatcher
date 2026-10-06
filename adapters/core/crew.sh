@@ -752,6 +752,34 @@ _is_session_id() {
   [[ "${1##*#}" =~ ^s[0-9]+-[0-9]+$ ]]
 }
 
+# CREW_CLOCK=<file> is a test-only virtual clock for the waits in `await`, the
+# hold paths and `stall-watch`: _clock_now reads epoch seconds from it and
+# _clock_sleep advances it instead of waiting. It starts at the real time and
+# only moves forward, so bus rows (real ms) posted during a run still sort at or
+# before `now`, as they do in production. Unset, these are exactly `date +%s`
+# and `sleep`.
+_clock_now() {
+  [ -n "${CREW_CLOCK:-}" ] || { date +%s; return; }
+  [ -s "$CREW_CLOCK" ] || date +%s >"$CREW_CLOCK"
+  cat "$CREW_CLOCK"
+}
+_clock_sleep() {
+  [ -n "${CREW_CLOCK:-}" ] || { sleep "$1"; return; }
+  local s="${1%%.*}"
+  [ "$s" = "$1" ] || s=$((${s:-0} + 1))
+  printf '%s\n' "$(($(_clock_now) + s))" >"$CREW_CLOCK.$$"
+  mv -f "$CREW_CLOCK.$$" "$CREW_CLOCK"
+}
+_clock_now_ms() {
+  [ -n "${CREW_CLOCK:-}" ] || { jq -nc 'now*1000|floor'; return; }
+  printf '%s\n' "$(($(_clock_now) * 1000))"
+}
+# _clock_now_f — fractional epoch seconds, jq's `now` when the clock is unset.
+_clock_now_f() {
+  [ -n "${CREW_CLOCK:-}" ] || { jq -nc 'now'; return; }
+  _clock_now
+}
+
 # Delivered marks (#290): {sender: ts of the last msg from that sender this
 # session has been handed}, one file per crew+session under $dir/await. `await`
 # and `inbox` both record into it, so a reply taken through the straggler fold is
@@ -1933,7 +1961,7 @@ await)
       ;;
     esac
   done
-  start=$(jq -nc 'now*1000|floor')
+  start=$(_clock_now_ms)
   deadline=$((start + timeout * 1000))
   delivered=$(_await_marks "$crew" "$me")
   while :; do
@@ -1964,11 +1992,11 @@ await)
         exit 0
       }
     fi
-    [ "$(jq -nc 'now*1000|floor')" -ge "$deadline" ] && {
+    [ "$(_clock_now_ms)" -ge "$deadline" ] && {
       echo "crew: await ended after ${timeout}s — no reply to $me${from:+ from $from} yet" >&2
       exit 0
     }
-    sleep "$interval"
+    _clock_sleep "$interval"
   done
   ;;
 register | deregister)
@@ -4325,7 +4353,7 @@ hold)
       exit 1
       ;;
     esac
-    now=$(jq -nc 'now | floor')
+    now=$(_clock_now)
     [ "$resets_at" -gt "$now" ] || {
       echo "crew: hold add: --resets-at must be in the future" >&2
       exit 1
@@ -4441,9 +4469,9 @@ hold)
       esac
     done
     crew=$(_hold_crew "$hcrew")
-    # Matured is `<=`, not `<`. Bare `now` here compares seconds
-    # against `wait.resets_at`, never the `now*1000` idiom `ts`/`id` use above.
-    matured=$(_hold_outstanding "$crew" | jq -c '[.[] | select(.wait.resets_at <= now)]')
+    # Matured is `<=`, not `<`. `_clock_now_f` is seconds, compared against
+    # `wait.resets_at`, never the `now*1000` idiom `ts`/`id` use above.
+    matured=$(_hold_outstanding "$crew" | jq -c --argjson now "$(_clock_now_f)" '[.[] | select(.wait.resets_at <= $now)]')
     n=$(printf '%s' "$matured" | jq 'length')
     if [ "$json" = true ]; then
       printf '%s\n' "$matured"
@@ -4492,10 +4520,10 @@ hold)
     # already matured; otherwise min(default, earliest - now). Never below 1
     # — `crew watch` rejects `--timeout 0` (crew.sh:869-872) and a 0 here
     # would fail the cursor re-arm.
-    _hold_outstanding "$crew" | jq -r --argjson default "$default" '
+    _hold_outstanding "$crew" | jq -r --argjson default "$default" --argjson now "$(_clock_now_f)" '
       ([.[] | .wait.resets_at] | min) as $earliest
-      | (if ($earliest == null or $earliest <= now) then $default
-         else ([$default, ($earliest - now)] | min) end) as $raw
+      | (if ($earliest == null or $earliest <= $now) then $default
+         else ([$default, ($earliest - $now)] | min) end) as $raw
       | ([$raw, 1] | max) | floor'
     ;;
   release)
@@ -4898,22 +4926,6 @@ PANES
     fi
   }
 
-  # CREW_STALL_CLOCK=<file> is a test-only virtual clock: _sw_now reads epoch
-  # seconds from it and _sw_sleep advances it instead of waiting. It starts at
-  # the real time and only moves forward, so bus rows (real ms) posted during a
-  # run still sort at or before `now`, as they do in production.
-  _sw_now() {
-    [ -n "${CREW_STALL_CLOCK:-}" ] || { date +%s; return; }
-    [ -s "$CREW_STALL_CLOCK" ] || date +%s >"$CREW_STALL_CLOCK"
-    cat "$CREW_STALL_CLOCK"
-  }
-  _sw_sleep() {
-    [ -n "${CREW_STALL_CLOCK:-}" ] || { sleep "$1"; return; }
-    local s="${1%%.*}"
-    [ "$s" = "$1" ] || s=$((${s:-0} + 1))
-    printf '%s\n' "$(($(_sw_now) + s))" >"$CREW_STALL_CLOCK"
-  }
-
   # C-3 — every bus read is scoped to THIS run. events.jsonl is append-only per
   # repo and re-dispatch onto the same branch is a first-class flow, so an
   # unscoped read lets the PREVIOUS run's failed/exited mute a freshly started
@@ -4924,7 +4936,7 @@ PANES
   # ms: without it a status the launcher posted a fraction of a second before
   # this process started sorts below the cutoff and reads as a previous run.
   # Previous runs are minutes away, so the slack cannot reach one.
-  run_start_ms=$((($(_sw_now) - 1) * 1000))
+  run_start_ms=$((($(_clock_now) - 1) * 1000))
   own_epoch=""
   if [ "$from_id" != "$me" ]; then
     own_epoch="${from_id##*#s}"
@@ -5095,23 +5107,23 @@ BUSLINE
     _release_windows "$branch" "$rel_session" "$bus_state" "$bus_ts" "$release" "" || rc=$?
     [ "$rc" = 3 ] || exit 0
     idle_ticks=0
-    prev_change=$(_sw_now)
+    prev_change=$(_clock_now)
   }
 
   _finished_release() {
     local t plain colored idle_ticks=0 prev_hash="" prev_change quiet_s rel_session=-
     ! _is_session_id "$from_id" || rel_session="${from_id##*#}"
-    prev_change=$(_sw_now)
+    prev_change=$(_clock_now)
     say() { :; }
     note() { :; }
     while :; do
       _bus_refresh
       case "$bus_state" in
       done | failed) ;;
-      '') _sw_sleep "$interval"; continue ;;
+      '') _clock_sleep "$interval"; continue ;;
       *) return 0 ;;
       esac
-      t=$(_sw_now)
+      t=$(_clock_now)
       [ $((t - start)) -ge "$max_life" ] && exit 0
       # A watchdog-posted `failed` marks a hung pane: keep it as evidence.
       [ "$bus_source" != watchdog ] || exit 0
@@ -5137,15 +5149,15 @@ BUSLINE
           [ "$quiet_s" -lt "$release" ] || _try_release
         fi
       fi
-      _sw_sleep "$interval"
+      _clock_sleep "$interval"
     done
   }
 
-  start=$(_sw_now)
-  _sw_sleep "$grace"
+  start=$(_clock_now)
+  _clock_sleep "$grace"
   fails=0
   last_hash=""
-  last_change=$(_sw_now)
+  last_change=$(_clock_now)
   tick=0
   d0_at=0
   d1_hits=0
@@ -5169,7 +5181,7 @@ BUSLINE
   engine_seen=0
   _bus_refresh
   while :; do
-    now=$(_sw_now)
+    now=$(_clock_now)
     # --max-life exists because the watchdog is nohup-detached: without a hard
     # cap, a bug or an orphaned pane leaves a process polling forever.
     [ $((now - start)) -ge "$max_life" ] && exit 0
@@ -5178,7 +5190,7 @@ BUSLINE
     # and not on `working`, which is a heartbeat.
     case "$bus_state" in
     done | failed)
-      [ "$role_mode" = 1 ] || [ "$release" = 0 ] || { _finished_release; last_hash=""; last_change=$(_sw_now); continue; }
+      [ "$role_mode" = 1 ] || [ "$release" = 0 ] || { _finished_release; last_hash=""; last_change=$(_clock_now); continue; }
       exit 0
       ;;
     exited) exit 0 ;;
@@ -5191,7 +5203,7 @@ BUSLINE
       # backstop owns the real case anyway.
       fails=$((fails + 1))
       [ "$fails" -ge 3 ] && exit 0
-      _sw_sleep "$interval"
+      _clock_sleep "$interval"
       tick=$((tick + 1))
       continue
     fi
@@ -5590,7 +5602,7 @@ BUSLINE
       esac
     fi
 
-    _sw_sleep "$interval"
+    _clock_sleep "$interval"
     tick=$((tick + 1))
     # Bus-read cadence: a whole-file jq over a growing cross-crew log every tick
     # for 12h is ~2880 spawns per worker. Every 4th tick costs ≤60s of latency
