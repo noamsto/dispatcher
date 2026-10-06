@@ -9632,9 +9632,11 @@ EOF
 
 _rw_poll() { # <shell-cmd, true when ready>
   local n
-  for n in $(seq 1 80); do
+  # Ceiling for watcher startup on a loaded runner. A ready condition
+  # returns on the first check.
+  for n in $(seq 1 200); do
     eval "$1" && return 0
-    sleep 0.02
+    sleep 0.05
   done
   return 1
 }
@@ -9642,8 +9644,10 @@ _rw_poll() { # <shell-cmd, true when ready>
 # Linger so a later tick can still mis-deliver. Each iteration logs two
 # display-message lines; the default 8 lines is four ticks.
 _rw_settle() {
-  local start=$(( $(grep -c '^display-message' "$STUB_LOG" || true) + ${1:-8} ))
-  _rw_poll "[ \"\$(grep -c '^display-message' \"\$STUB_LOG\" || true)\" -ge $start ]"
+  local have start
+  have=$(grep -c '^display-message' "$STUB_LOG" 2>/dev/null || true)
+  start=$((${have:-0} + ${1:-8}))
+  _rw_poll "[ \"\$(_rw_count '^display-message')\" -ge $start ]"
 }
 
 # _rw_start <engine> [body] — run the watcher in the background, then post one
@@ -9655,7 +9659,7 @@ _rw_start() {
   # shellcheck disable=SC2086
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 ${RW_EXTRA:-} >/dev/null 2>&1 &
   RW_PID=$!
-  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\"" || return 1
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
   jq -nc --arg body "${2:-go}" '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: $body}' >>"$common/crew/events.jsonl"
@@ -9674,10 +9678,15 @@ _rw_post() {
   jq -nc --arg from "$1" '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:$from, to:"role:feat/9-x:reviewer", body:"go"}' >>"$common/crew/events.jsonl"
 }
 
-_rw_sends() { grep -cE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" || true; }
-_rw_captures() { grep -c '^capture-pane' "$STUB_LOG" || true; }
+_rw_count() {
+  local n
+  n=$(grep -cE "$1" "$STUB_LOG" 2>/dev/null || true)
+  printf '%s\n' "${n:-0}"
+}
+_rw_sends() { _rw_count '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$'; }
+_rw_captures() { _rw_count '^capture-pane'; }
 
-_rw_deliveries() { grep -cE '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" || true; }
+_rw_deliveries() { _rw_count '^(paste |send-keys -t %6 -l )Assignment: '; }
 _rw_paste_payload() { grep -E '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" | head -1 | sed -E 's/^(paste |send-keys -t %6 -l )//'; }
 
 _rw_wait_sends() { _rw_poll "[ \"\$(_rw_sends)\" -ge $1 ]"; }
@@ -10418,10 +10427,10 @@ EOF
   "$2" >"$STUB_DIR/frame"
 }
 
-_rw_enters() { grep -cx 'send-keys -t %6 Enter' "$STUB_LOG" || true; }
+_rw_enters() { _rw_count '^send-keys -t %6 Enter$'; }
 _rw_copies() { grep -o 'Assignment: go' "$STUB_DIR/frame" | wc -l; }
 _rw_wait_enters() { _rw_poll "[ \"\$(_rw_enters)\" -ge $1 ]"; }
-_rw_unsubmitted() { grep -c '^msg .*assignment_unsubmitted' "$STUB_LOG" || true; }
+_rw_unsubmitted() { _rw_count '^msg .*assignment_unsubmitted'; }
 
 # _rw_swallow_case <engine> <idle-fn> <busy-fn> — the first Enter after the
 # paste is lost; the watcher must retry Enter alone and dequeue only once the
