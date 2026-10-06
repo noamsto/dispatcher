@@ -72,11 +72,13 @@ jobs:
               fi
             done
             if ((${#whole[@]} > 0)); then
+              mkdir -p "$junit_dir/whole"
               bats --jobs 16 --filter-tags '!timing' --report-formatter junit \
                 --output "$junit_dir/whole" "${whole[@]}" || fail=1
             fi
             if ((${#filtered_files[@]} > 0)); then
               for i in "${!filtered_files[@]}"; do
+                mkdir -p "$junit_dir/filter-$i"
                 bats --jobs 16 --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
                   --report-formatter junit --output "$junit_dir/filter-$i" \
                   "${filtered_files[$i]}" || fail=1
