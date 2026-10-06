@@ -95,7 +95,7 @@ Never run `gh stack init|add|modify|sync|unstack|merge|rebase|link`. Task wants 
 
 Behavioral bug, shared contract change or PR-feedback fix → read `EVIDENCE_REVIEW.md` from `protocol_dir:` before choosing the next stage; its evidence, review-risk, recurrence and handoff rules cover provided plans and resumed runs too.
 
-- trivial: implement directly → gate → `/deslop` → PR; no spec, plan, critics or review. Still run the three completion peeks (Checkpoint-peek): with no other seams, they are the only points a dispatcher redirect can reach you.
+- trivial: implement directly → gate → `/deslop` → PR; no spec, plan, critics or review. Still run the completion, wake and rerun peeks (Checkpoint-peek): with no other seams, they are the only points a dispatcher redirect can reach you.
 - standard: Plan of record first; no existing plan → `spec-plan-critic` `{ tier: 'standard', ... }` (plan + plan-critic only); execute via subagents. Code-review gate: one batch + targeted re-review if required.
 - deep: Resuming a killed run first; unless resuming, `spec-plan-critic` `{ tier: 'deep', ... }` (spec + spec-critic → optional consultant decomposition (Orchestration consult) → plan + plan-critic). Code-review gate: one parallel batch, reconciled once, conditional second re-review.
 - standard/deep then: execute → fast deterministic gate → code-review gate → `/deslop` + push + PR.
@@ -218,7 +218,7 @@ Any lead can reach another engine's model as a stateless, read-only shell one-sh
 
 ## Checkpoint-peek (all tiers)
 
-At each seam (after spec, plan, execute, fast gate, review; plus the completion peeks pre-push, pre-PR, pre-done, trivial's only seams), before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive:
+At each seam (after spec, plan, execute, fast gate, review; the completion peeks pre-push, pre-PR, pre-done; on every background-task notification wake, before acting on it; before re-running a stage or relaunching a long-running process after a failure or interruption, where a stop/redirect wins over the rerun), before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive:
 
 ```
 crew inbox "$CREW_WORKER_ID" --since <seen-cursor>
@@ -228,7 +228,7 @@ One pass, not a held wait (unlike `crew await`); empty output ⇒ proceed.
 
 - Seen-cursor: set by the First action drain; never re-initialize it to `now` (re-opens the pre-start blind spot). After a peek or await returns messages you read and handled, advance `seen` to the max `.ts` of those only: `seen=$(printf '%s\n' "$msgs" | jq -s 'map(.ts) | max')`. An empty peek leaves the cursor.
 - On a directive: receiving-code-review discipline (Process authority), then redirect the pipeline; on "stop", wind down cleanly and stamp `crew status "$CREW_WORKER_ID" <state>` (e.g. `failed "stopped by dispatcher"`).
-- Latency is honest, not instant: a redirect surfaces only at the next seam; one posted mid-`execute` (deep's longest stage) waits for execute to finish. The peek is NOT a kill switch: hard abort is the dispatcher's `tmux kill-window` (→ SessionEnd `exited`).
+- Latency is honest, not instant: a redirect surfaces only at the next seam; one posted mid-`execute` (deep's longest stage) waits for execute to finish or a background-task wake. The peek is NOT a kill switch: hard abort is the dispatcher's `tmux kill-window` (→ SessionEnd `exited`).
 - Completion peeks (all tiers), same seen-cursor rules: pre-push, after `/deslop` and any review→fix round, immediately before `git push` (besides the post-review seam); pre-PR, after `git push` succeeds, immediately before `gh pr create` (existing-PR path: before posting `pr_open`); pre-done, after `pr_open` and the metrics snapshot, immediately before `done`. After `done`, `crew reply` refuses the session.
   - Pre-push tracked-scaffolding check (all tiers): pre-push also checks this branch's changes. `WORKER_TASK.md` staged or committed here (in `git diff --name-only "$base_ref"...HEAD` or `git diff --cached --name-only`) is a stop-and-drop, never a push. Staged: `git restore --source=<base> --staged WORKER_TASK.md`. Committed: drop it from that commit and rewrite it (`git rm --cached WORKER_TASK.md && git commit --amend`, or an interactive rebase); never discard a commit carrying real work. `.git/info/exclude` hides only an untracked `WORKER_TASK.md`; once tracked it rides the diff into commits (#397).
   - Work-changing directive: do not post the next status; re-stamp `working`; re-enter the affected stage and redo every gate it invalidates (fast gate, review, `/deslop`, push). PR already open (pre-done, or any resume) → existing-PR path: `gh pr view --json url,state`, push to it, skip `gh pr create`, post `pr_open` with that url; never a second `gh pr create`. Re-entry after `pr_open` legitimately moves you from finished back to active in dispatcher accounting.

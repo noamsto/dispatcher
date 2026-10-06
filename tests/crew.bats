@@ -5980,6 +5980,73 @@ EOF
   [ "$output" = "0" ]
 }
 
+@test "stall-watch: D6 flags a working lead with an undelivered dispatcher directive" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive "* ]]
+}
+
+@test "stall-watch: D6 clears a dispatcher directive once delivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || bash $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive"* ]]
+  [ "${lines[1]}" = "working|unread: cleared" ]
+}
+
+@test "stall-watch: D6 keeps a dispatcher directive blocked while undelivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive"* ]]
+}
+
+@test "stall-watch: D6 does not treat a lead msg to the dispatcher as handling a directive" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  seed_msg worker:feat/x#s1-1 dispatcher:c1 20
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive "* ]]
+}
+
+@test "stall-watch: D6 relabels the episode when only the role verdict is delivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 40
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || CREW_ID=c1 bash $CREW await worker:feat/x#s1-1 --from role:feat/x:reviewer --timeout 1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 13
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "${lines[0]}" == "blocked|unread: role verdict "* ]]
+  [ "${lines[1]}" = "working|unread: cleared" ]
+  [[ "${lines[2]}" == "blocked|unread: dispatcher directive "* ]]
+}
+
 @test "stall-watch: a finished turn waiting on a background shell posts nothing" {
   a=$(fx_bgwait_crunched)
   b=$(fx_bgwait_churned)
