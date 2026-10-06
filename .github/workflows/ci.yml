@@ -21,8 +21,6 @@ jobs:
       # with scripts/bats-shard-weights.sh.
       - name: shard plan covers the suite
         run: nix develop -c bash scripts/bats-shard.sh --check
-      # The harness manifest must stay in sync with its sampled bats files;
-      # the bench job that used to run this on every PR is now path-gated.
       - name: harness manifest matches the sampled files
         run: nix develop -c bash scripts/harness-manifest.sh --check
 
