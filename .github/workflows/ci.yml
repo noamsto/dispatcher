@@ -74,11 +74,12 @@ jobs:
             # Units run at once so the heaviest is the only critical path; logs go
             # to per-run files because concurrent TAP streams interleave.
             jobs=4
+            whole_jobs=12
             pids=()
             logs=()
             if ((${#whole[@]} > 0)); then
               mkdir -p "$junit_dir/whole"
-              bats --jobs "$jobs" --filter-tags '!timing' --report-formatter junit \
+              bats --jobs "$whole_jobs" --filter-tags '!timing' --report-formatter junit \
                 --output "$junit_dir/whole" "${whole[@]}" >"$junit_dir/whole.log" 2>&1 &
               pids+=("$!")
               logs+=("$junit_dir/whole.log")
