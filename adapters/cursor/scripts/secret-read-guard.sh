@@ -282,8 +282,9 @@ dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]
 # the first `]` the one bash closes on. Any of them reads as a path even where
 # bash assigns (`a[b[1]]=x/env`, `a[$i]=x/env`), failing closed. A blank or
 # `;&|()` in SUB ends the word here, though bash's scan reads past it, so
-# `a[1 2]/env` and `a[;]/env` are missed. Quoting and escapes after the name
-# are not modelled: a quoted or escaped `=`, `+`, `[` or `]` counts as bare.
+# `a[1 2]/env` and `a[;]/env` are missed. Quoting after the name is not
+# modelled: a quoted `=`, `+`, `[` or `]` counts as bare. An escaped one stays
+# a path in the unstripped view, failing closed.
 # shellcheck disable=SC2016
 path_pfx='(/[^[:space:];&|()]*/|[{\\][^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^[:space:]A-Za-z0-9_=+[;&|()][^[:space:];&|()]*|\+([^=[:space:];&|()][^[:space:];&|()]*)?|\[[^][\\`$[:space:];&|()]*([[\\`$][^[:space:];&|()]*|\](\+([^=[:space:];&|()][^[:space:];&|()]*)?|[^=+[:space:];&|()][^[:space:];&|()]*)?)?)?/)?'
 env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
