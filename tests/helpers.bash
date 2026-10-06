@@ -25,6 +25,8 @@ export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.
 export GRANT_CHECK_LIB="$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
 # And for the shared localModels lane lib.
 export LOCAL_MODELS_LIB="$BATS_TEST_DIRNAME/../adapters/core/local-models.sh"
+# And for the shared quota-predicate lib.
+export BUDGET_GATE_LIB="$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
 # The host's ~/.config/dispatcher/settings.json must never reach a test.
 export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
 # A host's locked settings would override what each test sets up.

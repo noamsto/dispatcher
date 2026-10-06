@@ -138,67 +138,36 @@ pace_rule_target() {
 }
 
 # budget_stop <engine> [<role-label>] — refuse an engine whose quota is
-# ~exhausted (>=95% of a window that has not reset). With a role-label, the
-# refusal names the role. The cache is advisory data from refresh-budget — fail
-# open when it is missing, stale (>2h), or silent on this engine ("unknown" is
-# never "exhausted"). A window whose resets_at has already passed does not gate
-# (the cache can predate the reset); a null resets_at still does. --ignore-budget
-# is the manual escape hatch.
+# ~exhausted (>=95% of a window that has not reset), naming the first such
+# window. With a role-label, the refusal names the role. The cache is advisory
+# data from refresh-budget — fail open when _budget_windows can't tell (missing,
+# stale >2h, or silent on this engine: "unknown" is never "exhausted").
+# --ignore-budget is the manual escape hatch.
 budget_stop() {
-  local engine="$1" role_label="${2:-}" exhausted now_ts stale_before
+  local engine="$1" role_label="${2:-}" gate key pct resets_iso exhausted
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
-  now_ts="$(date +%s)"
-  stale_before=$((now_ts - 7200))
-  exhausted=$(jq -r --arg e "$engine" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
-    if .fetched_epoch < $stale_before then empty
-    elif .engines[$e] == null then empty
-    else .engines[$e].windows | to_entries[]
-      | select(.value.used_pct >= 95
-               and (.value.resets_at == null or .value.resets_at > $now))
-      | "\(.key) at \(.value.used_pct)%\(if .value.resets_at then ", resets \(.value.resets_at | todateiso8601)" else "" end)"
-    end' "$budget_file" 2>/dev/null || true)
-  [ -n "$exhausted" ] || return 0
+  gate=$(_budget_windows "$budget_file" "$engine" "$(date +%s)") || return 0
+  IFS=$'\t' read -r key pct _ resets_iso <<<"${gate%%$'\n'*}"
+  exhausted="$key at $pct%${resets_iso:+, resets $resets_iso}"
   if [ -n "$role_label" ]; then
-    echo "dispatch: role '$role_label' ($engine) quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: role '$role_label' ($engine) quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
   else
-    echo "dispatch: $engine quota exhausted ($(printf '%s' "$exhausted" | head -1)) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: $engine quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
   fi
   exit 1
 }
 
 # absolute_limit_stop <engine> [<role-label>] — refuse an engine whose
 # authoritative limit_reached is set even when every percent window is below
-# 95% (or no window exists). Codex (#201): denies ordinary usage, names a
-# rate-limit-reached reason, marks spend control reached, or reports a zeroed
-# individual spend limit. Cursor (#629): a plan pool at 100% or a spent
-# on-demand budget under a <95% month window (team plans); a resets_at already
-# past no longer holds. Pi (#639): the OpenRouter key's own credit limit is
-# exhausted. With a role-label the refusal names the role, like budget_stop.
-# The cache is advisory from refresh-budget — fail open when missing, stale
-# (>2h), or silent on this engine. --ignore-budget is the manual escape hatch.
+# 95% (or no window exists); _budget_limit holds the per-engine rules (codex
+# #201, cursor #629, pi #639). With a role-label the refusal names the role,
+# like budget_stop. Fails open on the same unknown cache. --ignore-budget is
+# the manual escape hatch.
 absolute_limit_stop() {
-  local engine="$1" role_label="${2:-}" now_ts stale_before abs_limit
-  case "$engine" in codex | cursor | pi) ;; *) return 0 ;; esac
+  local engine="$1" role_label="${2:-}" gate abs_limit
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
-  now_ts="$(date +%s)"
-  stale_before=$((now_ts - 7200))
-  abs_limit=$(jq -r --arg e "$engine" --argjson stale_before "$stale_before" --argjson now "$now_ts" '
-    if .fetched_epoch < $stale_before then empty
-    elif .engines[$e] == null then empty
-    else .engines[$e].limit_reached as $l
-      | if $e == "pi" then $l.reason // empty
-        elif $e == "cursor" then
-          if $l == null or ($l.resets_at != null and $l.resets_at <= $now) then empty
-          else $l.reason // "limit reached" end
-        else ($l // {}) as $l
-          | if $l.rate_limit_reached_type != null then $l.rate_limit_reached_type
-            elif $l.individual_remaining_percent == 0 then "spend control: 0% remaining"
-            elif $l.spend_control_reached == true then "spend control reached"
-            elif $l.ordinary_usage_allowed == false then "ordinary use not allowed"
-            else empty end
-        end
-    end' "$budget_file" 2>/dev/null || true)
-  [ -n "$abs_limit" ] || return 0
+  gate=$(_budget_limit "$budget_file" "$engine" "$(date +%s)") || return 0
+  IFS=$'\t' read -r abs_limit _ <<<"$gate"
   if [ -n "$role_label" ]; then
     echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
   else
@@ -742,6 +711,10 @@ fi
 # The localModels lane helpers, shared with crew and refresh-budget.
 # shellcheck source=/dev/null
 . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+
+# The quota predicates, shared with crew's stall-watch.
+# shellcheck source=/dev/null
+. "${BUDGET_GATE_LIB:-@budgetGateLib@}"
 
 # _local_id <model> — true when <model> is a configured localModels id (a pi
 # target). Reads $settings.
@@ -1763,12 +1736,16 @@ watch_role() {
   nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
 }
 
-# watch_role_prompts <role> <pane> <agent> <crew> — a parked claude role can
-# still sit on a permission dialog, so it gets a stall-watch under its role: id,
-# which runs only the prompt detectors. Other engines have no prompt to detect.
+# watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
+# stall-watch under its role: id. The prompt detectors stay claude-only inside
+# stall-watch, while the budget detector judges the role's own engine.
+# --ignore-budget is the human's spend decision, so it passes --no-budget; a
+# non-claude role with --no-budget has nothing to watch.
 watch_role_prompts() {
-  [ "$3" = claude ] || return 0
-  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine claude >/dev/null 2>&1 &
+  [ "$3" = claude ] || [ -z "${ignore_budget:-}" ] || return 0
+  local -a flags=()
+  [ -n "${ignore_budget:-}" ] && flags+=(--no-budget)
+  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &
 }
 
 # `dispatch --role-watch <role> --pane <pane> [--engine E] [--branch <b>]
@@ -2878,12 +2855,31 @@ fi
 
 # `dispatch --engines` — the effective roster: enabled AND installed, in
 # canonical order. The dispatcher protocol reads this before judging.
+# `--engines --in-budget` — the worker-side one-shot gate: also drop an engine
+# the launch gate would refuse on quota (same predicates, same fail-open on an
+# unknown cache), one stderr line per drop for the consult_failed note. Plain
+# --engines keeps such engines: the human may still spend with --ignore-budget.
 if [ "${1:-}" = "--engines" ]; then
+  in_budget=
+  [ "${2:-}" != --in-budget ] || in_budget=1
   _settings_load
+  now_ts="$(date +%s)"
   # shellcheck disable=SC2086 # intentional split of the fixed space-separated roster
   for e in $ENGINES_ALL; do
     engine_enabled "$e" || continue
     command -v "$(engine_cli "$e")" >/dev/null 2>&1 || continue
+    if [ -n "$in_budget" ]; then
+      if gate=$(_budget_windows "$budget_file" "$e" "$now_ts"); then
+        IFS=$'\t' read -r key pct _ resets_iso <<<"${gate%%$'\n'*}"
+        echo "dispatch: --engines --in-budget: dropping $e ($key at $pct%${resets_iso:+, resets $resets_iso})" >&2
+        continue
+      fi
+      if gate=$(_budget_limit "$budget_file" "$e" "$now_ts"); then
+        IFS=$'\t' read -r abs_limit _ <<<"$gate"
+        echo "dispatch: --engines --in-budget: dropping $e (absolute limit: $abs_limit)" >&2
+        continue
+      fi
+    fi
     echo "$e"
   done
   exit 0
@@ -5033,8 +5029,9 @@ write_launch_script launch_line "$launch_cmd"
 # Every pane is split and the layout settled BEFORE any engine launches: a TUI
 # that is still drawing its first frames garbles when a later split or refit
 # resizes it. The lead keeps the first pane by creation order, not launch order.
-# A role pane gets only the prompt watch, never the liveness detectors: a parked
-# role produces no output, which the pane-output watchdog would misread as a wedge.
+# A role pane's watch runs only the prompt detectors (claude) and the budget
+# detector, never the liveness detectors: a parked role produces no output,
+# which the pane-output watchdog would misread as a wedge.
 # A --lazy --status window gains a pane here even though it skipped the eager
 # role splits, so it must publish the grid hint too.
 role_panes=()
@@ -5075,5 +5072,7 @@ fi
 # goes silent through the startup window, posts `failed` so the dispatcher's
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
-# terminal state, or a vanished pane.
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &
+# terminal state, or a vanished pane. --ignore-budget waives its budget detector.
+stall_flags=()
+[ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &

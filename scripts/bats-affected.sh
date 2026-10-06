@@ -68,7 +68,7 @@ map_file() {
   scripts/bats-timing.sh | scripts/bats-classify.sh | scripts/bats-coverage.sh) ;;
   scripts/harness-bench.sh | scripts/harness-inventory.sh | scripts/harness-manifest.sh | scripts/harness-split.sh) ;;
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
-  adapters/core/crew.sh) add "${crew_set[@]}" ;;
+  adapters/core/crew.sh | adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;

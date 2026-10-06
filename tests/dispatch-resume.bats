@@ -2290,6 +2290,25 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
 }
 
+@test "resume --ignore-budget re-arms the stall watchdog with --no-budget" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --ignore-budget
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude --no-budget$'
+}
+
+@test "resume without --ignore-budget re-arms the stall watchdog without --no-budget" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  run ! grep -q -- '--no-budget' "$STUB_LOG"
+}
+
 # _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo
 # (TEST_REPO, where $WT is a linked worktree): a live pid plus a stream.tick,
 # the exact state `crew stream --status` reads from <repo>/crew/crews/c1/.

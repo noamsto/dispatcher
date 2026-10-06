@@ -3720,9 +3720,12 @@ EOF_REPOS
         # would make old and new rows silently non-comparable in the same field.
         # A new field leaves historical rows simply absent (null), which every
         # reader there already tolerates — and watchdog_blocked_count is direct
-        # evidence of how often a model/tier wedges.
+        # evidence of how often a model/tier wedges. A budget: row is a host-wide
+        # quota crossing, not a model/tier wedge, so it stays out of
+        # watchdog_blocked_count.
         | ($st | map(select(.body.state=="blocked" and (.body.source // "") != "watchdog")) | length) as $blocked
-        | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog")) | length) as $wblocked
+        | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog"
+                            and (((.body.detail // "") | if type == "string" then startswith("budget:") else false end) | not))) | length) as $wblocked
         # `try fromjson catch null` so ONE unparseable body cannot abort the whole
         # sweep and lose every other run with it (#25). Such a run folds with null
         # metrics — the same shape a run that never emitted metrics already takes.
@@ -4653,11 +4656,13 @@ hold)
 stall-watch)
   # stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
   #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S]
+  #   [--no-budget] [--budget-refresh S]
   #
   # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
   # reflects only what a worker POSTS, so a worker parked on an interactive
   # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Seven pane detectors read one capture per tick (D6 reads the bus instead):
+  # working (#31). Seven pane detectors read one capture per tick (D6 reads the
+  # bus instead, D8 the engine budget cache):
   #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
   #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
   #                  (quota: is D1's own content discriminator on the SAME
@@ -4684,6 +4689,13 @@ stall-watch)
   #                  --unread (#330); clears once delivered. Repainting panes
   #                  never trip D2/D3, so this reads the bus (bounded tail,
   #                  4-tick cadence). Never escalates.
+  #   D8 budget:     the engine has a quota window at >=95% that has not reset,
+  #                  or its limit_reached holds, per refresh-budget's
+  #                  engine-budget.json read through the launch gate's own
+  #                  predicate (budget-gate.sh). The worker keeps running; the
+  #                  dispatcher decides. Clears only on a fresh cache that reads
+  #                  clear — a stale or blind one holds. Never escalates.
+  #                  --no-budget turns it off (dispatch's --ignore-budget).
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
@@ -4708,13 +4720,13 @@ stall-watch)
   # D0/D3 stay silent (claude only) while a finished turn waits on a background
   # shell, for at most --bg-wait (default 2h) of unchanged frame.
   # role:<branch>:<role> selects prompt-only mode: a parked role pane
-  # legitimately sits static, so only D1/D1b run; D0/D2-D6 and the dead:
+  # legitimately sits static, so only D1/D1b (claude) and D8 run; D0/D2-D7 and the dead:
   # escalation are off, and a role-mode-only check exits the watch once the
   # pane's engine returns to a bare shell.
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]" >&2
+    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N] [--no-budget] [--budget-refresh S]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -4776,6 +4788,8 @@ stall-watch)
   unread=600
   runaway_hits=3
   runaway_tokens=1500
+  no_budget=0
+  budget_refresh=900
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -4843,6 +4857,14 @@ stall-watch)
       runaway_tokens="${2:-}"
       shift 2
       ;;
+    --no-budget)
+      no_budget=1
+      shift
+      ;;
+    --budget-refresh)
+      budget_refresh="${2:-}"
+      shift 2
+      ;;
     *)
       echo "crew: stall-watch: unknown arg '$1'" >&2
       exit 1
@@ -4855,6 +4877,11 @@ stall-watch)
   }
   case "$release" in '' | *[!0-9]*)
     echo "crew: stall-watch: --release must be a non-negative integer number of seconds" >&2
+    exit 1
+    ;;
+  esac
+  case "$budget_refresh" in '' | *[!0-9]*)
+    echo "crew: stall-watch: --budget-refresh must be a non-negative integer number of seconds" >&2
     exit 1
     ;;
   esac
@@ -4907,7 +4934,135 @@ stall-watch)
     sig_runaway=0
     ;;
   esac
+  # Every role engine gets a watcher for D8's sake, but the prompt detectors
+  # stay claude-only in role mode: no other engine's role pane ever had one,
+  # and its frames were never verified against a parked role.
+  if [ "$role_mode" = 1 ] && [ "$engine" != claude ]; then
+    sig_prompt=0
+    sig_session_limit=0
+    sig_cursor_limit=0
+  fi
   _frame_classifier
+
+  # shellcheck source=/dev/null
+  . "${BUDGET_GATE_LIB:-@budgetGateLib@}"
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # Decided once: the engine and the pane's model are fixed for the watch.
+  budget_on=0
+  if [ "$no_budget" = 0 ]; then
+    case "$engine" in
+    claude | codex | cursor) budget_on=1 ;;
+    pi)
+      budget_on=1
+      # A localModels id spends no OpenRouter quota (the launch gate skips it
+      # too). Any failure to tell keeps D8 on.
+      budget_model=$(tmux show-options -pqv -t "$pane" @crew_model 2>/dev/null || true)
+      if [ -n "$budget_model" ]; then
+        # shellcheck source=/dev/null
+        . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
+        if [ -n "$(_local_entry "$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null)" "$budget_model" 2>/dev/null)" ]; then
+          budget_on=0
+        fi
+      fi
+      ;;
+    esac
+  fi
+
+  # _budget_last_try — the later of the cache's fetched_epoch and the last
+  # refresh attempt's stamp; an unreadable value counts as never.
+  _budget_last_try() {
+    local f s
+    f=$(jq -r '.fetched_epoch | if type == "number" then floor else 0 end' "$budget_file" 2>/dev/null || true)
+    s=$(cat "$budget_file.refresh-at" 2>/dev/null || true)
+    # Base 10 forced: a stamp like `09` would read as bad octal in $((…)).
+    if [[ "$f" =~ ^[0-9]{1,12}$ ]]; then f=$((10#$f)); else f=0; fi
+    if [[ "$s" =~ ^[0-9]{1,12}$ ]]; then s=$((10#$s)); else s=0; fi
+    if [ "$f" -ge "$s" ]; then echo "$f"; else echo "$s"; fi
+  }
+
+  # _budget_refresh_maybe <now> — run refresh-budget when the cache is
+  # --budget-refresh old. Otherwise only a human or the dispatcher's session
+  # start refreshes it, so a window crossed mid-run would go unseen until the
+  # gates read it as stale. Single flight host-wide (the lock) plus the attempt
+  # stamp: N watchers cost one probe per interval, and a failing probe backs off
+  # the full interval instead of being retried every minute by every watcher.
+  # Synchronous on purpose — one tick slipping <=120s once per interval is far
+  # inside every detector threshold.
+  _budget_refresh_maybe() {
+    local last
+    [ "$budget_refresh" != 0 ] || return 0
+    last=$(_budget_last_try)
+    [ $(($1 - last)) -ge "$budget_refresh" ] || return 0
+    mkdir -p "${budget_file%/*}"
+    _lock_acquire "$budget_file.refresh.d" "$$" || return 0
+    last=$(_budget_last_try)
+    if [ $(($1 - last)) -lt "$budget_refresh" ]; then
+      _lock_release "$budget_file.refresh.d"
+      return 0
+    fi
+    printf '%s\n' "$1" >"$budget_file.refresh-at.$$"
+    mv -f "$budget_file.refresh-at.$$" "$budget_file.refresh-at"
+    if [ -n "${CREW_BUDGET_REFRESH_CMD:-}" ]; then
+      eval "$CREW_BUDGET_REFRESH_CMD" >/dev/null 2>&1 || true
+    elif command -v refresh-budget >/dev/null 2>&1; then
+      env -u CREW_WORKER_ID -u CREW_ID timeout 120 refresh-budget >/dev/null 2>&1 || true
+    fi
+    _lock_release "$budget_file.refresh.d"
+  }
+
+  # _budget_reltime <secs> — mirrors refresh-budget's `reltime` jq def, so the
+  # watchdog row and the budget report word a reset alike.
+  _budget_reltime() {
+    local d=$(($1 / 86400)) h=$(($1 % 86400 / 3600)) m=$(($1 % 3600 / 60))
+    if [ "$d" -gt 0 ]; then
+      echo "${d}d ${h}h"
+    elif [ "$h" -gt 0 ]; then
+      echo "${h}h ${m}m"
+    else
+      echo "${m}m"
+    fi
+  }
+
+  # _budget_reset_note <resets> <iso> <now> — " (resets <iso>, in <rel>)". jq
+  # can hand back a float or an exponent literal (`1E+10`), so anything but a
+  # plain future epoch drops the relative part rather than break the arithmetic.
+  _budget_reset_note() {
+    local r="${1%%.*}"
+    if [[ "$r" =~ ^[0-9]{1,12}$ ]] && [ $((10#$r)) -gt "$3" ]; then
+      printf ' (resets %s, in %s)' "$2" "$(_budget_reltime $((10#$r - $3)))"
+    else
+      printf ' (resets %s)' "$2"
+    fi
+  }
+
+  # _budget_detail <now> — the budget: detail for the first gating window, else
+  # the limit. Returns 0 exhausted (detail printed), 1 clear, 2 can't tell.
+  _budget_detail() {
+    local win lim wrc lrc key pct reason resets iso detail
+    win=$(_budget_windows "$budget_file" "$engine" "$1") && wrc=0 || wrc=$?
+    lim=$(_budget_limit "$budget_file" "$engine" "$1") && lrc=0 || lrc=$?
+    if [ "$wrc" = 0 ]; then
+      IFS=$'\t' read -r key pct resets iso <<<"${win%%$'\n'*}"
+      detail="budget: $engine $key at $pct%"
+      if [ -n "$resets" ]; then
+        detail="$detail$(_budget_reset_note "$resets" "$iso" "$1")"
+      else
+        detail="$detail (no reset time)"
+      fi
+    elif [ "$lrc" = 0 ]; then
+      IFS=$'\t' read -r reason resets iso <<<"${lim%%$'\n'*}"
+      detail="budget: $engine limit reached: $reason"
+      [ -z "$resets" ] || detail="$detail$(_budget_reset_note "$resets" "$iso" "$1")"
+    elif [ "$wrc" = 2 ] || [ "$lrc" = 2 ]; then
+      return 2
+    else
+      return 1
+    fi
+    if jq -e --arg e "$engine" '.engines[$e].credits_cover == true' "$budget_file" >/dev/null 2>&1; then
+      detail="$detail — credits cover: may be drawing paid credits"
+    fi
+    printf '%s\n' "$detail"
+  }
 
   # Leaked model sentinels: DeepSeek `<｜…｜>` (fullwidth bars), ChatML/GPT
   # `<|…|>` with a known token name.
@@ -5262,6 +5417,7 @@ BUSLINE
   d7_hits=0
   d7_tok0=0
   d7_at=0
+  d8_at=0
   engine_seen=0
   _bus_refresh
   while :; do
@@ -5342,6 +5498,40 @@ BUSLINE
           d4_at=0
           d4_since=0
         fi
+      fi
+    fi
+
+    # ---- D8: engine budget ------------------------------------------------
+    # The launch gates refuse an exhausted engine only at dispatch time; this
+    # flags one that crosses the line while the worker runs. Bus-read cadence,
+    # and only while the row is live work or a watchdog episode: a pr_open run
+    # is finished and idle, and a watchdog row would mask it in roster/reap
+    # (the later `budget: cleared` would even revive it in fan-out); a
+    # self-reported blocked is already parked in a zero-token await
+    # (`suppressed`). The bus is re-read after the refresh, which can hold the
+    # tick up to 120s, so a pr_open or await posted meanwhile still gates. A
+    # cache that can't tell holds the episode as it is, so a stale or blind read
+    # never announces a clearance. Never escalates.
+    if [ "$budget_on" = 1 ] && [ "$suppressed" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
+      _budget_refresh_maybe "$now"
+      _bus_refresh
+      if [ "$bus_state" = blocked ] && [ "$bus_source" != watchdog ]; then
+        suppressed=1
+      fi
+      if [ "$suppressed" = 0 ]; then
+        case "$bus_state" in
+        "" | working | blocked)
+          d8_detail=$(_budget_detail "$now") && d8_rc=0 || d8_rc=$?
+          if [ "$d8_rc" = 0 ] && [ "$d8_at" = 0 ]; then
+            if _post_blocked "budget:" "$d8_detail"; then
+              d8_at="$now"
+            fi
+          elif [ "$d8_rc" = 1 ] && [ "$d8_at" != 0 ]; then
+            _post_clear "budget:"
+            d8_at=0
+          fi
+          ;;
+        esac
       fi
     fi
 
@@ -6432,7 +6622,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] [--restamp] [--] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] [--restamp] [--] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] [--no-budget] [--budget-refresh S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
   exit 1
   ;;
 esac

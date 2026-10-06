@@ -19,6 +19,8 @@ setup() {
   export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
   # Table-driven rows restore this before each row's stubs.
   _ROW_BASE_PATH="$PATH"
+  # The real refresh-budget probes live accounts, which no test may do.
+  export CREW_BUDGET_REFRESH_CMD=:
 }
 
 teardown() {
@@ -7025,6 +7027,359 @@ EOF
   run ! grep -q '@crew_state' "$STUB_LOG"
 }
 
+# ---------------------------------------------------------------------------
+# stall-watch: D8 budget (engine budget cache → blocked/budget:)
+# ---------------------------------------------------------------------------
+
+# budget_now — the virtual clock's epoch, initialised so the fixture and the
+# watcher agree on "now".
+budget_now() {
+  [ -s "$CREW_CLOCK" ] || date +%s >"$CREW_CLOCK"
+  cat "$CREW_CLOCK"
+}
+
+# bwin <used_pct> <resets_at|null> — one window object of the cache.
+bwin() { printf '{"used_pct":%s,"resets_at":%s}' "$1" "$2"; }
+
+# budget_cache <fetched_offset_s> <engines-json> — write refresh-budget's cache,
+# fetched <offset> seconds from the virtual now.
+budget_cache() {
+  local f
+  f=$(($(budget_now) + $1))
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson e "$2" --argjson f "$f" \
+    '{fetched_at:($f|todateiso8601), fetched_epoch:$f, engines:$e}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+# budget_refresh_stub <fetched_offset_s> <engines-json> — a CREW_BUDGET_REFRESH_CMD
+# that counts its calls and rewrites the cache as a refresh would.
+budget_refresh_stub() {
+  printf '%s' "$2" >"$BATS_TEST_TMPDIR/refresh-engines.json"
+  cat >"$BATS_TEST_TMPDIR/refresh-stub" <<EOS
+#!/usr/bin/env bash
+echo call >>"$BATS_TEST_TMPDIR/refresh.calls"
+f=\$((\$(cat "$CREW_CLOCK") + $1))
+mkdir -p "$XDG_DATA_HOME/crew"
+jq -n --slurpfile e "$BATS_TEST_TMPDIR/refresh-engines.json" --argjson f "\$f" \\
+  '{fetched_at:(\$f|todateiso8601), fetched_epoch:\$f, engines:\$e[0]}' \\
+  >"$XDG_DATA_HOME/crew/engine-budget.json"
+EOS
+  chmod +x "$BATS_TEST_TMPDIR/refresh-stub"
+  export CREW_BUDGET_REFRESH_CMD="$BATS_TEST_TMPDIR/refresh-stub"
+}
+
+budget_calls() {
+  if [ -f "$BATS_TEST_TMPDIR/refresh.calls" ]; then
+    wc -l <"$BATS_TEST_TMPDIR/refresh.calls" | tr -d ' '
+  else
+    echo 0
+  fi
+}
+
+# budget_watch <max-life> [stall-watch args...] — a lead watcher over a static
+# idle pane; later args override these defaults.
+budget_watch() {
+  local life="$1"
+  shift
+  local p
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x --pane %9 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 \
+    --budget-refresh 0 --max-life "$life" "$@"
+}
+
+# budget_rows — every status row as from|state|source|detail.
+budget_rows() {
+  bus | jq -r 'select(.kind=="status") | "\(.from)|\(.body.state)|\(.body.source)|\(.body.detail)"'
+}
+
+budget_reset_bus() {
+  rm -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+}
+
+@test "stall-watch: D8 budget: lead claude window at 97% posts one blocked/budget: with the reset" {
+  now=$(budget_now)
+  resets=$((now + 15570))
+  iso=$(jq -nr --argjson r "$resets" '$r | todateiso8601')
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 null),\"7d\":$(bwin 97 "$resets")}}}"
+  budget_watch 6
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: claude 7d at 97% (resets $iso, in 4h 19m)" ]
+}
+
+@test "stall-watch: D8 budget: relative reset renders as Xd Yh, Xh Ym or Xm" {
+  # <seconds-to-reset>|<expected rel>; each lands a little past the round value
+  # so a tick of clock drift cannot change the rendering.
+  for row in "183630|2d 3h" "100|1m"; do
+    secs="${row%%|*}"
+    want="${row#*|}"
+    budget_reset_bus
+    resets=$(($(budget_now) + secs))
+    iso=$(jq -nr --argjson r "$resets" '$r | todateiso8601')
+    budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$resets")}}}"
+    budget_watch 3
+    [ "$status" -eq 0 ]
+    run budget_rows
+    [ "${#lines[@]}" -eq 1 ]
+    [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets $iso, in $want)" ]
+  done
+}
+
+@test "stall-watch: D8 budget: a window with no reset time says so" {
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 96 null)}}}"
+  budget_watch 3
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: claude 5h at 96% (no reset time)" ]
+}
+
+@test "stall-watch: D8 budget: codex spend-control limit posts blocked/budget: limit reached" {
+  now=$(budget_now)
+  budget_cache 0 "{\"codex\":{\"windows\":{\"5h\":$(bwin 40 "$((now + 9000))"),\"7d\":$(bwin 20 "$((now + 90000))")},\"limit_reached\":{\"spend_control_reached\":true},\"credits_cover\":false}}"
+  budget_watch 6 --engine codex
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: codex limit reached: spend control reached" ]
+}
+
+@test "stall-watch: D8 budget: credits_cover appends the paid-credits suffix" {
+  now=$(budget_now)
+  budget_cache 0 "{\"codex\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 9000))")},\"limit_reached\":null,\"credits_cover\":true}}"
+  budget_watch 3 --engine codex
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: codex 5h at 100% (resets "*" — credits cover: may be drawing paid credits" ]]
+}
+
+@test "stall-watch: D8 budget: clears to working when a refresh drops the engine below the line" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  budget_watch 20 --budget-refresh 1 --dead 2
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets "* ]]
+  [ "${lines[1]}" = "worker:feat/x|working|watchdog|budget: cleared" ]
+  run bash -c "bus | grep -c '\"state\":\"failed\"' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: clears when the clock passes resets_at with no refresh" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 3))")}}}"
+  budget_watch 10
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets "* ]]
+  [ "${lines[1]}" = "worker:feat/x|working|watchdog|budget: cleared" ]
+}
+
+@test "stall-watch: D8 budget: a window whose reset already passed posts nothing" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now - 60))")}}}"
+  budget_watch 6
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: a stale cache posts nothing" {
+  now=$(budget_now)
+  budget_cache -10800 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  budget_watch 6
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: an open episode is held, not cleared, when the cache turns stale" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  budget_refresh_stub -10800 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  budget_watch 20 --budget-refresh 1
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: "* ]]
+}
+
+@test "stall-watch: D8 budget: a pr_open worker is not flagged" {
+  seed_raw worker:feat/x pr_open "" ""
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  budget_watch 6
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c watchdog || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: --no-budget posts nothing for an exhausted cache" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  budget_watch 6 --no-budget
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: role mode judges its own engine and stays silent when that one has room" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}},\"codex\":{\"windows\":{\"5h\":$(bwin 50 "$((now + 99999))")},\"limit_reached\":null,\"credits_cover\":false}}"
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --budget-refresh 0 --max-life 6
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: role mode posts under the role id, never a worker row" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}},\"codex\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")},\"limit_reached\":null,\"credits_cover\":false}}"
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine codex \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --budget-refresh 0 --max-life 6
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "role:feat/x:reviewer|blocked|watchdog|budget: codex 5h at 100% (resets "* ]]
+  run bash -c "bus | grep -c '\"from\":\"worker:' || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: refreshes a missing cache once and is then rate-limited by the stamp" {
+  now=$(budget_now)
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+  [ -f "$XDG_DATA_HOME/crew/engine-budget.json.refresh-at" ]
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+}
+
+@test "stall-watch: D8 budget: a fresh cache triggers no refresh" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "0" ]
+}
+
+# budget_count_stub — a CREW_BUDGET_REFRESH_CMD that only counts its calls and
+# never writes the cache, so only the stamp or the lock can hold it back.
+budget_count_stub() {
+  printf '#!/usr/bin/env bash\necho call >>"%s"\n' "$BATS_TEST_TMPDIR/refresh.calls" \
+    >"$BATS_TEST_TMPDIR/refresh-stub"
+  chmod +x "$BATS_TEST_TMPDIR/refresh-stub"
+  export CREW_BUDGET_REFRESH_CMD="$BATS_TEST_TMPDIR/refresh-stub"
+}
+
+@test "stall-watch: D8 budget: a refresh that never writes the cache is held back by the stamp" {
+  budget_count_stub
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+}
+
+@test "stall-watch: D8 budget: a live holder of the refresh lock means no refresh" {
+  budget_count_stub
+  mkdir -p "$XDG_DATA_HOME/crew/engine-budget.json.refresh.d"
+  echo "$$" >"$XDG_DATA_HOME/crew/engine-budget.json.refresh.d/pid"
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "0" ]
+}
+
+@test "stall-watch: D8 budget: a pr_open posted during the refresh is not masked" {
+  now=$(budget_now)
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  cat >>"$BATS_TEST_TMPDIR/refresh-stub" <<EOS
+jq -nc --argjson ts "\$((\$(cat "$CREW_CLOCK") * 1000))" \\
+  '{ts:\$ts, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"pr_open"}}' \\
+  >>"$logf"
+EOS
+  budget_watch 6 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+  run bash -c "bus | grep -c watchdog || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: an exponent-form resets_at still posts, without the relative part" {
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 1e10)}}}"
+  iso=$(jq -nr '1e10 | todateiso8601')
+  budget_watch 3
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets $iso)" ]
+}
+
+@test "stall-watch: D8 budget: a zero-padded stamp is read as decimal" {
+  now=$(budget_now)
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  echo 09 >"$XDG_DATA_HOME/crew/engine-budget.json.refresh-at"
+  budget_watch 6 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets "* ]]
+}
+
+# A pi watcher on a local model has no account to exhaust: it reads the pane's
+# @crew_model and looks it up in localModels.
+budget_pi_local_fixture() { # <localModels-json>
+  mkdir -p "$BATS_TEST_TMPDIR/pibin"
+  cat >"$BATS_TEST_TMPDIR/pibin/tmux" <<'EOS'
+#!/usr/bin/env bash
+[ "$1" = show-options ] && printf 'local-x\n'
+exit 0
+EOS
+  printf '%s' "{\"localModels\":$1}" >"$BATS_TEST_TMPDIR/pibin/models.json"
+  printf '#!/usr/bin/env bash\ncat "%s"\n' "$BATS_TEST_TMPDIR/pibin/models.json" \
+    >"$BATS_TEST_TMPDIR/pibin/dispatch-config"
+  chmod +x "$BATS_TEST_TMPDIR/pibin/tmux" "$BATS_TEST_TMPDIR/pibin/dispatch-config"
+  export PATH="$BATS_TEST_TMPDIR/pibin:$PATH"
+  export DISPATCH_CONFIG_BIN="$BATS_TEST_TMPDIR/pibin/dispatch-config"
+  budget_cache 0 "{\"pi\":{\"windows\":{},\"limit_reached\":{\"reason\":\"key credit limit exhausted\"},\"credits_cover\":false}}"
+}
+
+@test "stall-watch: D8 budget: a pi watcher on a local model is exempt" {
+  budget_pi_local_fixture '{"local-x":{}}'
+  budget_watch 6 --engine pi
+  [ "$status" -eq 0 ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: a pi watcher on a hosted model still posts the limit" {
+  budget_pi_local_fixture '{}'
+  budget_watch 6 --engine pi
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: pi limit reached: key credit limit exhausted" ]
+}
+
 @test "roster: carries source and truncates detail to 120 chars" {
   long=$(printf 'quiet: %0.sx' $(seq 1 200))
   seed_raw worker:feat/x blocked "$long" watchdog
@@ -7049,6 +7404,8 @@ EOF
   seed_raw worker:feat/x blocked "which approach?" "" 2
   seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9 — waiting" watchdog 3
   seed_raw worker:feat/x blocked "quiet: pane unchanged for 1800s" watchdog 4
+  # An account limit, not a stall: it must not count as a watchdog stall.
+  seed_raw worker:feat/x blocked "budget: codex 5h at 100% (resets x)" watchdog 5
   store="$BATS_TEST_TMPDIR/xdg"
   XDG_DATA_HOME="$store" CREW_ID=c1 run run_crew rate
   [ "$status" -eq 0 ]

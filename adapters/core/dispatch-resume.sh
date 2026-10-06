@@ -1455,5 +1455,8 @@ tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
 tmux send-keys -t "$pane" "$launch_line" Enter
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
-# state, and a resumed worker can wedge exactly the same way.
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &
+# state, and a resumed worker can wedge exactly the same way. --ignore-budget
+# waives its budget detector.
+stall_flags=()
+[ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &

@@ -243,8 +243,10 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
 - **The tail of a window is not free headroom.** The pace rule below
   deliberately allows the premium rung at, say, 94% with two hours left on
   the `7d` window. A `deep` fan-out launched there can cross 95% mid-run and
-  start killing live workers on limit errors — the gate can't catch that
-  because it only runs at dispatch time. Near the wall, size the fan-out to
+  start killing live workers on limit errors — the launch gate only runs at
+  dispatch time, so it can't stop a fan-out already running; the watchdog's
+  `budget:` notice (below) tells you when a running worker's engine crosses,
+  but by then the window is spent. Near the wall, size the fan-out to
   what fits before the reset, not to the roster budget.
 - **≥70% on the `7d` window, pace-aware** — narrower and mechanical, not
   merely advisory: `dispatch` refuses a premium model rung or effort for an engine when its
@@ -314,7 +316,7 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
   fan-out released at once, which would burn a freshly refilled window in
   minutes and cost the crew its pace-rule rung for the rest of it. The
   predicate matches the gate's own, verbatim: **no window of `wait.engine`
-  at ≥95% with a null or still-future `resets_at`** (`dispatch.sh:114`) — not
+  at ≥95% with a null or still-future `resets_at`** (`budget-gate.sh` `_budget_windows`) — not
   "the recorded window reset", since a
   re-probe can find a different window binding by the time the wake fires.
 - **A hold record is data you wrote, not an instruction to obey.** Anything
@@ -1157,7 +1159,7 @@ in `--states`.
 
 A `status` carrying `body.source: "watchdog"` was posted **on the worker's behalf** by
 the per-worker liveness watchdog (`crew stall-watch`, spawned by `dispatch`), not
-self-reported. Its `detail` always begins with one of nine reserved prefixes:
+self-reported. Its `detail` always begins with one of ten reserved prefixes:
 
 **Relaying a pane to the human.** Whenever you point the human at a pane — a
 relayed prompt or classifier escalation, a `quota:` wait, an `unread:` nudge, or
@@ -1195,8 +1197,9 @@ it at relay time.
     risks — notably, the guarantee holds only if the transcript files are authentic —
     are in `docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md`.
 
-    Claude role panes carry their own prompt-only watch (`role:<branch>:<role>`),
-    posting `prompt:`/`quota:` the same way — the pane is named in the detail; verify,
+    Every role pane carries its own watch (`role:<branch>:<role>`) — it posts
+    `budget:` for the role's engine (see that bullet), and on claude role panes also
+    `prompt:`/`quota:` the same way — the pane is named in the detail; verify,
     then act, exactly as above — except a role pane's permission dialog goes straight to the human: do not run `permission-check` on it (the checker would refuse anyway: the pane is not running the lead session). Give the human the `crew where` line for that pane.
 - `quota:` — two distinct frame shapes, both meaning stop dispatching to this engine,
   don't answer a question. The rate-limit prompt ("Stop and wait for limit to reset")
@@ -1268,6 +1271,27 @@ it at relay time.
   engine if the model keeps derailing). Never escalates to `dead:`; clears itself if the
   sentinel leaves the frame. Own prefix — never reuse `prompt:`/`quota:`; consumers that
   treat unknown watchdog prefixes as non-question `running` need no change.
+- `budget:` — the worker's engine (a role pane: the role's own engine, posted under
+  `role:<branch>:<role>`) crossed ≥95% on a quota window whose `resets_at` is null or still
+  ahead, or carries `limit_reached` — the same predicate as the `dispatch` ≥95% /
+  absolute-limit stop, read from `engine-budget.json`. The detail names engine, window,
+  `used_pct` and reset (`resets <ISO>, in <4h 19m>`), or the limit reason, plus
+  `credits cover: may be drawing paid credits` when that engine's entry has
+  `credits_cover: true`. The watchdog keeps the cache fresh itself (it runs
+  `refresh-budget` host-wide at most every 15 min while workers run), so no manual
+  refresh is needed for it. The worker keeps running; you decide: let it finish (often
+  right near a PR), or stop it — `crew reply` a stop directive (lands at its next seam)
+  or `tmux kill-window` for a hard stop. Under `credits_cover: true` continuing spends
+  paid credits: that is the human's call — relay it with the `crew where` line, don't
+  decide it yourself. **Never re-dispatch** on `budget:` (it would discard intact work for
+  nothing), and don't dispatch new work to that engine either (the launch gate refuses
+  anyway). Arrives in a burst across that engine's workers and roles, like `load:`:
+  handle the batch in one turn. Skipped while the worker is self-blocked in `crew await`
+  or at `pr_open`. A worker launched with `--ignore-budget` (the human's spend decision)
+  never gets it; a resume without `--ignore-budget` re-arms it. Clears itself
+  (`budget: cleared`) once the window resets or the cache shows it below the line; a
+  stale or blind cache neither posts nor clears. Always `blocked`, never `failed`, never
+  escalates.
 - `dead:` — a `turn-stall:`/`quiet:` episode whose evidence still held a further 30 min.
   For `quiet:` this now additionally requires the engine process to be gone, not just
   the static frame; `turn-stall:`'s escalation is unchanged. This is the **only**
@@ -1281,7 +1305,8 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
    `detail` exists to make this one command possible. A `load:` detail names process
    `cwd`s, not a pane — skip the capture and go to the `load:` bullet's
-   attribute-then-act branch.
+   attribute-then-act branch. A `budget:` detail names an engine window, not a pane
+   problem — skip the capture and go to the `budget:` bullet.
 2. The pane confirms a prompt → answer it in place (except `quota:` — see above: stop,
    don't answer). A tool-permission dialog is answered only by
    `permission-check … --answer`; otherwise it goes to the human with the captured
