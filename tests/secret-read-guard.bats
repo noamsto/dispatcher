@@ -1801,8 +1801,10 @@ echo-glued-redirect|echo hi>/tmp/x
 make-env-arg|make env=prod
 envsubst-glued-redirect|envsubst>/tmp/x
 setx-glued-redirect|setx>/tmp/x
+env-assign-glued-redirect-cmd|env FOO=a>b cmd
+env-i-glued-redirect-cmd|env -i>/tmp/x mycmd
 ROWS
-  finish_rows 17
+  finish_rows 19
 }
 
 # backtick_level <k> — the backtick that opens or closes nesting level k: bash

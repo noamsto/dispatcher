@@ -265,10 +265,13 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # (`env >&2`, `env 2>&1`, `env >/tmp/x`, `env &>f`, `env {fd}>&2`), or stdin
 # (`env <file`, `env <<EOF`) — every path still lands the dump somewhere
 # legible, and a redirect to a file leaves it there for a later command to
-# print. A `>` may sit right against the dumper word (`env>/tmp/x`), but a `<`
-# must follow a space, so prose placeholders (`X=<empty>`) are not redirects;
-# `<(` is a process substitution.
-dump_end='$|[;&|)#>]|[[:space:]][0-9]*>|[0-9]+>|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
+# print. A `>` may sit right against a dumper word (`env>/tmp/x`, `set>f`), but
+# after env's or printenv's options (opt_end) it must follow a space, an fd
+# number or `{fd}` (or open `>&`): wrap_rest can stop short of a `>` inside a
+# word (`env FOO=a>b cmd` runs cmd). A `<` always needs a space, so prose
+# placeholders (`X=<empty>`) are not redirects; `<(` is a process substitution.
+opt_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
+dump_end='>|'"$opt_end"
 # A dumper path starts path-like, so the shebang in heredoc text
 # (`#!/usr/bin/env -S bash`) is not read as a dumper path. One starting with
 # `/`, `{` or `\` may hold `=` (`/nix/store/x-a=b/bin/env`, `{a[1]=d/env`),
@@ -288,7 +291,7 @@ dump_end='$|[;&|)#>]|[[:space:]][0-9]*>|[0-9]+>|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[
 # a path in the unstripped view, failing closed.
 # shellcheck disable=SC2016
 path_pfx='(/[^[:space:];&|()]*/|[{\\][^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^[:space:]A-Za-z0-9_=+[;&|()][^[:space:];&|()]*|\+([^=[:space:];&|()][^[:space:];&|()]*)?|\[[^][\\`$[:space:];&|()]*([[\\`$][^[:space:];&|()]*|\](\+([^=[:space:];&|()][^[:space:];&|()]*)?|[^=+[:space:];&|()][^[:space:];&|()]*)?)?)?/)?'
-env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
+env_dump_re="$cmd_start""$path_pfx"'((printenv|env)>|(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$opt_end"'))'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
