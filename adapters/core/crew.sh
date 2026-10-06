@@ -3710,9 +3710,12 @@ EOF_REPOS
         # would make old and new rows silently non-comparable in the same field.
         # A new field leaves historical rows simply absent (null), which every
         # reader there already tolerates — and watchdog_blocked_count is direct
-        # evidence of how often a model/tier wedges.
+        # evidence of how often a model/tier wedges. A budget: row is a host-wide
+        # quota crossing, not a model/tier wedge, so it stays out of
+        # watchdog_blocked_count (load: is left as is).
         | ($st | map(select(.body.state=="blocked" and (.body.source // "") != "watchdog")) | length) as $blocked
-        | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog")) | length) as $wblocked
+        | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog"
+                            and (((.body.detail // "") | if type == "string" then startswith("budget:") else false end) | not))) | length) as $wblocked
         # `try fromjson catch null` so ONE unparseable body cannot abort the whole
         # sweep and lose every other run with it (#25). Such a run folds with null
         # metrics — the same shape a run that never emitted metrics already takes.
