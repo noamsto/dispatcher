@@ -589,7 +589,8 @@ branch instead; the worktree carries over under `resume: true`.
   forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
   `--spawn-role` keep whatever is recorded, but every launch — resume and
   `--spawn-role` included — pins its launcher's own resolved grant roots onto the
-  launch as `DISPATCH_GRANT_ROOTS` (`:` when the roots resolved empty, never unset),
+  launch as `DISPATCH_GRANT_ROOTS` (`:` when the roots resolved empty, never unset;
+  `--spawn-role` takes them from its dispatcher's `protocol-dirs` record),
   re-checks the recorded grants against that pinned value, and drops any that no
   longer resolve inside a root, with a `dispatch: dropping invalid grant` line on
   stderr; the roots a session checks against are always the ones its own dispatcher
@@ -606,8 +607,8 @@ branch instead; the worktree carries over under `resume: true`.
   record are not a boundary against a worker that deliberately tampers with harness
   state (a `tmux set-option`, or running `dispatch`/`claude` itself); they close the
   sanctioned path, and Claude's own permission layer remains the boundary. It refuses
-  without those options (re-dispatch), without a record, or outside the dispatched
-  worktree's root. Its own `$crew_dir/artifacts/<branch>` is the
+  without those options (re-dispatch), without a record or one missing its settings
+  line (re-dispatch or `dispatch resume`), or outside the dispatched worktree's root. Its own `$crew_dir/artifacts/<branch>` is the
   only write-capable default grant — no `--add-dir` needed for any of those. Only claude launches take `--add-dir`: codex runs
   sandbox-bypassed, cursor runs `--force`, and pi has no path-permission layer, so
   none of them have a prompt to widen. A worker blocked on a permission prompt
@@ -644,7 +645,10 @@ branch instead; the worktree carries over under `resume: true`.
   which the classifier sees; an effect that stays in the worker's own session or
   grid (its own roster, its own watchers' bus, its own review — the human PR
   review is that boundary); and values the dispatcher resolved and recorded
-  (the protocol dirs). The rule for harness code this implies: **anchor, don't
+  (the protocol dirs, and the settings inputs — `XDG_CONFIG_HOME`,
+  `DISPATCH_LOCKED_SETTINGS`, the `DISPATCH_*` env layer, `PI_CODING_AGENT_DIR` —
+  that a lazy `--spawn-role` resolves settings and seeds the shared pi worker dir
+  from, never its caller's env). The rule for harness code this implies: **anchor, don't
   discover** — take crew dir, branch, window and pane identity from dispatcher
   state (the window's `@crew_dir`/`@crew_branch`/`@crew_id`/`@crew_role` stamps,
   records under the crew dir, the worktree record in
@@ -680,12 +684,13 @@ branch instead; the worktree carries over under `resume: true`.
   resolved; the call's git dir and the caller's own) against a baseline at
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
-  anchored git call, and before `wt switch`, `git fetch`/`ls-remote`, `wt
-  remove` and `git branch -D`. `dispatch` and `crew reap` first leave a
-  recorded worker worktree for the main checkout, and run `git
-  fetch`/`ls-remote`/`git branch -D` anchored — `--git-dir=<git-common-dir>`
-  plus the `-c` keys of `_wt_neutral_cfg` (these commands read no attributes)
-  — so no worker `.git`, standalone or swapped mid-run, is ever discovered by
+  anchored git call, and before `wt switch`, `git fetch`/`ls-remote`,
+  `crew reap`'s worktree removal and `git branch -D`. `dispatch` and
+  `crew reap` first leave a recorded worker worktree for the main checkout,
+  and run `git fetch`/`ls-remote`/`git branch -D`/`git worktree remove
+  --force` anchored — `--git-dir=<git-common-dir>` plus the `-c` keys of
+  `_wt_neutral_cfg` (these commands read no attributes) — so no worker
+  `.git`, standalone or swapped mid-run, is ever discovered by
   them. They refuse instead of leaving when the record is not a regular file,
   when the repo has no main checkout to move to (a bare or separate-git-dir
   layout), or when the cwd's git does not resolve to the recorded crew dir:
@@ -699,12 +704,12 @@ branch instead; the worktree carries over under `resume: true`.
   git itself resolves hooks to the resolved `<common>/hooks` (`git rev-parse
   --git-path hooks`) and no `core.worktree` is set; that cwd check runs only
   from a trusted cwd — dispatch entry, before `wt switch`, and reap's
-  window-kill and `wt remove` gates — so a dispatcher run from a linked
+  window-kill and removal gates — so a dispatcher run from a linked
   worktree with no dispatcher record refuses the relative spelling (set
   `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
-  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) — and, via
-  `GIT_CONFIG_COUNT`, the git that `crew reap`'s `wt remove` spawns, and
-  `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
+  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) —
+  and, via `GIT_CONFIG_COUNT`, `dispatch`'s own `wt switch` for every switch
+  but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
   `submodule.recurse=false`, disable the config-hook events they trigger (the
   set is `_wt_neutral_cfg` in `worktree-git.sh`), and read no in-tree
@@ -773,11 +778,9 @@ branch instead; the worktree carries over under `resume: true`.
   (reached e.g. through a worker-planted symlink) holding a standalone `.git`;
   `dispatch resume`'s plumbing before its record check, and its `crew` bus
   calls, discover through the cwd's `.git` (they run no program); `crew
-  reap`'s `wt remove` still runs worktrunk's own discovery git (`git status`)
-  inside the worker's worktree after reap's gitlink check, so a `.git` swapped
-  in that window is read with the neutral env only — its own config and
-  `info/attributes` can still select a filter (tracked as a follow-up;
-  anchoring the removal is the fix); and only a default create — `wt switch -c` off the freshly fetched
+  reap`'s last anchored dirt check and its forced removal are two calls, so a
+  write landing in the tree between them is removed with it; and only a
+  default create — `wt switch -c` off the freshly fetched
   default-branch tip, operator-trusted — still checks out with the new
   tree's own attributes and hooks, so a baselined relative smudge program or
   hook runs whatever that tree holds in the dispatcher's shell: keep driver
@@ -969,10 +972,21 @@ guard as the other two lanes. Each notification is one line:
 - **Error** → already retried internally; treat it as a prompt to run `--status`.
 - **Reap** → informational: the stream's own reap (Rule 5) reclaimed or released
   something. Nothing to do. If a line surprises you, `crew reap --dry-run` explains
-  the keeps. A no-op reap prints nothing. A `keeping … wt remove failed` line
-  repeats on every reap until the removal succeeds, and a dry run cannot show why:
-  run `wt remove <branch>` by hand in that repo to see the error, then fix it or
-  escalate. A stream reap that fails arrives as an `error` line whose detail starts
+  the keeps. A no-op reap prints nothing. A `keeping … worktree removal failed` line
+  repeats on every reap until the removal succeeds, and a dry run cannot show why.
+  Diagnose read-only: `git worktree list --porcelain` — a `locked` line is the
+  usual cause (a permissions failure inside the tree shows as the partway line
+  instead); fix the cause and let the next reap remove it, or escalate. Never
+  remove a worker worktree by hand: even a plain `git worktree remove` runs
+  `git status` in the worker's tree, reading its attributes with no config guard. A `keeping … removal failed partway` line
+  means git deleted part of the tree and its worktree registration: the path is
+  left but is no longer a worktree, so later reaps skip it — relay it to the
+  human, who fixes its permissions and removes the leftover path — never `rm` it
+  yourself (the branch and the `dispatched` label stay). A
+  `keeping … possible tampering` line means that worktree's `.git` changed mid-reap: relay it to the human
+  verbatim, never remove the worktree yourself. Reap deletes a local branch
+  only for a MERGED PR whose tip is the PR head; a CLOSED or unverifiable
+  branch stays. A stream reap that fails arrives as an `error` line whose detail starts
   with `reap:`.
 - **Hold due** → `holds[]` lists every matured hold; release exactly one — the
   ≥95% release predicate above, the duplicate guard (Tracker, above), the
@@ -1327,7 +1341,7 @@ Two reads remain for detail:
 - `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), the same event's `engine`/`model`/`tier`, an `engine_session` (the engine's own session id from the newest `dispatch`/`resume` row — a uuid for claude/pi, `null` for codex/cursor, which cannot pre-assign one), a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
 - `crew inbox dispatcher:$CREW_ID` — worker **questions** in full (messages only; status lives in the roster).
 - A worker that's `blocked` has posted its question and is **awaiting your reply in-band**. A `permission:` block follows _Permission blocks_ below. It stays inside `crew await` in repeated 300s cycles for up to a **~2h total budget (~24 cycles)**, re-stamping `blocked` each cycle; that per-cycle re-stamp is what keeps the roster's `age_s` honest and is the worker's liveness signal to `crew stall-watch` and to you (`WORKER_PROTOCOL.md` → Report to the bus). `crew reply worker:<branch> "<answer>"` at any point inside that budget is delivered in-band and resumes the worker in place — no tmux, no re-dispatch. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. A dispatch session whose shell has no `CREW_ID` (an in-session dispatcher command, an adopted crew) passes `--crew <id>`: `crew reply worker:<branch> "<answer>" --crew <id>` — without it `reply` uses the single crew holding a live session on that branch, and refuses when several do. A worker whose budget ran out has stamped `failed "blocked, no dispatcher reply"`: it is **terminal** — re-dispatch it with the context baked in, and do not attempt to wake it (a stopped session reads nothing, and nothing in the harness types into an engine pane). **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
-  **Acceptance waivers are yours alone.** A worker whose spec `## Acceptance` item it cannot run posts `blocked "acceptance: <item> — <why>"` and awaits you. Answer with `crew reply worker:<branch> "<waive <item> | run it this way: …>"`, naming the item — waive only what the task owner would accept unrun; a waiver covers just that item. A PR-body "Not done"/"Assumptions" line is not a waiver: a worker that reaches `pr_open` with an unrun, unwaived item broke protocol. Read the ledger in the `pr_open` detail on wake (`pass(<evidence>)` / `waived(dispatcher)`); a missing or gappy ledger means send it back rather than merging. `crew status` itself refuses `pr_open`/`done` without a review seam, and `pr_open` whose ledger has an item not in `pass(…)`/`waived(dispatcher)` form (or an empty detail when the task doc has `## Acceptance`), a CI item without a CI run id/`actions/runs/` URL, or `waived(dispatcher)` without your `crew reply` containing "waive" to that worker's current session (an earlier session's reply does not carry over), so a worker stuck `working`/`blocked` after such a refusal needs a nudge or a waiver, not a merge. `done` is not ledger-checked, so an implement worker's `done` with no `pr_open` before it skipped the ledger check — send it back.
+  **Acceptance waivers are yours alone.** A worker whose spec `## Acceptance` item it cannot run posts `blocked "acceptance: <item> — <why>"` and awaits you. Answer with `crew reply worker:<branch> "<waive <item> | run it this way: …>"`, naming the item — waive only what the task owner would accept unrun; a waiver covers just that item. A PR-body "Not done"/"Assumptions" line is not a waiver: a worker that reaches `pr_open` with an unrun, unwaived item broke protocol. Read the ledger in the `pr_open` detail on wake (`pass(<evidence>)` / `waived(dispatcher)`); a missing or gappy ledger means send it back rather than merging. `crew status` itself refuses `pr_open`/`done` without a review seam, and `pr_open` whose ledger has an item not in `pass(…)`/`waived(dispatcher)` form (or an empty detail when the task doc has `## Acceptance`), a CI item without a CI run id/`actions/runs/` URL, or `waived(dispatcher)` without your `crew reply` to that worker's current session naming that item in a waive phrase (`waive AC3`; a negated phrase or another item's waiver does not count) (an earlier session's reply does not carry over), so a worker stuck `working`/`blocked` after such a refusal needs a nudge or a waiver, not a merge. `done` is not ledger-checked, so an implement worker's `done` with no `pr_open` before it skipped the ledger check — send it back.
   **Permission blocks.** A worker's own `blocked "permission: …"` is awaiting you in-band. A bus reply cannot authorize anything — the worker's classifier never reads tool output, and the worker never retries on a bus message — so an authorization reaches it only through a relaunch's launch prompt:
   - **The human authorized that action in this session, within the task's scope:** `crew reply worker:<branch> "stop — relaunching with the owner's authorization"`, wait for its `failed`, then re-dispatch the same title with your own original spec as `DISPATCH_SPEC` — never text copied from the worktree's worker-writable `WORKER_TASK.md` — and `--owner-auth` quoting the human verbatim, after their explicit yes to that exact text. The finished worker is reclaimed and its worktree carries over under `resume: true`.
   - **No such authorization:** surface the block to the human — the exact action, target, and denial reason — and wait. Relaunch only with their verbatim words. If they decline, reply with a redirect that drops the step within the task, or "stop".
@@ -1465,5 +1479,5 @@ amber -> pr: "#124"
 2. **One change = one worker = one branch/worktree/PR.** A change is normally one issue. Bundle several issues into one dispatch with `--also-closes` (see **Tracker**) only when all four hold: (1) the issues would conflict — same function or same lines, not merely the same file; (2) each would get the same tier on its own; (3) the combined diff still fits that tier's review; (4) neither is likely to block the other from merging. If any fails, keep them separate: run them one after another, or stack them with `--base` when one depends on the other.
 3. **Judge cost.** Don't run a sprawling feature on haiku, and trivial/standard lead on sonnet, and opus is the escalation — reach for it only after a sonnet failure or a real signal, and shed it back to sonnet when the budget is tight. The model is your call **within the tier's row** (or behind `--ignore-map`) — not an unconstrained choice — and it's a real cost lever.
 4. **Escalations surface in the roster/inbox**, not silently — if a worker `failed` or stalled, decide: re-dispatch (smaller, or a stronger model), intervene, or drop it.
-5. **Cleanup is automatic, and gated on the PR.** Every `dispatch` first runs `crew reap --quiet`, and `crew stream` runs it too: every `--reap-every` seconds (default 900; `0` turns stream-driven reaps off) and after any batch carrying a terminal status or a `pr-watch` change to MERGED/CLOSED. A reap reclaims the window + worktree of a finished worker (`done`, `failed`, `exited`, or `pr_open`) whose PR is merged or closed. A worker with an open PR, uncommitted changes, or a session that is not finished is kept. A live engine in the worktree keeps it too, unless all of these hold. The worker's latest word is `done` (or `pr_open`), and nothing on its branch has posted since. Every engine pane there is claude, showing a provably idle frame on two samples: a finished-turn marker (`· done HH:MM`) right above an empty input box, where a dimmed prompt suggestion still counts as empty. It also shows no live turn, subagent, prompt, or background shell or monitor. Reap then kills that window, role panes included, and reclaims the worktree. Anything else is kept, and `crew reap --dry-run` names the reason. A grid window with non-claude role panes has no idle signature, so it is kept too. A finished (`done`/`failed`) worker's window is released once its latest status is `--idle` seconds old (default 300), whatever else holds back the worktree. Besides reap, the worker's own `crew stall-watch` does this without a running stream: after the same grace it releases the window if the pane is provably idle (never a live turn, prompt, unsent input, or background shell) and keeps the worktree. Both paths keep a window a person is evidently using, and re-check next cycle: it is the active window of an attached tmux client, it had output within the grace, or its engine transcript has a user turn newer than the `done`/`failed` status. A `pr_open` worker never idle-releases, so it stays until its engine exits or you close the pane. The window is killed before `wt remove`, so a failure after that point leaves the worktree without its window: run `crew reap` without `--quiet` to see why. A reap waits for another running reap to finish rather than overlap it. The stream's reaps skip instead (`--no-wait`). A stream reap that did something prints one `{"stream":"reap",…}` line (see the claude lane under "Read the bus"). `crew reap` also lists windows still stamped with a branch whose worktree is gone, without killing them. Like every keep, that list shows only without `--quiet`. Run `crew reap` by hand (add `--dry-run` to see the plan) to have the keeps explained, e.g. before asking why a finished worker's window is still around. The same `reap` also files each finished run's outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with `crew rate --report`); set `CREW_RATE_AUTOSWEEP=0` to disable it. The sweep runs detached and logs its start, skips and exit code to `~/.local/share/crew/autosweep.log`; if the store looks stale, read that log, or run `crew rate --sweep-all` to backfill every repo with a crew bus under `$HOME` (`--root DIR`, repeatable, replaces that default) plus any repo swept before.
+5. **Cleanup is automatic, and gated on the PR.** Every `dispatch` first runs `crew reap --quiet`, and `crew stream` runs it too: every `--reap-every` seconds (default 900; `0` turns stream-driven reaps off) and after any batch carrying a terminal status or a `pr-watch` change to MERGED/CLOSED. A reap reclaims the window + worktree of a finished worker (`done`, `failed`, `exited`, or `pr_open`) whose PR is merged or closed. A worker with an open PR, uncommitted changes, or a session that is not finished is kept. A live engine in the worktree keeps it too, unless all of these hold. The worker's latest word is `done` (or `pr_open`), and nothing on its branch has posted since. Every engine pane there is claude, showing a provably idle frame on two samples: a finished-turn marker (`· done HH:MM`) right above an empty input box, where a dimmed prompt suggestion still counts as empty. It also shows no live turn, subagent, prompt, or background shell or monitor. Reap then kills that window, role panes included, and reclaims the worktree. Anything else is kept, and `crew reap --dry-run` names the reason. A grid window with non-claude role panes has no idle signature, so it is kept too. A finished (`done`/`failed`) worker's window is released once its latest status is `--idle` seconds old (default 300), whatever else holds back the worktree. Besides reap, the worker's own `crew stall-watch` does this without a running stream: after the same grace it releases the window if the pane is provably idle (never a live turn, prompt, unsent input, or background shell) and keeps the worktree. Both paths keep a window a person is evidently using, and re-check next cycle: it is the active window of an attached tmux client, it had output within the grace, or its engine transcript has a user turn newer than the `done`/`failed` status. A `pr_open` worker never idle-releases, so it stays until its engine exits or you close the pane. The window is killed before the removal, so a failure after that point leaves the worktree without its window: run `crew reap` without `--quiet` to see why. A reap waits for another running reap to finish rather than overlap it. The stream's reaps skip instead (`--no-wait`). A stream reap that did something prints one `{"stream":"reap",…}` line (see the claude lane under "Read the bus"). `crew reap` also lists windows still stamped with a branch whose worktree is gone, without killing them. Like every keep, that list shows only without `--quiet`. Run `crew reap` by hand (add `--dry-run` to see the plan) to have the keeps explained, e.g. before asking why a finished worker's window is still around. The same `reap` also files each finished run's outcome into the ratings store (`~/.local/share/crew/ratings.jsonl`, read with `crew rate --report`); set `CREW_RATE_AUTOSWEEP=0` to disable it. The sweep runs detached and logs its start, skips and exit code to `~/.local/share/crew/autosweep.log`; if the store looks stale, read that log, or run `crew rate --sweep-all` to backfill every repo with a crew bus under `$HOME` (`--root DIR`, repeatable, replaces that default) plus any repo swept before.
 6. **Never print a secret — rule 7 of `WORKER_PROTOCOL.md` binds you too.** Dispatchers diagnose environment problems, which is where a variable dump leaks: no reading secret files; no bare `env`/`printenv`; no dumping builtin — bare `set` (fish and bash/POSIX), fish `set -S`/`set --show`, `declare -p`/`-x`, bare `declare`/`typeset`, `export -p`, `typeset -p`, `/proc/*/environ`, `tmux show-environment` (a pipe filter does not make a dump safe). Check presence only (`set -q NAME`, or `[ -n "${NAME:-}" ] && echo set || echo unset`) or run the consuming tool and read its error.

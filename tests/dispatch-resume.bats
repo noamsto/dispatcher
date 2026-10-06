@@ -692,7 +692,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _record_protocol_dirs launch_dir_args claude_lean_env; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -1102,10 +1102,11 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -qxF -- 'set-window-option -t @4 @crew_id c1' "$STUB_LOG"
   grep -qxF -- 'set-option -p -t %8 @crew_model sonnet' "$STUB_LOG"
   mapfile -t lines <"$rec"
-  [ "${#lines[@]}" -eq 5 ]
+  [ "${#lines[@]}" -eq 6 ]
   [ "${lines[0]}" = "$DISPATCHER_PROTOCOL_DIR" ]
   [ "${lines[1]}" = "$DISPATCHER_SKILLS_DIR" ]
   [ "${lines[4]}" = "$(realpath "$WT")" ]
+  jq -e --arg xdg "${XDG_CONFIG_HOME:-$HOME/.config}" 'type == "object" and .XDG_CONFIG_HOME == $xdg' <<<"${lines[5]}"
 }
 
 @test "resume on a new window stamps it for --spawn-role" {

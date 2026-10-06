@@ -30,6 +30,10 @@ teardown() {
   if [ -n "${HOLDER_PID:-}" ]; then
     kill -KILL "$HOLDER_PID" 2>/dev/null || true
   fi
+  # A test that leaves a read-only dir names it here, so bats can delete it.
+  if [ -n "${RESTORE_WRITE:-}" ]; then
+    chmod -R u+w "$RESTORE_WRITE" 2>/dev/null || true
+  fi
   teardown_repo
 }
 
@@ -142,56 +146,6 @@ EOF
   chmod +x "$STUB_DIR/tmux"
   export STUB_DIR STUB_LOG
   export PATH="$STUB_DIR:$PATH"
-}
-
-# stub_wt_removes — a wt whose `remove` REALLY removes the worktree (like the
-# real binary: it deletes the working tree and its registration) but exits
-# non-zero WITHOUT deleting the branch — the exact squash-merge shape #194
-# fixes. This repo squash-merges, so a merged PR's branch is never an ancestor
-# of main: `wt remove` exits non-zero because it refuses to delete the branch
-# it reads as unmerged, even though the removal it was asked for succeeded.
-# reap must judge success by the observable outcome (worktree gone), not by
-# the exit status, and reap (not wt) deletes the branch for a MERGED PR.
-stub_wt_removes() {
-  cat >"$STUB_DIR/wt" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-if [ "$1" = remove ]; then
-  # `wt remove --foreground --no-hooks <branch>` — the branch is the last arg.
-  branch="${!#}"
-  wtp=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
-  [ -n "$wtp" ] && rm -rf "$wtp"
-  git worktree prune
-  echo "Branch unmerged; to delete, run wt remove -D" >&2
-  exit 1
-fi
-exit 0
-EOF
-  chmod +x "$STUB_DIR/wt"
-}
-
-# stub_wt_removes_status — like stub_wt_removes, but its `remove` first runs a
-# real `git status --porcelain` in the worktree (as the real wt binary does)
-# and logs the GIT_ATTR_SOURCE/GIT_CONFIG_COUNT that call saw (#578).
-stub_wt_removes_status() {
-  cat >"$STUB_DIR/wt" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-if [ "$1" = remove ]; then
-  branch="${!#}"
-  wtp=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
-  if [ -n "$wtp" ]; then
-    printf 'GIT_ATTR_SOURCE=%s GIT_CONFIG_COUNT=%s\n' "${GIT_ATTR_SOURCE:-}" "${GIT_CONFIG_COUNT:-}" >>"$STUB_LOG"
-    git -C "$wtp" status --porcelain >/dev/null
-    rm -rf "$wtp"
-  fi
-  git worktree prune
-  echo "Branch unmerged; to delete, run wt remove -D" >&2
-  exit 1
-fi
-exit 0
-EOF
-  chmod +x "$STUB_DIR/wt"
 }
 
 # stub_tmux_frames <wins-body> <panes4-body> [panes3-body] — a tmux stub for
@@ -2339,7 +2293,7 @@ EOF
 @test "reap: a real run kills (best-effort) leftover worktree processes" {
   # kill is best-effort: the fake pid below does not exist, so `kill 4242 || true`
   # succeeds via the || true and the say still fires. The assertion is the wiring:
-  # the step runs before wt remove and names the right pid, never the /elsewhere one.
+  # the step runs before the removal and names the right pid, never the /elsewhere one.
   git commit --allow-empty -q -m init
   git branch feat/reap-me
   wt_path="$BATS_TEST_TMPDIR/reap-proc-real-wt"
@@ -2385,6 +2339,7 @@ EOF
   CREW_ID=c1 run_crew status "worker:feat/reap-live#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"an engine is still running there"* ]]
+  [ -d "$wt_path" ]
   run ! grep -q remove "$STUB_LOG"
 }
 
@@ -2738,7 +2693,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/42-reap-me" done "" "https://example.com/pr/7"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -2768,7 +2722,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/42-reap-bundle" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -2795,7 +2748,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/43-reap-me" done "" "https://example.com/pr/9"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -2822,7 +2774,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/45-reap-me" done "" "https://example.com/pr/11"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -2847,7 +2798,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/44-reap-me" done "" "https://example.com/pr/10"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -2857,18 +2807,17 @@ EOF
 
 @test "reap: a squash-merged PR is reaped by outcome — reap row, label, branch deletion" {
   # #194 Gap 1: this repo squash-merges, so a merged PR's branch is never an
-  # ancestor of main. `wt remove` removes the worktree, refuses to delete the
-  # "unmerged" branch, and can exit non-zero even so. reap must judge success
-  # by the observable outcome (the worktree is gone), write the reap row,
-  # release the dispatched label, and delete the local branch deliberately.
+  # ancestor of main. The removal never deletes the branch, and reap must judge
+  # success by the observable outcome (the worktree is gone): write the reap
+  # row, release the dispatched label, and delete the local branch deliberately.
   git commit -q --allow-empty -m init
   git branch feat/squash-me
   wt_path="$BATS_TEST_TMPDIR/squash-wt"
   git worktree add -q "$wt_path" feat/squash-me
   wt_path=$(cd "$wt_path" && pwd -P)
   # The squash shape from the wild: the branch really is ahead of main (its
-  # commits are gone from the squash merge), which is why wt refuses to
-  # delete it and why reap must do so deliberately.
+  # commits are gone from the squash merge), which is why git reads it as
+  # unmerged and why reap must delete it deliberately.
   echo unique >"$wt_path/work.txt"
   git -C "$wt_path" add work.txt
   git -C "$wt_path" commit -q -m "squash-me work"
@@ -2884,7 +2833,12 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf 'wt %s\n' "$*" >>"$STUB_LOG"
+exit 1
+EOF
+  chmod +x "$STUB_DIR/wt"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   CREW_ID=c1 run_crew status "worker:feat/squash-me" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
@@ -2895,6 +2849,7 @@ EOF
   jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
   [ ! -d "$wt_path" ]
   run ! git show-ref --verify --quiet refs/heads/feat/squash-me
+  run ! grep -q '^wt ' "$STUB_LOG"
 }
 
 @test "reap: a merged worker's anchor record is pruned (#556)" {
@@ -2921,7 +2876,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/anchor-me" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -2951,7 +2905,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/anchor-kept" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -2983,7 +2936,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/anchor-dry" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet --dry-run
   [ "$status" -eq 0 ]
@@ -3004,7 +2956,6 @@ EOF
   mkdir -p "$(dirname "$anchor")"
   printf 'record\n' >"$anchor"
   stub_tmux "" ""
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/ghost" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -3013,7 +2964,7 @@ EOF
 
 @test "reap: an undeletable anchor record does not abort the reclaim (#556)" {
   # Review-fix guard: `rm -f` still fails on a directory (or EACCES/EROFS).
-  # Under `set -e` an unguarded rm would abort reap right after `wt remove`
+  # Under `set -e` an unguarded rm would abort reap right after the removal
   # deleted the worktree, before the reap row, branch delete and label
   # release — permanently losing that bookkeeping (no worktree next sweep).
   git commit -q --allow-empty -m init
@@ -3038,7 +2989,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/anchor-dir" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -3074,7 +3024,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/diverged" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3086,9 +3035,10 @@ EOF
 }
 
 @test "reap: a genuinely failed removal is still kept — no reap row, no label, no branch delete" {
-  # #194 Gap 1 guard: a stale `wt remove` failure is judged by the worktree
-  # still being present — the branch is reported kept, no reap row is written,
-  # the dispatched label stays, and the local branch survives.
+  # #194 Gap 1 guard: a failed removal is judged by the worktree still being
+  # present — the branch is reported kept, no reap row is written, the
+  # dispatched label stays, and the local branch survives. A locked worktree
+  # fails for real: a single --force still refuses it.
   git commit -q --allow-empty -m init
   git branch feat/stuck
   wt_path="$BATS_TEST_TMPDIR/stuck-wt"
@@ -3104,18 +3054,12 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  cat >"$STUB_DIR/wt" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$STUB_LOG"
-echo "Cannot remove worktree: feat/stuck has uncommitted changes" >&2
-exit 1
-EOF
-  chmod +x "$STUB_DIR/wt"
+  git worktree lock "$wt_path"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   CREW_ID=c1 run_crew status "worker:feat/stuck" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"keeping feat/stuck — wt remove failed"* ]]
+  [[ "$output" == *"keeping feat/stuck — worktree removal failed"* ]]
   run ! grep -q 'remove-label' "$STUB_LOG"
   [ -d "$wt_path" ]
   git show-ref --verify --quiet refs/heads/feat/stuck
@@ -3127,7 +3071,7 @@ EOF
   # the superpowers writing-plans round artifacts (PLAN_ROUND4.md observed in
   # a real worker tree) are untracked scaffold "our own pipeline wrote". They
   # must neither read as uncommitted work nor survive as physical files that
-  # block `wt remove` — they are gtrash'd like WORKER_TASK.md, so a
+  # block the removal — they are gtrash'd like WORKER_TASK.md, so a
   # post-mortem can still recover them.
   git commit -q --allow-empty -m init
   git branch feat/noted
@@ -3160,7 +3104,6 @@ fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/gtrash"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/noted" done "" "https://example.com/pr/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -3222,7 +3165,6 @@ fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/gtrash"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/grid-me#s1-1" done "" "https://example.com/pr/30"
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   [ "$status" -eq 0 ]
@@ -3285,6 +3227,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/failed-open — PR OPEN"* ]]
+  [ -d "$wt_path" ]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -3400,7 +3343,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/539-a" done "" "https://example.com/pr/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3442,7 +3384,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/539-b" done "" "https://example.com/pr/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3478,7 +3419,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/539-c" done "" "https://example.com/pr/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3521,7 +3461,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/557-a" done "" "https://example.com/pr/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3531,10 +3470,10 @@ EOF
   [[ "$output" == *"filter.x.clean"* ]]
 }
 
-@test "reap: wt remove never runs a baselined worktree-relative filter the worker rewrote (#578)" {
-  # `wt remove` spawns its own git, which runs `git status` in the worktree.
+@test "reap: the removal never runs a baselined worktree-relative filter the worker rewrote (#578)" {
   # A baselined filter.x.clean naming a repo-relative program passes the
-  # guard; that git must still never run the worker's rewritten copy.
+  # guard; reap's anchored status and forced removal read no in-tree
+  # attributes, so the worker's rewritten copy never runs.
   mkdir -p tools
   printf '#!/bin/sh\ncat\n' >tools/conv.sh
   chmod +x tools/conv.sh
@@ -3562,14 +3501,11 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes_status
   CREW_ID=c1 run_crew status "worker:feat/578-a" done "" "https://example.com/pr/578"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
   [ ! -d "$wt_path" ]
-  run grep -E 'GIT_ATTR_SOURCE=.+ GIT_CONFIG_COUNT=7' "$STUB_LOG"
-  [ "$status" -eq 0 ]
 }
 
 @test "reap: a worker-planted include never runs (#557)" {
@@ -3607,7 +3543,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/557-b" done "" "https://example.com/pr/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3617,11 +3552,9 @@ EOF
   [[ "$output" == *"include.path"* ]]
 }
 
-@test "reap: a worker-planted fsmonitor never runs, even through wt remove (#557)" {
-  # #557: even if reap's own guard were somehow bypassed and `wt remove` ran
-  # a real `git status` against the worktree first (as worktrunk does, to
-  # decide whether the branch is safe to delete), that status call must never
-  # see a worker-planted core.fsmonitor either — defense in depth.
+@test "reap: a worker-planted fsmonitor never runs (#557)" {
+  # #557: the config-drift guard refuses the planted core.fsmonitor before
+  # any status runs, so the hook never fires and the tree is kept.
   git commit -q --allow-empty -m init
   git branch feat/557-c
   wt_path="$BATS_TEST_TMPDIR/557-c-wt"
@@ -3644,21 +3577,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  cat >"$STUB_DIR/wt" <<EOF
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >>"\$STUB_LOG"
-if [ "\$1" = remove ]; then
-  git -C "$wt_path" status >/dev/null 2>&1
-  branch="\${!#}"
-  wtp=\$(git worktree list --porcelain | awk -v b="refs/heads/\$branch" '/^worktree /{p=\$2} \$0=="branch "b{print p}')
-  [ -n "\$wtp" ] && rm -rf "\$wtp"
-  git worktree prune
-  echo "Branch unmerged; to delete, run wt remove -D" >&2
-  exit 1
-fi
-exit 0
-EOF
-  chmod +x "$STUB_DIR/wt"
   CREW_ID=c1 run_crew status "worker:feat/557-c" done "" "https://example.com/pr/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3692,7 +3610,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/557-d" done "" "https://example.com/pr/557"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -3766,7 +3683,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
@@ -3812,7 +3728,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
@@ -3840,7 +3755,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/633-here" done "" "https://example.com/pr/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap
@@ -3864,7 +3778,6 @@ EOF
   rm -f "$w1/.git"
   mv "$scratch/.git" "$w1/.git"
   stub_tmux "" ""
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
@@ -3872,6 +3785,244 @@ EOF
   [[ "$output" == *"inside the worker worktree"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
   [ -d "$cand_wt" ]
+}
+
+# make_filter_fake_gitdir <dir> <marker> — a standalone clone of $TEST_REPO
+# whose own attributes select a clean filter that touches <marker>: the repo a
+# worker's swapped `.git` would name.
+make_filter_fake_gitdir() {
+  git clone -q "$TEST_REPO" "$1"
+  printf '* filter=x\n' >"$1/.git/info/attributes"
+  git -C "$1" config filter.x.clean "$(printf 'touch %q; cat' "$2")"
+}
+
+@test "reap: a .git swapped after the gitlink check is never discovered (#677)" {
+  # reap checks the worker's gitlink, then trashes scaffold (where the stub
+  # swaps .git for a standalone repo) before removing. Any git that discovered
+  # the repo from the tree after that would read the fake's config and
+  # attributes and run its clean filter on the stat-dirty f.
+  printf a >f
+  git add f
+  git commit -q -m f
+  git branch feat/677-a
+  wt_path="$BATS_TEST_TMPDIR/677-a-wt"
+  git worktree add -q "$wt_path" feat/677-a
+  wt_path=$(cd "$wt_path" && pwd -P)
+  seed_git_baseline
+  : >"$wt_path/WORKER_TASK.md"
+  make_filter_fake_gitdir "$BATS_TEST_TMPDIR/677-fake" "$BATS_TEST_TMPDIR/SENTINEL"
+  touch -d '+5 seconds' "$wt_path/f"
+  stub_tmux "" ""
+  export SWAP_WT="$wt_path" SWAP_FAKE="$BATS_TEST_TMPDIR/677-fake" SWAP_MARK="$BATS_TEST_TMPDIR/swapped" SWAP_REPO="$TEST_REPO"
+  cat >"$STUB_DIR/gtrash" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ ! -e "$SWAP_MARK" ]; then
+  : >"$SWAP_MARK"
+  mv "$SWAP_WT/.git" "$SWAP_WT.gitfile"
+  mv "$SWAP_FAKE/.git" "$SWAP_WT/.git"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gtrash"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+*headRefOid*) git -C "$SWAP_REPO" rev-parse refs/heads/feat/677-a ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ "$1" = remove ]; then
+  branch="${!#}"
+  wtp=$(git worktree list --porcelain | awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+  if [ -n "$wtp" ]; then
+    git -C "$wtp" status --porcelain >/dev/null 2>&1
+    rm -rf "$wtp"
+  fi
+  git worktree prune
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-a" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/677-a — its .git changed during the reap"* ]]
+  run ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: a .git swapped after the last re-check is refused by the anchored removal (#677)" {
+  # The swap fires inside the removal call itself, after every re-check: git's
+  # gitfile validation refuses the swapped tree and reap relays the tampering
+  # line. The git wrapper also logs any post-swap git that discovers its repo
+  # from the tree, which pins the removal (and all after it) as anchored.
+  printf a >f
+  git add f
+  git commit -q -m f
+  git branch feat/677-b
+  wt_path="$BATS_TEST_TMPDIR/677-b-wt"
+  git worktree add -q "$wt_path" feat/677-b
+  wt_path=$(cd "$wt_path" && pwd -P)
+  seed_git_baseline
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
+  make_filter_fake_gitdir "$BATS_TEST_TMPDIR/677-b-fake" "$BATS_TEST_TMPDIR/SENTINEL"
+  touch -d '+5 seconds' "$wt_path/f"
+  real_git=$(command -v git)
+  stub_tmux "" ""
+  export REAL_GIT="$real_git" SWAP_WT="$wt_path" SWAP_FAKE="$BATS_TEST_TMPDIR/677-b-fake" \
+    SWAP_SAVE="$BATS_TEST_TMPDIR/real-gitfile" SWAP_MARK="$BATS_TEST_TMPDIR/swapped" SWAP_REPO="$TEST_REPO"
+  cat >"$STUB_DIR/git" <<'EOF2'
+#!/usr/bin/env bash
+if [ ! -e "$SWAP_MARK" ] && [ "${!#}" = "$SWAP_WT" ]; then
+  prev=
+  for arg in "$@"; do
+    if [ "$prev" = worktree ] && [ "$arg" = remove ]; then
+      : >"$SWAP_MARK"
+      mv "$SWAP_WT/.git" "$SWAP_SAVE"
+      mv "$SWAP_FAKE/.git" "$SWAP_WT/.git"
+      break
+    fi
+    prev=$arg
+  done
+fi
+if [ -e "$SWAP_MARK" ] && [ -z "${GIT_DIR:-}" ]; then
+  anchored= in_wt=
+  case "$PWD/" in "$SWAP_WT"/*) in_wt=1 ;; esac
+  prev=
+  for arg in "$@"; do
+    case "$arg" in --git-dir=*) anchored=1 ;; esac
+    if [ "$prev" = -C ]; then
+      case "$arg/" in "$SWAP_WT"/*) in_wt=1 ;; esac
+    fi
+    prev=$arg
+  done
+  if [ -z "$anchored" ] && [ -n "$in_wt" ]; then
+    printf '%s\n' "$*" >>"$BATS_TEST_TMPDIR/discovered"
+  fi
+fi
+exec "$REAL_GIT" "$@"
+EOF2
+  chmod +x "$STUB_DIR/git"
+  cat >"$STUB_DIR/gh" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+*headRefOid*) "$REAL_GIT" -C "$SWAP_REPO" rev-parse refs/heads/feat/677-b ;;
+esac
+exit 0
+EOF2
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-b" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/swapped" ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/677-b — its .git changed during the reap"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/discovered" ]
+  [ -e "$anchor" ]
+  run ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: a gitlink staged after the first submodule gate keeps the worktree (#677)" {
+  # --force skips git's own submodule refusal and the status re-check hides
+  # gitlinks, so the pre-removal re-check must look at the index again. The
+  # gtrash stub, like the real one, removes what it is given, and stages a
+  # gitlink over a fresh embedded repo between the first gate and the re-check.
+  git commit -q --allow-empty -m init
+  git branch feat/677-c
+  wt_path="$BATS_TEST_TMPDIR/677-c-wt"
+  git worktree add -q "$wt_path" feat/677-c
+  wt_path=$(cd "$wt_path" && pwd -P)
+  : >"$wt_path/WORKER_TASK.md"
+  stub_tmux "" ""
+  export SWAP_WT="$wt_path" SWAP_MARK="$BATS_TEST_TMPDIR/staged" SWAP_REPO="$TEST_REPO"
+  SWAP_ADMIN=$(git -C "$wt_path" rev-parse --absolute-git-dir)
+  export SWAP_ADMIN
+  cat >"$STUB_DIR/gtrash" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ ! -e "$SWAP_MARK" ]; then
+  : >"$SWAP_MARK"
+  git init -q "$SWAP_WT/sub"
+  git --git-dir="$SWAP_ADMIN" --work-tree="$SWAP_WT" update-index --add \
+    --cacheinfo "160000,$(git -C "$SWAP_REPO" rev-parse HEAD),sub"
+fi
+rm -f -- "${@:2}"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gtrash"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-c" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/staged" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/677-c — it has submodules"* ]]
+  [ -d "$wt_path/sub/.git" ]
+  run ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: a removal that fails partway is reported, not called tampering (#677)" {
+  # git deletes the admin dir even when part of the tree cannot go, so the
+  # tree's gitlink then fails to resolve without any tampering.
+  [ "$(id -u)" != 0 ] || skip "root ignores directory permissions"
+  git commit -q --allow-empty -m init
+  git branch feat/677-d
+  wt_path="$BATS_TEST_TMPDIR/677-d-wt"
+  git worktree add -q "$wt_path" feat/677-d
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'ro/\n' >>"$TEST_REPO/.git/info/exclude"
+  mkdir "$wt_path/ro"
+  : >"$wt_path/ro/f"
+  RESTORE_WRITE="$wt_path"
+  chmod 0555 "$wt_path/ro"
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-d" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/677-d — removal failed partway; $wt_path is no longer a worktree"* ]]
+  [[ "$output" != *"possible tampering"* ]]
+  [ ! -e "$anchor" ]
+  run ! grep -q '"kind":"reap"' "$log"
 }
 
 @test "git-baseline --accept refuses without a tty (#585)" {
@@ -4181,7 +4332,6 @@ esac
 exit 0
 EOF2
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   CREW_ID=c1 run_crew status "worker:feat/557-e" done "" "https://example.com/pr/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -4217,6 +4367,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/live-engine-me — an engine is still running there"* ]]
+  [ -d "$wt_path" ]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -4233,6 +4384,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/exited-no-pr — exited but no PR on the bus"* ]]
+  [ -d "$wt_path" ]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -4262,7 +4414,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   set_frame %1 <<'EOF'
   ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
@@ -4300,6 +4451,7 @@ EOF
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"an engine is still running there (live turn, unsent input, or no idle input box)"* ]]
+  [ -d "$wt_path" ]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -4365,7 +4517,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tfish\t%s\n' "$wt_path")"
   CREW_ID=c1 run_crew status "worker:feat/no-engine#s1-1" done "" "https://example.com/pr/1"
   CREW_ID=c1 run run_crew reap --quiet
@@ -4381,7 +4532,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   set_frame %1 <<'EOF'
   ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
@@ -4396,6 +4546,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"would kill window @1"* ]]
   run ! grep -q 'kill-window' "$STUB_LOG"
+  [ -d "$wt_path" ]
   run ! grep -q 'remove' "$STUB_LOG"
 }
 
@@ -4486,7 +4637,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   set_frame %1 <<'EOF'
   ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
@@ -4541,7 +4691,6 @@ EOF
   git worktree add -q "$wt_path" feat/lock-wait
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" ""
   CREW_ID=c1 run_crew status "worker:feat/lock-wait#s1-1" done "" "https://example.com/pr/1"
   log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
@@ -4567,7 +4716,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   set_frame %1 <<'EOF'
   ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
@@ -4591,7 +4739,6 @@ EOF
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   printf '  \xe2\x8e\xbf  Done (14 tool uses \xc2\xb7 58.2k tokens \xc2\xb7 1m 9s)\n\xe2\x9c\xbb Churned for 36s \xc2\xb7 done 11:20 AM\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80 reef \xe2\x94\x80\n\xe2\x9d\xaf \xc2\xa0\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n  -- INSERT -- \xe2\x8f\xb5\xe2\x8f\xb5 auto mode on \xc2\xb7 \xe2\x86\x90 for agents\n' >"$STUB_DIR/frames/%1"
   CREW_ID=c1 run_crew status "worker:feat/idle-nbsp#s1-1" done "" "https://example.com/pr/1"
@@ -4611,7 +4758,6 @@ reap_idle_fixture() {
   wt_path=$(cd "$wt_path" && pwd -P)
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" "$(printf '@1\t%%1\t%s\t%s\n' "${2:-claude}" "$wt_path")"
   CREW_ID=c1 run_crew status "worker:feat/$1#s1-1" done "" "https://example.com/pr/1"
 }
@@ -8259,7 +8405,6 @@ _stream_seed_reapable() {
   git worktree add -q "$wt_path" "$branch"
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" ""
   CREW_ID="$crew" run_crew status "worker:$branch#s1-1" done "" "https://example.com/pr/1"
 }
@@ -8290,7 +8435,6 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   git worktree add -q "$wt_path" feat/x
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" ""
   start_stream --crew c1 --reap-every 3600 --park 1 --interval 1
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://example.com/pr/1"
@@ -8309,7 +8453,6 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   git worktree add -q "$wt_path" feat/x
   stub_bin gh
   gh_stub_state MERGED
-  stub_wt_removes
   stub_tmux_frames "" ""
   start_stream --crew c1 --reap-every 0 --park 1 --interval 1
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://example.com/pr/1"
@@ -8457,7 +8600,7 @@ _refused() {
   [[ "$stderr" == *"$1"* ]]
   [ "$(_status_rows)" -eq 0 ]
 }
-_waive() { run_crew reply "${1:-worker:feat/x#s1-1}" "${2:-waive AC2}" --crew c1; }
+_waive() { run_crew reply "${1:-worker:feat/x#s1-1}" "${2:-waive AC1 AC2 AC3}" --crew c1; }
 _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"deslop"}'; }
 
 # Folded family — standard or deep with no review seam is refused and not written.
@@ -9642,6 +9785,49 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "pr_open: a negated waiver does not count and each waived item needs its own id named" {
+  _task_doc trivial
+  local n
+  for n in "will not waive AC1" "I don't waive AC1" "not waiving AC1"; do
+    _waive "worker:feat/x#s1-1" "$n"
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher)" https://example.com/pr/1
+    _refused "dispatcher waiver"
+  done
+  _waive "worker:feat/x#s1-1" "waive AC1 but not AC2"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher); AC2 waived(dispatcher)" https://example.com/pr/1
+  _refused "'AC2'"
+  _waive "worker:feat/x#s1-1" "waive AC2 and AC3"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher); AC2 waived(dispatcher); AC3 waived(dispatcher)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a dotted-id waiver covers only that id and an id-less waived item is refused" {
+  _task_doc trivial
+  _waive "worker:feat/x#s1-1" "waive AC2.1"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2 waived(dispatcher)" https://example.com/pr/1
+  _refused "dispatcher waiver"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "waived(dispatcher)" https://example.com/pr/1
+  _refused "needs its acceptance id"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2.1 waived(dispatcher)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: fenced # lines and a bold Out of scope list do not shift Acceptance entries" {
+  _task_doc trivial
+  printf '\n## Acceptance\n\n```\n# x\n- fenced item\n```\n- tests pass\n- CI green\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "2 pass(bats)" https://example.com/pr/1
+  _refused "CI run id"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "1 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a bold Out of scope list after a bold Acceptance header is not read as items" {
+  _task_doc trivial
+  printf '\n**Acceptance:**\n- tests pass\n\n**Out of scope:**\n- CI green\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "2 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
 @test "pr_open: id-less items, other Acceptance spellings, AC0 and look-alike run words are checked" {
   _task_doc trivial
   printf '\n**Acceptance:**\n- CI green on the PR head\n' >>WORKER_TASK.md
@@ -9649,7 +9835,7 @@ ROWS
   for d in 'waived(dispatcher)' 'pass(CI green)' 'AC1 pass(bats)' 'AC1 pass(CI dry-run 20261006 local)'; do
     run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
     [ "$status" -eq 1 ]
-    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* ]]
+    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* || "$stderr" == *"needs its acceptance id"* ]]
   done
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC0 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
@@ -9977,7 +10163,6 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  stub_wt_removes
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://example.com/pr/31"
   CREW_ID=c1 run run_crew reap --quiet

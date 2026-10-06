@@ -98,9 +98,7 @@
             name = "crew";
             # gh + gtrash are for `reap`: it reads PR state via gh and trashes
             # the finished worker's task doc via gtrash so a post-mortem can
-            # still recover it. `wt` stays ambient, as in dispatch — reap checks
-            # for it and degrades to a notice when absent. crew-dash is for
-            # `dash`, which delegates to it.
+            # still recover it. crew-dash is for `dash`, which delegates to it.
             # dispatch-config (#606) is on PATH so `crew rate` / _burn_weight
             # resolve the burn table out of the box, with no DISPATCH_CONFIG_BIN
             # and no ambient resolver required.
