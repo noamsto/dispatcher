@@ -269,11 +269,24 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # a process substitution.
 dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
 # A dumper path starts path-like, so the shebang in heredoc text
-# (`#!/usr/bin/env -S bash`) is not read as a dumper path. A relative one may
-# hold `=` unless the word reads as an assignment `NAME=…`, so `CONFIG=deploy/env`
-# is not read as a path but `./a=b/env` and `a/b=c/env` are; an absolute one may
-# (`/nix/store/x-a=b/bin/env`), since no assignment starts with `/`.
-path_pfx='(/[^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^A-Za-z0-9_=[:space:];&|()][^[:space:];&|()]*)?/)?'
+# (`#!/usr/bin/env -S bash`) is not read as a dumper path. One starting with
+# `/`, `{` or `\` may hold `=` (`/nix/store/x-a=b/bin/env`, `{a[1]=d/env`),
+# since no assignment starts with any of them; otherwise a glued `{` (where
+# cmd_start anchors) or a leading `\` (dropped by the escape-stripped view)
+# would expose an assignment inside the word. One starting with a name is a
+# path unless the word is a bash assignment — `NAME=`, `NAME+=`, `NAME[SUB]=`
+# or `NAME[SUB]+=` — so `CONFIG=deploy/env` and `a[1]+=deploy/env` are not
+# paths, but `./a=b/env`, `a/b=c/env`, `a[1]x=b/env` and an unclosed `a[/env`
+# are. SUB must hold no `[`, `]`, `\`, backtick or `$`: bash's subscript scan
+# nests brackets and skips escapes and backtick/`${…}` spans, so only then is
+# the first `]` the one bash closes on. Any of them reads as a path even where
+# bash assigns (`a[b[1]]=x/env`, `a[$i]=x/env`), failing closed. A blank or
+# `;&|()` in SUB ends the word here, though bash's scan reads past it, so
+# `a[1 2]/env` and `a[;]/env` are missed. Quoting after the name is not
+# modelled: a quoted `=`, `+`, `[` or `]` counts as bare. An escaped one stays
+# a path in the unstripped view, failing closed.
+# shellcheck disable=SC2016
+path_pfx='(/[^[:space:];&|()]*/|[{\\][^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^[:space:]A-Za-z0-9_=+[;&|()][^[:space:];&|()]*|\+([^=[:space:];&|()][^[:space:];&|()]*)?|\[[^][\\`$[:space:];&|()]*([[\\`$][^[:space:];&|()]*|\](\+([^=[:space:];&|()][^[:space:];&|()]*)?|[^=+[:space:];&|()][^[:space:];&|()]*)?)?)?/)?'
 env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
