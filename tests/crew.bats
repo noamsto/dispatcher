@@ -7252,6 +7252,17 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ -z "$output" ]
 }
 
+# #760: workers stamp the measured wait, which drifts by a second or two.
+@test "watch: a re-stamp whose measured wait drifted does not wake" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 302s, no reply (cycle 8 of 24)" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 @test "watch: a changed blocked detail wakes" {
   t="$(($(date +%s) * 1000))"
   seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"

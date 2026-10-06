@@ -1992,8 +1992,9 @@ await)
         exit 0
       }
     fi
-    [ "$(_clock_now_ms)" -ge "$deadline" ] && {
-      echo "crew: await ended after $((($(_clock_now_ms) - start) / 1000))s — no reply to $me${from:+ from $from} yet" >&2
+    now=$(_clock_now_ms)
+    [ "$now" -ge "$deadline" ] && {
+      echo "crew: await ended after $(((now - start) / 1000))s — no reply to $me${from:+ from $from} yet" >&2
       exit 0
     }
     _clock_sleep "$interval"
@@ -2420,7 +2421,7 @@ watch)
                | {ts: .ts, state: .body.state} ]
              | sort_by(.ts) | last | .state);
           def detail_text: if type == "string" then . else "" end;
-          def norm: gsub(" *\\(cycle [0-9]+ of [0-9]+\\)"; "");
+          def norm: gsub(" *\\(cycle [0-9]+ of [0-9]+\\)"; "") | gsub("awaited [0-9]+s"; "awaited Ns");
           def prev_status($all; $e):
             ([ $all[]
                | select(.crew_id==$e.crew_id and .kind=="status" and .from==$e.from and .ts < $e.ts) ]
