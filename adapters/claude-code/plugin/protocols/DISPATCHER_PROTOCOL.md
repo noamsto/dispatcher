@@ -1223,6 +1223,10 @@ it at relay time.
   tell the lead in its pane to read it (`crew await --from role:<branch>:<role>`),
   naming the pane with `crew where <lead branch>`. It clears itself once the
   msg is delivered. Never escalates and is never `failed`: a lead slow to read is not dead.
+  `unread: dispatcher directive …` is the same for your own msg, cleared only by
+  delivery: idle on a background task → have the human nudge its pane (`crew where`);
+  mid-stage → it reads at its next seam, or `tmux kill-window` for a hard stop. Never
+  type into it yourself.
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
   count, and the top CPU consumers with their `cwd`s, `comm`, and `pid`s.

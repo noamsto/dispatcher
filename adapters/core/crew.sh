@@ -4599,10 +4599,11 @@ stall-watch)
   #                  count grew by --runaway-tokens (#650). claude and pi only.
   #                  Never escalates: the turn is unrecoverable but the worktree
   #                  usually isn't, so verify the pane, then kill and re-dispatch.
-  #   D6 unread:     lead `working` while a role:<branch>:* msg to its session
-  #                  sits past the delivered mark for --unread (#330); clears
-  #                  once delivered. Repainting panes never trip D2/D3, so this
-  #                  reads the bus (bounded tail, 4-tick cadence). Never escalates.
+  #   D6 unread:     lead `working` while a role:<branch>:* or dispatcher:<crew>
+  #                  msg to its session sits past the delivered mark for
+  #                  --unread (#330); clears once delivered. Repainting panes
+  #                  never trip D2/D3, so this reads the bus (bounded tail,
+  #                  4-tick cadence). Never escalates.
   # Every detector posts `blocked` — recoverable, answerable, and cheap to be
   # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
   # after a second evidence check --dead later; a prompt still on screen is
@@ -5075,27 +5076,29 @@ BUSLINE
     printf '%s%s' "${body:0:$max}" "$suffix"
   }
 
-  # _unread_oldest — ts (ms) of the oldest role:<branch>:* msg to this lead that
-  # is past the delivered mark and not answered by a later msg from the lead to
-  # that role; empty when none. A sessioned watchdog matches its session id only,
-  # which scopes it to this run; a branch-keyed one has no marks to read and
-  # returns nothing. A msg scrolled out of the 2000-line tail reads as gone.
+  # _unread_oldest — "<ts-ms> role|dispatcher" for the oldest role:<branch>:* or
+  # dispatcher:<crew> msg to this lead that is past the delivered mark; a role msg
+  # also drops out once answered by a later msg from the lead to that role (a
+  # dispatcher directive clears only on delivery); empty when none. A sessioned
+  # watchdog matches its session id only, which scopes it to this run; a
+  # branch-keyed one has no marks to read and returns nothing. A msg scrolled
+  # out of the 2000-line tail reads as gone.
   _unread_oldest() {
     # A branch-keyed watchdog cannot name the lead's session, so it cannot read
     # that session's delivered marks; stay silent rather than misreport.
     [ "$from_id" != "$me" ] || return 0
     [ -f "$log" ] || return 0
     tail -n 2000 "$log" 2>/dev/null | jq -Rnr --arg c "$crew" --arg b "role:$branch:" \
-      --arg me "$me" --arg f "$from_id" --argjson t0 "$run_start_ms" \
+      --arg d "dispatcher:$crew" --arg me "$me" --arg f "$from_id" --argjson t0 "$run_start_ms" \
       --argjson marks "$(_await_marks "$crew" "$from_id")" '
         def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
                       else $x == $f end;
         [inputs | fromjson? | select(.crew_id == $c and .kind == "msg" and (.ts >= $t0 or $f != $me))] as $m
         | [$m[] | select(lead(.from))] as $sent
-        | [$m[] | select((.from | strings | startswith($b)) and lead(.to) and .ts > ($marks[.from] // 0))
+        | [$m[] | select(((.from | strings | startswith($b)) or .from == $d) and lead(.to) and .ts > ($marks[.from] // 0))
            | . as $r
-           | select(any($sent[]; .to == $r.from and .ts > $r.ts) | not)
-           | .ts] | min // empty' 2>/dev/null || true
+           | select($r.from == $d or (any($sent[]; .to == $r.from and .ts > $r.ts) | not))]
+        | (min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"' 2>/dev/null || true
   }
 
   # _finished_release — the worker posted done/failed: wait out --release, then
@@ -5175,6 +5178,7 @@ BUSLINE
   d4_since=0
   d5_at=0
   d6_at=0
+  d6_src=""
   d7_hits=0
   d7_tok0=0
   d7_at=0
@@ -5528,23 +5532,32 @@ BUSLINE
       esac
     fi
 
-    # ---- D6: unread role verdict --------------------------------------------
-    # A lead that is `working` while a role's msg to its session sits past the
-    # delivered mark (`_await_marks`) for --unread is a #300-shaped deadlock: its
-    # pane repaints, so D2/D3 stay silent. Own prefix rather than a `stalled:`
-    # sub-case because the recovery differs — nudge the lead to `crew await`/
-    # `inbox`, don't unblock a pane. Only the newest 2000 bus lines are read and
-    # only every 4th tick, so the cost stays flat as the log grows. A msg the
-    # lead answered (a later msg from it to that role) is handled, not unread.
-    # Never escalates: a lead slow to read is not dead.
+    # ---- D6: unread role verdict or dispatcher directive --------------------
+    # A lead that is `working` while a role's or the dispatcher's msg to its
+    # session sits past the delivered mark (`_await_marks`) for --unread is a
+    # #300-shaped deadlock: its pane repaints, so D2/D3 stay silent. Own prefix
+    # rather than a `stalled:` sub-case because the recovery differs — nudge the
+    # lead to `crew await`/`inbox`, don't unblock a pane. Only the newest 2000
+    # bus lines are read and only every 4th tick, so the cost stays flat as the
+    # log grows. A role msg the lead answered (a later msg from it to that role)
+    # is handled, not unread; a dispatcher directive clears only on delivery.
+    # The oldest of both is reported. Never escalates: a lead slow to read is
+    # not dead.
     if [ "$suppressed" = 0 ] && [ "$role_mode" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
       case "$bus_state" in
       "" | working)
         [ "$bus_source" = watchdog ] || d6_at=0
-        oldest=$(_unread_oldest)
+        read -r oldest src <<<"$(_unread_oldest)"
         if [[ "$oldest" =~ ^[0-9]+$ ]] && [ $((now * 1000 - oldest)) -ge $((unread * 1000)) ]; then
-          if [ "$d6_at" = 0 ] && _post_blocked "unread:" "unread: role verdict undelivered for $(((now * 1000 - oldest) / 1000))s — lead is working but has not read it; nudge it to run \`crew await\`"; then
+          age=$(((now * 1000 - oldest) / 1000))
+          if [ "$src" = dispatcher ]; then
+            detail="unread: dispatcher directive undelivered for ${age}s — lead is working but has not reached a peek seam (long stage or idle on a background task)"
+          else
+            detail="unread: role verdict undelivered for ${age}s — lead is working but has not read it; nudge it to run \`crew await\`"
+          fi
+          if [ "$d6_at" = 0 ] && _post_blocked "unread:" "$detail"; then
             d6_at="$now"
+            d6_src="$src"
           fi
         elif [ "$d6_at" != 0 ]; then
           _post_clear "unread:"
@@ -5554,8 +5567,9 @@ BUSLINE
       blocked)
         # Our own open episode: still clear it once the msg is delivered.
         if [ "$d6_at" != 0 ] && [ "$bus_source" = watchdog ]; then
-          oldest=$(_unread_oldest)
-          if ! [[ "$oldest" =~ ^[0-9]+$ ]] || [ $((now * 1000 - oldest)) -lt $((unread * 1000)) ]; then
+          read -r oldest src <<<"$(_unread_oldest)"
+          # A changed oldest source means the label is stale; the next tick re-posts.
+          if ! [[ "$oldest" =~ ^[0-9]+$ ]] || [ $((now * 1000 - oldest)) -lt $((unread * 1000)) ] || [ "$src" != "$d6_src" ]; then
             _post_clear "unread:"
             d6_at=0
           fi
