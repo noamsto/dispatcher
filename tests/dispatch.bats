@@ -7775,11 +7775,86 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
-# _write_dirs_record <protocol> <skills> <reviewers> <critics> — the
+# _write_dirs_record <protocol> <skills> <reviewers> <critics> [patch-json] — the
 # protocol-dirs record dispatch writes for feat/9-x, bound to this worktree.
+# Line 6 is the settings record, mirroring the recorder from the fixture's env;
+# [patch-json] overrides keys (a role runs from this record, never the caller's env).
 _write_dirs_record() {
+  local engines settings patch="${5:-}"
+  [ -n "$patch" ] || patch='{}'
+  engines="${DISPATCH_ENGINES:-$("$DISPATCH_CONFIG_BIN" | jq -r '.engines // [] | join(" ")')}"
+  settings="$(jq -cn --arg engines "$engines" --arg xdg "${XDG_CONFIG_HOME:-$HOME/.config}" \
+    --arg pi "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}" --arg roots "${DISPATCH_GRANT_ROOTS:-:}" \
+    --argjson patch "$patch" '
+    def e(n): $ENV[n] // null;
+    {XDG_CONFIG_HOME: $xdg, DISPATCH_LOCKED_SETTINGS: e("DISPATCH_LOCKED_SETTINGS"),
+     DISPATCH_ENGINES: $engines, DISPATCH_GRANT_ROOTS: $roots,
+     DISPATCH_OPENROUTER_MONTHLY_USD: e("DISPATCH_OPENROUTER_MONTHLY_USD"),
+     DISPATCH_OPENROUTER_KEY_FILE: e("DISPATCH_OPENROUTER_KEY_FILE"),
+     DISPATCH_PROFILE: e("DISPATCH_PROFILE"), DISPATCH_REPO_TRACKERS: e("DISPATCH_REPO_TRACKERS"),
+     DISPATCH_ORG_TRACKERS: e("DISPATCH_ORG_TRACKERS"), PI_CODING_AGENT_DIR: $pi,
+     DISPATCH_CONFIG_BIN: e("DISPATCH_CONFIG_BIN"), LOCAL_MODELS_LIB: e("LOCAL_MODELS_LIB")} + $patch')"
   mkdir -p "$common/crew/protocol-dirs/feat"
-  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" >"$common/crew/protocol-dirs/feat/9-x"
+  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" "$settings" >"$common/crew/protocol-dirs/feat/9-x"
+}
+
+# _record_grant_roots <roots> — rewrite the record with the dispatcher's resolved
+# DISPATCH_GRANT_ROOTS.
+_record_grant_roots() {
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "" \
+    "$(jq -cn --arg r "$1" '{DISPATCH_GRANT_ROOTS: $r}')"
+}
+
+# _spawn_role_anchor_fixture — a pi spawn-role fixture whose dispatcher settings
+# (the record's XDG_CONFIG_HOME) hold localModels anchorgood/m, and a hostile
+# caller XDG tree plus locked layer holding anchorevil/m.
+_spawn_role_anchor_fixture() {
+  _spawn_role_fixture
+  T="$(realpath "$BATS_TEST_TMPDIR")"
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher" "$T/evil/dispatcher"
+  printf '{"localModels":{"anchorgood/m":{"baseUrl":"http://good.test/v1","contextWindow":131072}}}\n' \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  printf '{"localModels":{"anchorevil/m":{"baseUrl":"http://evil.test/v1","contextWindow":131072}}}\n' \
+    >"$T/evil/dispatcher/settings.json"
+  cp "$T/evil/dispatcher/settings.json" "$T/evil-locked.json"
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" ""
+}
+
+@test "spawn-role: record — a caller XDG_CONFIG_HOME does not replace the dispatcher's settings" {
+  _spawn_role_anchor_fixture
+  XDG_CONFIG_HOME="$T/evil" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  grep -q anchorgood "$HOME/.pi/dispatcher-worker/models.json"
+  run ! grep -q anchorevil "$HOME/.pi/dispatcher-worker/models.json"
+}
+
+@test "spawn-role: record — a caller DISPATCH_LOCKED_SETTINGS is ignored" {
+  _spawn_role_anchor_fixture
+  DISPATCH_LOCKED_SETTINGS="$T/evil-locked.json" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  grep -q anchorgood "$HOME/.pi/dispatcher-worker/models.json"
+  run ! grep -q anchorevil "$HOME/.pi/dispatcher-worker/models.json"
+}
+
+@test "spawn-role: record — a caller PI_CODING_AGENT_DIR does not choose the pi seed source" {
+  _spawn_role_anchor_fixture
+  mkdir -p "$HOME/.pi/agent/bin" "$T/evilpi/bin"
+  printf 'good\n' >"$HOME/.pi/agent/bin/hookyard-bridge.ts"
+  printf 'evil\n' >"$T/evilpi/bin/hookyard-bridge.ts"
+  PI_CODING_AGENT_DIR="$T/evilpi" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/.pi/dispatcher-worker/bin/hookyard-bridge.ts")" = good ]
+}
+
+@test "spawn-role: record — a record without a settings line is refused before any pane" {
+  _spawn_role_fixture
+  sed -i 5q "$common/crew/protocol-dirs/feat/9-x"
+  [ "$(wc -l <"$common/crew/protocol-dirs/feat/9-x")" -eq 5 ]
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no settings record"* ]]
+  [[ "$output" == *"re-dispatch"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
 }
 
 @test "grid: --spawn-role refuses a \$TMUX_PANE that is not this process's pane" {
@@ -8208,6 +8283,14 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "${lines[2]}" = "" ]
   [ "${lines[3]}" = "" ]
   [ "${lines[4]}" = "$(realpath "$TEST_REPO/.dispatch-wt/feat-42-dirs-record")" ]
+  [ "${#lines[@]}" -eq 6 ]
+  expected_engines="$("$DISPATCH_CONFIG_BIN" | jq -r '.engines // [] | join(" ")')"
+  jq -e --arg xdg "$XDG_CONFIG_HOME" --arg pi "$HOME/.pi/agent" --arg engines "$expected_engines" \
+    --arg bin "$DISPATCH_CONFIG_BIN" 'type == "object"
+    and .XDG_CONFIG_HOME == $xdg and .PI_CODING_AGENT_DIR == $pi
+    and .DISPATCH_PROFILE == "work" and .DISPATCH_GRANT_ROOTS == ":"
+    and .DISPATCH_ENGINES == $engines and .DISPATCH_LOCKED_SETTINGS == null
+    and .DISPATCH_CONFIG_BIN == $bin' <<<"${lines[5]}"
 }
 
 @test "protocol-dirs record: a symlink planted at the record path is refused, its target left untouched" {
@@ -8880,32 +8963,37 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   T="$(realpath "$BATS_TEST_TMPDIR")"
   mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
   printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $T/repos/proj "* ]]
 
   : >"$STUB_LOG"
-  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots :
+  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" != *"$T/repos/proj"* ]]
 }
 
-@test "add-dir: --spawn-role under a pinned empty root list ignores a tmux-env locked layer" {
+@test "add-dir: --spawn-role takes the recorded root list, not a caller's locked layer" {
   _spawn_role_fixture
   T="$(realpath "$BATS_TEST_TMPDIR")"
   mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
   printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
   printf '{"grantRoots":["%s/repos"]}\n' "$T" >"$T/locked.json"
-  DISPATCH_LOCKED_SETTINGS="$T/locked.json" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  # The roots the dispatcher resolved from its locked layer.
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $T/repos/proj "* ]]
 
   : >"$STUB_LOG"
-  DISPATCH_GRANT_ROOTS=: DISPATCH_LOCKED_SETTINGS="$T/locked.json" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots :
+  DISPATCH_LOCKED_SETTINGS="$T/locked.json" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
@@ -8917,14 +9005,16 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   T="$(realpath "$BATS_TEST_TMPDIR")"
   mkdir -p "$T/repos/proj" "$common/crew/grants/feat"
   printf '%s\n' "$T/repos/proj" >"$common/crew/grants/feat/9-x"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $T/repos/proj "* ]]
 
   mkdir -p "$T/repos/proj/.git/hooks"
   : >"$STUB_LOG"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
@@ -8937,14 +9027,16 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   git init -q "$T/repos/proj"
   mkdir -p "$T/repos/proj/.husky" "$common/crew/grants/feat"
   printf '%s\n' "$T/repos/proj/.husky" >"$common/crew/grants/feat/9-x"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $T/repos/proj/.husky "* ]]
 
   git -C "$T/repos/proj" config core.hooksPath .husky
   : >"$STUB_LOG"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj/.husky' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
@@ -8957,14 +9049,16 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   git init -q "$T/repos/proj"
   mkdir -p "$T/repos/proj/docs" "$common/crew/grants/feat"
   printf '%s\n' "$T/repos/proj/docs" >"$common/crew/grants/feat/9-x"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $T/repos/proj/docs "* ]]
 
   ln -s ../.git/hooks "$T/repos/proj/docs/h"
   : >"$STUB_LOG"
-  DISPATCH_GRANT_ROOTS="$T/repos" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  _record_grant_roots "$T/repos"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: dropping invalid grant '$T/repos/proj/docs' for feat/9-x"* ]]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
@@ -11757,7 +11851,13 @@ EOF
   roles="$common/crew/artifacts/feat/9-x/roles.json"
   printf '{"reviewer":{"agent":"codex","model":"gpt-5.6-terra","effort":"medium"}}\n' >"$roles"
 
-  DISPATCH_ENGINES="claude pi" run run_dispatch --spawn-role reviewer
+  _write_dirs_record "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "" '{"DISPATCH_ENGINES":"claude pi"}'
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
+  run ! grep -q 'split-window' "$STUB_LOG"
+
+  DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch --spawn-role reviewer
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'reviewer' uses --agent codex is not enabled here"* ]]
   run ! grep -q 'split-window' "$STUB_LOG"
@@ -11879,7 +11979,7 @@ EOF
 @test "spawn-role: record — a record bound to another worktree is refused" {
   _spawn_role_fixture
   mkdir -p "$TEST_REPO/other"
-  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "" "$(realpath "$TEST_REPO/other")" \
+  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$DISPATCHER_SKILLS_DIR" "" "" "$(realpath "$TEST_REPO/other")" '{}' \
     >"$common/crew/protocol-dirs/feat/9-x"
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet
   [ "$status" -eq 1 ]
@@ -11904,7 +12004,7 @@ _fake_git_dir() {
 # grant: $HOME as the skills dir, the real crew dir as the critics dir.
 _forged_record() {
   mkdir -p "$1/crew/protocol-dirs/feat"
-  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$HOME" "" "$common/crew" "$(realpath "$PWD")" \
+  printf '%s\n' "$DISPATCHER_PROTOCOL_DIR" "$HOME" "" "$common/crew" "$(realpath "$PWD")" '{}' \
     >"$1/crew/protocol-dirs/feat/9-x"
 }
 

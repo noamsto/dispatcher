@@ -157,9 +157,10 @@ write_launch_script() {
   _launch="bash $_quoted"
 }
 
-# _artifacts_dir_bad, _protocol_dirs_record_bad, _record_protocol_dirs and
-# launch_dir_args: duplicated from dispatch.sh (standalone build),
-# parity-tested like the two above. See dispatch.sh for the grant rules: a
+# _artifacts_dir_bad, _protocol_dirs_record_bad, _settings_env_names,
+# _settings_env_json, _record_protocol_dirs and launch_dir_args: duplicated
+# from dispatch.sh (standalone build), parity-tested like the two above. See
+# dispatch.sh for the record's settings line and the grant rules: a
 # claude launch gets the protocol dirs read-only, the branch's artifacts dir
 # write-capable, and the grants in $crew_dir/grants/<branch>, never the
 # add_dir: header lines. The grant validator itself (_add_dir_ok and its
@@ -196,6 +197,33 @@ _protocol_dirs_record_bad() {
   return 1
 }
 
+_settings_env_names() {
+  printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
+    DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
+    DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
+    PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+}
+
+_settings_env_json() {
+  local n
+  local -a args=()
+  while IFS= read -r n; do
+    case "$n" in
+    XDG_CONFIG_HOME) args+=(--arg "$n" "${XDG_CONFIG_HOME:-$HOME/.config}") ;;
+    PI_CODING_AGENT_DIR) args+=(--arg "$n" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}") ;;
+    DISPATCH_GRANT_ROOTS) args+=(--arg "$n" "${DISPATCH_GRANT_ROOTS:-:}") ;;
+    *)
+      if [ -n "${!n+x}" ]; then
+        args+=(--arg "$n" "${!n}")
+      else
+        args+=(--argjson "$n" null)
+      fi
+      ;;
+    esac
+  done < <(_settings_env_names)
+  jq -cn '$ARGS.named' "${args[@]}"
+}
+
 _record_protocol_dirs() {
   local rec="$crew_dir/protocol-dirs/$branch" n v tmp
   local -a lines=()
@@ -204,7 +232,7 @@ _record_protocol_dirs() {
     [[ $v == /* ]] || v=""
     lines+=("$v")
   done
-  lines+=("$(realpath -e -- "$1")")
+  lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
   (
     umask 077
     mkdir -p "$(dirname "$rec")"

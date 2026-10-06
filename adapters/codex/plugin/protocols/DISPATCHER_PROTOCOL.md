@@ -587,7 +587,8 @@ branch instead; the worktree carries over under `resume: true`.
   forward; passing `--add-dir` replaces them. `dispatch resume` and a lazy
   `--spawn-role` keep whatever is recorded, but every launch — resume and
   `--spawn-role` included — pins its launcher's own resolved grant roots onto the
-  launch as `DISPATCH_GRANT_ROOTS` (`:` when the roots resolved empty, never unset),
+  launch as `DISPATCH_GRANT_ROOTS` (`:` when the roots resolved empty, never unset;
+  `--spawn-role` takes them from its dispatcher's `protocol-dirs` record),
   re-checks the recorded grants against that pinned value, and drops any that no
   longer resolve inside a root, with a `dispatch: dropping invalid grant` line on
   stderr; the roots a session checks against are always the ones its own dispatcher
@@ -642,7 +643,10 @@ branch instead; the worktree carries over under `resume: true`.
   which the classifier sees; an effect that stays in the worker's own session or
   grid (its own roster, its own watchers' bus, its own review — the human PR
   review is that boundary); and values the dispatcher resolved and recorded
-  (the protocol dirs). The rule for harness code this implies: **anchor, don't
+  (the protocol dirs, and the settings inputs — `XDG_CONFIG_HOME`,
+  `DISPATCH_LOCKED_SETTINGS`, the `DISPATCH_*` env layer, `PI_CODING_AGENT_DIR` —
+  that a lazy `--spawn-role` resolves settings and seeds the shared pi worker dir
+  from, never its caller's env). The rule for harness code this implies: **anchor, don't
   discover** — take crew dir, branch, window and pane identity from dispatcher
   state (the window's `@crew_dir`/`@crew_branch`/`@crew_id`/`@crew_role` stamps,
   records under the crew dir, the worktree record in
