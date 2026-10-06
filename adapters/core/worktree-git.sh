@@ -85,9 +85,8 @@ _wt_cfg_guarded() { # <key> <value> — status 0 when the baseline guards the pa
 # _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry, reap's
 # window-kill and removal gates and dispatch's `wt` gates, which cannot take
 # --git-dir — asks git's own `--git-path hooks` whether the spellings resolve
-# to one dir. Any
-# core.worktree turns the equivalence off: work-tree commands resolve the value
-# there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
+# to one dir. Any core.worktree turns the equivalence off: work-tree commands
+# resolve the value there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
 # pin core.hooksPath=/dev/null (_wt_neutral_cfg) and resolve nothing from a cwd.
 _wt_cfg_canon() { # <R> <rec> <var> — set <var> to <rec>, the exact relative `.git/hooks` core.hookspath made `<R>/hooks`
   printf -v "$3" '%s' "$2"

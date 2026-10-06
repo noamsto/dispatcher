@@ -3795,10 +3795,10 @@ make_filter_fake_gitdir() {
 }
 
 @test "reap: a .git swapped after the gitlink check is never discovered (#677)" {
-  # reap checks the worker's gitlink, then trashes scaffold and runs the
-  # removal, which discovers the repo from the worker tree. A worker that swaps
-  # .git for a standalone repo in that gap would have the fake's config and
-  # attributes read there, running its clean filter on a stat-dirty file.
+  # reap checks the worker's gitlink, then trashes scaffold (where the stub
+  # swaps .git for a standalone repo) before removing. Any git that discovered
+  # the repo from the tree after that would read the fake's config and
+  # attributes and run its clean filter on the stat-dirty f.
   printf a >f
   git add f
   git commit -q -m f

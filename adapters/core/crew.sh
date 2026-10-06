@@ -6040,7 +6040,6 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
     | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state, .ts] | @tsv' "$log")
 EOF
-  # gh reads PR state.
   command -v gh >/dev/null || {
     note "needs gh"
     exit 0
@@ -6317,8 +6316,6 @@ PROCS
     done <<SCAFFOLD
 $(_wt_status "$admin" "$wtpath" --untracked-files=all | grep -E "$reap_scaffold_re" || true)
 SCAFFOLD
-    # Kill the window ourselves: the plain git removal below runs no worktrunk
-    # post-remove hook (#123).
     for wid in $(tmux list-windows -a -F '#{window_id} #{pane_current_path} #{@worktree}' 2>/dev/null |
       awk -v p="$wtpath" '$2 == p || $3 == p {print $1}'); do
       tmux kill-window -t "$wid" 2>/dev/null || true
