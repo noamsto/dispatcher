@@ -9191,6 +9191,19 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "pr_open: CI entries resolve by numeric id, ledger position and top-level bullets only" {
+  _task_doc trivial
+  printf '\n## Acceptance\n1. Tests pass\n   - covers x\n2. CI green\n' >>WORKER_TASK.md
+  local d
+  for d in '2 pass(bats)' 'AC02 pass(bats)' 'pass(bats); pass(bats)' $'AC2 pass(local\nCI green)'; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"CI run id"* ]]
+  done
+  run --separate-stderr run_crew status "worker:feat/x#s1-2" pr_open "AC1 pass(bats); AC2 pass(CI run_id=1234567)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
 @test "pr_open: a lone state word before a valid item reads as its id (known gap)" {
   # Known accepted gap: a single-token state word with no parens reads as the id
   # of the next item. A drifting agent is unlikely to write it.
