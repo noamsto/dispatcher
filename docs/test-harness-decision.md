@@ -26,10 +26,12 @@ numbers from the `harness-bench` job (run 37304440476) are all in.
   wall time. The parser stitches `strace -f` `<unfinished ...>` / `<resumed>`
   syscall pairs (a real 17-case pr-watch trace carries 117 split lines; the
   pre-fix parser silently dropped those execs and sleeps).
-- Suite weights: `tests/shard-weights.tsv` from a full-suite
+- Suite weights: `tests/shard-weights.tsv` currently comes from a full-suite
   `scripts/bats-timing.sh` run on a loaded shared host (total ≈ 2376 s
   post-rebase vs the ≈ 1875 s CI audit) — relative balance only, not absolute
-  CI times.
+  CI times. The CI artifact path below supersedes that input after this PR has
+  produced its first successful main run; it must not be claimed as regenerated
+  before then.
 
 ## Where suite time goes (time split, 31 cases)
 
@@ -336,6 +338,31 @@ parallel workers under #724:
    still dominate, keep bats and stop.
 
 ## Regenerating this evidence
+
+### CI shard weights (staged delivery)
+
+Each bats shard uploads one `bats-timing-shard-N` JUnit artifact, even when the
+shard fails. After this PR merges and a successful `main` run has completed,
+regenerate the committed weights from one or more such runs:
+
+```bash
+nix develop -c bash scripts/bats-shard-weights.sh --run <main-run-id> [--run <second-main-run-id>] > tests/shard-weights.tsv
+nix develop -c bash scripts/bats-shard.sh --check
+```
+
+The importer uses `gh run download` and `yq`; it rejects a red report, a
+duplicate case, or a run whose JUnit `(file, test)` inventory does not exactly
+match the current non-timing suite. With two runs it averages each individual
+test's milliseconds before it totals family weights. This branch intentionally
+does not update `tests/shard-weights.tsv`: the preceding `main` runs have no
+JUnit artifacts, so CI-derived weights do not yet exist.
+
+For a planning-only lower bound, the current 2,406.6 weighted seconds divide
+to 601.6 / 481.3 / 401.1 seconds at 4 / 5 / 6 perfectly balanced shards. That
+is not a wall-clock projection: every extra shard also pays checkout plus Nix
+setup, and the observed main run 37427270027 already shows 2–3 minutes of
+per-job elapsed time. Keep four shards for the first artifact-backed rebalance;
+compare real 4/5/6 assignments after regeneration before adding runners.
 
 ```bash
 nix develop -c bash scripts/harness-bench.sh --repetitions 5 --output bench-out
