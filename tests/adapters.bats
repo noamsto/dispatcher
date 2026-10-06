@@ -2145,7 +2145,7 @@ $hits"
   protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
   for statement in \
     'no window of `wait.engine`' \
-    'dispatch.sh:114'; do
+    '`budget-gate.sh` `_budget_windows`'; do
     run grep -F "$statement" "$protocol"
     [ "$status" -eq 0 ]
   done

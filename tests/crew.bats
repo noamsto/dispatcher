@@ -7133,6 +7133,72 @@ budget_reset_bus() {
   [ "$(budget_calls)" = "0" ]
 }
 
+# budget_count_stub — a CREW_BUDGET_REFRESH_CMD that only counts its calls and
+# never writes the cache, so only the stamp or the lock can hold it back.
+budget_count_stub() {
+  printf '#!/usr/bin/env bash\necho call >>"%s"\n' "$BATS_TEST_TMPDIR/refresh.calls" \
+    >"$BATS_TEST_TMPDIR/refresh-stub"
+  chmod +x "$BATS_TEST_TMPDIR/refresh-stub"
+  export CREW_BUDGET_REFRESH_CMD="$BATS_TEST_TMPDIR/refresh-stub"
+}
+
+@test "stall-watch: D8 budget: a refresh that never writes the cache is held back by the stamp" {
+  budget_count_stub
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+}
+
+@test "stall-watch: D8 budget: a live holder of the refresh lock means no refresh" {
+  budget_count_stub
+  mkdir -p "$XDG_DATA_HOME/crew/engine-budget.json.refresh.d"
+  echo "$$" >"$XDG_DATA_HOME/crew/engine-budget.json.refresh.d/pid"
+  budget_watch 10 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "0" ]
+}
+
+@test "stall-watch: D8 budget: a pr_open posted during the refresh is not masked" {
+  now=$(budget_now)
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$logf")"
+  cat >>"$BATS_TEST_TMPDIR/refresh-stub" <<EOS
+jq -nc --argjson ts "\$((\$(cat "$CREW_CLOCK") * 1000))" \\
+  '{ts:\$ts, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"pr_open"}}' \\
+  >>"$logf"
+EOS
+  budget_watch 6 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(budget_calls)" = "1" ]
+  run bash -c "bus | grep -c watchdog || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: an exponent-form resets_at still posts, without the relative part" {
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 1e10)}}}"
+  iso=$(jq -nr '1e10 | todateiso8601')
+  budget_watch 3
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets $iso)" ]
+}
+
+@test "stall-watch: D8 budget: a zero-padded stamp is read as decimal" {
+  now=$(budget_now)
+  budget_refresh_stub 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 100 "$((now + 99999))")}}}"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  echo 09 >"$XDG_DATA_HOME/crew/engine-budget.json.refresh-at"
+  budget_watch 6 --budget-refresh 900
+  [ "$status" -eq 0 ]
+  run budget_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "worker:feat/x|blocked|watchdog|budget: claude 5h at 100% (resets "* ]]
+}
+
 # A pi watcher on a local model has no account to exhaust: it reads the pane's
 # @crew_model and looks it up in localModels.
 budget_pi_local_fixture() { # <localModels-json>

@@ -1682,8 +1682,10 @@ watch_role() {
 # watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
 # stall-watch under its role: id. The prompt detectors stay claude-only inside
 # stall-watch, while the budget detector judges the role's own engine.
-# --ignore-budget is the human's spend decision, so it passes --no-budget.
+# --ignore-budget is the human's spend decision, so it passes --no-budget; a
+# non-claude role with --no-budget has nothing to watch.
 watch_role_prompts() {
+  [ "$3" = claude ] || [ -z "${ignore_budget:-}" ] || return 0
   local -a flags=()
   [ -n "${ignore_budget:-}" ] && flags+=(--no-budget)
   CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &
@@ -4952,8 +4954,9 @@ write_launch_script launch_line "$launch_cmd"
 # Every pane is split and the layout settled BEFORE any engine launches: a TUI
 # that is still drawing its first frames garbles when a later split or refit
 # resizes it. The lead keeps the first pane by creation order, not launch order.
-# A role pane gets only the prompt watch, never the liveness detectors: a parked
-# role produces no output, which the pane-output watchdog would misread as a wedge.
+# A role pane's watch runs only the prompt detectors (claude) and the budget
+# detector, never the liveness detectors: a parked role produces no output,
+# which the pane-output watchdog would misread as a wedge.
 # A --lazy --status window gains a pane here even though it skipped the eager
 # role splits, so it must publish the grid hint too.
 role_panes=()

@@ -4768,14 +4768,14 @@ EOF
   run ! grep -q -- '--no-budget' "$STUB_LOG"
 }
 
-@test "--ignore-budget: every eager role's stall-watch is told --no-budget too" {
+@test "--ignore-budget: claude roles' stall-watch is told --no-budget; a codex role gets none" {
   stub_launch_bins
   _grid_tmux_stub
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --roles "plan-critic=codex:gpt-5.6-terra,reviewer=claude:sonnet" --effort high --crew-id c1 --ignore-budget 42 "Do a thing"
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch role:feat/42-do-a-thing:reviewer --pane %6 --engine claude --no-budget$'
-  wait_for_log 'stall-watch role:feat/42-do-a-thing:plan-critic --pane [^ ]* --engine codex --no-budget$'
   wait_for_log 'stall-watch worker:feat/42-do-a-thing#s7-7 --pane [^ ]* --engine claude --no-budget$'
+  run ! grep -q 'stall-watch role:feat/42-do-a-thing:plan-critic' "$STUB_LOG"
 }
 
 @test "--ignore-budget: a --spawn-role role's stall-watch is told --no-budget" {

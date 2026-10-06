@@ -4964,8 +4964,9 @@ stall-watch)
     local f s
     f=$(jq -r '.fetched_epoch | if type == "number" then floor else 0 end' "$budget_file" 2>/dev/null || true)
     s=$(cat "$budget_file.refresh-at" 2>/dev/null || true)
-    case "$f" in '' | *[!0-9]*) f=0 ;; esac
-    case "$s" in '' | *[!0-9]*) s=0 ;; esac
+    # Base 10 forced: a stamp like `09` would read as bad octal in $((…)).
+    if [[ "$f" =~ ^[0-9]{1,12}$ ]]; then f=$((10#$f)); else f=0; fi
+    if [[ "$s" =~ ^[0-9]{1,12}$ ]]; then s=$((10#$s)); else s=0; fi
     if [ "$f" -ge "$s" ]; then echo "$f"; else echo "$s"; fi
   }
 
@@ -5012,6 +5013,18 @@ stall-watch)
     fi
   }
 
+  # _budget_reset_note <resets> <iso> <now> — " (resets <iso>, in <rel>)". jq
+  # can hand back a float or an exponent literal (`1E+10`), so anything but a
+  # plain future epoch drops the relative part rather than break the arithmetic.
+  _budget_reset_note() {
+    local r="${1%%.*}"
+    if [[ "$r" =~ ^[0-9]{1,12}$ ]] && [ $((10#$r)) -gt "$3" ]; then
+      printf ' (resets %s, in %s)' "$2" "$(_budget_reltime $((10#$r - $3)))"
+    else
+      printf ' (resets %s)' "$2"
+    fi
+  }
+
   # _budget_detail <now> — the budget: detail for the first gating window, else
   # the limit. Returns 0 exhausted (detail printed), 1 clear, 2 can't tell.
   _budget_detail() {
@@ -5022,14 +5035,14 @@ stall-watch)
       IFS=$'\t' read -r key pct resets iso <<<"${win%%$'\n'*}"
       detail="budget: $engine $key at $pct%"
       if [ -n "$resets" ]; then
-        detail="$detail (resets $iso, in $(_budget_reltime $((${resets%%.*} - $1))))"
+        detail="$detail$(_budget_reset_note "$resets" "$iso" "$1")"
       else
         detail="$detail (no reset time)"
       fi
     elif [ "$lrc" = 0 ]; then
       IFS=$'\t' read -r reason resets iso <<<"${lim%%$'\n'*}"
       detail="budget: $engine limit reached: $reason"
-      [ -z "$resets" ] || detail="$detail (resets $iso, in $(_budget_reltime $((${resets%%.*} - $1))))"
+      [ -z "$resets" ] || detail="$detail$(_budget_reset_note "$resets" "$iso" "$1")"
     elif [ "$wrc" = 2 ] || [ "$lrc" = 2 ]; then
       return 2
     else
@@ -5485,23 +5498,31 @@ BUSLINE
     # is finished and idle, and a watchdog row would mask it in roster/reap
     # (the later `budget: cleared` would even revive it in fan-out); a
     # self-reported blocked is already parked in a zero-token await
-    # (`suppressed`). A cache that can't tell holds the episode as it is, so a
-    # stale or blind read never announces a clearance. Never escalates.
+    # (`suppressed`). The bus is re-read after the refresh, which can hold the
+    # tick up to 120s, so a pr_open or await posted meanwhile still gates. A
+    # cache that can't tell holds the episode as it is, so a stale or blind read
+    # never announces a clearance. Never escalates.
     if [ "$budget_on" = 1 ] && [ "$suppressed" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
-      case "$bus_state" in
-      "" | working | blocked)
-        _budget_refresh_maybe "$now"
-        d8_detail=$(_budget_detail "$now") && d8_rc=0 || d8_rc=$?
-        if [ "$d8_rc" = 0 ] && [ "$d8_at" = 0 ]; then
-          if _post_blocked "budget:" "$d8_detail"; then
-            d8_at="$now"
+      _budget_refresh_maybe "$now"
+      _bus_refresh
+      if [ "$bus_state" = blocked ] && [ "$bus_source" != watchdog ]; then
+        suppressed=1
+      fi
+      if [ "$suppressed" = 0 ]; then
+        case "$bus_state" in
+        "" | working | blocked)
+          d8_detail=$(_budget_detail "$now") && d8_rc=0 || d8_rc=$?
+          if [ "$d8_rc" = 0 ] && [ "$d8_at" = 0 ]; then
+            if _post_blocked "budget:" "$d8_detail"; then
+              d8_at="$now"
+            fi
+          elif [ "$d8_rc" = 1 ] && [ "$d8_at" != 0 ]; then
+            _post_clear "budget:"
+            d8_at=0
           fi
-        elif [ "$d8_rc" = 1 ] && [ "$d8_at" != 0 ]; then
-          _post_clear "budget:"
-          d8_at=0
-        fi
-        ;;
-      esac
+          ;;
+        esac
+      fi
     fi
 
     # ---- D5: launch not started ---------------------------------------------
