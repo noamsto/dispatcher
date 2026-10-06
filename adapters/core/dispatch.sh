@@ -4287,10 +4287,9 @@ name)
   _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
   ;;
 fetch-name)
-  # A PR head branch is attacker-named; see _fetch_origin_branch. Create it from
-  # the fetch's own oid, not DWIM from refs/remotes/origin/<head>, which a worker
-  # can move before the switch (#716); DWIM set tracking, so write it directly
-  # rather than resolving it through the worker-movable ref/refspecs.
+  # A PR head branch is attacker-named; see _fetch_origin_branch. Workers can
+  # move refs/remotes/origin/<head> and rewrite remote.*.fetch, so branch from
+  # the fetched oid and write tracking literally rather than resolving either (#716).
   _fetch_origin_branch "$branch" || {
     echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
