@@ -433,7 +433,7 @@ done
 split_unit() {
   local id=$1 file family weight parts n i j cnt rem name
   local -a names=()
-  local -A part_cnt=()
+  local -a part_cnt=()
   file=${unit_file[$id]}
   family=${unit_family[$id]}
   weight=${unit_weight[$id]}
@@ -445,7 +445,7 @@ split_unit() {
   ((parts >= 2)) || return 0
   rem=$weight
   for ((j = 1; j <= parts; j++)); do
-    part_cnt[$j]=0
+    part_cnt[j]=0
   done
   for ((i = 0; i < n; i++)); do
     name=${names[i]}
@@ -453,10 +453,10 @@ split_unit() {
       j=$((i % parts + 1))
       test_part[$file$'\x1f'$family$'\x1f'$name]="$family#$j/$parts"
       part_names[$file$'\x1f'"$family#$j/$parts"]+="$name"$'\n'
-      part_cnt[$j]=$((part_cnt[$j] + 1))
+      part_cnt[j]=$((part_cnt[j] + 1))
     fi
   done
-  unset "unit_weight[$id]" "unit_file[$id]" "unit_family[$id]"
+  unset 'unit_weight[$id]' 'unit_file[$id]' 'unit_family[$id]'
   for ((j = 1; j <= parts; j++)); do
     if ((j == parts)); then
       cnt=$rem

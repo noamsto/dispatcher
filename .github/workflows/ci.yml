@@ -71,27 +71,34 @@ jobs:
                 whole+=("$unit")
               fi
             done
-            # Every unit runs at once; the 16 job slots are split between the
-            # invocations (floor 2) instead of each unit waiting for the last.
-            n=$(( ${#filtered_files[@]} + (${#whole[@]} > 0 ? 1 : 0) ))
-            jobs=$(( n > 0 ? 16 / n : 16 ))
-            ((jobs >= 2)) || jobs=2
+            # Every unit runs at once so the slowest test no longer queues behind
+            # the previous unit. Each invocation keeps a few slots of its own;
+            # the heaviest unit is the critical path, so splitting 16 slots n
+            # ways would starve it. Console output goes to a per-run log, since
+            # concurrent TAP streams interleave unreadably.
+            jobs=4
             pids=()
+            logs=()
             if ((${#whole[@]} > 0)); then
               mkdir -p "$junit_dir/whole"
               bats --jobs "$jobs" --filter-tags '!timing' --report-formatter junit \
-                --output "$junit_dir/whole" "${whole[@]}" &
-              pids+=($!)
+                --output "$junit_dir/whole" "${whole[@]}" >"$junit_dir/whole.log" 2>&1 &
+              pids+=("$!")
+              logs+=("$junit_dir/whole.log")
             fi
             for i in "${!filtered_files[@]}"; do
               mkdir -p "$junit_dir/filter-$i"
               bats --jobs "$jobs" --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
                 --report-formatter junit --output "$junit_dir/filter-$i" \
-                "${filtered_files[$i]}" &
-              pids+=($!)
+                "${filtered_files[$i]}" >"$junit_dir/filter-$i.log" 2>&1 &
+              pids+=("$!")
+              logs+=("$junit_dir/filter-$i.log")
             done
-            for pid in "${pids[@]+"${pids[@]}"}"; do
-              wait "$pid" || fail=1
+            for i in "${!pids[@]}"; do
+              wait "${pids[$i]}" || fail=1
+              echo "::group::${logs[$i]##*/}"
+              cat "${logs[$i]}"
+              echo "::endgroup::"
             done
             exit "$fail"
           SHARD

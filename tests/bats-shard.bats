@@ -552,3 +552,19 @@ ci_module_bats_job_ok() {
   run --separate-stderr "$SHARD_SCRIPT" --weights "$FIXTURE/weights.tsv" --check "$FIXTURE"
   [ "$status" -eq 0 ]
 }
+
+@test "a split family with quotes in its name is scheduled once, in weighted parts" {
+  local n
+  for n in 1 2 3 4 5 6; do
+    write_case "$FIXTURE/big.bats" "it's \$x: case $n"
+  done
+  write_case "$FIXTURE/small.bats" "lone"
+  write_weights_header
+  add_weight "$FIXTURE/big.bats" "it's \$x" '!timing' 600000
+  add_weight "$FIXTURE/small.bats" '*' '!timing' 10000
+  run --separate-stderr "$SHARD_SCRIPT" --weights "$FIXTURE/weights.tsv" --plan "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$(awk -F '\t' '$3 ~ /big.bats/ { n++ } END { print n }' <<<"$output")" -eq 6 ]
+  [ "$(awk -F '\t' '$3 ~ /big.bats/ && $5 == 0' <<<"$output" | wc -l)" -eq 0 ]
+  [ "$(awk -F '\t' '$3 ~ /big.bats/ { s += $5 } END { print s }' <<<"$output")" -eq 600000 ]
+}
