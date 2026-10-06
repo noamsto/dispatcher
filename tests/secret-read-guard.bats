@@ -1663,9 +1663,9 @@ ROWS
 
 # F79: deny_cmd rows folded from a wrapper with a backticked argument, a
 # wrapper whose option argument is a substitution (#452, #484), and a relative
-# dumper path holding '=' (#683), and a relative dumper path shaped like an
-# append or subscript assignment that bash still runs as a command (#706).
-# Stateless: run_guard, no shared fixture.
+# dumper path holding '=' (#683) or shaped like an append or subscript
+# assignment bash still runs as a command (#706). Stateless: run_guard, no
+# shared fixture.
 @test "secret-read-guard: denies substituted wrapper args and equals-paths" {
   begin_rows
   local row cmd
