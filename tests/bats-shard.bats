@@ -360,6 +360,73 @@ GH
   [[ $stderr == *"does not match the current !timing test inventory"* ]]
 }
 
+@test "weights --run imports a complete JUnit artifact inventory" {
+  local bin="$BATS_TEST_TMPDIR/bin" expected
+  mkdir -p "$bin"
+  cat >"$bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+name=
+dir=
+while (($#)); do
+  case $1 in
+    -n) name=$2; shift 2 ;;
+    --dir) dir=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ $name == bats-timing-shard-1 ]] || exit 0
+mkdir -p "$dir/$name"
+find tests -maxdepth 1 -name '*.bats' ! -name module.bats -print0 | LC_ALL=C sort -z | xargs -0 awk '
+  function xml(value) {
+    gsub(/&/, "\\&amp;", value)
+    gsub(/</, "\\&lt;", value)
+    gsub(/>/, "\\&gt;", value)
+    gsub(/"/, "\\&quot;", value)
+    return value
+  }
+  FNR == 1 {
+    if (NR > 1) print "</testsuite>"
+    suite = FILENAME
+    sub(/^.*\//, "", suite)
+    print "<testsuite name=\"" xml(suite) "\" failures=\"0\" errors=\"0\">"
+    file_tags = ""
+    test_tags = ""
+  }
+  /^# bats file_tags=/ { file_tags = $0; sub(/^# bats file_tags=/, "", file_tags); next }
+  /^# bats test_tags=/ { test_tags = $0; sub(/^# bats test_tags=/, "", test_tags); next }
+  /^@test / {
+    tags = file_tags "," test_tags
+    name = $0; sub(/^@test "/, "", name); sub(/" \{[[:space:]]*$/, "", name)
+    if (tags !~ /(^|,)[[:space:]]*timing([[:space:]]*,|$)/) print "<testcase name=\"" xml(name) "\" time=\"0.001\"/>"
+    test_tags = ""
+  }
+  END { print "</testsuite>" }
+' >"$dir/$name/report.xml"
+GH
+  chmod +x "$bin/gh"
+
+  run --separate-stderr env PATH="$bin:$PATH" "$WEIGHTS_SCRIPT" --run 123
+  [ "$status" -eq 0 ]
+
+  expected="$(
+    find tests -maxdepth 1 -name '*.bats' ! -name module.bats -print0 | LC_ALL=C sort -z | xargs -0 awk -v OFS='\t' '
+      function family_of(name, i) { i = index(name, ":"); return i ? substr(name, 1, i - 1) : "*" }
+      FNR == 1 { file_tags = ""; test_tags = "" }
+      /^# bats file_tags=/ { file_tags = $0; sub(/^# bats file_tags=/, "", file_tags); next }
+      /^# bats test_tags=/ { test_tags = $0; sub(/^# bats test_tags=/, "", test_tags); next }
+      /^@test / {
+        tags = file_tags "," test_tags
+        name = $0; sub(/^@test "/, "", name); sub(/" \{[[:space:]]*$/, "", name)
+        if (tags !~ /(^|,)[[:space:]]*timing([[:space:]]*,|$)/) weight[FILENAME SUBSEP family_of(name)]++
+        test_tags = ""
+      }
+      END { for (key in weight) { split(key, fields, SUBSEP); print fields[1], fields[2], "!timing", weight[key] } }
+    ' | { printf 'file\tfamily\tfilter\tweight_ms\n'; LC_ALL=C sort -t $'\t' -k1,1 -k2,2; }
+  )"
+  [ "$output" = "$expected" ]
+}
+
 ci_module_bats_job_ok() {
   local ci="$1"
   local line current="" in_jobs=0 hits=0 owner="" trimmed

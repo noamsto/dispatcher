@@ -66,7 +66,9 @@ aggregate() {
 }
 
 expected_inventory() {
-  find tests -maxdepth 1 -name '*.bats' ! -name module.bats -print | LC_ALL=C sort | awk '
+  # shellcheck disable=SC2016 # awk program deliberately contains field references.
+  find tests -maxdepth 1 -name '*.bats' ! -name module.bats -print0 | LC_ALL=C sort -z |
+    xargs -0 awk '
     FNR == 1 { file_tags = ""; test_tags = "" }
     /^# bats file_tags=/ { file_tags = $0; sub(/^# bats file_tags=/, "", file_tags); next }
     /^# bats test_tags=/ { test_tags = $0; sub(/^# bats test_tags=/, "", test_tags); next }
@@ -77,7 +79,7 @@ expected_inventory() {
       if (tags !~ /(^|,)[[:space:]]*timing([[:space:]]*,|$)/) print FILENAME "\t" name
       test_tags = ""
     }
-  '
+  ' | LC_ALL=C sort
 }
 
 runs=()
@@ -113,14 +115,19 @@ for run in "${runs[@]}"; do
   actual="$sample/actual.tsv"
   : >"$actual"
   for report in "${reports[@]}"; do
-    if yq -r '.. | select(has("+@failures") or has("+@errors")) | [ ."+@failures", ."+@errors" ] | @tsv' "$report" |
+    if yq -p=xml -o=json -r '.. | select(has("+@failures") or has("+@errors")) | [ ."+@failures", ."+@errors" ] | @tsv' "$report" |
       awk -F '\t' '$1 != "0" || $2 != "0" { exit 1 }'; then :; else
       echo "bats-shard-weights: run $run includes failed tests" >&2; exit 1
     fi
     # shellcheck disable=SC2016 # yq expression deliberately contains $suite.
-    yq -r '.. | select(has("testcase")) | . as $suite | $suite.testcase[] | [$suite."+@name", ."+@name", ."+@time"] | @tsv' "$report" |
+    yq -p=xml -o=json -r '.. | select(has("testcase")) | . as $suite | ($suite.testcase | (select(tag == "!!seq") // [.]) | .[]) | [$suite."+@name", ."+@name", ."+@time"] | @tsv' "$report" |
       awk -F '\t' -v OFS='\t' '
         NF != 3 || $1 == "" || $2 == "" || $3 !~ /^[0-9]+(\.[0-9]+)?$/ { exit 1 }
+        $2 ~ /^".*"$/ {
+          sub(/^"/, "", $2)
+          sub(/"$/, "", $2)
+          gsub(/""/, "\"", $2)
+        }
         { print $1, $2, int(($3 * 1000) + 0.5) }
       ' >>"$actual" || { echo "bats-shard-weights: invalid JUnit report $report" >&2; exit 1; }
   done
