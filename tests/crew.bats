@@ -1675,6 +1675,35 @@ after_await_parks() {
   [[ "$output" == *'"body":"answer"'* ]]
 }
 
+# #760: a second blocked episode. The first answer is delivered and marked; the
+# reply to the second question lands before the second await starts and must
+# still come out at once, not on a later cycle.
+@test "await: a reply already on the bus in a second blocked episode is delivered" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
+  bus_tick
+  CREW_ID=c1 run_crew reply "$id" "A1"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [[ "$output" == *'"body":"A1"'* ]]
+  bus_tick
+  CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
+  bus_tick
+  CREW_ID=c1 run_crew reply "$id" "A2"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 300 --interval 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"A2"'* ]]
+}
+
+# #760: the note a timed-out await prints is the only evidence a worker has that
+# the full wait elapsed, so it reports the time actually waited.
+@test "await: the timeout note reports the elapsed wait" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 7 --interval 3
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"await ended after 9s"* ]]
+}
+
 # #385: the dispatcher's reply can cross the worker's own question in flight —
 # the reply lands first, the question second. The question must not hide it: a
 # msg is due until this session has actually been handed it (the per-sender

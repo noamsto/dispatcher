@@ -1993,7 +1993,7 @@ await)
       }
     fi
     [ "$(_clock_now_ms)" -ge "$deadline" ] && {
-      echo "crew: await ended after ${timeout}s — no reply to $me${from:+ from $from} yet" >&2
+      echo "crew: await ended after $((($(_clock_now_ms) - start) / 1000))s — no reply to $me${from:+ from $from} yet" >&2
       exit 0
     }
     _clock_sleep "$interval"
