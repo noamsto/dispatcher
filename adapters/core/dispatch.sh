@@ -1518,9 +1518,66 @@ _protocol_dirs_record_bad() {
   return 1
 }
 
-# _record_protocol_dirs <worktree> — record the resolved protocol dirs and the
-# worktree they belong to, for --spawn-role (#496): dispatcher-written, outside
-# every prompt-free write grant a worker holds.
+# _settings_env_names — the env vars that steer _settings_load and the pi seed.
+# LOCAL_MODELS_LIB and DISPATCH_CONFIG_BIN are pinned for the `crew pi-agent-dir`
+# child, which sources/runs them to write the shared models.json (dispatch.sh's
+# own startup sourcing is the caller's own code).
+_settings_env_names() {
+  printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
+    DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
+    DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
+    PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+}
+
+# _settings_env_json — those vars as one JSON object, null when unset, except
+# XDG_CONFIG_HOME, PI_CODING_AGENT_DIR (a leading ~/ expanded here)
+# and DISPATCH_GRANT_ROOTS, recorded with their defaults so a reader never falls
+# back to its caller's HOME or locked grantRoots. Path values are recorded absolute.
+# DISPATCH_ENGINES and DISPATCH_GRANT_ROOTS are the already-resolved values
+# (_settings_load ran first): a deliberate snapshot. The rest are inputs, so a
+# reader re-resolves settings from the dispatcher's own files.
+_settings_env_json() {
+  local n v
+  local -a args=()
+  while IFS= read -r n; do
+    case "$n" in
+    XDG_CONFIG_HOME)
+      v="${XDG_CONFIG_HOME:-$HOME/.config}"
+      [[ $v == /* ]] || v="$HOME/.config"
+      args+=(--arg "$n" "$v")
+      ;;
+    DISPATCH_LOCKED_SETTINGS | DISPATCH_OPENROUTER_KEY_FILE)
+      if [ -z "${!n+x}" ]; then
+        args+=(--argjson "$n" null)
+      else
+        v="${!n}"
+        [[ -z $v || $v == /* ]] || v="$(realpath -m -- "$v")"
+        args+=(--arg "$n" "$v")
+      fi
+      ;;
+    PI_CODING_AGENT_DIR)
+      v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+      case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac
+      [[ $v == /* ]] || v="$HOME/.pi/agent"
+      args+=(--arg "$n" "$v")
+      ;;
+    DISPATCH_GRANT_ROOTS) args+=(--arg "$n" "${DISPATCH_GRANT_ROOTS:-:}") ;;
+    *)
+      if [ -n "${!n+x}" ]; then
+        args+=(--arg "$n" "${!n}")
+      else
+        args+=(--argjson "$n" null)
+      fi
+      ;;
+    esac
+  done < <(_settings_env_names)
+  jq -cn '$ARGS.named' "${args[@]}"
+}
+
+# _record_protocol_dirs <worktree> — record the resolved protocol dirs, the
+# worktree they belong to, and the settings env (_settings_env_json), for
+# --spawn-role (#496, #733): dispatcher-written, outside every prompt-free
+# write grant a worker holds.
 _record_protocol_dirs() {
   local rec="$crew_dir/protocol-dirs/$branch" n v tmp
   local -a lines=()
@@ -1529,7 +1586,7 @@ _record_protocol_dirs() {
     [[ $v == /* ]] || v=""
     lines+=("$v")
   done
-  lines+=("$(realpath -e -- "$1")")
+  lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
   (
     umask 077
     mkdir -p "$(dirname "$rec")"
@@ -2550,7 +2607,6 @@ git_env="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: "
 # `dispatch --spawn-role <role>` — create a lazy grid's role pane on demand in
 # the caller's own window/worktree, from roles.json. Idempotent.
 if [ "${1:-}" = "--spawn-role" ]; then
-  _settings_load
   role="${2:-}"
   [ -n "$role" ] || {
     echo "dispatch: --spawn-role needs a role name" >&2
@@ -2620,6 +2676,21 @@ if [ "${1:-}" = "--spawn-role" ]; then
   # Pin to the recorded root and use it below, never $PWD: a worker could cd
   # through a symlink to its worktree and retarget the link after this check.
   cd -- "$wt_root" || exit 1
+  # Settings and the pi seed (`crew pi-agent-dir` inherits this env) come from
+  # the dispatcher's record, never this worker's env: a caller XDG_CONFIG_HOME
+  # or PI_CODING_AGENT_DIR would otherwise pick the models.json and hookyard
+  # bridge every pi worker on the host loads (#733).
+  jq -e 'type == "object"' <<<"${rec_lines[5]:-}" >/dev/null 2>&1 || {
+    echo "dispatch: --spawn-role: no settings record for $branch — re-dispatch the task or run dispatch resume" >&2
+    exit 1
+  }
+  while IFS= read -r _v; do
+    unset "$_v"
+    if _val="$(jq -er --arg k "$_v" '.[$k] | strings' <<<"${rec_lines[5]}")"; then
+      export "$_v=$_val"
+    fi
+  done < <(_settings_env_names)
+  _settings_load
   unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
   DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
