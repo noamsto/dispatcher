@@ -8100,6 +8100,7 @@ _refused() {
   [[ "$stderr" == *"$1"* ]]
   [ "$(_status_rows)" -eq 0 ]
 }
+_waive() { run_crew reply "${1:-worker:feat/x#s1-1}" "${2:-waive AC2}" --crew c1; }
 _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"deslop"}'; }
 
 # Folded family — standard or deep with no review seam is refused and not written.
@@ -9002,6 +9003,7 @@ ROWS
 
 @test "pr_open: the acceptance ledger rides in the status detail" {
   _task_doc trivial
+  _waive
   run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats) AC2 waived(dispatcher)" https://example.com/pr/1
   [ "$(jq -r 'select(.kind=="status") | .body.detail' "$(git rev-parse --git-common-dir)/crew/events.jsonl")" = "AC1 pass(bats) AC2 waived(dispatcher)" ]
 }
@@ -9219,11 +9221,94 @@ ROWS
   local n=0
   for d in "${details[@]}"; do
     n=$((n + 1))
+    _waive "worker:feat/x#s1-$n"
     run --separate-stderr run_crew status "worker:feat/x#s1-$n" pr_open "$d" https://example.com/pr/1
     [ "$status" -eq 0 ]
     [ -z "$stderr" ]
   done
   [ "$(_status_rows)" -eq "$n" ]
+}
+
+@test "pr_open: a CI item needs a CI run id or actions/runs URL, a local stand-in is refused" {
+  _task_doc trivial
+  printf '\n## Acceptance\n- CI green on the PR head\n- Non-CI items behave as before\n' >>WORKER_TASK.md
+  local -a refused=(
+    'AC1 pass(bats-affected)'
+    'AC1 pass(local stand-in: shellcheck and bats-affected)'
+    'AC1 pass(pre-push hook: trim-trailing-whitespace passed)'
+    'AC2 pass(CI green, 12 tests)'
+    'AC1 pass(bats); AC2 pass(bats)'
+  )
+  local d
+  for d in "${refused[@]}"; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    _refused "CI run id"
+  done
+  local -a accepted=(
+    'AC1 pass(https://github.com/o/r/actions/runs/123456789)'
+    'AC1 pass(CI run 123456789); AC2 pass(bats)'
+    'AC1 pass(run id 9876543)'
+    'AC2 pass(bats)'
+    'AC2 waived(dispatcher: not run on CI)'
+  )
+  local n=0
+  for d in "${accepted[@]}"; do
+    n=$((n + 1))
+    _waive "worker:feat/x#s1-$n"
+    run --separate-stderr run_crew status "worker:feat/x#s1-$n" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "pr_open: a CI item is found by explicit id in the task doc" {
+  _task_doc trivial
+  printf '\n## Acceptance\n- AC2 Tests pass\n- **AC1** CI passes\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
+  _refused "CI run id"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2 pass(bats); AC1 pass(actions/runs/42)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: waived(dispatcher) needs a dispatcher waive msg to this session on the bus" {
+  _task_doc trivial
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher)" https://example.com/pr/1
+  _refused "dispatcher waiver"
+  # a worker-forged msg, a non-waive reply and a reply to another session do not count
+  run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" "waive AC1"
+  _waive "worker:feat/x#s1-1" "carry on"
+  _waive "worker:feat/x#s0-9" "waive AC1"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher)" https://example.com/pr/1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatcher waiver"* ]]
+  _waive "worker:feat/x#s1-1" "waive AC1"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher: draft CI pending)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: id-less items, other Acceptance spellings, AC0 and look-alike run words are checked" {
+  _task_doc trivial
+  printf '\n**Acceptance:**\n- CI green on the PR head\n' >>WORKER_TASK.md
+  local d
+  for d in 'waived(dispatcher)' 'pass(CI green)' 'AC1 pass(bats)' 'AC1 pass(CI dry-run 20261006 local)'; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* ]]
+  done
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC0 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: CI entries resolve by numeric id, ledger position and top-level bullets only" {
+  _task_doc trivial
+  printf '\n## Acceptance\n1. Tests pass\n   - covers x\n2. CI green\n' >>WORKER_TASK.md
+  local d
+  for d in '2 pass(bats)' 'AC02 pass(bats)' 'pass(bats); pass(bats)' $'AC2 pass(local\nCI green)'; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"CI run id"* ]]
+  done
+  run --separate-stderr run_crew status "worker:feat/x#s1-2" pr_open "AC1 pass(bats); AC2 pass(CI run_id=1234567)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
 }
 
 @test "pr_open: a lone state word before a valid item reads as its id (known gap)" {
@@ -9432,6 +9517,7 @@ EOF
     n=$((n + 1))
     d="${ex#pr_open \"}"
     d="${d%\"}"
+    _waive "worker:feat/x#s1-$n"
     run --separate-stderr run_crew status "worker:feat/x#s1-$n" pr_open "$d" https://example.com/pr/1
     [ "$status" -eq 0 ]
     [ -z "$stderr" ]
