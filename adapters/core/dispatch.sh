@@ -1519,6 +1519,9 @@ _protocol_dirs_record_bad() {
 }
 
 # _settings_env_names — the env vars that steer _settings_load and the pi seed.
+# LOCAL_MODELS_LIB and DISPATCH_CONFIG_BIN are pinned for the `crew pi-agent-dir`
+# child, which sources/runs them to write the shared models.json (dispatch.sh's
+# own startup sourcing is the caller's own code).
 _settings_env_names() {
   printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
     DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
@@ -1526,17 +1529,25 @@ _settings_env_names() {
     PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
 }
 
-# _settings_env_json — those vars as one JSON object, null when unset.
+# _settings_env_json — those vars as one JSON object, null when unset, except
+# XDG_CONFIG_HOME, PI_CODING_AGENT_DIR (absolute, a leading ~/ expanded here)
+# and DISPATCH_GRANT_ROOTS, recorded with their defaults so a reader never falls
+# back to its caller's HOME or locked grantRoots.
 # DISPATCH_ENGINES and DISPATCH_GRANT_ROOTS are the already-resolved values
 # (_settings_load ran first): a deliberate snapshot. The rest are inputs, so a
 # reader re-resolves settings from the dispatcher's own files.
 _settings_env_json() {
-  local n
+  local n v
   local -a args=()
   while IFS= read -r n; do
     case "$n" in
     XDG_CONFIG_HOME) args+=(--arg "$n" "${XDG_CONFIG_HOME:-$HOME/.config}") ;;
-    PI_CODING_AGENT_DIR) args+=(--arg "$n" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}") ;;
+    PI_CODING_AGENT_DIR)
+      v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+      case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac
+      [[ $v == /* ]] || v="$HOME/.pi/agent"
+      args+=(--arg "$n" "$v")
+      ;;
     DISPATCH_GRANT_ROOTS) args+=(--arg "$n" "${DISPATCH_GRANT_ROOTS:-:}") ;;
     *)
       if [ -n "${!n+x}" ]; then

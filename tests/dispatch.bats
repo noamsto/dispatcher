@@ -8293,6 +8293,15 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
     and .DISPATCH_CONFIG_BIN == $bin' <<<"${lines[5]}"
 }
 
+@test "protocol-dirs record: a ~/ PI_CODING_AGENT_DIR is recorded absolute" {
+  stub_launch_bins
+  PI_CODING_AGENT_DIR='~/custom-pi' DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record"
+  mapfile -t lines <"$rec"
+  jq -e --arg pi "$HOME/custom-pi" '.PI_CODING_AGENT_DIR == $pi' <<<"${lines[5]}"
+}
+
 @test "protocol-dirs record: a symlink planted at the record path is refused, its target left untouched" {
   stub_launch_bins
   victim="$BATS_TEST_TMPDIR/victim"

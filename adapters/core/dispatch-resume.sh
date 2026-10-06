@@ -205,12 +205,17 @@ _settings_env_names() {
 }
 
 _settings_env_json() {
-  local n
+  local n v
   local -a args=()
   while IFS= read -r n; do
     case "$n" in
     XDG_CONFIG_HOME) args+=(--arg "$n" "${XDG_CONFIG_HOME:-$HOME/.config}") ;;
-    PI_CODING_AGENT_DIR) args+=(--arg "$n" "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}") ;;
+    PI_CODING_AGENT_DIR)
+      v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+      case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac
+      [[ $v == /* ]] || v="$HOME/.pi/agent"
+      args+=(--arg "$n" "$v")
+      ;;
     DISPATCH_GRANT_ROOTS) args+=(--arg "$n" "${DISPATCH_GRANT_ROOTS:-:}") ;;
     *)
       if [ -n "${!n+x}" ]; then
