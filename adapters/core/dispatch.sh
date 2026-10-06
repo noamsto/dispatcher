@@ -1820,6 +1820,21 @@ if [ "${1:-}" = "--role-watch" ]; then
   }
   watch_set_state idle
 
+  # DISPATCH_ROLE_WATCH_CLOCK=<file> is test-only. Unset, these are date +%s
+  # and sleep. Set, the file holds epoch seconds: it starts at real time and
+  # only moves forward, and sleep advances it instead of waiting.
+  _rw_now() {
+    [ -n "${DISPATCH_ROLE_WATCH_CLOCK:-}" ] || { date +%s; return; }
+    [ -s "$DISPATCH_ROLE_WATCH_CLOCK" ] || date +%s >"$DISPATCH_ROLE_WATCH_CLOCK"
+    cat "$DISPATCH_ROLE_WATCH_CLOCK"
+  }
+  _rw_sleep() {
+    [ -n "${DISPATCH_ROLE_WATCH_CLOCK:-}" ] || { sleep "$1"; return; }
+    local s="${1%%.*}"
+    [ "$s" = "$1" ] || s=$((${s:-0} + 1))
+    printf '%s\n' "$(($(_rw_now) + s))" >"$DISPATCH_ROLE_WATCH_CLOCK"
+  }
+
   # Signatures copied byte-identically from crew.sh's stall-watch (this is a
   # standalone build; tests/adapters.bats pins each copy).
   re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
@@ -2509,16 +2524,16 @@ if [ "${1:-}" = "--role-watch" ]; then
             # unrelated real draft.
         fi
       else
-        [ "$deferred_since" -gt 0 ] || deferred_since="$(date +%s)"
+        [ "$deferred_since" -gt 0 ] || deferred_since="$(_rw_now)"
         if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
-          [ $(($(date +%s) - deferred_since)) -ge "$defer_notice" ]; then
+          [ $(($(_rw_now) - deferred_since)) -ge "$defer_notice" ]; then
           deferred_told=1
           crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
             '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
         fi
       fi
     fi
-    sleep "$interval"
+    _rw_sleep "$interval"
   done
   exit 0
 fi

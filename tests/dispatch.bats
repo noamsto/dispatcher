@@ -9658,15 +9658,36 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
+_rw_poll() { # <shell-cmd, true when ready>
+  local n
+  # Ceiling for watcher startup on a loaded runner. A ready condition
+  # returns on the first check.
+  for n in $(seq 1 200); do
+    eval "$1" && return 0
+    sleep 0.05
+  done
+  return 1
+}
+
+# Linger so a later tick can still mis-deliver. Each iteration logs two
+# display-message lines; the default 8 lines is four ticks.
+_rw_settle() {
+  local have start
+  have=$(grep -c '^display-message' "$STUB_LOG" 2>/dev/null || true)
+  start=$((${have:-0} + ${1:-8}))
+  _rw_poll "[ \"\$(_rw_count '^display-message')\" -ge $start ]"
+}
+
 # _rw_start <engine> [body] — run the watcher in the background, then post one
 # assignment to the role from the lead. $2 is a derived test payload, never a
 # real capture value; defaults to "go".
 _rw_start() {
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   # shellcheck disable=SC2086
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 ${RW_EXTRA:-} >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\"" || return 1
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
   jq -nc --arg body "${2:-go}" '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: $body}' >>"$common/crew/events.jsonl"
@@ -9685,47 +9706,24 @@ _rw_post() {
   jq -nc --arg from "$1" '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:$from, to:"role:feat/9-x:reviewer", body:"go"}' >>"$common/crew/events.jsonl"
 }
 
-_rw_sends() { grep -cE '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$' "$STUB_LOG" || true; }
-_rw_captures() { grep -c '^capture-pane' "$STUB_LOG" || true; }
+_rw_count() {
+  local n
+  n=$(grep -cE "$1" "$STUB_LOG" 2>/dev/null || true)
+  printf '%s\n' "${n:-0}"
+}
+_rw_sends() { _rw_count '^(paste Assignment: go|send-keys -t %6 -l Assignment: go)$'; }
+_rw_captures() { _rw_count '^capture-pane'; }
 
-_rw_deliveries() { grep -cE '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" || true; }
+_rw_deliveries() { _rw_count '^(paste |send-keys -t %6 -l )Assignment: '; }
 _rw_paste_payload() { grep -E '^(paste |send-keys -t %6 -l )Assignment: ' "$STUB_LOG" | head -1 | sed -E 's/^(paste |send-keys -t %6 -l )//'; }
 
-_rw_wait_sends() {
-  local n
-  for n in $(seq 1 40); do
-    [ "$(_rw_sends)" -ge "$1" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
+_rw_wait_sends() { _rw_poll "[ \"\$(_rw_sends)\" -ge $1 ]"; }
 
-_rw_wait_deliveries() {
-  local n
-  for n in $(seq 1 40); do
-    [ "$(_rw_deliveries)" -ge "$1" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
+_rw_wait_deliveries() { _rw_poll "[ \"\$(_rw_deliveries)\" -ge $1 ]"; }
 
-_rw_wait_captures() {
-  local n
-  for n in $(seq 1 60); do
-    [ "$(_rw_captures)" -ge "$1" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
+_rw_wait_captures() { _rw_poll "[ \"\$(_rw_captures)\" -ge $1 ]"; }
 
-_rw_wait_deferred() {
-  local n
-  for n in $(seq 1 60); do
-    grep -q 'assignment_deferred' "$STUB_LOG" && return 0
-    sleep 0.1
-  done
-  return 1
-}
+_rw_wait_deferred() { _rw_poll "grep -q 'assignment_deferred' \"\$STUB_LOG\""; }
 
 @test "role-watch: a permission dialog receives no keys until it clears, then the assignment lands once" {
   _spawn_role_fixture
@@ -9736,7 +9734,7 @@ _rw_wait_deferred() {
   run ! grep -q '^send-keys' "$STUB_LOG"
   rw_frame_idle >"$STUB_DIR/frame"
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
   grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
@@ -9772,7 +9770,7 @@ _rw_wait_deferred() {
   _rw_stub rw_frame_claude_with_cursor_anchors
   _rw_start claude
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
 }
@@ -9782,7 +9780,7 @@ _rw_wait_deferred() {
   _rw_stub rw_frame_idle
   _rw_start claude
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
 }
@@ -9790,6 +9788,13 @@ _rw_wait_deferred() {
 @test "role-watch: the frame gate works under LC_ALL=C" {
   _spawn_role_fixture
   export LC_ALL=C
+  # The frame stays idle after the paste, so the next tick pastes again.
+  # Stop on the first paste; the assertion is that first delivery.
+  cat >"$STUB_DIR/hook" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = paste-buffer ] && touch "$STUB_DIR/stop"
+EOF
+  chmod +x "$STUB_DIR/hook"
   for spec in \
     "claude rw_frame_idle" \
     "codex rw_frame_codex_idle_empty" \
@@ -9817,7 +9822,7 @@ _rw_wait_deferred() {
   rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl"
   _rw_stub rw_frame_select
   _rw_start pi
-  sleep 1
+  _rw_settle
   _rw_stop
   run ! grep -q '^send-keys' "$STUB_LOG"
 }
@@ -9934,10 +9939,7 @@ _rw_wait_deferred() {
     touch "$STUB_DIR/flip"
     _rw_start "$eng"
     _rw_wait_sends 1
-    for n in $(seq 1 40); do
-      grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
-      sleep 0.1
-    done
+    _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
     _rw_stop
     [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: assignment was not typed"; return 1; }
     grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
@@ -9979,10 +9981,7 @@ _rw_wait_deferred() {
     "$after_fn" >"$STUB_DIR/frame_after"
     touch "$STUB_DIR/flip"
     _rw_start "$eng" "$rw_wrapped_assignment"
-    for n in $(seq 1 40); do
-      grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
-      sleep 0.1
-    done
+    _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
     _rw_stop
     grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" || { echo "$eng: wrapped assignment was not confirmed"; return 1; }
   done
@@ -10058,11 +10057,11 @@ _rw_wait_deferred() {
   _spawn_role_fixture
   _rw_stub rw_frame_live
   _rw_start claude
-  sleep 0.8
+  _rw_settle
   [ "$(_rw_sends)" -eq 0 ]
   rw_frame_idle >"$STUB_DIR/frame"
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
 }
@@ -10089,11 +10088,8 @@ _rw_wait_deferred() {
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
   _rw_wait_sends 1
   # The next delivery lands several ticks after the first; linger afterwards to catch a duplicate.
-  for n in $(seq 1 150); do
-    grep -qE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG" && break
-    sleep 0.1
-  done
-  sleep 1.2
+  _rw_poll "grep -qE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' \"\$STUB_LOG\""
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
   [ "$(grep -cE '^(paste Assignment: two|send-keys -t %6 -l Assignment: two)$' "$STUB_LOG")" -eq 1 ]
@@ -10107,13 +10103,10 @@ _rw_wait_deferred() {
   touch "$STUB_DIR/flip"
   _rw_start claude
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   rw_frame_idle >"$STUB_DIR/frame"
-  for n in $(seq 1 40); do
-    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
-    sleep 0.1
-  done
+  _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
   _rw_stop
   grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   grep -qx 'send-keys -t %6 C-u' "$STUB_LOG"
@@ -10134,10 +10127,7 @@ _rw_wait_deferred() {
   } >"$STUB_DIR/frame_after"
   touch "$STUB_DIR/flip"
   _rw_start claude
-  for n in $(seq 1 40); do
-    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
-    sleep 0.1
-  done
+  _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
   _rw_stop
   grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   [ "$(_rw_sends)" -eq 1 ]
@@ -10156,10 +10146,7 @@ _rw_wait_deferred() {
   } >"$STUB_DIR/frame_after"
   touch "$STUB_DIR/flip"
   _rw_start pi
-  for n in $(seq 1 40); do
-    grep -qx 'send-keys -t %6 Enter' "$STUB_LOG" && break
-    sleep 0.1
-  done
+  _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
   _rw_stop
   grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
 }
@@ -10183,9 +10170,10 @@ _rw_wait_deferred() {
   _spawn_role_fixture
   _rw_stub rw_frame_permission
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1 >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
@@ -10195,12 +10183,77 @@ _rw_wait_deferred() {
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
+@test "role-watch: DISPATCH_ROLE_WATCH_CLOCK reports a deferral without wall sleep" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  SECONDS=0
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 30 --defer-notice 30 >/dev/null 2>&1 &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  _rw_poll "grep -q 'assignment_deferred' \"\$STUB_LOG\"" || true
+  # Stop before the assertions so a missed deferral cannot sit in sleep 30.
+  pkill -P "$RW_PID" 2>/dev/null || true
+  kill "$RW_PID" 2>/dev/null || true
+  wait "$RW_PID" 2>/dev/null || true
+  [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+  [ "$SECONDS" -lt 5 ]
+  _rw_stop
+}
+
+@test "role-watch: skipping the clock does not emit assignment_deferred without a deferral" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  printf '%s\n' "$(($(date +%s) + 100000))" >"$DISPATCH_ROLE_WATCH_CLOCK"
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1 >/dev/null 2>&1 &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  _rw_poll "[ \"\$(_rw_deliveries)\" -ge 1 ]"
+  _rw_settle
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
+  run ! grep -q 'assignment_deferred' "$STUB_LOG"
+}
+
+@test "role-watch: an unset DISPATCH_ROLE_WATCH_CLOCK uses real sleep and date" {
+  unset DISPATCH_ROLE_WATCH_CLOCK
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  export STUB_DIR STUB_LOG
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 1 --defer-notice 2 >/dev/null 2>&1 &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  sleep 0.4
+  run ! grep -q 'assignment_deferred' "$STUB_LOG"
+  for n in $(seq 1 60); do
+    grep -q 'assignment_deferred' "$STUB_LOG" && break
+    sleep 0.1
+  done
+  [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+  [ "$(grep -c '^display-message' "$STUB_LOG")" -lt 40 ]
+  _rw_stop
+}
+
 @test "role-watch: a role verdict does not flip the role idle while an assignment is queued" {
   _spawn_role_fixture
   _rw_stub rw_frame_permission
   _rw_start claude
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", to: "worker:feat/9-x#s1-1", from: "role:feat/9-x:reviewer", body: "{}"}' >>"$common/crew/events.jsonl"
-  sleep 1
+  _rw_settle
   _rw_stop
   grep -qF '@crew_state working' "$STUB_LOG"
   run ! grep -qF '@crew_state idle' <(sed -n '/@crew_state working/,$p' "$STUB_LOG")
@@ -10219,11 +10272,11 @@ _rw_wait_deferred() {
   _spawn_role_fixture
   _rw_stub rw_frame_pi_live
   _rw_start pi
-  sleep 0.8
+  _rw_settle
   [ "$(_rw_sends)" -eq 0 ]
   rw_frame_pi_idle >"$STUB_DIR/frame"
   _rw_wait_sends 1
-  sleep 0.8
+  _rw_settle
   _rw_stop
   [ "$(_rw_sends)" -eq 1 ]
 }
@@ -10268,7 +10321,7 @@ _rw_wait_deferred() {
   _rw_stub rw_frame_idle
   touch "$STUB_DIR/load_buffer_fail"
   _rw_start claude
-  sleep 0.8
+  _rw_settle
   [ "$(_rw_deliveries)" -eq 0 ]
   run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   rm -f "$STUB_DIR/load_buffer_fail"
@@ -10283,7 +10336,7 @@ _rw_wait_deferred() {
   _rw_stub rw_frame_idle
   touch "$STUB_DIR/paste_buffer_fail"
   _rw_start claude
-  sleep 0.8
+  _rw_settle
   [ "$(_rw_deliveries)" -eq 0 ]
   run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   rm -f "$STUB_DIR/paste_buffer_fail"
@@ -10402,17 +10455,10 @@ EOF
   "$2" >"$STUB_DIR/frame"
 }
 
-_rw_enters() { grep -cx 'send-keys -t %6 Enter' "$STUB_LOG" || true; }
+_rw_enters() { _rw_count '^send-keys -t %6 Enter$'; }
 _rw_copies() { grep -o 'Assignment: go' "$STUB_DIR/frame" | wc -l; }
-_rw_wait_enters() {
-  local n
-  for n in $(seq 1 60); do
-    [ "$(_rw_enters)" -ge "$1" ] && return 0
-    sleep 0.1
-  done
-  return 1
-}
-_rw_unsubmitted() { grep -c '^msg .*assignment_unsubmitted' "$STUB_LOG" || true; }
+_rw_wait_enters() { _rw_poll "[ \"\$(_rw_enters)\" -ge $1 ]"; }
+_rw_unsubmitted() { _rw_count '^msg .*assignment_unsubmitted'; }
 
 # _rw_swallow_case <engine> <idle-fn> <busy-fn> — the first Enter after the
 # paste is lost; the watcher must retry Enter alone and dequeue only once the
@@ -10422,7 +10468,7 @@ _rw_swallow_case() {
   _rw_sim "$1" "$2" "$3" 1
   _rw_start "$1"
   _rw_wait_enters 2
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 2 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10455,7 +10501,7 @@ _rw_scroll_case() {
   _rw_sim "$1" rw_frame_pi_idle rw_frame_pi_live 0
   _rw_start pi
   _rw_wait_enters 1
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10475,7 +10521,7 @@ _rw_scroll_case() {
   _rw_sim pi_scrolled rw_frame_pi_idle rw_frame_pi_live 1
   _rw_start pi
   _rw_wait_enters 2
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 2 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10488,11 +10534,8 @@ _rw_scroll_case() {
   # the frame after Enter matches no recogniser (no input box at all)
   printf ' something unrecognised\n' >"$STUB_DIR/dialog_frame"
   RW_EXTRA='--submit-retries 2' _rw_start pi
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
-  sleep 0.5
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
@@ -10537,10 +10580,7 @@ _rw_scroll_case() {
   _rw_wait_enters 1
   # unknown_max is 5 ticks; wait past it so a missing confirmation would raise
   # `could not confirm` inside the window instead of after the test stops.
-  for n in $(seq 1 40); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
+  _rw_settle 16
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10554,11 +10594,8 @@ _rw_scroll_case() {
   _rw_sim claude rw_frame_idle rw_frame_live 1
   rw_frame_claude_draft >"$STUB_DIR/dialog_frame"
   RW_EXTRA='--submit-retries 2' _rw_start claude
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
-  sleep 0.5
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
@@ -10601,7 +10638,7 @@ rw_frame_claude_spinner_empty() {
   # host editor's submit path (index.ts:2625) — a re-sent Enter really submits.
   _rw_after_enter pi rw_frame_pi_idle rw_frame_pi_live rw_frame_pi_normal_held
   _rw_wait_enters 2
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 2 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10612,10 +10649,7 @@ rw_frame_claude_spinner_empty() {
 
 @test "role-watch: a claude draft that is only a substring of the assignment gets no retry Enter" {
   _rw_after_enter claude rw_frame_idle rw_frame_live rw_frame_claude_substring_draft
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
@@ -10627,7 +10661,7 @@ rw_frame_claude_spinner_empty() {
   RW_PASTE_CHARS=14 rw_frame_pi_paste_marker >"$STUB_DIR/dialog_frame"
   _rw_start pi
   _rw_wait_enters 2
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 2 ]
   [ "$(_rw_unsubmitted)" -eq 0 ]
@@ -10635,10 +10669,7 @@ rw_frame_claude_spinner_empty() {
 
 @test "role-watch: a pi collapsed-paste marker with another length is unknown: no retry Enter" {
   _rw_after_enter pi rw_frame_pi_idle rw_frame_pi_live rw_frame_pi_paste_marker_wrong
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
@@ -10646,10 +10677,7 @@ rw_frame_claude_spinner_empty() {
 
 @test "role-watch: a cursor usage-limit frame after Enter gets no retry Enter" {
   _rw_after_enter cursor rw_frame_cursor_idle_empty rw_frame_cursor_live_turn rw_frame_cursor_monthly_limit
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
@@ -10657,7 +10685,7 @@ rw_frame_claude_spinner_empty() {
 
 @test "role-watch: a claude spinner row above an empty box is a live turn: dequeued, no alarm" {
   _rw_after_enter claude rw_frame_idle rw_frame_live rw_frame_claude_spinner_empty
-  sleep 2.5
+  _rw_settle 16
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -eq 0 ]
@@ -10670,11 +10698,11 @@ rw_frame_claude_spinner_empty() {
   _rw_start pi
   _rw_wait_enters 1
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
-  sleep 0.8
+  _rw_settle
   # the pane finally repaints as a live turn
   rw_frame_pi_live >"$STUB_DIR/frame"
   rm -f "$STUB_DIR/hook"
-  sleep 1.2
+  _rw_settle
   _rw_stop
   # once at startup, once when the submit resolves
   [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -ge 2 ]
@@ -10690,11 +10718,11 @@ rw_frame_claude_spinner_empty() {
   _rw_start pi
   _rw_wait_enters 1
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"verdict\":\"revise\",\"finding\":\"quotes assignment_unsubmitted\"}"}' >>"$common/crew/events.jsonl"
-  sleep 0.8
+  _rw_settle
   # the pane finally repaints as a live turn
   rw_frame_pi_live >"$STUB_DIR/frame"
   rm -f "$STUB_DIR/hook"
-  sleep 1.2
+  _rw_settle
   _rw_stop
   # once at startup, once when the submit resolves
   [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -ge 2 ]
@@ -10709,10 +10737,10 @@ rw_frame_claude_spinner_empty() {
   _rw_start pi
   _rw_wait_enters 1
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "role:feat/9-x:reviewer", to: "worker:feat/9-x#s1-1", body: "{\"role\":\"reviewer\",\"event\":\"assignment_unsubmitted\"}"}' >>"$common/crew/events.jsonl"
-  sleep 0.8
+  _rw_settle
   rw_frame_pi_live >"$STUB_DIR/frame"
   rm -f "$STUB_DIR/hook"
-  sleep 1.2
+  _rw_settle
   _rw_stop
   # only the startup idle: the own post is not a verdict
   [ "$(grep -c 'set-option -p -t %6 @crew_state idle' "$STUB_LOG")" -eq 1 ]
@@ -10723,7 +10751,7 @@ rw_frame_claude_spinner_empty() {
   _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 3
   _rw_start pi
   _rw_wait_enters 4
-  sleep 1
+  _rw_settle
   _rw_stop
   [ "$(_rw_enters)" -eq 4 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10736,11 +10764,8 @@ rw_frame_claude_spinner_empty() {
   _rw_sim pi rw_frame_pi_idle rw_frame_pi_live 99
   RW_EXTRA='--submit-retries 2' _rw_start pi
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 2 ] && break
-    sleep 0.1
-  done
-  sleep 1.5
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 2 ]"
+  _rw_settle
   # first budget (initial Enter + 2 retries), one retype, then a second budget
   [ "$(_rw_enters)" -eq 6 ]
   # one msg to the lead, one to the dispatcher, naming pane and role
@@ -10759,10 +10784,7 @@ rw_frame_claude_spinner_empty() {
   "$STUB_DIR/hook" noop
   rm -f "$STUB_DIR/busy"
   "$STUB_DIR/hook" noop
-  for n in $(seq 1 60); do
-    grep -q '^paste Assignment: two' "$STUB_LOG" && break
-    sleep 0.1
-  done
+  _rw_poll "grep -q '^paste Assignment: two' \"\$STUB_LOG\""
   _rw_stop
   grep -q '^paste Assignment: two' "$STUB_LOG"
   [ "$(_rw_unsubmitted)" -eq 2 ]
@@ -10775,7 +10797,7 @@ rw_frame_claude_spinner_empty() {
   _rw_start claude
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "two"}' >>"$common/crew/events.jsonl"
   _rw_wait_enters 1
-  sleep 2
+  _rw_settle 16
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_deliveries)" -eq 1 ]
@@ -10788,12 +10810,13 @@ rw_frame_claude_spinner_empty() {
   _spawn_role_fixture
   _rw_stub rw_frame_idle
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
   _rw_post worker:feat/9-x#s9-9
   _rw_wait_deliveries 1
-  sleep 0.4
+  _rw_settle
   _rw_stop
   [ "$(_rw_deliveries)" -eq 1 ]
 }
@@ -10802,12 +10825,13 @@ rw_frame_claude_spinner_empty() {
   _spawn_role_fixture
   _rw_stub rw_frame_idle
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
   _rw_post dispatcher:c1
   _rw_wait_deliveries 1
-  sleep 0.4
+  _rw_settle
   _rw_stop
   [ "$(_rw_deliveries)" -eq 1 ]
 }
@@ -10816,9 +10840,10 @@ rw_frame_claude_spinner_empty() {
   _spawn_role_fixture
   _rw_stub rw_frame_idle
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
   local sender
   for sender in \
     'worker:feat/8-other#s1-1' \
@@ -10828,7 +10853,8 @@ rw_frame_claude_spinner_empty() {
     'worker:feat/9-x#y#s1-1'; do
     _rw_post "$sender"
   done
-  sleep 1.0
+  _rw_poll "[ \"\$(grep -c role_watch_drop \"\$STUB_LOG\" || true)\" -ge 5 ]"
+  _rw_settle
   _rw_stop
   [ "$(_rw_deliveries)" -eq 0 ]
   for sender in \
@@ -10846,11 +10872,12 @@ rw_frame_claude_spinner_empty() {
   _rw_stub rw_frame_idle
   touch "$STUB_DIR/no_crew_id"
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
   RW_PID=$!
-  sleep 0.6
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
   _rw_post dispatcher:c1
-  sleep 0.6
+  _rw_settle
   [ "$(_rw_deliveries)" -eq 0 ]
   run ! grep -q 'role_watch_drop' "$STUB_LOG"
   _rw_post worker:feat/9-x#s1-1
@@ -10867,7 +10894,7 @@ rw_frame_claude_spinner_empty() {
   local common
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"dispatcher:c1", body:"{\"event\":\"role_watch_drop\"}"}' >>"$common/crew/events.jsonl"
-  sleep 1.0
+  _rw_settle
   _rw_stop
   grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
   run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
@@ -11009,21 +11036,9 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
-_rw725_poll_sends() {
-  local n
-  for n in $(seq 1 40); do
-    [ "$(_rw_sends)" -ge 1 ] && return 0
-    sleep 0.1
-  done
-}
+_rw725_poll_sends() { _rw_poll "[ \"\$(_rw_sends)\" -ge 1 ]"; }
 
-_rw725_poll_captures() {
-  local n
-  for n in $(seq 1 40); do
-    [ "$(_rw_captures)" -ge 2 ] && return 0
-    sleep 0.1
-  done
-}
+_rw725_poll_captures() { _rw_poll "[ \"\$(_rw_captures)\" -ge 2 ]"; }
 
 @test "role-watch: #725 codex post-turn idle is typed into" {
   _spawn_role_fixture
@@ -11200,13 +11215,8 @@ _rw725_paste_go() { grep -c '^paste Assignment: go$' "$STUB_LOG" || true; }
   _spawn_role_fixture
   _rw725_pi_stub clear
   RW_EXTRA='--submit-retries 1' _rw_start pi
-  local n
-  for n in $(seq 1 80); do
-    cmp -s "$STUB_DIR/live_frame" "$STUB_DIR/frame" && break
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
-  sleep 1
+  _rw_poll "cmp -s \"\$STUB_DIR/live_frame\" \"\$STUB_DIR/frame\" || [ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_settle
   _rw_stop
   [ "$(_rw_unsubmitted)" -eq 0 ]
   [ "$(_rw725_paste_go)" -eq 2 ]
@@ -11219,11 +11229,8 @@ _rw725_paste_go() { grep -c '^paste Assignment: go$' "$STUB_LOG" || true; }
   _rw725_pi_stub noop
   RW_EXTRA='--submit-retries 1' _rw_start pi
   local n
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 1 ] && break
-    sleep 0.1
-  done
-  sleep 1
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_settle
   _rw_stop
   # one escalation: the lead and the dispatcher (inflight sender is the lead).
   # A swallowed draft is pasted once today; the one-shot retype adds a second
@@ -11275,11 +11282,8 @@ EOF
   _rw725_codex_held_stub
   RW_EXTRA='--submit-retries 1' _rw_start codex
   local n
-  for n in $(seq 1 80); do
-    [ "$(_rw_unsubmitted)" -ge 2 ] && break
-    sleep 0.1
-  done
-  sleep 1
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 2 ]"
+  _rw_settle
   _rw_stop
   [ "$(_rw725_paste_go)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -eq 2 ]
@@ -11320,17 +11324,14 @@ EOF
   _spawn_role_fixture
   _rw725_dead_stub
   export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
   bash "$DISPATCH" --role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
   RW_PID=$!
   touch "$STUB_DIR/dead"
-  local rw_alive=1 n
-  for n in $(seq 1 20); do
-    if ! kill -0 "$RW_PID" 2>/dev/null; then
-      rw_alive=0
-      break
-    fi
-    sleep 0.1
-  done
+  local rw_alive=1
+  if _rw_poll "! kill -0 \"$RW_PID\" 2>/dev/null"; then
+    rw_alive=0
+  fi
   if [ "$rw_alive" -eq 1 ] && ! kill -0 "$RW_PID" 2>/dev/null; then
     rw_alive=0
   fi
