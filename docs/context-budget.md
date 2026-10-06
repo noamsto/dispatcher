@@ -348,7 +348,8 @@ is not measured. Claude Code's `--exclude-dynamic-system-prompt-sections`
 moves per-machine sections (cwd, git status) out of the system prompt, which
 could let the static ~85k prefix (base prompt, tools, protocol) be shared
 across sessions in the cache and make restarts and every fresh worker launch
-cheaper. That is not measured.
+cheaper. Measured on 2026-10-06: it does not help, see
+[Prompt-cache sharing](#prompt-cache-sharing-with-the-exclude-dynamic-flag).
 
 Measured since: a relaunch rewrites 22k of its 63k `-p` prefix (up to about 56k
 of the real ~97k floor), not all of it, so the cost is 0.7-1.4M and the
@@ -451,7 +452,7 @@ dispatcher per batch (up to 498M) and filtering no-action notifications (up to
 
 Issue #755. Q4's cost note priced a relaunch as a full rewrite of the 107-127k
 prefix at the 1-hour write rate, which made #700 and #701 roughly break-even.
-#728 (open as PR #754, haiku, 64k probe) found most of a fresh prefix already
+#728 ([haiku, 64k probe](#prompt-cache-sharing-with-the-exclude-dynamic-flag)) found most of a fresh prefix already
 read from the cache. This section measures it on sonnet, against a worker-scale (176k) session, the
 model claude standard leads run, and puts the measured split back into the Q4 and
 Q6 models.
@@ -509,7 +510,7 @@ tokens**, written once at the 1-hour rate. Findings:
   same worktree, and by a relaunch after a 176k session. The rewritten
   ~22k is the same in all three, so it is **not** cwd-dependent and a relaunch
   does not escape it. It was not attributed to a prompt section.
-- #728's haiku probe read 49.1k and wrote 14.9k of 64k. At sonnet the split is
+- [#728's haiku probe](#prompt-cache-sharing-with-the-exclude-dynamic-flag) read 49.1k and wrote 14.9k of 64k. At sonnet the split is
   41.4k and 22.0k of 63.4k: the shared part holds, the rewritten tail is
   larger. Different model and a smaller protocol file; the difference was not
   isolated.
@@ -560,6 +561,52 @@ human's in-chat instructions (Q6).
 equivalents), the interactive-only part of the prefix (bounded, not measured),
 the origin of the 22k rewritten tail, 5-minute-TTL writes (none occurred), a
 gap longer than the TTL, and the dispatcher prefix.
+
+## Prompt-cache sharing with the exclude-dynamic flag
+
+Issue #728. Does `--exclude-dynamic-system-prompt-sections` let two fresh claude worker sessions in different
+worktrees share the static prefix in the prompt cache?
+
+**Setup.** Claude Code 2.1.289, `claude -p --model haiku --max-turns 1
+--output-format json`, with the worker launch's `--settings` plugin-disable
+layer, `ENABLE_CLAUDEAI_MCP_SERVERS=false`, and the installed `WORKER_PROTOCOL.md` (116 kB,
+about 42k tokens) as `--append-system-prompt-file`, so the default system prompt
+and the real tool set apply (per `claude --help` the flag is ignored otherwise). Each condition used
+its own protocol copy ending in a unique nonce line, so session 1 starts from a
+cold cache. Session 1 ran in worktree `a` (branch `probe-a`), session 2 in
+worktree `b` (branch `probe-b`), seconds apart. Both asked for the cwd, branch
+and tree state. One run per cell, haiku; the cache read/write split does not
+depend on the model's answer.
+
+First-turn usage:
+
+| Flag | Session | `cache_read_input_tokens` | `cache_creation_input_tokens` |
+| ---- | ------- | ------------------------- | ----------------------------- |
+| off  | 1       | 0                         | 63,998                        |
+| off  | 2       | 49,116                    | 14,882                        |
+| on   | 1       | 0                         | 63,980                        |
+| on   | 2       | 49,026                    | 14,954                        |
+
+**Result: no effect.** Session 2 reads the same ~49k and rewrites the same ~15k
+with and without the flag (differences are under 0.5%). The static prefix,
+which by size must include the protocol (inferred, not isolated), is already
+shared across worktrees without the flag. This probe is a smaller setup than the
+~97k lead floor Q4 models (about 64k on the first turn). The ~15k tail is not
+cwd-dependent either (checked with the flag on only): re-running the flag-on launch in the same
+worktree it was first run in, and in worktree `b` again, both gave 49,026 read
+and 14,930 written, so it is rewritten every launch whatever the flag says.
+
+**Decision: do not adopt.** No launch change and no bats test. The flag
+changes nothing in the cache split, so the Q4 cost note is unaffected by it. The
+probe launches ran seconds apart; the Q4 cost note assumes restarts of a lead
+whose cache may be cold, and this run says nothing about that gap. Note that a
+warm launch here wrote only ~15k of ~64k, so re-measure a worker-sized launch
+before relying on Q4's `F + R` rewrite figure for fresh launches (done in
+[Relaunch cache cost, measured](#relaunch-cache-cost-measured)). The 15k tail
+itself was not attributed.
+
+Not measured: sonnet (the cache is assumed to be per model, not verified), the 5-minute versus 1-hour TTL choice, and whether the warm 49k
+survives an hour between launches.
 
 ## Not measured
 
