@@ -1,0 +1,17 @@
+100 1000.000000 execve("/nix/store/bats/libexec/bats-core/bats-exec-test", ["bats-exec-test"], 0x0) = 0 <0.000100>
+100 1000.500000 clone(child_stack=NULL, flags=SIGCHLD) = 200 <0.000100>
+200 1001.000000 execve("/bin/bash", ["bash", "/repo/scripts/refresh-models.sh"], 0x0) = 0 <0.000100>
+200 1002.000000 clone(child_stack=NULL, flags=SIGCHLD) = 300 <0.000100>
+300 1002.000000 execve("/bin/sleep", ["sleep", "3"], 0x0) = 0 <0.000100>
+200 1003.000000 clone(child_stack=NULL, flags=SIGCHLD) = 400 <0.000100>
+400 1003.000000 execve("/bin/git", ["git", "status"], 0x0) = 0 <0.000100>
+300 1005.000000 +++ exited with 0 +++
+400 1006.000000 +++ exited with 0 +++
+200 1008.000000 +++ exited with 0 +++
+100 1008.200000 clone(child_stack=NULL, flags=SIGCHLD) = 500 <0.000100>
+500 1008.500000 execve("/bin/bash", ["bash", "/repo/scripts/harness-bench.sh"], 0x0) = 0 <0.000100>
+500 1009.000000 clone(child_stack=NULL, flags=SIGCHLD) = 600 <0.000100>
+600 1009.000000 execve("/bin/sleep", ["sleep", "1"], 0x0) = 0 <0.000100>
+600 1010.000000 +++ exited with 0 +++
+500 1011.000000 +++ exited with 0 +++
+100 1012.000000 +++ exited with 0 +++

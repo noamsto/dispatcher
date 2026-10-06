@@ -1,0 +1,9 @@
+100 1000.000000 execve("/nix/store/bats/libexec/bats-core/bats-exec-test", ["bats-exec-test"], 0x0) = 0 <0.000100>
+100 1001.000000 clone(child_stack=NULL, flags=SIGCHLD) = 200 <0.000100>
+200 1001.500000 execve("/bin/bash", ["bash", "/repo/scripts/refresh-models.sh"], 0x0 <unfinished ...>
+100 1002.000000 nanosleep({tv_sec=0, tv_nsec=500000000}, NULL) = 0 <0.500000>
+200 1002.500000 <... execve resumed>) = 0 <0.000200>
+200 1003.000000 clock_nanosleep(CLOCK_REALTIME, 0, {tv_sec=2, tv_nsec=0}, 0x0 <unfinished ...>
+200 1005.000000 <... clock_nanosleep resumed>, 0x0) = 0 <2.000000>
+200 1006.000000 +++ exited with 0 +++
+100 1007.000000 +++ exited with 0 +++
