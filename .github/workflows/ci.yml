@@ -71,19 +71,33 @@ jobs:
                 whole+=("$unit")
               fi
             done
+            # Units run at once so the heaviest is the only critical path; logs go
+            # to per-run files because concurrent TAP streams interleave.
+            jobs=4
+            whole_jobs=12
+            pids=()
+            logs=()
             if ((${#whole[@]} > 0)); then
               mkdir -p "$junit_dir/whole"
-              bats --jobs 16 --filter-tags '!timing' --report-formatter junit \
-                --output "$junit_dir/whole" "${whole[@]}" || fail=1
+              bats --jobs "$whole_jobs" --filter-tags '!timing' --report-formatter junit \
+                --output "$junit_dir/whole" "${whole[@]}" >"$junit_dir/whole.log" 2>&1 &
+              pids+=("$!")
+              logs+=("$junit_dir/whole.log")
             fi
-            if ((${#filtered_files[@]} > 0)); then
-              for i in "${!filtered_files[@]}"; do
-                mkdir -p "$junit_dir/filter-$i"
-                bats --jobs 16 --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
-                  --report-formatter junit --output "$junit_dir/filter-$i" \
-                  "${filtered_files[$i]}" || fail=1
-              done
-            fi
+            for i in "${!filtered_files[@]}"; do
+              mkdir -p "$junit_dir/filter-$i"
+              bats --jobs "$jobs" --filter-tags '!timing' --filter "${filtered_regexes[$i]}" \
+                --report-formatter junit --output "$junit_dir/filter-$i" \
+                "${filtered_files[$i]}" >"$junit_dir/filter-$i.log" 2>&1 &
+              pids+=("$!")
+              logs+=("$junit_dir/filter-$i.log")
+            done
+            for i in "${!pids[@]}"; do
+              wait "${pids[$i]}" || fail=1
+              echo "::group::${logs[$i]##*/}"
+              cat "${logs[$i]}"
+              echo "::endgroup::"
+            done
             exit "$fail"
           SHARD
       - name: upload bats timings (shard ${{ matrix.shard }})

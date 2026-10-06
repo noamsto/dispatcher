@@ -1,191 +1,192 @@
 file	family	filter	weight_ms
-tests/adapters.bats	*	!timing	10297
-tests/adapters.bats	Base ref snippets	!timing	172
-tests/adapters.bats	autopilot Base ref	!timing	965
-tests/adapters.bats	autopilot Stack base	!timing	1988
-tests/adapters.bats	autopilot Stack maintenance	!timing	378
-tests/adapters.bats	autopilot Step 4	!timing	185
-tests/adapters.bats	autopilot parent branch	!timing	191
-tests/adapters.bats	finish-prs Setup	!timing	227
-tests/adapters.bats	resolver	!timing	17674
-tests/adapters.bats	worker Base ref	!timing	204
-tests/bats-affected.bats	affected	!timing	1442
-tests/bats-affected.bats	affected git	!timing	612
-tests/bats-shard.bats	*	!timing	56513
-tests/crew-dash.bats	*	!timing	7454
-tests/crew-dash.bats	--json shape	!timing	736
-tests/crew-id.bats	crew id	!timing	1015
-tests/crew.bats	*	!timing	10024
-tests/crew.bats	await	!timing	35426
-tests/crew.bats	await --from	!timing	7789
-tests/crew.bats	blocked-cycle	!timing	1459
-tests/crew.bats	burn map conformance	!timing	3156
-tests/crew.bats	bus	!timing	1709
-tests/crew.bats	done	!timing	1425
-tests/crew.bats	done/failed	!timing	323
-tests/crew.bats	done/pr_open	!timing	500
-tests/crew.bats	engine-cmd	!timing	1841
-tests/crew.bats	git-baseline shows an exec value verbatim	!timing	465
-tests/crew.bats	id	!timing	297
-tests/crew.bats	identity	!timing	2789
-tests/crew.bats	inbox	!timing	890
-tests/crew.bats	msg	!timing	2101
-tests/crew.bats	occupants	!timing	2007
-tests/crew.bats	pi-agent-dir	!timing	12534
-tests/crew.bats	pr_open	!timing	32777
-tests/crew.bats	pr_open/done	!timing	778
-tests/crew.bats	rate	!timing	1907
-tests/crew.bats	reap	!timing	65290
-tests/crew.bats	register	!timing	638
-tests/crew.bats	reply	!timing	7071
-tests/crew.bats	report	!timing	333
-tests/crew.bats	resolve-target	!timing	472
-tests/crew.bats	roster	!timing	5565
-tests/crew.bats	sessions	!timing	4454
-tests/crew.bats	stall-watch	!timing	67984
-tests/crew.bats	status	!timing	5708
-tests/crew.bats	stream	!timing	80000
-tests/crew.bats	stream --status	!timing	1094
-tests/crew.bats	watch	!timing	10600
-tests/crew.bats	watch and stream	!timing	303
-tests/crew.bats	where	!timing	2886
-tests/crews.bats	*	!timing	1031
-tests/crews.bats	adopt	!timing	9636
-tests/crews.bats	crews	!timing	4119
-tests/crews.bats	deregister	!timing	1266
-tests/crews.bats	dispatch	!timing	141
-tests/crews.bats	dispatcher	!timing	2098
-tests/crews.bats	id	!timing	486
-tests/crews.bats	new	!timing	395
-tests/crews.bats	pidfile.log	!timing	706
-tests/crews.bats	register	!timing	2302
-tests/crews.bats	register/deregister	!timing	322
-tests/crews.bats	worker worktree	!timing	409
-tests/dispatch-comment.bats	*	!timing	18594
-tests/dispatch-config.bats	*	!timing	5057
-tests/dispatch-config.bats	no user, locked or env layer	!timing	70
-tests/dispatch-notify.bats	notify	!timing	7411
-tests/dispatch-resume.bats	*	!timing	97060
-tests/dispatch-resume.bats	a symlinked leads dir is never read through	!timing	787
-tests/dispatch-resume.bats	bound	!timing	1692
-tests/dispatch-resume.bats	claude resume never reads a grant from the task doc's add_dir	!timing	808
-tests/dispatch-resume.bats	cross-repo	!timing	4212
-tests/dispatch-resume.bats	inserting resume	!timing	790
-tests/dispatch-resume.bats	plan provided resume prompt for a kind	!timing	799
-tests/dispatch-resume.bats	reattaches to a live dispatcher	!timing	798
-tests/dispatch-resume.bats	resume	!timing	796
-tests/dispatch-resume.bats	resume escalation	!timing	7178
-tests/dispatch-resume.bats	resume preserves a stacked base	!timing	788
-tests/dispatch-resume.bats	stamps resume	!timing	762
-tests/dispatch-resume.bats	target	!timing	6335
-tests/dispatch.bats	*	!timing	418964
-tests/dispatch.bats	--base	!timing	3116
-tests/dispatch.bats	--base branches from the fetched parent ref and stamps base	!timing	763
-tests/dispatch.bats	--pr	!timing	1237
-tests/dispatch.bats	--pr path calls wt switch without -c and stamps pr	!timing	590
-tests/dispatch.bats	--pr stamps base	!timing	580
-tests/dispatch.bats	--review stamps kind	!timing	597
-tests/dispatch.bats	--spawn-role	!timing	2497
-tests/dispatch.bats	a non-pr dispatch never stamps base	!timing	690
-tests/dispatch.bats	add-dir	!timing	76296
-tests/dispatch.bats	also-closes	!timing	27065
-tests/dispatch.bats	an implement dispatch stamps kind	!timing	714
-tests/dispatch.bats	bound	!timing	3238
-tests/dispatch.bats	claim	!timing	60068
-tests/dispatch.bats	claude lead	!timing	707
-tests/dispatch.bats	create	!timing	5182
-tests/dispatch.bats	cross-repo	!timing	3544
-tests/dispatch.bats	default create	!timing	5786
-tests/dispatch.bats	direnv	!timing	3063
-tests/dispatch.bats	dispatch after upgrade	!timing	654
-tests/dispatch.bats	dispatch event carries plan	!timing	678
-tests/dispatch.bats	engine_session	!timing	4960
-tests/dispatch.bats	escalation	!timing	6776
-tests/dispatch.bats	fish replay	!timing	1048
-tests/dispatch.bats	gate	!timing	4257
-tests/dispatch.bats	grid	!timing	52916
-tests/dispatch.bats	identity	!timing	2002
-tests/dispatch.bats	lead-session	!timing	14840
-tests/dispatch.bats	lean	!timing	5693
-tests/dispatch.bats	local lane	!timing	8459
-tests/dispatch.bats	lock	!timing	1404
-tests/dispatch.bats	mint	!timing	2670
-tests/dispatch.bats	owner-auth	!timing	10499
-tests/dispatch.bats	pi budget gate	!timing	3077
-tests/dispatch.bats	pi budget pace gate	!timing	3059
-tests/dispatch.bats	pi lead	!timing	3037
-tests/dispatch.bats	protocol-dirs record	!timing	1173
-tests/dispatch.bats	prune	!timing	4865
-tests/dispatch.bats	resume	!timing	10782
-tests/dispatch.bats	role-watch	!timing	215164
-tests/dispatch.bats	roles.json	!timing	1352
-tests/dispatch.bats	session	!timing	3364
-tests/dispatch.bats	single-engine fallback	!timing	2855
-tests/dispatch.bats	spawn-role	!timing	18511
-tests/dispatch.bats	stacked create	!timing	756
-tests/dispatch.bats	tier map conformance	!timing	213
-tests/dispatch.bats	tracker	!timing	15125
-tests/dispatch.bats	trust	!timing	7960
-tests/dispatch.bats	worktree anchor	!timing	2536
-tests/dispatcher.bats	*	!timing	14238
-tests/dispatcher.bats	orchestrator defaults are data	!timing	466
-tests/hold.bats	hold	!timing	744
-tests/hold.bats	hold add	!timing	4344
-tests/hold.bats	hold due	!timing	2270
-tests/hold.bats	hold due --json	!timing	526
-tests/hold.bats	hold park	!timing	928
-tests/hold.bats	hold release	!timing	588
-tests/model-map-doc.bats	*	!timing	1553
-tests/model-map.bats	model map	!timing	153520
-tests/permission-check.bats	permission-check	!timing	39946
-tests/pr-watch.bats	*	!timing	2627
-tests/pr-watch.bats	default clock	!timing	1133
-tests/public-leak-guard.bats	public-leak-guard	!timing	3706
-tests/rate-autosweep.bats	autosweep	!timing	16836
-tests/rate-autosweep.bats	guard	!timing	146
-tests/rate-sweep-all.bats	sweep-all	!timing	8053
-tests/rate.bats	*	!timing	259
-tests/rate.bats	--report	!timing	113
-tests/rate.bats	--report --json	!timing	192
-tests/rate.bats	--report on an empty store	!timing	98
-tests/rate.bats	cost	!timing	1118
-tests/rate.bats	crew watch	!timing	1137
-tests/rate.bats	first_ci_green	!timing	461
-tests/rate.bats	lock	!timing	401
-tests/rate.bats	outcome	!timing	589
-tests/rate.bats	rate --report	!timing	705
-tests/rate.bats	rate --report (default)	!timing	239
-tests/rate.bats	rate --report --pooled	!timing	100
-tests/rate.bats	reconcile	!timing	1825
-tests/rate.bats	reverted	!timing	475
-tests/rate.bats	review_rounds	!timing	220
-tests/rate.bats	sweep	!timing	1245
-tests/rate.bats	task_kind	!timing	230
-tests/rate.bats	terminal_state	!timing	229
-tests/rate.bats	unresolved_notes	!timing	446
-tests/reap-race.bats	reap	!timing	13373
-tests/refresh-budget.bats	*	!timing	141929
-tests/refresh-budget.bats	--report usage	!timing	74
-tests/refresh-budget.bats	claude plan_type stays null	!timing	1172
-tests/refresh-budget.bats	cursor individual plan	!timing	1233
-tests/refresh-budget.bats	cursor team plan	!timing	1191
-tests/refresh-budget.bats	local slots	!timing	2418
-tests/refresh-budget.bats	the key file is exclusive	!timing	1156
-tests/refresh-models.bats	*	!timing	555
-tests/refresh-scores.bats	*	!timing	2178
-tests/retro.bats	*	!timing	4537
-tests/retro.bats	--json rows	!timing	333
-tests/retro.bats	cross-path dedupe	!timing	334
-tests/retro.bats	dispatcher notes	!timing	432
-tests/retro.bats	killed worker	!timing	276
-tests/retro.bats	oversized gate_thrash detail	!timing	418
-tests/retro.bats	plan_required_unaudited	!timing	2452
-tests/retro.bats	snapshot supersede	!timing	285
-tests/retro.bats	unknown tag	!timing	452
-tests/retro.bats	windowing	!timing	419
-tests/secret-read-guard.bats	secret-read-guard	!timing	151609
+tests/adapters.bats	*	!timing	9479
+tests/adapters.bats	Base ref snippets	!timing	167
+tests/adapters.bats	autopilot Base ref	!timing	1020
+tests/adapters.bats	autopilot Stack base	!timing	1886
+tests/adapters.bats	autopilot Stack maintenance	!timing	387
+tests/adapters.bats	autopilot Step 4	!timing	184
+tests/adapters.bats	autopilot parent branch	!timing	164
+tests/adapters.bats	finish-prs Setup	!timing	184
+tests/adapters.bats	resolver	!timing	12209
+tests/adapters.bats	worker Base ref	!timing	195
+tests/bats-affected.bats	affected	!timing	3908
+tests/bats-affected.bats	affected git	!timing	1670
+tests/bats-shard.bats	*	!timing	53964
+tests/crew-dash.bats	*	!timing	9034
+tests/crew-dash.bats	--json shape	!timing	352
+tests/crew-id.bats	crew id	!timing	2390
+tests/crew.bats	*	!timing	65735
+tests/crew.bats	await	!timing	67822
+tests/crew.bats	await --from	!timing	16341
+tests/crew.bats	blocked-cycle	!timing	9765
+tests/crew.bats	burn map conformance	!timing	19017
+tests/crew.bats	bus	!timing	17083
+tests/crew.bats	done	!timing	10684
+tests/crew.bats	done/failed	!timing	2400
+tests/crew.bats	done/pr_open	!timing	2225
+tests/crew.bats	engine-cmd	!timing	12864
+tests/crew.bats	git-baseline shows an exec value verbatim	!timing	3701
+tests/crew.bats	id	!timing	1604
+tests/crew.bats	identity	!timing	17891
+tests/crew.bats	inbox	!timing	7884
+tests/crew.bats	msg	!timing	14895
+tests/crew.bats	occupants	!timing	12888
+tests/crew.bats	pi-agent-dir	!timing	123309
+tests/crew.bats	pr_open	!timing	240454
+tests/crew.bats	pr_open/done	!timing	2461
+tests/crew.bats	rate	!timing	15905
+tests/crew.bats	reap	!timing	429530
+tests/crew.bats	register	!timing	5043
+tests/crew.bats	reply	!timing	62032
+tests/crew.bats	report	!timing	2355
+tests/crew.bats	resolve-target	!timing	1881
+tests/crew.bats	roster	!timing	39301
+tests/crew.bats	sessions	!timing	29537
+tests/crew.bats	stall-watch	!timing	474937
+tests/crew.bats	status	!timing	37490
+tests/crew.bats	stream	!timing	159537
+tests/crew.bats	stream --status	!timing	7906
+tests/crew.bats	watch	!timing	48846
+tests/crew.bats	watch and stream	!timing	2343
+tests/crew.bats	where	!timing	13669
+tests/crews.bats	*	!timing	490
+tests/crews.bats	adopt	!timing	11778
+tests/crews.bats	crews	!timing	5251
+tests/crews.bats	deregister	!timing	1309
+tests/crews.bats	dispatch	!timing	88
+tests/crews.bats	dispatcher	!timing	2834
+tests/crews.bats	id	!timing	431
+tests/crews.bats	new	!timing	358
+tests/crews.bats	pidfile.log	!timing	400
+tests/crews.bats	register	!timing	2988
+tests/crews.bats	register/deregister	!timing	283
+tests/crews.bats	worker worktree	!timing	240
+tests/dispatch-comment.bats	*	!timing	44295
+tests/dispatch-config.bats	*	!timing	50123
+tests/dispatch-config.bats	no user, locked or env layer	!timing	457
+tests/dispatch-notify.bats	notify	!timing	15802
+tests/dispatch-resume.bats	*	!timing	884424
+tests/dispatch-resume.bats	a symlinked leads dir is never read through	!timing	1171
+tests/dispatch-resume.bats	bound	!timing	13717
+tests/dispatch-resume.bats	claude resume never reads a grant from the task doc's add_dir	!timing	7509
+tests/dispatch-resume.bats	cross-repo	!timing	31458
+tests/dispatch-resume.bats	inserting resume	!timing	986
+tests/dispatch-resume.bats	plan provided resume prompt for a kind	!timing	1018
+tests/dispatch-resume.bats	reattaches to a live dispatcher	!timing	6298
+tests/dispatch-resume.bats	resume	!timing	8202
+tests/dispatch-resume.bats	resume escalation	!timing	58779
+tests/dispatch-resume.bats	resume preserves a stacked base	!timing	5236
+tests/dispatch-resume.bats	stamps resume	!timing	6387
+tests/dispatch-resume.bats	target	!timing	30181
+tests/dispatch.bats	*	!timing	1161039
+tests/dispatch.bats	--base	!timing	26050
+tests/dispatch.bats	--base branches from the fetched parent ref and stamps base	!timing	4549
+tests/dispatch.bats	--pr	!timing	8286
+tests/dispatch.bats	--pr path calls wt switch without -c and stamps pr	!timing	4485
+tests/dispatch.bats	--pr stamps base	!timing	3797
+tests/dispatch.bats	--review stamps kind	!timing	4924
+tests/dispatch.bats	--spawn-role	!timing	3022
+tests/dispatch.bats	a non-pr dispatch never stamps base	!timing	5229
+tests/dispatch.bats	add-dir	!timing	411428
+tests/dispatch.bats	also-closes	!timing	120908
+tests/dispatch.bats	an implement dispatch stamps kind	!timing	4992
+tests/dispatch.bats	bound	!timing	24790
+tests/dispatch.bats	claim	!timing	278869
+tests/dispatch.bats	claude lead	!timing	5400
+tests/dispatch.bats	create	!timing	33584
+tests/dispatch.bats	cross-repo	!timing	28101
+tests/dispatch.bats	default create	!timing	47656
+tests/dispatch.bats	direnv	!timing	24314
+tests/dispatch.bats	dispatch after upgrade	!timing	4180
+tests/dispatch.bats	dispatch event carries plan	!timing	4286
+tests/dispatch.bats	engine_session	!timing	27286
+tests/dispatch.bats	escalation	!timing	43465
+tests/dispatch.bats	fish replay	!timing	0
+tests/dispatch.bats	gate	!timing	35244
+tests/dispatch.bats	grid	!timing	138055
+tests/dispatch.bats	identity	!timing	12093
+tests/dispatch.bats	lead-session	!timing	37340
+tests/dispatch.bats	lean	!timing	12146
+tests/dispatch.bats	local lane	!timing	26198
+tests/dispatch.bats	lock	!timing	8191
+tests/dispatch.bats	mint	!timing	17773
+tests/dispatch.bats	owner-auth	!timing	37652
+tests/dispatch.bats	pi budget gate	!timing	6337
+tests/dispatch.bats	pi budget pace gate	!timing	7368
+tests/dispatch.bats	pi lead	!timing	7820
+tests/dispatch.bats	protocol-dirs record	!timing	10096
+tests/dispatch.bats	prune	!timing	23502
+tests/dispatch.bats	resume	!timing	66883
+tests/dispatch.bats	role-watch	!timing	470578
+tests/dispatch.bats	roles.json	!timing	11418
+tests/dispatch.bats	session	!timing	20612
+tests/dispatch.bats	single-engine fallback	!timing	6794
+tests/dispatch.bats	spawn-role	!timing	32646
+tests/dispatch.bats	stacked create	!timing	5842
+tests/dispatch.bats	tier map conformance	!timing	1230
+tests/dispatch.bats	tracker	!timing	118376
+tests/dispatch.bats	trust	!timing	24875
+tests/dispatch.bats	worktree anchor	!timing	21476
+tests/dispatcher.bats	*	!timing	49160
+tests/dispatcher.bats	orchestrator defaults are data	!timing	1651
+tests/hold.bats	crew clock	!timing	1271
+tests/hold.bats	hold	!timing	484
+tests/hold.bats	hold add	!timing	3822
+tests/hold.bats	hold due	!timing	1170
+tests/hold.bats	hold due --json	!timing	285
+tests/hold.bats	hold park	!timing	1054
+tests/hold.bats	hold release	!timing	312
+tests/model-map-doc.bats	*	!timing	3811
+tests/model-map.bats	model map	!timing	223238
+tests/permission-check.bats	permission-check	!timing	61306
+tests/pr-watch.bats	*	!timing	10296
+tests/pr-watch.bats	default clock	!timing	1184
+tests/public-leak-guard.bats	public-leak-guard	!timing	6891
+tests/rate-autosweep.bats	autosweep	!timing	32134
+tests/rate-autosweep.bats	guard	!timing	84
+tests/rate-sweep-all.bats	sweep-all	!timing	23204
+tests/rate.bats	*	!timing	1336
+tests/rate.bats	--report	!timing	325
+tests/rate.bats	--report --json	!timing	531
+tests/rate.bats	--report on an empty store	!timing	182
+tests/rate.bats	cost	!timing	4149
+tests/rate.bats	crew watch	!timing	1425
+tests/rate.bats	first_ci_green	!timing	1809
+tests/rate.bats	lock	!timing	1877
+tests/rate.bats	outcome	!timing	1719
+tests/rate.bats	rate --report	!timing	2283
+tests/rate.bats	rate --report (default)	!timing	574
+tests/rate.bats	rate --report --pooled	!timing	327
+tests/rate.bats	reconcile	!timing	6713
+tests/rate.bats	reverted	!timing	1588
+tests/rate.bats	review_rounds	!timing	463
+tests/rate.bats	sweep	!timing	5147
+tests/rate.bats	task_kind	!timing	644
+tests/rate.bats	terminal_state	!timing	972
+tests/rate.bats	unresolved_notes	!timing	1687
+tests/reap-race.bats	reap	!timing	20375
+tests/refresh-budget.bats	*	!timing	181711
+tests/refresh-budget.bats	--report usage	!timing	221
+tests/refresh-budget.bats	claude plan_type stays null	!timing	1253
+tests/refresh-budget.bats	cursor individual plan	!timing	1304
+tests/refresh-budget.bats	cursor team plan	!timing	1280
+tests/refresh-budget.bats	local slots	!timing	3249
+tests/refresh-budget.bats	the key file is exclusive	!timing	1531
+tests/refresh-models.bats	*	!timing	1757
+tests/refresh-scores.bats	*	!timing	4961
+tests/retro.bats	*	!timing	5373
+tests/retro.bats	--json rows	!timing	225
+tests/retro.bats	cross-path dedupe	!timing	246
+tests/retro.bats	dispatcher notes	!timing	284
+tests/retro.bats	killed worker	!timing	278
+tests/retro.bats	oversized gate_thrash detail	!timing	565
+tests/retro.bats	plan_required_unaudited	!timing	3303
+tests/retro.bats	snapshot supersede	!timing	259
+tests/retro.bats	unknown tag	!timing	292
+tests/retro.bats	windowing	!timing	298
+tests/secret-read-guard.bats	secret-read-guard	!timing	327738
 tests/secret-read-guard.bats	secret-read-guard	timing	79342
-tests/secret-read-guard.bats	secret-read-guard (merged)	!timing	15238
-tests/smoke.bats	*	!timing	449
-tests/worktree-git.bats	*	!timing	46683
-tests/worktree-git.bats	deleting the baseline is the recovery	!timing	1432
+tests/secret-read-guard.bats	secret-read-guard (merged)	!timing	34400
+tests/smoke.bats	*	!timing	1220
+tests/worktree-git.bats	*	!timing	259229
+tests/worktree-git.bats	deleting the baseline is the recovery	!timing	8074

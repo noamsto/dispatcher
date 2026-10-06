@@ -76,6 +76,35 @@ family_filter() {
   printf '%s' "$regex"
 }
 
+# Plain families go through family_filter; a split part ("fam#j/k") adds an
+# exact-name alternation of its cases.
+unit_filter() {
+  local file=$1 tok name esc regex alt=''
+  shift
+  local -a plain=()
+  local -a names=()
+  for tok in "$@"; do
+    if [[ -n ${part_names[$file$'\x1f'$tok]+x} ]]; then
+      mapfile -t names < <(printf '%s' "${part_names[$file$'\x1f'$tok]}")
+      for name in "${names[@]}"; do
+        esc=$(ere_escape "$name")
+        alt+="$esc|"
+      done
+    else
+      plain+=("$tok")
+    fi
+  done
+  regex=
+  if ((${#plain[@]})); then
+    regex=$(family_filter "${plain[@]}")
+  fi
+  if [[ -n $alt ]]; then
+    [[ -z $regex ]] || regex+='|'
+    regex+="^(${alt%|})\$"
+  fi
+  printf '%s' "$regex"
+}
+
 unit_id() {
   local file=$1 family=$2
   if [[ $family == '*' ]]; then
@@ -388,12 +417,90 @@ for wkey in "${weight_keys[@]+"${weight_keys[@]}"}"; do
   add_unit "$wfile" "$wfam" "${weight_ms[$wkey]}"
 done
 
+# A family heavier than 40% of an even shard budget (and at least a minute)
+# cannot balance as one unit, so it is cut into parts of at most that weight.
+# Without per-test weights the parts split the family's cases round-robin by position and share its weight
+# in proportion to their case counts. A part's regex lists its names exactly.
+declare -A family_names part_names test_part
+for entry in "${keep_tests[@]+"${keep_tests[@]}"}"; do
+  IFS=$'\x1f' read -r tfile tfam tname <<<"$entry"
+  if [[ -z ${file_has_weight[$tfile]+x} ]]; then
+    tfam='*'
+  fi
+  family_names[$tfile$'\x1f'$tfam]+="$tname"$'\n'
+done
+
+split_unit() {
+  local id=$1 file family weight parts n i j cnt rem name
+  local -a names=()
+  local -a part_cnt=()
+  file=${unit_file[$id]}
+  family=${unit_family[$id]}
+  weight=${unit_weight[$id]}
+  mapfile -t names < <(printf '%s' "${family_names[$file$'\x1f'$family]:-}")
+  n=${#names[@]}
+  ((n >= 2)) || return 0
+  parts=$(((10#$weight + split_threshold - 1) / split_threshold))
+  ((parts <= n)) || parts=$n
+  ((parts >= 2)) || return 0
+  rem=$weight
+  for ((j = 1; j <= parts; j++)); do
+    part_cnt[j]=0
+  done
+  for ((i = 0; i < n; i++)); do
+    name=${names[i]}
+    if [[ -z ${test_part[$file$'\x1f'$family$'\x1f'$name]+x} ]]; then
+      j=$((i % parts + 1))
+      test_part[$file$'\x1f'$family$'\x1f'$name]="$family#$j/$parts"
+      part_names[$file$'\x1f'"$family#$j/$parts"]+="$name"$'\n'
+      part_cnt[j]=$((part_cnt[j] + 1))
+    fi
+  done
+  unset 'unit_weight[$id]' 'unit_file[$id]' 'unit_family[$id]'
+  for ((j = 1; j <= parts; j++)); do
+    if ((j == parts)); then
+      cnt=$rem
+    else
+      cnt=$((10#$weight * part_cnt[j] / n))
+      rem=$((rem - cnt))
+    fi
+    add_unit "$file" "$family#$j/$parts" "$cnt"
+  done
+  split_dropped+=("$id")
+}
+
+split_dropped=()
+split_total=0
+for id in "${unit_ids[@]+"${unit_ids[@]}"}"; do
+  split_total=$((split_total + 10#${unit_weight[$id]}))
+done
+split_threshold=$((split_total * 2 / (total * 5)))
+((split_threshold >= 60000)) || split_threshold=60000
+if ((split_threshold > 0)); then
+  for id in "${unit_ids[@]+"${unit_ids[@]}"}"; do
+    [[ -n ${file_has_weight[${unit_file[$id]}]+x} ]] || continue
+    if ((10#${unit_weight[$id]} > split_threshold)); then
+      split_unit "$id"
+    fi
+  done
+  if ((${#split_dropped[@]})); then
+    kept=()
+    for id in "${unit_ids[@]}"; do
+      [[ -n ${unit_weight[$id]+x} ]] && kept+=("$id")
+    done
+    unit_ids=("${kept[@]}")
+  fi
+fi
+
 for entry in "${keep_tests[@]+"${keep_tests[@]}"}"; do
   IFS=$'\x1f' read -r tfile tfam tname <<<"$entry"
   if [[ -z ${file_has_weight[$tfile]+x} ]]; then
     tfam='*'
   fi
   tid=$(unit_id "$tfile" "$tfam")
+  if [[ -n ${test_part[$tfile$'\x1f'$tfam$'\x1f'$tname]+x} ]]; then
+    tid=$(unit_id "$tfile" "${test_part[$tfile$'\x1f'$tfam$'\x1f'$tname]}")
+  fi
   if [[ -z ${unit_weight[$tid]+x} ]]; then
     errors+=("omitted case: $tfile / $tname")
   fi
@@ -489,7 +596,7 @@ while IFS= read -r file; do
     continue
   fi
   mapfile -t fams <<<"$mine"
-  printf '%s\t%s\n' "$file" "$(family_filter "${fams[@]}")"
+  printf '%s\t%s\n' "$file" "$(unit_filter "$file" "${fams[@]}")"
 done < <(printf '%s\n' "${!shard_families[@]}" | LC_ALL=C sort)
 
 exit 0
