@@ -85,8 +85,12 @@ expected_inventory() {
 runs=()
 while (($#)); do
   case $1 in
-    --run) (($# >= 2)) || usage; runs+=("$2"); shift 2 ;;
-    *) usage ;;
+  --run)
+    (($# >= 2)) || usage
+    runs+=("$2")
+    shift 2
+    ;;
+  *) usage ;;
   esac
 done
 
@@ -95,8 +99,14 @@ if ((${#runs[@]} == 0)); then
   exit 0
 fi
 
-command -v gh >/dev/null || { echo 'bats-shard-weights: gh is required for --run' >&2; exit 1; }
-command -v yq >/dev/null || { echo 'bats-shard-weights: yq is required for --run' >&2; exit 1; }
+command -v gh >/dev/null || {
+  echo 'bats-shard-weights: gh is required for --run' >&2
+  exit 1
+}
+command -v yq >/dev/null || {
+  echo 'bats-shard-weights: yq is required for --run' >&2
+  exit 1
+}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 expected="$work/expected.tsv"
@@ -111,13 +121,17 @@ for run in "${runs[@]}"; do
     gh run download "$run" -n "bats-timing-shard-$shard" --dir "$sample"
   done
   mapfile -t reports < <(find "$sample" -name '*.xml' -type f | LC_ALL=C sort)
-  ((${#reports[@]})) || { echo "bats-shard-weights: run $run has no JUnit reports" >&2; exit 1; }
+  ((${#reports[@]})) || {
+    echo "bats-shard-weights: run $run has no JUnit reports" >&2
+    exit 1
+  }
   actual="$sample/actual.tsv"
   : >"$actual"
   for report in "${reports[@]}"; do
     if yq -p=xml -o=json -r '.. | select(has("+@failures") or has("+@errors")) | [ ."+@failures", ."+@errors" ] | @tsv' "$report" |
       awk -F '\t' '$1 != "0" || $2 != "0" { exit 1 }'; then :; else
-      echo "bats-shard-weights: run $run includes failed tests" >&2; exit 1
+      echo "bats-shard-weights: run $run includes failed tests" >&2
+      exit 1
     fi
     # shellcheck disable=SC2016 # yq expression deliberately contains $suite.
     yq -p=xml -o=json -r '.. | select(has("testcase")) | . as $suite | ($suite.testcase | (select(tag == "!!seq") // [.]) | .[]) | [$suite."+@name", ."+@name", ."+@time"] | @tsv' "$report" |
@@ -129,7 +143,10 @@ for run in "${runs[@]}"; do
           gsub(/""/, "\"", $2)
         }
         { print $1, $2, int(($3 * 1000) + 0.5) }
-      ' >>"$actual" || { echo "bats-shard-weights: invalid JUnit report $report" >&2; exit 1; }
+      ' >>"$actual" || {
+      echo "bats-shard-weights: invalid JUnit report $report" >&2
+      exit 1
+    }
   done
   # JUnit names a suite by basename. Resolve it only after proving basenames
   # are unique in the source inventory.
@@ -138,15 +155,18 @@ for run in "${runs[@]}"; do
     !($1 in path) { exit 3 }
     { print path[$1], $2, $3 }
   ' "$expected" "$actual" | LC_ALL=C sort >"$sample/actual-paths.tsv" || {
-    echo "bats-shard-weights: run $run names an unknown or ambiguous test file" >&2; exit 1
+    echo "bats-shard-weights: run $run names an unknown or ambiguous test file" >&2
+    exit 1
   }
   LC_ALL=C sort "$expected" >"$sample/expected-sorted.tsv"
   cut -f1,2 "$sample/actual-paths.tsv" | uniq -c | awk '$1 != 1 { exit 1 }' || {
-    echo "bats-shard-weights: run $run duplicates a test case" >&2; exit 1
+    echo "bats-shard-weights: run $run duplicates a test case" >&2
+    exit 1
   }
   cut -f1,2 "$sample/actual-paths.tsv" >"$sample/actual-inventory.tsv"
   if ! diff -u "$sample/expected-sorted.tsv" "$sample/actual-inventory.tsv" >/dev/null; then
-    echo "bats-shard-weights: run $run does not match the current !timing test inventory" >&2; exit 1
+    echo "bats-shard-weights: run $run does not match the current !timing test inventory" >&2
+    exit 1
   fi
   awk -F '\t' -v OFS='\t' '{ print $1, "ok", $3, $2 }' "$sample/actual-paths.tsv" >>"$case_samples"
 done
