@@ -7,6 +7,7 @@ on:
       - tests/harness/**
       - scripts/harness-*.sh
       - tests/shard-weights.tsv
+      - .github/workflows/harness-bench.yml
 
 jobs:
   harness-bench:

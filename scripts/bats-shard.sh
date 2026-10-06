@@ -6,14 +6,16 @@
 #   bats-shard.sh --check [tests-dir]
 #
 # --weights <path> overrides tests/shard-weights.tsv. A missing default file
-# falls back to bats --count per file. When a file has weights but a family
-# has no row, that family is still scheduled: its weight is the median
+# falls back to bats --count per file. When a file has weights but a !timing
+# family has no row, that family is still scheduled: its weight is the median
 # per-case rate of the file's other same-filter families (weight_ms / cases,
 # integer division; even counts take the lower middle) times this family's
 # case count, at least 1ms. With no sibling rate, the weight is the case
-# count. Timing families are not scheduled. Stale rows (no matching case, or
-# a file outside the tests dir) warn and are skipped. --check warns on that
-# staleness and still exits 0. --plan prints the 4-shard CI assignment.
+# count. A warning names that fallback and scripts/bats-shard-weights.sh.
+# An uncovered timing family warns that it has no weight and is not scheduled
+# (regenerate with the same script). Stale rows (no matching case, or a file
+# outside the tests dir) warn and are skipped. --check warns on that staleness
+# and still exits 0. --plan prints the 4-shard CI assignment.
 # Shard stdout is one unit per line: a bats path, or path<TAB>regex when only
 # some families of that file land in the shard.
 set -euo pipefail
@@ -325,7 +327,7 @@ fallback_weight() {
     n=${family_count[$wkey]:-0}
     ((n > 0)) || continue
     wms=${weight_ms[$wkey]}
-    rates+=("$((wms / n))")
+    rates+=("$((10#$wms / n))")
   done
   if ((${#rates[@]} == 0)); then
     printf '%s' "$count"
@@ -356,13 +358,16 @@ for pkey in "${present_keys[@]+"${present_keys[@]}"}"; do
   IFS=$'\x1f' read -r pfile pfam pfilter <<<"$pkey"
   [[ -n ${file_has_weight[$pfile]+x} ]] || continue
   [[ -z ${weight_ms[$pkey]+x} ]] || continue
+  if [[ $pfilter != '!timing' ]]; then
+    printf 'bats-shard: warning: no weight for %s / %s (%s); not scheduled — regenerate with scripts/bats-shard-weights.sh\n' \
+      "$pfile" "$pfam" "$pfilter" >&2
+    continue
+  fi
   n=${family_count[$pkey]:-0}
   fb=$(fallback_weight "$pfile" "$pfilter" "$n")
   printf 'bats-shard: warning: no weight for %s / %s (%s); using fallback %sms — regenerate with scripts/bats-shard-weights.sh\n' \
     "$pfile" "$pfam" "$pfilter" "$fb" >&2
-  if [[ $pfilter == '!timing' ]]; then
-    add_unit "$pfile" "$pfam" "$fb"
-  fi
+  add_unit "$pfile" "$pfam" "$fb"
 done
 
 for file in "${files[@]}"; do

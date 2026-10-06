@@ -199,6 +199,24 @@ shard() {
   [ "$(awk -F '\t' '$4 == "beta" { print $5 }' <<<"$output")" = 20 ]
 }
 
+@test "zero-padded weight strings parse as decimal fallback rates" {
+  local file="$FIXTURE/cases.bats"
+  write_case "$file" "alpha: one"
+  write_case "$file" "gamma: one"
+  write_case "$file" "gamma: two"
+  write_case "$file" "gamma: three"
+  write_case "$file" "beta: one"
+  write_case "$file" "beta: two"
+  write_weights_header
+  add_weight "$file" alpha '!timing' 010
+  add_weight "$file" gamma '!timing' 090
+
+  # 010 and 090 are decimal (rates 10 and 30). Lower-middle is 10; beta → 20.
+  shard --plan "$FIXTURE"
+  [ "$status" -eq 0 ]
+  [ "$(awk -F '\t' '$4 == "beta" { print $5 }' <<<"$output")" = 20 ]
+}
+
 @test "timing-tagged cases never appear in shard output" {
   local file="$FIXTURE/cases.bats"
   write_case "$file" "alpha: first"
