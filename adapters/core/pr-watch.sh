@@ -154,7 +154,7 @@ printf '%s' "$prev" | jq -e type >/dev/null 2>&1 || prev=""
 }
 
 # PR_WATCH_CLOCK=<file> is a test-only virtual clock, same pattern as
-# crew.sh's CREW_STALL_CLOCK: _pw_now_ms reads epoch milliseconds from it and
+# crew.sh's CREW_CLOCK: _pw_now_ms reads epoch milliseconds from it and
 # _pw_sleep advances it instead of waiting. It starts at the real time and
 # only moves forward. The emitted event's ts stays real — it is the
 # caller-facing record of when the change was observed, not loop bookkeeping.

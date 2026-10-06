@@ -14,9 +14,9 @@ setup() {
   # No engine process by default, so quiet:->dead: escalation stays
   # deterministic regardless of what runs on the host tmux server.
   export CREW_STALL_PROC_CMD='printf ""'
-  # stall-watch runs on a virtual clock: its waits advance this file instead
-  # of sleeping. Nothing else in crew reads it.
-  export CREW_STALL_CLOCK="$BATS_TEST_TMPDIR/stall-clock"
+  # await, the hold paths and stall-watch run on a virtual clock: their waits
+  # advance this file instead of sleeping.
+  export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
   # Table-driven rows restore this before each row's stubs.
   _ROW_BASE_PATH="$PATH"
 }
@@ -1616,6 +1616,35 @@ _pi_assert_refused() {
   [[ "$output" == *"resume-directive"* ]]
 }
 
+# Bounded wait until the wall-clock ms passes the newest bus row, so the next
+# row sorts strictly after it.
+bus_tick() {
+  local blog last i=0
+  blog="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  last=$(jq -s 'map(.ts) | max // 0' "$blog")
+  while [ "$(jq -nc 'now*1000|floor')" -le "$last" ] && [ "$i" -lt 400 ]; do
+    sleep 0.005
+    i=$((i + 1))
+  done
+}
+
+# For a backgrounded sender: runs "$@" once the await under test has parked on
+# the virtual clock at least once, so the message really arrives mid-wait. Pair
+# with a --timeout long enough that the await cannot expire first.
+after_await_parks() {
+  local v0 i=0
+  while [ ! -s "$CREW_CLOCK" ] && [ "$i" -lt 1000 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  v0=$(cat "$CREW_CLOCK")
+  while [ "$(cat "$CREW_CLOCK")" = "$v0" ] && [ "$i" -lt 2000 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  "$@"
+}
+
 @test "await: a branch-only worker id exits non-zero" {
   CREW_ID=c1 run run_crew await "worker:feat/x" --timeout 1
   [ "$status" -eq 1 ]
@@ -1624,10 +1653,9 @@ _pi_assert_refused() {
 
 @test "await: a sessioned id still receives a reply" {
   (
-    sleep 1
-    CREW_ID=c1 bash -euo pipefail "$CREW" reply "worker:feat/x#s1-1" hi
+    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" reply "worker:feat/x#s1-1" hi
   ) >/dev/null 2>&1 &
-  CREW_ID=c1 run run_crew await "worker:feat/x#s1-1" --timeout 5 --interval 1
+  CREW_ID=c1 run run_crew await "worker:feat/x#s1-1" --timeout 300 --interval 1
   wait
   [ "$status" -eq 0 ]
   [[ "$output" == *'"body":"hi"'* ]]
@@ -1640,7 +1668,7 @@ _pi_assert_refused() {
 @test "await: a reply that landed before await starts is delivered" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [ "$status" -eq 0 ]
@@ -1654,7 +1682,7 @@ _pi_assert_refused() {
 @test "await: a reply that crossed the worker's question is delivered" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew reply "$id" "answer"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
@@ -1666,9 +1694,9 @@ _pi_assert_refused() {
 @test "await: a later outbound to a third party does not hide an earlier reply" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "worker:feat/y#s2-2" "unrelated"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [ "$status" -eq 0 ]
@@ -1681,9 +1709,9 @@ _pi_assert_refused() {
 @test "await: an unread answer survives a newer question and is handed out once" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "A1"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
@@ -1691,7 +1719,7 @@ _pi_assert_refused() {
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "A2"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [ "$status" -eq 0 ]
@@ -1704,7 +1732,7 @@ _pi_assert_refused() {
 @test "await: a second await with no new question does not re-deliver the reply" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
@@ -1718,16 +1746,16 @@ _pi_assert_refused() {
   spec="role:feat/x:spec-critic"
   plan="role:feat/x:plan-critic"
   CREW_ID=c1 run_crew msg "$id" "$spec" "review spec"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$spec" "$id" "spec verdict"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"spec verdict"'* ]]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"plan verdict"'* ]]
@@ -1736,11 +1764,11 @@ _pi_assert_refused() {
 @test "await: a delivered dispatcher reply is not re-delivered after critic traffic" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "role:feat/x:plan-critic" "review plan"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ -z "$output" ]
@@ -1754,9 +1782,9 @@ _pi_assert_refused() {
   b="role:feat/x:reviewer"
   CREW_ID=c1 run_crew msg "$id" "$a" "qa"
   CREW_ID=c1 run_crew msg "$id" "$b" "qb"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$b" "$id" "vb"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$a" "$id" "va"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"va"'* ]]
@@ -1773,13 +1801,12 @@ _pi_assert_refused() {
   rev="role:feat/x:reviewer"
   CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
   CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
   (
-    sleep 2
-    CREW_ID=c1 bash -euo pipefail "$CREW" msg "$rev" "$id" "review verdict"
+    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" msg "$rev" "$id" "review verdict"
   ) >/dev/null 2>&1 &
-  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 5 --interval 1
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 300 --interval 1
   wait
   [ "$status" -eq 0 ]
   [[ "$output" == *'"body":"review verdict"'* ]]
@@ -1792,7 +1819,7 @@ _pi_assert_refused() {
   plan="role:feat/x:plan-critic"
   rev="role:feat/x:reviewer"
   CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
   [ "$status" -eq 0 ]
@@ -1807,7 +1834,7 @@ _pi_assert_refused() {
   id="worker:feat/x#s1-1"
   rev="role:feat/x:reviewer"
   CREW_ID=c1 run_crew msg "$rev" "$id" "verdict"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "$rev" "review diff"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 0
   [ "$status" -eq 0 ]
@@ -1829,11 +1856,11 @@ _pi_assert_refused() {
   CREW_ID=c1 run_crew msg "$id" "$spec" "review spec"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ -z "$output" ]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$spec" "$id" "spec verdict"
   CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
   [[ "$output" == *'"body":"spec verdict"'* ]]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "$plan" "review plan"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ -z "$output" ]
@@ -1845,11 +1872,11 @@ _pi_assert_refused() {
 @test "await: a reply already handed out by inbox is not returned after a later question" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q1"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
   [[ "$output" == *'"body":"answer"'* ]]
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "Q2"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
   [ "$status" -eq 0 ]
@@ -1861,15 +1888,15 @@ _pi_assert_refused() {
 @test "await: an unreadable delivered-marks file does not hide a reply" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
   state=$(git rev-parse --path-format=absolute --git-common-dir)/crew/await
   for f in "$state"/*; do printf '{"dispatcher:c1":5}"x":6}' >"$f"; done
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why2?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer2"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer2"'* ]]
@@ -1878,14 +1905,14 @@ _pi_assert_refused() {
 # Delivered state is per session: a resumed session (new id) starts clean.
 @test "await: delivered state does not carry to another session" {
   CREW_ID=c1 run_crew msg "worker:feat/x#s1-1" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "worker:feat/x#s1-1" "answer"
   CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s1-1" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer"'* ]]
   CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s2-2" --timeout 0
   [ -z "$output" ]
   CREW_ID=c1 run_crew msg "worker:feat/x#s2-2" "dispatcher:c1" "why2?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "worker:feat/x#s2-2" "answer2"
   CREW_ID=c1 run --separate-stderr run_crew await "worker:feat/x#s2-2" --timeout 5 --interval 1
   [[ "$output" == *'"body":"answer2"'* ]]
@@ -1915,7 +1942,7 @@ _pi_assert_refused() {
 @test "await: a torn trailing log line does not hide a reply" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" "dispatcher:c1" "why?"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew reply "$id" "answer"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
@@ -1931,9 +1958,9 @@ _pi_assert_refused() {
 @test "await: a same-sender burst is handed out in one await, oldest first" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m1"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m2"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "dispatcher:c1" "$id" "m3"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
   [[ "$output" == *'"body":"m1"'* ]]
@@ -1972,7 +1999,7 @@ _pi_assert_refused() {
   id="worker:feat/x#s1-1"
   rev="role:feat/x:reviewer"
   CREW_ID=c1 run_crew msg "$rev" "$id" "note"
-  sleep 1
+  bus_tick
   CREW_ID=c1 run_crew msg "$rev" "$id" "verdict"
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 5 --interval 1
   [[ "$output" == *'"body":"note"'* ]]
@@ -5553,7 +5580,7 @@ EOF
   [ "${lines[0]}" = "blocked|stalled: no output for 1s" ]
 }
 
-@test "stall-watch: CREW_STALL_CLOCK runs a ten-minute watch on virtual time" {
+@test "stall-watch: CREW_CLOCK runs a ten-minute watch on virtual time" {
   # Ten virtual minutes outlast D4's 300s --load window, so pin a calm host.
   export CREW_STALL_LOAD_CMD='printf "1.0 32\n"'
   p=$(fx_idle_box)

@@ -182,7 +182,7 @@ failures. Resolved — pytest timings stand.
   job to 7m48s (shards 5m46s–7m40s). This branch rebalances the shards by
   measured weights (594.0/593.9/594.0/593.9 s locally, post-rebase) and adds
   `bats-shard.sh --check` coverage proof to lint.
-- #712: stall-watch's virtual clock (`CREW_STALL_CLOCK`, `_sw_now`/`_sw_sleep`)
+- #712: stall-watch's virtual clock (`CREW_CLOCK`, formerly `CREW_STALL_CLOCK`; `_clock_now`/`_clock_sleep`)
   cut that family 622 s → 49 s (92%).
 
 ## Clock seams first (owner direction)
