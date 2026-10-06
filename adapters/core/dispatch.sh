@@ -4177,8 +4177,10 @@ create)
     neutral_switch=1
     _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   else
-    # Runs in this cwd, never the destination; --branch/--target as a real create binds them.
-    wt hook pre-switch -y --branch="$branch" --target="$branch"
+    # Runs in this cwd, never the destination; --branch/--target as a real create binds them,
+    # and the cwd-derived vars a real create leaves unset are blanked.
+    wt hook pre-switch -y --branch="$branch" --target="$branch" \
+      --target_worktree_path= --commit= --short_commit=
     wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
@@ -4204,9 +4206,9 @@ create)
   # planted mid-create, since worktrunk's git reads that tree.
   if [ -z "$base_flag" ]; then
     _wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1
-    wt -C "$wt_path" hook pre-start -y --base="$create_base_oid"
-    wt -C "$wt_path" hook post-start -y --base="$create_base_oid"
-    wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y --base="$create_base_oid"
+    wt -C "$wt_path" hook pre-start -y --base="$create_base_oid" --base_worktree_path=
+    wt -C "$wt_path" hook post-start -y --base="$create_base_oid" --base_worktree_path=
+    wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y --base="$create_base_oid" --base_worktree_path=
   fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
