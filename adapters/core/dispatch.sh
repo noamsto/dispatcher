@@ -4298,8 +4298,8 @@ fetch-name)
   }
   neutral_switch=1
   _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$fetched_oid^{commit}" -y --no-hooks
-  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.remote" origin
-  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.merge" "refs/heads/$branch"
+  _wt_git_common "${crew_dir%/crew}" config --replace-all "branch.$branch.remote" origin
+  _wt_git_common "${crew_dir%/crew}" config --replace-all "branch.$branch.merge" "refs/heads/$branch"
   ;;
 pr-ref)
   neutral_switch=1
