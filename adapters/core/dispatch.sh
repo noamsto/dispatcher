@@ -4022,8 +4022,8 @@ else
   # Resume on ref existence alone (#73), which is exactly what `wt switch -c`
   # refuses on: a branch whose worktree was pruned or `wt remove`d never fires the
   # reclaim below, and -c died on it all the same. Resolved here rather than
-  # hoisted with $branch, because `crew reap` above calls `wt remove` and can
-  # delete a merged branch — a mode computed before it could already be stale.
+  # hoisted with $branch, because `crew reap` above can delete a merged
+  # branch — a mode computed before it could already be stale.
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     switch_mode=resume
   else

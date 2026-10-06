@@ -83,8 +83,9 @@ _wt_cfg_guarded() { # <key> <value> — status 0 when the baseline guards the pa
 # worker-editable dir. git resolves a relative value against a context the
 # worker controls (a `.git` dir or symlink, core.bare, core.worktree), so
 # _wt_cfg_guard_cwd — run only from a trusted cwd: dispatch entry, reap's
-# window-kill gate and the `wt` gates, which cannot take --git-dir — asks git's own
-# `--git-path hooks` whether the spellings resolve to one dir. Any
+# window-kill and removal gates and dispatch's `wt` gates, which cannot take
+# --git-dir — asks git's own `--git-path hooks` whether the spellings resolve
+# to one dir. Any
 # core.worktree turns the equivalence off: work-tree commands resolve the value
 # there, which rev-parse does not show. Anchored calls (_wt_git, _wt_git_common)
 # pin core.hooksPath=/dev/null (_wt_neutral_cfg) and resolve nothing from a cwd.

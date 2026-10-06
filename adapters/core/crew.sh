@@ -2892,7 +2892,7 @@ stream)
   }
 
   # _stream_reap — a background `crew reap`, never awaited or killed by
-  # _stream_cleanup: an interrupted `wt remove` strands a worktree. It ignores
+  # _stream_cleanup: an interrupted removal strands a worktree. It ignores
   # HUP only; a signal to the whole process group still reaches it. Output goes
   # to a per-child `$reapoutf.$BASHPID` (the child's own pid, not the stream's
   # `$$`), printed once this stream's tracked child is gone, so a child that
@@ -5869,7 +5869,7 @@ reap)
   wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
   # shellcheck source=/dev/null
   . "$wt_git_lib"
-  # Never run reap's git/wt from a worker's worktree (#633); the caller's own
+  # Never run reap's git from a worker's worktree (#633); the caller's own
   # cwd still decides which worktree is kept.
   reap_cwd="$PWD"
   _wt_trusted_cwd "$common" || exit 1
@@ -5971,7 +5971,7 @@ reap)
     ;;
   esac
 
-  # Two reaps racing `wt remove` on one tree strand it. After the autosweep
+  # Two reaps racing a removal on one tree strand it. After the autosweep
   # block because its sync mode clears the EXIT trap. dispatch waits (it reads
   # branch state right after its reap); the stream passes --no-wait.
   reap_lock="$dir/reap.lock.d"
@@ -6012,6 +6012,7 @@ reap)
   # Anchored on the porcelain `?? ` prefix and the full path so a
   # real file merely named e.g. `src/PLAN.md` still counts as dirt.
   reap_scaffold_re='^\?\? (WORKER_TASK\.md|SPEC\.md|PLAN\.md|DECOMPOSITION\.md|REVIEW_NOTES\.md|PLAN_ROUND[0-9]+\.md|docs/superpowers/plans/[^/]*\.md)$'
+  tampered="its .git changed during the reap; possible tampering: tell the human"
 
   # Idle release: a session that reached a terminal state but whose window is
   # still sitting there keeps the tree occupied, and the PR gate below deliberately
@@ -6039,14 +6040,11 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
     | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state, .ts] | @tsv' "$log")
 EOF
-  # gh reads PR state; wt owns the worktree layout, so it does the removal and
-  # resolves from the ambient session PATH (same as in dispatch) — hence checked.
-  for tool in gh wt; do
-    command -v "$tool" >/dev/null || {
-      note "needs $tool"
-      exit 0
-    }
-  done
+  # gh reads PR state.
+  command -v gh >/dev/null || {
+    note "needs gh"
+    exit 0
+  }
 
   # Orphan windows: report only — a human may be using one.
   while IFS=$'\t' read -r owid obranch ocdir; do
@@ -6186,9 +6184,9 @@ PANES
       ;;
     esac
 
-    # `wt remove` below runs its own discovery-based `git status`, so before
-    # it the gitlink must point at the real admin dir and no submodule may be
-    # there to recurse into (#539). Each gate keeps the worktree.
+    # Before reap's own anchored reads of the tree, the gitlink must point at
+    # the real admin dir and no submodule may be there to recurse into (#539).
+    # Each gate keeps the worktree.
     if ! admin=$(_wt_admin_dir "$common" "$wtpath"); then
       note "keeping $branch — no git admin dir for $wtpath"
       continue
@@ -6210,9 +6208,8 @@ PANES
       continue
     fi
 
-    # Check for leftover work BEFORE touching anything. `wt remove` refuses a
-    # dirty worktree on its own, but discovering that only after trashing the
-    # task doc below would strip a worktree that then survives.
+    # Check for leftover work BEFORE touching anything. The removal is forced,
+    # so this check and the re-check right before it are what keep dirty work.
     # --untracked-files=all: the default "normal" mode collapses a brand-new
     # untracked directory to just its own name (e.g. `?? docs/`), which would
     # never match the docs/superpowers/plans/*.md pattern in $reap_scaffold_re.
@@ -6297,7 +6294,7 @@ $(_reap_procs)
 PROCS
 
     # The resume record's path is keyed by the worktree's own realpath, so it
-    # must be computed while the directory still exists — before `wt remove` (#556).
+    # must be computed while the directory still exists — before the removal (#556).
     anchor="$(_worktree_anchor_path "$wtpath")"
 
     if [ -n "$dry" ]; then
@@ -6306,10 +6303,10 @@ PROCS
       continue
     fi
 
-    # Every scaffold artifact is untracked, and `wt remove` refuses ANY dirty
-    # worktree — the dirt check above only declares them non-dirt so our own
-    # pipeline never pins a finished tree forever; each file must ALSO be
-    # moved out physically before wt runs, or the refusal fires anyway
+    # Every scaffold artifact is untracked, and the re-check before the removal
+    # treats ANY status line as dirt — the dirt check above only declares them
+    # non-dirt so our own pipeline never pins a finished tree forever; each
+    # file must ALSO be moved out physically, or the re-check keeps the tree
     # (feat/113-116-127-142 all sat blocked by untracked PLAN.md/SPEC.md
     # alone). gtrash everything so a post-mortem can still recover it.
     while IFS= read -r line; do
@@ -6320,28 +6317,33 @@ PROCS
     done <<SCAFFOLD
 $(_wt_status "$admin" "$wtpath" --untracked-files=all | grep -E "$reap_scaffold_re" || true)
 SCAFFOLD
-    # Kill the window ourselves rather than leaning on worktrunk's post-remove
-    # hook: that hook short-circuits under $CLAUDECODE, so relying on it would
-    # make cleanup work for codex/cursor dispatchers only (#123 in reverse).
+    # Kill the window ourselves: the plain git removal below runs no worktrunk
+    # post-remove hook (#123).
     for wid in $(tmux list-windows -a -F '#{window_id} #{pane_current_path} #{@worktree}' 2>/dev/null |
       awk -v p="$wtpath" '$2 == p || $3 == p {print $1}'); do
       tmux kill-window -t "$wid" 2>/dev/null || true
     done
-    # Judge success by the OBSERVABLE OUTCOME, not wt's exit status. This repo
-    # squash-merges, so a merged PR's branch is never an ancestor of main; `wt
-    # remove` removes the worktree, refuses to delete the "unmerged" branch,
-    # and can exit non-zero even though the worktree is gone — reap then left
-    # the branch, wrote no reap row and never released the dispatched label
-    # (#194). --no-hooks because the window is already gone; no -f, because a
-    # genuinely dirty worktree must survive.
-    # Per-call guard (#557): `wt remove` runs git in both contexts below. The
-    # git it spawns itself reads no in-tree attributes and carries _wt_git's
-    # overrides (#578).
+    # Remove anchored (#677): --git-dir=<common> discovers nothing through the
+    # tree's worker-writable .git, and --force skips git's clean-check child (a
+    # status run in the tree), so no git reads the tree's config or attributes.
+    # The re-checks just before it are the keep gates; a single --force still
+    # refuses a locked worktree. The cwd guard covers reap's remaining
+    # cwd-discovered calls (worktree list, show-ref, rev-parse).
     if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
       note "keeping $branch — git config drift"
       continue
     fi
-    _wt_neutral "$common" wt remove --foreground --no-hooks "$branch" >/dev/null 2>&1 || true
+    if ! _wt_gitlink_ok "$admin" "$wtpath"; then
+      say "keeping $branch — $tampered"
+      continue
+    fi
+    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || [ -n "$st" ]; then
+      say "keeping $branch — uncommitted changes"
+      continue
+    fi
+    _wt_git_common "$common" worktree remove --force "$wtpath" >/dev/null 2>&1 || true
+    # Judge success by the observable outcome, not the exit status (#194). The
+    # removal never deletes the branch; reap deletes it below for a MERGED PR.
     wtleft=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
@@ -6356,7 +6358,7 @@ SCAFFOLD
       _bus_append "$log" "$line"
 
       # A squash-merged PR's branch is never an ancestor of main, so git
-      # (and wt) still read it as unmerged — delete it deliberately now that
+      # still reads it as unmerged — delete it deliberately now that
       # gh has confirmed the merge, but ONLY when the local tip is exactly
       # the merged PR head. A resumed run or a human may have committed past
       # the merge, and those commits would be orphaned by a forced delete
@@ -6392,8 +6394,10 @@ SCAFFOLD
         gh issue edit "$issue" --remove-label dispatched >/dev/null 2>&1 ||
           note "could not remove the dispatched label from #$issue ($branch)"
       done
+    elif ! _wt_gitlink_ok "$admin" "$wtpath"; then
+      say "keeping $branch — $tampered"
     else
-      say "keeping $branch — wt remove failed"
+      say "keeping $branch — worktree removal failed"
     fi
   done <<EOF
 $candidates
