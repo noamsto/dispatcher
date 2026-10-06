@@ -1660,6 +1660,55 @@ status | msg)
             echo "crew: refusing pr_open for $from — the task doc has an acceptance list, so the pr_open detail must carry its ledger: $hint" >&2
             exit 1
           fi
+          # CI evidence and waivers are checked on content, not just form: a
+          # local gate is not a CI run, and only a real dispatcher reply waives.
+          # An item is a CI item when its evidence, or its task-doc Acceptance
+          # entry (by id, else AC<n> = nth entry), names CI as a word ("Non-CI"
+          # does not).
+          ci_re='(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)'
+          run_re='actions/runs/[0-9]+|[Rr]un([ -]?[Ii][Dd])?[ :#]*[0-9]{6,}'
+          accept_items=$(awk '
+            /^[[:space:]]*#{2,}[[:space:]]+[*_]{0,2}[Aa]cceptance/ { on = 1; next }
+            on && /^[[:space:]]*#{1,}[[:space:]]/ { on = 0 }
+            on && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]/ {
+              sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, ""); print }
+          ' "$top/WORKER_TASK.md" 2>/dev/null || true)
+          items=$(jq -nr --arg d "$d" '
+            "(?:(?<id>[^\\s;,()]+)\\s+)?(?:(?<k>pass)(?=\\(\\s*[^\\s)])(?<b>\\((?:[^()]|\\g<b>)*\\))|(?<w>waived)\\(dispatcher(?:[:;,\\s](?:[^()]|\\g<b>)*)?\\))" as $item
+            | [$d | match($item; "gi") | [.captures[] | select(.name != null) | {(.name): .string}] | add]
+            | .[] | [(.id // ""), (if .k != null then "pass" else "waived" end), (.b // "")] | @tsv' 2>/dev/null || true)
+          while IFS=$'\t' read -r iid ikind iev; do
+            [ -n "$ikind" ] || continue
+            iid=${iid%:}
+            if [ "$ikind" = pass ]; then
+              is_ci=false
+              if [[ $iev =~ $ci_re ]]; then
+                is_ci=true
+              elif [ -n "$iid" ]; then
+                entry=$(printf '%s\n' "$accept_items" | awk -v id="$iid" '
+                  { t = $0; gsub(/^[*_]+/, "", t); n++ }
+                  tolower(substr(t, 1, length(id))) == tolower(id) && substr(t, length(id) + 1, 1) !~ /[[:alnum:]_]/ { print; found = 1; exit }
+                  END { if (!found) print "\001" n }')
+                if [[ $entry == $'\001'* ]]; then
+                  entry=""
+                  if [[ $iid =~ ^[Aa][Cc]([0-9]+)$ ]]; then
+                    entry=$(printf '%s\n' "$accept_items" | sed -n "${BASH_REMATCH[1]}p")
+                  fi
+                fi
+                ! [[ $entry =~ $ci_re ]] || is_ci=true
+              fi
+              if [ "$is_ci" = true ] && ! [[ $iev =~ $run_re ]]; then
+                echo "crew: refusing pr_open for $from — acceptance item '${iid:-?}' is a CI item, so its pass(...) must carry a CI run id or an actions/runs/<id> URL on the PR's current head; a local gate (pre-push, bats-affected, shellcheck, nix flake check) is never CI evidence. If CI has not finished, wait for it, or block and ask the dispatcher to waive the item." >&2
+                exit 1
+              fi
+            elif ! { [ -f "$log" ] && jq -e -n -R --arg c "$crew" --arg f "$from" '
+                [inputs | (try fromjson catch null) | select(type == "object"
+                  and .crew_id == $c and .kind == "msg" and .from == ("dispatcher:" + $c)
+                  and .to == $f and ((.body // "") | tostring | test("waive"; "i")))] | length > 0' "$log" >/dev/null 2>&1; }; then
+              echo "crew: refusing pr_open for $from — waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session ($from) containing \"waive\" (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself." >&2
+              exit 1
+            fi
+          done <<<"$items"
         fi
         case "$tier:${kind:-implement}" in
         standard:implement | deep:implement)
