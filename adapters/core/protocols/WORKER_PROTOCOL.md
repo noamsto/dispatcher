@@ -103,7 +103,7 @@ Never run `gh stack init|add|modify|sync|unstack|merge|rebase|link`. Task wants 
 
 Behavioral bug, shared contract change or PR-feedback fix → read `EVIDENCE_REVIEW.md` from `protocol_dir:` before choosing the next stage; its evidence, review-risk, recurrence and handoff rules cover provided plans and resumed runs too.
 
-- trivial: implement directly → gate → `/deslop` → PR; no spec, plan, critics or review. Still run the three completion peeks (Checkpoint-peek): with no other seams, they are the only points a dispatcher redirect can reach you.
+- trivial: implement directly → gate → `/deslop` → PR; no spec, plan, critics or review. Still run the completion, wake and rerun peeks (Checkpoint-peek): with no other seams, they are the only points a dispatcher redirect can reach you.
 - standard: Plan of record first; no existing plan → `spec-plan-critic` `{ tier: 'standard', ... }` (plan + plan-critic only); execute via subagents. Code-review gate: one batch + targeted re-review if required.
 - deep: Resuming a killed run first; unless resuming, `spec-plan-critic` `{ tier: 'deep', ... }` (spec + spec-critic → optional consultant decomposition (Orchestration consult) → plan + plan-critic). Code-review gate: one parallel batch, reconciled once, conditional second re-review.
 - standard/deep then: execute → fast deterministic gate → code-review gate → `/deslop` + push + PR.
@@ -250,7 +250,7 @@ Any lead can reach another engine's model as a stateless, read-only shell one-sh
 
 ## Checkpoint-peek (all tiers)
 
-At each seam (after spec, plan, execute, fast gate, review; plus the completion peeks pre-push, pre-PR, pre-done, trivial's only seams), before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive:
+At each seam (after spec, plan, execute, fast gate, review; the completion peeks pre-push, pre-PR, pre-done; on every background-task notification wake, before acting on it; before re-running a stage or relaunching a long-running process after a failure or interruption, where a stop/redirect wins over the rerun), before sinking cost into the next stage, peek non-blocking for a dispatcher stop/redirect directive:
 
 ```
 crew inbox "$CREW_WORKER_ID" --since <seen-cursor>
