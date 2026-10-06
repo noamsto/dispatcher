@@ -38,12 +38,10 @@ ccs="$root/adapters/claude-code/plugin/skills"
 bash "$root/scripts/gen-model-map-doc.sh"
 
 # The claude lead appends this render; codex, cursor and pi read the core file.
-# The tmp file sits inside the rev-hashed protocol dir, so a failed render removes it.
+# The tmp file sits inside the rev-hashed protocol dir, so every exit path removes it.
 tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
-if ! bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp"; then
-  rm -f "$tmp"
-  exit 1
-fi
+trap 'rm -f "$tmp"' EXIT
+bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp" || exit 1
 mv "$tmp" "$protocols/WORKER_PROTOCOL.claude.md"
 
 # The protocol revision marker (#184, #193) is no longer a committed file:
