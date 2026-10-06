@@ -796,8 +796,9 @@ branch instead; the worktree carries over under `resume: true`.
   no operator hook run in that worker's tree (#680). `dispatch` passes
   `{{ branch }}` and `{{ target }}` to pre-switch and `{{ base }}` to the rest,
   as a real create would, and blanks `{{ base_worktree_path }}` (pre-switch's
-  `{{ target_worktree_path }}`, `{{ commit }}` and `{{ short_commit }}`), which
-  a real create leaves unset. Pre-switch reads project hooks from the dispatching cwd's
+  `{{ target_worktree_path }}`, `{{ commit }}`, `{{ short_commit }}` and
+  `{{ upstream }}`), which a real create leaves unset: empty and falsy, though
+  `default()` and `is defined` still tell them apart. Pre-switch reads project hooks from the dispatching cwd's
   `.config/wt.toml`, as a real create does; the rest read the new tree's (the
   fetched default-branch tip), where a real create reads the cwd's. A hook
   type with nothing configured prints `▲ No <type> hooks configured` —

@@ -4919,7 +4919,7 @@ EOF
   hook_ln="$(grep -n 'hook pre-start' "$STUB_LOG" | head -1 | cut -d: -f1)"
   [ -n "$switch_ln" ] && [ -n "$hook_ln" ]
   [ "$switch_ln" -lt "$hook_ln" ]
-  grep -q -- "hook pre-switch -y --branch=feat/42-do-a-thing --target=feat/42-do-a-thing --target_worktree_path= --commit= --short_commit=" "$STUB_LOG"
+  grep -q -- "hook pre-switch -y --branch=feat/42-do-a-thing --target=feat/42-do-a-thing --target_worktree_path= --commit= --short_commit= --upstream=" "$STUB_LOG"
   oid="$(git -C "$TEST_REPO" rev-parse refs/heads/feat/42-do-a-thing)"
   for h in pre-start post-start post-switch; do
     grep -qF -- "hook $h -y --base=$oid --base_worktree_path=" "$STUB_LOG"

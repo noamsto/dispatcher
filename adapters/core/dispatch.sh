@@ -4180,7 +4180,7 @@ create)
     # Runs in this cwd, never the destination; --branch/--target as a real create binds them,
     # and the cwd-derived vars a real create leaves unset are blanked.
     wt hook pre-switch -y --branch="$branch" --target="$branch" \
-      --target_worktree_path= --commit= --short_commit=
+      --target_worktree_path= --commit= --short_commit= --upstream=
     wt switch -c "$branch" -b "$create_base_oid^{commit}" -y --no-hooks
   fi
   # A HEAD rewritten after the listing still makes the switch attach, so verify it
