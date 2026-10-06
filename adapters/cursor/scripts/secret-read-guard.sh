@@ -243,9 +243,11 @@ strip_templates() {
 wrap_word='[^[:space:];&|]+'
 wrap_rest='[^[:space:];&|]*'
 sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
-# env's options and NAME=value words: what remains when no command follows is a
-# dump (`env -0`, `env -u X`, `env FOO=1`).
-env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)|([[:space:]]+[A-Za-z_][A-Za-z0-9_]*='"$wrap_rest"'))*'
+# env's options and NAME=value words — env reads any word holding `=` as an
+# assignment, identifier or not (`env a-b=1`): what remains when no command
+# follows is a dump (`env -0`, `env -u X`, `env FOO=1`). Any dash word counts as
+# an option (`env -- -=1`, `env -->/tmp/x`), failing closed.
+env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+-'"$wrap_rest"')|([[:space:]]+([^-=[:space:];&|][^=[:space:];&|]*)?='"$wrap_rest"'))*'
 # A slot-free wrapper's option: a flag, optionally followed by one non-flag word
 # read as its argument.
 opt_arg='([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)'
@@ -264,10 +266,16 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # (`env >&2`, `env 2>&1`, `env >/tmp/x`, `env &>f`, `env {fd}>&2`), or stdin
 # (`env <file`, `env <<EOF`) — every path still lands the dump somewhere
 # legible, and a redirect to a file leaves it there for a later command to
-# print. A `>` must follow a space, an fd number or `{fd}` (or open `>&`), and
-# a `<` a space, so prose placeholders (`X=<empty>`) are not redirects; `<(` is
-# a process substitution.
-dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
+# print. A `>` or `<` may sit right against a dumper word (`env>/tmp/x`,
+# `env</dev/null`, `set>f`); that denies even when a command follows
+# (`env</dev/null cmd`), as the spaced `env >f cmd` does, an accepted
+# fail-closed limit. After env's or printenv's options (opt_end) a `>`
+# must follow a space, an fd number or `{fd}` (or open `>&`), because wrap_rest
+# can stop short of a `>` inside a word (`env FOO=a>b cmd` runs cmd), and a `<`
+# must follow a space, so prose placeholders (`X=<empty>`) are not redirects;
+# `<(` is a process substitution.
+opt_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]|[[:space:]]<[^(]'
+dump_end='>|<[^(]|'"$opt_end"
 # A dumper path starts path-like, so the shebang in heredoc text
 # (`#!/usr/bin/env -S bash`) is not read as a dumper path. One starting with
 # `/`, `{` or `\` may hold `=` (`/nix/store/x-a=b/bin/env`, `{a[1]=d/env`),
@@ -287,7 +295,7 @@ dump_end='$|[;&|)#]|[[:space:]][0-9]*>|[0-9]+>|>&|\{[A-Za-z_][A-Za-z0-9_]*\}[<>]
 # a path in the unstripped view, failing closed.
 # shellcheck disable=SC2016
 path_pfx='(/[^[:space:];&|()]*/|[{\\][^[:space:];&|()]*/|[0-9.~][^[:space:];&|()]*/|[A-Za-z_][A-Za-z0-9_]*([^[:space:]A-Za-z0-9_=+[;&|()][^[:space:];&|()]*|\+([^=[:space:];&|()][^[:space:];&|()]*)?|\[[^][\\`$[:space:];&|()]*([[\\`$][^[:space:];&|()]*|\](\+([^=[:space:];&|()][^[:space:];&|()]*)?|[^=+[:space:];&|()][^[:space:];&|()]*)?)?)?/)?'
-env_dump_re="$cmd_start""$path_pfx"'(printenv([[:space:]]+--?([A-Za-z0-9]'"$wrap_rest"')?)*|env'"$env_opts"')[[:space:]]*('"$dump_end"')'
+env_dump_re="$cmd_start""$path_pfx"'((printenv|env)(>|<[^(])|(printenv([[:space:]]+-'"$wrap_rest"')*|env'"$env_opts"')[[:space:]]*('"$opt_end"'))'
 # `printenv NAME` prints just that value — fine for HOME, a leak for a key.
 printenv_secret_re="$cmd_start""$path_pfx"'printenv([[:space:]]+[^[:space:];&|]+)*[[:space:]]+[A-Za-z_]*(API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY)'
 # Listing/show forms that print a value without echoing it — the gap behind
