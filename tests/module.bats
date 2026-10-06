@@ -384,6 +384,18 @@ placeholder_two_row() { # token
   grep -q '^cross_repo_hint() {' "$lib"
 }
 
+@test "the substituted budget-gate lib exists and defines the quota predicates" {
+  local bin
+  for bin in "$OUT_CREW/bin/crew" "$OUT_DISPATCH/bin/dispatch"; do
+    run grep -c '@budgetGateLib@' "$bin"
+    [ "$output" = "0" ]
+  done
+  lib="$(grep -o '/nix/store/[^"}]*budget-gate[^"}]*' "$OUT_DISPATCH/bin/dispatch" | head -1)"
+  [ -n "$lib" ]
+  [ -f "$lib" ]
+  grep -q '^_budget_windows() {' "$lib"
+}
+
 # F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
 # substituted in each consumer. An unsubstituted token is not a readable path, so the source
 # would abort under set -e. Read-only greps; no per-row reset.

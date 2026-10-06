@@ -1683,12 +1683,14 @@ watch_role() {
   nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
 }
 
-# watch_role_prompts <role> <pane> <agent> <crew> — a parked claude role can
-# still sit on a permission dialog, so it gets a stall-watch under its role: id,
-# which runs only the prompt detectors. Other engines have no prompt to detect.
+# watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
+# stall-watch under its role: id. The prompt detectors stay claude-only inside
+# stall-watch, while the budget detector judges the role's own engine.
+# --ignore-budget is the human's spend decision, so it passes --no-budget.
 watch_role_prompts() {
-  [ "$3" = claude ] || return 0
-  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine claude >/dev/null 2>&1 &
+  local -a flags=()
+  [ -n "${ignore_budget:-}" ] && flags+=(--no-budget)
+  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &
 }
 
 # `dispatch --role-watch <role> --pane <pane> [--engine E] [--branch <b>]
@@ -4996,5 +4998,7 @@ fi
 # goes silent through the startup window, posts `failed` so the dispatcher's
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
-# terminal state, or a vanished pane.
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" >/dev/null 2>&1 &
+# terminal state, or a vanished pane. --ignore-budget waives its budget detector.
+stall_flags=()
+[ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
+CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
