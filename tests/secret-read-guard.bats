@@ -1690,6 +1690,7 @@ sub-unclosed-long|ab[c/env
 sub-unclosed-printenv|x[/printenv MY_TOKEN
 sub-unclosed-tmux|x[/tmux show-environment
 sub-closed-no-eq|a[1]/env
+sub-plus-no-eq|a[1]+/env
 plus-mid-eq|a+b=c/env
 sub-unclosed-eq|a[=b/env
 sub-text-before-eq|a[1]x=deploy/env
@@ -1701,8 +1702,12 @@ sub-backtick|a[`x]=d`]/env
 sub-param-exp|a[${x=]=d}]/env
 plus-no-eq|X+/env
 plus-plus-eq|X++=deploy/env
+brace-glued-sub|{a[1]=d/env
+brace-glued-plain|{X=d/env
+escaped-lead-sub|\a[1]=d/env
+escaped-lead-append|\X+=d/env
 ROWS
-  finish_rows 28
+  finish_rows 33
 }
 
 @test "secret-read-guard: denies a dump inside three and four levels of escaped backticks" {
