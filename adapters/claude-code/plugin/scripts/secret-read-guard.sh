@@ -267,7 +267,9 @@ cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])
 # (`env <file`, `env <<EOF`) — every path still lands the dump somewhere
 # legible, and a redirect to a file leaves it there for a later command to
 # print. A `>` or `<` may sit right against a dumper word (`env>/tmp/x`,
-# `env</dev/null`, `set>f`). After env's or printenv's options (opt_end) a `>`
+# `env</dev/null`, `set>f`); that denies even when a command follows
+# (`env</dev/null cmd`), as the spaced `env >f cmd` does, an accepted
+# fail-closed limit. After env's or printenv's options (opt_end) a `>`
 # must follow a space, an fd number or `{fd}` (or open `>&`), because wrap_rest
 # can stop short of a `>` inside a word (`env FOO=a>b cmd` runs cmd), and a `<`
 # must follow a space, so prose placeholders (`X=<empty>`) are not redirects;

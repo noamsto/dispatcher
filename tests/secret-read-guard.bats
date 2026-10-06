@@ -1609,8 +1609,10 @@ printenv-glued-stdin|printenv</dev/null
 set-glued-stdin|set</dev/null
 export-glued-stdin|export</dev/null
 declare-glued-stdin|declare</dev/null
+env-glued-redirect-cmd|env>/tmp/x cmd
+env-glued-stdin-cmd|env</dev/null cmd
 ROWS
-  finish_rows 35
+  finish_rows 37
 }
 
 @test "secret-read-guard: allows direnv without a dump" {
