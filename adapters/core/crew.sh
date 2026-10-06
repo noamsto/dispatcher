@@ -3712,7 +3712,7 @@ EOF_REPOS
         # reader there already tolerates — and watchdog_blocked_count is direct
         # evidence of how often a model/tier wedges. A budget: row is a host-wide
         # quota crossing, not a model/tier wedge, so it stays out of
-        # watchdog_blocked_count (load: is left as is).
+        # watchdog_blocked_count.
         | ($st | map(select(.body.state=="blocked" and (.body.source // "") != "watchdog")) | length) as $blocked
         | ($st | map(select(.body.state=="blocked" and (.body.source // "") == "watchdog"
                             and (((.body.detail // "") | if type == "string" then startswith("budget:") else false end) | not))) | length) as $wblocked
