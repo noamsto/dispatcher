@@ -209,7 +209,20 @@ _settings_env_json() {
   local -a args=()
   while IFS= read -r n; do
     case "$n" in
-    XDG_CONFIG_HOME) args+=(--arg "$n" "${XDG_CONFIG_HOME:-$HOME/.config}") ;;
+    XDG_CONFIG_HOME)
+      v="${XDG_CONFIG_HOME:-$HOME/.config}"
+      [[ $v == /* ]] || v="$HOME/.config"
+      args+=(--arg "$n" "$v")
+      ;;
+    DISPATCH_LOCKED_SETTINGS | DISPATCH_OPENROUTER_KEY_FILE)
+      if [ -z "${!n+x}" ]; then
+        args+=(--argjson "$n" null)
+      else
+        v="${!n}"
+        [[ -z $v || $v == /* ]] || v="$(realpath -m -- "$v")"
+        args+=(--arg "$n" "$v")
+      fi
+      ;;
     PI_CODING_AGENT_DIR)
       v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
       case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac

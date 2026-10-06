@@ -8302,6 +8302,25 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   jq -e --arg pi "$HOME/custom-pi" '.PI_CODING_AGENT_DIR == $pi' <<<"${lines[5]}"
 }
 
+@test "protocol-dirs record: a relative DISPATCH_LOCKED_SETTINGS is recorded absolute" {
+  stub_launch_bins
+  printf '{}\n' >rel-locked.json
+  DISPATCH_LOCKED_SETTINGS=rel-locked.json DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record"
+  mapfile -t lines <"$rec"
+  jq -e --arg p "$(realpath -m rel-locked.json)" '.DISPATCH_LOCKED_SETTINGS == $p' <<<"${lines[5]}"
+}
+
+@test "protocol-dirs record: a relative XDG_CONFIG_HOME is recorded as the default" {
+  stub_launch_bins
+  XDG_CONFIG_HOME=relcfg DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "dirs record"
+  [ "$status" -eq 0 ]
+  rec="$TEST_REPO/.git/crew/protocol-dirs/feat/42-dirs-record"
+  mapfile -t lines <"$rec"
+  jq -e --arg x "$HOME/.config" '.XDG_CONFIG_HOME == $x' <<<"${lines[5]}"
+}
+
 @test "protocol-dirs record: a symlink planted at the record path is refused, its target left untouched" {
   stub_launch_bins
   victim="$BATS_TEST_TMPDIR/victim"

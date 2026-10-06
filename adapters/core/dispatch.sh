@@ -1530,9 +1530,9 @@ _settings_env_names() {
 }
 
 # _settings_env_json — those vars as one JSON object, null when unset, except
-# XDG_CONFIG_HOME, PI_CODING_AGENT_DIR (absolute, a leading ~/ expanded here)
+# XDG_CONFIG_HOME, PI_CODING_AGENT_DIR (a leading ~/ expanded here)
 # and DISPATCH_GRANT_ROOTS, recorded with their defaults so a reader never falls
-# back to its caller's HOME or locked grantRoots.
+# back to its caller's HOME or locked grantRoots. Path values are recorded absolute.
 # DISPATCH_ENGINES and DISPATCH_GRANT_ROOTS are the already-resolved values
 # (_settings_load ran first): a deliberate snapshot. The rest are inputs, so a
 # reader re-resolves settings from the dispatcher's own files.
@@ -1541,7 +1541,20 @@ _settings_env_json() {
   local -a args=()
   while IFS= read -r n; do
     case "$n" in
-    XDG_CONFIG_HOME) args+=(--arg "$n" "${XDG_CONFIG_HOME:-$HOME/.config}") ;;
+    XDG_CONFIG_HOME)
+      v="${XDG_CONFIG_HOME:-$HOME/.config}"
+      [[ $v == /* ]] || v="$HOME/.config"
+      args+=(--arg "$n" "$v")
+      ;;
+    DISPATCH_LOCKED_SETTINGS | DISPATCH_OPENROUTER_KEY_FILE)
+      if [ -z "${!n+x}" ]; then
+        args+=(--argjson "$n" null)
+      else
+        v="${!n}"
+        [[ -z $v || $v == /* ]] || v="$(realpath -m -- "$v")"
+        args+=(--arg "$n" "$v")
+      fi
+      ;;
     PI_CODING_AGENT_DIR)
       v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
       case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac
