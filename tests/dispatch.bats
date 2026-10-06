@@ -2116,13 +2116,26 @@ ROWS
 }
 
 @test "claude sonnet at high and below, and deep opus at xhigh, still launch" {
-  stub_launch_bins
+  load_dispatch_fns refuse_claude_sonnet_cap claude_sonnet_cap
+  # Read by the eval'd refuse_claude_sonnet_cap, not by this function body.
+  # shellcheck disable=SC2034
+  ignore_map=
+  local -a failures=()
+  local effort
   for effort in low medium high; do
-    run run_dispatch standard sonnet --agent claude --effort "$effort" --crew-id c1 42 "sonnet $effort"
-    [ "$status" -eq 0 ]
+    run refuse_claude_sonnet_cap claude sonnet "$effort"
+    [ "$status" -eq 0 ] || failures+=("sonnet $effort: status=$status")
   done
-  run run_dispatch deep opus --agent claude --effort xhigh --crew-id c1 42 "deep opus xhigh"
+  run refuse_claude_sonnet_cap claude opus xhigh
+  [ "$status" -eq 0 ] || failures+=("opus xhigh: status=$status")
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
+  stub_launch_bins
+  run run_dispatch standard sonnet --agent claude --effort high --crew-id c1 42 "sonnet high"
   [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "a claude sonnet role at xhigh/max is refused; --ignore-map bypasses" {
@@ -3022,17 +3035,12 @@ EOF
 # Asserts only that the gate stayed silent — a full launch per model would need
 # a distinct branch per row and buys nothing the acceptance tests do not cover.
 assert_gate_silent() { # <engine> <model> [profile]
-  DISPATCH_PROFILE="${3:-work}" run run_dispatch standard "$2" --agent "$1" --effort medium --ignore-map --crew-id c1 42 "map row $2"
-  if [[ "$output" == *"Model gate"* ]]; then
-    printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
-    return 1
+  if ! declare -F model_gate >/dev/null; then
+    load_dispatch_fns model_gate
   fi
-  # Non-vacuous: no stub_launch_bins here, so every row already dies
-  # downstream at dispatch.sh's `gh repo view` resolution regardless of
-  # gate 1/gate 2 — reaching that specific failure proves the run cleared
-  # BOTH the dispatchability gate and the new tier gate.
-  if [[ "$output" != *"could not resolve the default branch"* ]]; then
-    printf 'gate stopped %s/%s before reaching gh repo view: %s\n' "$1" "$2" "$output" >&2
+  agent=$1 model=$2 local_entry= run model_gate
+  if [ "$status" -ne 0 ]; then
+    printf 'gate rejected %s/%s: %s\n' "$1" "$2" "$output" >&2
     return 1
   fi
 }
@@ -3061,6 +3069,9 @@ assert_gate_silent() { # <engine> <model> [profile]
     assert_gate_silent pi "$m" work
     assert_gate_silent pi "$m" personal
   done
+  run run_dispatch standard opus --agent claude --effort medium --ignore-map --crew-id c1 42 "map row opus"
+  [[ "$output" == *"could not resolve the default branch"* ]]
+  [[ "$output" != *"Model gate"* ]]
 }
 
 @test "tier gate accepts every claude table cell" {
@@ -3080,7 +3091,17 @@ standard|sonnet
 standard|claude-sonnet-4-5
 trivial|sonnet
 trivial|haiku
+standard|opus
+trivial|opus
+standard|claude-opus-5
+trivial|claude-opus-5
 TABLE
+  if _model_in_row claude trivial fable; then
+    failures+=("claude trivial fable: unexpectedly in row")
+  fi
+  if _model_in_row claude standard fable; then
+    failures+=("claude standard fable: unexpectedly in row")
+  fi
   if [ "${#failures[@]}" -gt 0 ]; then
     printf '%s\n' "${failures[@]}" >&2
     return 1
@@ -3255,30 +3276,10 @@ TABLE
 }
 
 @test "claude standard and trivial accept opus; fable stays deep-only" {
-  stub_launch_bins
-  run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "tier claude standard sonnet lead"
-  [ "$status" -eq 0 ]
-
-  run run_dispatch trivial sonnet --agent claude --effort low --crew-id c1 42 "tier claude trivial sonnet lead"
-  [ "$status" -eq 0 ]
-
-  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "tier claude standard opus accepted"
-  [ "$status" -eq 0 ]
-
-  run run_dispatch trivial opus --agent claude --effort low --crew-id c1 42 "tier claude trivial opus accepted"
-  [ "$status" -eq 0 ]
-
-  run run_dispatch standard claude-opus-5 --agent claude --effort medium --crew-id c1 42 "tier claude standard opus id accepted"
-  [ "$status" -eq 0 ]
-
   run run_dispatch trivial fable --agent claude --effort low --crew-id c1 42 "tier claude trivial fable rejected"
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not trivial's row"* ]]
   [[ "$output" == *"--ignore-map"* ]]
-
-  run run_dispatch standard fable --agent claude --effort medium --crew-id c1 42 "tier claude standard fable rejected"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"is not standard's row"* ]]
 }
 
 @test "budget rung gate refuses standard opus and names sonnet" {
@@ -3621,26 +3622,23 @@ pi_limit_json() { # <limit_reached jq literal>
 
 # Folded family F34: a stale absolute-limit cache and a 5h spike both launch.
 @test "a stale codex absolute limit and a 5h spike with low 7d both launch" {
-  stub_launch_bins
+  load_dispatch_fns absolute_limit_stop
+  # Read by the eval'd absolute_limit_stop, not by this function body.
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
   local -a failures=()
-  local path_saved="$PATH" bus age title program epoch why
-  bus="$TEST_REPO/.git/crew/events.jsonl"
+  local age title program epoch why
+  mkdir -p "$(dirname "$budget_file")"
   while IFS='|' read -r age title program <&3; do
     case "$age" in '' | '#'*) continue ;; esac
-    export PATH="$path_saved"
-    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
-    mkdir -p "$XDG_DATA_HOME/crew"
-    mkdir -p "$(dirname "$bus")"
-    : >"$bus"
-    : >"$STUB_LOG"
     epoch="$(($(date +%s) - age))"
-    jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
-    DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "$title"
+    jq -n --argjson epoch "$epoch" "$program" >"$budget_file"
+    run absolute_limit_stop codex
     why=
     [ "$status" -eq 0 ] || why="status=$status"
-    if ! grep -q 'send-keys' "$STUB_LOG"; then
-      why="${why:+$why; }no send-keys"
-    fi
+    [[ "$output" != *"quota exhausted"* ]] || why="${why:+$why; }unexpected [quota exhausted]"
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
@@ -3652,6 +3650,14 @@ ROWS
     printf '%s\n' "${failures[@]}" >&2
     return 1
   fi
+  stub_launch_bins
+  epoch="$(($(date +%s) - 0))"
+  jq -n --argjson epoch "$epoch" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: {source: "t", windows: {"5h": {used_pct: 90, resets_at: null}, "7d": {used_pct: 30, resets_at: null}}}, cursor: null}}' \
+    >"$budget_file"
+  DISPATCH_PROFILE=work run run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "5h spike 7d low"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "cursor absolute limit refuses on a plan pool at 100% with no window" {
@@ -3680,28 +3686,23 @@ ROWS
 
 # Folded family F35: stale and unknown cursor quotas both launch.
 @test "a stale cursor absolute limit and an unknown cursor quota both launch" {
-  stub_launch_bins
+  load_dispatch_fns absolute_limit_stop
+  # Read by the eval'd absolute_limit_stop, not by this function body.
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
   local -a failures=()
-  local path_saved="$PATH" bus age title program epoch why row_output
-  bus="$TEST_REPO/.git/crew/events.jsonl"
+  local age title program epoch why
+  mkdir -p "$(dirname "$budget_file")"
   while IFS='|' read -r age title program <&3; do
     case "$age" in '' | '#'*) continue ;; esac
-    export PATH="$path_saved"
-    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
-    mkdir -p "$XDG_DATA_HOME/crew"
-    mkdir -p "$(dirname "$bus")"
-    : >"$bus"
-    : >"$STUB_LOG"
     epoch="$(($(date +%s) - age))"
-    jq -n --argjson epoch "$epoch" "$program" >"$XDG_DATA_HOME/crew/engine-budget.json"
-    DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "$title"
-    row_output=$output
+    jq -n --argjson epoch "$epoch" "$program" >"$budget_file"
+    run absolute_limit_stop cursor
     why=
     [ "$status" -eq 0 ] || why="status=$status"
-    [[ "$row_output" != *"quota exhausted"* ]] || why="${why:+$why; }unexpected [quota exhausted]"
-    if ! grep -q 'send-keys' "$STUB_LOG"; then
-      why="${why:+$why; }no send-keys"
-    fi
+    [[ "$output" != *"quota exhausted"* ]] || why="${why:+$why; }unexpected [quota exhausted]"
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
@@ -3713,6 +3714,15 @@ ROWS
     printf '%s\n' "${failures[@]}" >&2
     return 1
   fi
+  stub_launch_bins
+  epoch="$(($(date +%s) - 0))"
+  jq -n --argjson epoch "$epoch" \
+    '{fetched_epoch: $epoch, engines: {claude: null, codex: null, cursor: null}}' \
+    >"$budget_file"
+  DISPATCH_PROFILE=work run run_dispatch standard composer-2.5 --agent cursor --effort low --crew-id c1 42 "cursor abs unknown"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"quota exhausted"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "a cursor absolute limit already past its resets_at fails open" {
@@ -3914,20 +3924,40 @@ ROWS
 }
 
 @test "pace gate refuses premium effort, but allows high and --ignore-budget" {
+  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
+  _settings_load
+  # Read by the eval'd pace_rule_target, not by this function body.
+  # shellcheck disable=SC2034
+  ignore_map=
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
+  local -a failures=()
+  local why
+
+  budget_json_at claude 77 345600
+  ignore_budget=
+  run pace_rule_target claude sonnet xhigh
+  why=
+  [ "$status" -eq 1 ] || why="status=$status"
+  [[ "$output" == *"premium effort (xhigh)"* ]] || why="${why:+$why; }missing [premium effort (xhigh)]"
+  [[ "$output" == *"use high instead"* ]] || why="${why:+$why; }missing [use high instead]"
+  [ -z "$why" ] || failures+=("effort refuses: $why")
+
+  ignore_budget=1
+  budget_json_at claude 77 345600
+  run pace_rule_target claude sonnet xhigh
+  [ "$status" -eq 0 ] || failures+=("ignore effort: status=$status")
+
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
+
   stub_launch_bins
   budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "effort refuses"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"premium effort (xhigh)"* ]]
-  [[ "$output" == *"use high instead"* ]]
-
-  budget_json_at claude 77 345600
   run run_dispatch deep sonnet --effort high --crew-id c1 42 "high allows"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
-
-  budget_json_at claude 77 345600
-  run run_dispatch deep sonnet --effort xhigh --ignore-map --ignore-budget --crew-id c1 42 "ignore effort"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
 }
@@ -3941,23 +3971,55 @@ ROWS
 }
 
 @test "pace gate effort escape is exact and null reset still refuses" {
-  stub_launch_bins
-  budget_json_at claude 77 345600
-  DISPATCH_IGNORE_RUNG=xhigh run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "exact effort"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"effort refusal skipped"* ]]
+  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
+  _settings_load
+  # Read by the eval'd pace_rule_target, not by this function body.
+  # shellcheck disable=SC2034
+  ignore_map=
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
+  local -a failures=()
+  local why
 
+  budget_json_at claude 77 345600
+  ignore_budget=
+  DISPATCH_IGNORE_RUNG=xhigh
+  run pace_rule_target claude sonnet xhigh
+  why=
+  [ "$status" -eq 0 ] || why="status=$status"
+  [[ "$output" == *"effort refusal skipped"* ]] || why="${why:+$why; }missing [effort refusal skipped]"
+  [ -z "$why" ] || failures+=("exact effort: $why")
+
+  budget_json_at claude 77 345600
+  DISPATCH_IGNORE_RUNG=max
+  run pace_rule_target claude sonnet xhigh
+  why=
+  [ "$status" -eq 1 ] || why="status=$status"
+  [[ "$output" == *"premium effort"* ]] || why="${why:+$why; }missing [premium effort]"
+  [ -z "$why" ] || failures+=("mismatched effort: $why")
+
+  budget_json_at claude 90 null
+  unset DISPATCH_IGNORE_RUNG
+  run pace_rule_target claude sonnet max
+  why=
+  [ "$status" -eq 1 ] || why="status=$status"
+  [[ "$output" == *"premium effort (max)"* ]] || why="${why:+$why; }missing [premium effort (max)]"
+  [[ "$output" == *"use high instead"* ]] || why="${why:+$why; }missing [use high instead]"
+  [[ "$output" != *"ahead of pace"* ]] || why="${why:+$why; }unexpected [ahead of pace]"
+  [ -z "$why" ] || failures+=("null effort: $why")
+
+  if [ "${#failures[@]}" -gt 0 ]; then
+    printf '%s\n' "${failures[@]}" >&2
+    return 1
+  fi
+
+  stub_launch_bins
   budget_json_at claude 77 345600
   DISPATCH_IGNORE_RUNG=max run run_dispatch deep sonnet --effort xhigh --ignore-map --crew-id c1 42 "mismatched effort"
   [ "$status" -eq 1 ]
   [[ "$output" == *"premium effort"* ]]
-
-  budget_json_at claude 90 null
-  run run_dispatch deep sonnet --effort max --ignore-map --crew-id c1 42 "null effort"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"premium effort (max)"* ]]
-  [[ "$output" == *"use high instead"* ]]
-  [[ "$output" != *"ahead of pace"* ]]
 }
 
 @test "pace gate checks explicit and inherited eager role effort before panes" {
@@ -3976,25 +4038,23 @@ ROWS
 
 # Folded family F37: budget rung allows at pace, near reset, and below the floor.
 @test "budget rung gate allows burn at pace, near reset, and below the floor" {
-  stub_launch_bins
+  load_dispatch_fns budget_stop pace_rule_target _pace_downgrade _pace_burn_weight _settings_load
+  _settings_load
+  # Read by the eval'd budget_stop and pace_rule_target, not by this function body.
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
   local -a failures=()
-  local path_saved="$PATH" bus pct resets title why
-  bus="$TEST_REPO/.git/crew/events.jsonl"
+  local pct resets title why
   while IFS='|' read -r pct resets title <&3; do
     case "$pct" in '' | '#'*) continue ;; esac
-    export PATH="$path_saved"
-    export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$title"
-    mkdir -p "$XDG_DATA_HOME"
-    mkdir -p "$(dirname "$bus")"
-    : >"$bus"
-    : >"$STUB_LOG"
     budget_json_at claude "$pct" "$resets"
-    run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "$title"
     why=
+    run budget_stop claude
     [ "$status" -eq 0 ] || why="status=$status"
-    if ! grep -q 'send-keys' "$STUB_LOG"; then
-      why="${why:+$why; }no send-keys"
-    fi
+    run pace_rule_target claude opus high
+    [ "$status" -eq 0 ] || why="${why:+$why; }status=$status"
     if [ -n "$why" ]; then
       failures+=("$title: $why")
     fi
@@ -4007,6 +4067,11 @@ ROWS
     printf '%s\n' "${failures[@]}" >&2
     return 1
   fi
+  stub_launch_bins
+  budget_json_at claude 77 86400
+  run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "at pace allows"
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys' "$STUB_LOG"
 }
 
 @test "budget rung gate falls back to the flat rule when resets_at is null" {
