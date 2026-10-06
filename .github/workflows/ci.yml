@@ -71,11 +71,8 @@ jobs:
                 whole+=("$unit")
               fi
             done
-            # Every unit runs at once so the slowest test no longer queues behind
-            # the previous unit. Each invocation keeps a few slots of its own;
-            # the heaviest unit is the critical path, so splitting 16 slots n
-            # ways would starve it. Console output goes to a per-run log, since
-            # concurrent TAP streams interleave unreadably.
+            # Units run at once so the heaviest is the only critical path; logs go
+            # to per-run files because concurrent TAP streams interleave.
             jobs=4
             pids=()
             logs=()

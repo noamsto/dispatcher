@@ -418,8 +418,8 @@ for wkey in "${weight_keys[@]+"${weight_keys[@]}"}"; do
 done
 
 # A family heavier than 40% of an even shard budget (and at least a minute)
-# cannot balance as one unit, so it is cut into parts of at most that weight. Without per-test weights the
-# parts split the family's cases round-robin by position and share its weight
+# cannot balance as one unit, so it is cut into parts of at most that weight.
+# Without per-test weights the parts split the family's cases round-robin by position and share its weight
 # in proportion to their case counts. A part's regex lists its names exactly.
 declare -A family_names part_names test_part
 for entry in "${keep_tests[@]+"${keep_tests[@]}"}"; do
