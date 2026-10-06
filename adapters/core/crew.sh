@@ -5178,6 +5178,7 @@ BUSLINE
   d4_since=0
   d5_at=0
   d6_at=0
+  d6_src=""
   d7_hits=0
   d7_tok0=0
   d7_at=0
@@ -5556,6 +5557,7 @@ BUSLINE
           fi
           if [ "$d6_at" = 0 ] && _post_blocked "unread:" "$detail"; then
             d6_at="$now"
+            d6_src="$src"
           fi
         elif [ "$d6_at" != 0 ]; then
           _post_clear "unread:"
@@ -5565,8 +5567,9 @@ BUSLINE
       blocked)
         # Our own open episode: still clear it once the msg is delivered.
         if [ "$d6_at" != 0 ] && [ "$bus_source" = watchdog ]; then
-          read -r oldest _ <<<"$(_unread_oldest)"
-          if ! [[ "$oldest" =~ ^[0-9]+$ ]] || [ $((now * 1000 - oldest)) -lt $((unread * 1000)) ]; then
+          read -r oldest src <<<"$(_unread_oldest)"
+          # A changed oldest source means the label is stale; the next tick re-posts.
+          if ! [[ "$oldest" =~ ^[0-9]+$ ]] || [ $((now * 1000 - oldest)) -lt $((unread * 1000)) ] || [ "$src" != "$d6_src" ]; then
             _post_clear "unread:"
             d6_at=0
           fi

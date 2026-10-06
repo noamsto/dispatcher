@@ -6031,6 +6031,22 @@ EOF
   [[ "${lines[0]}" == "blocked|unread: dispatcher directive "* ]]
 }
 
+@test "stall-watch: D6 relabels the episode when only the role verdict is delivered" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  seed_raw worker:feat/x#s1-1 working "" ""
+  seed_msg role:feat/x:reviewer worker:feat/x#s1-1 40
+  seed_msg dispatcher:c1 worker:feat/x#s1-1 30
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || CREW_ID=c1 bash $CREW await worker:feat/x#s1-1 --from role:feat/x:reviewer --timeout 1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 13
+  run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "${lines[0]}" == "blocked|unread: role verdict "* ]]
+  [ "${lines[1]}" = "working|unread: cleared" ]
+  [[ "${lines[2]}" == "blocked|unread: dispatcher directive "* ]]
+}
+
 @test "stall-watch: a finished turn waiting on a background shell posts nothing" {
   a=$(fx_bgwait_crunched)
   b=$(fx_bgwait_churned)
