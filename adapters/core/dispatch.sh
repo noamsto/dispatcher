@@ -3199,6 +3199,7 @@ check_engine "$agent" "--agent $agent"
 # bump a rebuild.
 # Unanchored at the front on purpose: `gpt-5.5-extra-high` is a real cursor id
 # and matches on its trailing `-high`.
+model_gate() {
 re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
 if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
   echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
@@ -3298,6 +3299,9 @@ else
     ;;
   esac
 fi
+}
+
+model_gate
 
 # Escalation helpers — query the bus for prior failed workers. The
 # one-rung-up hops themselves live in defaults.json (_escalation_hop). The
