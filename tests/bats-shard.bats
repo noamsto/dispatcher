@@ -330,6 +330,36 @@ shard() {
   [[ $stderr == *not-ok* ]]
 }
 
+@test "weights --run rejects an incomplete JUnit artifact inventory" {
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  cat >"$bin/gh" <<'GH'
+#!/usr/bin/env bash
+set -euo pipefail
+name=
+dir=
+while (($#)); do
+  case $1 in
+    -n) name=$2; shift 2 ;;
+    --dir) dir=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [[ $name == bats-timing-shard-1 ]]; then
+  mkdir -p "$dir/$name"
+  printf '%s\n' \
+    '<testsuites><testsuite name="crew-id.bats" failures="0" errors="0">' \
+    '<testcase name="crew id: resolves from WORKER_TASK.md with no CREW_ID in the environment at all" time="0.1"/>' \
+    '</testsuite></testsuites>' >"$dir/$name/report.xml"
+fi
+GH
+  chmod +x "$bin/gh"
+
+  run --separate-stderr env PATH="$bin:$PATH" "$WEIGHTS_SCRIPT" --run 123
+  [ "$status" -ne 0 ]
+  [[ $stderr == *"does not match the current !timing test inventory"* ]]
+}
+
 ci_module_bats_job_ok() {
   local ci="$1"
   local line current="" in_jobs=0 hits=0 owner="" trimmed
