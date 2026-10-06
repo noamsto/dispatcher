@@ -2398,3 +2398,14 @@ _render_fixture() {
   cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
 }
+
+@test "gen-adapters removes the claude render tmp file when interrupted mid-render" {
+  work="$BATS_TEST_TMPDIR/interrupt"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  printf '#!/usr/bin/env bash\necho partial\nkill -TERM "$PPID"\nsleep 5\n' >"$work/scripts/render-engine.sh"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+}
