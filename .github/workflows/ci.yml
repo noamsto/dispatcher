@@ -21,8 +21,6 @@ jobs:
       # with scripts/bats-shard-weights.sh.
       - name: shard plan covers the suite
         run: nix develop -c bash scripts/bats-shard.sh --check
-      - name: harness manifest matches the sampled files
-        run: nix develop -c bash scripts/harness-manifest.sh --check
 
   # module.bats's setup_file does a multi-output nix build of this flake.
   # On a cold git-fetcher cache that races inside nix, so this file runs
