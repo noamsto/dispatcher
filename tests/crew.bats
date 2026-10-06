@@ -28,6 +28,10 @@ teardown() {
   if [ -n "${HOLDER_PID:-}" ]; then
     kill -KILL "$HOLDER_PID" 2>/dev/null || true
   fi
+  # A test that leaves a read-only dir names it here, so bats can delete it.
+  if [ -n "${RESTORE_WRITE:-}" ]; then
+    chmod -R u+w "$RESTORE_WRITE" 2>/dev/null || true
+  fi
   teardown_repo
 }
 
@@ -3857,10 +3861,10 @@ EOF
 }
 
 @test "reap: a .git swapped after the last re-check is refused by the anchored removal (#677)" {
-  # The swap fires inside the removal call itself, after every re-check. The
-  # anchored removal reads nothing from the swapped tree: git's gitfile
-  # validation refuses it, so a discovering removal (`git -C <wt>`, `wt`)
-  # would fail this test.
+  # The swap fires inside the removal call itself, after every re-check: git's
+  # gitfile validation refuses the swapped tree and reap relays the tampering
+  # line. The git wrapper also logs any post-swap git that discovers its repo
+  # from the tree, which pins the removal (and all after it) as anchored.
   printf a >f
   git add f
   git commit -q -m f
@@ -3889,6 +3893,21 @@ if [ ! -e "$SWAP_MARK" ] && [ "${!#}" = "$SWAP_WT" ]; then
     prev=$arg
   done
 fi
+if [ -e "$SWAP_MARK" ] && [ -z "${GIT_DIR:-}" ]; then
+  anchored= in_wt=
+  case "$PWD/" in "$SWAP_WT"/*) in_wt=1 ;; esac
+  prev=
+  for arg in "$@"; do
+    case "$arg" in --git-dir=*) anchored=1 ;; esac
+    if [ "$prev" = -C ]; then
+      case "$arg/" in "$SWAP_WT"/*) in_wt=1 ;; esac
+    fi
+    prev=$arg
+  done
+  if [ -z "$anchored" ] && [ -n "$in_wt" ]; then
+    printf '%s\n' "$*" >>"$BATS_TEST_TMPDIR/discovered"
+  fi
+fi
 exec "$REAL_GIT" "$@"
 EOF2
   chmod +x "$STUB_DIR/git"
@@ -3911,6 +3930,86 @@ EOF2
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
   [ -d "$wt_path" ]
   [[ "$output" == *"keeping feat/677-b — its .git changed during the reap"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/discovered" ]
+  run ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: a gitlink staged after the first submodule gate keeps the worktree (#677)" {
+  # --force skips git's own submodule refusal and the status re-check hides
+  # gitlinks, so the pre-removal re-check must look at the index again. The
+  # gtrash stub stages one between the first gate and the re-check.
+  git commit -q --allow-empty -m init
+  git branch feat/677-c
+  wt_path="$BATS_TEST_TMPDIR/677-c-wt"
+  git worktree add -q "$wt_path" feat/677-c
+  wt_path=$(cd "$wt_path" && pwd -P)
+  : >"$wt_path/WORKER_TASK.md"
+  stub_tmux "" ""
+  export SWAP_WT="$wt_path" SWAP_MARK="$BATS_TEST_TMPDIR/staged" SWAP_REPO="$TEST_REPO"
+  SWAP_ADMIN=$(git -C "$wt_path" rev-parse --absolute-git-dir)
+  export SWAP_ADMIN
+  cat >"$STUB_DIR/gtrash" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+if [ ! -e "$SWAP_MARK" ]; then
+  : >"$SWAP_MARK"
+  git --git-dir="$SWAP_ADMIN" --work-tree="$SWAP_WT" update-index --add \
+    --cacheinfo "160000,$(git -C "$SWAP_REPO" rev-parse HEAD),sub"
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gtrash"
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-c" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -e "$BATS_TEST_TMPDIR/staged" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"keeping feat/677-c — it has submodules"* ]]
+  run ! grep -q '"kind":"reap"' "$log"
+}
+
+@test "reap: a removal that fails partway is reported, not called tampering (#677)" {
+  # git deletes the admin dir even when part of the tree cannot go, so the
+  # tree's gitlink then fails to resolve without any tampering.
+  [ "$(id -u)" != 0 ] || skip "root ignores directory permissions"
+  git commit -q --allow-empty -m init
+  git branch feat/677-d
+  wt_path="$BATS_TEST_TMPDIR/677-d-wt"
+  git worktree add -q "$wt_path" feat/677-d
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'ro/\n' >>"$TEST_REPO/.git/info/exclude"
+  mkdir "$wt_path/ro"
+  : >"$wt_path/ro/f"
+  RESTORE_WRITE="$wt_path"
+  chmod 0555 "$wt_path/ro"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/677-d" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/677-d — removal failed partway; $wt_path is no longer a worktree"* ]]
+  [[ "$output" != *"possible tampering"* ]]
   run ! grep -q '"kind":"reap"' "$log"
 }
 

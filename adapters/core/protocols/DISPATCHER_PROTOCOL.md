@@ -679,11 +679,12 @@ branch instead; the worktree carries over under `resume: true`.
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
   anchored git call, and before `wt switch`, `git fetch`/`ls-remote`,
-  `crew reap`'s worktree removal and `git branch -D`. `dispatch` and `crew reap` first leave a
-  recorded worker worktree for the main checkout, and run `git
-  fetch`/`ls-remote`/`git branch -D`/`git worktree remove --force` anchored — `--git-dir=<git-common-dir>`
-  plus the `-c` keys of `_wt_neutral_cfg` (these commands read no attributes)
-  — so no worker `.git`, standalone or swapped mid-run, is ever discovered by
+  `crew reap`'s worktree removal and `git branch -D`. `dispatch` and
+  `crew reap` first leave a recorded worker worktree for the main checkout,
+  and run `git fetch`/`ls-remote`/`git branch -D`/`git worktree remove
+  --force` anchored — `--git-dir=<git-common-dir>` plus the `-c` keys of
+  `_wt_neutral_cfg` (these commands read no attributes) — so no worker
+  `.git`, standalone or swapped mid-run, is ever discovered by
   them. They refuse instead of leaving when the record is not a regular file,
   when the repo has no main checkout to move to (a bare or separate-git-dir
   layout), or when the cwd's git does not resolve to the recorded crew dir:
@@ -700,8 +701,9 @@ branch instead; the worktree carries over under `resume: true`.
   window-kill and removal gates — so a dispatcher run from a linked
   worktree with no dispatcher record refuses the relative spelling (set
   `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
-  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) — and, via
-  `GIT_CONFIG_COUNT`, `dispatch`'s own `wt switch` for every switch but a default create — pass `core.fsmonitor=false`,
+  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) —
+  and, via `GIT_CONFIG_COUNT`, `dispatch`'s own `wt switch` for every switch
+  but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
   `submodule.recurse=false`, disable the config-hook events they trigger (the
   set is `_wt_neutral_cfg` in `worktree-git.sh`), and read no in-tree
@@ -965,10 +967,17 @@ guard as the other two lanes. Each notification is one line:
 - **Reap** → informational: the stream's own reap (Rule 5) reclaimed or released
   something. Nothing to do. If a line surprises you, `crew reap --dry-run` explains
   the keeps. A no-op reap prints nothing. A `keeping … worktree removal failed` line
-  repeats on every reap until the removal succeeds, and a dry run cannot show why:
-  run `git worktree remove <path>` (no `--force`) by hand in that repo to see
-  the error, then fix it or escalate. A `keeping … possible tampering` line
-  means that worktree's `.git` changed mid-reap: relay it to the human
+  repeats on every reap until the removal succeeds, and a dry run cannot show why.
+  Diagnose read-only: `git worktree list --porcelain` (a `locked` line names the
+  lock) and the permissions under that path; fix the cause and let the next reap
+  remove it, or escalate. Never remove a worker worktree by hand: even a plain
+  `git worktree remove` runs `git status` in the worker's tree, reading its
+  attributes with no config guard. A `keeping … removal failed partway` line
+  means git deleted part of the tree and its worktree registration: the path is
+  left but is no longer a worktree, so later reaps skip it — relay it to the
+  human (after fixing its permissions, the leftover path needs a by-hand `rm`;
+  the branch and the `dispatched` label stay). A `keeping … possible tampering`
+  line means that worktree's `.git` changed mid-reap: relay it to the human
   verbatim, never remove the worktree yourself. Reap deletes a local branch
   only for a MERGED PR whose tip is the PR head; a CLOSED or unverifiable
   branch stays. A stream reap that fails arrives as an `error` line whose detail starts

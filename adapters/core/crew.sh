@@ -6337,7 +6337,21 @@ SCAFFOLD
       say "keeping $branch — $tampered"
       continue
     fi
-    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || [ -n "$st" ]; then
+    # --force skips git's own submodule refusal, and the status below hides
+    # gitlinks: one staged since the first gate would go with its embedded repo.
+    if ! staged=$(_wt_git "$admin" "$wtpath" ls-files --stage); then
+      say "keeping $branch — could not read its index"
+      continue
+    fi
+    if grep -q '^160000 ' <<<"$staged"; then
+      say "keeping $branch — it has submodules"
+      continue
+    fi
+    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all); then
+      say "keeping $branch — git status failed"
+      continue
+    fi
+    if [ -n "$st" ]; then
       say "keeping $branch — uncommitted changes"
       continue
     fi
@@ -6394,6 +6408,11 @@ SCAFFOLD
         gh issue edit "$issue" --remove-label dispatched >/dev/null 2>&1 ||
           note "could not remove the dispatched label from #$issue ($branch)"
       done
+    elif [ ! -d "$admin" ]; then
+      # git validates the gitfile before deleting anything, so a gone admin dir
+      # means a real tree whose contents only partly went (e.g. a read-only
+      # subdir). It is no longer a worktree, so no later reap will see it.
+      say "keeping $branch — removal failed partway; $wtpath is no longer a worktree: check its permissions and remove it by hand"
     elif ! _wt_gitlink_ok "$admin" "$wtpath"; then
       say "keeping $branch — $tampered"
     else
