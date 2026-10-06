@@ -1664,20 +1664,28 @@ status | msg)
           # local gate is not a CI run, and only a real dispatcher reply waives.
           # An item is a CI item when its evidence, or its task-doc Acceptance
           # entry (by id, else AC<n> = nth entry), names CI as a word ("Non-CI"
-          # does not).
+          # does not). The waiver check is presence-only, not authentication: any
+          # process can post as dispatcher:<crew>.
           ci_re='(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)'
-          run_re='actions/runs/[0-9]+|[Rr]un([ -]?[Ii][Dd])?[ :#]*[0-9]{6,}'
+          run_re='actions/runs/[0-9]+|(^|[^[:alnum:]_-])[Rr]un([ -]?[Ii][Dd])?[ :#]*[0-9]{6,}'
           accept_items=$(awk '
-            /^[[:space:]]*#{2,}[[:space:]]+[*_]{0,2}[Aa]cceptance/ { on = 1; next }
-            on && /^[[:space:]]*#{1,}[[:space:]]/ { on = 0 }
+            tolower($0) ~ /^[[:space:]]*(##+[[:space:]]+[*_]*acceptance|[*_][*_]?acceptance|acceptance:)/ { on = 1; next }
+            on && /^[[:space:]]*#+[[:space:]]/ { on = 0 }
             on && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]/ {
               sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, ""); print }
-          ' "$top/WORKER_TASK.md" 2>/dev/null || true)
+          ' "$top/WORKER_TASK.md") || {
+            echo "crew: refusing pr_open for $from — could not read the task doc's acceptance list" >&2
+            exit 1
+          }
           items=$(jq -nr --arg d "$d" '
             "(?:(?<id>[^\\s;,()]+)\\s+)?(?:(?<k>pass)(?=\\(\\s*[^\\s)])(?<b>\\((?:[^()]|\\g<b>)*\\))|(?<w>waived)\\(dispatcher(?:[:;,\\s](?:[^()]|\\g<b>)*)?\\))" as $item
             | [$d | match($item; "gi") | [.captures[] | select(.name != null) | {(.name): .string}] | add]
-            | .[] | [(.id // ""), (if .k != null then "pass" else "waived" end), (.b // "")] | @tsv' 2>/dev/null || true)
-          while IFS=$'\t' read -r iid ikind iev; do
+            | .[] | [(.id // ""), (if .k != null then "pass" else "waived" end), (.b // "")] | join("\u001f")') || {
+            echo "crew: refusing pr_open for $from — could not parse the acceptance ledger items" >&2
+            exit 1
+          }
+          have_waiver=""
+          while IFS=$'\x1f' read -r iid ikind iev; do
             [ -n "$ikind" ] || continue
             iid=${iid%:}
             if [ "$ikind" = pass ]; then
@@ -1691,7 +1699,7 @@ status | msg)
                   END { if (!found) print "\001" n }')
                 if [[ $entry == $'\001'* ]]; then
                   entry=""
-                  if [[ $iid =~ ^[Aa][Cc]([0-9]+)$ ]]; then
+                  if [[ $iid =~ ^[Aa][Cc]([1-9][0-9]*)$ ]]; then
                     entry=$(printf '%s\n' "$accept_items" | sed -n "${BASH_REMATCH[1]}p")
                   fi
                 fi
@@ -1701,10 +1709,17 @@ status | msg)
                 echo "crew: refusing pr_open for $from — acceptance item '${iid:-?}' is a CI item, so its pass(...) must carry a CI run id or an actions/runs/<id> URL on the PR's current head; a local gate (pre-push, bats-affected, shellcheck, nix flake check) is never CI evidence. If CI has not finished, wait for it, or block and ask the dispatcher to waive the item." >&2
                 exit 1
               fi
-            elif ! { [ -f "$log" ] && jq -e -n -R --arg c "$crew" --arg f "$from" '
-                [inputs | (try fromjson catch null) | select(type == "object"
-                  and .crew_id == $c and .kind == "msg" and .from == ("dispatcher:" + $c)
-                  and .to == $f and ((.body // "") | tostring | test("waive"; "i")))] | length > 0' "$log" >/dev/null 2>&1; }; then
+            else
+              if [ -z "$have_waiver" ]; then
+                have_waiver=false
+                if [ -f "$log" ] && jq -e -n -R --arg c "$crew" --arg f "$from" '
+                  [inputs | (try fromjson catch null) | select(type == "object"
+                    and .crew_id == $c and .kind == "msg" and .from == ("dispatcher:" + $c)
+                    and .to == $f and ((.body // "") | tostring | test("waive"; "i")))] | length > 0' "$log" >/dev/null 2>&1; then
+                  have_waiver=true
+                fi
+              fi
+              [ "$have_waiver" = true ] && continue
               echo "crew: refusing pr_open for $from — waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session ($from) containing \"waive\" (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself." >&2
               exit 1
             fi

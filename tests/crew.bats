@@ -9178,6 +9178,19 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "pr_open: id-less items, other Acceptance spellings, AC0 and look-alike run words are checked" {
+  _task_doc trivial
+  printf '\n**Acceptance:**\n- CI green on the PR head\n' >>WORKER_TASK.md
+  local d
+  for d in 'waived(dispatcher)' 'pass(CI green)' 'AC1 pass(bats)' 'AC1 pass(CI dry-run 20261006 local)'; do
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* ]]
+  done
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC0 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
 @test "pr_open: a lone state word before a valid item reads as its id (known gap)" {
   # Known accepted gap: a single-token state word with no parens reads as the id
   # of the next item. A drifting agent is unlikely to write it.
