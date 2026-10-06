@@ -3873,6 +3873,8 @@ EOF
   git worktree add -q "$wt_path" feat/677-b
   wt_path=$(cd "$wt_path" && pwd -P)
   seed_git_baseline
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
   make_filter_fake_gitdir "$BATS_TEST_TMPDIR/677-b-fake" "$BATS_TEST_TMPDIR/SENTINEL"
   touch -d '+5 seconds' "$wt_path/f"
   real_git=$(command -v git)
@@ -3931,6 +3933,7 @@ EOF2
   [ -d "$wt_path" ]
   [[ "$output" == *"keeping feat/677-b — its .git changed during the reap"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/discovered" ]
+  [ -e "$anchor" ]
   run ! grep -q '"kind":"reap"' "$log"
 }
 
@@ -3997,6 +4000,8 @@ EOF
   : >"$wt_path/ro/f"
   RESTORE_WRITE="$wt_path"
   chmod 0555 "$wt_path/ro"
+  write_anchor_record "$wt_path"
+  anchor="$(anchor_record_path "$wt_path")"
   stub_tmux "" ""
   cat >"$STUB_DIR/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -4014,6 +4019,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/677-d — removal failed partway; $wt_path is no longer a worktree"* ]]
   [[ "$output" != *"possible tampering"* ]]
+  [ ! -e "$anchor" ]
   run ! grep -q '"kind":"reap"' "$log"
 }
 
