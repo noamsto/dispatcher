@@ -12374,6 +12374,21 @@ _escalation_seed_spoof() {
   grep -q "switch -c feat/pr-head -b $PR_HEAD_OID" "$STUB_LOG"
 }
 
+@test "--pr: a PR head ref deleted right after the fetch still gets its upstream (#716)" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  stub_git_race_after_fetch -d refs/remotes/origin/feat/pr-head
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO/.worktrees/feat/pr-head" rev-parse HEAD)" = "$PR_HEAD_OID" ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.remote)" = origin ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.merge)" = refs/heads/feat/pr-head ]
+}
+
 @test "--pr: a head branch that parses as a fetch option is refused" {
   stub_launch_bins
   stub_pr_bins tmp-head

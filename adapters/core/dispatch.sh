@@ -4289,14 +4289,16 @@ name)
 fetch-name)
   # A PR head branch is attacker-named; see _fetch_origin_branch. Create it from
   # the fetch's own oid, not DWIM from refs/remotes/origin/<head>, which a worker
-  # can move before the switch (#716); DWIM set tracking, so set the upstream.
+  # can move before the switch (#716); DWIM set tracking, so write it directly
+  # rather than resolving it through the worker-movable ref/refspecs.
   _fetch_origin_branch "$branch" || {
     echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   }
   neutral_switch=1
   _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$fetched_oid^{commit}" -y --no-hooks
-  _wt_git_common "${crew_dir%/crew}" branch -q --set-upstream-to="refs/remotes/origin/$branch" "$branch"
+  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.remote" origin
+  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.merge" "refs/heads/$branch"
   ;;
 pr-ref)
   neutral_switch=1
