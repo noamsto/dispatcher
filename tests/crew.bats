@@ -3937,7 +3937,8 @@ EOF2
 @test "reap: a gitlink staged after the first submodule gate keeps the worktree (#677)" {
   # --force skips git's own submodule refusal and the status re-check hides
   # gitlinks, so the pre-removal re-check must look at the index again. The
-  # gtrash stub stages one between the first gate and the re-check.
+  # gtrash stub, like the real one, removes what it is given, and stages a
+  # gitlink over a fresh embedded repo between the first gate and the re-check.
   git commit -q --allow-empty -m init
   git branch feat/677-c
   wt_path="$BATS_TEST_TMPDIR/677-c-wt"
@@ -3953,9 +3954,11 @@ EOF2
 printf '%s\n' "$*" >>"$STUB_LOG"
 if [ ! -e "$SWAP_MARK" ]; then
   : >"$SWAP_MARK"
+  git init -q "$SWAP_WT/sub"
   git --git-dir="$SWAP_ADMIN" --work-tree="$SWAP_WT" update-index --add \
     --cacheinfo "160000,$(git -C "$SWAP_REPO" rev-parse HEAD),sub"
 fi
+rm -f -- "${@:2}"
 exit 0
 EOF
   chmod +x "$STUB_DIR/gtrash"
@@ -3976,6 +3979,7 @@ EOF
   [ -e "$BATS_TEST_TMPDIR/staged" ]
   [ -d "$wt_path" ]
   [[ "$output" == *"keeping feat/677-c — it has submodules"* ]]
+  [ -d "$wt_path/sub/.git" ]
   run ! grep -q '"kind":"reap"' "$log"
 }
 

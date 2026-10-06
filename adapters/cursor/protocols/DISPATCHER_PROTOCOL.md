@@ -968,16 +968,16 @@ guard as the other two lanes. Each notification is one line:
   something. Nothing to do. If a line surprises you, `crew reap --dry-run` explains
   the keeps. A no-op reap prints nothing. A `keeping … worktree removal failed` line
   repeats on every reap until the removal succeeds, and a dry run cannot show why.
-  Diagnose read-only: `git worktree list --porcelain` (a `locked` line names the
-  lock) and the permissions under that path; fix the cause and let the next reap
-  remove it, or escalate. Never remove a worker worktree by hand: even a plain
-  `git worktree remove` runs `git status` in the worker's tree, reading its
-  attributes with no config guard. A `keeping … removal failed partway` line
+  Diagnose read-only: `git worktree list --porcelain` — a `locked` line is the
+  usual cause (a permissions failure inside the tree shows as the partway line
+  instead); fix the cause and let the next reap remove it, or escalate. Never
+  remove a worker worktree by hand: even a plain `git worktree remove` runs
+  `git status` in the worker's tree, reading its attributes with no config guard. A `keeping … removal failed partway` line
   means git deleted part of the tree and its worktree registration: the path is
   left but is no longer a worktree, so later reaps skip it — relay it to the
-  human (after fixing its permissions, the leftover path needs a by-hand `rm`;
-  the branch and the `dispatched` label stay). A `keeping … possible tampering`
-  line means that worktree's `.git` changed mid-reap: relay it to the human
+  human, who fixes its permissions and removes the leftover path — never `rm` it
+  yourself (the branch and the `dispatched` label stay). A
+  `keeping … possible tampering` line means that worktree's `.git` changed mid-reap: relay it to the human
   verbatim, never remove the worktree yourself. Reap deletes a local branch
   only for a MERGED PR whose tip is the PR head; a CLOSED or unverifiable
   branch stays. A stream reap that fails arrives as an `error` line whose detail starts

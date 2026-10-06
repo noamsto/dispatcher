@@ -6412,7 +6412,7 @@ SCAFFOLD
       # git validates the gitfile before deleting anything, so a gone admin dir
       # means a real tree whose contents only partly went (e.g. a read-only
       # subdir). It is no longer a worktree, so no later reap will see it.
-      say "keeping $branch — removal failed partway; $wtpath is no longer a worktree: check its permissions and remove it by hand"
+      say "keeping $branch — removal failed partway; $wtpath is no longer a worktree: tell the human (fix its permissions, then remove it)"
     elif ! _wt_gitlink_ok "$admin" "$wtpath"; then
       say "keeping $branch — $tampered"
     else
