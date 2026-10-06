@@ -8237,7 +8237,7 @@ _refused() {
   [[ "$stderr" == *"$1"* ]]
   [ "$(_status_rows)" -eq 0 ]
 }
-_waive() { run_crew reply "${1:-worker:feat/x#s1-1}" "${2:-waive AC2}" --crew c1; }
+_waive() { run_crew reply "${1:-worker:feat/x#s1-1}" "${2:-waive AC1 AC2 AC3}" --crew c1; }
 _deslop_seam() { run_crew msg "${1:-worker:feat/x#s1-1}" "review:c1" '{"seam":"deslop"}'; }
 
 # Folded family — standard or deep with no review seam is refused and not written.
@@ -9422,6 +9422,49 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "pr_open: a negated waiver does not count and each waived item needs its own id named" {
+  _task_doc trivial
+  local n
+  for n in "will not waive AC1" "I don't waive AC1" "not waiving AC1"; do
+    _waive "worker:feat/x#s1-1" "$n"
+    run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher)" https://example.com/pr/1
+    _refused "dispatcher waiver"
+  done
+  _waive "worker:feat/x#s1-1" "waive AC1 but not AC2"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher); AC2 waived(dispatcher)" https://example.com/pr/1
+  _refused "'AC2'"
+  _waive "worker:feat/x#s1-1" "waive AC2 and AC3"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 waived(dispatcher); AC2 waived(dispatcher); AC3 waived(dispatcher)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a dotted-id waiver covers only that id and an id-less waived item is refused" {
+  _task_doc trivial
+  _waive "worker:feat/x#s1-1" "waive AC2.1"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2 waived(dispatcher)" https://example.com/pr/1
+  _refused "dispatcher waiver"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "waived(dispatcher)" https://example.com/pr/1
+  _refused "needs its acceptance id"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC2.1 waived(dispatcher)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: fenced # lines and a bold Out of scope list do not shift Acceptance entries" {
+  _task_doc trivial
+  printf '\n## Acceptance\n\n```\n# x\n- fenced item\n```\n- tests pass\n- CI green\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "2 pass(bats)" https://example.com/pr/1
+  _refused "CI run id"
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "1 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
+@test "pr_open: a bold Out of scope list after a bold Acceptance header is not read as items" {
+  _task_doc trivial
+  printf '\n**Acceptance:**\n- tests pass\n\n**Out of scope:**\n- CI green\n' >>WORKER_TASK.md
+  run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "2 pass(bats)" https://example.com/pr/1
+  [ "$status" -eq 0 ]
+}
+
 @test "pr_open: id-less items, other Acceptance spellings, AC0 and look-alike run words are checked" {
   _task_doc trivial
   printf '\n**Acceptance:**\n- CI green on the PR head\n' >>WORKER_TASK.md
@@ -9429,7 +9472,7 @@ ROWS
   for d in 'waived(dispatcher)' 'pass(CI green)' 'AC1 pass(bats)' 'AC1 pass(CI dry-run 20261006 local)'; do
     run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "$d" https://example.com/pr/1
     [ "$status" -eq 1 ]
-    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* ]]
+    [[ "$stderr" == *"CI run id"* || "$stderr" == *"dispatcher waiver"* || "$stderr" == *"needs its acceptance id"* ]]
   done
   run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC0 pass(bats)" https://example.com/pr/1
   [ "$status" -eq 0 ]
