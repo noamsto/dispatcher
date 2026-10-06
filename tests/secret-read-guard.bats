@@ -1565,8 +1565,8 @@ allow_cmd() { # <command>
 
 # F77: deny_cmd rows folded from direnv exec, a shell-variable dump followed by
 # a comment, a dump followed by a comment or a descriptor redirect, and a
-# relative dumper path without '=', and a dump glued to an output redirect
-# (#692). Stateless: run_guard, no shared fixture.
+# relative dumper path without '=', and a dump glued to an output or input
+# redirect, or behind a dash word (#692). Stateless: run_guard, no shared fixture.
 @test "secret-read-guard: denies direnv comment redirect and relative-path dumps" {
   begin_rows
   local row cmd
@@ -1599,8 +1599,18 @@ set-glued-redirect|set>/tmp/x
 export-glued-redirect|export>/tmp/x
 declare-glued-redirect|declare>/tmp/x
 env-glued-dup|env>&2
+env-dashdash-glued-redirect|env -->/tmp/x
+env-u-dashdash-glued-redirect|env -u X -->/tmp/x
+printenv-dashdash-glued-redirect|printenv -->/tmp/x
+env-glued-stdin|env</dev/null
+env-glued-herestring|env<<<x
+env-glued-dup-stdin|env<&0
+printenv-glued-stdin|printenv</dev/null
+set-glued-stdin|set</dev/null
+export-glued-stdin|export</dev/null
+declare-glued-stdin|declare</dev/null
 ROWS
-  finish_rows 25
+  finish_rows 35
 }
 
 @test "secret-read-guard: allows direnv without a dump" {
@@ -1611,7 +1621,8 @@ ROWS
 
 # F78: deny_cmd rows folded from env/printenv options with no command, and a
 # dumper behind env and sudo, and an env assignment whose name is not an
-# identifier (#692). Stateless: run_guard, no shared fixture.
+# identifier or a dash word after `--` (#692). Stateless: run_guard, no shared
+# fixture.
 @test "secret-read-guard: denies option-only env and wrapped dumpers" {
   begin_rows
   local row cmd
@@ -1640,8 +1651,10 @@ env-i-nonident|env -i a-b=1
 env-empty-name|env =x
 env-nonident-printenv|env a-b=1 printenv
 env-nonident-glued-redirect|env a-b=1>/tmp/x
+env-dashdash-dash-assign|env -- -=1
+env-dashdash-dashdash-assign|env -- --=1
 ROWS
-  finish_rows 21
+  finish_rows 23
 }
 
 @test "secret-read-guard: a comment right after a closing parenthesis cannot hide a dump" {
@@ -1775,8 +1788,8 @@ ROWS
 
 # F80: allow_cmd rows folded from a redirected command that is not a dump, and
 # env/sudo running a command, env running a command after a non-identifier
-# assignment, and a glued redirect of a non-dumper (#692). Stateless: run_guard,
-# no shared fixture.
+# assignment, a glued redirect of a non-dumper, and an env process substitution
+# or placeholder (#692). Stateless: run_guard, no shared fixture.
 @test "secret-read-guard: allows redirected and wrapped non-dump commands" {
   begin_rows
   local row cmd
@@ -1803,8 +1816,11 @@ envsubst-glued-redirect|envsubst>/tmp/x
 setx-glued-redirect|setx>/tmp/x
 env-assign-glued-redirect-cmd|env FOO=a>b cmd
 env-i-glued-redirect-cmd|env -i>/tmp/x mycmd
+env-dashdash-glued-redirect-cmd|env -->/tmp/x mycmd
+env-procsub-arg|env <(true)
+env-placeholder-cmd|env X=<empty> cmd
 ROWS
-  finish_rows 19
+  finish_rows 22
 }
 
 # backtick_level <k> — the backtick that opens or closes nesting level k: bash
