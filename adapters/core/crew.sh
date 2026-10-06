@@ -4934,10 +4934,8 @@ stall-watch)
   fi
   _frame_classifier
 
-  budget_gate_lib="${BUDGET_GATE_LIB:-@budgetGateLib@}"
-  [ -f "$budget_gate_lib" ] || budget_gate_lib="$(dirname -- "${BASH_SOURCE[0]}")/budget-gate.sh"
   # shellcheck source=/dev/null
-  . "$budget_gate_lib"
+  . "${BUDGET_GATE_LIB:-@budgetGateLib@}"
   budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
   # Decided once: the engine and the pane's model are fixed for the watch.
   budget_on=0

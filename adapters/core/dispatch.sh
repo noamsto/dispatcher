@@ -713,12 +713,8 @@ fi
 . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
 
 # The quota predicates, shared with crew's stall-watch.
-budget_gate_lib="${BUDGET_GATE_LIB:-@budgetGateLib@}"
-if [ ! -f "$budget_gate_lib" ]; then
-  budget_gate_lib="$(dirname -- "${BASH_SOURCE[0]}")/budget-gate.sh"
-fi
 # shellcheck source=/dev/null
-. "$budget_gate_lib"
+. "${BUDGET_GATE_LIB:-@budgetGateLib@}"
 
 # _local_id <model> — true when <model> is a configured localModels id (a pi
 # target). Reads $settings.
