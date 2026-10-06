@@ -50,6 +50,13 @@ a restart cheaper), so the rows do not sum. Row 2 and row 3 overlap most. Ranks
 **Not recommended:** capping gate output on its own (32M/week, 0.5% of the
 fleet).
 
+**The relaunch cost was measured (#755).** Q4's cost note assumed a restart
+rewrites the whole prefix. Measured against a 176k session on sonnet, a
+relaunch reads about 65% of its `-p` prefix (63k of the ~97k floor) from the
+cache, which cuts the cost of a restart to 0.7-1.4M and the break-even to 9-18
+turns at Q4's R = 10k (Q4's assumption: 29). Both #700 and #701 are worth pursuing; see
+[Relaunch cache cost, measured](#relaunch-cache-cost-measured).
+
 **No prototype in this PR.** The top items need harness behavior or
 dispatcher-protocol changes across both adapter copies, and row 4 rewrites
 `WORKER_PROTOCOL.md` in both adapter copies plus the launch carrier in
@@ -343,6 +350,11 @@ could let the static ~85k prefix (base prompt, tools, protocol) be shared
 across sessions in the cache and make restarts and every fresh worker launch
 cheaper. That is not measured.
 
+Measured since: a relaunch rewrites 22k of its 63k `-p` prefix (up to about 56k
+of the real ~97k floor), not all of it, so the cost is 0.7-1.4M and the
+break-even 9-18 turns at R = 10k; see
+[Relaunch cache cost, measured](#relaunch-cache-cost-measured).
+
 **Non-token costs.** The fresh lead loses tacit context (why a fix was chosen)
 and re-reads files. Much of the mechanism exists: `dispatch resume --fresh`
 relaunches with a reorient note built from `SPEC.md`, `PLAN.md`, and git;
@@ -434,6 +446,120 @@ the idle turns cheaper; do not add them.
 85.8% of turns and a third of its cost is waking up to do nothing. A fresh
 dispatcher per batch (up to 498M) and filtering no-action notifications (up to
 412M) attack the same cost from two sides.
+
+## Relaunch cache cost, measured
+
+Issue #755. Q4's cost note priced a relaunch as a full rewrite of the 107-127k
+prefix at the 1-hour write rate, which made #700 and #701 roughly break-even.
+#728 (open as PR #754, haiku, 64k probe) found most of a fresh prefix already
+read from the cache. This section measures it on sonnet, against a worker-scale (176k) session, the
+model claude standard leads run, and puts the measured split back into the Q4 and
+Q6 models.
+
+**Setup.** Claude Code 2.1.289, `claude -p --output-format stream-json
+--verbose`, sonnet, effort medium. The command is a copy of the launch script
+`dispatch` wrote for a live standard lead (`.git/crew/launch/launch.*`), with
+these differences: `-p`, `--max-turns`, a fresh `--session-id`, no `--name`; the
+`--settings` plugin-disable layer (#729) and `WORKER_PROTOCOL.claude.md`, which
+the current `dispatch.sh` launches and the older stamped script lacked;
+`Edit(//nix/store/**)`, `Bash(git push:*)` and `Bash(gh pr:*)` in
+`--disallowedTools`; and a read-only `WORKER_TASK.md` in each scratch worktree
+so a probe could not push or open a PR. Nothing was pushed; the worktrees and
+branches are deleted. Because `-p` omits the interactive-only pieces (hook text,
+connector and skill listings), the probe's first turn is **63.4k tokens against
+the ~97k real lead floor**; the cache split below is therefore measured on the
+`-p` prefix and bounded for the rest (see the model). Per-turn numbers come from
+the `usage` record of each assistant message; every write landed in the 1-hour
+bucket (`ephemeral_5m_input_tokens` was 0 in every call).
+
+**Call count.** 5 `claude -p` calls and 9 API requests in total (1.19 USD
+metered, 0.25 of it the cold first call).
+
+**Step 1: cross-session reuse.** Two fresh sessions in two worktrees, seconds
+apart:
+
+| Session            | First-turn read | First-turn written (1h) | Prefix | Read share |
+| ------------------ | --------------- | ----------------------- | ------ | ---------- |
+| A (cold)           | 0               | 63,199                  | 63,199 | 0%         |
+| B (other worktree) | 41,399          | 21,794                  | 63,193 | 65.5%      |
+
+**Step 2: the relaunch.** A new session in worktree A was driven past 150k (it read the task doc,
+a SPEC and PLAN, `docs/context-budget.md`, `dispatch-resume.sh` and 150 kB of
+`dispatch.sh` in 25 kB chunks; its third request ran at 176.5k context), then
+relaunched in the same worktree with the exact `dispatch resume --fresh`
+claude prompt (task line, push mandate, the fresh reorient note and the protocol
+note), run twice: once as is, once with one extra sentence forcing the reorient
+reads, because the model skipped them the first time:
+
+| Request                                          | Read   | Written (1h) | Context |
+| ------------------------------------------------ | ------ | ------------ | ------- |
+| Long session, request 1                          | 41,399 | 21,954       | 63,353  |
+| Long session, request 2 (12 parallel reads)      | 63,353 | 1,783        | 65,136  |
+| Long session, request 3                          | 65,136 | 111,325      | 176,461 |
+| **Relaunch, first turn** (as is)                 | 41,399 | 22,041       | 63,440  |
+| **Relaunch, first turn** (forced-read variant)   | 41,399 | 22,081       | 63,480  |
+| Relaunch, request 2 (SPEC + PLAN + `git status`) | 63,480 | 4,477        | 67,957  |
+
+The relaunched first turn reads 65.3% of its prefix and rewrites 22.0k, and
+runs at 63.4k against the 176.5k of the session it replaces. The reorient reads
+(a 4.3 kB PLAN, a 6 kB SPEC, `git status`; 10.5 kB of results) cost **4.4k
+tokens**, written once at the 1-hour rate. Findings:
+
+- The same 41.4k is read by a different worktree (B), by a relaunch in the
+  same worktree, and by a relaunch after a 176k session. The rewritten
+  ~22k is the same in all three, so it is **not** cwd-dependent and a relaunch
+  does not escape it. It was not attributed to a prompt section.
+- #728's haiku probe read 49.1k and wrote 14.9k of 64k. At sonnet the split is
+  41.4k and 22.0k of 63.4k: the shared part holds, the rewritten tail is
+  larger. Different model and a smaller protocol file; the difference was not
+  isolated.
+- The Step 1 sessions and the long session warmed the cache for the relaunch, as a live lead's own turns warm it
+  for its relaunch. If the gap between the last old turn and the relaunch
+  exceeded the TTL the read share would be lower; the 1-hour TTL makes that
+  unlikely at a seam.
+
+**Plug into the model.** Prices in read-equivalent tokens (cache read 1,
+1-hour write 20). A relaunch first turn costs `read x 1 + written x 20`, plus
+the reorient note and reads written once. All rows use Q4's default R = 10k for
+the reorient allowance (the measured reorient reads were 4.4k, so this is
+conservative) and the same per-turn saving, 74k at execute (181k old context
+against `F + R` = 107k) and 83k at review (190k):
+
+| Case                                                                 | Relaunch cost | Break-even (later turns) |
+| -------------------------------------------------------------------- | ------------- | ------------------------ |
+| Q4 assumption: full rewrite of `F + R` = 107k                        | 2.1M          | 29                       |
+| Measured `-p` prefix: 41.4k read, 22.0k written, R = 10k written     | 0.68M         | 9                        |
+| Measured, all ~34k of interactive-only pieces rewritten (worst case) | 1.35M         | 18                       |
+
+Break-even is the cost divided by the per-turn saving (0.68M / 74k, 1.35M / 74k,
+2.14M / 74k). Two restarts cost 1.4-2.7M against Q4's median saving of 5.2M per
+run at R = 10k (about 70 turns at 74k): a net gain of 2.5-3.8M per run where the
+rewrite assumption gave +0.9M. Across the 96 runs with both markers, the 884M
+gross saving falls by 130-260M to a net of about 625-755M a week, where the
+rewrite assumption left about 470M. At R = 30k the per-turn saving drops to 54k
+and the measured break-even is 20-33 turns against 47 for the rewrite model; the
+recommendation does not change.
+
+**#701 (dispatcher).** The dispatcher prefix differs (turn 1 is 107k, the
+dispatcher protocol is 48k tokens), and this probe did not measure it. Assuming
+the worker split carries over, a restart costs at most about 1.5M including a
+10k handoff note. At turn 100 the saving is about 97k a turn (212k against about
+115k), so it breaks even within 16 turns of a 100-turn batch. About 35 restarts
+at the 100-turn interval (4,492 turns; approximate, not recomputed) cost about
+50M of the 498M gross saving.
+
+**Recommendation: pursue #700, and #701 after it.** The cache cost is no longer
+the reason to hold either back: a relaunch costs 0.7-1.4M and repays itself
+within 9-18 turns, against 29 in the rewrite model. #700 is the larger and
+better-measured win (a net of about 625-755M a week); the remaining risk is
+behavioural (lost tacit context and re-reads), which this measurement does not
+cover. #701 rests on the assumption above and its handoff note must carry the
+human's in-chat instructions (Q6).
+
+**Not measured here.** Quota weighting of cache reads (these are dollar-rate
+equivalents), the interactive-only part of the prefix (bounded, not measured),
+the origin of the 22k rewritten tail, 5-minute-TTL writes (none occurred), a
+gap longer than the TTL, and the dispatcher prefix.
 
 ## Not measured
 
