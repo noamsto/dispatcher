@@ -1663,7 +1663,9 @@ ROWS
 
 # F79: deny_cmd rows folded from a wrapper with a backticked argument, a
 # wrapper whose option argument is a substitution (#452, #484), and a relative
-# dumper path holding '=' (#683). Stateless: run_guard, no shared fixture.
+# dumper path holding '=' (#683), and a relative dumper path shaped like an
+# append or subscript assignment that bash still runs as a command (#706).
+# Stateless: run_guard, no shared fixture.
 @test "secret-read-guard: denies substituted wrapper args and equals-paths" {
   begin_rows
   local row cmd
@@ -1683,8 +1685,24 @@ rel-dot-eq|./a=b/env
 rel-tilde-eq|~/a=b/env
 rel-mid-eq|a/b=c/env
 rel-digit-eq|1a=b/env
+sub-unclosed|a[/env
+sub-unclosed-long|ab[c/env
+sub-unclosed-printenv|x[/printenv MY_TOKEN
+sub-unclosed-tmux|x[/tmux show-environment
+sub-closed-no-eq|a[1]/env
+plus-mid-eq|a+b=c/env
+sub-unclosed-eq|a[=b/env
+sub-text-before-eq|a[1]x=deploy/env
+sub-plus-plus-eq|a[1]++=deploy/env
+sub-double-close|a[1]]=deploy/env
+sub-nested|a[[]=d]/env
+sub-escaped-close|a[1\]=d]/env
+sub-backtick|a[`x]=d`]/env
+sub-param-exp|a[${x=]=d}]/env
+plus-no-eq|X+/env
+plus-plus-eq|X++=deploy/env
 ROWS
-  finish_rows 12
+  finish_rows 28
 }
 
 @test "secret-read-guard: denies a dump inside three and four levels of escaped backticks" {
@@ -3687,7 +3705,23 @@ big_bash() { printf '%s' "$1" | jq -Rsc '{hook_event_name:"PreToolUse",tool_name
 }
 
 @test "secret-read-guard: a relative assignment ending in /env stays allowed" {
-  allow_cmd 'a=b/env'
+  begin_rows
+  local row cmd
+  while IFS='|' read -r row cmd; do
+    [ -n "$row" ] || continue
+    keep_row "$row" allow_cmd "$cmd"
+  done <<'ROWS'
+plain|a=b/env
+append|X+=deploy/env
+subscript|a[1]=deploy/env
+subscript-append|a[1]+=deploy/env
+subscript-empty|a[]=deploy/env
+underscore-subscript|_[0]=deploy/env
+arith-subscript|a[i+1]=deploy/env
+printenv-secret|a[1]+=deploy/printenv GITHUB_TOKEN
+after-then|then X+=deploy/env
+ROWS
+  finish_rows 9
 }
 
 # bats test_tags=timing
