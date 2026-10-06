@@ -185,10 +185,37 @@ EOF
   cat >"$STUB_DIR/wt" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-# switch <branch> -y --config-set ...
-branch="$2"
-mkdir -p "$TEST_REPO/.worktrees"
-git worktree add -q "$TEST_REPO/.worktrees/$branch" "$branch"
+if [ "$1" = switch ]; then
+  br="" start="" create=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -c)
+      br="$2" create=1
+      shift 2
+      ;;
+    -b)
+      start="$2"
+      shift 2
+      ;;
+    --config-set)
+      shift 2
+      ;;
+    -*) shift ;;
+    *)
+      [ -n "$br" ] || br="$1"
+      shift
+      ;;
+    esac
+  done
+  [ -n "$br" ] || exit 1
+  mkdir -p "$TEST_REPO/.worktrees"
+  if [ -n "$create" ]; then
+    git worktree add -q -b "$br" "$TEST_REPO/.worktrees/$br" "$start"
+  else
+    git worktree add -q "$TEST_REPO/.worktrees/$br" "$br"
+  fi
+fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/wt"
@@ -12319,10 +12346,47 @@ _escalation_seed_spoof() {
   stub_pr_bins tmp-head
   git branch -D tmp-head
   git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
   export PR_HEAD=feat/pr-head
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
   git -C "$TEST_REPO" rev-parse --verify -q refs/remotes/origin/feat/pr-head
+  [ "$(git -C "$TEST_REPO/.worktrees/feat/pr-head" rev-parse HEAD)" = "$PR_HEAD_OID" ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.remote)" = origin ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.merge)" = refs/heads/feat/pr-head ]
+  grep -q "switch -c feat/pr-head -b $PR_HEAD_OID" "$STUB_LOG"
+}
+
+@test "--pr: a ref rewritten right after the fetch cannot replace the fetched PR head (#716)" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  other="$(git -C "$TEST_REPO" -c user.email=test@example.com -c user.name=test commit-tree "HEAD^{tree}" -m other)"
+  stub_git_race_after_fetch refs/remotes/origin/feat/pr-head "$other"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO/.worktrees/feat/pr-head" rev-parse HEAD)" = "$PR_HEAD_OID" ]
+  [ "$(git -C "$TEST_REPO" reflog --format=%H refs/heads/feat/pr-head)" = "$PR_HEAD_OID" ]
+  [[ "$output" != *hard-resetting* ]]
+  grep -q "switch -c feat/pr-head -b $PR_HEAD_OID" "$STUB_LOG"
+}
+
+@test "--pr: a PR head ref deleted right after the fetch still gets its upstream (#716)" {
+  stub_launch_bins
+  stub_pr_bins tmp-head
+  git branch -D tmp-head
+  git push -q origin main:refs/heads/feat/pr-head
+  git update-ref -d refs/remotes/origin/feat/pr-head
+  export PR_HEAD=feat/pr-head
+  stub_git_race_after_fetch -d refs/remotes/origin/feat/pr-head
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TEST_REPO/.worktrees/feat/pr-head" rev-parse HEAD)" = "$PR_HEAD_OID" ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.remote)" = origin ]
+  [ "$(git -C "$TEST_REPO" config branch.feat/pr-head.merge)" = refs/heads/feat/pr-head ]
 }
 
 @test "--pr: a head branch that parses as a fetch option is refused" {

@@ -4289,13 +4289,17 @@ name)
   _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
   ;;
 fetch-name)
-  # A PR head branch is attacker-named; see _fetch_origin_branch.
+  # A PR head branch is attacker-named; see _fetch_origin_branch. Workers can
+  # move refs/remotes/origin/<head> and rewrite remote.*.fetch, so branch from
+  # the fetched oid and write tracking literally rather than resolving either (#716).
   _fetch_origin_branch "$branch" || {
     echo "dispatch: PR head '$branch' is not a plain branch name or could not be fetched from origin" >&2
     exit 1
   }
   neutral_switch=1
-  _wt_neutral "${crew_dir%/crew}" wt switch "$branch" -y --no-hooks
+  _wt_neutral "${crew_dir%/crew}" wt switch -c "$branch" -b "$fetched_oid^{commit}" -y --no-hooks
+  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.remote" origin
+  _wt_git_common "${crew_dir%/crew}" config "branch.$branch.merge" "refs/heads/$branch"
   ;;
 pr-ref)
   neutral_switch=1
