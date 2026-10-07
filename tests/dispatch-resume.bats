@@ -692,7 +692,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _ensure_roster_render _recorded_pid_live _pid_alive _file_mtime_s _pid_recycled _ps_elapsed_s; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -2307,6 +2307,44 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
   run ! grep -q -- '--no-budget' "$STUB_LOG"
+}
+
+@test "roster-render: resume hands over its own TMUX_PANE, never dispatcher_pane" {
+  setup_worker_wt
+  sed -i 's/^dispatcher_pane: .*/dispatcher_pane: %99/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  TMUX_PANE=%5 run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5( --no-open)? --detach$'
+  run ! grep -E 'roster-render.*%99' "$STUB_LOG"
+}
+
+# A live registered dispatcher owns the renderer's pane; a human resuming from a
+# worker's own pane must not retarget it there.
+_roster_live_dispatcher() {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '%s\n' "$$" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%3\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  cd "$WT"
+}
+
+@test "roster-render: resume with a live dispatcher drops a TMUX_PANE that is not its pane" {
+  _roster_live_dispatcher
+  TMUX_PANE=%5 run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reattached"* ]]
+  wait_for_log 'roster-render --crew c1( --no-open)? --detach$'
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
+}
+
+@test "roster-render: resume from the live dispatcher's own pane hands it over" {
+  _roster_live_dispatcher
+  TMUX_PANE=%3 run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %3( --no-open)? --detach$'
 }
 
 # _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo

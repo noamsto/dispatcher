@@ -5,7 +5,7 @@ setup() {
   CONFIG="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
   DEFAULTS="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
   unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE
-  unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS
+  unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS DISPATCH_ROSTER_AUTO_OPEN
   export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
   USER_FILE="$XDG_CONFIG_HOME/dispatcher/settings.json"
   LOCKED_FILE="$BATS_TEST_TMPDIR/locked.json"
@@ -368,7 +368,7 @@ EOF
   chmod +x "$shim/jq"
   PATH="$shim:$PATH" run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults shapes"* ]]
+  [[ "$stderr" == *"(base layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults / rosterDiagram shapes"* ]]
 }
 
 @test "a whitespace-only DISPATCH_ENGINES contributes no engines layer" {
@@ -399,6 +399,48 @@ EOF
   DISPATCH_PROFILE=work run --separate-stderr "$CONFIG" --show-origin
   [ "$status" -eq 0 ]
   jq -e '.profile == {"value":"work","origin":"env"}' <<<"$output"
+}
+
+@test "rosterDiagram.autoOpen defaults to true" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.rosterDiagram.autoOpen == true' <<<"$output"
+}
+
+@test "DISPATCH_ROSTER_AUTO_OPEN false-like values turn rosterDiagram.autoOpen off, any other non-empty value on" {
+  local v
+  for v in 0 false no off OFF False; do
+    DISPATCH_ROSTER_AUTO_OPEN="$v" run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    jq -e '.rosterDiagram.autoOpen == false' <<<"$output"
+  done
+
+  user_settings '{"rosterDiagram":{"autoOpen":false}}'
+  for v in 1 yes on anything; do
+    DISPATCH_ROSTER_AUTO_OPEN="$v" run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    jq -e '.rosterDiagram.autoOpen == true' <<<"$output"
+  done
+
+  DISPATCH_ROSTER_AUTO_OPEN= run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.rosterDiagram.autoOpen == false' <<<"$output"
+
+  DISPATCH_ROSTER_AUTO_OPEN=off run --separate-stderr "$CONFIG" --show-origin
+  [ "$status" -eq 0 ]
+  jq -e '.rosterDiagram.autoOpen == {"value":false,"origin":"env"}' <<<"$output"
+}
+
+@test "a malformed rosterDiagram is refused, naming the layer and the path" {
+  user_settings '{"rosterDiagram":"x"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): rosterDiagram must be an object"* ]]
+
+  user_settings '{"rosterDiagram":{"autoOpen":"no"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$USER_FILE (user layer): rosterDiagram.autoOpen must be a boolean"* ]]
 }
 
 @test "DISPATCH_REPO_TRACKERS and DISPATCH_ORG_TRACKERS parse whitespace-separated key=value pairs" {

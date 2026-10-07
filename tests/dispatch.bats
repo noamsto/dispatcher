@@ -4812,6 +4812,79 @@ EOF
   wait_for_log 'stall-watch role:feat/9-x:reviewer --pane %6 --engine claude --no-budget$'
 }
 
+@test "roster-render: TMUX_PANE is handed to crew as --pane, detached" {
+  stub_launch_bins
+  _grid_tmux_stub
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5 --detach$'
+}
+
+@test "roster-render: no TMUX_PANE passes no --pane" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --detach$'
+}
+
+# _roster_live_dispatcher — crew c1 registered with a live pid (this shell) on pane %3.
+_roster_live_dispatcher() {
+  stub_launch_bins
+  _grid_tmux_stub
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '%s\n' "$$" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%3\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+}
+
+@test "roster-render: dispatch with a live dispatcher drops a TMUX_PANE that is not its pane" {
+  _roster_live_dispatcher
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --detach$'
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
+}
+
+@test "roster-render: dispatch from the live dispatcher's own pane hands it over" {
+  _roster_live_dispatcher
+  TMUX_PANE=%3 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %3 --detach$'
+}
+
+@test "roster-render: DISPATCH_ROSTER_AUTO_OPEN=0 adds --no-open" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_ROSTER_AUTO_OPEN=0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5 --no-open --detach$'
+}
+
+@test "roster-render: a --spawn-role does not start the renderer" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/9-x:reviewer'
+  run ! grep -q 'roster-render' "$STUB_LOG"
+}
+
+@test "base: a --base dispatch writes base on its dispatch event" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .base' "$log"
+  [ "$output" = "feat/parent" ]
+}
+
+@test "base: a plain dispatch's event has no base key" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | has("base")' "$log"
+  [ "$output" = "false" ]
+}
+
 @test "session: a minted id is epoch-pid shaped" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch \

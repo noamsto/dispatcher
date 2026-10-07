@@ -397,6 +397,41 @@ _ps_elapsed_s() {
   printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
+# _pid_alive, _file_mtime_s, _pid_recycled and _recorded_pid_live: duplicated
+# from dispatch-resume.sh (standalone build), parity-tested. See that file for
+# their contracts.
+_pid_alive() {
+  case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
+  local kmsg
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in
+  *"not permitted"* | *"not allowed"*) return 0 ;; # EPERM: the process exists
+  esac
+  ps -p "$1" -o pid= >/dev/null 2>&1
+}
+
+_file_mtime_s() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+_pid_recycled() {
+  local pid="$1" file="$2" elapsed file_s
+  [ -f "$file" ] || return 1
+  elapsed="$(_ps_elapsed_s "$pid")" || return 1
+  file_s="$(_file_mtime_s "$file")" || return 1
+  case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
+  case "$file_s" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
+}
+
+# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
+# <pidfile> records: live and not a later-recycled pid.
+_recorded_pid_live() {
+  _pid_alive "$1" || return 1
+  _pid_recycled "$1" "$2" && return 1
+  return 0
+}
+
 # Branch names in evidence text come from the remote or the bus: strip control
 # characters and cap the length before they reach a terminal.
 _evidence_text() { printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-120; }
@@ -1303,6 +1338,21 @@ _pane_is_ancestor() {
   return 1
 }
 
+# _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
+# renderer, or retarget a running one. crew accepts the pane only when its shell
+# is an ancestor of the crew process, so the call is synchronous (--detach
+# returns at once): a nohup'd child can be reparented after this script exits,
+# which would defeat that check. `if . == false` because `// true` would turn
+# an explicit false into true.
+_ensure_roster_render() {
+  local flags=()
+  [ -z "$2" ] || flags+=(--pane "$2")
+  if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
+    flags+=(--no-open)
+  fi
+  CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
+}
+
 # split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
 # role pane, decorate it, and echo its pane id. `tmux new-window -e` scopes to
 # that window's first pane only, so every pane split off it must repeat the lead's
@@ -1499,7 +1549,7 @@ _settings_env_names() {
   printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
     DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
     DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
-    PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+    DISPATCH_ROSTER_AUTO_OPEN PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
 }
 
 # _settings_env_json — those vars as one JSON object, null when unset, except
@@ -4568,11 +4618,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
+  --arg base "$base_ref" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
+   + if $base != "" then {base:$base} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
@@ -5076,3 +5128,13 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
+# A human dispatching from an exited worker's pane (its env carries CREW_ID)
+# must not retarget the renderer there while the crew's dispatcher is live;
+# only the registered dispatcher's pane may move it.
+rr_pane="${TMUX_PANE:-}"
+rr_pid="$(cat "$crew_dir/crews/$crew_id/pid" 2>/dev/null || true)"
+if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
+  [ "$rr_pane" != "$(cat "$crew_dir/crews/$crew_id/pane" 2>/dev/null || true)" ]; then
+  rr_pane=""
+fi
+_ensure_roster_render "$crew_id" "$rr_pane"

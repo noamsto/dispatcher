@@ -17,7 +17,9 @@
 #            DISPATCH_OPENROUTER_KEY_FILE, DISPATCH_PROFILE,
 #            DISPATCH_REPO_TRACKERS/DISPATCH_ORG_TRACKERS (whitespace-separated
 #            key=value pairs, split at the first "="; a repeated key is
-#            last-wins); an empty var contributes nothing.
+#            last-wins), DISPATCH_ROSTER_AUTO_OPEN (0/false/no/off, any case,
+#            is false; any other value is true); an empty var contributes
+#            nothing.
 #
 # Security: grantRoots and openrouter.keyFile widen what a worker can read, so
 # they are honoured only from the locked layer or the environment — a copy in
@@ -73,7 +75,7 @@ check_no_blank_engines() {
 
 # check_model_shapes <json> <file> <layer> — die, naming <file> and <layer>
 # and the JSON path, when the layer's modelMap / escalation / paceDowngrades /
-# burnClasses / orchestratorDefaults holds a wrong-shaped leaf. Only shapes
+# burnClasses / orchestratorDefaults / rosterDiagram holds a wrong-shaped leaf. Only shapes
 # present in the layer are checked, so a layer that refines a single row stays
 # valid and the merge of well-shaped layers is well-shaped.
 check_model_shapes() {
@@ -164,14 +166,20 @@ check_model_shapes() {
          (if (.value|has("effort")) and ((.value.effort|type) != "string") then err("orchestratorDefaults.\(.key).effort"; "a string") else empty end)
         end
       ) end;
+    def rosterdiagram($d):
+      if ($d|type) != "object" then err("rosterDiagram"; "an object")
+      else
+       (if ($d|has("autoOpen")) and (($d.autoOpen|type) != "boolean") then err("rosterDiagram.autoOpen"; "a boolean") else empty end)
+      end;
     . as $r
     | (if ($r|has("modelMap")) then modelmap($r.modelMap) else empty end),
       (if ($r|has("escalation")) then escalation($r.escalation) else empty end),
       (if ($r|has("paceDowngrades")) then pace($r.paceDowngrades) else empty end),
       (if ($r|has("burnClasses")) then burnclasses($r.burnClasses) else empty end),
-      (if ($r|has("orchestratorDefaults")) then orchestratordefaults($r.orchestratorDefaults) else empty end)
+      (if ($r|has("orchestratorDefaults")) then orchestratordefaults($r.orchestratorDefaults) else empty end),
+      (if ($r|has("rosterDiagram")) then rosterdiagram($r.rosterDiagram) else empty end)
   ' <<<"$1") ||
-    die "$2 ($3 layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults shapes"
+    die "$2 ($3 layer): could not validate the modelMap / escalation / paceDowngrades / burnClasses / orchestratorDefaults / rosterDiagram shapes"
   while IFS=$'\t' read -r path what; do
     [ -n "$path" ] || continue
     die "$2 ($3 layer): $path must be $what"
@@ -246,7 +254,8 @@ env_layer=$(jq -cn '
   | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)
   | from_env("DISPATCH_PROFILE"; ["profile"]; .)
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
-  | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)')
+  | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)
+  | from_env("DISPATCH_ROSTER_AUTO_OPEN"; ["rosterDiagram", "autoOpen"]; test("^(0|false|no|off)$"; "i") | not)')
 
 printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_origin "$show_origin" "$jq_defs"'
   def string_array: type == "array" and all(.[]; type == "string");
