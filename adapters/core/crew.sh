@@ -552,14 +552,93 @@ _frame_classifier() {
     colored_row=$(printf '%s\n' "$colored_row" | head -1)
     printf '%s\n' "$colored_row" | grep -qF "$_rw_ghost_marker"
   }
+
+  # _pi_live_turn <text> — a live pi turn replaces the editor's top rule
+  # with a spinner-and-status label row (real capture, pi 0.87.1, both
+  # during text generation and a bash tool call: `── ⠼ Working ──…`),
+  # leaving the box beneath it looking exactly like an idle empty box. A
+  # genuinely idle pi rule is a pure run of `─` (real capture); any
+  # rule-shaped line (starts with `──`) that is NOT entirely dashes is
+  # treated as a live-turn label, generalizing beyond the one literal
+  # status text captured above. Checked anywhere in the last 30
+  # non-empty lines, mirroring _claude_idle_box's position-flexible
+  # _meter_line/_has_subrow/"esc to interrupt" checks. Uses index()/gsub()
+  # on the bare glyph, never a quantifier directly on it, so this stays
+  # correct under LC_ALL=C (see _box_rows's own comment on the same trap).
+  # The editor's scroll indicators (`↑ N more` / `↓ N more`, real capture, pi
+  # 0.99.1, drawn once a paste is taller than the editor) are rule-borne text but
+  # not a live-turn label. pi-vim appends its mode label (` INSERT`, ` NORMAL`,
+  # ` EX …`, ` VISUAL`, ` V-LINE`, plus a pending-command tail such as
+  # ` NORMAL 3dw_`; real capture, pi 1.0.0 + pi-vim 0.14.2) to the LOWER rule, so
+  # a vim-mode pane is idle despite the rule text. Strip that trailing label
+  # before deciding. Any other rule text (e.g. `── ⠼ Working ──`) still vetoes.
+  _pi_live_turn() {
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 | awk '
+      {
+        if (index($0, "─") != 1) next
+        line = $0
+        gsub(/─/, "", line)
+        gsub(/↑ [0-9]+ more/, "", line)
+        gsub(/↓ [0-9]+ more/, "", line)
+        sub(/[[:space:]]+(INSERT|NORMAL|EX|VISUAL|V-LINE)([[:space:]].*)?[[:space:]]*$/, "", line)
+        if (line !~ /^[[:space:]]*$/) { found = 1; exit }
+      }
+      END { exit (found ? 0 : 1) }'
+  }
+
+  # _pi_working_row <text> — a pi-vim working-indicator row: a braille glyph
+  # carrying the `Working` status text, drawn as its own row above the editor box
+  # instead of on the top rule (real capture, pi 1.0.0 + pi-vim 0.14.2:
+  # ` ⠸ Working`). The braille range U+2800–U+28FF is matched by its lead byte
+  # and two continuation ranges, never a quantifier directly on the glyph, so
+  # this stays correct under LC_ALL=C.
+  _pi_working_row() {
+    printf '%s\n' "$1" | LC_ALL=C grep -qE $'^[[:space:]]*\xe2[\xa0-\xa3][\x80-\xbf].*Working'
+  }
+
+  # _pi_working_label <text> — POSITIVE live-turn evidence: a rule carrying the
+  # `Working` status text or a braille spinner glyph (real capture, pi 0.87.1),
+  # or a pi-vim working row adjacent to the editor box (real capture, pi 1.0.0).
+  # `_pi_live_turn` is the wider fail-closed veto ("any rule text means not
+  # idle"), which is right before a paste but is not proof that a turn started.
+  # The row check is positional (rows `_box_rows` prints above the upper rule) so
+  # a stale transcript row cannot dequeue a still-held assignment; when there is
+  # no box, only the rule-borne evidence counts.
+  _pi_working_label() {
+    local out above
+    printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 |
+      LC_ALL=C grep -qE $'^\xe2\x94\x80.*(Working|\xe2[\xa0-\xa3][\x80-\xbf])' && return 0
+    out=$(_box_rows "$1" '.*') || return 1
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    _pi_working_row "$above"
+  }
+
+  # _pi_idle_box <text> — positive idle shape of a pi pane, from a real capture
+  # (pi 0.87.1): an editor bounded by two `─` rules, blank or holding text, with
+  # the cwd and stats rows after the lower rule. A bare shell prompt or a boot
+  # frame has no such box. A vim-mode rule suffix is not live-turn evidence
+  # (`_pi_live_turn`); a pi-vim working row among the box's above-rule rows is a
+  # live turn and vetoes (real capture, pi 1.0.0 + pi-vim 0.14.2).
+  _pi_idle_box() {
+    local out row above
+    _pi_live_turn "$1" && return 1
+    out=$(_box_rows "$1" '.*') || return 1
+    row=$(printf '%s\n' "$out" | head -1)
+    printf '%s\n' "$row" | grep -qE "$re_option" && return 1
+    above=$(printf '%s\n' "$out" | tail -n +2)
+    _pi_working_row "$above" && return 1
+    return 0
+  }
 }
 
-# _pane_idle_reason <plain> <colored> — 0 (prints nothing) iff a claude frame
+# _pane_idle_reason <plain> <colored> [allow_bg] — 0 (prints nothing) iff a claude frame
 # is provably idle; else prints a short keep reason and returns 1. Needs
 # _frame_classifier already called. On top of --role-watch's
 # _claude_idle_box, idle needs a finished turn's `· done HH:MM` marker just
 # above the box, so a freshly booted pane or an unrecognised frame reads busy.
 # The predicates read $engine, unset outside stall-watch, hence the local.
+# allow_bg=1 skips the background shell/monitor veto, for callers that want an
+# idle input box regardless of detached work.
 _pane_idle_reason() {
   local engine=claude tail_n above
   if _is_permission_prompt "$1" || _is_prompt "$1" || _is_quota_session_limit "$1"; then
@@ -567,7 +646,7 @@ _pane_idle_reason() {
     return 1
   fi
   tail_n=$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -30 || true)
-  if grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)' <<<"$tail_n"; then
+  if [ "${3:-0}" != 1 ] && grep -qE '(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)' <<<"$tail_n"; then
     printf '%s' "background shell or monitor still running"
     return 1
   fi
@@ -811,6 +890,38 @@ _await_record() {
     mv "$tmp" "$st" 2>/dev/null
   fi
   rm -f "$tmp"
+}
+
+# _unread_scan <crew> <branch> <me> <from_id> <t0> <mode> — mode `oldest` prints
+# "<ts-ms> role|dispatcher" for the oldest role:<branch>:* or dispatcher:<crew>
+# msg to this lead that is past the delivered mark; a role msg also drops out
+# once answered by a later msg from the lead to that role (a dispatcher
+# directive clears only on delivery); empty when none. Mode `dispatcher`
+# considers only the undelivered dispatcher:<crew> msgs and prints
+# "<oldest-ts> <newest-ts>". A sessioned watchdog matches its session id only,
+# which scopes it to this run; a branch-keyed one has no marks to read and
+# returns nothing. A msg scrolled out of the 2000-line tail reads as gone.
+_unread_scan() {
+  local crew="$1" branch="$2" me="$3" from_id="$4" t0="$5" mode="$6"
+  # A branch-keyed watchdog cannot name the lead's session, so it cannot read
+  # that session's delivered marks; stay silent rather than misreport.
+  [ "$from_id" != "$me" ] || return 0
+  [ -f "$log" ] || return 0
+  tail -n 2000 "$log" 2>/dev/null | jq -Rnr --arg c "$crew" --arg b "role:$branch:" \
+    --arg d "dispatcher:$crew" --arg me "$me" --arg f "$from_id" --argjson t0 "$t0" \
+    --arg mode "$mode" --argjson marks "$(_await_marks "$crew" "$from_id")" '
+      def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
+                    else $x == $f end;
+      [inputs | fromjson? | select(.crew_id == $c and .kind == "msg" and (.ts >= $t0 or $f != $me))] as $m
+      | [$m[] | select(lead(.from))] as $sent
+      | [$m[] | select(((.from | strings | startswith($b)) or .from == $d) and lead(.to) and .ts > ($marks[.from] // 0))
+         | . as $r
+         | select($r.from == $d or (any($sent[]; .to == $r.from and .ts > $r.ts) | not))] as $u
+      | if $mode == "dispatcher" then
+          [$u[] | select(.from == $d)] | if length == 0 then empty else "\(min_by(.ts).ts) \(max_by(.ts).ts)" end
+        else
+          ($u | min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"
+        end' 2>/dev/null || true
 }
 
 # _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
@@ -5311,30 +5422,7 @@ BUSLINE
     printf '%s%s' "${body:0:$max}" "$suffix"
   }
 
-  # _unread_oldest — "<ts-ms> role|dispatcher" for the oldest role:<branch>:* or
-  # dispatcher:<crew> msg to this lead that is past the delivered mark; a role msg
-  # also drops out once answered by a later msg from the lead to that role (a
-  # dispatcher directive clears only on delivery); empty when none. A sessioned
-  # watchdog matches its session id only, which scopes it to this run; a
-  # branch-keyed one has no marks to read and returns nothing. A msg scrolled
-  # out of the 2000-line tail reads as gone.
-  _unread_oldest() {
-    # A branch-keyed watchdog cannot name the lead's session, so it cannot read
-    # that session's delivered marks; stay silent rather than misreport.
-    [ "$from_id" != "$me" ] || return 0
-    [ -f "$log" ] || return 0
-    tail -n 2000 "$log" 2>/dev/null | jq -Rnr --arg c "$crew" --arg b "role:$branch:" \
-      --arg d "dispatcher:$crew" --arg me "$me" --arg f "$from_id" --argjson t0 "$run_start_ms" \
-      --argjson marks "$(_await_marks "$crew" "$from_id")" '
-        def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
-                      else $x == $f end;
-        [inputs | fromjson? | select(.crew_id == $c and .kind == "msg" and (.ts >= $t0 or $f != $me))] as $m
-        | [$m[] | select(lead(.from))] as $sent
-        | [$m[] | select(((.from | strings | startswith($b)) or .from == $d) and lead(.to) and .ts > ($marks[.from] // 0))
-           | . as $r
-           | select($r.from == $d or (any($sent[]; .to == $r.from and .ts > $r.ts) | not))]
-        | (min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"' 2>/dev/null || true
-  }
+  _unread_oldest() { _unread_scan "$crew" "$branch" "$me" "$from_id" "$run_start_ms" oldest; }
 
   # _finished_release — the worker posted done/failed: wait out --release, then
   # release its window and exit. Returns only when the worker has re-opened the

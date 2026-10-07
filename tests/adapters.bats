@@ -96,7 +96,7 @@ teardown() {
   # multi-line ones are 2-space indented and end at the first `  }`.
   crew="$ROOT/adapters/core/crew.sh"
   disp="$ROOT/adapters/core/dispatch.sh"
-  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt _is_quota_cursor_limit _box_rows _claude_idle_box; do
+  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt _is_quota_cursor_limit _box_rows _claude_idle_box _pi_live_turn _pi_working_row _pi_working_label _pi_idle_box; do
     canonical="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$crew")"
     [ -n "$canonical" ]
     found="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$disp")"
