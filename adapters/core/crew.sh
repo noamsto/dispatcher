@@ -1858,8 +1858,8 @@ nudge)
   # refused before typing, 3 typed but not accepted.
   # --wait [SECONDS] (default 1800) loops _nudge_pane while the lead is on a
   # live turn, one waiter per lead session (a second call joins and reports the
-  # first's outcome); any other refusal is immediate, and a lead that reads the
-  # msg meanwhile ends the wait untyped (exit 0).
+  # first's outcome only when it covers the caller's msg); any other refusal
+  # is immediate, and a lead that reads the msg meanwhile ends the wait untyped (exit 0).
   _nudge_fail() {
     echo "crew: nudge: $*" >&2
     exit 1
@@ -2001,8 +2001,8 @@ nudge)
   done
   trap '_lock_release "$nudge_ld"' EXIT
   if [ "$nudge_joining" = 1 ]; then
-    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson t "$nudge_start_ms" '
-      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge_wait" and .state == "resolved" and .to == $to and .ts >= $t)] | last // empty')
+    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson t "$nudge_start_ms" --argjson m "$nudge_ts" '
+      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge_wait" and .state == "resolved" and .to == $to and .ts >= $t and (.msg_ts // 0) >= $m)] | last // empty')
     if [ -n "$nudge_prev" ]; then
       nudge_rc=$(printf '%s' "$nudge_prev" | jq -r .rc)
       nudge_res=$(printf '%s' "$nudge_prev" | jq -r '"\(.result): \(.detail)"')

@@ -11000,13 +11000,46 @@ EOF
     sleep 0.1
   done
   grep -q 'nudge joining' "$d/b"
-  cp "$(fx_done_idle)" "$STUB_DIR/frames/%9"
+  cp "$(fx_done_idle)" "$STUB_DIR/frames/%9.tmp"
+  mv "$STUB_DIR/frames/%9.tmp" "$STUB_DIR/frames/%9"
   wait "$pa" || true
   wait "$pb" || true
   [ "$(nudge_keys | grep -c -- '-t %9 -l')" -eq 1 ]
   [ "$(nudge_rows | wc -l)" -eq 1 ]
   grep -q 'nudge unconfirmed' "$d/a"
   grep -q 'nudge joined' "$d/b"
+}
+
+@test "nudge: --wait a joiner for a newer msg does not take an older msg's outcome" {
+  _nudge_setup
+  _nudge_directive
+  unset CREW_CLOCK
+  export CREW_NUDGE_WAIT_INTERVAL=0.2
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_meter 2s 1.2k)"
+  d="$BATS_TEST_TMPDIR/joinold"
+  mkdir -p "$d"
+  sid='worker:feat/x#s1-1'
+  key="$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$sid" | cksum | cut -d' ' -f1)"
+  sleep 60 3>&- &
+  hp=$!
+  mkdir -p "$ndir/nudge-wait/$key.d"
+  echo "$hp" >"$ndir/nudge-wait/$key.d/pid"
+  CREW_ID=c1 run_crew nudge nova --wait 30 >"$d/b" 2>&1 3>&- &
+  pb=$!
+  for _ in $(seq 100); do
+    grep -q 'nudge joining' "$d/b" && break
+    sleep 0.1
+  done
+  grep -q 'nudge joining' "$d/b"
+  jq -nc --argjson ts "$((($(date +%s) + 60) * 1000))" '{ts:$ts, crew_id:"c1", kind:"nudge_wait",
+    from:"dispatcher:c1", to:"worker:feat/x#s1-1", branch:"feat/x", pane:"%9", msg_ts:1,
+    state:"resolved", result:"read", rc:0, detail:"older msg"}' >>"$ndir/events.jsonl"
+  kill "$hp"
+  wait "$hp" 2>/dev/null || true
+  wait "$pb" || true
+  run ! grep -q 'nudge joined' "$d/b"
+  grep -q 'nudge accepted' "$d/b"
+  [ "$(nudge_keys | grep -c -- '-t %9 -l')" -eq 1 ]
 }
 
 @test "nudge: --wait parsing takes only an all-digit SECONDS" {
