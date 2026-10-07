@@ -45,7 +45,8 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 . "$grant_check_lib"
 
 # Worker-only plugin disablement is shared with dispatch.  It is a separate
-# --settings layer, preserving the Nix wrapper's settings overlay.
+# --settings layer; the Nix wrapper merges it into its overlay (Claude itself
+# keeps only the last --settings).
 claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
 # replaceStrings rewrites the token on both sides of an equality check, so a
 # string compare against the placeholder always matches after bake.

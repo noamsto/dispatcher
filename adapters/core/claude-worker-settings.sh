@@ -2,8 +2,9 @@
 #
 # Plugins that are installed for interactive Claude sessions but have no role in
 # dispatcher workers.  Keep this list separate from the Nix settings overlay:
-# `--settings` layers merge, so the worker-only override leaves hooks and the
-# centrally managed plugin configuration intact.
+# Claude keeps only the last `--settings`; the overlay survives only because the
+# Nix wrapper merges caller layers into it.  A bare `claude` would replace the
+# user's settings with this layer.
 readonly CLAUDE_WORKER_DISABLED_PLUGINS=(
   'superpowers@superpowers-dev'
   'agent-smith@agent-smith'
