@@ -5,7 +5,7 @@ setup() {
   run_resume() { bash -euo pipefail "$RESUME" "$@"; }
   setup_repo
   export HOME="$TEST_REPO"
-  unset DISPATCH_PROFILE CREW_ID TMUX_PANE CLAUDE_CONFIG_DIR
+  unset DISPATCH_PROFILE CREW_ID TMUX_PANE CLAUDE_CONFIG_DIR PI_CODING_AGENT_DIR
   stub_tmux_no_pane
   stub_bin crew
   # engine-cmd needs real matching (mirrors crew.sh's own _is_engine_cmd,
