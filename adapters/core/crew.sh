@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# File-based coordination bus: id | identity | status | msg | watch | roster | inbox | stall-watch | pr-watch | log
+# File-based coordination bus: id | identity | status | msg | watch | roster | roster-render | inbox | stall-watch | pr-watch | log
 # A real CLI on PATH (not a fish fn) so BOTH the dispatcher (fish) and workers
 # (their bash tool) can call it. Pure jq + append; the log is the state. The
 # shebang + `set -euo pipefail` are prepended by writeShellApplication, so this
@@ -1488,6 +1488,181 @@ _hold_render() {
   printf 'id\tengine\twindow\tresets_at\tref\tbranch\ttitle\n'
   jq -r '.[] | [.id, .wait.engine, .wait.window, (.wait.resets_at | tostring),
                 .task.ref, .task.branch, .task.title] | @tsv'
+}
+
+# _rr_role_panes <crew> — "branch\trole\tstate" per live role pane of this
+# crew, sorted. Keyed on the dispatcher-set window stamps, never on discovery.
+_rr_role_panes() {
+  { tmux list-panes -a -F $'#{@crew_dir}\t#{@crew_id}\t#{@crew_branch}\t#{@crew_role}\t#{@crew_state}\t#{@crew_exited}' 2>/dev/null || true; } |
+    awk -F'\t' -v dir="$dir" -v crew="$1" \
+      '$1 == dir && $2 == crew && $3 != "" && $4 != "" && $4 != "lead" && $6 == "" { print $3 "\t" $4 "\t" $5 }' |
+    sort
+}
+
+# _rr_model <crew> <role_rows> — the renderer's input, {rows, holds, roles}.
+# Every fallible step returns before the caller writes anything: a failed
+# model must never replace a good diagram.
+_rr_model() {
+  local crew="$1" rows pending holds ids='{}' roles='[]' br role st engine f id
+  [ -f "$log" ] || {
+    printf '{"rows":[],"holds":[],"roles":[]}'
+    return 0
+  }
+  rows=$(bash -euo pipefail "${_rr_self:-$0}" roster "$crew") || return 1
+  # `roster` folds status rows only, so a launched session reads as nothing (or
+  # as its previous session's row) until it posts: it is `dispatched` until then.
+  pending=$(jq -c -s --arg crew "$crew" '
+      map(select(.crew_id == $crew)) as $ev
+      | [$ev[] | select(.kind == "status" and (.from | type) == "string")] as $st
+      | [$ev[] | select(.kind == "dispatch" and (.branch | type) == "string")]
+      | group_by(.branch)
+      | map(max_by(.ts) as $d | $d.branch as $b
+          | ([$ev[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .ts] | max) as $launch
+          | ([$st[] | select(.from == "worker:" + $b or (.from | startswith("worker:" + $b + "#"))) | .ts] | max) as $last
+          | {branch: $b, ts: $launch, base: ($d.base // null), title: ($d.title // null),
+             tier: ($d.tier // null), engine: ($d.engine // null), model: ($d.model // null),
+             pending: ($last == null or $launch > $last)})' "$log") || return 1
+  while IFS= read -r br; do
+    [ -n "$br" ] || continue
+    id=$(_identity_recorded "$br")
+    [ -n "$id" ] || id=$(_identity "$br")
+    ids=$(printf '%s' "$ids" | jq -c --arg k "$br" --argjson v "$id" '. + {($k): $v}') || return 1
+  done <<EOF
+$(printf '%s' "$pending" | jq -r '.[] | select(.pending) | .branch')
+EOF
+  holds=$(_hold_outstanding "$crew") || return 1
+  # roles.json is worker-writable: a symlink could aim it at any JSON the user
+  # can read, so only a regular file is read and only a known engine name kept.
+  while IFS=$'\t' read -r br role st; do
+    [[ $role =~ ^[A-Za-z0-9._-]{1,32}$ ]] || continue
+    engine=""
+    f="$dir/artifacts/$br/roles.json"
+    if [ -f "$f" ] && [ ! -L "$f" ]; then
+      engine=$(jq -r --arg r "$role" '.[$r].agent // empty' "$f" 2>/dev/null || true)
+    fi
+    case "$engine" in claude | codex | cursor | pi) ;; *) engine="?" ;; esac
+    roles=$(printf '%s' "$roles" | jq -c --arg b "$br" --arg r "$role" --arg s "$st" --arg e "$engine" \
+      '. + [{branch: $b, role: $r, state: $s, engine: $e}]') || return 1
+  done <<EOF
+$2
+EOF
+  printf '%s\n%s\n%s\n%s\n%s\n' "${rows:-[]}" "$pending" "$ids" "$holds" "$roles" | jq -c -n '
+      [inputs] as [$r, $p, $ids, $holds, $roles]
+      | ($p | map({key: .branch, value: .}) | from_entries) as $pm
+      | {rows: ([$r[] | select($pm[.branch].pending | not) | . + {base: $pm[.branch].base}]
+                + [$p[] | select(.pending)
+                   | {branch, ts, base, title, tier, engine, model, state: "dispatched",
+                      detail: null, source: null, sessions: [], pr_url: null} + $ids[.branch]]
+                | sort_by(.branch)),
+         holds: $holds, roles: $roles}'
+}
+
+# _rr_d2 — model on stdin -> D2 text. Every bus-, record- or tmux-sourced string
+# reaches the output only inside a quoted label (q); keys are generated and the
+# only bare value, the stroke color, must be a palette entry.
+_rr_d2() {
+  jq -r --argjson palette "$(printf '%s\n' "${_colors[@]}" | jq -R . | jq -sc .)" '
+    def cap($n): (if type == "string" then . elif . == null then "" else tojson end) | .[0:$n];
+    def orq: if . == "" then "?" else . end;
+    def q: gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; "")
+      | gsub("\\\\"; "\\\\") | gsub("\""; "\\\"") | gsub("\\$"; "\\$") | gsub("\n"; "\\n")
+      | "\"" + . + "\"";
+    def hhmm: if type == "number" then . / 1000 | floor | strflocaltime("%H:%M") else "?" end;
+    def loop: test("(^|[^A-Za-z0-9])r[0-9]+($|[^A-Za-z0-9])|revision [0-9]+|(^|[^A-Za-z])fix($|[^A-Za-z])|re-review");
+    def among($s): . as $x | any($s[]; . == $x);
+    .roles as $roles
+    | .rows as $rows
+    | def cnt($s): [$rows[] | select(.state | among($s))] | length;
+    ($rows | to_entries | map(.value + {key: "w\(.key + 1)"})) as $w
+    | cnt(["failed", "exited"]) as $f
+    | "title: \"Crew roster\" {near: top-center}",
+      "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
+      "dispatcher: \"dispatcher\" {style.bold: true}",
+      ($w[] | .key as $k
+        | ([(.name | cap(60) | orq), (.title | cap(80) | orq),
+            ([.tier, .engine, .model] | map(cap(60) | orq) | join("·")),
+            ((.state | cap(32) | orq)
+             + (if .source == "watchdog" then " (watchdog)" else "" end)
+             + (.detail | cap(120) | if . == "" then "" else " · " + . + (if loop then "↻" else "" end) end)
+             + " · since " + (.ts | hhmm)
+             + (.sessions | if length > 1 then " · \(length) sessions" else "" end))]
+           | join("\n") | q) as $label
+        | "\($k): \($label) {",
+          "  style: {\(if .color | among($palette) then "stroke: \(.color); " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
+          (if .state | among(["working", "blocked", "dispatched"]) then
+             .branch as $b
+             | [$roles[] | select(.branch == $b)] | sort_by(.role) | to_entries[]
+             | "  r\(.key + 1): \(.value | .role + "\n" + .engine + (if .state != "" then " · " + (.state | cap(32)) else "" end) | q)"
+           else empty end),
+          "}",
+          "dispatcher -> \($k)",
+          ((.pr_url | cap(200)) as $u
+           | if (.state | among(["pr_open", "done"])) and $u != "" then
+               "\($k)_pr: \($u | q) {shape: page}",
+               "\($k) -> \($k)_pr\(first(($u | capture("/pull/(?<n>[0-9]+)") | ": " + ("#" + .n | q)), ""))"
+             else empty end)),
+      ($w[] | .key as $k | .base as $base
+        | first($w[] | select(.branch == $base and .key != $k
+                              and (.state | among(["working", "blocked", "pr_open", "dispatched"]))))
+        | "\($k) -> \(.key): \"stacked on\""),
+      (.holds | sort_by(.id) | to_entries[] | "h\(.key + 1)" as $k | .value
+        | ("hold " + (.task.ref | cap(60)) + "\nwaiting on " + (.wait.engine | cap(60)) + " " + (.wait.window | cap(60))
+           + "\nuntil " + (.wait.resets_at | if type == "number" then strflocaltime("%m-%d %H:%M") else "?" end)) as $label
+        | "\($k): \($label | q) {shape: hexagon}",
+          "dispatcher -> \($k): {style.stroke-dash: 3}")'
+}
+
+_rr_target() { # $1=crew
+  printf '%s/roster-%s.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" "$1"
+}
+
+# _rr_put <target> <content> — same-dir temp + mv, so a reader never sees a
+# partial file; a symlinked or non-regular target is refused, not replaced.
+_rr_put() {
+  local tmp
+  if [ -L "$1" ] || { [ -e "$1" ] && [ ! -f "$1" ]; }; then
+    echo "crew: roster-render: $1 is not a regular file — not writing it" >&2
+    return 1
+  fi
+  tmp=$(mktemp "${1%/*}/.roster-render.XXXXXX") || return 1
+  { printf '%s\n' "$2" >"$tmp" && mv -f "$tmp" "$1"; } || {
+    rm -f "$tmp"
+    return 1
+  }
+}
+
+# _rr_publish <file> <pane> <cdir> <no_open> — show the diagram in the aeye
+# carousel beside <pane>, opening it once per pane. Best-effort: always 0.
+_rr_publish() {
+  local open=()
+  [ -n "$_rr_aeye" ] || return 0
+  [ -n "$4" ] || [ "$(cat "$3/roster-render.opened" 2>/dev/null || true)" = "$2" ] || open=(--open)
+  aeye publish-diagram "$1" --pane "$2" "${open[@]}" >/dev/null 2>&1 || return 0
+  _rr_put "$3/roster-render.published" "$2" || true
+  [ ${#open[@]} -eq 0 ] || _rr_put "$3/roster-render.opened" "$2" || true
+  return 0
+}
+
+# _rr_pass <crew> <cdir> <no_open> [role_rows] — one render: write the diagram when its text
+# changed, publish when written or the recorded pane is not the one last
+# published to, and print the live count (working/blocked/dispatched rows plus
+# outstanding holds) — the only thing it prints on stdout.
+_rr_pass() {
+  local model text live target pane
+  model=$(_rr_model "$1" "${4-$(_rr_role_panes "$1")}") || return 1
+  text=$(printf '%s' "$model" | _rr_d2) || return 1
+  live=$(printf '%s' "$model" | jq '([.rows[] | select(.state == "working" or .state == "blocked" or .state == "dispatched")] | length)
+                                    + (.holds | length)') || return 1
+  target=$(_rr_target "$1")
+  pane=$(cat "$2/roster-render.pane" 2>/dev/null || true)
+  [[ $pane =~ ^%[0-9]+$ ]] || pane=""
+  if [ -f "$target" ] && [ ! -L "$target" ] && printf '%s\n' "$text" | cmp -s - "$target"; then
+    [ -z "$pane" ] || [ "$pane" = "$(cat "$2/roster-render.published" 2>/dev/null || true)" ] ||
+      _rr_publish "$target" "$pane" "$2" "$3"
+  elif mkdir -p "${target%/*}" 2>/dev/null && _rr_put "$target" "$text"; then
+    [ -z "$pane" ] || _rr_publish "$target" "$pane" "$2" "$3"
+  fi
+  printf '%s\n' "$live"
 }
 
 # _write_if_changed — running pi workers share the target dir, so replace via a
@@ -3648,6 +3823,140 @@ EOF
             then .name = (.name + "·" + ((.branch | capture("(?:[a-z]+/)?(?<id>[A-Za-z]+-[0-9]+|[0-9]+)") | .id) // .branch))
             else . end)
       | map(if .exit_suspect then . else del(.prev_state) end)'
+  ;;
+roster-render)
+  # roster-render --crew ID [--pane %N] [--no-open] [--once] [--interval S] [--quiet S]
+  # Draws the crew's roster diagram (roster-<crew>.d2) from the bus and the
+  # crew's live role panes, and publishes it to the aeye carousel beside the
+  # recorded dispatcher pane. One renderer per repo bus: a crew spanning several
+  # repos gets one diagram per repo. Usage errors exit 64, like `stream`.
+  rr_crew=""
+  rr_pane=""
+  rr_no_open=""
+  rr_once=""
+  rr_interval=2
+  rr_quiet=1800
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crew | --pane | --interval | --quiet)
+      [ -n "${2:-}" ] || {
+        echo "crew: $1 needs a value" >&2
+        exit 64
+      }
+      case "$1" in
+      --crew) rr_crew="$2" ;;
+      --pane) rr_pane="$2" ;;
+      --interval) rr_interval="$2" ;;
+      --quiet) rr_quiet="$2" ;;
+      esac
+      shift 2
+      ;;
+    --no-open)
+      rr_no_open=1
+      shift
+      ;;
+    --once)
+      rr_once=1
+      shift
+      ;;
+    *)
+      echo "crew: roster-render: unknown arg '$1'" >&2
+      exit 64
+      ;;
+    esac
+  done
+  case "$rr_interval" in '' | *[!0-9]*)
+    echo "crew: --interval must be a positive integer number of seconds" >&2
+    exit 64
+    ;;
+  esac
+  [ "$rr_interval" -gt 0 ] || {
+    echo "crew: --interval must be a positive integer number of seconds" >&2
+    exit 64
+  }
+  case "$rr_quiet" in '' | *[!0-9]*)
+    echo "crew: --quiet must be a non-negative integer number of seconds" >&2
+    exit 64
+    ;;
+  esac
+  [ -n "$rr_crew" ] || {
+    echo "crew: roster-render: --crew is required" >&2
+    exit 64
+  }
+  case "$rr_crew" in
+  *[!A-Za-z0-9._-]* | -* | . | ..)
+    echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
+    exit 64
+    ;;
+  esac
+  cdir="$dir/crews/$rr_crew"
+  mkdir -p "$cdir"
+  # Resolved before the cd below: `_rr_model` re-execs this script, and a
+  # relative $0 would no longer resolve from $common.
+  _rr_self=$(readlink -f "$0")
+  # `dispatch resume` starts this from inside a worker worktree, and every
+  # rebuild re-execs `crew roster`, which resolves the bus from cwd: once that
+  # worktree is reaped the renderer would die with `not in a git repo`.
+  cd -- "$common" || exit 1
+  # The pane record is rewritten before any lock, so a new dispatcher pane
+  # retargets an already-running renderer. Any same-uid caller passing --pane
+  # retargets it too — the command text names that effect.
+  if [[ $rr_pane =~ ^%[0-9]+$ ]]; then
+    _rr_put "$cdir/roster-render.pane" "$rr_pane" || true
+  fi
+  # Probed once here, outside any $( ): passes run in command substitutions.
+  # Captured then matched, not piped to grep, so no SIGPIPE false negative.
+  _rr_aeye=""
+  if command -v aeye >/dev/null 2>&1; then
+    rr_help=$(aeye --help 2>/dev/null || true)
+    rr_re=$'(^|\n)[[:space:]]+publish-diagram([[:space:]]|$)'
+    if [[ $rr_help =~ $rr_re ]]; then
+      _rr_aeye=1
+    fi
+  fi
+  if [ -n "$rr_once" ]; then
+    _rr_pass "$rr_crew" "$cdir" "$rr_no_open" >/dev/null
+    exit 0
+  fi
+  # Acquired before the traps are armed, like `stream`: a refused start must
+  # not release the incumbent's lock. A held lock is a silent no-op — the pane
+  # record above already retargeted the running renderer.
+  rr_lockd="$cdir/roster-render.lock.d"
+  _lock_acquire "$rr_lockd" "$$" || exit 0
+  # `_lock_release` is unconditional; the pid check keeps a renderer whose lock
+  # was reclaimed (crew dir removed and re-created) from deleting the new owner's.
+  trap '[ "$(cat "$rr_lockd/pid" 2>/dev/null || true)" != "$$" ] || _lock_release "$rr_lockd"' EXIT
+  trap 'exit 0' INT TERM
+  rr_live=1
+  rr_sig=""
+  rr_last_build=0
+  rr_idle_since=""
+  while :; do
+    # Losing the lock (e.g. `crew deregister` removed the crew dir) ends the loop.
+    [ "$(cat "$rr_lockd/pid" 2>/dev/null || true)" = "$$" ] || exit 0
+    rr_now=$(_clock_now)
+    rr_roles=$(_rr_role_panes "$rr_crew")
+    rr_size=0
+    [ ! -f "$log" ] || rr_size=$(wc -c <"$log")
+    rr_newsig="$rr_size|$(cat "$cdir/roster-render.pane" 2>/dev/null || true)|$rr_roles"
+    if [ "$rr_newsig" != "$rr_sig" ] || [ "$((rr_now - rr_last_build))" -ge 60 ]; then
+      # A failed pass keeps the last live count rather than reading as drained.
+      if rr_out=$(_rr_pass "$rr_crew" "$cdir" "$rr_no_open" "$rr_roles"); then
+        rr_live=$rr_out
+      fi
+      rr_sig="$rr_newsig"
+      rr_last_build="$rr_now"
+    fi
+    if [ "$rr_live" -eq 0 ]; then
+      [ -n "$rr_idle_since" ] || rr_idle_since="$rr_now"
+      [ "$((rr_now - rr_idle_since))" -lt "$rr_quiet" ] || exit 0
+    else
+      rr_idle_since=""
+    fi
+    # Wall-clock sleep: the poll interval is real time, while the quiet window
+    # and the rebuild backstop read `_clock_now`, which tests drive via CREW_CLOCK.
+    sleep "$rr_interval"
+  done
   ;;
 inbox)
   # messages only — `roster` owns status (every status is addressed to the

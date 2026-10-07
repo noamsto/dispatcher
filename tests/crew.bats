@@ -27,6 +27,12 @@ teardown() {
   # Before teardown_repo: a leaked `crew stream` (and the `crew watch` it owns)
   # would race its rm -rf. See the stream harness at the bottom of this file.
   stop_stream
+  local rr
+  for rr in "${RR_PID:-}" "${RR_PID2:-}"; do
+    [ -n "$rr" ] || continue
+    pkill -KILL -P "$rr" 2>/dev/null || true
+    kill -KILL "$rr" 2>/dev/null || true
+  done
   if [ -n "${HOLDER_PID:-}" ]; then
     kill -KILL "$HOLDER_PID" 2>/dev/null || true
   fi
@@ -11070,4 +11076,242 @@ EOF
   [ "$status" -eq 1 ]
   run grep -qP '[\x00-\x09\x0b-\x1f]' "$target"
   [ "$status" -eq 1 ]
+}
+
+# _rr_aeye_publish [exit] — aeye whose --help lists publish-diagram; the
+# publish-diagram call exits with [exit] (default 0).
+_rr_aeye_publish() {
+  cat >"$STUB_DIR/aeye" <<EOF
+#!/usr/bin/env bash
+printf 'aeye %s\n' "\$*" >>"\$STUB_LOG"
+case "\${1:-}" in
+--help) printf 'Usage: aeye [command]\n\nCommands:\n  render <file>\n  publish-diagram <file> [flags]\n  open\n' ;;
+publish-diagram) exit ${1:-0} ;;
+esac
+exit 0
+EOF
+}
+
+_rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
+
+@test "roster-render: an aeye without publish-diagram gets no publish" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  run run_crew roster-render --crew c1 --once --pane %7
+  [ "$status" -eq 0 ]
+  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -z "$(_rr_publishes)" ]
+}
+
+@test "roster-render: publishes opening once per pane, republishing on change" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish
+  target="$CREW_ROSTER_DIR/roster-c1.d2"
+
+  run run_crew roster-render --crew c1 --once --pane %7
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes)" = "aeye publish-diagram $target --pane %7 --open" ]
+
+  # The pane record persists: no --pane needed, and nothing changed.
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 1 ]
+
+  _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'execute: lint'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | tail -n 1)" = "aeye publish-diagram $target --pane %7" ]
+  [ "$(_rr_publishes | wc -l)" -eq 2 ]
+
+  # A new pane republishes the unchanged file without rewriting it.
+  touch -d @1 "$target"
+  before=$(stat -c '%i %Y' "$target")
+  run run_crew roster-render --crew c1 --once --pane %8
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | tail -n 1)" = "aeye publish-diagram $target --pane %8 --open" ]
+  [ "$(_rr_publishes | wc -l)" -eq 3 ]
+  [ "$(stat -c '%i %Y' "$target")" = "$before" ]
+}
+
+@test "roster-render: --no-open never passes --open" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish
+  run run_crew roster-render --crew c1 --once --pane %7 --no-open
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes)" = "aeye publish-diagram $CREW_ROSTER_DIR/roster-c1.d2 --pane %7" ]
+  run run_crew roster-render --crew c1 --once --pane %8 --no-open
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 2 ]
+  [ -z "$(_rr_publishes | grep -e '--open' || true)" ]
+}
+
+@test "roster-render: no pane ever given writes the file and never publishes" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -z "$(_rr_publishes)" ]
+}
+
+@test "roster-render: a failing publish-diagram still exits 0 and is retried" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish 1
+  run run_crew roster-render --crew c1 --once --pane %7
+  [ "$status" -eq 0 ]
+  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ "$(_rr_publishes | wc -l)" -eq 1 ]
+  [ -f "$(_rr_crewdir)/crews/c1/roster-render.pane" ]
+  [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.published" ]
+
+  # The failure was not recorded, so an unchanged bus retries the publish.
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 2 ]
+}
+
+@test "roster-render: a --pane that is not %N is ignored" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish
+  run run_crew roster-render --crew c1 --once --pane bogus
+  [ "$status" -eq 0 ]
+  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.pane" ]
+  [ -z "$(_rr_publishes)" ]
+}
+
+# The roster-render daemon (#806). _rr_daemon starts it in the background from
+# RR_CWD (default: here) with output off bats' fds, so a stuck daemon cannot
+# hang the run; teardown kills RR_PID/RR_PID2.
+_rr_daemon() {
+  local n=1 log
+  [ -z "${RR_PID:-}" ] || n=2
+  log="$BATS_TEST_TMPDIR/rr-daemon-$n.log"
+  (cd -- "${RR_CWD:-.}" && exec bash -euo pipefail "$CREW" roster-render \
+    --crew c1 --interval 1 "$@") >"$log" 2>&1 3>&- &
+  if [ "$n" -eq 1 ]; then RR_PID=$!; else RR_PID2=$!; fi
+}
+
+# _rr_wait <cmd…> — poll until the command succeeds, at most 5s.
+_rr_wait() {
+  local i
+  for i in $(seq 50); do
+    if "$@"; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# _rr_exited <pid> <max_s> — wait for the daemon to exit; its status lands in
+# RR_RC.
+_rr_exited() {
+  local i
+  for i in $(seq $(($2 * 10))); do
+    if ! kill -0 "$1" 2>/dev/null; then
+      RR_RC=0
+      wait "$1" || RR_RC=$?
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+_rr_lockpid() { cat "$(_rr_crewdir)/crews/c1/roster-render.lock.d/pid" 2>/dev/null; }
+_rr_lock_is() { [ "$(_rr_lockpid)" = "$1" ]; }
+_rr_publish_logged() { _rr_publishes | grep -qxF "aeye publish-diagram $1"; }
+_rr_file_has() { grep -qF -- "$2" "$1" 2>/dev/null; }
+
+# _rr_mini <state> [detail] — one dispatched worker in the given state, no
+# hold, and hermetic tmux/aeye stubs listing no role panes.
+_rr_mini() {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791360600000 "$1" "${2:-}"
+  _rr_stubs ''
+}
+
+@test "roster-render: a second daemon for the same crew exits at once" {
+  _rr_mini working 'execute: tests'
+  _rr_daemon
+  _rr_wait _rr_lockpid
+  local first="$RR_PID"
+  _rr_lock_is "$first"
+
+  _rr_daemon
+  _rr_exited "$RR_PID2" 3
+  [ "$RR_RC" -eq 0 ]
+  _rr_lock_is "$first"
+  kill -0 "$first"
+}
+
+@test "roster-render: a second start hands the running daemon its pane" {
+  _rr_mini working 'execute: tests'
+  _rr_aeye_publish
+  local target="$CREW_ROSTER_DIR/roster-c1.d2"
+  _rr_daemon --pane %7
+  _rr_wait _rr_publish_logged "$target --pane %7 --open"
+
+  run run_crew roster-render --crew c1 --interval 1 --pane %9
+  [ "$status" -eq 0 ]
+  _rr_wait _rr_publish_logged "$target --pane %9 --open"
+  kill -0 "$RR_PID"
+}
+
+@test "roster-render: the daemon exits when its crew dir is removed" {
+  _rr_mini working 'execute: tests'
+  _rr_daemon
+  _rr_wait _rr_lockpid
+  rm -rf "$(_rr_crewdir)/crews/c1"
+  _rr_exited "$RR_PID" 5
+  [ "$RR_RC" -eq 0 ]
+}
+
+@test "roster-render: a drained crew's daemon exits after the quiet window" {
+  _rr_mini done
+  date +%s >"$CREW_CLOCK"
+  _rr_daemon --quiet 30
+  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  sleep 1.5
+  kill -0 "$RR_PID"
+  printf '%s\n' "$(($(cat "$CREW_CLOCK") + 31))" >"$CREW_CLOCK"
+  _rr_exited "$RR_PID" 5
+  [ "$RR_RC" -eq 0 ]
+}
+
+@test "roster-render: a crew with a live worker outlasts the quiet window" {
+  _rr_mini working 'execute: tests'
+  date +%s >"$CREW_CLOCK"
+  _rr_daemon --quiet 30
+  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  sleep 1.5
+  printf '%s\n' "$(($(cat "$CREW_CLOCK") + 31))" >"$CREW_CLOCK"
+  sleep 3
+  kill -0 "$RR_PID"
+}
+
+@test "roster-render: the daemon survives its launch worktree being reaped" {
+  _rr_mini working 'execute: tests'
+  local wt="$BATS_TEST_TMPDIR/rr-wt"
+  git worktree add -q -b rr-wt "$wt"
+  RR_CWD="$wt" _rr_daemon
+  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  git worktree remove --force "$wt"
+  [ ! -d "$wt" ]
+
+  _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'after-reap detail'
+  _rr_wait _rr_file_has "$CREW_ROSTER_DIR/roster-c1.d2" 'after-reap detail'
+  kill -0 "$RR_PID"
 }
