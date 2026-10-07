@@ -390,12 +390,12 @@ Non-blocking findings never ride only in the PR body: fix in place or report. Bl
   - mechanical (no behavior change, fast deterministic gate covers it) → fix via that gate within its batch's round, no re-review.
   - behavioral → fix, ride the next round's targeted re-review (`EVIDENCE_REVIEW.md`), never beyond the two-round budget.
   - behavioral, no round left (both rounds' batches returned) → report, noting it belongs to the parent task, deferred only for lack of a review round.
-- Report unfixed non-blocking findings, same path for every tracker (never `gh issue create`; the dispatcher files after one human approval).
+- Report unfixed non-blocking findings, same path for every tracker (never `gh issue create`; the dispatcher decides: on `tracker: github` it files, comments, folds and closes on its own judgment, on `tracker: linear` after one human approval).
   - Bar: report only a concrete defect: a failure scenario (input or state → wrong result) verified against the code (`file:line`, a reproduction, or a reviewer's confirmed probe), or a correctness/security gap with that same evidence. Nits, style, speculative hardening and "could also handle X" are not reported: one `## Review notes` line `dropped (below bar)`, nothing sent.
   - Group: items in the same subsystem/function are one entry with sub-bullets; unrelated items stay separate entries.
-  - `same-area`: the entry's `file:line` is in a file or function that the `Closes` issue names or that this diff touches (`pr: N` task: first `Closes` in that PR's body) → mark the entry `same-area` (the dispatcher comments on the origin instead of minting an issue).
-  - Exactly one `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id>`, body opening `follow-ups (untracked):`, then self-contained entries: what, evidence (`file:line`), why deferred, `same-area` when it applies. Then list them in the PR body under `## Follow-ups (untracked)`.
-  - Order: (fresh PR: `gh pr create` →) `crew msg` with the PR url → `gh pr edit` adds `## Follow-ups (untracked)` → `pr_open`.
+  - `same-area`: the entry's `file:line` is in a file or function that the `Closes` issue names or that this diff touches (`pr: N` task: first `Closes` in that PR's body), and a `Closes` issue exists → mark the entry `same-area` (the dispatcher comments on the origin instead of minting an issue).
+  - Exactly one `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id>`, body opening `follow-ups (untracked):`, then self-contained entries: what, evidence (`file:line`), why deferred, `same-area` when it applies. List them in the PR body under `## Follow-ups (untracked)` before sending, so the dispatcher's edit never races yours.
+  - Order: `gh pr create` with `## Follow-ups (untracked)` in the body (existing PR: `gh pr edit` first) → `crew msg` with the PR url → `pr_open`; later `gh pr edit`s re-read the body first and keep the section or the dispatcher's `## Follow-ups`.
 - `## Follow-ups (untracked)` ("PR body contract"): one line per entry, never finding text; the dispatcher replaces it with `## Follow-ups` links once filed.
 - Final `done` detail: `crew status "$CREW_WORKER_ID" done "follow-ups: untracked"` when a batch was sent; else plain `done`.
 
