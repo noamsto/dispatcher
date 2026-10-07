@@ -1037,38 +1037,10 @@ _nudge_box_text() {
       }' || true
 }
 
-# _nudge_pane <pane> <engine> <session-id> <crew> <actor> <msg-ts> — type the
-# constant $_nudge_line into a worker lead's provably idle, empty input box and
-# submit it, so a lead whose wake expired reads its unread directive. Needs
-# _frame_classifier already called. Prints one line; returns 0 accepted, 2
-# refused before typing (nothing typed, no bus row; an anchor-gate refusal
-# starts with `anchor:`), 3 typed but not accepted (held, unknown,
-# unconfirmed). Every typed attempt appends one `kind:"nudge"` row. Never
-# retries the text or the Enter: whatever the pane shows instead may be a human's.
-_nudge_pane() {
-  local engine="$2"
-  local pane="$1" sid="$3" crew="$4" actor="$5" msg_ts="$6" key branch wins panes prow wid role cmd wrow n last
-  local plain colored why p2 c2 p3 c3 tail_n out row result detail entry
-  key="${_nudge_line//[[:space:]]/}"
-  if ! _is_session_id "$sid"; then
-    printf '%s\n' "'$sid' is not a sessioned worker id"
-    return 2
-  fi
-  case "$msg_ts" in '' | *[!0-9]*)
-    printf '%s\n' "msg ts '$msg_ts' is not a ms timestamp"
-    return 2
-    ;;
-  esac
-  case "$engine" in
-  claude | pi) ;;
-  *)
-    printf '%s\n' "no verified idle lead frame for ${engine:-an unknown engine}"
-    return 2
-    ;;
-  esac
-
-  # The frame gate runs before the anchor gate: the anchor's _sessions reads
-  # the whole bus log, and a busy lead is the common refusal.
+# _nudge_frame_gate <pane> — reads $engine. Returns 0 when the pane shows an
+# idle, empty input box; else prints the refusal reason and returns 2.
+_nudge_frame_gate() {
+  local pane="$1" plain colored why
   plain=$(_pane_capture "$pane" || true)
   colored=$(_pane_capture "$pane" colored || true)
   [ -n "$plain" ] || {
@@ -1095,6 +1067,42 @@ _nudge_pane() {
       return 2
     }
   fi
+}
+
+# _nudge_pane <pane> <engine> <session-id> <crew> <actor> <msg-ts> — type the
+# constant $_nudge_line into a worker lead's provably idle, empty input box and
+# submit it, so a lead whose wake expired reads its unread directive. Needs
+# _frame_classifier already called. Prints one line; returns 0 accepted, 2
+# refused before typing (nothing typed, no bus row; an anchor-gate refusal
+# starts with `anchor:`), 3 typed but not accepted (held, unknown,
+# unconfirmed). Every typed attempt appends one `kind:"nudge"` row. Never
+# retries the text or the Enter: whatever the pane shows instead may be a human's.
+_nudge_pane() {
+  local engine="$2"
+  local pane="$1" sid="$3" crew="$4" actor="$5" msg_ts="$6" key branch wins panes prow wid role cmd wrow n last
+  local p2 c2 p3 c3 tail_n out row result detail entry
+  key="${_nudge_line//[[:space:]]/}"
+  if ! _is_session_id "$sid"; then
+    printf '%s\n' "'$sid' is not a sessioned worker id"
+    return 2
+  fi
+  case "$msg_ts" in '' | *[!0-9]*)
+    printf '%s\n' "msg ts '$msg_ts' is not a ms timestamp"
+    return 2
+    ;;
+  esac
+  case "$engine" in
+  claude | pi) ;;
+  *)
+    printf '%s\n' "no verified idle lead frame for ${engine:-an unknown engine}"
+    return 2
+    ;;
+  esac
+
+  # The frame gate runs before the anchor gate: the anchor's _sessions reads
+  # the whole bus log, and a busy lead is the common refusal. It runs again
+  # right before typing, since that read leaves time for a human to start typing.
+  _nudge_frame_gate "$pane" || return 2
 
   # Anchor: the pane is the lead of this crew's window for the session's
   # branch, still runs an engine, and the session is that branch's live newest.
@@ -1142,6 +1150,7 @@ _nudge_pane() {
     return 2
   fi
 
+  _nudge_frame_gate "$pane" || return 2
   tmux send-keys -t "$pane" -l "$_nudge_line" 2>/dev/null || {
     printf '%s\n' "send-keys failed"
     return 2

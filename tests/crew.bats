@@ -10525,13 +10525,15 @@ _nudge_setup() {
 # _nudge_directive — the unread dispatcher directive a nudge points the lead at.
 _nudge_directive() { seed_msg dispatcher:c1 'worker:feat/x#s1-1' 30; }
 
-# nudge_frames <before> [post-type] [post-enter] — the frames %9's plain
-# captures answer, in call order; a missing later frame repeats <before>.
+# nudge_frames <before> [post-type] [post-enter] [recheck] — the frames %9's
+# plain captures answer, in call order (before, recheck, post-type,
+# post-enter); a missing frame repeats <before>.
 nudge_frames() {
   rm -f "$STUB_DIR/frames/%9"*
   cp "$1" "$STUB_DIR/frames/%9"
-  [ -z "${2:-}" ] || cp "$2" "$STUB_DIR/frames/%9.2"
-  [ -z "${3:-}" ] || cp "$3" "$STUB_DIR/frames/%9.3"
+  [ -z "${4:-}" ] || cp "$4" "$STUB_DIR/frames/%9.2"
+  [ -z "${2:-}" ] || cp "$2" "$STUB_DIR/frames/%9.3"
+  [ -z "${3:-}" ] || cp "$3" "$STUB_DIR/frames/%9.4"
 }
 
 nudge_keys() { grep '^send-keys' "$STUB_LOG" || true; }
@@ -10711,6 +10713,14 @@ EOF
   nudge_frames "$(fx_meter 2s 1.2k)"
   CREW_ID=c1 run run_crew nudge nova
   _nudge_refused "live turn or no idle input box"
+}
+
+@test "nudge: refuses when a draft appears between the anchor gate and typing" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)" "" "" "$(fx_nudge_draft)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "unsent input in the input box"
 }
 
 @test "nudge: refuses a pi lead mid-turn or holding a draft" {
