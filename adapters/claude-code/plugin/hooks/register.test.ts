@@ -121,7 +121,12 @@ test('/roster with no crew lists crews, or hints when only the header exists', a
   mock.clock(on)
   on('process.run', async () => ok('crew_id\tlast_event_s\n'))
   await $.session.start(START)
-  await $.command.run({ command: 'roster', args: '' })
+  await $.command.run({
+    command: 'roster',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 100 },
+  })
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
