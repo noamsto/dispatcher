@@ -66,9 +66,10 @@ test('a worker session registers nothing and runs no process', async ($, on) => 
 test('rows render: active first, watchdog distinct, detail truncated, PR linked', async ($, on) => {
   mock.env(on, { CREW_ID: 'c1' })
   stubEngine(on)
-  mock.clock(on)
+  const clock = mock.clock(on)
   on('process.run', async () => ok(JSON.stringify(ROWS)))
   await $.session.start(START)
+  await clock.settle()
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
@@ -106,7 +107,7 @@ test('the roster refreshes on the timer and treats empty output as no workers', 
   })
   await $.session.start(START)
   await clock.advance(25_000)
-  expect(argv.length).toBeGreaterThanOrEqual(3)
+  expect(argv.length).toBe(3)
   expect(argv[0]).toEqual(['crew', 'roster', 'c1'])
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',

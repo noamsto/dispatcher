@@ -64,7 +64,9 @@ async function listCrews($: EngineInterface) {
   } catch (err) {
     crews = `crew crews failed: ${err instanceof Error ? err.message : String(err)}`
   }
-  await update($, view, () => ({ crew: null, rows: [], error: null, crews }))
+  await update($, view, v =>
+    v.crew ? v : { crew: null, rows: [], error: null, crews },
+  )
 }
 
 export const register: Register = on => {
@@ -78,8 +80,8 @@ export const register: Register = on => {
     })
     const crew = await $.env.get('CREW_ID')
     if (crew) {
-      await follow($, crew)
-      void $.ui.open({ id: PANE, title: 'Crew roster' })
+      follow($, crew).catch(() => {})
+      $.ui.open({ id: PANE, title: 'Crew roster' }).catch(() => {})
     }
 
     return next(e)
@@ -106,7 +108,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Text>No crew selected. Run /roster &lt;crew-id&gt;.</Text>
           {(crews ?? '').split('\n').map(line => (
-            <Text dimColor>{line}</Text>
+            <Text key={line} dimColor>{line}</Text>
           ))}
         </Box>
       )
@@ -118,7 +120,7 @@ export const register: Register = on => {
         {error && <Text color="red">crew roster failed: {error}</Text>}
         {!error && rows.length === 0 && <Text dimColor>No workers yet.</Text>}
         {sortRows(rows).map(row => (
-          <Box flexDirection="column">
+          <Box key={row.name} flexDirection="column">
             <Text>
               <Text color={row.color ?? undefined} bold>
                 {row.name}
