@@ -1303,6 +1303,23 @@ _pane_is_ancestor() {
   return 1
 }
 
+# _ensure_roster_render <crew_id> — start the crew's roster renderer, or
+# retarget a running one. The pane is this process's own TMUX_PANE, kept only
+# when its shell is an ancestor of this process (anchor, don't discover): never
+# the worker-writable WORKER_TASK.md `dispatcher_pane:` or a caller's argument.
+# The renderer's lock makes a second start a no-op. `if . == false` because
+# `// true` would turn an explicit false into true.
+_ensure_roster_render() {
+  local flags=()
+  if [ -n "${TMUX_PANE:-}" ] && _pane_is_ancestor "$TMUX_PANE"; then
+    flags+=(--pane "$TMUX_PANE")
+  fi
+  if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
+    flags+=(--no-open)
+  fi
+  CREW_ID="$1" nohup crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} >/dev/null 2>&1 &
+}
+
 # split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
 # role pane, decorate it, and echo its pane id. `tmux new-window -e` scopes to
 # that window's first pane only, so every pane split off it must repeat the lead's
@@ -1499,7 +1516,7 @@ _settings_env_names() {
   printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
     DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
     DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
-    PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+    DISPATCH_ROSTER_AUTO_OPEN PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
 }
 
 # _settings_env_json — those vars as one JSON object, null when unset, except
@@ -4568,11 +4585,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
+  --arg base "$base_ref" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
+   + if $base != "" then {base:$base} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 if [ -n "$ident_locked" ]; then
@@ -5076,3 +5095,4 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
+_ensure_roster_render "$crew_id"

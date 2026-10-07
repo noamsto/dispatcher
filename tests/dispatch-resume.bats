@@ -692,7 +692,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _pane_is_ancestor _ensure_roster_render; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -2307,6 +2307,52 @@ _precheck_ignores_map() { grep 'resume precheck' "$STUB_LOG" | grep -q -- '--ign
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
   run ! grep -q -- '--no-budget' "$STUB_LOG"
+}
+
+# _roster_tmux_stub <pane-pid> — stub_tmux_with_pane_at_wt plus an answer for
+# `display-message -p -t <pane> '#{pane_pid}'`, which _pane_is_ancestor reads.
+_roster_tmux_stub() {
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+list-panes) printf '%s\t%s\t%s\t%s\t%s\n' '@4' '%8' '$WT' '' iris ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message)
+  case "\$*" in
+  *'#{pane_pid}'*) printf '%s\n' '$1' ;;
+  *) printf '%s\n' '80 24 on' ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "roster-render: resume anchors the renderer on its own ancestor TMUX_PANE, never dispatcher_pane" {
+  setup_worker_wt
+  sed -i 's/^dispatcher_pane: .*/dispatcher_pane: %99/' "$WT/WORKER_TASK.md"
+  _roster_tmux_stub "$$"
+  cd "$WT"
+  TMUX_PANE=%5 run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5'
+  run ! grep -E 'roster-render.*%99' "$STUB_LOG"
+}
+
+@test "roster-render: resume drops --pane when TMUX_PANE is not an ancestor" {
+  setup_worker_wt
+  sleep 60 &
+  foreign=$!
+  kill "$foreign"
+  wait "$foreign" 2>/dev/null || true
+  _roster_tmux_stub "$foreign"
+  cd "$WT"
+  TMUX_PANE=%5 run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1( --no-open)?$'
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
 }
 
 # _seed_worker_stream <ts-ms> — a stream for crew c1 armed in the worker repo

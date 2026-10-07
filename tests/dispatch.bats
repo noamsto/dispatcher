@@ -4812,6 +4812,59 @@ EOF
   wait_for_log 'stall-watch role:feat/9-x:reviewer --pane %6 --engine claude --no-budget$'
 }
 
+@test "roster-render: an ancestor TMUX_PANE is handed over as --pane" {
+  stub_launch_bins
+  _grid_tmux_stub
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5$'
+}
+
+@test "roster-render: a TMUX_PANE that is not an ancestor is dropped" {
+  stub_launch_bins
+  _grid_tmux_stub
+  sleep 60 &
+  foreign=$!
+  STUB_PANE_PID=$foreign TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$foreign" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1$'
+  run ! grep -q 'roster-render .*--pane' "$STUB_LOG"
+}
+
+@test "roster-render: DISPATCH_ROSTER_AUTO_OPEN=0 adds --no-open" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_ROSTER_AUTO_OPEN=0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %5 --no-open$'
+}
+
+@test "roster-render: a --spawn-role does not start the renderer" {
+  _spawn_role_fixture
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/9-x:reviewer'
+  run ! grep -q 'roster-render' "$STUB_LOG"
+}
+
+@test "base: a --base dispatch writes base on its dispatch event" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .base' "$log"
+  [ "$output" = "feat/parent" ]
+}
+
+@test "base: a plain dispatch's event has no base key" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | has("base")' "$log"
+  [ "$output" = "false" ]
+}
+
 @test "session: a minted id is epoch-pid shaped" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch \

@@ -151,7 +151,7 @@
           # itself uses for `wt`.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
-            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux procps]) ++ [crew];
             text = withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh));
           };
 

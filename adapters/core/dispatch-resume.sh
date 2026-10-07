@@ -159,8 +159,9 @@ write_launch_script() {
 }
 
 # _artifacts_dir_bad, _protocol_dirs_record_bad, _settings_env_names,
-# _settings_env_json, _record_protocol_dirs and launch_dir_args: duplicated
-# from dispatch.sh (standalone build), parity-tested like the two above. See
+# _settings_env_json, _record_protocol_dirs, launch_dir_args, _pane_is_ancestor
+# and _ensure_roster_render: duplicated from dispatch.sh (standalone build),
+# parity-tested like the two above. See
 # dispatch.sh for the record's settings line and the grant rules: a
 # claude launch gets the protocol dirs read-only, the branch's artifacts dir
 # write-capable, and the grants in $crew_dir/grants/<branch>, never the
@@ -202,7 +203,7 @@ _settings_env_names() {
   printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
     DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
     DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
-    PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
+    DISPATCH_ROSTER_AUTO_OPEN PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
 }
 
 _settings_env_json() {
@@ -711,6 +712,45 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 # tmux server's environment.
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" "dispatch resume"
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
+
+# _pane_is_ancestor <pane> — is <pane>'s pid one of this process's ancestors?
+# A worker's own dispatch descends from its pane's shell; a pane id copied from
+# another window does not. Bounded walk, spelling copied from crew.sh's
+# _is_ancestor_pid. Assumes the engine's tool shell shares tmux's pid
+# namespace — a pid-namespaced sandbox makes this refuse (fail closed).
+# Only a concrete %id: a relative target (`@5.{bottom-right}`) re-resolves to
+# another pane after this check.
+_pane_is_ancestor() {
+  local pane_pid p depth=0
+  [[ $1 =~ ^%[0-9]+$ ]] || return 1
+  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null || true)"
+  case "$pane_pid" in '' | *[!0-9]*) return 1 ;; esac
+  p=$$
+  while [ "$depth" -lt 32 ]; do
+    depth=$((depth + 1))
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
+    case "$p" in '' | *[!0-9]* | 0) return 1 ;; esac
+    if [ "$p" = "$pane_pid" ]; then return 0; fi
+  done
+  return 1
+}
+
+# _ensure_roster_render <crew_id> — start the crew's roster renderer, or
+# retarget a running one. The pane is this process's own TMUX_PANE, kept only
+# when its shell is an ancestor of this process (anchor, don't discover): never
+# the worker-writable WORKER_TASK.md `dispatcher_pane:` or a caller's argument.
+# The renderer's lock makes a second start a no-op. `if . == false` because
+# `// true` would turn an explicit false into true.
+_ensure_roster_render() {
+  local flags=()
+  if [ -n "${TMUX_PANE:-}" ] && _pane_is_ancestor "$TMUX_PANE"; then
+    flags+=(--pane "$TMUX_PANE")
+  fi
+  if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
+    flags+=(--no-open)
+  fi
+  CREW_ID="$1" nohup crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} >/dev/null 2>&1 &
+}
 
 # _settings_load, _glob_match, _exact_match and _escalation_hop: duplicated
 # from dispatch.sh (standalone build), parity-tested. See dispatch.sh for
@@ -1461,3 +1501,4 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
+_ensure_roster_render "$crew_id"
