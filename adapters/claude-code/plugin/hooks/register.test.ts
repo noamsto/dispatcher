@@ -94,3 +94,37 @@ test('a failing crew call shows an error line', async ($, on) => {
   })
   expect(await ui.find({ text: /crew roster failed: boom/ })).toBeDefined()
 })
+
+test('the roster refreshes on the timer and treats empty output as no workers', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  const argv: string[][] = []
+  on('process.run', async (_$, e) => {
+    argv.push([...e.argv])
+    return ok('')
+  })
+  await $.session.start(START)
+  await clock.advance(25_000)
+  expect(argv.length).toBeGreaterThanOrEqual(3)
+  expect(argv[0]).toEqual(['crew', 'roster', 'c1'])
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  expect(await ui.find({ text: /No workers yet/ })).toBeDefined()
+})
+
+test('/roster with no crew lists crews, or hints when only the header exists', async ($, on) => {
+  mock.env(on, {})
+  stubEngine(on)
+  mock.clock(on)
+  on('process.run', async () => ok('crew_id\tlast_event_s\n'))
+  await $.session.start(START)
+  await $.command.run({ command: 'roster', args: '' })
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  expect(await ui.find({ text: /No crews found/ })).toBeDefined()
+})

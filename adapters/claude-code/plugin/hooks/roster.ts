@@ -30,7 +30,12 @@ export const profile = (row: RosterRow): string =>
   [row.tier, row.engine, row.model].map(part => part ?? '?').join('·')
 
 export const parseRoster = (stdout: string): RosterRow[] => {
+  if (!stdout.trim()) return []
   const rows: unknown = JSON.parse(stdout)
   if (!Array.isArray(rows)) throw new Error('crew roster did not print a JSON array')
-  return rows as RosterRow[]
+  return (rows as RosterRow[]).map(row => ({
+    ...row,
+    age_s: Number.isFinite(row.age_s) ? row.age_s : 0,
+    detail: typeof row.detail === 'string' ? row.detail : null,
+  }))
 }

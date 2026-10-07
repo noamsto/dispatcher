@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { RosterView } from '../types'
+import type { RosterRow, RosterView } from '../types'
 import {
   ageLabel,
   isWatchdog,
@@ -23,29 +23,48 @@ const view = atom(
 let timer: Timer | undefined
 
 async function refresh($: EngineInterface) {
-  const crew = (await read($, view)).crew
-  if (!crew) return
   try {
-    const ran = await $.process.run(['crew', 'roster'], {
-      env: { CREW_ID: crew },
-      timeoutMs: 10_000,
-    })
-    if (ran.exitCode !== 0) {
-      throw new Error(ran.stderr.trim() || `crew roster exited ${ran.exitCode}`)
+    const crew = (await read($, view)).crew
+    if (!crew) return
+    let rows: RosterRow[] = []
+    let error: string | null = null
+    try {
+      const ran = await $.process.run(['crew', 'roster', crew], { timeoutMs: 10_000 })
+      if (ran.exitCode !== 0) {
+        throw new Error(ran.stderr.trim() || `crew roster exited ${ran.exitCode}`)
+      }
+      rows = parseRoster(ran.stdout)
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err)
     }
-    const rows = parseRoster(ran.stdout)
-    await update($, view, v => ({ ...v, rows, error: null }))
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
-    await update($, view, v => ({ ...v, error }))
+    await update($, view, v =>
+      v.crew !== crew ? v : { ...v, rows: error ? v.rows : rows, error },
+    )
+  } catch {
+    // a failing state call must not escape the timer callback
   }
 }
 
 async function follow($: EngineInterface, crew: string) {
   timer?.cancel()
+  timer = $.clock.every(REFRESH_MS, () => void refresh($))
   await update($, view, () => ({ crew, rows: [], error: null, crews: null }))
   await refresh($)
-  timer = $.clock.every(REFRESH_MS, () => void refresh($))
+}
+
+async function listCrews($: EngineInterface) {
+  timer?.cancel()
+  timer = undefined
+  let crews = 'No crews found. Run /roster <crew-id>.'
+  try {
+    const ran = await $.process.run(['crew', 'crews'], { timeoutMs: 10_000 })
+    const body = ran.stdout.trim().split('\n').slice(1).join('\n')
+    if (ran.exitCode !== 0) crews = `crew crews failed: ${ran.stderr.trim() || ran.exitCode}`
+    else if (body) crews = ran.stdout.trim()
+  } catch (err) {
+    crews = `crew crews failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+  await update($, view, () => ({ crew: null, rows: [], error: null, crews }))
 }
 
 export const register: Register = on => {
@@ -71,14 +90,7 @@ export const register: Register = on => {
     if (crew) {
       await follow($, crew)
     } else {
-      timer?.cancel()
-      timer = undefined
-      const ran = await $.process.run(['crew', 'crews'], { timeoutMs: 10_000 })
-      const crews =
-        ran.exitCode === 0 && ran.stdout.trim()
-          ? ran.stdout.trim()
-          : 'No crews found. Run /roster <crew-id>.'
-      await update($, view, () => ({ crew: null, rows: [], error: null, crews }))
+      await listCrews($)
     }
     await $.ui.open({ id: PANE, title: 'Crew roster' })
 
