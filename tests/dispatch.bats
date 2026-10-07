@@ -403,8 +403,10 @@ write_cursor_models_cache() { # <fetched_epoch>
 }
 
 # #817: `dispatch --help` is a readable screen, not the one-line synopsis. The
-# flag list is derived from the parse arms of dispatch.sh itself, so a flag
-# added later without a help line fails here instead of going undocumented.
+# flag list is derived from the parse arms of dispatch.sh itself, and each flag
+# has to own a line of the help (anchored, so a mention inside a synopsis or
+# another flag's description does not count) — a flag added later without its
+# own help line fails here instead of going undocumented.
 _dispatch_help_flags() {
   grep -E '^  --[a-z-]+\)' "$DISPATCH" | sed -E 's/^  (--[a-z-]+)\).*/\1/' | sort -u
 }
@@ -417,7 +419,7 @@ _dispatch_help_flags() {
     [[ "$output" == *"usage: dispatch"* ]] || { echo "$form: no synopsis"; return 1; }
     missing=()
     while IFS= read -r flag; do
-      grep -Fq -- "$flag" <<<"$output" || missing+=("$flag")
+      grep -Eq "^  ${flag}([ =]|\$)" <<<"$output" || missing+=("$flag")
     done < <(_dispatch_help_flags)
     [ "${#missing[@]}" -eq 0 ] || { echo "$form missing: ${missing[*]}"; return 1; }
   done

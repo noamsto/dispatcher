@@ -132,8 +132,10 @@ setup_worker_wt() { # [extra header lines...]
 }
 
 # #817: `dispatch resume --help` is a readable screen, not the one-line
-# synopsis. The flag list is derived from this file's own parse arms below, so
-# a flag added without a help line fails here.
+# synopsis. The flag list is derived from this file's own parse arms below, and
+# each flag has to own a line of the help — anchored, because the synopsis
+# repeats every flag, so an unanchored match would let a description line go
+# missing with the row still green.
 @test "resume --help and -h list every flag it parses and exit 0 (#817)" {
   local form flag missing
   for form in --help -h; do
@@ -142,7 +144,7 @@ setup_worker_wt() { # [extra header lines...]
     [[ "$output" == *"usage: dispatch resume"* ]] || { echo "$form: no synopsis"; return 1; }
     missing=()
     while IFS= read -r flag; do
-      grep -Fq -- "$flag" <<<"$output" || missing+=("$flag")
+      grep -Eq "^  ${flag}([ =]|\$)" <<<"$output" || missing+=("$flag")
     done < <(grep -E '^  --[a-z-]+\)' "$RESUME" | sed -E 's/^  (--[a-z-]+)\).*/\1/' | sort -u)
     [ "${#missing[@]}" -eq 0 ] || { echo "$form missing: ${missing[*]}"; return 1; }
   done
