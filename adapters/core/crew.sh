@@ -5874,6 +5874,14 @@ stall-watch)
     esac
   fi
 
+  # A non-claude role watch has only D8 and its own end-of-life exit live: the
+  # prompt signatures stay claude-only, D0/D2-D7 and the dead: escalation are
+  # worker mode. With the budget detector off as well nothing is left to detect,
+  # and @crew_state for the pane belongs to dispatch's --role-watch.
+  if [ "$role_mode" = 1 ] && [ "$budget_on" = 0 ] && [ "$engine" != claude ]; then
+    exit 0
+  fi
+
   # _budget_last_try — the later of the cache's fetched_epoch and the last
   # refresh attempt's stamp; an unreadable value counts as never.
   _budget_last_try() {
@@ -5894,17 +5902,19 @@ stall-watch)
   # the full interval instead of being retried every minute by every watcher.
   # Synchronous on purpose — one tick slipping <=120s once per interval is far
   # inside every detector threshold.
+  # Returns 0 only when the probe ran: the caller re-reads the bus after a real
+  # refresh, the one thing that can hold the tick up to 120s.
   _budget_refresh_maybe() {
     local last
-    [ "$budget_refresh" != 0 ] || return 0
+    [ "$budget_refresh" != 0 ] || return 1
     last=$(_budget_last_try)
-    [ $(($1 - last)) -ge "$budget_refresh" ] || return 0
+    [ $(($1 - last)) -ge "$budget_refresh" ] || return 1
     mkdir -p "${budget_file%/*}"
-    _lock_acquire "$budget_file.refresh.d" "$$" || return 0
+    _lock_acquire "$budget_file.refresh.d" "$$" || return 1
     last=$(_budget_last_try)
     if [ $(($1 - last)) -lt "$budget_refresh" ]; then
       _lock_release "$budget_file.refresh.d"
-      return 0
+      return 1
     fi
     printf '%s\n' "$1" >"$budget_file.refresh-at.$$"
     mv -f "$budget_file.refresh-at.$$" "$budget_file.refresh-at"
@@ -5914,6 +5924,7 @@ stall-watch)
       env -u CREW_WORKER_ID -u CREW_ID timeout 120 refresh-budget >/dev/null 2>&1 || true
     fi
     _lock_release "$budget_file.refresh.d"
+    return 0
   }
 
   # _budget_reltime <secs> — mirrors refresh-budget's `reltime` jq def, so the
@@ -6304,6 +6315,10 @@ BUSLINE
   d7_at=0
   d8_at=0
   engine_seen=0
+  # Set when a tick advances without the loop-end cadence read (the pane-gone
+  # continue), so the next D8 tick re-reads the bus even with no refresh; the
+  # cadence read clears it.
+  bus_stale=0
   _bus_refresh
   while :; do
     now=$(_clock_now)
@@ -6330,6 +6345,9 @@ BUSLINE
       [ "$fails" -ge 3 ] && exit 0
       _clock_sleep "$interval"
       tick=$((tick + 1))
+      if [ $((tick % 4)) -eq 0 ]; then
+        bus_stale=1
+      fi
       continue
     fi
     fails=0
@@ -6393,13 +6411,17 @@ BUSLINE
     # is finished and idle, and a watchdog row would mask it in roster/reap
     # (the later `budget: cleared` would even revive it in fan-out); a
     # self-reported blocked is already parked in a zero-token await
-    # (`suppressed`). The bus is re-read after the refresh, which can hold the
-    # tick up to 120s, so a pr_open or await posted meanwhile still gates. A
-    # cache that can't tell holds the episode as it is, so a stale or blind read
+    # (`suppressed`). A refresh can hold the tick up to 120s, so the bus is
+    # re-read after one and a pr_open or await posted meanwhile still gates. Every
+    # other D8 tick uses the loop-end cadence read, or the startup read at tick 0.
+    # A cache that can't tell holds the episode as it is, so a stale or blind read
     # never announces a clearance. Never escalates.
     if [ "$budget_on" = 1 ] && [ "$suppressed" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
-      _budget_refresh_maybe "$now"
-      _bus_refresh
+      # `if`, not a `||` chain: a 1 return here would end the watch under `set -e`.
+      if _budget_refresh_maybe "$now" || [ "$bus_stale" = 1 ]; then
+        _bus_refresh
+        bus_stale=0
+      fi
       if [ "$bus_state" = blocked ] && [ "$bus_source" != watchdog ]; then
         suppressed=1
       fi
@@ -6821,6 +6843,7 @@ BUSLINE
     # against an 1800s threshold. _post's pre-write read is exempt.
     if [ $((tick % 4)) -eq 0 ]; then
       _bus_refresh
+      bus_stale=0
     fi
   done
   ;;

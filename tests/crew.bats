@@ -7543,6 +7543,75 @@ EOS
   [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: pi limit reached: key credit limit exhausted" ]
 }
 
+# budget_bus_reads <max-life> [stall-watch args...] — run budget_watch under
+# `bash -x` and print how many times the watch called _bus_refresh. A trace line
+# for a call ends with the bare function name.
+budget_bus_reads() {
+  run_crew() { bash -euo pipefail -x "$CREW" "$@"; }
+  budget_watch "$@"
+  [ "$status" -eq 0 ]
+  local n
+  n=$(printf '%s\n' "$output" | grep -c '_bus_refresh$' || true)
+  printf '%s\n' "$n"
+}
+
+# role_watch <max-life> [stall-watch args...] — a role watcher over a static idle
+# pane; `role_polls` afterwards shows whether it polled at all.
+role_watch() {
+  local life="$1"
+  shift
+  local p
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life "$life" "$@"
+}
+
+role_polls() { cat "$SAMPLER_DIR/n"; }
+
+@test "stall-watch: D8 budget: a skipped refresh re-reads the bus, a real one once more" {
+  now=$(budget_now)
+  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
+  # D8 off entirely: the baseline is the startup read plus the loop-end cadence.
+  off=$(budget_bus_reads 10 --budget-refresh 900 --no-budget)
+  # D8 live over a fresh cache: no refresh, so the tick's existing view is used.
+  skipped=$(budget_bus_reads 10 --budget-refresh 900)
+  # With no cache the first D8 tick refreshes, and that one tick re-reads.
+  rm -f "$XDG_DATA_HOME/crew/engine-budget.json"
+  budget_count_stub
+  refreshed=$(budget_bus_reads 10 --budget-refresh 900)
+  [ "$off" -gt 0 ]
+  [ "$skipped" -eq "$off" ]
+  [ "$(budget_calls)" = "1" ]
+  [ "$refreshed" -eq $((off + 1)) ]
+}
+
+@test "stall-watch: D8 budget: a pi role on a local model exits instead of polling" {
+  budget_pi_local_fixture '{"local-x":{}}'
+  role_watch 30 --engine pi --budget-refresh 900
+  [ "$status" -eq 0 ]
+  # The sampler is the watch's only pane read: never called means no poll loop.
+  [ "$(role_polls)" = "0" ]
+  run bash -c "bus | grep -c . || true"
+  [ "$output" = "0" ]
+}
+
+@test "stall-watch: D8 budget: a pi role on a hosted model keeps polling" {
+  budget_pi_local_fixture '{}'
+  role_watch 4 --engine pi --budget-refresh 900
+  [ "$status" -eq 0 ]
+  [ "$(role_polls)" -gt 0 ]
+}
+
+@test "stall-watch: D8 budget: a claude role with --no-budget keeps polling" {
+  p=$(fx_idle_box)
+  stall_sampler "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --no-budget --max-life 4
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SAMPLER_DIR/n")" -gt 0 ]
+}
+
 @test "roster: carries source and truncates detail to 120 chars" {
   long=$(printf 'quiet: %0.sx' $(seq 1 200))
   seed_raw worker:feat/x blocked "$long" watchdog
