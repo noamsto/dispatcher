@@ -261,8 +261,10 @@ commands_reach_row() { # path template containing $ROOT and $n
     for source in "$ROOT"/adapters/core/protocols/*.md; do
       # claude-code ships the claude render; the sync test covers it.
       [ "$adapter/$(basename "$source")" != claude-code/plugin/WORKER_PROTOCOL.md ] || continue
+      [ "$adapter/$(basename "$source")" != claude-code/plugin/DISPATCHER_PROTOCOL.md ] || continue
       # only a claude lead reads the render, so codex and cursor do not ship it.
       [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != WORKER_PROTOCOL.claude.md ] || continue
+      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != DISPATCHER_PROTOCOL.claude.md ] || continue
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
   done
@@ -399,11 +401,12 @@ guard_ships_row() { # script basename
   for source in "$ROOT"/adapters/core/protocols/*.md; do
     name="$(basename "$source")"
     # claude-code ships the claude render; the sync test covers it.
-    if [ "$name" != WORKER_PROTOCOL.md ]; then
+    if [ "$name" != WORKER_PROTOCOL.md ] && [ "$name" != DISPATCHER_PROTOCOL.md ]; then
       run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
       [ "$status" -eq 0 ]
     fi
     [ "$name" != WORKER_PROTOCOL.claude.md ] || continue
+    [ "$name" != DISPATCHER_PROTOCOL.claude.md ] || continue
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done
@@ -2349,6 +2352,27 @@ _render_fixture() {
   [ ! -e "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" ]
 }
 
+@test "claude dispatcher protocol render is in sync and drops the roster diagram duty" {
+  local core="$ROOT/adapters/core/protocols" a
+  bash "$ROOT/scripts/render-engine.sh" claude "$core/DISPATCHER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/render.md"
+  cmp "$BATS_TEST_TMPDIR/render.md" "$core/DISPATCHER_PROTOCOL.claude.md"
+  cmp "$BATS_TEST_TMPDIR/render.md" "$ROOT/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md"
+  [ -f "$ROOT/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.claude.md" ]
+  [ ! -e "$ROOT/adapters/cursor/protocols/DISPATCHER_PROTOCOL.claude.md" ]
+  for a in "$core/DISPATCHER_PROTOCOL.claude.md" "$ROOT/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md"; do
+    if grep -qE '^(<!-- only:|<!-- /only -->)' "$a"; then
+      echo "marker left in $a"
+      return 1
+    fi
+  done
+  run grep -cF 'roster-$CREW_ID.d2' "$core/DISPATCHER_PROTOCOL.claude.md"
+  [ "$output" = 0 ]
+  grep -qF 'roster-$CREW_ID.d2' "$ROOT/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.md"
+  grep -qF 'roster-$CREW_ID.d2' "$ROOT/adapters/cursor/protocols/DISPATCHER_PROTOCOL.md"
+  grep -qF 'DISPATCHER_PROTOCOL.claude.md' "$ROOT/adapters/core/commands/dispatcher.md"
+}
+
 @test "engine-only blocks reach codex and cursor copies but not the claude render" {
   local core="$ROOT/adapters/core/protocols" a
   grep -E '^<!-- only:' "$core/WORKER_PROTOCOL.md" | grep -qv 'only:[^>]*claude'
@@ -2407,5 +2431,36 @@ _render_fixture() {
   printf '#!/usr/bin/env bash\necho partial\nkill -TERM "$PPID"\nsleep 5\n' >"$work/scripts/render-engine.sh"
   run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
   [ "$status" -ne 0 ]
+  [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+}
+
+@test "gen-adapters leaves the claude dispatcher render intact and no tmp file when rendering fails" {
+  work="$BATS_TEST_TMPDIR/atomic-dispatcher"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$work/before.md"
+  printf '<!-- only:pi -->\n' >>"$protocols/DISPATCHER_PROTOCOL.md"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  cmp "$work/before.md" "$protocols/DISPATCHER_PROTOCOL.claude.md"
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
+}
+
+@test "gen-adapters removes the claude dispatcher render tmp file when interrupted mid-render" {
+  work="$BATS_TEST_TMPDIR/interrupt-dispatcher"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cat >"$work/scripts/render-engine.sh" <<'STUB'
+#!/usr/bin/env bash
+case "$2" in
+*/DISPATCHER_PROTOCOL.md) echo partial; kill -TERM "$PPID"; sleep 5 ;;
+*) cat "$2" ;;
+esac
+STUB
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
 }

@@ -297,6 +297,7 @@ setup() {
   [ -f "$dir/WORKER_PROTOCOL.md" ]
   [ -f "$dir/WORKER_PROTOCOL.claude.md" ]
   [ -f "$dir/DISPATCHER_PROTOCOL.md" ]
+  [ -f "$dir/DISPATCHER_PROTOCOL.claude.md" ]
   # dispatch --review resolves this one at dispatch time and aborts without it.
   [ -f "$dir/REVIEW_TASK.md" ]
   [ -f "$dir/EVIDENCE_REVIEW.md" ]

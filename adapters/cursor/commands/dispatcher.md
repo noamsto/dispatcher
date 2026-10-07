@@ -61,7 +61,8 @@ session**. Resolve it in this order:
 
 1. `$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md` when that variable is set —
    the dispatcher Home Manager module exports it, and you export it yourself to
-   point at a checkout while iterating on the protocol.
+   point at a checkout while iterating on the protocol. A claude session reads
+   `DISPATCHER_PROTOCOL.claude.md` in that directory instead.
 2. Otherwise `protocols/DISPATCHER_PROTOCOL.md` inside this plugin's own
    directory, which every install ships. From here on you are a dispatcher: you judge
 each task into tier + engine + model + effort, scaffold one worker per task via

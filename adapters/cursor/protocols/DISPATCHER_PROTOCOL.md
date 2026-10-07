@@ -970,8 +970,10 @@ guard as the other two lanes. Each notification is one line:
 - **Batch** → parse it and handle the **entire `events[]` in ONE turn** (reply /
   dispatch next / intervene). **Never one-turn-per-event.** Remember its `cursor`; skip
   any later batch whose `cursor` isn't greater — a stop mid-drain can redeliver the
-  last one, which is what makes that harmless. Re-render the roster diagram (below) on
-  a batch only.
+  last one, which is what makes that harmless.
+<!-- only:codex,cursor,pi -->
+  Re-render the roster diagram (below) on a batch only.
+<!-- /only -->
 - **Heartbeat** → near-silent; also run the `--status` poll below, its backstop role
   for a roster that drained without a final batch.
 - **Error** → already retried internally; treat it as a prompt to run `--status`.
@@ -1045,9 +1047,11 @@ instead.
      **entire `events[]` in ONE turn** (reply / dispatch next / intervene). **Never
      one-turn-per-event.**
    - empty stdout (the park expired; still exit 0) → nothing to handle.
+<!-- only:codex,cursor,pi -->
    - **On a non-empty batch, re-render the roster diagram** (see "Roster diagram"
      below) so the carousel tracks the state change. Skip it on the empty-stdout
      path — nothing changed.
+<!-- /only -->
 3. **Re-arm exactly one** new `crew watch`, recording its new arm-token. On the
    empty-stdout path this re-arm is **near-silent**: one tool call, zero prose.
 
@@ -1420,85 +1424,43 @@ Keep the title short (40 cells) and start it with a letter or digit — a leadin
 
 ## Roster diagram
 
-Keep a live picture of the crew in the aeye carousel. Whenever the roster changes
-— after a non-empty batch from either primitive (`crew watch` or `crew stream`), and
-right after you `dispatch` a new worker — regenerate it from `crew roster` and write **D2** to
-`/tmp/claude-status/images/diagrams/src/roster-$CREW_ID.d2` (always the **same path
-for this crew** — it overwrites and the carousel updates in place). The `$CREW_ID`
-suffix is load-bearing: `/tmp/claude-status/` is machine-global, so a bare
-`roster.d2` is one file every dispatcher on the box shares, and a second crew
-overwriting it between your Write and the render hook's re-read lands _its_ roster
-in _your_ carousel. The cost is one stale render set per finished crew in the
-diagrams dir. One node per worker; **you** are the
-root. This is a read-only mirror of the bus — never let drawing it delay a reply to a
-blocked worker. A cursor dispatcher writes the same D2 file; the aeye carousel's auto-render hook
-is driven by claude/codex plugin hooks, so the render may lag — cosmetic only,
-never block a reply on it.
+<!-- only:claude -->
+The roster pane is your live view of the crew: it opens automatically in a launcher
+dispatcher, and `/roster [crew-id]` opens it in an in-session dispatcher. Draw no diagram.
+<!-- /only -->
+<!-- only:codex,cursor,pi -->
+Claude dispatchers skip this section: their roster pane is the live view.
 
-Per-worker node: **outline** it with the worker's roster `color` on the _stroke_
-(`{style: {stroke: <color>; stroke-width: 3}}`, a plain color name D2 accepts) —
-not the fill. A hand-set fill bakes in one theme's assumption and the label can
-land light-on-light; a colored border keeps the node on the theme's own
-fill+label (always readable) while still tying it to its tmux window color. A
-worker whose latest `blocked` carries `source: "watchdog"` (nobody is
-waiting in `crew await` — see above) additionally gets a **dashed** stroke,
-`style.stroke-dash: 3`, on top of its color: dash is a line-style property,
-not a color, so it layers onto the existing rule rather than conflicting
-with it — `{style: {stroke: <color>; stroke-width: 3; stroke-dash: 3}}`.
+Keep a live picture of the crew in the aeye carousel. After each non-empty batch and
+right after each `dispatch`, regenerate it from `crew roster` and write **D2** to
+`/tmp/claude-status/images/diagrams/src/roster-$CREW_ID.d2`. The `$CREW_ID` suffix is
+load-bearing: `/tmp/claude-status/` is machine-global, so a shared filename lets
+another crew's roster land in your carousel. You are the root; draw one node per
+worker. It is a read-only mirror of the bus: never let drawing it delay a reply to a
+blocked worker, and the render may lag.
 
-Label `"<codename>\n<title>\n<tier>·<engine>·<model>\n<state>[ (watchdog)] · <detail><loop-marker> · <age>s[ · <N> sessions]"`:
+Outline each worker node with its roster `color` on the _stroke_
+(`{style: {stroke: <color>; stroke-width: 3}}`), never the fill. A worker whose latest
+`blocked` carries `source: "watchdog"` also gets `stroke-dash: 3`.
 
-- **`<tier>·<engine>·<model>`** — read straight off the roster row (the
-  join lives in `crew roster` itself, same mechanism as `title`). Render
-  `?` for any component that's `null` (pre-tuple dispatch events, or a
-  legacy branch-keyed row) rather than dropping the whole line.
-- **`<detail>`** — the roster already truncates it to 120 chars, so the
-  label has a bounded width; when `detail` is null/empty, drop the
-  `· <detail>` segment entirely rather than leaving a trailing `· `.
-- **`<loop-marker>`** — append `↻` right after `<detail>` when it matches
-  one of the vocabulary's own loop tokens: `r<N>` (`spec-critic r2`),
-  `revision <N>`, `fix`, or `re-review`. Plain text in the label string,
-  not a style — needs no `|md` block, a second round is distinguishable
-  from a first at a glance. These are the exact freeform phrases issue #136
-  measured occurring on the bus, not an enforced enum — the match fires
-  when a worker happens to phrase a loop that way and simply doesn't
-  otherwise, which is fine since `<detail>` alone already carries the
-  phase.
-- **`· <N> sessions`** — append only when `sessions` has more than one
-  entry: a second session on this branch, whether from death, resume, or a
-  deliberate re-dispatch. Omit the segment for the common one-session case.
-- **`detail`/`title` are worker-authored free text** flowing into more of
-  the label than before — escape a literal `$` in either as `\$` (the
-  general escaping rule below still applies; called out again here because
-  a missed one silently suppresses the whole diagram, not just this node).
-- **`age_s` reads on `detail`'s staleness too.** `detail` can lag the
-  worker's real position (measured: 27 minutes stale in the field, mid-review
-  while `detail` still read `gate`). `age_s` is precisely "time since the
-  last status event on the bus for this session" (a watchdog post refreshes
-  it same as a worker's own heartbeat) — so a large `age_s` next to an
-  unchanged `detail` is the reader's cue that the phase label may be stale,
-  with no new field or poll.
-
-Draw a `PR` node and an
-edge to it for any worker in `pr_open`/`done` (label it with the `pr_url`). Escape a
-literal `$` in any label as `\$`, and use only plain quoted labels with `\n` — never
-`|md`/`|markdown` blocks (the rasterizer paints them blank and suppresses the whole
-diagram). Skeleton:
+Label `"<codename>\n<title>\n<tier>·<engine>·<model>\n<state>[ (watchdog)] · <detail>[↻] · <age>s[ · <N> sessions]"`.
+Render `?` for any `null` part of the tuple, and drop `· <detail>` when it is empty. Add `↻` when `detail` names a loop round (`r<N>`, `revision <N>`, `fix`, `re-review`) and `· <N> sessions` only when `sessions` has more than one entry.
+Escape a literal `$` in any label as `\$` (a missed one suppresses the whole
+diagram). Draw a `PR` node and an edge labelled with the `pr_url` for any worker in
+`pr_open`/`done`. Use only plain quoted labels with `\n`, never `|md`/`|markdown`
+blocks (the rasterizer paints them blank and suppresses the whole diagram).
 
 ```d2
 title: "Crew roster" {near: top-center}
 dispatcher: "dispatcher" {style.bold: true}
-sage: "sage\nfix the widget\nstandard·claude·sonnet\nworking · execute: tests · 42s" {style: {stroke: green; stroke-width: 3}}
-atlas: "atlas\nbump flake.lock\ndeep·claude·opus\nworking · plan-critic r2↻ · 190s · 2 sessions" {style: {stroke: blue; stroke-width: 3}}
+sage: "sage\nfix the widget\nstandard·codex·terra\nworking · execute: tests · 42s" {style: {stroke: green; stroke-width: 3}}
 indigo: "indigo\nrework the cache\nstandard·codex·terra\nblocked (watchdog) · quiet: %204 · 1820s" {style: {stroke: indigo; stroke-width: 3; stroke-dash: 3}}
-amber: "amber\nrelease notes\nstandard·claude·sonnet\npr_open · 8s" {style: {stroke: yellow; stroke-width: 3}}
 pr: "PR" {shape: page}
 dispatcher -> sage
-dispatcher -> atlas
 dispatcher -> indigo
-dispatcher -> amber
-amber -> pr: "#124"
+sage -> pr: "#124"
 ```
+<!-- /only -->
 
 ## Rules
 

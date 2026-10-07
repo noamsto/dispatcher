@@ -543,7 +543,7 @@ persist across sessions, so an unpinned claude dispatcher would inherit whatever
 a previous cheap session left set and judge the whole fan-out on it. `--model` /
 `--effort` still override per launch.
 
-Claude and pi bake `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
+Claude bakes `DISPATCHER_PROTOCOL.claude.md` and pi bakes `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
 inject it as the first prompt. The judging rubric
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".

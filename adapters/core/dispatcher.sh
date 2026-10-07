@@ -251,7 +251,7 @@ claude)
   # unpinned dispatcher judges tier+engine+model on whatever the last cheap
   # session was toggled to. high, not xhigh — same reason codex holds at high
   # below: blocked workers wait on a bounded ~2h in-band window.
-  set -- --name "$session_name" --append-system-prompt-file "$protocol" \
+  set -- --name "$session_name" --append-system-prompt-file "$PROTOCOL_DIR/DISPATCHER_PROTOCOL.claude.md" \
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   claude "$@" ${task:+"$task"}
   ;;

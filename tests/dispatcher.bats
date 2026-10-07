@@ -139,7 +139,7 @@ protocol_dir_kept_row() { # kind relpath content
     [ -n "$row" ] || continue
     keep_row "$row" launcher_log_row "$needle"
   done <<'ROWS'
-protocol-file|--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.md
+protocol-file|--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.claude.md
 model-pin|--model opus --effort high
 ROWS
   finish_rows 2
@@ -347,7 +347,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatcher: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
   grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS" "$STUB_LOG"
-  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.claude.md" "$STUB_LOG"
 }
 
 # F54: a store path whose content matches the bake, and a checkout path
