@@ -28,21 +28,17 @@
 #     way it is).
 #   codex  — `codex app-server --stdio` JSON-RPC account/rateLimits/read
 #     (experimental API; any failure -> null).
-#   cursor — GET https://cursor.com/api/usage-summary (the dashboard's own
-#     endpoint) with cookie WorkosCursorSessionToken=<account>::<token>, sent
-#     through curl -K - on stdin only. Probed only when cursor-agent is on
-#     PATH; cursor-agent itself is never executed. Linux token:
-#     ${XDG_CONFIG_HOME:-~/.config}/cursor/auth.json, first of .accessToken,
-#     .access_token, .token — the field name is UNVERIFIED, so a miss
-#     degrades to null; whether cursor-agent honours XDG_CONFIG_HOME is
-#     unverified too. macOS token: `security find-generic-password -s
-#     cursor-access-token -a cursor-user -w` (read-only; may raise a GUI ACL
-#     prompt for an item another binary created — bounded by timeout 10,
-#     then null). Account id: cli-config.json (Linux: next to auth.json;
-#     macOS: ~/.cursor/) .authInfo.authId, .authInfo.userId, else the JWT
-#     sub, with the provider prefix up to the last `|` stripped. The cookie
-#     form is unverified live. Strictly read-only on Cursor's auth state:
-#     never writes, refreshes, or rotates anything.
+#   cursor — `tmux-agent-usage-cursor --print` (tmux-og, noamsto/tmux-og#945 or
+#     later): the one Cursor usage probe, shared with tmux-og's status bar, so
+#     this script holds no token, account or usage-summary code. Found on PATH
+#     first, else via `tmux run-shell 'command -v ...'` against the running
+#     server (the wrapper puts it only on that server's PATH; resolved per
+#     call, as store paths change every generation). Its exit codes 2/3/4/5
+#     (no token / no account / fetch failed / unrecognised) map to the
+#     warnings in main; any other failure, or stdout that is not the contract
+#     JSON, is unrecognised. The entry carries spend {used_usd, limit_usd} when
+#     the plan reports dollars; credits_cover and limit_reached derive from the
+#     printed on-demand pools.
 #   pi     — GET /api/v1/key on OpenRouter (usage-priced, so there is no
 #     quota to probe — only a spend-vs-target check). Key resolution:
 #     DISPATCH_OPENROUTER_KEY_FILE's first line, exclusively when set (an
@@ -441,74 +437,72 @@ probe_codex() {
   ' <<<"$resp" 2>/dev/null
 }
 
-# probe_cursor — print the cursor engine object from the dashboard's
-# usage-summary; return 1 with no cursor-agent CLI, 2 with no usable access
-# token, 3 with no usable account id, 4 when the call fails, 5 when the
-# response is not recognised. Token and account are spliced into a curl
-# config, so each must match the JWT / WorkOS id charset; the token reaches
-# jq only on stdin, and every call that sees auth state discards stderr
-# (jq errors can echo string values).
+# _cursor_tool — print the absolute path of tmux-agent-usage-cursor; return 1
+# when it is nowhere. It is internal to the tmux-og wrapper, so outside a
+# tmux-og pane it is only on the PATH of the tmux server the wrapper started:
+# ask that server, per call, since store paths change every generation.
+_cursor_tool() {
+  local bin
+  bin=$(command -v tmux-agent-usage-cursor 2>/dev/null) || bin=""
+  if [[ -z $bin ]] && command -v tmux >/dev/null 2>&1; then
+    bin=$(timeout 10 tmux run-shell 'command -v tmux-agent-usage-cursor' 2>/dev/null </dev/null) || bin=""
+    bin=${bin%%$'\n'*}
+  fi
+  [[ $bin == /* && -f $bin && -x $bin ]] || return 1
+  printf '%s' "$bin"
+}
+
+# probe_cursor — print the cursor engine object derived from
+# `tmux-agent-usage-cursor --print`; return 1 when the tool is not found, 2/3/4
+# when it reports no token / no account / a failed fetch (its own exit codes),
+# 5 for its unrecognised-response code or any other failure, including stdout
+# that is not the contract JSON. The tool owns the token, account and
+# usage-summary call; stdout is untrusted, so every field is type-checked here.
 probe_cursor() {
-  command -v cursor-agent >/dev/null 2>&1 || return 1
-  local conf token account
-  if [[ $(uname -s) == Darwin ]]; then
-    conf="$HOME/.cursor/cli-config.json"
-    token=$(timeout 10 security find-generic-password -s cursor-access-token -a cursor-user -w 2>/dev/null) || token=""
-  else
-    local dir="${XDG_CONFIG_HOME:-$HOME/.config}/cursor"
-    conf="$dir/cli-config.json"
-    token=$(jq -r '[.accessToken, .access_token, .token | strings | select(. != "")][0] // empty' "$dir/auth.json" 2>/dev/null) || token=""
-  fi
-  [[ $token =~ ^[A-Za-z0-9._-]+$ ]] || return 2
-  account=$(jq -r '[.authInfo.authId, .authInfo.userId | strings | select(. != "")][0] // empty' "$conf" 2>/dev/null) || account=""
-  if [[ -z $account ]]; then
-    account=$(jq -Rr '
-      split(".")[1] // empty
-      | gsub("-"; "+") | gsub("_"; "/")
-      | . + ("=" * ((4 - length % 4) % 4))
-      | @base64d | fromjson | .sub | strings' <<<"$token" 2>/dev/null) || account=""
-  fi
-  account="${account##*|}"
-  [[ $account =~ ^[A-Za-z0-9._-]+$ ]] || return 3
+  local bin out rc=0
+  bin=$(_cursor_tool) || return 1
+  out=$(timeout 20 "$bin" --print 2>/dev/null </dev/null) || rc=$?
+  case $rc in
+  0) ;;
+  2 | 3 | 4) return "$rc" ;;
+  124) return 4 ;;
+  *) return 5 ;;
+  esac
+  # An older tmux-og ignores --print and exits 0 with nothing on stdout.
+  [[ -n $out ]] || return 1
 
-  local resp
-  resp=$(curl -sf --max-time 15 -K - https://cursor.com/api/usage-summary <<<"header = \"Accept: application/json\"
-header = \"Cookie: WorkosCursorSessionToken=$account::$token\"") || return 4
-
-  # The team shape reports individualUsage.overall used/limit, the individual
-  # shape per-pool plan percentages; max(auto, api) errs toward refusing. The
-  # billing-cycle bounds are both kept or both dropped, so no half-sized
-  # window is ever written. limit_reached compares the raw percentages
-  # (used_pct is rounded for display only).
-  jq -e '
-    def toepoch:
-      if type == "number" then (if . > 1e12 then . / 1000 else . end) | floor
-      elif type == "string" then (try (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) catch null)
-      else null end;
-    def bounded: (.limit | type) == "number" and .limit > 0 and (.used | type) == "number";
-    (.isUnlimited == true) as $unlimited
-    | ([.individualUsage.overall | objects | select(bounded) | .used / .limit * 100][0]) as $overall
-    | [.individualUsage.plan | objects | .autoPercentUsed, .apiPercentUsed | numbers] as $plan
-    | (if $overall != null then $overall else ($plan | max) end) as $pct
+  # max(auto, api) errs toward refusing when the plan carries no percentage.
+  # The cycle bounds are both kept or both dropped, so no half-sized window is
+  # ever written. limit_reached compares the raw percentages (used_pct is
+  # rounded for display only). A null on-demand limit is uncapped; a numeric
+  # limit <= 0 is off.
+  jq -ces '
+    def bounded: (.limit_usd | type) == "number" and .limit_usd > 0;
+    def spent: (.used_usd | numbers) // 0;
+    if length != 1 or (.[0] | type) != "object" then error("not one object") else .[0] end
+    | (.unlimited == true) as $unlimited
+    | ([.plan | objects | .used_pct | numbers][0]) as $plan_pct
+    | [.pools | objects | .auto_pct, .api_pct | numbers] as $pools
+    | (if $plan_pct != null then $plan_pct else ($pools | max) end) as $pct
     | if $pct == null and ($unlimited | not) then error("no usable percentage") else . end
-    | (.billingCycleStart | toepoch) as $s
-    | (.billingCycleEnd | toepoch) as $e
-    | (if $s != null and $e != null and $e > $s then [$s, $e] else [null, null] end) as [$starts, $resets]
-    | [.individualUsage.onDemand, .teamUsage.onDemand | objects | select(.enabled == true)] as $od
-    | ([$plan[], $overall | numbers] | max) as $raw
+    | ([.cycle | objects | [.starts_at, .resets_at]][0] // [null, null]) as [$s, $e]
+    | (if ($s | type) == "number" and ($e | type) == "number" and $e > $s then [$s, $e] else [null, null] end) as [$starts, $resets]
+    | [.on_demand | arrays | .[] | objects | select(.enabled == true)] as $od
+    | ([$plan_pct, $pools[] | numbers] | max) as $raw
+    | ([.plan | objects | select((.used_usd | type) == "number" and (.limit_usd | type) == "number") | {used_usd, limit_usd}][0]) as $spend
     | {
         source: "usage_summary",
-        plan_type: (if (.membershipType | type) == "string" then .membershipType else null end),
-        credits_cover: ($od | any(.limit == null or (bounded and .used < .limit))),
+        plan_type: (if (.plan_type | type) == "string" then .plan_type else null end),
+        credits_cover: ($od | any(.limit_usd == null or (bounded and spent < .limit_usd))),
         unlimited: $unlimited,
         windows: (if $unlimited then {} else {month: {used_pct: (($pct * 10 | round) / 10), starts_at: $starts, resets_at: $resets}} end),
         limit_reached: (
           if $unlimited then null
           elif $raw != null and $raw >= 100 then {reason: "plan usage at \($raw | round)%", resets_at: $resets}
-          elif ($od | any(bounded and .used >= .limit)) then {reason: "on-demand limit reached", resets_at: $resets}
+          elif ($od | any(bounded and spent >= .limit_usd)) then {reason: "on-demand limit reached", resets_at: $resets}
           else null end)
-      }
-  ' <<<"$resp" 2>/dev/null || return 5
+      } + (if $spend != null then {spend: $spend} else {} end)
+  ' <<<"$out" 2>/dev/null || return 5
 }
 
 # _or_key — resolve the OpenRouter key into the caller's `or_key` local
@@ -667,9 +661,10 @@ report() {
        else
          "\($e): openrouter $\($v.spend_usd | usd) month-to-date (no monthly target; \($proj))"
        end) + $reset + (if $v.limit_reset != null then " [key limit resets: \($v.limit_reset)]" else "" end) + (if $v.limit_reached != null then " — LIMIT REACHED: \($v.limit_reached.reason)" else "" end)
-    else "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) +
+    else (.value.spend // null) as $sp | "\($e): " + (if .value.plan_type then "[\(.value.plan_type)] " else "" end) +
       (if .value.unlimited == true then "unlimited" else ([.value.windows | to_entries[] |
         "\(.key) \(.value.used_pct)% used" +
+        (if .key == "month" and $sp != null then " ($\($sp.used_usd | round)/$\($sp.limit_usd | round))" else "" end) +
         (if .value.resets_at then
            " (resets \(.value.resets_at | todateiso8601)" +
            (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
@@ -748,9 +743,9 @@ main() {
   cursor_probe=$(probe_cursor) && rc=0 || rc=$?
   case $rc in
   0) cursor=$cursor_probe ;;
-  1) warn "cursor quota unknown (no cursor-agent CLI)" ;;
-  2) warn "cursor quota unknown — no usable cursor-agent access token (auth.json fields tried: accessToken, access_token, token; macOS: keychain item cursor-access-token)" ;;
-  3) warn "cursor quota unknown — no cursor account id (cli-config.json authInfo.authId/userId, JWT sub)" ;;
+  1) warn "cursor quota unknown — tmux-agent-usage-cursor not found (needs tmux-og with \`--print\`, noamsto/tmux-og#945 or later)" ;;
+  2) warn "cursor quota unknown — tmux-agent-usage-cursor found no Cursor access token" ;;
+  3) warn "cursor quota unknown — tmux-agent-usage-cursor found no Cursor account id" ;;
   4) warn "cursor quota unknown — usage-summary call failed (HTTP error, expired login, or timeout)" ;;
   *) warn "cursor quota unknown — usage-summary response not recognised" ;;
   esac
