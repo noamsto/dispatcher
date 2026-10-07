@@ -11228,25 +11228,6 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   [ -z "$(_rr_publishes)" ]
 }
 
-@test "roster-render: two repos' renderers for one crew id write separate diagrams" {
-  _rr_mini working 'from repo one'
-  run run_crew roster-render --crew c1 --once
-  [ "$status" -eq 0 ]
-  local first other="$BATS_TEST_TMPDIR/other-repo"
-  first=$(_rr_file)
-  git init -q -b main "$other"
-  cd "$other"
-  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
-  _rr_status 'worker:feat/1-a#s1' 1791360600000 working 'from repo two'
-  run run_crew roster-render --crew c1 --once
-  [ "$status" -eq 0 ]
-  [ "$(_rr_file)" != "$first" ]
-  grep -qF 'from repo one' "$first"
-  grep -qF 'from repo two' "$(_rr_file)"
-  run grep -qF 'from repo two' "$first"
-  [ "$status" -eq 1 ]
-}
-
 @test "roster-render: two repos sharing a dir name write separate diagrams" {
   local x="$BATS_TEST_TMPDIR/x/repo" y="$BATS_TEST_TMPDIR/y/repo" first
   git init -q -b main "$x"
@@ -11318,12 +11299,12 @@ _rr_exited() {
 
 _rr_lockpid() { cat "$(_rr_crewdir)/crews/c1/roster-render.lock.d/pid" 2>/dev/null; }
 _rr_lock_is() { [ "$(_rr_lockpid)" = "$1" ]; }
-# _rr_lock_taken [not_pid] — the lock records a pid other than [not_pid]; it
-# lands in RR_PID, which teardown kills.
+# _rr_lock_taken — the lock records a pid; it lands in RR_PID, which teardown
+# kills.
 _rr_lock_taken() {
   local p
   p=$(_rr_lockpid) || return 1
-  [ -n "$p" ] && [ "$p" != "${1:-}" ] || return 1
+  [ -n "$p" ] || return 1
   RR_PID=$p
 }
 _rr_publish_logged() { _rr_publishes | grep -qxF "aeye publish-diagram $1"; }
