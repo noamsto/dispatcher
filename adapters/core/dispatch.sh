@@ -397,6 +397,40 @@ _ps_elapsed_s() {
   printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
+# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
+# <pidfile> records: live under any uid (EPERM reads alive) and not a pid
+# recycled after the file was written. Copied with its helpers from
+# dispatch-resume.sh: the two ship as standalone builds.
+_pid_alive() {
+  case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
+  local kmsg
+  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
+  case "$kmsg" in
+  *"not permitted"* | *"not allowed"*) return 0 ;; # EPERM: the process exists
+  esac
+  ps -p "$1" -o pid= >/dev/null 2>&1
+}
+
+_file_mtime_s() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
+}
+
+_pid_recycled() {
+  local pid="$1" file="$2" elapsed file_s
+  [ -f "$file" ] || return 1
+  elapsed="$(_ps_elapsed_s "$pid")" || return 1
+  file_s="$(_file_mtime_s "$file")" || return 1
+  case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
+  case "$file_s" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
+}
+
+_recorded_pid_live() {
+  _pid_alive "$1" || return 1
+  _pid_recycled "$1" "$2" && return 1
+  return 0
+}
+
 # Branch names in evidence text come from the remote or the bus: strip control
 # characters and cap the length before they reach a terminal.
 _evidence_text() { printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-120; }
@@ -5093,4 +5127,13 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
-_ensure_roster_render "$crew_id" "${TMUX_PANE:-}"
+# A human dispatching from an exited worker's pane (its env carries CREW_ID)
+# must not retarget the renderer there while the crew's dispatcher is live;
+# only the registered dispatcher's pane may move it.
+rr_pane="${TMUX_PANE:-}"
+rr_pid="$(cat "$crew_dir/crews/$crew_id/pid" 2>/dev/null || true)"
+if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
+  [ "$rr_pane" != "$(cat "$crew_dir/crews/$crew_id/pane" 2>/dev/null || true)" ]; then
+  rr_pane=""
+fi
+_ensure_roster_render "$crew_id" "$rr_pane"

@@ -10893,10 +10893,11 @@ _rr_bus() { printf '%s/crew/events.jsonl' "$(git rev-parse --path-format=absolut
 _rr_crewdir() { printf '%s/crew' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
 # _rr_file — crew c1's diagram for the repo here: one file per repo bus.
 _rr_file() {
-  local repo
-  repo=$(git rev-parse --path-format=absolute --git-common-dir)
-  repo=${repo%/*}
-  printf '%s/roster-c1-%s.d2' "$CREW_ROSTER_DIR" "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')"
+  local common repo
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  repo=${common%/*}
+  printf '%s/roster-c1-%s-%s.d2' "$CREW_ROSTER_DIR" "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(printf '%s' "$common" | cksum | cut -d' ' -f1)"
 }
 
 # _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
@@ -11246,6 +11247,26 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   [ "$status" -eq 1 ]
 }
 
+@test "roster-render: two repos sharing a dir name write separate diagrams" {
+  local x="$BATS_TEST_TMPDIR/x/repo" y="$BATS_TEST_TMPDIR/y/repo" first
+  git init -q -b main "$x"
+  git init -q -b main "$y"
+  cd "$x"
+  _rr_mini working 'from org x'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  first=$(_rr_file)
+  cd "$y"
+  _rr_mini working 'from org y'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_file)" != "$first" ]
+  grep -qF 'from org x' "$first"
+  grep -qF 'from org y' "$(_rr_file)"
+  run grep -qF 'from org y' "$first"
+  [ "$status" -eq 1 ]
+}
+
 @test "roster-render: a --pane that is not %N is ignored" {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
@@ -11417,47 +11438,4 @@ _rr_mini() {
   _rr_wait _rr_lock_taken
   kill -0 "$RR_PID"
   [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.pane")" = "%7" ]
-  _rr_wait test -s "$(_rr_crewdir)/crews/c1/roster-render.lock.d/self"
-  [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.lock.d/self")" = "$(readlink -f "$CREW")" ]
-}
-
-@test "roster-render: --detach replaces a daemon from another build" {
-  _rr_mini working 'execute: tests'
-  local lockd
-  lockd="$(_rr_crewdir)/crews/c1/roster-render.lock.d"
-  # Orphaned at once, so its exit is reaped and reads as dead to kill -0; its
-  # argv names roster-render, as a real renderer's does.
-  # A 1s loop, so the sleep a killed holder orphans is gone within a second.
-  printf '#!/usr/bin/env bash\nfor _ in {1..60}; do sleep 1; done\n' >"$BATS_TEST_TMPDIR/roster-render-fake"
-  HOLDER_PID=$(bash "$BATS_TEST_TMPDIR/roster-render-fake" >/dev/null 2>&1 3>&- & printf '%s' "$!")
-  _rr_wait _rr_args_have "$HOLDER_PID" roster-render
-  mkdir -p "$lockd"
-  printf '%s\n' "$HOLDER_PID" >"$lockd/pid"
-  printf '%s\n' /nix/store/old-crew/bin/crew >"$lockd/self"
-  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --interval 1 3>&-
-  [ "$status" -eq 0 ]
-  run kill -0 "$HOLDER_PID"
-  [ "$status" -ne 0 ]
-  _rr_wait _rr_lock_taken "$HOLDER_PID"
-  kill -0 "$RR_PID"
-  _rr_wait _rr_file_has "$lockd/self" "$(readlink -f "$CREW")"
-  [ "$(cat "$lockd/self")" = "$(readlink -f "$CREW")" ]
-}
-
-@test "roster-render: --detach never signals a recycled pid that is not a renderer" {
-  _rr_mini working 'execute: tests'
-  local lockd
-  lockd="$(_rr_crewdir)/crews/c1/roster-render.lock.d"
-  HOLDER_PID=$(sleep 60 >/dev/null 2>&1 3>&- & printf '%s' "$!")
-  mkdir -p "$lockd"
-  printf '%s\n' "$HOLDER_PID" >"$lockd/pid"
-  printf '%s\n' /nix/store/old-crew/bin/crew >"$lockd/self"
-  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --interval 1 3>&-
-  [ "$status" -eq 0 ]
-  sleep 1
-  kill -0 "$HOLDER_PID"
-}
-
-_rr_args_have() { # <pid> <substring>
-  [[ $(ps -o args= -p "$1" 2>/dev/null || true) == *"$2"* ]]
 }

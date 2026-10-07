@@ -4828,6 +4828,30 @@ EOF
   wait_for_log 'roster-render --crew c1 --detach$'
 }
 
+# _roster_live_dispatcher — crew c1 registered with a live pid (this shell) on pane %3.
+_roster_live_dispatcher() {
+  stub_launch_bins
+  _grid_tmux_stub
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1"
+  printf '%s\n' "$$" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%3\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+}
+
+@test "roster-render: dispatch with a live dispatcher drops a TMUX_PANE that is not its pane" {
+  _roster_live_dispatcher
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --detach$'
+  run ! grep -E 'roster-render.*--pane' "$STUB_LOG"
+}
+
+@test "roster-render: dispatch from the live dispatcher's own pane hands it over" {
+  _roster_live_dispatcher
+  TMUX_PANE=%3 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wait_for_log 'roster-render --crew c1 --pane %3 --detach$'
+}
+
 @test "roster-render: DISPATCH_ROSTER_AUTO_OPEN=0 adds --no-open" {
   stub_launch_bins
   _grid_tmux_stub
