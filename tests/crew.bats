@@ -6162,7 +6162,7 @@ EOF
   stall_sampler "$p"
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
-  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
@@ -6175,7 +6175,7 @@ EOF
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
   export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || bash $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
-  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 2 ]
@@ -6188,7 +6188,7 @@ EOF
   stall_sampler "$p"
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
-  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
@@ -6201,7 +6201,7 @@ EOF
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
   seed_msg worker:feat/x#s1-1 dispatcher:c1 20
-  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 3
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 1 ]
@@ -6215,13 +6215,170 @@ EOF
   seed_msg role:feat/x:reviewer worker:feat/x#s1-1 40
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
   export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || CREW_ID=c1 bash $CREW await worker:feat/x#s1-1 --from role:feat/x:reviewer --timeout 1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
-  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 13
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
   [ "${#lines[@]}" -eq 3 ]
   [[ "${lines[0]}" == "blocked|unread: role verdict "* ]]
   [ "${lines[1]}" = "working|unread: cleared" ]
   [[ "${lines[2]}" == "blocked|unread: dispatcher directive "* ]]
+}
+
+# d6_nudge_sampler <idle> <typed> <after> [busy-calls] — after _nudge_setup: %9's
+# frame follows the stub's send-keys log (idle until the line is typed, typed
+# until the Enter, then after), so loop samples and nudge captures share one
+# source. The first [busy-calls] samples show a live meter instead. With
+# D6_INBOX set, the lead reads its inbox on the 3rd sample after the Enter —
+# past the nudge's own after-captures, i.e. on the next loop tick.
+d6_nudge_sampler() {
+  local d="$BATS_TEST_TMPDIR/d6nudge"
+  mkdir -p "$d"
+  cp "$1" "$d/idle"
+  cp "$2" "$d/typed"
+  cp "$3" "$d/after"
+  cp "$(fx_meter 2s 1.2k)" "$d/busy"
+  printf '%s' "${4:-0}" >"$d/busy_n"
+  printf '0' >"$d/n"
+  printf '0' >"$d/after_n"
+  cat >"$d/sample" <<EOS
+#!/usr/bin/env bash
+d="$d"
+n=\$((\$(cat "\$d/n") + 1))
+printf '%s' "\$n" >"\$d/n"
+if [ "\$n" -le "\$(cat "\$d/busy_n")" ]; then
+  cat "\$d/busy"
+elif grep -q '^send-keys -t %9 Enter' "\$STUB_LOG" 2>/dev/null; then
+  a=\$((\$(cat "\$d/after_n") + 1))
+  printf '%s' "\$a" >"\$d/after_n"
+  [ "\$a" != 3 ] || [ -z "\${D6_INBOX:-}" ] || bash "$CREW" inbox 'worker:feat/x#s1-1' c1 >/dev/null
+  cat "\$d/after"
+elif grep -q '^send-keys -t %9 -l' "\$STUB_LOG" 2>/dev/null; then
+  cat "\$d/typed"
+else
+  cat "\$d/idle"
+fi
+EOS
+  chmod +x "$d/sample"
+  export CREW_STALL_SAMPLE_CMD="$d/sample"
+}
+
+d6_watch() { # [extra stall-watch flags] — 4 D6 ticks (0, 4, 8, 12)
+  CREW_ID=c1 run run_crew stall-watch 'worker:feat/x#s1-1' --pane %9 --engine "${D6_ENGINE:-claude}" \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 13 "$@"
+}
+d6_rows() { bus | jq -r 'select(.kind=="status" and .body.source=="watchdog") | "\(.body.state)|\(.body.detail)"'; }
+
+@test "stall-watch: D6 auto-nudges an idle lead once and skips that tick's unread: post" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  D6_INBOX=1 d6_watch
+  [ "$(nudge_keys)" = "$(printf '%s\n' 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | jq -r '"\(.from) \(.result)"')" = "watchdog accepted" ]
+  run d6_rows
+  [[ "$output" != *"blocked|unread:"* ]]
+}
+
+@test "stall-watch: D6 types an undelivered directive's nudge only once" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  # Accepted, but the lead never reads: later D6 ticks must not re-type.
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+}
+
+@test "stall-watch: D6 does not re-type a directive another nudge already covered" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  jq -nc --argjson m "$(bus | jq -r 'select(.kind=="msg") | .ts')" \
+    '{ts:($m + 1), crew_id:"c1", kind:"nudge", from:"dispatcher:c1", to:"worker:feat/x#s1-1",
+      branch:"feat/x", pane:"%9", engine:"claude", result:"held", detail:"", msg_ts:$m}' >>"$ndir/events.jsonl"
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch
+  [ -z "$(nudge_keys)" ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+}
+
+@test "stall-watch: D6 does not nudge a lead mid-turn and posts as before" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  d6_nudge_sampler "$(fx_meter 2s 1.2k)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  run d6_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive undelivered for "*"has not reached a peek seam"* ]]
+}
+
+@test "stall-watch: D6 does not nudge with --no-nudge" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch --no-nudge
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
+@test "stall-watch: D6 does not nudge for a role verdict" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  seed_msg role:feat/x:reviewer 'worker:feat/x#s1-1' 30
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  run d6_rows
+  [[ "${lines[0]}" == "blocked|unread: role verdict "* ]]
+}
+
+@test "stall-watch: D6 reports a typed-but-unaccepted auto-nudge once" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  # The line still sits in the box after the Enter: held.
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_nudge_typed)"
+  d6_watch
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | jq -r '"\(.from) \(.result)"')" = "watchdog held" ]
+  run d6_rows
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive undelivered for "*"auto-nudge typed but not accepted (nudge held: %9 worker:feat/x#s1-1); verify the pane with crew where" ]]
+}
+
+@test "stall-watch: D6 reports an unaccepted auto-nudge inside its own open unread: episode" {
+  _nudge_setup
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  # Mid-turn on the first D6 tick (episode opens), idle by the next one.
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_done_idle)" "$(fx_done_idle)" 4
+  d6_watch
+  [ "$(nudge_keys)" = 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' ]
+  [ "$(nudge_rows | jq -r .result)" = unconfirmed ]
+  run d6_rows
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive "*"has not reached a peek seam"* ]]
+  [[ "${lines[1]}" == "blocked|unread: "*"auto-nudge typed but not accepted (nudge unconfirmed: %9 "* ]]
+}
+
+@test "stall-watch: D6 stops auto-nudging after an anchor refusal" {
+  _nudge_setup claude zsh
+  seed_raw 'worker:feat/x#s1-1' working "" ""
+  _nudge_directive
+  d6_nudge_sampler "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_done_idle)"
+  d6_watch
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  [ "$(grep -c '^list-windows' "$STUB_LOG")" -eq 1 ]
+  run d6_rows
+  [[ "${lines[0]}" == "blocked|unread: dispatcher directive "* ]]
 }
 
 @test "stall-watch: a finished turn waiting on a background shell posts nothing" {
@@ -10290,6 +10447,386 @@ EOF
   CREW_ID=c1 run run_crew where nova
   [ "$status" -eq 1 ]
   [[ "$output" == *"cannot read tmux windows"* ]]
+}
+
+# --- crew nudge -----------------------------------------------------------
+# Types the constant `crew inbox "$CREW_WORKER_ID"` line into an idle worker lead.
+
+# stub_tmux_nudge <wins-body> <panes-body> — wins rows are
+# `window_id\tbranch\tdir\tcrew_id\tname` (the nudge CLI's query); the anchor
+# gate's `window_id\tbranch\tcrew_id` query is cut from the same rows. Panes rows
+# are `window_id\tpane_id\trole\tcommand`. The Nth plain capture of a pane
+# answers from `frames/<pane>.<N>`, else `frames/<pane>`; the Nth colored (-e)
+# one from `frames/<pane>.<N>.e`, else the plain frame N, else `frames/<pane>.e`,
+# else `frames/<pane>`. Every call, send-keys included, lands in $STUB_LOG.
+stub_tmux_nudge() {
+  STUB_DIR="${STUB_DIR:-$(mktemp -d)}"
+  STUB_LOG="${STUB_LOG:-$STUB_DIR/calls.log}"
+  mkdir -p "$STUB_DIR/frames"
+  printf '%s\n' "$1" >"$STUB_DIR/wins.txt"
+  printf '%s\n' "$2" >"$STUB_DIR/panes.txt"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-windows)
+  case "$*" in
+  *@crew_dir*) cat "$STUB_DIR/wins.txt" ;;
+  *) awk -F'\t' -v OFS='\t' 'NF { print $1, $2, $4 }' "$STUB_DIR/wins.txt" ;;
+  esac
+  ;;
+list-panes) cat "$STUB_DIR/panes.txt" ;;
+capture-pane)
+  pane=""
+  prev=""
+  for a in "$@"; do
+    [ "$prev" = "-t" ] && pane="$a"
+    prev="$a"
+  done
+  f="$STUB_DIR/frames/$pane"
+  case " $* " in *" -e "*) k=e ;; *) k=p ;; esac
+  n=$(($(cat "$f.$k.n" 2>/dev/null || echo 0) + 1))
+  echo "$n" >"$f.$k.n"
+  if [ "$k" = e ] && [ -f "$f.$n.e" ]; then
+    cat "$f.$n.e"
+  elif [ -f "$f.$n" ]; then
+    cat "$f.$n"
+  elif [ "$k" = e ] && [ -f "$f.e" ]; then
+    cat "$f.e"
+  elif [ -f "$f" ]; then
+    cat "$f"
+  fi
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export STUB_DIR STUB_LOG
+  export PATH="$STUB_DIR:$PATH"
+}
+
+# _nudge_setup [engine] [pane-command] — one crew-c1 window @7 for feat/x
+# (codename nova) whose lead is %9, a dispatch row for its live session s1-1
+# and that session's first `working` status. The suite may itself run inside a
+# worker pane, so the worker-only environment is cleared.
+_nudge_setup() {
+  unset CREW_WORKER_ID CREW_ROLE_ID
+  export CREW_NUDGE_GAP=0 CREW_NUDGE_SETTLE=0
+  ndir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$ndir"
+  stub_tmux_nudge "$(printf '@7\tfeat/x\t%s\tc1\tnova' "$ndir")" \
+    "$(printf '@7\t%%9\tlead\t%s\n@7\t%%10\tplan-critic\tclaude' "${2:-claude}")"
+  jq -nc --arg e "${1:-claude}" --argjson ts "$((($(date +%s) - 60) * 1000))" \
+    '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
+      worker_id:"worker:feat/x#s1-1", engine:$e, name:"nova"}' >>"$ndir/events.jsonl"
+  seed_raw 'worker:feat/x#s1-1' working "" "" "$((($(date +%s) - 59) * 1000))"
+}
+
+# _nudge_directive — the unread dispatcher directive a nudge points the lead at.
+_nudge_directive() { seed_msg dispatcher:c1 'worker:feat/x#s1-1' 30; }
+
+# nudge_frames <before> [post-type] [post-enter] [recheck] — the frames %9's
+# plain captures answer, in call order (before, recheck, post-type,
+# post-enter); a missing frame repeats <before>.
+nudge_frames() {
+  rm -f "$STUB_DIR/frames/%9"*
+  cp "$1" "$STUB_DIR/frames/%9"
+  [ -z "${4:-}" ] || cp "$4" "$STUB_DIR/frames/%9.2"
+  [ -z "${2:-}" ] || cp "$2" "$STUB_DIR/frames/%9.3"
+  [ -z "${3:-}" ] || cp "$3" "$STUB_DIR/frames/%9.4"
+}
+
+nudge_keys() { grep '^send-keys' "$STUB_LOG" || true; }
+nudge_rows() { bus | jq -c 'select(.kind=="nudge")'; }
+
+# _nudge_refused <reason> — the last run refused before typing: exit 2, the
+# reason printed, no keys sent, no nudge row.
+_nudge_refused() {
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"$1"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
+# fx_done_idle with the nudge line typed into its box.
+fx_nudge_typed() {
+  frame_file nudge_typed <<'EOF'
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM
+────────────────── reef ─
+❯ crew inbox "$CREW_WORKER_ID"
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
+fx_nudge_bgwait_typed() {
+  frame_file nudge_bgwait_typed <<'EOF'
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ crew inbox "$CREW_WORKER_ID"
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+EOF
+}
+
+# fx_done_idle holding a real unsent draft: the colored capture's `❯` row has
+# the nbsp separator but no dim (ghost) SGR, as in dispatch.bats's
+# rw_frame_claude_draft capture.
+fx_nudge_draft() {
+  printf '%s\n' \
+    $'✻ Churned for 36s · done 11:20 AM' \
+    $'──────────────────' \
+    $'❯\xc2\xa0hello draft text' \
+    $'──────────────────' \
+    $'  -- INSERT -- ⏵⏵ auto mode on · ← for agents' | frame_file nudge_draft
+}
+fx_nudge_draft_colored() {
+  printf '%s\n' \
+    $'✻ Churned for 36s · done 11:20 AM' \
+    $'──────────────────' \
+    $'\033[39m❯\xc2\xa0hello draft text' \
+    $'──────────────────' \
+    $'  -- INSERT -- ⏵⏵ auto mode on · ← for agents' | frame_file nudge_draft_e
+}
+
+# fx_nudge_typed with the line wrapped onto a second box row (a narrow pane).
+fx_nudge_typed_wrapped() {
+  frame_file nudge_typed_wrapped <<'EOF'
+✻ Churned for 36s · done 11:20 AM
+──────────────────
+❯ crew inbox
+  "$CREW_WORKER_ID"
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+EOF
+}
+
+# A freshly booted claude: an empty idle box but no finished turn above it.
+fx_nudge_fresh() {
+  frame_file nudge_fresh <<'EOF'
+ ✻ Welcome to Claude Code!
+──────────────────
+❯
+──────────────────
+  ? for shortcuts
+EOF
+}
+
+# pi frames, shaped like dispatch.bats's rw_frame_pi_idle / rw_frame_pi_live
+# captures (pi 0.87.1).
+fx_nudge_pi() { # <name> <editor-row>
+  printf ' pi v0.87.1\n──────────────────────────────\n%s\n──────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)      unknown\n' "$2" |
+    frame_file "nudge_pi_$1"
+}
+fx_nudge_pi_live() {
+  frame_file nudge_pi_live <<'EOF'
+ pi v0.87.1
+── ⠼ Working ──────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown
+EOF
+}
+
+@test "nudge: accepted on an idle claude lead types the inbox line, Enter once, and records it" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge nova
+  [ "$status" -eq 0 ]
+  [[ "$output" == "nudge accepted: %9 worker:feat/x#s1-1 — "* ]]
+  [ "$(nudge_keys)" = "$(printf '%s\n' 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+  msg_ts=$(bus | jq -r 'select(.kind=="msg") | .ts')
+  run bash -c "bus | jq -r 'select(.kind==\"nudge\") | \"\(.result) \(.from) \(.to) \(.pane) \(.engine) \(.branch) \(.msg_ts)\"'"
+  [ "$output" = "accepted dispatcher:c1 worker:feat/x#s1-1 %9 claude feat/x $msg_ts" ]
+}
+
+@test "nudge: a line the box wrapped onto two rows is confirmed and accepted" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed_wrapped)" "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge nova
+  [ "$status" -eq 0 ]
+  [ "$(nudge_keys)" = "$(printf '%s\n' 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | jq -r .result)" = accepted ]
+}
+
+@test "nudge: accepted on a claude lead parked on a background shell" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_bgwait_churned)" "$(fx_nudge_bgwait_typed)" "$(fx_bgwait_churned)"
+  CREW_ID=c1 run run_crew nudge 'worker:feat/x#s1-1'
+  [ "$status" -eq 0 ]
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | jq -r .result)" = accepted ]
+}
+
+@test "nudge: accepted on an idle pi lead" {
+  _nudge_setup pi pi
+  _nudge_directive
+  nudge_frames "$(fx_nudge_pi idle '')" "$(fx_nudge_pi typed 'crew inbox "$CREW_WORKER_ID"')" "$(fx_nudge_pi_live)"
+  CREW_ID=c1 run run_crew nudge feat/x
+  [ "$status" -eq 0 ]
+  [ "$(nudge_keys)" = "$(printf '%s\n' 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | jq -r '"\(.result) \(.engine)"')" = "accepted pi" ]
+}
+
+@test "nudge: refuses without an unread dispatcher directive" {
+  _nudge_setup
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "no unread msg from dispatcher:c1 to worker:feat/x#s1-1"
+  # A role's msg is not the dispatcher's directive.
+  seed_msg role:feat/x:reviewer 'worker:feat/x#s1-1' 30
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "no unread msg from dispatcher:c1"
+  # Nor is a directive the lead already read.
+  _nudge_directive
+  CREW_ID=c1 run run_crew inbox 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "no unread msg from dispatcher:c1"
+}
+
+@test "nudge: refuses every claude frame that is not an idle empty box" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_nudge_draft)"
+  cp "$(fx_nudge_draft_colored)" "$STUB_DIR/frames/%9.e"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "unsent input in the input box"
+  while IFS='|' read -r fx reason; do
+    nudge_frames "$($fx)"
+    CREW_ID=c1 run run_crew nudge nova
+    _nudge_refused "$reason"
+  done <<'EOF'
+fx_prompt_select|dialog on screen (option-select or workspace trust)
+fx_prompt_trust|dialog on screen (option-select or workspace trust)
+fx_permission_subagent|permission dialog on screen
+fx_prompt_quota|quota frame on screen
+fx_session_limit_refusal|quota frame on screen
+fx_nudge_fresh|no finished-turn marker above the input box
+EOF
+  nudge_frames "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "live turn or no idle input box"
+}
+
+@test "nudge: refuses when a draft appears between the anchor gate and typing" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)" "" "" "$(fx_nudge_draft)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "unsent input in the input box"
+}
+
+@test "nudge: refuses a pi lead mid-turn or holding a draft" {
+  _nudge_setup pi pi
+  _nudge_directive
+  nudge_frames "$(fx_nudge_pi_live)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "live turn or no idle input box"
+  nudge_frames "$(fx_nudge_pi draft 'hello draft')"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "unsent input in the input box"
+}
+
+@test "nudge: refuses an engine with no verified idle frame" {
+  _nudge_setup codex codex
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "no verified idle lead frame for codex"
+}
+
+@test "nudge: refuses a lead pane that no longer runs an engine (anchor)" {
+  _nudge_setup claude zsh
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "anchor: %9 is not running an engine (zsh)"
+}
+
+@test "nudge: refuses a lead that has not posted its first status" {
+  _nudge_setup
+  jq -c 'select(.kind != "status")' "$ndir/events.jsonl" >"$ndir/events.tmp"
+  mv "$ndir/events.tmp" "$ndir/events.jsonl"
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "lead has not posted its first status yet — wait for it to start"
+}
+
+@test "nudge: refuses a stopped newest session" {
+  _nudge_setup
+  _nudge_directive
+  seed_raw 'worker:feat/x#s1-1' done "" ""
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "newest session on feat/x is done"
+}
+
+@test "nudge: another crew's window does not resolve" {
+  _nudge_setup
+  _nudge_directive
+  printf '@7\tfeat/x\t%s\tc2\tnova\n' "$ndir" >"$STUB_DIR/wins.txt"
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no live pane for 'nova'"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
+@test "nudge: a worker or role session may not nudge" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_WORKER_ID='worker:feat/y#s2-2' CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "crew: nudge is a dispatcher command"
+  CREW_ROLE_ID='role:feat/y:reviewer' CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "crew: nudge is a dispatcher command"
+  printf 'crew_id: c1\n' >WORKER_TASK.md
+  CREW_ID=c1 run run_crew nudge nova
+  rm -f WORKER_TASK.md
+  _nudge_refused "crew: nudge is a dispatcher command"
+}
+
+@test "nudge: a pane id is not an accepted target" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge '%9'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"a pane id is not an anchored address"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
+@test "nudge: a line that never shows in the box is unconfirmed and gets no Enter" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova
+  [ "$status" -eq 3 ]
+  [[ "$output" == "nudge unconfirmed: %9 worker:feat/x#s1-1 — "*"no Enter sent"* ]]
+  [ "$(nudge_keys)" = 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' ]
+  [ "$(nudge_rows | jq -r .result)" = unconfirmed ]
+}
+
+@test "nudge: a line still in the box after Enter is held, with exactly one Enter" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_nudge_typed)"
+  CREW_ID=c1 run run_crew nudge 'worker:feat/x#s1-1'
+  [ "$status" -eq 3 ]
+  [[ "$output" == "nudge held: %9 worker:feat/x#s1-1 — "* ]]
+  [ "$(nudge_keys | grep -c ' Enter$')" -eq 1 ]
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | jq -r .result)" = held ]
 }
 
 @test "stall-watch: keeps the window after a watchdog-posted failed on a static non-claude pane" {
