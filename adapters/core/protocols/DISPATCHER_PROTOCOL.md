@@ -198,12 +198,15 @@ the gates below fail open on a cache older than ~2h, run `refresh-budget` right 
 sizing a pi fan-out, not just once at session start.
 Cursor's entry is plan usage, not spend: `engines.cursor` holds a `month`
 window over its billing cycle (`starts_at`→`resets_at`), the plan's `plan_type`
-and `credits_cover`, and a `limit_reached` signal, read from the dashboard's
-usage summary with cursor-agent's own stored login. `used_pct` is the overall
-figure on team plans, else the higher of the Auto and API pools, so an
-exhausted API pool reads full even when Auto has room. An unlimited plan
-records no window and no limit. `null` — no cursor-agent, no usable login, or a
-failed call (`refresh-budget` warns which step) — is unknown, not free.
+and `credits_cover`, a `limit_reached` signal, and, when the plan reports
+dollars, `spend` (`used_usd`/`limit_usd`, also shown on the `cursor:` summary
+line), read by delegating to tmux-og's `tmux-agent-usage-cursor --print`
+(tmux-og with noamsto/tmux-og#945 or later; `refresh-budget` holds no Cursor
+token or endpoint code). `used_pct` is the plan figure on team plans, else the
+higher of the Auto and API pools, so an exhausted API pool reads full even when
+Auto has room. An unlimited plan records no window and no limit. `null` — no
+`tmux-agent-usage-cursor`, no usable login, or a failed call (`refresh-budget`
+warns which step) — is unknown, not free.
 
 - **pi is the cheap lane when claude's `7d` window runs ahead of pace — unless
   OpenRouter is itself ahead of its monthly pace.** `engines.pi.windows.month`
@@ -379,7 +382,7 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
   **no hold path** — the hold release predicate reads ≥95% windows only — so
   hand the task back or pick another engine. `refresh-budget` also records
   each engine's `plan_type` (codex from the snapshot; claude's oauth payload
-  has no plan key, so `null`; cursor from usage-summary's `membershipType`)
+  has no plan key, so `null`; cursor from `--print`'s `plan_type`)
   and prints it in the summary. Missing data never blocks — an older cache
   without `plan_type`/`limit_reached` gates exactly as before, and a cursor
   `limit_reached.resets_at` already past does not refuse.
@@ -390,8 +393,8 @@ failed call (`refresh-budget` warns which step) — is unknown, not free.
 - **cursor's quota is the shakiest reading.** When `refresh-budget` can't
   read it (`engines.cursor` is `null`), treat it as neutral, but it's the
   engine most likely to surprise you — the probe rides an undocumented
-  dashboard endpoint — so route the work you'd shed first there, not the work
-  you'd shed last. A non-null reading gates and levers like any other engine's.
+  dashboard endpoint behind tmux-og's `--print` — so route the work you'd
+  shed first there, not the work you'd shed last. A non-null reading gates and levers like any other engine's.
 
 **Engine constraint:** the dispatchable set is whatever `dispatch --engines`
 prints — the resolved `engines` setting (a per-launch `DISPATCH_ENGINES` when

@@ -8,12 +8,10 @@ setup() {
   FIXTURE_DIR="$(mktemp -d)"
   PI_LOG="$STUB_DIR/pi.log"
   export STUB_DIR STUB_LOG FIXTURE_DIR PI_LOG
-  # Resolved before $STUB_DIR is prepended to PATH, so the date and uname
-  # shims below can fall through to the genuine binary for every call they
-  # don't fake.
+  # Resolved before $STUB_DIR is prepended to PATH, so the date shim below
+  # can fall through to the genuine binary for every call it doesn't fake.
   REAL_DATE="$(command -v date)"
-  REAL_UNAME="$(command -v uname)"
-  export REAL_DATE REAL_UNAME
+  export REAL_DATE
   # The script reads $HOME/.claude/.credentials.json — give it a throwaway HOME.
   export HOME="$(mktemp -d)"
   mkdir -p "$HOME/.claude"
@@ -126,21 +124,6 @@ case "${@: -1}" in
     fi
     cat "$FIXTURE_DIR/or_key.json"
     ;;
-  *cursor.com/api/usage-summary*)
-    # Same contract as the OpenRouter arm: the session cookie arrives on
-    # stdin and is never logged.
-    stdin_content="$(cat)"
-    if [[ -n "${SHIM_CURSOR_FAIL:-}" ]]; then
-      exit 22
-    fi
-    expect="${SHIM_CURSOR_EXPECT:-user_TESTACCOUNT::SENTINELCURSORTOKEN}"
-    if [[ "$stdin_content" == *"Cookie: WorkosCursorSessionToken=$expect\""* ]]; then
-      printf 'cursor_cookie_on_stdin=yes\n' >>"$STUB_LOG"
-    else
-      printf 'cursor_cookie_on_stdin=no\n' >>"$STUB_LOG"
-    fi
-    cat "$FIXTURE_DIR/cursor_usage.json"
-    ;;
   *) exit 22 ;;
 esac
 EOF
@@ -187,7 +170,9 @@ EOF
   chmod +x "$STUB_DIR/codex"
 }
 
-# Fake tmux: list-windows / list-panes / capture-pane, dispatched on $1.
+# Fake tmux: list-windows / list-panes / capture-pane / run-shell, dispatched
+# on $1. run-shell echoes $SHIM_TMUX_RUNSHELL (the cursor tool lookup) and
+# logs its arguments.
 # Defaults to "no windows" (exit 1) when its controlling env vars are unset —
 # load-bearing: every EXISTING test in this file (which sets none of them)
 # must see the pane-scrape tier fail exactly like before this shim existed.
@@ -215,88 +200,62 @@ capture-pane)
   [ -n "$val" ] || exit 1
   printf '%s\n' "$val"
   ;;
+run-shell)
+  printf 'tmux %s\n' "$*" >>"$STUB_LOG"
+  [ -n "${SHIM_TMUX_RUNSHELL:-}" ] || exit 1
+  printf '%s\n' "$SHIM_TMUX_RUNSHELL"
+  ;;
 *) exit 1 ;;
 esac
 EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
-# write_cursor_shims — probe_cursor's host edges, all inert by default. A
-# `cursor-agent` whose presence satisfies `command -v` but which marks the log
-# if anything runs it (the probe never may); a `uname` answering Linux to -s
-# unless SHIM_UNAME says otherwise, so a macOS dev host never takes the
-# Darwin branch; a `security` that fails unless SHIM_SECURITY_TOKEN opts in,
-# so no test ever reaches a real keychain.
+# write_cursor_shims — probe_cursor's host edge, inert by default: a
+# `tmux-agent-usage-cursor` that logs "cursor-print <args>", exits
+# $SHIM_CURSOR_RC when set, and otherwise prints $FIXTURE_DIR/cursor_print.json
+# (exit 4, a failed fetch, when no test has written one). The real tool must
+# never be reachable from these tests; a test that needs it absent strips it
+# with path_without_real and removes this stub.
 write_cursor_shims() {
-  cat >"$STUB_DIR/cursor-agent" <<'EOF'
+  cat >"$STUB_DIR/tmux-agent-usage-cursor" <<'EOF'
 #!/usr/bin/env bash
-printf 'cursor-agent-executed\n' >>"$STUB_LOG"
-exit 1
+printf 'cursor-print %s\n' "$*" >>"$STUB_LOG"
+[[ -z "${SHIM_CURSOR_RC:-}" || "$SHIM_CURSOR_RC" == 0 ]] || exit "$SHIM_CURSOR_RC"
+[[ -f "$FIXTURE_DIR/cursor_print.json" ]] || exit 4
+cat "$FIXTURE_DIR/cursor_print.json"
 EOF
-  cat >"$STUB_DIR/uname" <<EOF
-#!/usr/bin/env bash
-if [[ "\$#" -eq 1 && "\$1" == "-s" ]]; then
-  printf '%s\n' "\${SHIM_UNAME:-Linux}"
-  exit 0
-fi
-exec "$REAL_UNAME" "\$@"
-EOF
-  cat >"$STUB_DIR/security" <<'EOF'
-#!/usr/bin/env bash
-printf 'security %s\n' "$*" >>"$STUB_LOG"
-if [[ -n "${SHIM_SECURITY_TOKEN:-}" ]]; then
-  printf '%s\n' "$SHIM_SECURITY_TOKEN"
-  exit 0
-fi
-exit 44
-EOF
-  chmod +x "$STUB_DIR/cursor-agent" "$STUB_DIR/uname" "$STUB_DIR/security"
+  chmod +x "$STUB_DIR/tmux-agent-usage-cursor"
 }
 
-# cursor_auth <field> [token] — a synthetic Linux auth.json holding <token>
-# (default the sentinel) under <field>.
+# cursor_auth <field> [token] — a sentinel Linux auth.json holding <token>
+# (default the sentinel) under <field>. The probe must never read or write it.
 cursor_auth() {
   mkdir -p "$XDG_CONFIG_HOME/cursor"
   jq -n --arg f "$1" --arg t "${2:-SENTINELCURSORTOKEN}" '{($f): $t}' >"$XDG_CONFIG_HOME/cursor/auth.json"
 }
 
-# cursor_config [dir] — a synthetic cli-config.json whose authInfo.authId
-# carries the provider prefix the probe strips.
+# cursor_config — a sentinel cli-config.json, likewise never touched.
 cursor_config() {
-  local dir="${1:-$XDG_CONFIG_HOME/cursor}"
-  mkdir -p "$dir"
-  printf '%s\n' '{"version":1,"authInfo":{"authId":"auth0|user_TESTACCOUNT"}}' >"$dir/cli-config.json"
+  mkdir -p "$XDG_CONFIG_HOME/cursor"
+  printf '%s\n' '{"version":1,"authInfo":{"authId":"auth0|user_TESTACCOUNT"}}' >"$XDG_CONFIG_HOME/cursor/cli-config.json"
 }
 
-# cursor_jwt <sub> — a synthetic JWT-shaped token: base64url header and
-# payload, unpadded, signature SENTINELSIG. With the sub the tests use, the
-# extra claim makes the payload need both padding and the -/_ translation.
-cursor_jwt() {
-  local header payload
-  header=$(printf '%s' '{"alg":"none","typ":"JWT"}' | base64 | tr -d '\n=' | tr '+/' '-_')
-  payload=$(jq -cnj --arg s "$1" '{sub: $s, x: "???>>>?"}' | base64 | tr -d '\n=' | tr '+/' '-_')
-  printf '%s.%s.SENTINELSIG' "$header" "$payload"
+# cursor_print <json> — the stubbed `--print` stdout.
+cursor_print() {
+  printf '%s\n' "$1" >"$FIXTURE_DIR/cursor_print.json"
 }
 
-# cursor_usage <json> — the stubbed usage-summary response body.
-cursor_usage() {
-  printf '%s\n' "$1" >"$FIXTURE_DIR/cursor_usage.json"
-}
-
-# cursor_individual_usage — an individual-plan response: two plan pools, ISO
-# dates with fractional seconds, on-demand off.
-cursor_individual_usage() {
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31.000Z",
-    "billingCycleEnd": "2026-10-14T08:12:31.000Z",
-    "membershipType": "pro",
-    "isUnlimited": false,
-    "individualUsage": {
-      "plan": {"enabled": true, "used": 1269, "limit": 2000, "remaining": 731,
-               "autoPercentUsed": 41.25, "apiPercentUsed": 63.46, "totalPercentUsed": 52.36},
-      "onDemand": {"enabled": false, "used": 0, "limit": null, "remaining": null}
-    },
-    "teamUsage": {}
+# cursor_individual_print — an individual-plan `--print` object: two plan
+# pools, no plan dollars, on-demand off. The cycle is 2026-09-14T08:12:31Z to
+# 2026-10-14T08:12:31Z.
+cursor_individual_print() {
+  cursor_print '{
+    "plan_type": "pro", "unlimited": false,
+    "cycle": {"starts_at": 1789373551, "resets_at": 1791965551},
+    "plan": {"used_pct": null, "used_usd": null, "limit_usd": null},
+    "pools": {"auto_pct": 41.25, "api_pct": 63.46},
+    "on_demand": [{"scope": "individual", "enabled": false, "used_usd": 0, "limit_usd": null}]
   }'
 }
 
@@ -1123,13 +1082,13 @@ ROWS
 }
 
 # ---------------------------------------------------------------------------
-# cursor (usage-summary probe)
+# cursor (delegated to tmux-agent-usage-cursor --print)
 # ---------------------------------------------------------------------------
 
-@test "cursor individual plan: month window from the plan pools, cookie on stdin only" {
+@test "cursor individual plan: month window from the pools, never touching the token" {
   cursor_auth accessToken
   cursor_config
-  cursor_individual_usage
+  cursor_individual_print
   auth_sum=$(sha256sum "$XDG_CONFIG_HOME/cursor/auth.json")
   conf_sum=$(sha256sum "$XDG_CONFIG_HOME/cursor/cli-config.json")
   start_epoch=$(jq -n '"2026-09-14T08:12:31Z" | fromdateiso8601')
@@ -1140,52 +1099,91 @@ ROWS
   [[ "$output" != *"cursor quota unknown"* ]]
   [[ "$output" != *"SENTINELCURSORTOKEN"* ]]
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  # max(auto 41.25, api 63.46), rounded to one decimal.
+  # max(auto 41.25, api 63.46), rounded to one decimal; no plan dollars, so no spend.
   run jq -e --argjson s "$start_epoch" --argjson r "$reset_epoch" '.engines.cursor == {
     source: "usage_summary", plan_type: "pro", credits_cover: false, unlimited: false,
     windows: {month: {used_pct: 63.5, starts_at: $s, resets_at: $r}}, limit_reached: null}' "$cache"
   [ "$status" -eq 0 ]
-  grep -q "cursor_cookie_on_stdin=yes" "$STUB_LOG"
+  grep -qx "cursor-print --print" "$STUB_LOG"
   run ! grep -q SENTINELCURSORTOKEN "$cache"
   run ! grep -q SENTINELCURSORTOKEN "$STUB_LOG"
-  run ! grep -q cursor-agent-executed "$STUB_LOG"
   run ! grep -q '^security' "$STUB_LOG"
+  run ! grep -q 'cursor.com' "$STUB_LOG"
   [ "$(sha256sum "$XDG_CONFIG_HOME/cursor/auth.json")" = "$auth_sum" ]
   [ "$(sha256sum "$XDG_CONFIG_HOME/cursor/cli-config.json")" = "$conf_sum" ]
 }
 
-@test "cursor team plan: overall used/limit, epoch-millisecond dates, on-demand room covers" {
-  cursor_auth accessToken
-  cursor_config
-  cursor_usage '{
-    "billingCycleStart": 1788000000123,
-    "billingCycleEnd": 1790592000999,
-    "membershipType": "enterprise",
-    "isUnlimited": false,
-    "individualUsage": {"overall": {"enabled": true, "used": 30, "limit": 120, "remaining": 90}},
-    "teamUsage": {"onDemand": {"enabled": true, "used": 5, "limit": 50, "remaining": 45}}
+@test "refresh-budget carries no cursor token, account or usage-summary code of its own" {
+  run ! grep -E 'cursor\.com|WorkosCursor|cli-config|security find' "$SCRIPT"
+  body=$(sed -n '/^probe_cursor()/,/^}/p' "$SCRIPT")
+  [ -n "$body" ]
+  run ! grep -E 'security|curl|auth\.json|cli-config|accessToken|cursor-agent|uname' <<<"$body"
+}
+
+@test "cursor team plan: dollars on the entry and the summary line, on-demand room covers" {
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 25, "used_usd": 30, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "team", "enabled": true, "used_usd": 5, "limit_usd": 50}]
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor: [enterprise] month 25% used (resets "*") [credits cover]"* ]]
+  [[ "$output" == *"cursor: [enterprise] month 25% used (\$30/\$120) (resets "*") [credits cover]"* ]]
   run jq -e '.engines.cursor == {
     source: "usage_summary", plan_type: "enterprise", credits_cover: true, unlimited: false,
-    windows: {month: {used_pct: 25, starts_at: 1788000000, resets_at: 1790592000}}, limit_reached: null}' \
+    windows: {month: {used_pct: 25, starts_at: 1788000000, resets_at: 1790592000}}, limit_reached: null,
+    spend: {used_usd: 30, limit_usd: 120}}' \
     "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$status" -eq 0 ]
 }
 
-@test "cursor plan pool at 100% sets limit_reached, compared on the raw percentages" {
-  cursor_auth accessToken
-  cursor_config
-  reset_epoch=$(jq -n '"2026-10-14T08:12:31Z" | fromdateiso8601')
+@test "cursor enterprise plan: measured dollars round to whole dollars in the summary" {
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 38.669523809, "used_usd": 406.03, "limit_usd": 1050},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "team", "enabled": true, "used_usd": 861.55, "limit_usd": 6000}]
+  }'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cursor: [enterprise] month 38.7% used (\$406/\$1050) (resets "* ]]
+  run jq -e '.engines.cursor.spend == {used_usd: 406.03, limit_usd: 1050}
+    and .engines.cursor.windows.month.used_pct == 38.7
+    and .engines.cursor.credits_cover == true and .engines.cursor.limit_reached == null' \
+    "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "cursor spend is omitted unless both plan dollar figures are numbers" {
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  # Whole-second Z and +00:00 both parse.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31+00:00",
-    "membershipType": "pro", "isUnlimited": false,
-    "individualUsage": {"plan": {"enabled": true, "autoPercentUsed": 12, "apiPercentUsed": 100},
-                        "onDemand": {"enabled": false}}
+  for plan in '{"used_pct": 40, "used_usd": null, "limit_usd": null}' '{"used_pct": 40, "used_usd": 30}' '{"used_pct": 40, "used_usd": "30", "limit_usd": 120}'; do
+    cursor_print '{
+      "plan_type": "enterprise", "unlimited": false,
+      "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+      "plan": '"$plan"',
+      "pools": {"auto_pct": null, "api_pct": null}, "on_demand": []
+    }'
+    run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cursor: [enterprise] month 40% used (resets "* ]]
+    run jq -e '.engines.cursor | has("spend") | not' "$cache"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "cursor plan pool at 100% sets limit_reached, compared on the raw percentages" {
+  reset_epoch=$(jq -n '"2026-10-14T08:12:31Z" | fromdateiso8601')
+  start_epoch=$(jq -n '"2026-09-14T08:12:31Z" | fromdateiso8601')
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  cursor_print '{
+    "plan_type": "pro", "unlimited": false,
+    "cycle": {"starts_at": '"$start_epoch"', "resets_at": '"$reset_epoch"'},
+    "plan": {"used_pct": null, "used_usd": null, "limit_usd": null},
+    "pools": {"auto_pct": 12, "api_pct": 100},
+    "on_demand": [{"scope": "individual", "enabled": false, "used_usd": 0, "limit_usd": null}]
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1195,10 +1193,10 @@ ROWS
   [ "$status" -eq 0 ]
 
   # 99.96 displays as 100 but has not reached the limit.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "pro", "isUnlimited": false,
-    "individualUsage": {"plan": {"enabled": true, "autoPercentUsed": 12, "apiPercentUsed": 99.96}}
+  cursor_print '{
+    "plan_type": "pro", "unlimited": false,
+    "cycle": {"starts_at": '"$start_epoch"', "resets_at": '"$reset_epoch"'},
+    "plan": {"used_pct": null}, "pools": {"auto_pct": 12, "api_pct": 99.96}, "on_demand": []
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1206,33 +1204,42 @@ ROWS
   run jq -e '.engines.cursor.windows.month.used_pct == 100 and .engines.cursor.limit_reached == null' "$cache"
   [ "$status" -eq 0 ]
 
-  # Team shape: used_pct is the overall figure, yet an exhausted plan pool
-  # still sets the limit.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "enterprise", "isUnlimited": false,
-    "individualUsage": {"overall": {"used": 48, "limit": 120}, "plan": {"apiPercentUsed": 100}}
+  # Team shape: used_pct is the plan figure, yet an exhausted pool still sets
+  # the limit.
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": '"$start_epoch"', "resets_at": '"$reset_epoch"'},
+    "plan": {"used_pct": 40, "used_usd": 48, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": 100}, "on_demand": []
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   run jq -e '.engines.cursor.windows.month.used_pct == 40
     and .engines.cursor.limit_reached.reason == "plan usage at 100%"' "$cache"
   [ "$status" -eq 0 ]
+
+  # The plan percentage itself at 100.
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": '"$start_epoch"', "resets_at": '"$reset_epoch"'},
+    "plan": {"used_pct": 100, "used_usd": 120, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null}, "on_demand": []
+  }'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.cursor.limit_reached.reason == "plan usage at 100%"' "$cache"
+  [ "$status" -eq 0 ]
 }
 
-@test "cursor billing dates are both kept or both dropped, even at a 100% plan pool" {
-  cursor_auth accessToken
-  cursor_config
+@test "cursor billing cycle bounds are both kept or both dropped, even at a 100% plan pool" {
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  # A missing start, then a +02:00 start the parser doesn't accept: the valid
-  # end must not survive alone as a half-sized window or a limit reset.
-  for start in '' '"billingCycleStart": "2026-09-14T08:12:31+02:00",'; do
-    cursor_usage '{
-      '"$start"'
-      "billingCycleEnd": "2026-10-14T08:12:31Z",
-      "membershipType": "pro", "isUnlimited": false,
-      "individualUsage": {"plan": {"enabled": true, "autoPercentUsed": 12, "apiPercentUsed": 100},
-                          "onDemand": {"enabled": false}}
+  # One bound null, then an inverted cycle: the surviving bound must not
+  # become a half-sized window or a limit reset.
+  for cycle in '{"starts_at": null, "resets_at": 1790592000}' '{"starts_at": 1790592000, "resets_at": null}' '{"starts_at": 1790592000, "resets_at": 1788000000}' '{"starts_at": "x", "resets_at": 1790592000}' 'null'; do
+    cursor_print '{
+      "plan_type": "pro", "unlimited": false, "cycle": '"$cycle"',
+      "plan": {"used_pct": null}, "pools": {"auto_pct": 12, "api_pct": 100},
+      "on_demand": [{"scope": "individual", "enabled": false, "used_usd": 0, "limit_usd": null}]
     }'
     run bash "$SCRIPT"
     [ "$status" -eq 0 ]
@@ -1245,16 +1252,15 @@ ROWS
 }
 
 @test "cursor exhausted on-demand block sets limit_reached; a 0 or null limit never does" {
-  cursor_auth accessToken
-  cursor_config
-  reset_epoch=$(jq -n '"2026-10-14T08:12:31Z" | fromdateiso8601')
+  reset_epoch=1790592000
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "enterprise", "isUnlimited": false,
-    "individualUsage": {"overall": {"used": 72, "limit": 120},
-                        "onDemand": {"enabled": true, "used": 50, "limit": 50}},
-    "teamUsage": {"onDemand": {"enabled": false, "used": 0, "limit": null}}
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 60, "used_usd": 72, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "individual", "enabled": true, "used_usd": 50, "limit_usd": 50},
+                  {"scope": "team", "enabled": false, "used_usd": 0, "limit_usd": null}]
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1265,11 +1271,12 @@ ROWS
   [ "$status" -eq 0 ]
 
   # A 0 limit is "off": neither exhausted nor cover.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "enterprise", "isUnlimited": false,
-    "individualUsage": {"overall": {"used": 72, "limit": 120},
-                        "onDemand": {"enabled": true, "used": 50, "limit": 0}}
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 60, "used_usd": 72, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "individual", "enabled": true, "used_usd": 50, "limit_usd": 0}]
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1277,26 +1284,52 @@ ROWS
   [ "$status" -eq 0 ]
 
   # A null limit is uncapped: never exhausted, and it covers.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "enterprise", "isUnlimited": false,
-    "individualUsage": {"overall": {"used": 72, "limit": 120},
-                        "onDemand": {"enabled": true, "used": 50, "limit": null}}
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 60, "used_usd": 72, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "individual", "enabled": true, "used_usd": 50, "limit_usd": null}]
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   run jq -e '.engines.cursor.limit_reached == null and .engines.cursor.credits_cover == true' "$cache"
   [ "$status" -eq 0 ]
+
+  # An enabled bounded pool with a null used_usd counts as unspent: it covers.
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 60, "used_usd": 72, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "team", "enabled": true, "used_usd": null, "limit_usd": 50}]
+  }'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.cursor.limit_reached == null and .engines.cursor.credits_cover == true' "$cache"
+  [ "$status" -eq 0 ]
+
+  # A disabled pool never covers, whatever its numbers.
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 60, "used_usd": 72, "limit_usd": 120},
+    "pools": {"auto_pct": null, "api_pct": null},
+    "on_demand": [{"scope": "team", "enabled": false, "used_usd": 1, "limit_usd": 50}]
+  }'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run jq -e '.engines.cursor.limit_reached == null and .engines.cursor.credits_cover == false' "$cache"
+  [ "$status" -eq 0 ]
 }
 
 @test "cursor unlimited plan records no window and no limit, with or without percentages" {
-  cursor_auth accessToken
-  cursor_config
   cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "enterprise", "isUnlimited": true,
-    "individualUsage": {"plan": {"autoPercentUsed": 100, "apiPercentUsed": 100}}
+  cursor_print '{
+    "plan_type": "enterprise", "unlimited": true,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": null, "used_usd": null, "limit_usd": null},
+    "pools": {"auto_pct": 100, "api_pct": 100}, "on_demand": []
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
@@ -1306,7 +1339,9 @@ ROWS
     and .engines.cursor.limit_reached == null' "$cache"
   [ "$status" -eq 0 ]
 
-  cursor_usage '{"membershipType": "enterprise", "isUnlimited": true}'
+  cursor_print '{"plan_type": "enterprise", "unlimited": true, "cycle": {"starts_at": null, "resets_at": null},
+    "plan": {"used_pct": null, "used_usd": null, "limit_usd": null},
+    "pools": {"auto_pct": null, "api_pct": null}, "on_demand": []}'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"cursor: [enterprise] unlimited"* ]]
@@ -1315,167 +1350,131 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
-@test "a failed usage-summary call leaves cursor unknown" {
-  cursor_auth accessToken
-  cursor_config
-  cursor_individual_usage
-  SHIM_CURSOR_FAIL=1 run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — usage-summary call failed"* ]]
-  [[ "$output" == *"cursor: unknown"* ]]
-  [[ "$output" != *"SENTINELCURSORTOKEN"* ]]
-  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-}
-
-@test "no cursor auth.json leaves cursor unknown without calling usage-summary" {
-  cursor_config
-  cursor_individual_usage
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — no usable cursor-agent access token"* ]]
-  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-  run ! grep -q usage-summary "$STUB_LOG"
-}
-
-@test "an auth.json with no candidate token field leaves cursor unknown" {
-  cursor_auth refreshToken
-  cursor_config
-  cursor_individual_usage
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — no usable cursor-agent access token"* ]]
-  [[ "$output" != *"SENTINELCURSORTOKEN"* ]]
-  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-  run ! grep -q usage-summary "$STUB_LOG"
-}
-
-@test "the access_token field is a token candidate too" {
-  cursor_auth access_token
-  cursor_config
-  cursor_individual_usage
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor: [pro] month 63.5% used"* ]]
-  grep -q "cursor_cookie_on_stdin=yes" "$STUB_LOG"
-}
-
-@test "a token outside the JWT charset never reaches the curl config" {
-  cursor_config
-  cursor_individual_usage
-  for bad in 'SENTINEL"CURSORTOKEN' 'SENTINEL CURSORTOKEN'; do
-    : >"$STUB_LOG"
-    cursor_auth accessToken "$bad"
-    run bash "$SCRIPT"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"cursor quota unknown — no usable cursor-agent access token"* ]]
-    [[ "$output" != *"CURSORTOKEN"* ]]
-    run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-    [ "$output" = "null" ]
-    run ! grep -q usage-summary "$STUB_LOG"
-  done
-}
-
-@test "with no cli-config.json the account id comes from the JWT sub" {
-  jwt=$(cursor_jwt 'auth0|user_TESTACCOUNT')
-  cursor_auth accessToken "$jwt"
-  cursor_individual_usage
-  SHIM_CURSOR_EXPECT="user_TESTACCOUNT::$jwt" run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor: [pro] month 63.5% used"* ]]
-  [[ "$output" != *"SENTINELSIG"* ]]
-  grep -q "cursor_cookie_on_stdin=yes" "$STUB_LOG"
-  run ! grep -q SENTINELSIG "$STUB_LOG"
-  run ! grep -q SENTINELSIG "$XDG_DATA_HOME/crew/engine-budget.json"
-}
-
-@test "no usable cursor account id leaves cursor unknown without calling usage-summary" {
-  cursor_individual_usage
-  # No cli-config and a token with no JWT payload to decode.
-  cursor_auth accessToken
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — no cursor account id"* ]]
-  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
-  run ! grep -q usage-summary "$STUB_LOG"
-
-  # An account id outside the charset after the prefix strip.
-  mkdir -p "$XDG_CONFIG_HOME/cursor"
-  printf '%s\n' '{"authInfo":{"authId":"auth0|user TESTACCOUNT"}}' >"$XDG_CONFIG_HOME/cursor/cli-config.json"
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — no cursor account id"* ]]
-  run ! grep -q usage-summary "$STUB_LOG"
-}
-
-@test "an unrecognised usage-summary response leaves cursor unknown" {
-  cursor_auth accessToken
-  cursor_config
-  cache="$XDG_DATA_HOME/crew/engine-budget.json"
-  cursor_usage '<html>sign in</html>'
-  run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — usage-summary response not recognised"* ]]
-  run jq '.engines.cursor' "$cache"
-  [ "$output" = "null" ]
-
-  # JSON, not unlimited, but no percentage — even with an exhausted-looking
-  # on-demand block, the shape is unrecognised.
-  cursor_usage '{
-    "billingCycleStart": "2026-09-14T08:12:31Z", "billingCycleEnd": "2026-10-14T08:12:31Z",
-    "membershipType": "pro", "isUnlimited": false,
-    "individualUsage": {"plan": {"enabled": true, "totalPercentUsed": 50}},
-    "teamUsage": {"onDemand": {"enabled": true, "used": 50, "limit": 50}}
+@test "a null plan_type is carried as null and left out of the summary prefix" {
+  cursor_print '{
+    "plan_type": null, "unlimited": false,
+    "cycle": {"starts_at": 1788000000, "resets_at": 1790592000},
+    "plan": {"used_pct": 10}, "pools": {"auto_pct": null, "api_pct": null}, "on_demand": []
   }'
   run bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — usage-summary response not recognised"* ]]
-  run jq '.engines.cursor' "$cache"
-  [ "$output" = "null" ]
+  [[ "$output" == *"cursor: month 10% used (resets "* ]]
+  run jq -e '.engines.cursor.plan_type == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$status" -eq 0 ]
 }
 
-@test "no cursor-agent CLI leaves cursor unknown without reading auth or calling out" {
-  cursor_auth accessToken
-  cursor_config
-  cursor_individual_usage
-  rm "$STUB_DIR/cursor-agent"
-  PATH="$(path_without_real cursor-agent)" run bash "$SCRIPT"
+@test "each --print failure exit code maps to its warning and leaves cursor unknown" {
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  cursor_individual_print
+  for pair in '2:no Cursor access token' '3:no Cursor account id' '4:usage-summary call failed' '5:response not recognised'; do
+    SHIM_CURSOR_RC="${pair%%:*}" run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cursor quota unknown — "*"${pair#*:}"* ]]
+    [[ "$output" == *"cursor: unknown"* ]]
+    run jq '.engines.cursor' "$cache"
+    [ "$output" = "null" ]
+  done
+  # Any other nonzero exit is an unrecognised result, never free quota.
+  for rc in 1 7; do
+    SHIM_CURSOR_RC="$rc" run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cursor quota unknown — "*"response not recognised"* ]]
+    run jq '.engines.cursor' "$cache"
+    [ "$output" = "null" ]
+  done
+  # Our own timeout is a failed fetch, not a malformed response.
+  SHIM_CURSOR_RC=124 run bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown (no cursor-agent CLI)"* ]]
+  [[ "$output" == *"cursor quota unknown — usage-summary call failed"* ]]
+}
+
+@test "an unusable --print stdout leaves cursor unknown" {
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  # Not JSON, an array, a scalar, then objects with the wrong types or no
+  # usable percentage on a limited plan.
+  for body in '<html>sign in</html>' '[]' '"x"' '{}' \
+    '{"unlimited": true} {"unlimited": true}' \
+    '{"unlimited": false, "plan": {"used_pct": "50"}, "pools": {}, "on_demand": []}' \
+    '{"unlimited": false, "plan": {"used_pct": null}, "pools": {"auto_pct": "3", "api_pct": null}, "on_demand": []}' \
+    '{"unlimited": false, "plan": {}, "pools": {}, "on_demand": [{"scope": "team", "enabled": true, "used_usd": 50, "limit_usd": 50}]}'; do
+    cursor_print "$body"
+    run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cursor quota unknown — "*"response not recognised"* ]]
+    run jq '.engines.cursor' "$cache"
+    [ "$output" = "null" ]
+  done
+}
+
+@test "a tool that ignores --print and prints nothing gets the not-found warning" {
+  cursor_print ''
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tmux-agent-usage-cursor not found"* ]]
   run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
   [ "$output" = "null" ]
-  run ! grep -q usage-summary "$STUB_LOG"
 }
 
-@test "macOS reads the token from the keychain item and cli-config from ~/.cursor" {
-  cursor_config "$HOME/.cursor"
-  cursor_individual_usage
-  SHIM_UNAME=Darwin SHIM_SECURITY_TOKEN=SENTINELCURSORTOKEN run bash "$SCRIPT"
+@test "stdout that is not plain contract JSON never leaks into the cache or output" {
+  cursor_print '{"plan_type": {"x": "SENTINELCURSORTOKEN"}, "unlimited": false, "plan": {"used_pct": 10},
+    "pools": {}, "on_demand": [], "cycle": {"starts_at": 1788000000, "resets_at": 1790592000}}'
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  # A non-string plan_type degrades to null; the object is never spliced in.
+  run jq -e '.engines.cursor.plan_type == null' "$cache"
+  [ "$status" -eq 0 ]
+  run ! grep -q SENTINELCURSORTOKEN "$cache"
+  [[ "$output" != *"SENTINELCURSORTOKEN"* ]]
+}
+
+@test "no tmux-agent-usage-cursor leaves cursor unknown and names the tmux-og requirement" {
+  cursor_individual_print
+  rm "$STUB_DIR/tmux-agent-usage-cursor"
+  PATH="$(path_without_real tmux-agent-usage-cursor)" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cursor quota unknown — tmux-agent-usage-cursor not found (needs tmux-og with \`--print\`, noamsto/tmux-og#945 or later)"* ]]
+  [[ "$output" == *"cursor: unknown"* ]]
+  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [ "$output" = "null" ]
+  grep -qx "tmux run-shell command -v tmux-agent-usage-cursor" "$STUB_LOG"
+  run ! grep -q cursor-print "$STUB_LOG"
+}
+
+@test "the tool is resolved through the tmux server's PATH when it is not on ours" {
+  cursor_individual_print
+  via="$BATS_TEST_TMPDIR/via-tmux"
+  mkdir -p "$via"
+  mv "$STUB_DIR/tmux-agent-usage-cursor" "$via/"
+  PATH="$(path_without_real tmux-agent-usage-cursor)" SHIM_TMUX_RUNSHELL="$via/tmux-agent-usage-cursor" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"cursor: [pro] month 63.5% used (resets "* ]]
+  grep -qx "tmux run-shell command -v tmux-agent-usage-cursor" "$STUB_LOG"
+  grep -qx "cursor-print --print" "$STUB_LOG"
+}
+
+@test "a tool on our PATH wins without asking the tmux server" {
+  cursor_individual_print
+  SHIM_TMUX_RUNSHELL="$BATS_TEST_TMPDIR/elsewhere" run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   [[ "$output" == *"cursor: [pro] month 63.5% used"* ]]
-  [[ "$output" != *"SENTINELCURSORTOKEN"* ]]
-  grep -q "cursor_cookie_on_stdin=yes" "$STUB_LOG"
-  grep -qx "security find-generic-password -s cursor-access-token -a cursor-user -w" "$STUB_LOG"
-  run grep -c '^security ' "$STUB_LOG"
-  [ "$output" = "1" ]
-  run ! grep -q SENTINELCURSORTOKEN "$STUB_LOG"
-  run ! grep -q SENTINELCURSORTOKEN "$XDG_DATA_HOME/crew/engine-budget.json"
+  run ! grep -q '^tmux run-shell' "$STUB_LOG"
 }
 
-@test "macOS with a denied keychain leaves cursor unknown without calling usage-summary" {
-  cursor_config "$HOME/.cursor"
-  cursor_individual_usage
-  SHIM_UNAME=Darwin run bash "$SCRIPT"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"cursor quota unknown — no usable cursor-agent access token"* ]]
-  grep -qx "security find-generic-password -s cursor-access-token -a cursor-user -w" "$STUB_LOG"
-  run ! grep -q 'cursor.com/api/usage-summary' "$STUB_LOG"
-  run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
-  [ "$output" = "null" ]
+@test "a tmux lookup answer that is not an absolute executable path is ignored" {
+  cursor_individual_print
+  rm "$STUB_DIR/tmux-agent-usage-cursor"
+  printf 'x\n' >"$BATS_TEST_TMPDIR/not-exec"
+  for answer in 'tmux-agent-usage-cursor' "$BATS_TEST_TMPDIR/not-exec" "$BATS_TEST_TMPDIR/missing" '' '-flag'; do
+    PATH="$(path_without_real tmux-agent-usage-cursor)" SHIM_TMUX_RUNSHELL="$answer" run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tmux-agent-usage-cursor not found"* ]]
+    run jq '.engines.cursor' "$XDG_DATA_HOME/crew/engine-budget.json"
+    [ "$output" = "null" ]
+  done
+  run ! grep -q cursor-print "$STUB_LOG"
 }
+
 
 # ---------------------------------------------------------------------------
 # --report / --report --json (render-only, no probing)
