@@ -1303,21 +1303,19 @@ _pane_is_ancestor() {
   return 1
 }
 
-# _ensure_roster_render <crew_id> — start the crew's roster renderer, or
-# retarget a running one. The pane is this process's own TMUX_PANE, kept only
-# when its shell is an ancestor of this process (anchor, don't discover): never
-# the worker-writable WORKER_TASK.md `dispatcher_pane:` or a caller's argument.
-# The renderer's lock makes a second start a no-op. `if . == false` because
-# `// true` would turn an explicit false into true.
+# _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
+# renderer, or retarget a running one. crew accepts the pane only when its shell
+# is an ancestor of the crew process, so the call is synchronous (--detach
+# returns at once): a nohup'd child can be reparented after this script exits,
+# which would defeat that check. `if . == false` because `// true` would turn
+# an explicit false into true.
 _ensure_roster_render() {
   local flags=()
-  if [ -n "${TMUX_PANE:-}" ] && _pane_is_ancestor "$TMUX_PANE"; then
-    flags+=(--pane "$TMUX_PANE")
-  fi
+  [ -z "$2" ] || flags+=(--pane "$2")
   if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
     flags+=(--no-open)
   fi
-  CREW_ID="$1" nohup crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} >/dev/null 2>&1 &
+  CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
 # split_role_pane <window> <worktree> <role> <worker_id> <crew_id> — create a
@@ -5095,4 +5093,4 @@ fi
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
-_ensure_roster_render "$crew_id"
+_ensure_roster_render "$crew_id" "${TMUX_PANE:-}"

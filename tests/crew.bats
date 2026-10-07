@@ -10891,6 +10891,13 @@ EOF
 
 _rr_bus() { printf '%s/crew/events.jsonl' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
 _rr_crewdir() { printf '%s/crew' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
+# _rr_file — crew c1's diagram for the repo here: one file per repo bus.
+_rr_file() {
+  local repo
+  repo=$(git rev-parse --path-format=absolute --git-common-dir)
+  repo=${repo%/*}
+  printf '%s/roster-c1-%s.d2' "$CREW_ROSTER_DIR" "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')"
+}
 
 # _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
 _rr_dispatch() {
@@ -10918,16 +10925,22 @@ _rr_status() {
 }
 
 # _rr_stubs <panes-tsv-body> — tmux answers the role listing (the `-F` format
-# naming @crew_dir) from the body and everything else, including crew roster's
-# own pane_current_command listing, with nothing; aeye logs argv and its
-# --help names no publish-diagram.
+# naming @crew_dir) from the body, a pane's #{pane_pid} with RR_PANE_PID (this
+# test process, an ancestor of every crew.sh it runs) and everything else,
+# including crew roster's own pane_current_command listing, with nothing; aeye
+# logs argv and its --help names no publish-diagram.
 _rr_stubs() {
   stub_bin tmux
   stub_bin aeye
+  export RR_PANE_PID=$$
   printf '%s' "$1" >"$STUB_DIR/tmux-panes"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >>"$STUB_LOG"
+if [ "${1:-}" = display-message ] && [ "${*: -1}" = '#{pane_pid}' ]; then
+  printf '%s\n' "$RR_PANE_PID"
+  exit 0
+fi
 fmt=""
 while [ $# -gt 0 ]; do
   if [ "$1" = -F ]; then
@@ -10979,6 +10992,9 @@ _rr_seed() {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
   _rr_seed
+  # A re-dispatch without --base, older than feat/3-c's last status: the
+  # stacked edge still comes from the earlier dispatch that named the base.
+  _rr_dispatch feat/3-c 1791362700000 nova magenta colour127 "Charlie task" deep claude opus
   cat >"$BATS_TEST_TMPDIR/expected.d2" <<'EOF'
 title: "Crew roster" {near: top-center}
 legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
@@ -11008,14 +11024,14 @@ dispatcher -> h1: {style.stroke-dash: 3}
 EOF
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
-  diff -u "$BATS_TEST_TMPDIR/expected.d2" "$CREW_ROSTER_DIR/roster-c1.d2"
+  diff -u "$BATS_TEST_TMPDIR/expected.d2" "$(_rr_file)"
 }
 
 @test "roster-render: an unchanged bus writes nothing; a working detail change writes once" {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
   _rr_seed
-  target="$CREW_ROSTER_DIR/roster-c1.d2"
+  target="$(_rr_file)"
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
   [ -f "$target" ]
@@ -11057,7 +11073,7 @@ EOF
 
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
-  target="$CREW_ROSTER_DIR/roster-c1.d2"
+  target="$(_rr_file)"
 
   grep -qFx 'w1: "atlas\na\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {' "$target"
   grep -qFx '  style: {stroke-width: 3}' "$target"
@@ -11100,7 +11116,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   _rr_seed
   run run_crew roster-render --crew c1 --once --pane %7
   [ "$status" -eq 0 ]
-  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -f "$(_rr_file)" ]
   [ -z "$(_rr_publishes)" ]
 }
 
@@ -11109,7 +11125,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
   _rr_seed
   _rr_aeye_publish
-  target="$CREW_ROSTER_DIR/roster-c1.d2"
+  target="$(_rr_file)"
 
   run run_crew roster-render --crew c1 --once --pane %7
   [ "$status" -eq 0 ]
@@ -11143,7 +11159,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   _rr_aeye_publish
   run run_crew roster-render --crew c1 --once --pane %7 --no-open
   [ "$status" -eq 0 ]
-  [ "$(_rr_publishes)" = "aeye publish-diagram $CREW_ROSTER_DIR/roster-c1.d2 --pane %7" ]
+  [ "$(_rr_publishes)" = "aeye publish-diagram $(_rr_file) --pane %7" ]
   run run_crew roster-render --crew c1 --once --pane %8 --no-open
   [ "$status" -eq 0 ]
   [ "$(_rr_publishes | wc -l)" -eq 2 ]
@@ -11157,7 +11173,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   _rr_aeye_publish
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
-  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -f "$(_rr_file)" ]
   [ -z "$(_rr_publishes)" ]
 }
 
@@ -11168,7 +11184,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   _rr_aeye_publish 1
   run run_crew roster-render --crew c1 --once --pane %7
   [ "$status" -eq 0 ]
-  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -f "$(_rr_file)" ]
   [ "$(_rr_publishes | wc -l)" -eq 1 ]
   [ -f "$(_rr_crewdir)/crews/c1/roster-render.pane" ]
   [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.published" ]
@@ -11177,6 +11193,57 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
   [ "$(_rr_publishes | wc -l)" -eq 2 ]
+
+  # A failure after a success clears the record, so the next pass retries.
+  _rr_aeye_publish
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 3 ]
+  [ -f "$(_rr_crewdir)/crews/c1/roster-render.published" ]
+  _rr_aeye_publish 1
+  _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'execute: lint'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 4 ]
+  _rr_aeye_publish
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_publishes | wc -l)" -eq 5 ]
+}
+
+@test "roster-render: a --pane whose shell is not an ancestor is ignored" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  _rr_aeye_publish
+  sleep 60 >/dev/null 2>&1 3>&- &
+  HOLDER_PID=$!
+  export RR_PANE_PID="$HOLDER_PID"
+  run run_crew roster-render --crew c1 --once --pane %7
+  kill "$HOLDER_PID"
+  [ "$status" -eq 0 ]
+  [ -f "$(_rr_file)" ]
+  [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.pane" ]
+  [ -z "$(_rr_publishes)" ]
+}
+
+@test "roster-render: two repos' renderers for one crew id write separate diagrams" {
+  _rr_mini working 'from repo one'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  local first other="$BATS_TEST_TMPDIR/other-repo"
+  first=$(_rr_file)
+  git init -q -b main "$other"
+  cd "$other"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791360600000 working 'from repo two'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(_rr_file)" != "$first" ]
+  grep -qF 'from repo one' "$first"
+  grep -qF 'from repo two' "$(_rr_file)"
+  run grep -qF 'from repo two' "$first"
+  [ "$status" -eq 1 ]
 }
 
 @test "roster-render: a --pane that is not %N is ignored" {
@@ -11186,7 +11253,7 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   _rr_aeye_publish
   run run_crew roster-render --crew c1 --once --pane bogus
   [ "$status" -eq 0 ]
-  [ -f "$CREW_ROSTER_DIR/roster-c1.d2" ]
+  [ -f "$(_rr_file)" ]
   [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.pane" ]
   [ -z "$(_rr_publishes)" ]
 }
@@ -11230,6 +11297,14 @@ _rr_exited() {
 
 _rr_lockpid() { cat "$(_rr_crewdir)/crews/c1/roster-render.lock.d/pid" 2>/dev/null; }
 _rr_lock_is() { [ "$(_rr_lockpid)" = "$1" ]; }
+# _rr_lock_taken [not_pid] — the lock records a pid other than [not_pid]; it
+# lands in RR_PID, which teardown kills.
+_rr_lock_taken() {
+  local p
+  p=$(_rr_lockpid) || return 1
+  [ -n "$p" ] && [ "$p" != "${1:-}" ] || return 1
+  RR_PID=$p
+}
 _rr_publish_logged() { _rr_publishes | grep -qxF "aeye publish-diagram $1"; }
 _rr_file_has() { grep -qF -- "$2" "$1" 2>/dev/null; }
 
@@ -11260,11 +11335,11 @@ _rr_mini() {
 @test "roster-render: a second start hands the running daemon its pane" {
   _rr_mini working 'execute: tests'
   _rr_aeye_publish
-  local target="$CREW_ROSTER_DIR/roster-c1.d2"
+  local target="$(_rr_file)"
   _rr_daemon --pane %7
   _rr_wait _rr_publish_logged "$target --pane %7 --open"
 
-  run run_crew roster-render --crew c1 --interval 1 --pane %9
+  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --interval 1 --pane %9
   [ "$status" -eq 0 ]
   _rr_wait _rr_publish_logged "$target --pane %9 --open"
   kill -0 "$RR_PID"
@@ -11283,7 +11358,7 @@ _rr_mini() {
   _rr_mini done
   date +%s >"$CREW_CLOCK"
   _rr_daemon --quiet 30
-  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  _rr_wait test -f "$(_rr_file)"
   sleep 1.5
   kill -0 "$RR_PID"
   printf '%s\n' "$(($(cat "$CREW_CLOCK") + 31))" >"$CREW_CLOCK"
@@ -11295,7 +11370,7 @@ _rr_mini() {
   _rr_mini working 'execute: tests'
   date +%s >"$CREW_CLOCK"
   _rr_daemon --quiet 30
-  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  _rr_wait test -f "$(_rr_file)"
   sleep 1.5
   printf '%s\n' "$(($(cat "$CREW_CLOCK") + 31))" >"$CREW_CLOCK"
   sleep 3
@@ -11307,11 +11382,82 @@ _rr_mini() {
   local wt="$BATS_TEST_TMPDIR/rr-wt"
   git worktree add -q -b rr-wt "$wt"
   RR_CWD="$wt" _rr_daemon
-  _rr_wait test -f "$CREW_ROSTER_DIR/roster-c1.d2"
+  _rr_wait test -f "$(_rr_file)"
   git worktree remove --force "$wt"
   [ ! -d "$wt" ]
 
   _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'after-reap detail'
-  _rr_wait _rr_file_has "$CREW_ROSTER_DIR/roster-c1.d2" 'after-reap detail'
+  _rr_wait _rr_file_has "$(_rr_file)" 'after-reap detail'
   kill -0 "$RR_PID"
+}
+
+@test "roster-render: an outstanding hold keeps a drained crew's daemon alive" {
+  _rr_mini done
+  seed_hold c1 h-1 "$(($(date +%s) + 86400))" feat/5-e r-5 claude codex "Echo task"
+  date +%s >"$CREW_CLOCK"
+  _rr_daemon --quiet 30
+  _rr_wait test -f "$(_rr_file)"
+  sleep 1.5
+  printf '%s\n' "$(($(cat "$CREW_CLOCK") + 31))" >"$CREW_CLOCK"
+  sleep 3
+  kill -0 "$RR_PID"
+}
+
+@test "roster-render: --detach and --once together are a usage error" {
+  _rr_mini working 'execute: tests'
+  run run_crew roster-render --crew c1 --once --detach
+  [ "$status" -eq 64 ]
+  [ ! -e "$(_rr_crewdir)/crews/c1/roster-render.lock.d" ]
+}
+
+@test "roster-render: --detach records the pane and returns, leaving a daemon on the lock" {
+  _rr_mini working 'execute: tests'
+  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --pane %7 --interval 1 3>&-
+  [ "$status" -eq 0 ]
+  _rr_wait _rr_lock_taken
+  kill -0 "$RR_PID"
+  [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.pane")" = "%7" ]
+  _rr_wait test -s "$(_rr_crewdir)/crews/c1/roster-render.lock.d/self"
+  [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.lock.d/self")" = "$(readlink -f "$CREW")" ]
+}
+
+@test "roster-render: --detach replaces a daemon from another build" {
+  _rr_mini working 'execute: tests'
+  local lockd
+  lockd="$(_rr_crewdir)/crews/c1/roster-render.lock.d"
+  # Orphaned at once, so its exit is reaped and reads as dead to kill -0; its
+  # argv names roster-render, as a real renderer's does.
+  # A 1s loop, so the sleep a killed holder orphans is gone within a second.
+  printf '#!/usr/bin/env bash\nfor _ in {1..60}; do sleep 1; done\n' >"$BATS_TEST_TMPDIR/roster-render-fake"
+  HOLDER_PID=$(bash "$BATS_TEST_TMPDIR/roster-render-fake" >/dev/null 2>&1 3>&- & printf '%s' "$!")
+  _rr_wait _rr_args_have "$HOLDER_PID" roster-render
+  mkdir -p "$lockd"
+  printf '%s\n' "$HOLDER_PID" >"$lockd/pid"
+  printf '%s\n' /nix/store/old-crew/bin/crew >"$lockd/self"
+  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --interval 1 3>&-
+  [ "$status" -eq 0 ]
+  run kill -0 "$HOLDER_PID"
+  [ "$status" -ne 0 ]
+  _rr_wait _rr_lock_taken "$HOLDER_PID"
+  kill -0 "$RR_PID"
+  _rr_wait _rr_file_has "$lockd/self" "$(readlink -f "$CREW")"
+  [ "$(cat "$lockd/self")" = "$(readlink -f "$CREW")" ]
+}
+
+@test "roster-render: --detach never signals a recycled pid that is not a renderer" {
+  _rr_mini working 'execute: tests'
+  local lockd
+  lockd="$(_rr_crewdir)/crews/c1/roster-render.lock.d"
+  HOLDER_PID=$(sleep 60 >/dev/null 2>&1 3>&- & printf '%s' "$!")
+  mkdir -p "$lockd"
+  printf '%s\n' "$HOLDER_PID" >"$lockd/pid"
+  printf '%s\n' /nix/store/old-crew/bin/crew >"$lockd/self"
+  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --interval 1 3>&-
+  [ "$status" -eq 0 ]
+  sleep 1
+  kill -0 "$HOLDER_PID"
+}
+
+_rr_args_have() { # <pid> <substring>
+  [[ $(ps -o args= -p "$1" 2>/dev/null || true) == *"$2"* ]]
 }

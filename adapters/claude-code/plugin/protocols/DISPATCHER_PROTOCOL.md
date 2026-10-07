@@ -947,6 +947,11 @@ repo — `cd <worker repo> && crew stream --crew <id>` — so point a lane at th
 repo before waiting on the worker. A single checkout's stream can never cover a
 dispatch that left its repo.
 
+The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
+`dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the
+aeye carousel beside your pane on every bus change. Never write `roster-*.d2`
+yourself. If the carousel is closed, open it with `prefix + I`.
+
 **claude — streaming monitor.** Arm once, with the crew id substituted literally (never
 `$CREW_ID` — an in-session `/dispatcher` never exports it, so an unsubstituted reference
 resolves to nothing and the lane dies on start):
@@ -1031,11 +1036,6 @@ notice. Process death stays covered — the next turn's poll finds `dead`.
 **pi is the exception:** it has no `Monitor` and no background-completion
 notification to bind a turn to, so it takes the codex/pi blocking park below
 instead.
-
-The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
-`dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the
-aeye carousel beside your pane on every bus change. Never write `roster-*.d2`
-yourself. If the carousel is closed, open it with `prefix + I`.
 
 **cursor — background park.** INV-1 below applies to you.
 

@@ -104,7 +104,7 @@
             # and no ambient resolver required.
             # stall-watch runs refresh-budget (rate-limited, host-wide) so its
             # budget: detector reads a fresh cache.
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
             text = sub (builtins.readFile ./adapters/core/crew.sh);
@@ -151,7 +151,7 @@
           # itself uses for `wt`.
           dispatch-resume = pkgs.writeShellApplication {
             name = "dispatch-resume";
-            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux procps]) ++ [crew];
+            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
             text = withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh));
           };
 

@@ -4812,24 +4812,20 @@ EOF
   wait_for_log 'stall-watch role:feat/9-x:reviewer --pane %6 --engine claude --no-budget$'
 }
 
-@test "roster-render: an ancestor TMUX_PANE is handed over as --pane" {
+@test "roster-render: TMUX_PANE is handed to crew as --pane, detached" {
   stub_launch_bins
   _grid_tmux_stub
   TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  wait_for_log 'roster-render --crew c1 --pane %5$'
+  wait_for_log 'roster-render --crew c1 --pane %5 --detach$'
 }
 
-@test "roster-render: a TMUX_PANE that is not an ancestor is dropped" {
+@test "roster-render: no TMUX_PANE passes no --pane" {
   stub_launch_bins
   _grid_tmux_stub
-  sleep 60 &
-  foreign=$!
-  STUB_PANE_PID=$foreign TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
-  kill "$foreign" 2>/dev/null || true
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  wait_for_log 'roster-render --crew c1$'
-  run ! grep -q 'roster-render .*--pane' "$STUB_LOG"
+  wait_for_log 'roster-render --crew c1 --detach$'
 }
 
 @test "roster-render: DISPATCH_ROSTER_AUTO_OPEN=0 adds --no-open" {
@@ -4837,7 +4833,7 @@ EOF
   _grid_tmux_stub
   DISPATCH_ROSTER_AUTO_OPEN=0 TMUX_PANE=%5 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  wait_for_log 'roster-render --crew c1 --pane %5 --no-open$'
+  wait_for_log 'roster-render --crew c1 --pane %5 --no-open --detach$'
 }
 
 @test "roster-render: a --spawn-role does not start the renderer" {

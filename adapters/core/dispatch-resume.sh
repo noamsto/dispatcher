@@ -159,7 +159,7 @@ write_launch_script() {
 }
 
 # _artifacts_dir_bad, _protocol_dirs_record_bad, _settings_env_names,
-# _settings_env_json, _record_protocol_dirs, launch_dir_args, _pane_is_ancestor
+# _settings_env_json, _record_protocol_dirs, launch_dir_args
 # and _ensure_roster_render: duplicated from dispatch.sh (standalone build),
 # parity-tested like the two above. See
 # dispatch.sh for the record's settings line and the grant rules: a
@@ -713,43 +713,19 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" "dispatch resume"
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
 
-# _pane_is_ancestor <pane> — is <pane>'s pid one of this process's ancestors?
-# A worker's own dispatch descends from its pane's shell; a pane id copied from
-# another window does not. Bounded walk, spelling copied from crew.sh's
-# _is_ancestor_pid. Assumes the engine's tool shell shares tmux's pid
-# namespace — a pid-namespaced sandbox makes this refuse (fail closed).
-# Only a concrete %id: a relative target (`@5.{bottom-right}`) re-resolves to
-# another pane after this check.
-_pane_is_ancestor() {
-  local pane_pid p depth=0
-  [[ $1 =~ ^%[0-9]+$ ]] || return 1
-  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null || true)"
-  case "$pane_pid" in '' | *[!0-9]*) return 1 ;; esac
-  p=$$
-  while [ "$depth" -lt 32 ]; do
-    depth=$((depth + 1))
-    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
-    case "$p" in '' | *[!0-9]* | 0) return 1 ;; esac
-    if [ "$p" = "$pane_pid" ]; then return 0; fi
-  done
-  return 1
-}
-
-# _ensure_roster_render <crew_id> — start the crew's roster renderer, or
-# retarget a running one. The pane is this process's own TMUX_PANE, kept only
-# when its shell is an ancestor of this process (anchor, don't discover): never
-# the worker-writable WORKER_TASK.md `dispatcher_pane:` or a caller's argument.
-# The renderer's lock makes a second start a no-op. `if . == false` because
-# `// true` would turn an explicit false into true.
+# _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
+# renderer, or retarget a running one. crew accepts the pane only when its shell
+# is an ancestor of the crew process, so the call is synchronous (--detach
+# returns at once): a nohup'd child can be reparented after this script exits,
+# which would defeat that check. `if . == false` because `// true` would turn
+# an explicit false into true.
 _ensure_roster_render() {
   local flags=()
-  if [ -n "${TMUX_PANE:-}" ] && _pane_is_ancestor "$TMUX_PANE"; then
-    flags+=(--pane "$TMUX_PANE")
-  fi
+  [ -z "$2" ] || flags+=(--pane "$2")
   if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
     flags+=(--no-open)
   fi
-  CREW_ID="$1" nohup crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} >/dev/null 2>&1 &
+  CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
 # _settings_load, _glob_match, _exact_match and _escalation_hop: duplicated
@@ -1501,4 +1477,10 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
 CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
-_ensure_roster_render "$crew_id"
+# A human resuming from a worker's own pane must not retarget the renderer
+# there; only the registered dispatcher's pane may move it.
+rr_pane="${TMUX_PANE:-}"
+if [ -n "$dispatcher_live" ] && [ "$rr_pane" != "$dispatcher_pane_new" ]; then
+  rr_pane=""
+fi
+_ensure_roster_render "$crew_id" "$rr_pane"

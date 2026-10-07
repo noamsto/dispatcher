@@ -1519,7 +1519,9 @@ _rr_model() {
       | map(max_by(.ts) as $d | $d.branch as $b
           | ([$ev[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .ts] | max) as $launch
           | ([$st[] | select(.from == "worker:" + $b or (.from | startswith("worker:" + $b + "#"))) | .ts] | max) as $last
-          | {branch: $b, ts: $launch, base: ($d.base // null), title: ($d.title // null),
+          # A re-dispatch without --base keeps the base an earlier dispatch named.
+          | (map(select((.base | type) == "string")) | max_by(.ts) | .base) as $base
+          | {branch: $b, ts: $launch, base: $base, title: ($d.title // null),
              tier: ($d.tier // null), engine: ($d.engine // null), model: ($d.model // null),
              pending: ($last == null or $launch > $last)})' "$log") || return 1
   while IFS= read -r br; do
@@ -1612,8 +1614,12 @@ _rr_d2() {
           "dispatcher -> \($k): {style.stroke-dash: 3}")'
 }
 
-_rr_target() { # $1=crew
-  printf '%s/roster-%s.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" "$1"
+# _rr_target <crew> — one diagram per crew per repo bus, named after the repo
+# dir that owns the bus, so two repos' renderers never write the same file.
+_rr_target() {
+  local repo=${common%/*}
+  printf '%s/roster-%s-%s.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" "$1" \
+    "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')"
 }
 
 # _rr_put <target> <content> — same-dir temp + mv, so a reader never sees a
@@ -1632,12 +1638,19 @@ _rr_put() {
 }
 
 # _rr_publish <file> <pane> <cdir> <no_open> — show the diagram in the aeye
-# carousel beside <pane>, opening it once per pane. Best-effort: always 0.
+# carousel beside <pane>, opening it once per pane. aeye is probed per publish,
+# so one installed or upgraded after the renderer started is picked up. A
+# failed publish clears the record, so the next pass retries. Best-effort: always 0.
 _rr_publish() {
-  local open=()
-  [ -n "$_rr_aeye" ] || return 0
+  local open=() help re=$'(^|\n)[[:space:]]+publish-diagram([[:space:]]|$)'
+  # Captured then matched, not piped to grep, so no SIGPIPE false negative.
+  help=$(aeye --help 2>/dev/null || true)
+  [[ $help =~ $re ]] || return 0
   [ -n "$4" ] || [ "$(cat "$3/roster-render.opened" 2>/dev/null || true)" = "$2" ] || open=(--open)
-  aeye publish-diagram "$1" --pane "$2" "${open[@]}" >/dev/null 2>&1 || return 0
+  if ! timeout 60 aeye publish-diagram "$1" --pane "$2" "${open[@]}" >/dev/null 2>&1; then
+    rm -f "$3/roster-render.published"
+    return 0
+  fi
   _rr_put "$3/roster-render.published" "$2" || true
   [ ${#open[@]} -eq 0 ] || _rr_put "$3/roster-render.opened" "$2" || true
   return 0
@@ -3825,15 +3838,18 @@ EOF
       | map(if .exit_suspect then . else del(.prev_state) end)'
   ;;
 roster-render)
-  # roster-render --crew ID [--pane %N] [--no-open] [--once] [--interval S] [--quiet S]
-  # Draws the crew's roster diagram (roster-<crew>.d2) from the bus and the
-  # crew's live role panes, and publishes it to the aeye carousel beside the
+  # roster-render --crew ID [--pane %N] [--no-open] [--once | --detach] [--interval S] [--quiet S]
+  # Draws the crew's roster diagram (roster-<crew>-<repo>.d2) from the bus and
+  # the crew's live role panes, and publishes it to the aeye carousel beside the
   # recorded dispatcher pane. One renderer per repo bus: a crew spanning several
-  # repos gets one diagram per repo. Usage errors exit 64, like `stream`.
+  # repos gets one diagram per repo, <repo> naming the dir that owns the bus.
+  # --detach records the pane, then starts the daemon detached and returns.
+  # Usage errors exit 64, like `stream`.
   rr_crew=""
   rr_pane=""
   rr_no_open=""
   rr_once=""
+  rr_detach=""
   rr_interval=2
   rr_quiet=1800
   while [ $# -gt 0 ]; do
@@ -3857,6 +3873,10 @@ roster-render)
       ;;
     --once)
       rr_once=1
+      shift
+      ;;
+    --detach)
+      rr_detach=1
       shift
       ;;
     *)
@@ -3883,6 +3903,10 @@ roster-render)
     echo "crew: roster-render: --crew is required" >&2
     exit 64
   }
+  [ -z "$rr_once" ] || [ -z "$rr_detach" ] || {
+    echo "crew: roster-render: --once and --detach are mutually exclusive" >&2
+    exit 64
+  }
   case "$rr_crew" in
   *[!A-Za-z0-9._-]* | -* | . | ..)
     echo "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'" >&2
@@ -3899,20 +3923,42 @@ roster-render)
   # worktree is reaped the renderer would die with `not in a git repo`.
   cd -- "$common" || exit 1
   # The pane record is rewritten before any lock, so a new dispatcher pane
-  # retargets an already-running renderer. Any same-uid caller passing --pane
-  # retargets it too — the command text names that effect.
-  if [[ $rr_pane =~ ^%[0-9]+$ ]]; then
-    _rr_put "$cdir/roster-render.pane" "$rr_pane" || true
-  fi
-  # Probed once here, outside any $( ): passes run in command substitutions.
-  # Captured then matched, not piped to grep, so no SIGPIPE false negative.
-  _rr_aeye=""
-  if command -v aeye >/dev/null 2>&1; then
-    rr_help=$(aeye --help 2>/dev/null || true)
-    rr_re=$'(^|\n)[[:space:]]+publish-diagram([[:space:]]|$)'
-    if [[ $rr_help =~ $rr_re ]]; then
-      _rr_aeye=1
+  # retargets an already-running renderer. Anchor, don't discover: a --pane is
+  # recorded only when its shell is an ancestor of this process, so a caller
+  # can point the renderer at its own pane but never at another's.
+  if [ -n "$rr_pane" ]; then
+    rr_pane_pid=""
+    if [[ $rr_pane =~ ^%[0-9]+$ ]]; then
+      rr_pane_pid=$(tmux display-message -p -t "$rr_pane" '#{pane_pid}' 2>/dev/null || true)
     fi
+    if [[ $rr_pane_pid =~ ^[0-9]+$ ]] && _is_ancestor_pid "$rr_pane_pid"; then
+      _rr_put "$cdir/roster-render.pane" "$rr_pane" || true
+    else
+      echo "crew: roster-render: --pane '$rr_pane' is not this caller's pane — ignored" >&2
+    fi
+  fi
+  rr_lockd="$cdir/roster-render.lock.d"
+  if [ -n "$rr_detach" ]; then
+    # A nohup'd child of the caller can be reparented before it checks
+    # ancestry, so the pane was validated above and the daemon reads the record.
+    # A renderer from another build (a rebuild switched $0) is stopped rather
+    # than left running stale code; its lock clears for the one started here.
+    rr_held=$(cat "$rr_lockd/pid" 2>/dev/null || true)
+    # The args check keeps a recycled pid (a renderer that died uncleanly) from
+    # getting a stray TERM.
+    if [[ $rr_held =~ ^[1-9][0-9]*$ ]] && kill -0 "$rr_held" 2>/dev/null &&
+      [ "$(cat "$rr_lockd/self" 2>/dev/null || true)" != "$_rr_self" ] &&
+      [[ $(ps -o args= -p "$rr_held" 2>/dev/null || true) == *roster-render* ]]; then
+      kill -TERM "$rr_held" 2>/dev/null || true
+      for _ in {1..50}; do
+        if [ ! -d "$rr_lockd" ] || ! kill -0 "$rr_held" 2>/dev/null; then break; fi
+        sleep 0.1
+      done
+    fi
+    rr_args=(--crew "$rr_crew" --interval "$rr_interval" --quiet "$rr_quiet")
+    [ -z "$rr_no_open" ] || rr_args+=(--no-open)
+    CREW_ID="$rr_crew" nohup bash -euo pipefail "$_rr_self" roster-render "${rr_args[@]}" </dev/null >/dev/null 2>&1 &
+    exit 0
   fi
   if [ -n "$rr_once" ]; then
     _rr_pass "$rr_crew" "$cdir" "$rr_no_open" >/dev/null
@@ -3921,8 +3967,9 @@ roster-render)
   # Acquired before the traps are armed, like `stream`: a refused start must
   # not release the incumbent's lock. A held lock is a silent no-op — the pane
   # record above already retargeted the running renderer.
-  rr_lockd="$cdir/roster-render.lock.d"
   _lock_acquire "$rr_lockd" "$$" || exit 0
+  # Read by a later --detach to tell a renderer from another build.
+  printf '%s\n' "$_rr_self" >"$rr_lockd/self" || exit 0
   # `_lock_release` is unconditional; the pid check keeps a renderer whose lock
   # was reclaimed (crew dir removed and re-created) from deleting the new owner's.
   trap '[ "$(cat "$rr_lockd/pid" 2>/dev/null || true)" != "$$" ] || _lock_release "$rr_lockd"' EXIT
