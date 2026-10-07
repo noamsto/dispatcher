@@ -402,11 +402,9 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"usage: dispatch"* ]]
 }
 
-# #817: `dispatch --help` is a readable screen, not the one-line synopsis. The
-# flag list is derived from the parse arms of dispatch.sh itself, and each flag
-# has to own a line of the help (anchored, so a mention inside a synopsis or
-# another flag's description does not count) — a flag added later without its
-# own help line fails here instead of going undocumented.
+# #817: `dispatch --help` is a grouped screen, not the one-line synopsis. The
+# flag list comes from the parse arms of dispatch.sh, and each flag has to own
+# a line of the help — a mention in a synopsis or another flag's line is not it.
 _dispatch_help_flags() {
   grep -E '^  --[a-z-]+\)' "$DISPATCH" | sed -E 's/^  (--[a-z-]+)\).*/\1/' | sort -u
 }
@@ -436,8 +434,8 @@ _dispatch_help_flags() {
   grep -Fq 'dispatch standard sonnet --effort high' <<<"$output"
 }
 
-# The help path has to stay above every lookup a broken environment can fail:
-# a bare directory, no crew id, no settings file.
+# The help path has to stay above every lookup a broken environment can fail: a
+# bare directory, no crew id, no settings file.
 @test "--help works with no repo, crew id or settings file (#817)" {
   local sandbox
   sandbox="$BATS_TEST_TMPDIR/norepo"
@@ -457,7 +455,7 @@ _dispatch_help_flags() {
 }
 
 # The #349 rule, applied to help: only a leading argument selects it, so a
-# --help the worker put in a title stays title text.
+# --help inside a title stays title text.
 @test "a --help after -- is title text, not the help screen (#817)" {
   stub_launch_bins
   stub_gh_claim "" ""

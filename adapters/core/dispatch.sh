@@ -6,16 +6,13 @@
 # The shebang + `set -euo pipefail` are prepended by writeShellApplication, so
 # this file is only the function body (see crew.sh for the same pattern).
 
-# Error paths only: the short synopsis, pointing at the full help below.
 usage() {
   echo "usage: dispatch <trivial|standard|deep> <model> --effort E [flags] [--] <title...> — see: dispatch --help" >&2
 }
 
-# Readable help (#817), in the shape `crew <sub> --help` uses (#815): synopsis,
-# purpose, flags grouped by what they are for, one line each, two examples.
-# Every flag dispatch parses has a line here, and tests/dispatch.bats derives
-# the flag list from this file's own `^  --[a-z-]+\)` parse arms — a flag added
-# without a line here fails the test rather than going undocumented.
+# `dispatch --help`, in the shape `crew <sub> --help` shares (#815): one line
+# per flag, grouped. tests/dispatch.bats derives the flag list from the
+# `^  --[a-z-]+\)` arms of the parse loop below and requires each to own a line.
 _dispatch_help() {
   cat <<'HELP'
 usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
@@ -81,11 +78,9 @@ Examples
 HELP
 }
 
-# Only a LEADING --help is the help screen: `dispatch standard sonnet -- x --help`
-# keeps --help as title text, the same first-argument rule that keeps the word
-# `resume` in a title from selecting the subcommand (#349). Intercepted above
-# every path that reads a repo, a setting, the tracker or a budget, so help
-# works from any directory with no crew id.
+# Only a LEADING --help is the help screen, the #349 first-argument rule that
+# keeps `resume` in a title from selecting the subcommand. It sits above every
+# read of a repo, a setting, the tracker or a budget, so help works from anywhere.
 case "${1:-}" in
 --help | -h | help)
   _dispatch_help

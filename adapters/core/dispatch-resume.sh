@@ -8,15 +8,13 @@
 # entirely, and re-runs only the gates it names. The shebang and
 # `set -euo pipefail` are prepended by writeShellApplication.
 
-# Error paths only: the short synopsis, pointing at the full help below.
 usage() {
   echo "usage: dispatch resume [<target>] [flags] [extra prompt...] — see: dispatch resume --help" >&2
 }
 
-# Readable help (#817), matching `dispatch --help` and `crew <sub> --help`
-# (#812, #815). Every flag this file parses has a line here, and
-# tests/dispatch-resume.bats derives the flag list from the `^  --[a-z-]+\)`
-# arms of the parse loop below.
+# `dispatch resume --help`, in the shape `dispatch --help` shares (#817). One
+# line per flag: tests/dispatch-resume.bats derives the flag list from the
+# `^  --[a-z-]+\)` arms of the parse loop below and requires each to own a line.
 _resume_help() {
   cat <<'HELP'
 usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
@@ -44,9 +42,9 @@ engine session, and re-run only the gates this command names.
 HELP
 }
 
-# Only a LEADING --help is the help screen — the first-argument rule that keeps
-# `resume` in a title from selecting the subcommand (#349). Above every read of
-# a worktree, a task doc or the bus, so it works from anywhere.
+# Only a LEADING --help is the help screen, the #349 first-argument rule that
+# keeps `resume` in a title from selecting the subcommand. It sits above every
+# read of a worktree, a task doc or the bus, so help works from anywhere.
 case "${1:-}" in
 --help | -h)
   _resume_help
