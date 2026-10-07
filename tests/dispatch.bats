@@ -402,6 +402,75 @@ write_cursor_models_cache() { # <fetched_epoch>
   [[ "$output" == *"usage: dispatch"* ]]
 }
 
+# #817: `dispatch --help` is a readable screen, not the one-line synopsis. The
+# flag list is derived from the parse arms of dispatch.sh itself, so a flag
+# added later without a help line fails here instead of going undocumented.
+_dispatch_help_flags() {
+  grep -E '^  --[a-z-]+\)' "$DISPATCH" | sed -E 's/^  (--[a-z-]+)\).*/\1/' | sort -u
+}
+
+@test "--help, -h and help list every flag dispatch parses and exit 0 (#817)" {
+  local form flag missing
+  for form in --help -h help; do
+    run run_dispatch "$form"
+    [ "$status" -eq 0 ] || { echo "$form: status $status"; return 1; }
+    [[ "$output" == *"usage: dispatch"* ]] || { echo "$form: no synopsis"; return 1; }
+    missing=()
+    while IFS= read -r flag; do
+      grep -Fq -- "$flag" <<<"$output" || missing+=("$flag")
+    done < <(_dispatch_help_flags)
+    [ "${#missing[@]}" -eq 0 ] || { echo "$form missing: ${missing[*]}"; return 1; }
+  done
+}
+
+@test "--help separates the internal modes and shows an example (#817)" {
+  run run_dispatch --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Internal (called by workers and the harness"* ]]
+  local mode
+  for mode in --spawn-role --reap-roles --role-exited --role-watch; do
+    grep -Fq -- "$mode" <<<"$output" || { echo "help missing: $mode"; return 1; }
+  done
+  grep -Fq 'dispatch standard sonnet --effort high' <<<"$output"
+}
+
+# The help path has to stay above every lookup a broken environment can fail:
+# a bare directory, no crew id, no settings file.
+@test "--help works with no repo, crew id or settings file (#817)" {
+  local sandbox
+  sandbox="$BATS_TEST_TMPDIR/norepo"
+  mkdir -p "$sandbox"
+  (
+    cd "$sandbox" || exit 1
+    env -u CREW_ID -u CREW_WORKER_ID -u CREW_REAL -u DISPATCH_ENGINES \
+      HOME="$sandbox/home" XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" \
+      bash -euo pipefail "$(realpath "$DISPATCH")" --help
+  ) >"$sandbox/out" 2>"$sandbox/err"
+  [ -s "$sandbox/out" ]
+  grep -q '^usage: dispatch' "$sandbox/out"
+  if [ -s "$sandbox/err" ]; then
+    echo "stderr: $(cat "$sandbox/err")"
+    return 1
+  fi
+}
+
+# The #349 rule, applied to help: only a leading argument selects it, so a
+# --help the worker put in a title stays title text.
+@test "a --help after -- is title text, not the help screen (#817)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 -- "title with --help in it"
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-title-with-help-in-it"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'title: title with --help in it' "$wt_path/WORKER_TASK.md"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 43 --help real title words
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-43-help-real-title-words"
+  grep -qx 'title: --help real title words' "$wt_path/WORKER_TASK.md"
+}
+
 @test "resume intercepts before the positional tier parse and execs dispatch-resume" {
   stub_bin dispatch-resume
   run run_dispatch resume --print

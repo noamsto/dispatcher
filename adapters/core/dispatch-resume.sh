@@ -8,9 +8,51 @@
 # entirely, and re-runs only the gates it names. The shebang and
 # `set -euo pipefail` are prepended by writeShellApplication.
 
+# Error paths only: the short synopsis, pointing at the full help below.
 usage() {
-  echo "usage: dispatch resume [<target>] [--agent claude|codex|cursor|pi] [--model M] [--effort E] [--mcp <profile>] [--fresh] [--print] [--ignore-budget] [--ignore-map] [extra prompt...]" >&2
+  echo "usage: dispatch resume [<target>] [flags] [extra prompt...] — see: dispatch resume --help" >&2
 }
+
+# Readable help (#817), matching `dispatch --help` and `crew <sub> --help`
+# (#812, #815). Every flag this file parses has a line here, and
+# tests/dispatch-resume.bats derives the flag list from the `^  --[a-z-]+\)`
+# arms of the parse loop below.
+_resume_help() {
+  cat <<'HELP'
+usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
+                     [--mcp P] [--fresh] [--print] [--ignore-budget]
+                     [--ignore-map] [extra prompt...]
+
+Relaunch the worker whose worktree you are standing in, continuing its own
+engine session, and re-run only the gates this command names.
+
+  <target>            Where the work is: the current directory (the default),
+                      '#N' or N, a Linear id, a branch, a codename, or
+                      worker:<branch>#<session>
+  --agent E           Engine to relaunch on: claude | codex | cursor | pi
+  --model M           Model for that engine (default: the task doc's)
+  --effort E          low | medium | high | xhigh | max | ultra (default: the task doc's)
+  --mcp P             MCP profile to launch the engine with
+  --fresh             Start a new engine session instead of continuing the old one
+  --print             Print the launch command instead of running it
+  --ignore-budget     Spend past the quota stop (a human's spend decision)
+  --ignore-map        Skip the tier-map model refusals (a human's model call)
+  [extra prompt...]   Words appended to the carried task body for this run
+
+  cd .dispatch-wt/feat-42-fix-the-roster-column && dispatch resume
+  dispatch resume '#42' --agent pi --model lemonade/Qwen3.8-Flash --effort high
+HELP
+}
+
+# Only a LEADING --help is the help screen — the first-argument rule that keeps
+# `resume` in a title from selecting the subcommand (#349). Above every read of
+# a worktree, a task doc or the bus, so it works from anywhere.
+case "${1:-}" in
+--help | -h)
+  _resume_help
+  exit 0
+  ;;
+esac
 
 # pi_skill_args <worktree> — emit --skill flags for the worktree's own project
 # skill dirs and for the harness's own skills ($SKILLS_DIR, set below).

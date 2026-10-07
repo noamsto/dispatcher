@@ -6,9 +6,92 @@
 # The shebang + `set -euo pipefail` are prepended by writeShellApplication, so
 # this file is only the function body (see crew.sh for the same pattern).
 
+# Error paths only: the short synopsis, pointing at the full help below.
 usage() {
-  echo -e "usage: dispatch <trivial|standard|deep> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--no-grid] [--roles <r1[=model|agent:model][@effort],...>] [--plan provided|required] [--crew-id <id>] [--base <ref|PR>] [--add-dir DIR]... [--owner-auth TEXT] [--pr N] [--parent N] [--also-closes N|ID]... [--review] [--draft|--no-draft] [--ignore-budget] [--ignore-map] [LINEAR-ID|#N] [--] <title...>\n       dispatch resume [<target>] [--agent E] [--model M] [--effort E] [--mcp P] [--fresh] [--print] [extra prompt...]" >&2
+  echo "usage: dispatch <trivial|standard|deep> <model> --effort E [flags] [--] <title...> — see: dispatch --help" >&2
 }
+
+# Readable help (#817), in the shape `crew <sub> --help` uses (#815): synopsis,
+# purpose, flags grouped by what they are for, one line each, two examples.
+# Every flag dispatch parses has a line here, and tests/dispatch.bats derives
+# the flag list from this file's own `^  --[a-z-]+\)` parse arms — a flag added
+# without a line here fails the test rather than going undocumented.
+_dispatch_help() {
+  cat <<'HELP'
+usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
+       dispatch resume [<target>] [flags]
+       dispatch --engines [--in-budget]
+
+Scaffold a worker session: claim or mint its issue, create the branch, the
+worktree and WORKER_TASK.md, then launch the engine in a tmux window. Flags
+come before the title; put -- before a title that starts with a dash.
+
+Task shape
+  tier                    Positional: trivial | standard | deep — sets review rigor
+  model                   Positional: the model id or alias the engine runs
+  --effort E              low | medium | high | xhigh | max | ultra (required)
+  --plan provided|required   Task doc is the plan of record (default: required)
+
+Engine and roles
+  --agent E               claude (default) | codex | cursor | pi
+  --mcp P                 MCP profile to launch the engine with
+  --grid                  Role grid derived from the tier (critics, reviewer)
+  --no-grid               No role grid (refused with --agent pi above trivial)
+  --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
+  --lazy                  Stamp the grid but start no pane; spawn each on demand
+  --status                Add a crew-status pane beside the grid
+
+Tracker
+  LINEAR-ID | #N          Positional: a Linear id or a GitHub issue number
+  --parent N              Mint the issue as a sub-issue of #N
+  --also-closes N         Extra issue this branch and PR also close (repeatable)
+  --crew-id ID            Crew to post to (otherwise $CREW_ID)
+
+Base and PR
+  --base REF              Branch to base the worktree on, for a stacked layer
+  --pr N                  Reuse an open PR: its branch, its base and its title
+  --review                Review-only worker; requires --pr N
+  --draft                 Open the PR as a draft
+  --no-draft              Ready for review (the default)
+
+Grants and authorization
+  --add-dir DIR           Grant the worker read access to DIR (repeatable)
+  --owner-auth TEXT       The owner's own words authorizing a gated action
+
+Overrides
+  --ignore-budget         Spend past the quota stop (a human's spend decision)
+  --ignore-map            Skip the tier-map model refusals (a human's model call)
+  DISPATCH_SPEC=FILE      Task body to inline into WORKER_TASK.md
+  DISPATCH_IGNORE_RUNG=M  Lift the premium-rung refusal for model or effort M
+  DISPATCH_SKIP_MODEL_CHECK=M  Launch M without checking the engine accepts it
+
+Other entry points
+  dispatch resume ...     Relaunch the worker of the worktree you are standing in
+  dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
+
+Internal (called by workers and the harness, not by hand)
+  --spawn-role ROLE       Start one lazy grid role pane in the worker's window
+  --reap-roles            Kill every role pane in the caller's window
+  --role-exited ROLE      Report a role engine that died before its verdict
+  --role-watch ROLE       Type assignments into a role pane; spawned per role
+
+Examples
+  dispatch standard sonnet --effort high --agent claude 42 "fix the roster age column"
+  dispatch deep opus --effort max --grid --also-closes 43 ENG-12 "rework the claim lock"
+HELP
+}
+
+# Only a LEADING --help is the help screen: `dispatch standard sonnet -- x --help`
+# keeps --help as title text, the same first-argument rule that keeps the word
+# `resume` in a title from selecting the subcommand (#349). Intercepted above
+# every path that reads a repo, a setting, the tracker or a budget, so help
+# works from any directory with no crew id.
+case "${1:-}" in
+--help | -h | help)
+  _dispatch_help
+  exit 0
+  ;;
+esac
 
 valid_effort() {
   case "$1" in
