@@ -1841,9 +1841,8 @@ where)
   ;;
 nudge)
   # nudge <codename|branch|worker:<branch>#s…> [--crew ID] — type the constant
-  # $_nudge_line into a worker lead's idle input box, so a
-  # lead whose wake expired reads the directive already posted with `crew
-  # reply`. The pane is resolved from the window's dispatcher-anchored @crew_*
+  # $_nudge_line into a worker lead's idle input box, so a lead whose wake
+  # expired reads the directive already posted with `crew reply`. The pane is resolved from the window's dispatcher-anchored @crew_*
   # stamps, never a pane id. Exit 0 accepted, 1 usage or resolution error, 2
   # refused before typing, 3 typed but not accepted.
   _nudge_fail() {
