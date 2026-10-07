@@ -1004,29 +1004,53 @@ _nudge_busy_reason() {
   esac
 }
 
-# _nudge_row <text> — the first row of the lead's input box, trimmed (claude's
-# `❯` and nbsp separator dropped); empty when the box is empty or absent.
-_nudge_row() {
+# The line a nudge types, literally: the lead's own shell expands the variable
+# its engine environment exports, so nothing bus- or branch-derived is typed.
+_nudge_line="crew inbox \"\$CREW_WORKER_ID\""
+
+# _nudge_box_text <text> — every row inside the lead's input box (same bounds
+# as _box_rows) concatenated with claude's `❯` and all whitespace dropped, so a
+# box the engine wrapped (at a space or mid-word) still compares equal to the
+# whitespace-free line; empty when the box is empty or absent.
+_nudge_box_text() {
   local rx='.*'
   [ "$engine" != claude ] || rx='^[[:space:]]*❯'
-  _box_rows "$1" "$rx" | head -1 |
-    sed -E $'s/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//; s/^[[:space:]]+//; s/[[:space:]]+$//' || true
+  printf '%s\n' "$1" |
+    rx="$rx" csi="$csi_re" awk '
+      {
+        stripped = $0
+        gsub(ENVIRON["csi"], "", stripped)
+        if (stripped ~ /^[[:space:]]*$/) next
+        plain[++n] = stripped
+      }
+      END {
+        off = (n > 30) ? n - 30 : 0
+        b = 0; a = 0
+        for (i = n; i > off; i--) if (index(plain[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
+        if (!a || b - a < 1 || b - a - 1 > 12 || n - b < 1 || n - b > 5) exit
+        if (b - a > 1 && plain[a + 1] !~ ENVIRON["rx"]) exit
+        s = ""
+        for (i = a + 1; i < b; i++) s = s plain[i]
+        sub(/^[[:space:]]*❯/, "", s)
+        gsub(/[[:space:]]|\302\240/, "", s)
+        print s
+      }' || true
 }
 
 # _nudge_pane <pane> <engine> <session-id> <crew> <actor> <msg-ts> — type the
-# constant line `crew inbox <session-id>` into a worker lead's provably idle,
-# empty input box and submit it, so a lead whose wake expired reads its unread
-# directive. Needs _frame_classifier already called. Prints one line; returns 0
-# accepted, 2 refused before typing (nothing typed, no bus row; an anchor-gate
-# refusal starts with `anchor:`), 3 typed but not accepted (held, unknown,
+# constant $_nudge_line into a worker lead's provably idle, empty input box and
+# submit it, so a lead whose wake expired reads its unread directive. Needs
+# _frame_classifier already called. Prints one line; returns 0 accepted, 2
+# refused before typing (nothing typed, no bus row; an anchor-gate refusal
+# starts with `anchor:`), 3 typed but not accepted (held, unknown,
 # unconfirmed). Every typed attempt appends one `kind:"nudge"` row. Never
 # retries the text or the Enter: whatever the pane shows instead may be a human's.
 _nudge_pane() {
   local engine="$2"
-  local pane="$1" sid="$3" crew="$4" actor="$5" msg_ts="$6" line branch wins panes prow wid role cmd wrow n last
+  local pane="$1" sid="$3" crew="$4" actor="$5" msg_ts="$6" key branch wins panes prow wid role cmd wrow n last
   local plain colored why p2 c2 p3 c3 tail_n out row result detail entry
-  line="crew inbox $sid"
-  if ! _is_session_id "$sid" || ! [[ $line =~ ^crew\ inbox\ worker:[A-Za-z0-9._/-]+#s[0-9]+-[0-9]+$ ]]; then
+  key="${_nudge_line//[[:space:]]/}"
+  if ! _is_session_id "$sid"; then
     printf '%s\n' "'$sid' is not a sessioned worker id"
     return 2
   fi
@@ -1042,6 +1066,35 @@ _nudge_pane() {
     return 2
     ;;
   esac
+
+  # The frame gate runs before the anchor gate: the anchor's _sessions reads
+  # the whole bus log, and a busy lead is the common refusal.
+  plain=$(_pane_capture "$pane" || true)
+  colored=$(_pane_capture "$pane" colored || true)
+  [ -n "$plain" ] || {
+    printf '%s\n' "pane unreadable"
+    return 2
+  }
+  if [ "$engine" = claude ]; then
+    if ! why=$(_pane_idle_reason "$plain" "$colored" 1); then
+      _nudge_busy_reason "$plain" "$colored" "$why"
+      printf '\n'
+      return 2
+    fi
+  else
+    why=""
+    if _is_prompt "$plain"; then
+      why="prompt on screen"
+    elif ! _pi_idle_box "$plain"; then
+      why="live turn or no idle input box"
+    elif [ -n "$(_nudge_box_text "$plain")" ]; then
+      why="unsent input in the input box"
+    fi
+    [ -z "$why" ] || {
+      printf '%s\n' "$why"
+      return 2
+    }
+  fi
 
   # Anchor: the pane is the lead of this crew's window for the session's
   # branch, still runs an engine, and the session is that branch's live newest.
@@ -1089,44 +1142,19 @@ _nudge_pane() {
     return 2
   fi
 
-  plain=$(_pane_capture "$pane" || true)
-  colored=$(_pane_capture "$pane" colored || true)
-  [ -n "$plain" ] || {
-    printf '%s\n' "pane unreadable"
-    return 2
-  }
-  if [ "$engine" = claude ]; then
-    if ! why=$(_pane_idle_reason "$plain" "$colored" 1); then
-      _nudge_busy_reason "$plain" "$colored" "$why"
-      printf '\n'
-      return 2
-    fi
-  else
-    why=""
-    if _is_prompt "$plain"; then
-      why="prompt on screen"
-    elif ! _pi_idle_box "$plain"; then
-      why="live turn or no idle input box"
-    elif [ -n "$(_nudge_row "$plain")" ]; then
-      why="unsent input in the input box"
-    fi
-    [ -z "$why" ] || {
-      printf '%s\n' "$why"
-      return 2
-    }
-  fi
-
-  tmux send-keys -t "$pane" -l "$line" 2>/dev/null || {
+  tmux send-keys -t "$pane" -l "$_nudge_line" 2>/dev/null || {
     printf '%s\n' "send-keys failed"
     return 2
   }
 
   # Enter only once the line provably sits alone in a still-idle box: an Enter
-  # into anything else could answer a dialog or submit a human's text.
+  # into anything else could answer a dialog or submit a human's text. The
+  # settle lets the engine redraw the typed text before it is read back.
+  _clock_sleep "${CREW_NUDGE_SETTLE:-1}"
   p2=$(_pane_capture "$pane" || true)
   c2=$(_pane_capture "$pane" colored || true)
   entry=0
-  if ! _is_prompt "$p2" && [ "$(_nudge_row "$p2")" = "$line" ]; then
+  if ! _is_prompt "$p2" && [ "$(_nudge_box_text "$p2")" = "$key" ]; then
     if [ "$engine" = claude ]; then
       ! _is_permission_prompt "$p2" && _claude_idle_box "$p2" "$c2" 1 && entry=1
     else
@@ -1152,16 +1180,16 @@ _nudge_pane() {
           printf '%s\n' "$out" | tail -n +2 | grep -qE '^[^[:alnum:]]*[A-Za-z]+…'; } ||
         _claude_idle_box "$p3" "$c3" 0; then
         result=accepted
-      elif _claude_idle_box "$p3" "$c3" 1 && [ "$(_nudge_row "$p3")" = "$line" ]; then
+      elif _claude_idle_box "$p3" "$c3" 1 && [ "$(_nudge_box_text "$p3")" = "$key" ]; then
         result=held
       fi
     elif _pi_working_label "$p3"; then
       result=accepted
     elif _pi_idle_box "$p3"; then
-      row=$(_nudge_row "$p3")
+      row=$(_nudge_box_text "$p3")
       if [ -z "$row" ]; then
         result=accepted
-      elif [ "$row" = "$line" ]; then
+      elif [ "$row" = "$key" ]; then
         result=held
       fi
     fi
@@ -1804,7 +1832,7 @@ where)
   ;;
 nudge)
   # nudge <codename|branch|worker:<branch>#s…> [--crew ID] — type the constant
-  # `crew inbox <session id>` line into a worker lead's idle input box, so a
+  # $_nudge_line into a worker lead's idle input box, so a
   # lead whose wake expired reads the directive already posted with `crew
   # reply`. The pane is resolved from the window's dispatcher-anchored @crew_*
   # stamps, never a pane id. Exit 0 accepted, 1 usage or resolution error, 2
@@ -1888,6 +1916,8 @@ nudge)
   [ -n "$nudge_last" ] || _nudge_refuse "no session on $nudge_branch — dispatch a worker before nudging one"
   [ "$(printf '%s' "$nudge_last" | jq -r .terminal)" != true ] ||
     _nudge_refuse "newest session on $nudge_branch is $(printf '%s' "$nudge_last" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in"
+  [ "$(printf '%s' "$nudge_last" | jq -r .state)" != null ] ||
+    _nudge_refuse "lead has not posted its first status yet — wait for it to start"
   [ "$(printf '%s' "$nudge_last" | jq -r .session)" != null ] ||
     _nudge_refuse "$nudge_branch has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch"
   nudge_sid=$(printf '%s' "$nudge_last" | jq -r .worker_id)
@@ -6237,24 +6267,31 @@ BUSLINE
         read -r d_old d_new <<<"$(_unread_scan "$crew" "$branch" "$me" "$from_id" "$run_start_ms" dispatcher)"
         if [[ "$d_old" =~ ^[0-9]+$ ]] && [[ "$d_new" =~ ^[0-9]+$ ]] &&
           [ $((now * 1000 - d_old)) -ge $((unread * 1000)) ] && [ "$d_new" -gt "$nudged_ts" ]; then
-          nudge_rc=0
-          nudge_out=$(_nudge_pane "$pane" "$engine" "$from_id" "$crew" watchdog "$d_new") || nudge_rc=$?
-          case "$nudge_rc" in
-          0)
+          # Once per directive across watchdogs and the dispatcher: a restarted
+          # watchdog or a manual `crew nudge` may already have typed for it.
+          if tail -n 2000 "$log" 2>/dev/null | jq -Rne --arg c "$crew" --arg to "$from_id" --argjson m "$d_new" '
+            any(inputs | fromjson? | objects; .crew_id == $c and .kind == "nudge" and .to == $to and (.msg_ts // 0) >= $m)' >/dev/null; then
             nudged_ts="$d_new"
-            d6_skip=1
-            ;;
-          3)
-            nudged_ts="$d_new"
-            d6_skip=1
-            # _post, not _post_blocked: our own open unread: episode must not
-            # swallow the failure.
-            _post blocked "unread: dispatcher directive undelivered for $(((now * 1000 - d_old) / 1000))s — auto-nudge typed but not accepted (${nudge_out%% — *}); verify the pane with crew where"
-            d6_at="$now"
-            d6_src=dispatcher
-            ;;
-          *) [[ $nudge_out != anchor:* ]] || nudge_off=1 ;;
-          esac
+          else
+            nudge_rc=0
+            nudge_out=$(_nudge_pane "$pane" "$engine" "$from_id" "$crew" watchdog "$d_new") || nudge_rc=$?
+            case "$nudge_rc" in
+            0)
+              nudged_ts="$d_new"
+              d6_skip=1
+              ;;
+            3)
+              nudged_ts="$d_new"
+              d6_skip=1
+              # _post, not _post_blocked: our own open unread: episode must not
+              # swallow the failure.
+              _post blocked "unread: dispatcher directive undelivered for $(((now * 1000 - d_old) / 1000))s — auto-nudge typed but not accepted (${nudge_out%% — *}); verify the pane with crew where"
+              d6_at="$now"
+              d6_src=dispatcher
+              ;;
+            *) [[ $nudge_out != anchor:* ]] || nudge_off=1 ;;
+            esac
+          fi
         fi
       fi
       [ "$d6_skip" = 1 ] || case "$bus_state" in

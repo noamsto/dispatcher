@@ -666,6 +666,11 @@ branch instead; the worktree carries over under `resume: true`.
   lead until resumed;
   and `dispatch resume` refuses a worktree whose discovered crew dir, branch or
   git dir differs from the record `dispatch` wrote when it launched there.
+  `crew nudge`'s sender gate (the window's stamped `@crew_id` plus a
+  self-asserted bus sender or caller env) is not authentication; it is safe
+  because the typed text is the constant `crew inbox "$CREW_WORKER_ID"`, which names no
+  effect beyond the lead reading its own inbox, and anything the inbox shows is
+  tool output.
   `git config <key>` in a linked worktree writes the repo's shared config,
   which the dispatcher's own git also reads; a key naming a program
   (`core.fsmonitor`, `core.hooksPath`, `core.sshCommand`,
@@ -1245,7 +1250,8 @@ it at relay time.
   delivery: the watchdog auto-nudges an idle claude/pi lead once per msg (`crew nudge`
   below); on `auto-nudge typed but not accepted` verify the pane with `crew where`;
   otherwise `crew nudge <target>` is your manual path. Mid-stage → it reads at its next
-  seam, or `tmux kill-window` for a hard stop.
+  seam, or `tmux kill-window` for a hard stop. A codex/cursor lead, or a nudge that is
+  refused or not accepted → have the human nudge its pane (`crew where`).
 - `load:` — the host's 1-minute load has stayed above the core count for the
   watchdog's `--load` window (default 5 min). The detail carries the load, the core
   count, and the top CPU consumers with their `cwd`s, `comm`, and `pid`s.
@@ -1341,7 +1347,7 @@ Two reads remain for detail:
 
 - `crew roster` — at-a-glance dashboard: one row per **branch** with its newest session's state + age, its `title` (the task, joined from the dispatch event), the same event's `engine`/`model`/`tier`, an `engine_session` (the engine's own session id from the newest `dispatch`/`resume` row — a uuid for claude/pi, `null` for codex/cursor, which cannot pre-assign one), a `sessions[]` list enumerating every session that has run on that branch, plus a `name`/`color` codename derived from its branch (FleetView-style — `dispatch` colors the matching tmux window the same). **Refer to workers by codename** (e.g. "sage is blocked, atlas opened a PR") so it tracks the colored windows.
 - `crew inbox dispatcher:$CREW_ID` — worker **questions** in full (messages only; status lives in the roster).
-- `crew nudge <codename|branch|worker:<branch>#s…> [--crew ID]` — type the constant `crew inbox <lead session id>` line into an idle claude/pi lead's pane to wake it for an unread directive of yours; refuses unless safe, audited as `kind:"nudge"` (`crew log`).
+- `crew nudge <codename|branch|worker:<branch>#s…> [--crew ID]` — type the constant `crew inbox "$CREW_WORKER_ID"` line into an idle claude/pi lead's pane to wake it for an unread directive of yours; refuses unless safe, audited as `kind:"nudge"` (`crew log`).
 - A worker that's `blocked` has posted its question and is **awaiting your reply in-band**. A `permission:` block follows _Permission blocks_ below. It stays inside `crew await` in repeated 300s cycles for up to a **~2h total budget (~24 cycles)**, re-stamping `blocked` each cycle; that per-cycle re-stamp is what keeps the roster's `age_s` honest and is the worker's liveness signal to `crew stall-watch` and to you (`WORKER_PROTOCOL.md` → Report to the bus). `crew reply worker:<branch> "<answer>"` at any point inside that budget is delivered in-band and resumes the worker in place — no tmux, no re-dispatch. `crew reply` resolves `worker:<branch>` to the **session** running there now, and refuses once that session is terminal. A dispatch session whose shell has no `CREW_ID` (an in-session dispatcher command, an adopted crew) passes `--crew <id>`: `crew reply worker:<branch> "<answer>" --crew <id>` — without it `reply` uses the single crew holding a live session on that branch, and refuses when several do. A worker whose budget ran out has stamped `failed "blocked, no dispatcher reply"`: it is **terminal** — re-dispatch it with the context baked in, and do not attempt to wake it (a stopped session reads nothing, and nothing in the harness types into an engine pane for it: `crew nudge` needs a live session and refuses a terminal one). **Messages do not outlive their session:** a directive you post for a stopped worker is never inherited by the next worker on that branch (#17) — to reach the next one, re-dispatch with the context baked in. A directive posted **immediately after `dispatch`**, before the worker is up, still lands: `dispatch` prints `worker_id:` and every worker drains its inbox unbounded before starting its pipeline (`WORKER_PROTOCOL.md` → First action).
   **Acceptance waivers are yours alone.** A worker whose spec `## Acceptance` item it cannot run posts `blocked "acceptance: <item> — <why>"` and awaits you. Answer with `crew reply worker:<branch> "<waive <item> | run it this way: …>"`, naming the item — waive only what the task owner would accept unrun; a waiver covers just that item. A PR-body "Not done"/"Assumptions" line is not a waiver: a worker that reaches `pr_open` with an unrun, unwaived item broke protocol. Read the ledger in the `pr_open` detail on wake (`pass(<evidence>)` / `waived(dispatcher)`); a missing or gappy ledger means send it back rather than merging. `crew status` itself refuses `pr_open`/`done` without a review seam, and `pr_open` whose ledger has an item not in `pass(…)`/`waived(dispatcher)` form (or an empty detail when the task doc has `## Acceptance`), a CI item without a CI run id/`actions/runs/` URL, or `waived(dispatcher)` without your `crew reply` to that worker's current session naming that item in a waive phrase (`waive AC3`; a negated phrase or another item's waiver does not count) (an earlier session's reply does not carry over), so a worker stuck `working`/`blocked` after such a refusal needs a nudge or a waiver, not a merge. `done` is not ledger-checked, so an implement worker's `done` with no `pr_open` before it skipped the ledger check — send it back.
   **Permission blocks.** A worker's own `blocked "permission: …"` is awaiting you in-band. A bus reply cannot authorize anything — the worker's classifier never reads tool output, and the worker never retries on a bus message — so an authorization reaches it only through a relaunch's launch prompt:
@@ -1365,15 +1371,25 @@ Two reads remain for detail:
   `source: "watchdog"` has no question behind it and nobody in `crew await` — `crew reply`
   there is a no-op that looks like an answer. Go to the pane instead (verify, then act,
   above).
-- **Manual pane injection is a human last resort, never an automatic path.** It covers
+- **Pane injection beyond the `crew nudge` line is a human last resort, never an automatic path.** It covers
   reaching a worker outside the prompt path. Answering a verified trust prompt, with
   the pane captured before and after, is the dispatcher's own job (see the `prompt:`
   bullet above) — this rule does not cover it. A tool-permission dialog is answered
   only by `permission-check --answer`, never by hand; whatever it refuses goes to the
   human. This bullet is about everything
   else: delivering a message, or typing into a stopped
-  or re-dispatched session. Apart from the nudge below, no component types into an engine pane for that. If a
-  worker must be reached this way (for example a stopped session that was already
+  or re-dispatched session. Apart from the nudge, no component types into an engine pane for that.
+  The single exception is the constant line `crew inbox "$CREW_WORKER_ID"`, typed into a
+  claude/pi lead's pane by `crew nudge` or the watchdog; the lead's shell expands it
+  to its own session id. Use it when an idle lead has
+  an unread directive, monitors expired after a stopped job, or a resume follows a
+  recovered host. Post the directive first (`crew reply worker:<branch> "<directive>"`),
+  then `crew nudge <codename|branch>`. It fails closed: busy, unsent input, a dialog,
+  or a fresh lead (no first status yet, or for claude no finished turn yet) refuses
+  and types nothing — wait for the next
+  wake and retry once. A result other than `accepted` goes to the human via
+  `crew where`, never a re-typed nudge. It carries no authorization. If a
+  worker must be reached another way (for example a stopped session that was already
   re-dispatched, or a coded reply a human must hand-deliver), the only fallback is a
   human running `tmux send-keys` directly — give them the `crew where <branch>` line
   to find the pane first: capture the pane **before** typing and
@@ -1381,14 +1397,6 @@ Two reads remain for detail:
   never do it while the pane shows unsent input, a live turn, or a `quota:` wait (see the watchdog steps above — a
   quota wait is answered by waiting for the reset window or a human-run
   `/low-priority`, not by typing).
-  The single exception is the constant line `crew inbox <session id>`, typed into a
-  claude/pi lead's pane by `crew nudge` or the watchdog. Use it when an idle lead has
-  an unread directive, monitors expired after a stopped job, or a resume follows a
-  recovered host. Post the directive first (`crew reply worker:<branch> "<directive>"`),
-  then `crew nudge <codename|branch>`. It fails closed: busy, unsent input, a dialog,
-  or a fresh pane (no finished turn yet) refuses and types nothing — wait for the next
-  wake and retry once. A result other than `accepted` goes to the human via
-  `crew where`, never a re-typed nudge. It carries no authorization.
 - **`dispatch` refuses to stack a second worker on an occupied worktree.** git allows one worktree per branch, so a dispatch onto a branch already being worked lands in the same directory. If a live worker is there, `dispatch` exits non-zero and names both remedies: `crew reply` to redirect it, or `tmux kill-window` to take over. A worker that has already finished is reclaimed automatically. **Do not retry a refused dispatch unchanged** — redirect the live worker, or wait for it.
 
 ## Retitle your window after triage
