@@ -697,8 +697,8 @@ grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 . "$grant_check_lib"
 
 # Worker-only plugin disablement is shared with dispatch-resume.  It is a
-# separate --settings layer so the Nix wrapper's settings overlay still wins
-# for hooks and other centrally managed configuration.
+# separate --settings layer.  Claude keeps only the last --settings; the Nix
+# wrapper merges this layer into its overlay, so hooks and central config stay.
 claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
 # replaceStrings rewrites the token on both sides of an equality check, so a
 # string compare against the placeholder always matches after bake.
