@@ -1218,6 +1218,17 @@ _nudge_pane() {
   [ "$result" = accepted ] || return 3
 }
 
+# _nudge_wait_row <state> <result> <rc> <detail> — the `nudge` arm's --wait
+# bookkeeping row, from the arm's nudge_* variables.
+_nudge_wait_row() {
+  _bus_append "$log" "$(jq -nc --arg crew "$nudge_crew" --arg to "$nudge_sid" --arg branch "$nudge_branch" \
+    --arg pane "$nudge_pane" --arg state "$1" --arg result "$2" --arg rc "$3" --arg detail "$4" \
+    --argjson msg_ts "$nudge_ts" --argjson ts "$(_clock_now_ms)" \
+    '{ts:$ts, crew_id:$crew, kind:"nudge_wait", from:("dispatcher:" + $crew), to:$to, branch:$branch,
+      pane:$pane, msg_ts:$msg_ts, state:$state, result:$result, detail:$detail}
+      + (if $rc == "" then {} else {rc:($rc | tonumber)} end)')"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
@@ -1845,6 +1856,10 @@ nudge)
   # expired reads the directive already posted with `crew reply`. The pane is resolved from the window's dispatcher-anchored @crew_*
   # stamps, never a pane id. Exit 0 accepted, 1 usage or resolution error, 2
   # refused before typing, 3 typed but not accepted.
+  # --wait [SECONDS] (default 1800) loops _nudge_pane while the lead is on a
+  # live turn, one waiter per lead session (a second call joins and reports the
+  # first's outcome only when it covers the caller's msg); any other refusal
+  # is immediate, and a lead that reads the msg meanwhile ends the wait untyped (exit 0).
   _nudge_fail() {
     echo "crew: nudge: $*" >&2
     exit 1
@@ -1862,24 +1877,35 @@ nudge)
   fi
   nudge_crew=$(_crew_id)
   nudge_target=""
+  nudge_wait=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --crew)
-      [ -n "${2:-}" ] || _nudge_fail "--crew needs an id (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID])"
+      [ -n "${2:-}" ] || _nudge_fail "--crew needs an id (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
       nudge_crew="$2"
       shift 2
       ;;
+    --wait)
+      nudge_wait=1800
+      case "${2:-}" in
+      '' | *[!0-9]*) shift ;;
+      *)
+        nudge_wait="$2"
+        shift 2
+        ;;
+      esac
+      ;;
     --*)
-      _nudge_fail "unknown flag '$1' (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID])"
+      _nudge_fail "unknown flag '$1' (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
       ;;
     *)
-      [ -z "$nudge_target" ] || _nudge_fail "one target only (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID])"
+      [ -z "$nudge_target" ] || _nudge_fail "one target only (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
       nudge_target="$1"
       shift
       ;;
     esac
   done
-  [ -n "$nudge_target" ] || _nudge_fail "usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID]"
+  [ -n "$nudge_target" ] || _nudge_fail "usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]"
   [ -n "$nudge_crew" ] || _nudge_fail "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>"
   nudge_want=""
   case "$nudge_target" in
@@ -1941,10 +1967,81 @@ nudge)
 
   _frame_classifier
   nudge_rc=0
-  nudge_out=$(_nudge_pane "$nudge_pane" "$nudge_engine" "$nudge_sid" "$nudge_crew" "dispatcher:$nudge_crew" "$nudge_ts") || nudge_rc=$?
-  [ "$nudge_rc" -ne 2 ] || _nudge_refuse "refused — $nudge_out"
-  printf '%s\n' "$nudge_out"
-  exit "$nudge_rc"
+  if [ -z "$nudge_wait" ]; then
+    nudge_out=$(_nudge_pane "$nudge_pane" "$nudge_engine" "$nudge_sid" "$nudge_crew" "dispatcher:$nudge_crew" "$nudge_ts") || nudge_rc=$?
+    [ "$nudge_rc" -ne 2 ] || _nudge_refuse "refused — $nudge_out"
+    printf '%s\n' "$nudge_out"
+    exit "$nudge_rc"
+  fi
+
+  # <result> <rc> <detail> <line> — ends the wait: records the outcome once a
+  # waiting row exists, so a joiner can report it.
+  nudge_waiting=0
+  _nudge_wait_end() {
+    [ "$nudge_waiting" = 0 ] || _nudge_wait_row resolved "$1" "$2" "$3"
+    [ "$2" -ne 2 ] || _nudge_refuse "$4"
+    printf '%s\n' "$4"
+    exit "$2"
+  }
+  nudge_start=$(_clock_now)
+  nudge_start_ms=$(_clock_now_ms)
+  nudge_interval="${CREW_NUDGE_WAIT_INTERVAL:-15}"
+  nudge_ld="$dir/nudge-wait/$(printf '%s' "$nudge_sid" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$nudge_sid" | cksum | cut -d' ' -f1).d"
+  mkdir -p "$dir/nudge-wait"
+  nudge_joining=0
+  until _lock_acquire "$nudge_ld" $$; do
+    nudge_hpid=$(cat "$nudge_ld/pid" 2>/dev/null || true)
+    if [ "$nudge_joining" = 0 ]; then
+      nudge_joining=1
+      printf 'nudge joining: %s %s — another crew nudge --wait (pid %s) owns this lead'"'"'s wait\n' "$nudge_pane" "$nudge_sid" "$nudge_hpid"
+    fi
+    [ "$(_clock_now)" -lt $((nudge_start + nudge_wait)) ] ||
+      _nudge_refuse "refused — still waiting on another crew nudge --wait (pid $nudge_hpid)"
+    _clock_sleep "$nudge_interval"
+  done
+  trap '_lock_release "$nudge_ld"' EXIT
+  if [ "$nudge_joining" = 1 ]; then
+    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson t "$nudge_start_ms" --argjson m "$nudge_ts" '
+      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge_wait" and .state == "resolved" and .to == $to and .ts >= $t and (.msg_ts // 0) >= $m)] | last // empty')
+    if [ -n "$nudge_prev" ]; then
+      nudge_rc=$(printf '%s' "$nudge_prev" | jq -r .rc)
+      nudge_res=$(printf '%s' "$nudge_prev" | jq -r '"\(.result): \(.detail)"')
+      _nudge_wait_end joined "$nudge_rc" "$nudge_res" "nudge joined: $nudge_pane $nudge_sid — $nudge_res"
+    fi
+  fi
+
+  while :; do
+    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson m "$nudge_ts" '
+      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge" and .to == $to and (.msg_ts // 0) >= $m)] | last // empty')
+    if [ -n "$nudge_prev" ]; then
+      nudge_res=$(printf '%s' "$nudge_prev" | jq -r .result)
+      nudge_detail=$(printf '%s' "$nudge_prev" | jq -r .detail)
+      nudge_rc=3
+      [ "$nudge_res" != accepted ] || nudge_rc=0
+      _nudge_wait_end already "$nudge_rc" "$nudge_res: $nudge_detail" "nudge already typed: $nudge_pane $nudge_sid — $nudge_res: $nudge_detail"
+    fi
+    read -r nudge_old _ <<<"$(_unread_scan "$nudge_crew" "$nudge_branch" "worker:$nudge_branch" "$nudge_sid" 0 dispatcher)"
+    if [ -z "$nudge_old" ] || [ "$nudge_old" -gt "$nudge_ts" ]; then
+      _nudge_wait_end read 0 "the lead read the msg during the wait; nothing typed" \
+        "nudge not needed: $nudge_pane $nudge_sid — the lead read the msg during the wait; nothing typed"
+    fi
+    nudge_rc=0
+    nudge_out=$(_nudge_pane "$nudge_pane" "$nudge_engine" "$nudge_sid" "$nudge_crew" "dispatcher:$nudge_crew" "$nudge_ts") || nudge_rc=$?
+    if [ "$nudge_rc" -ne 2 ]; then
+      nudge_res="${nudge_out#nudge }"
+      _nudge_wait_end "${nudge_res%%:*}" "$nudge_rc" "${nudge_out#* — }" "$nudge_out"
+    fi
+    [ "$nudge_out" = "live turn or no idle input box" ] || _nudge_wait_end refused 2 "$nudge_out" "refused — $nudge_out"
+    if [ "$nudge_waiting" = 0 ]; then
+      nudge_waiting=1
+      _nudge_wait_row waiting "" "" "live turn"
+      printf 'nudge waiting: %s %s — live turn; re-checking every %ss for up to %ss\n' "$nudge_pane" "$nudge_sid" "$nudge_interval" "$nudge_wait"
+    fi
+    nudge_waited=$(($(_clock_now) - nudge_start))
+    [ "$nudge_waited" -lt "$nudge_wait" ] ||
+      _nudge_wait_end timeout 2 "$nudge_out (waited ${nudge_waited}s)" "refused — $nudge_out (waited ${nudge_waited}s)"
+    _clock_sleep "$nudge_interval"
+  done
   ;;
 resolve-target)
   # resolve-target <target> [--crew ID] — the branch, codename, host and crew a
@@ -7110,7 +7207,7 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] [--restamp] [--] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | where <codename|branch|%id> [--crew ID] | nudge <codename|branch|worker:<branch>#s…> [--crew ID] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] [--no-budget] [--budget-refresh S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
+  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] [--restamp] [--] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | where <codename|branch|%id> [--crew ID] | nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] [--no-budget] [--budget-refresh S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
   exit 1
   ;;
 esac

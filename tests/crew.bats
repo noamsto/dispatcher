@@ -10829,6 +10829,237 @@ EOF
   [ "$(nudge_rows | jq -r .result)" = held ]
 }
 
+nudge_wait_rows() { bus | jq -c 'select(.kind=="nudge_wait")'; }
+
+# _nudge_wrap_tmux <capture-N> <command> — a tmux wrapper ahead of the stub:
+# on the Nth plain capture it runs <command>, then defers to the stub.
+_nudge_wrap_tmux() {
+  local w="$BATS_TEST_TMPDIR/tmuxwrap"
+  mkdir -p "$w"
+  cat >"$w/tmux" <<EOS
+#!/usr/bin/env bash
+case "\$*" in
+capture-pane*)
+  case " \$* " in *" -e "*) ;; *)
+    n=\$((\$(cat "$w/n" 2>/dev/null || echo 0) + 1))
+    echo "\$n" >"$w/n"
+    [ "\$n" != "$1" ] || { $2; } >/dev/null
+    ;;
+  esac
+  ;;
+esac
+exec "$STUB_DIR/tmux" "\$@"
+EOS
+  chmod +x "$w/tmux"
+  export PATH="$w:$PATH"
+}
+
+# _nudge_wait_frames — %9 shows a live turn for two checks, then the idle,
+# typed and post-Enter frames of one accepted nudge.
+_nudge_wait_frames() {
+  nudge_frames "$(fx_meter 2s 1.2k)"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.1"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.2"
+  cp "$(fx_done_idle)" "$STUB_DIR/frames/%9.3"
+  cp "$(fx_done_idle)" "$STUB_DIR/frames/%9.4"
+  cp "$(fx_nudge_typed)" "$STUB_DIR/frames/%9.5"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.6"
+}
+
+@test "nudge: --wait types once after a live turn ends" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  _nudge_wait_frames
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"nudge waiting: %9 worker:feat/x#s1-1"* ]]
+  [[ "$output" == *"nudge accepted: %9 worker:feat/x#s1-1"* ]]
+  [ "$(nudge_keys)" = "$(printf '%s\n' 'send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"' 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+  [ "$(nudge_rows | jq -r .result)" = accepted ]
+  [ "$(nudge_wait_rows | jq -r '"\(.state):\(.result)"' | paste -sd' ')" = "waiting: resolved:accepted" ]
+  [ "$(cat "$STUB_DIR/frames/%9.p.n")" -ge 6 ]
+}
+
+@test "nudge: --wait still types once when a follow-up msg lands mid-wait" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  _nudge_wait_frames
+  cat >"$BATS_TEST_TMPDIR/followup.sh" <<EOS
+jq -nc --argjson ts "\$((\$(date +%s) * 1000))" '{ts:\$ts, crew_id:"c1", from:"dispatcher:c1",
+  to:"worker:feat/x#s1-1", kind:"msg", body:"follow-up"}' >>"$ndir/events.jsonl"
+EOS
+  _nudge_wrap_tmux 2 "bash '$BATS_TEST_TMPDIR/followup.sh'"
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  [ "$status" -eq 0 ]
+  [ "$(bus | jq -c 'select(.kind=="msg")' | wc -l)" -eq 2 ]
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | jq -r .result)" = accepted ]
+}
+
+@test "nudge: --wait stops untyped when the lead reads the msg during the wait" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  nudge_frames "$(fx_done_idle)"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.1"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.2"
+  _nudge_wrap_tmux 2 "bash '$CREW' inbox 'worker:feat/x#s1-1' c1"
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"read the msg during the wait"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  [ "$(nudge_wait_rows | jq -r 'select(.state=="resolved") | .result')" = read ]
+}
+
+@test "nudge: --wait times out on a lead that stays mid-turn" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  nudge_frames "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge nova --wait 10
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"live turn or no idle input box (waited"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  [ "$(nudge_wait_rows | jq -r 'select(.state=="resolved") | .result')" = timeout ]
+}
+
+@test "nudge: --wait refuses non-live-turn frames immediately" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  nudge_frames "$(fx_nudge_draft)"
+  cp "$(fx_nudge_draft_colored)" "$STUB_DIR/frames/%9.e"
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  _nudge_refused "unsent input in the input box"
+  [ -z "$(nudge_wait_rows)" ]
+  [ "$(cat "$STUB_DIR/frames/%9.p.n")" -le 1 ]
+  while IFS='|' read -r fx reason; do
+    nudge_frames "$($fx)"
+    CREW_ID=c1 run run_crew nudge nova --wait 60
+    _nudge_refused "$reason"
+    [ -z "$(nudge_wait_rows)" ]
+    [ "$(cat "$STUB_DIR/frames/%9.p.n")" -le 1 ]
+  done <<'EOF'
+fx_prompt_select|dialog on screen (option-select or workspace trust)
+fx_permission_subagent|permission dialog on screen
+fx_nudge_fresh|no finished-turn marker above the input box
+EOF
+}
+
+@test "nudge: --wait refuses a codex lead and a missing msg immediately" {
+  _nudge_setup codex codex
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  _nudge_refused "no verified idle lead frame for codex"
+  [ -z "$(nudge_wait_rows)" ]
+  CREW_ID=c1 run run_crew inbox 'worker:feat/x#s1-1' c1
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  _nudge_refused "no unread msg from dispatcher:c1"
+}
+
+@test "nudge: --wait stops on a dialog that appears mid-wait" {
+  _nudge_setup
+  _nudge_directive
+  export CREW_NUDGE_WAIT_INTERVAL=5
+  nudge_frames "$(fx_prompt_select)"
+  cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.1"
+  CREW_ID=c1 run run_crew nudge nova --wait 60
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"dialog on screen"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  [ "$(nudge_wait_rows | jq -r 'select(.state=="resolved") | .result')" = refused ]
+}
+
+@test "nudge: --wait two concurrent calls for one lead and msg type once" {
+  _nudge_setup
+  _nudge_directive
+  unset CREW_CLOCK
+  export CREW_NUDGE_WAIT_INTERVAL=0.2
+  nudge_frames "$(fx_meter 2s 1.2k)"
+  d="$BATS_TEST_TMPDIR/conc"
+  mkdir -p "$d"
+  CREW_ID=c1 run_crew nudge nova --wait 30 >"$d/a" 2>&1 3>&- &
+  pa=$!
+  for _ in $(seq 100); do
+    [ -n "$(nudge_wait_rows)" ] && break
+    sleep 0.1
+  done
+  [ -n "$(nudge_wait_rows)" ]
+  CREW_ID=c1 run_crew nudge nova --wait 30 >"$d/b" 2>&1 3>&- &
+  pb=$!
+  for _ in $(seq 100); do
+    grep -q 'nudge joining' "$d/b" && break
+    sleep 0.1
+  done
+  grep -q 'nudge joining' "$d/b"
+  cp "$(fx_done_idle)" "$STUB_DIR/frames/%9.tmp"
+  mv "$STUB_DIR/frames/%9.tmp" "$STUB_DIR/frames/%9"
+  wait "$pa" || true
+  wait "$pb" || true
+  [ "$(nudge_keys | grep -c -- '-t %9 -l')" -eq 1 ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+  grep -q 'nudge unconfirmed' "$d/a"
+  grep -q 'nudge joined' "$d/b"
+}
+
+@test "nudge: --wait a joiner for a newer msg does not take an older msg's outcome" {
+  _nudge_setup
+  _nudge_directive
+  unset CREW_CLOCK
+  export CREW_NUDGE_WAIT_INTERVAL=0.2
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_meter 2s 1.2k)"
+  d="$BATS_TEST_TMPDIR/joinold"
+  mkdir -p "$d"
+  sid='worker:feat/x#s1-1'
+  key="$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$sid" | cksum | cut -d' ' -f1)"
+  sleep 60 3>&- &
+  hp=$!
+  mkdir -p "$ndir/nudge-wait/$key.d"
+  echo "$hp" >"$ndir/nudge-wait/$key.d/pid"
+  CREW_ID=c1 run_crew nudge nova --wait 30 >"$d/b" 2>&1 3>&- &
+  pb=$!
+  for _ in $(seq 100); do
+    grep -q 'nudge joining' "$d/b" && break
+    sleep 0.1
+  done
+  grep -q 'nudge joining' "$d/b"
+  jq -nc --argjson ts "$((($(date +%s) + 60) * 1000))" '{ts:$ts, crew_id:"c1", kind:"nudge_wait",
+    from:"dispatcher:c1", to:"worker:feat/x#s1-1", branch:"feat/x", pane:"%9", msg_ts:1,
+    state:"resolved", result:"read", rc:0, detail:"older msg"}' >>"$ndir/events.jsonl"
+  kill "$hp"
+  wait "$hp" 2>/dev/null || true
+  wait "$pb" || true
+  run ! grep -q 'nudge joined' "$d/b"
+  grep -q 'nudge accepted' "$d/b"
+  [ "$(nudge_keys | grep -c -- '-t %9 -l')" -eq 1 ]
+}
+
+@test "nudge: --wait parsing takes only an all-digit SECONDS" {
+  _nudge_setup
+  _nudge_directive
+  nudge_frames "$(fx_done_idle)"
+  CREW_ID=c1 run run_crew nudge nova --wait abc
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"one target only"* ]]
+  nudge_frames "$(fx_done_idle)" "$(fx_nudge_typed)" "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge --wait nova
+  [ "$status" -eq 0 ]
+  [ "$(nudge_rows | jq -r .result)" = accepted ]
+  seed_msg dispatcher:c1 'worker:feat/x#s1-1' 0
+  nudge_frames "$(fx_meter 2s 1.2k)"
+  CREW_ID=c1 run run_crew nudge nova --wait 0
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"(waited 0s)"* ]]
+}
+
 @test "stall-watch: keeps the window after a watchdog-posted failed on a static non-claude pane" {
   _release_setup
   seed_raw "worker:feat/x#s1-1" failed "dead: quiet: no output" watchdog "$(($(date +%s) * 1000 + 500))"
