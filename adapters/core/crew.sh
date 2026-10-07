@@ -5109,6 +5109,9 @@ stall-watch)
   #                  --unread (#330); clears once delivered. Repainting panes
   #                  never trip D2/D3, so this reads the bus (bounded tail,
   #                  4-tick cadence). Never escalates.
+  #                  A sessioned claude/pi watchdog first auto-nudges an idle
+  #                  lead past an overdue dispatcher directive (_nudge_pane,
+  #                  once per newest directive); --no-nudge turns it off.
   #   D8 budget:     the engine has a quota window at >=95% that has not reset,
   #                  or its limit_reached holds, per refresh-budget's
   #                  engine-budget.json read through the launch gate's own
@@ -5146,7 +5149,7 @@ stall-watch)
   arg="${1:-}"
   shift || true
   [ -n "$arg" ] || {
-    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N] [--no-budget] [--budget-refresh S]" >&2
+    echo "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S] [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S] [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N] [--no-budget] [--budget-refresh S] [--no-nudge]" >&2
     exit 1
   }
   # INV-W0 — identity is branch-keyed and suffix-tolerant. dispatch has shipped
@@ -5210,6 +5213,7 @@ stall-watch)
   runaway_tokens=1500
   no_budget=0
   budget_refresh=900
+  nudge_on=1
   host_cores=$(nproc 2>/dev/null || echo 1)
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -5284,6 +5288,10 @@ stall-watch)
     --budget-refresh)
       budget_refresh="${2:-}"
       shift 2
+      ;;
+    --no-nudge)
+      nudge_on=0
+      shift
       ;;
     *)
       echo "crew: stall-watch: unknown arg '$1'" >&2
@@ -5811,6 +5819,8 @@ BUSLINE
   d5_at=0
   d6_at=0
   d6_src=""
+  nudged_ts=0
+  nudge_off=0
   d7_hits=0
   d7_tok0=0
   d7_at=0
@@ -6210,8 +6220,44 @@ BUSLINE
     # is handled, not unread; a dispatcher directive clears only on delivery.
     # The oldest of both is reported. Never escalates: a lead slow to read is
     # not dead.
+    # An overdue dispatcher directive first gets one auto-nudge per newest
+    # directive (a role verdict never does: the lead `crew await`s those). An
+    # accepted nudge skips this tick's verdict, since the lead is reading its
+    # inbox now; a typed-but-unaccepted one is reported once as the episode.
+    # An anchor refusal means a stale pane or session: stop trying for good.
     if [ "$suppressed" = 0 ] && [ "$role_mode" = 0 ] && [ $((tick % 4)) -eq 0 ]; then
+      d6_skip=0
+      d6_nudge=0
       case "$bus_state" in
+      "" | working) d6_nudge=1 ;;
+      blocked) [ "$d6_at" = 0 ] || [ "$bus_source" != watchdog ] || [[ $bus_detail != unread:* ]] || d6_nudge=1 ;;
+      esac
+      if [ "$d6_nudge" = 1 ] && [ "$nudge_on" = 1 ] && [ "$nudge_off" = 0 ] && [ "$from_id" != "$me" ] &&
+        { [ "$engine" = claude ] || [ "$engine" = pi ]; }; then
+        read -r d_old d_new <<<"$(_unread_scan "$crew" "$branch" "$me" "$from_id" "$run_start_ms" dispatcher)"
+        if [[ "$d_old" =~ ^[0-9]+$ ]] && [[ "$d_new" =~ ^[0-9]+$ ]] &&
+          [ $((now * 1000 - d_old)) -ge $((unread * 1000)) ] && [ "$d_new" -gt "$nudged_ts" ]; then
+          nudge_rc=0
+          nudge_out=$(_nudge_pane "$pane" "$engine" "$from_id" "$crew" watchdog "$d_new") || nudge_rc=$?
+          case "$nudge_rc" in
+          0)
+            nudged_ts="$d_new"
+            d6_skip=1
+            ;;
+          3)
+            nudged_ts="$d_new"
+            d6_skip=1
+            # _post, not _post_blocked: our own open unread: episode must not
+            # swallow the failure.
+            _post blocked "unread: dispatcher directive undelivered for $(((now * 1000 - d_old) / 1000))s — auto-nudge typed but not accepted (${nudge_out%% — *}); verify the pane with crew where"
+            d6_at="$now"
+            d6_src=dispatcher
+            ;;
+          *) [[ $nudge_out != anchor:* ]] || nudge_off=1 ;;
+          esac
+        fi
+      fi
+      [ "$d6_skip" = 1 ] || case "$bus_state" in
       "" | working)
         [ "$bus_source" = watchdog ] || d6_at=0
         read -r oldest src <<<"$(_unread_oldest)"
