@@ -329,7 +329,7 @@ them. See `dispatch-orchestration.md` → "Local models".
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
 settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case
 insensitive) rather than env vars. `dispatch` stamps that on every fresh task
-(`tracker: linear ENG` or `tracker: github`) and a worker reads the stamp.
+(`tracker: linear ENG` or `tracker: github`) and the dispatcher reads the stamp when filing follow-ups.
 Precedence is the per-repo entry, then the origin org's default, then
 `github`. With the block above, `factify-inc/mono = "linear:ENG"` and the org
 default `factify-inc = "linear:ENG"`, so `factify-inc/mono` resolves to
