@@ -1,0 +1,36 @@
+import type { RosterRow } from '../types'
+
+const ACTIVE = new Set(['working', 'blocked'])
+
+export const isWatchdog = (row: RosterRow): boolean =>
+  row.state === 'blocked' && row.source === 'watchdog'
+
+export const sortRows = (rows: RosterRow[]): RosterRow[] =>
+  rows
+    .map((row, index) => ({ row, index }))
+    .sort(
+      (a, b) =>
+        Number(ACTIVE.has(b.row.state)) - Number(ACTIVE.has(a.row.state)) ||
+        a.row.age_s - b.row.age_s ||
+        a.index - b.index,
+    )
+    .map(({ row }) => row)
+
+export const truncate = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text
+
+export const ageLabel = (seconds: number): string => {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
+}
+
+export const profile = (row: RosterRow): string =>
+  [row.tier, row.engine, row.model].map(part => part ?? '?').join('·')
+
+export const parseRoster = (stdout: string): RosterRow[] => {
+  const rows: unknown = JSON.parse(stdout)
+  if (!Array.isArray(rows)) throw new Error('crew roster did not print a JSON array')
+  return rows as RosterRow[]
+}
