@@ -10879,3 +10879,195 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"no worker matches 'nobody'"* ]]
 }
+
+# roster-render: bus + live tmux role panes -> D2 text (#806). Fixture times are
+# fixed ms epochs: 1791360000 = 08:00:00 UTC, so HH:MM below is base + minutes.
+
+_rr_bus() { printf '%s/crew/events.jsonl' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
+_rr_crewdir() { printf '%s/crew' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
+
+# _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
+_rr_dispatch() {
+  local logf
+  logf="$(_rr_bus)"
+  mkdir -p "$(dirname "$logf")"
+  jq -nc --arg branch "$1" --argjson ts "$2" --arg name "$3" --arg color "$4" \
+    --arg tmux "$5" --arg title "$6" --arg tier "$7" --arg engine "$8" \
+    --arg model "$9" --arg base "${10:-}" \
+    '{ts:$ts, crew_id:"c1", kind:"dispatch", branch:$branch, session:"s1",
+      worker_id:("worker:" + $branch + "#s1"), engine:$engine, model:$model,
+      tier:$tier, title:$title, name:$name, color:$color, tmux:$tmux}
+     + (if $base != "" then {base:$base} else {} end)' >>"$logf"
+}
+
+# _rr_status <from> <ts_ms> <state> [detail] [source] [pr_url]
+_rr_status() {
+  jq -nc --arg from "$1" --argjson ts "$2" --arg state "$3" --arg detail "${4:-}" \
+    --arg source "${5:-}" --arg pr "${6:-}" \
+    '{ts:$ts, crew_id:"c1", from:$from, to:"dispatcher:c1", kind:"status",
+      body:({state:$state}
+            + (if $detail != "" then {detail:$detail} else {} end)
+            + (if $source != "" then {source:$source} else {} end)
+            + (if $pr != "" then {pr_url:$pr} else {} end))}' >>"$(_rr_bus)"
+}
+
+# _rr_stubs <panes-tsv-body> — tmux answers the role listing (the `-F` format
+# naming @crew_dir) from the body and everything else, including crew roster's
+# own pane_current_command listing, with nothing; aeye logs argv and its
+# --help names no publish-diagram.
+_rr_stubs() {
+  stub_bin tmux
+  stub_bin aeye
+  printf '%s' "$1" >"$STUB_DIR/tmux-panes"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux %s\n' "$*" >>"$STUB_LOG"
+fmt=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = -F ]; then
+    fmt="${2:-}"
+    shift
+  fi
+  shift
+done
+case "$fmt" in
+*@crew_dir*) cat "$STUB_DIR/tmux-panes" ;;
+esac
+exit 0
+EOF
+  cat >"$STUB_DIR/aeye" <<'EOF'
+#!/usr/bin/env bash
+printf 'aeye %s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+--help) printf 'Usage: aeye [command]\n\nCommands:\n  render <file>\n  open\n' ;;
+esac
+exit 0
+EOF
+}
+
+# The fixture bus: four workers (feat/3-c stacked on feat/1-a, two sessions,
+# watchdog-blocked; feat/4-d dispatched but silent apart from a role row) and
+# one hold.
+_rr_seed() {
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 atlas blue colour32 "Bravo task" standard codex gpt-5
+  _rr_dispatch feat/3-c 1791360120000 nova magenta colour127 "Charlie task" deep claude opus feat/1-a
+  _rr_dispatch feat/4-d 1791360180000 ember orange colour130 "Delta task" quick cursor composer
+  _rr_status 'role:feat/4-d:reviewer' 1791360240000 working
+  _rr_status 'worker:feat/3-c#s1' 1791360300000 working
+  _rr_status 'worker:feat/1-a#s1' 1791360600000 working 'execute: tests'
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working 'plan-critic r2'
+  _rr_status 'worker:feat/2-b#s1' 1791361800000 pr_open '' '' https://github.com/o/r/pull/124
+  _rr_status 'worker:feat/2-b#s1' 1791362400000 done
+  _rr_status 'worker:feat/3-c#s2' 1791363000000 blocked 'quiet: %204' watchdog
+  seed_hold c1 h-1 1791374400 feat/5-e r-5 claude codex "Echo task"
+  local cdir
+  cdir="$(_rr_crewdir)"
+  mkdir -p "$cdir/artifacts/feat/1-a"
+  printf '%s\n' '{"spec-critic":{"agent":"claude"}}' >"$cdir/artifacts/feat/1-a/roles.json"
+  _rr_stubs "$(printf '%s\tc1\tfeat/1-a\tspec-critic\tidle\t\n%s\tc1\tfeat/1-a\tlead\tworking\t\n%s\tc2\tfeat/1-a\tother-role\tidle\t\n' \
+    "$cdir" "$cdir" "$cdir")"
+}
+
+@test "roster-render: --once renders the fixture bus" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  cat >"$BATS_TEST_TMPDIR/expected.d2" <<'EOF'
+title: "Crew roster" {near: top-center}
+legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
+dispatcher: "dispatcher" {style.bold: true}
+w1: "sage\nAlpha task\nstandard·claude·sonnet\nworking · plan-critic r2↻ · since 08:20" {
+  style: {stroke: green; stroke-width: 3}
+  r1: "spec-critic\nclaude · idle"
+}
+dispatcher -> w1
+w2: "atlas\nBravo task\nstandard·codex·gpt-5\ndone · since 08:40" {
+  style: {stroke: blue; stroke-width: 3}
+}
+dispatcher -> w2
+w2_pr: "https://github.com/o/r/pull/124" {shape: page}
+w2 -> w2_pr: "#124"
+w3: "nova\nCharlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {
+  style: {stroke: magenta; stroke-width: 3; stroke-dash: 3}
+}
+dispatcher -> w3
+w4: "ember\nDelta task\nquick·cursor·composer\ndispatched · since 08:03" {
+  style: {stroke: orange; stroke-width: 3}
+}
+dispatcher -> w4
+w3 -> w1: "stacked on"
+h1: "hold r-5\nwaiting on claude 5h\nuntil 10-07 12:00" {shape: hexagon}
+dispatcher -> h1: {style.stroke-dash: 3}
+EOF
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  diff -u "$BATS_TEST_TMPDIR/expected.d2" "$CREW_ROSTER_DIR/roster-c1.d2"
+}
+
+@test "roster-render: an unchanged bus writes nothing; a working detail change writes once" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  target="$CREW_ROSTER_DIR/roster-c1.d2"
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ -f "$target" ]
+  # A rewrite (even identical bytes) would move the mtime off the epoch.
+  touch -d @1 "$target"
+  before=$(stat -c '%i %Y' "$target")
+  cp "$target" "$BATS_TEST_TMPDIR/before.d2"
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%i %Y' "$target")" = "$before" ]
+
+  _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'execute: lint'
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%i %Y' "$target")" != "$before" ]
+  [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^>')" -eq 1 ]
+  [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^<')" -eq 1 ]
+  grep -qF 'working · execute: lint · since 08:25" {' "$target"
+}
+
+@test "roster-render: hostile text stays inside quoted labels" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local cdir title detail
+  cdir="$(_rr_crewdir)"
+  title=$'a"b\\c$d |md ...@import x } {\n# e'
+  detail=$'go ${x}\x01end'
+  _rr_dispatch feat/1-a 1791360000000 atlas 'red; fill: blue' colour32 "$title" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 sage green colour28 Plain standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working "$detail"
+  _rr_status 'worker:feat/2-b#s1' 1791361800000 working
+  seed_hold c1 h-1 1791374400 feat/5-e 'h"1$' claude codex "Echo task"
+  mkdir -p "$cdir/artifacts/feat/1-a" "$cdir/artifacts/feat/2-b"
+  printf '%s\n' '{"spec-critic":{"agent":"evil\""}}' >"$cdir/artifacts/feat/1-a/roles.json"
+  printf '%s\n' '{"critic":{"agent":"claude"}}' >"$BATS_TEST_TMPDIR/other.json"
+  ln -s "$BATS_TEST_TMPDIR/other.json" "$cdir/artifacts/feat/2-b/roles.json"
+  _rr_stubs "$(printf '%s\tc1\tfeat/1-a\tr";x\tidle\t\n%s\tc1\tfeat/1-a\tspec-critic\tidle\t\n%s\tc1\tfeat/2-b\tcritic\tidle\t\n' \
+    "$cdir" "$cdir" "$cdir")"
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$CREW_ROSTER_DIR/roster-c1.d2"
+
+  grep -qFx 'w1: "atlas\na\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {' "$target"
+  grep -qFx '  style: {stroke-width: 3}' "$target"
+  grep -qFx '  r1: "spec-critic\n? · idle"' "$target"
+  grep -qFx 'w2: "sage\nPlain\nstandard·claude·sonnet\nworking · since 08:30" {' "$target"
+  grep -qFx '  style: {stroke: green; stroke-width: 3}' "$target"
+  grep -qFx '  r1: "critic\n? · idle"' "$target"
+  grep -qFx 'h1: "hold h\"1\$\nwaiting on claude 5h\nuntil 10-07 12:00" {shape: hexagon}' "$target"
+
+  # The hostile role pane and non-palette color leave no trace.
+  run grep -cE 'red|fill: blue|;x|evil' "$target"
+  [ "$output" = 0 ]
+
+  # Only generated keys start a line; a lone `}` closes a container.
+  run grep -vE '^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|r[0-9]+)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])' "$target"
+  [ "$status" -eq 1 ]
+  run grep -qP '[\x00-\x09\x0b-\x1f]' "$target"
+  [ "$status" -eq 1 ]
+}
