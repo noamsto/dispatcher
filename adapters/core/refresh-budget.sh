@@ -740,10 +740,12 @@ main() {
     warn "codex quota unknown (no codex CLI or app-server call failed)"
   fi
   local cursor_probe rc
+  # shellcheck disable=SC2016 # literal backticks in the message
+  local cursor_missing_msg='cursor quota unknown — tmux-agent-usage-cursor not found (needs tmux-og with `--print`, noamsto/tmux-og#945 or later)'
   cursor_probe=$(probe_cursor) && rc=0 || rc=$?
   case $rc in
   0) cursor=$cursor_probe ;;
-  1) warn "cursor quota unknown — tmux-agent-usage-cursor not found (needs tmux-og with \`--print\`, noamsto/tmux-og#945 or later)" ;;
+  1) warn "$cursor_missing_msg" ;;
   2) warn "cursor quota unknown — tmux-agent-usage-cursor found no Cursor access token" ;;
   3) warn "cursor quota unknown — tmux-agent-usage-cursor found no Cursor account id" ;;
   4) warn "cursor quota unknown — usage-summary call failed (HTTP error, expired login, or timeout)" ;;
