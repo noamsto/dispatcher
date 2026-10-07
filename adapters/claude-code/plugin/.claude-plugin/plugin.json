@@ -2,7 +2,10 @@
   "name": "dispatcher",
   "version": "0.1.0",
   "description": "Judge tasks into tier + engine + model, fan out one worker per task, coordinate over a git-backed crew bus.",
-  "author": { "name": "Noam Stolero" },
+  "author": {
+    "name": "Noam Stolero"
+  },
   "commands": "./commands",
-  "skills": "./skills"
+  "skills": "./skills",
+  "types": "./types/index.d.ts"
 }
