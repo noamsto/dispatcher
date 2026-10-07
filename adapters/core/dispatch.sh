@@ -397,10 +397,9 @@ _ps_elapsed_s() {
   printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
 }
 
-# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
-# <pidfile> records: live under any uid (EPERM reads alive) and not a pid
-# recycled after the file was written. Copied with its helpers from
-# dispatch-resume.sh: the two ship as standalone builds.
+# _pid_alive, _file_mtime_s, _pid_recycled and _recorded_pid_live: duplicated
+# from dispatch-resume.sh (standalone build), parity-tested. See that file for
+# their contracts.
 _pid_alive() {
   case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
   local kmsg
@@ -425,6 +424,8 @@ _pid_recycled() {
   [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
 }
 
+# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
+# <pidfile> records: live and not a later-recycled pid.
 _recorded_pid_live() {
   _pid_alive "$1" || return 1
   _pid_recycled "$1" "$2" && return 1

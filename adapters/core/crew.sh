@@ -1616,7 +1616,7 @@ _rr_d2() {
 
 # _rr_target <crew> — one diagram per crew per repo bus, named after the repo
 # dir that owns the bus plus a hash of the bus path, so two repos' renderers
-# never write the same file (bare repos, same-named repos in different orgs).
+# never write the same file.
 _rr_target() {
   local repo=${common%/*}
   printf '%s/roster-%s-%s-%s.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" "$1" \
