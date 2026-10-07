@@ -328,28 +328,28 @@ Visible section order, each only if it has content:
 - `## Summary`: compact what, why, needed design rationale; plan-skip line if applicable: `Plan: task doc (provided)`, `Plan: task doc (self-gate)` or `Plan: recovered (resume)` ("Rules" rule 5).
 - Contract/risk notes; shared-contract change: one sentence on the consumer map (full map: Agent ledger, `EVIDENCE_REVIEW.md`).
 - `## Testing` (replaces Evidence/Test-plan): one line per command + result; raw output only for evidence CI cannot reproduce, trimmed to decisive lines.
-- `## Review notes`: one disposition line (e.g. `deferred (#N)`) per open, deferred or refuted item; no fixed rows, SHAs, round counts.
-- `## Escalated`, `## Assumptions`, `## Follow-ups`, in that order.
+- `## Review notes`: one disposition line (e.g. `deferred (reported)`, `dropped (below bar)`, `refuted`) per open, deferred or refuted item; no fixed rows, SHAs, round counts.
+- `## Escalated`, `## Assumptions`, `## Follow-ups (untracked)` (worker-written; the dispatcher swaps in `## Follow-ups` issue links), in that order.
 
-Always last: one collapsed `<details><summary>Agent ledger</summary>…</details>` block with full recurrence ledger (all `EVIDENCE_REVIEW.md` ledger-table fields) and acceptance ledger (all `## Acceptance` items with evidence). Add at PR create if ledger data exists, else with the first `gh pr edit` carrying some; update via `gh pr edit`. New visible sections (e.g. `## Follow-ups`, "Deferred findings") go before it, never after.
+Always last: one collapsed `<details><summary>Agent ledger</summary>…</details>` block with full recurrence ledger (all `EVIDENCE_REVIEW.md` ledger-table fields) and acceptance ledger (all `## Acceptance` items with evidence). Add at PR create if ledger data exists, else with the first `gh pr edit` carrying some; update via `gh pr edit`. New visible sections (e.g. `## Follow-ups (untracked)`, "Deferred findings") go before it, never after.
 
 ## Deferred findings (standard/deep)
 
-Non-blocking findings never ride only in the PR body: fix in place or file an issue. Blocking correctness findings and critic escalations (`## Escalated`) follow `EVIDENCE_REVIEW.md`. A `kind: review` worker files nothing; findings stay in the posted review.
+Non-blocking findings never ride only in the PR body: fix in place or report. Blocking correctness findings and critic escalations (`## Escalated`) follow `EVIDENCE_REVIEW.md`. A `kind: review` worker reports nothing; findings stay in the posted review.
 
-- Belongs to this task? Ask first. No (file it; any one outranks the yes tests): pre-existing and orthogonal, needs a design decision the task doc leaves open or shared-code refactor outside the feature, touches an unrelated subsystem. Yes: diff introduced it, or it sits in changed code (or those files' direct test/doc siblings) and the task goal is visibly incomplete or wrong without it. Task doc's file list is expected scope, not a fence (a sibling test or the same function's error message belongs), unless it fences explicitly ("touch only these files").
+- Belongs to this task? Ask first. No (report it; any one outranks the yes tests): pre-existing and orthogonal, needs a design decision the task doc leaves open or shared-code refactor outside the feature, touches an unrelated subsystem. Yes: diff introduced it, or it sits in changed code (or those files' direct test/doc siblings) and the task goal is visibly incomplete or wrong without it. Task doc's file list is expected scope, not a fence (a sibling test or the same function's error message belongs), unless it fences explicitly ("touch only these files").
 - Fits in this run? (belonging findings only):
   - mechanical (no behavior change, fast deterministic gate covers it) → fix via that gate within its batch's round, no re-review.
   - behavioral → fix, ride the next round's targeted re-review (`EVIDENCE_REVIEW.md`), never beyond the two-round budget.
-  - behavioral, no round left (both rounds' batches returned) → file, noting it belongs to the parent task, deferred only for lack of a review round.
-- File unfixed non-blocking findings by header `tracker:` (stamped by `dispatch`, never inferred from closes line or PR body):
-- `tracker: github` → one issue per independent item, never bundled. Order: (fresh PR: `gh pr create` →) issues (linking the PR) → `gh pr edit` extends `## Follow-ups` (creating it if absent) → `pr_open`.
-  - Standing approval: repo owner pre-approved follow-up issues; do not ask (overrides confirm-before-`gh issue create` for them only).
-  - First `gh issue list --search "<key terms>" --state open`; link a covering issue instead of filing a second.
-  - Self-contained title and body: what is wrong, evidence (`file:line`, reviewer finding), why deferred, PR link, parent issue link. `--assignee @me`; no `dispatched` label.
-- `tracker: linear <TEAM>`, or no `tracker:` line (old task doc; not GitHub) → untracked, never `gh issue create`: exactly one `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id>`, body opening `follow-ups (untracked):`, then self-contained items (what, evidence, why deferred); list them in the PR body under `## Follow-ups (untracked)`.
-- `## Follow-ups` ("PR body contract"): one `#N — short title` line per issue, never finding text.
-- Final `done` detail: refs only, no titles: `crew status "$CREW_WORKER_ID" done "follow-ups: #N, #M"`; untracked `done "follow-ups: untracked"`; nothing filed: plain `done`. Roster clips detail at 120 chars; on overflow, count plus first refs (PR's `## Follow-ups` is authoritative).
+  - behavioral, no round left (both rounds' batches returned) → report, noting it belongs to the parent task, deferred only for lack of a review round.
+- Report unfixed non-blocking findings, same path for every tracker (never `gh issue create`; the dispatcher files after one human approval).
+  - Bar: report only a concrete defect: a failure scenario (input or state → wrong result) verified against the code (`file:line`, a reproduction, or a reviewer's confirmed probe), or a correctness/security gap with that same evidence. Nits, style, speculative hardening and "could also handle X" are not reported: one `## Review notes` line `dropped (below bar)`, nothing sent.
+  - Group: items in the same subsystem/function are one entry with sub-bullets; unrelated items stay separate entries.
+  - `same-area`: the entry's `file:line` is in a file or function that the `Closes` issue names or that this diff touches (`pr: N` task: first `Closes` in that PR's body) → mark the entry `same-area` (the dispatcher comments on the origin instead of minting an issue).
+  - Exactly one `crew msg "$CREW_WORKER_ID" dispatcher:<crew_id>`, body opening `follow-ups (untracked):`, then self-contained entries: what, evidence (`file:line`), why deferred, `same-area` when it applies. Then list them in the PR body under `## Follow-ups (untracked)`.
+  - Order: (fresh PR: `gh pr create` →) `crew msg` with the PR url → `gh pr edit` adds `## Follow-ups (untracked)` → `pr_open`.
+- `## Follow-ups (untracked)` ("PR body contract"): one line per entry, never finding text; the dispatcher replaces it with `## Follow-ups` links once filed.
+- Final `done` detail: `crew status "$CREW_WORKER_ID" done "follow-ups: untracked"` when a batch was sent; else plain `done`.
 
 ## Acceptance ledger (all tiers)
 
@@ -358,7 +358,7 @@ Before `pr_open`, list every item of the task doc's `## Acceptance` (or equivale
 - Cannot run an item (no browser, network, credentials, or command won't run): post `blocked "acceptance: <item> — <why>"` → block→await. No PR while an item is unrun and unwaived.
 - Only the dispatcher waives, via `crew reply` naming the item (covers only that item); `waived(dispatcher…)` needs a reply on the bus to this session that names that item's id in a waive phrase (`waive AC3`; a negation like "will not waive" doesn't count), which `crew status` checks per item. Not waivers: PR-body disclosures ("Not done", "Assumptions"), your own low-risk judgement. Every tier, `trivial` included; overrides the low-risk safe-default allowance in "Report to the bus".
 - A CI acceptance item's `pass(…)` must carry a CI run id or `actions/runs/` URL on the PR's current head; local gates (pre-push, bats-affected, shellcheck, `nix flake check`) are never CI evidence. CI unfinished → wait, or block for a waiver.
-- Ledger in `pr_open` detail: `crew status "$CREW_WORKER_ID" pr_open "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)" <url>`. Items exactly `<id> pass(<evidence>)` or `<id> waived(dispatcher)`, joined by `; `; id one token, no spaces (`AC1`, `AC1-3`); notes inside the parentheses (`waived(dispatcher: <note>)`). `crew status` refuses any other form (`pending`, `not run`, `skipped`, `n/a`, `partial`, a note after the parentheses), and an empty detail if the task doc has a `## Acceptance` list (else empty is accepted). `done` is not ledger-checked (detail: follow-ups list). Keep it short (bus clips long lines). Full ledger: Agent ledger block ("PR body contract"), not a visible `## Acceptance` heading.
+- Ledger in `pr_open` detail: `crew status "$CREW_WORKER_ID" pr_open "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)" <url>`. Items exactly `<id> pass(<evidence>)` or `<id> waived(dispatcher)`, joined by `; `; id one token, no spaces (`AC1`, `AC1-3`); notes inside the parentheses (`waived(dispatcher: <note>)`). `crew status` refuses any other form (`pending`, `not run`, `skipped`, `n/a`, `partial`, a note after the parentheses), and an empty detail if the task doc has a `## Acceptance` list (else empty is accepted). `done` is not ledger-checked (detail: `follow-ups: untracked`). Keep it short (bus clips long lines). Full ledger: Agent ledger block ("PR body contract"), not a visible `## Acceptance` heading.
 
 ## Retro notes (all tiers)
 
@@ -397,7 +397,7 @@ Right before every stopping path (done; terminal failure of spec, plan, consult 
 
 - start: `crew status "$CREW_WORKER_ID" working`
 - PR open: `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <pr_url>`, ledger per "Acceptance ledger"
-- finish: `crew status "$CREW_WORKER_ID" done`, optional `"follow-ups: …"` detail per "Deferred findings"
+- finish: `crew status "$CREW_WORKER_ID" done`, optional `"follow-ups: untracked"` detail per "Deferred findings"
 - question only the dispatcher can answer: block, then await the reply in-band; never stop dead:
   ```
   crew status "$CREW_WORKER_ID" blocked "<why>"
@@ -453,7 +453,7 @@ CPU-contention timing-flake repros are allowed but crew-wide on a shared host. B
 
 ## When done
 
-(After the code review gate and its seam, on standard/deep) pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. Fresh-PR path: filing and `done` detail per "Deferred findings". Ping the dispatcher pane once: `dispatcher_pane:` → `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+(After the code review gate and its seam, on standard/deep) pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. Fresh-PR path: reporting and `done` detail per "Deferred findings". Ping the dispatcher pane once: `dispatcher_pane:` → `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - Every worker, all tiers, emits metrics before stopping (one ratings row per run):
   ```
