@@ -672,7 +672,7 @@ EOF
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]
-  [[ "$output" == *"reap takes --quiet, --dry-run, --no-wait and --idle S"* ]]
+  [[ "$output" == *"reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH"* ]]
 }
 
 @test "reap: is a no-op when the bus has no events" {
@@ -5267,6 +5267,204 @@ GH
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/issue-none — done but no PR on the bus or GitHub; no claim-issue row"* ]]
   [ -d "$wt_path" ]
+}
+
+# reap_discard_fixture <slug> <PR state> — a done worker on feat/<slug> with a
+# bus PR in that state and a dirty tree: an unstaged edit, a staged edit, an
+# untracked file and an untracked scaffold file.
+reap_discard_fixture() {
+  printf 'a\n' >t.txt
+  printf 'b\n' >s.txt
+  git add t.txt s.txt
+  git commit -q -m init
+  git branch "feat/$1"
+  wt_path="$BATS_TEST_TMPDIR/$1-wt"
+  git worktree add -q "$wt_path" "feat/$1"
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'a2\n' >"$wt_path/t.txt"
+  printf 'b2\n' >"$wt_path/s.txt"
+  git -C "$wt_path" add s.txt
+  printf 'new\n' >"$wt_path/new.txt"
+  printf 'notes\n' >"$wt_path/REVIEW_NOTES.md"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '%s\n' '[]' ;;
+*"issue view"*) printf '%s\n' 'CLOSED' ;;
+*headRefOid*) git rev-parse "refs/heads/feat/$1" ;;
+*state*) printf '%s\n' '$2' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  log="$common/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/$1" done "" "https://github.com/o/r/pull/9"
+}
+
+@test "reap: --discard saves a dirty merged tree as a patch that applies to the branch tip, then removes it (#836)" {
+  reap_discard_fixture discard-ok MERGED
+  CREW_ID=c1 run run_crew reap --discard feat/discard-ok
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"saved uncommitted state to $common/crew/artifacts/feat/discard-ok/discarded-"*".patch"* ]]
+  [[ "$output" == *"reaped feat/discard-ok (MERGED, discarded)"* ]]
+  patch=$(printf '%s\n' "$common"/crew/artifacts/feat/discard-ok/discarded-*.patch)
+  [ -s "$patch" ]
+  [ ! -e "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/discard-ok
+  jq -se --arg p "$patch" 'map(select(.kind == "reap" and .branch == "feat/discard-ok")) | .[0].discarded == $p' "$log"
+  fresh="$BATS_TEST_TMPDIR/discard-ok-fresh"
+  git worktree add -q "$fresh" feat/discard-ok
+  git -C "$fresh" apply --check "$patch"
+  git -C "$fresh" apply "$patch"
+  [ "$(cat "$fresh/t.txt")" = a2 ]
+  [ "$(cat "$fresh/s.txt")" = b2 ]
+  [ "$(cat "$fresh/new.txt")" = new ]
+  [ "$(cat "$fresh/REVIEW_NOTES.md")" = notes ]
+}
+
+@test "reap: --discard refuses an OPEN PR and touches nothing (#836)" {
+  reap_discard_fixture discard-open OPEN
+  CREW_ID=c1 run run_crew reap --discard feat/discard-open
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-open — PR OPEN"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-open" ]
+}
+
+@test "reap: --discard refuses a tree with a live engine pane (#836)" {
+  reap_discard_fixture discard-live MERGED
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-live
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-live — an engine is running there"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-live" ]
+}
+
+@test "reap: --discard refuses a branch whose latest status is working (#836)" {
+  reap_discard_fixture discard-working MERGED
+  CREW_ID=c1 run_crew status "worker:feat/discard-working" working
+  CREW_ID=c1 run run_crew reap --discard feat/discard-working
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-working — latest status is working"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-working" ]
+}
+
+@test "reap: --discard on a clean tree with a closed issue removes it, keeping the branch and writing no patch (#836)" {
+  reap_issue_fixture discard-issue CLOSED claim
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-issue --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no uncommitted changes to save"* ]]
+  [[ "$output" == *"reaped feat/discard-issue (issue #77 CLOSED, discarded)"* ]]
+  [ ! -e "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/discard-issue
+  [ -z "$(find "$common/crew/artifacts" -name 'discarded-*' 2>/dev/null)" ]
+  jq -se 'map(select(.kind == "reap" and .branch == "feat/discard-issue")) | .[0].discarded == ""' "$log"
+}
+
+@test "reap: --discard never runs a worker-planted clean filter (#836)" {
+  git commit -q --allow-empty -m init
+  printf '' >f
+  printf 'f filter=x\n' >.gitattributes
+  git add f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git branch feat/discard-557
+  wt_path="$BATS_TEST_TMPDIR/discard-557-wt"
+  git worktree add -q "$wt_path" feat/discard-557
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  seed_git_baseline
+  git config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
+  echo x >"$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/discard-557" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-557
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"refusing --discard feat/discard-557"* ]]
+}
+
+@test "reap: --discard never runs a baselined worktree-relative filter the worker rewrote (#836)" {
+  mkdir -p tools
+  printf '#!/bin/sh\ncat\n' >tools/conv.sh
+  chmod +x tools/conv.sh
+  printf a >f
+  printf 'f filter=x\n' >.gitattributes
+  git add tools/conv.sh f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git config filter.x.clean tools/conv.sh
+  seed_git_baseline
+  git branch feat/discard-578
+  wt_path="$BATS_TEST_TMPDIR/discard-578-wt"
+  git worktree add -q "$wt_path" feat/discard-578
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf '#!/bin/sh\ntouch %q\ncat\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$wt_path/tools/conv.sh"
+  git -C "$wt_path" commit -qam rewrite
+  rm -f "$BATS_TEST_TMPDIR/SENTINEL"
+  printf b >"$wt_path/f"
+  printf 'u\n' >"$wt_path/untracked.txt"
+  touch -d '+5 seconds' "$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/discard-578" done "" "https://example.com/pr/578"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-578
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"saved uncommitted state to "* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: --discard --dry-run reports the patch path and writes nothing (#836)" {
+  reap_discard_fixture discard-dry MERGED
+  CREW_ID=c1 run run_crew reap --discard feat/discard-dry --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would save uncommitted state to $common/crew/artifacts/feat/discard-dry/discarded-"* ]]
+  [[ "$output" == *"would reap feat/discard-dry (MERGED) @ $wt_path"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-dry" ]
+}
+
+@test "reap: --discard refuses an invalid branch name (#836)" {
+  CREW_ID=c1 run_crew status "worker:feat/x" done
+  CREW_ID=c1 run run_crew reap --discard '@{-1}'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard @{-1} — not a valid branch name"* ]]
+}
+
+@test "reap: plain reap never discards a dirty merged tree (#836)" {
+  reap_discard_fixture discard-plain MERGED
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/discard-plain — uncommitted changes"* ]]
+  [ -d "$wt_path" ]
+  [ -z "$(find "$common/crew/artifacts" -name 'discarded-*' 2>/dev/null)" ]
 }
 
 @test "msg: an oversized JSON body stays parseable JSON" {
