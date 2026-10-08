@@ -73,6 +73,117 @@ _wt_cfg_match() { # <table-name> <key> <value> — status 0 when the table names
   done
   return 1
 }
+# Keys whose subsection is itself a URL (#686); only these are masked in a key.
+_wt_cfg_url_subsection_keys=('url.*.insteadof' 'url.*.pushinsteadof' 'http.*.*' 'credential.*.*')
+_wt_cfg_show_url() { # <string> <var> [proxy] — set <var> to <string> with URL userinfo and query values masked, else %q
+  local LC_ALL=C _wt_s_in="$1" _wt_s_str="$1" _wt_s_pre='' _wt_s_out _wt_s_q _wt_s_part _wt_s_fp
+  # Bracket expressions: `]` first and `[` before a non-`:` are literal.
+  local _wt_s_u=$'[^]@/?#[\\\\[:space:][:cntrl:]]' _wt_s_us=$'[^]@/?#[\\\\%:[:space:][:cntrl:]]'
+  local _wt_s_pc=$'[A-Za-z0-9._~!$&\'()*+,;=:@%/-]'
+  local _wt_s_url="^([A-Za-z][A-Za-z0-9+.-]*)://((${_wt_s_u}*)@)?([A-Za-z0-9.-]+)(:[0-9]+)?((/${_wt_s_pc}*)(\\?(${_wt_s_pc}|\\?)*)?)?\$"
+  local _wt_s_scp="^(${_wt_s_us}+)@([A-Za-z0-9.-]+):(${_wt_s_pc}*)\$"
+  # git and curl read a scheme-less proxy as http://<value>.
+  if [[ ${3-} == proxy && $_wt_s_in != *://* ]]; then
+    _wt_s_pre='http://'
+    _wt_s_str="$_wt_s_pre$_wt_s_in"
+  fi
+  if [[ $_wt_s_in != *[@?]* ]]; then
+    printf -v "$2" %q "$_wt_s_in"
+    return 0
+  fi
+  if [[ $_wt_s_str =~ $_wt_s_url ]]; then
+    case "${BASH_REMATCH[1],,}" in
+    http | https | ftp | ftps) ;;
+    ssh | git+ssh | ssh+git)
+      # git url_decode()s an ssh url before splitting off the host.
+      [[ ${BASH_REMATCH[3]} != *%* ]] || {
+        printf -v "$2" %q "$_wt_s_in"
+        return 0
+      }
+      ;;
+    socks4 | socks4a | socks5 | socks5h)
+      [[ ${3-} == proxy ]] || {
+        printf -v "$2" %q "$_wt_s_in"
+        return 0
+      }
+      ;;
+    *)
+      printf -v "$2" %q "$_wt_s_in"
+      return 0
+      ;;
+    esac
+    _wt_s_q="${BASH_REMATCH[8]#\?}"
+    if [[ -z ${BASH_REMATCH[2]} && -z $_wt_s_q ]]; then
+      printf -v "$2" %q "$_wt_s_in"
+      return 0
+    fi
+    _wt_s_out="${BASH_REMATCH[1]}://"
+    [[ -z ${BASH_REMATCH[2]} ]] || _wt_s_out+='***@'
+    _wt_s_out+="${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[7]}"
+    if [[ -n $_wt_s_q ]]; then
+      _wt_s_out+='?'
+      while :; do
+        _wt_s_part="${_wt_s_q%%&*}"
+        if [[ $_wt_s_part == *=* ]]; then
+          _wt_s_out+="${_wt_s_part%%=*}=***"
+        elif [[ -n $_wt_s_part ]]; then
+          _wt_s_out+='***'
+        fi
+        [[ $_wt_s_q == *'&'* ]] || break
+        _wt_s_q="${_wt_s_q#*&}"
+        _wt_s_out+='&'
+      done
+    fi
+    _wt_s_out="${_wt_s_out#"$_wt_s_pre"}"
+  elif [[ ${3-} != proxy && $_wt_s_in =~ $_wt_s_scp ]]; then
+    _wt_s_out="***@${BASH_REMATCH[2]}:${BASH_REMATCH[3]}"
+  else
+    printf -v "$2" %q "$_wt_s_in"
+    return 0
+  fi
+  _wt_s_fp="$(printf %s "$_wt_s_in" | sha256sum)"
+  printf -v "$2" '%s [sha256:%s]' "$_wt_s_out" "${_wt_s_fp:0:8}"
+}
+_wt_cfg_show_key() { # <key> <var> — set <var> to <key>, its URL subsection masked for the keys that embed one, else %q
+  local _wt_s_sec _wt_s_sub _wt_s_var _wt_s_disp _wt_s_plain
+  printf -v _wt_s_disp %q "$1"
+  if _wt_cfg_match _wt_cfg_url_subsection_keys "$1" ""; then
+    _wt_s_sec="${1%%.*}"
+    _wt_s_var="${1##*.}"
+    _wt_s_sub="${1#"$_wt_s_sec".}"
+    _wt_s_sub="${_wt_s_sub%."$_wt_s_var"}"
+    _wt_cfg_show_url "$_wt_s_sub" _wt_s_disp
+    printf -v _wt_s_plain %q "$_wt_s_sub"
+    if [[ $_wt_s_disp == "$_wt_s_plain" ]]; then
+      printf -v _wt_s_disp %q "$1"
+    else
+      _wt_s_disp="$_wt_s_sec.$_wt_s_disp.$_wt_s_var"
+    fi
+  fi
+  printf -v "$2" '%s' "$_wt_s_disp"
+}
+_wt_cfg_rewritten() { # <url> [aliases] — status 0 when a value in the array named [aliases] prefixes <url>
+  local _wt_s_a _wt_s_ref="${2-}[@]"
+  [[ -n ${2-} ]] || return 1
+  for _wt_s_a in "${!_wt_s_ref}"; do
+    [[ $1 != "$_wt_s_a"* ]] || return 0
+  done
+  return 1
+}
+_wt_cfg_show_pair() { # <key> <value> <var> [aliases] — set <var> to `key=value`, masking a redirect value's URL credentials unless an insteadOf alias in [aliases] rewrites it
+  local _wt_s_k _wt_s_v
+  _wt_cfg_show_key "$1" _wt_s_k
+  printf -v _wt_s_v %q "$2"
+  if _wt_cfg_match _wt_redirect_keys "$1" "$2"; then
+    case "$1" in
+    http.proxy | http.*.proxy | remote.*.proxy) _wt_cfg_show_url "$2" _wt_s_v proxy ;;
+    # git contacts the rewritten url, whose host the mask could hide.
+    remote.*.url | remote.*.pushurl) _wt_cfg_rewritten "$2" "${4-}" || _wt_cfg_show_url "$2" _wt_s_v ;;
+    *) _wt_cfg_show_url "$2" _wt_s_v ;;
+    esac
+  fi
+  printf -v "$3" '%s=%s' "$_wt_s_k" "$_wt_s_v"
+}
 _wt_cfg_guarded() { # <key> <value> — status 0 when the baseline guards the pair
   _wt_cfg_match _wt_exec_keys "$1" "$2" || _wt_cfg_match _wt_redirect_keys "$1" "$2"
 }
@@ -124,12 +235,15 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
   printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
 _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
-  local what="$1" rec keys=
+  local what="$1" rec keys='' raw='' disp
   shift
   for rec in "$@"; do
     [ "$rec" != "$_wt_cfg_redirect_mark" ] || continue
     rec="${rec%%$'\n'*}"
-    [[ ", $keys, " == *", $rec, "* ]] || keys="${keys:+$keys, }$rec"
+    [[ ", $raw, " != *", $rec, "* ]] || continue
+    raw="${raw:+$raw, }$rec"
+    _wt_cfg_show_key "$rec" disp
+    keys="${keys:+$keys, }$disp"
   done
   # Keys only: a credential.helper value may carry a token.
   [ -n "$keys" ] || return 0
@@ -175,7 +289,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   _wt_cfg_note_keys "$file" "${recs[@]}"
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon redirect=
+  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon kd plain redirect=
   local -a pairs listing drift=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -214,6 +328,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   mapfile -d '' listing < <(git --git-dir="$gitdir" config --list --show-origin --show-scope -z)
   for key in "${drift[@]}"; do
     found=
+    _wt_cfg_show_key "$key" kd
     for ((i = 0; i + 2 < ${#listing[@]}; i += 3)); do
       [[ ${listing[i]} == local || ${listing[i]} == worktree ]] || continue
       rec="${listing[i + 2]}"
@@ -222,15 +337,16 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
       origin="${listing[i + 1]#file:}"
       [[ " $found " != *" $origin "* ]] || continue
       found+=" $origin"
-      printf 'refusing git: %q (from %q) is not in the git-config baseline %s\n' "$key" "$origin" "$file" >&2
+      printf 'refusing git: %s (from %q) is not in the git-config baseline %s\n' "$kd" "$origin" "$file" >&2
       # Unsetting a replaced remote.origin.url would delete origin.
-      if _wt_cfg_match _wt_redirect_keys "$key" "${rec#"$key"$'\n'}"; then
+      printf -v plain %q "$key"
+      if [[ $kd != "$plain" ]] || _wt_cfg_match _wt_redirect_keys "$key" "${rec#"$key"$'\n'}"; then
         printf '  restore the baselined value or remove it: edit %q\n' "$origin" >&2
       else
         printf '  remove it: git config --file %q --unset-all %q\n' "$origin" "$key" >&2
       fi
     done
-    [ -n "$found" ] || printf 'refusing git: %q is not in the git-config baseline %s\n' "$key" "$file" >&2
+    [ -n "$found" ] || printf 'refusing git: %s is not in the git-config baseline %s\n' "$kd" "$file" >&2
   done
   printf "  to clear it: list drift with \`crew git-baseline\`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: \`crew git-baseline --accept\` (deleting %q instead re-records EVERYTHING present at the next dispatch)\n" "$file" >&2
   return 1

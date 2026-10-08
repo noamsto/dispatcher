@@ -769,11 +769,20 @@ branch instead; the worktree carries over under `resume: true`.
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
   config, not the program; refusals name the key and its file, never the
-  value — but a `url.<base>.insteadOf` key embeds its URL, so a token in that
-  base is printed in refusals and in dispatch's baseline-recorded note;
-  `crew git-baseline` prints raw values verbatim, which may include credentials
-  (a remote URL's userinfo token, a proxy password, a `credential.helper`
-  argument), so the human runs it in their own terminal, never the dispatcher;
+  value; refusals, dispatch's baseline-recorded note and `crew git-baseline`
+  (listing and `--accept` prompt) mask URL userinfo and query values in redirect-key values
+  and in URL-subsection keys (`url.<base>.(push)insteadOf`, `http.<url>.*`,
+  `credential.<url>.*`), showing host/path plus an 8-hex `sha256:` fingerprint
+  of the full value so two secrets never look alike; masking is output-only, comparison and the baseline file use
+  full values; it applies only to URLs in a strict grammar (http/https/ftp/ftps/
+  ssh schemes, socks proxies, scp form, scheme-less proxy) where git, curl and ssh agree on the
+  host, and anything else (brackets, ssh `%`-escapes, other schemes,
+  fragments, spaces, a query with no path, a remote URL an `insteadOf` alias
+  (listed or baselined) rewrites, `includeIf` condition keys) prints whole, so masking never hides the endpoint git contacts, but such a value may
+  still carry a credential; an alias drift line is followed by every remote URL
+  it rewrites, printed whole even if baselined; exec-class values (a `credential.helper` argument)
+  still print verbatim, so the human runs `crew git-baseline` in their own
+  terminal, never the dispatcher;
   gh-based repo
   resolution reads `remote.origin.url` outside the guard;
   `<git-common-dir>/info/attributes` still selects

@@ -4393,6 +4393,110 @@ crew_tty() {
   [[ "$output" == *remote.origin.url=attacker.example:x@github.com:o/r.git* ]]
 }
 
+@test "git-baseline masks URL credentials in redirect values and keys, keeping hosts (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://x-access-token:FAKETOKEN0686@github.com/o/r.git'
+  git config http.proxy 'http://u:fakepass0686@proxy.example:3128'
+  git config http.https://p.example/.proxy 'u:fakepass0686@proxy.example:3128'
+  git config 'url.https://x:FAKETOKEN0686@evil.example/.insteadOf' 'https://github.com/'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *github.com* ]]
+  [[ "$output" == *proxy.example* ]]
+  [[ "$output" == *evil.example* ]]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *FAKETOKEN0686* ]]
+  [[ "$output" != *fakepass0686* ]]
+}
+
+@test "git-baseline prints a remote url an insteadOf alias rewrites verbatim, so the contacted host shows (#686)" {
+  local base gcfg="$BATS_TEST_TMPDIR/gitconfig"
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://evil.example:x@github.com/o/r.git'
+  for base in '' 'git@'; do
+    git config "url.$base.insteadOf" 'https://'
+    run run_crew git-baseline
+    [ "$status" -eq 1 ]
+    [[ "$output" == *remote.origin.url=*evil.example* ]]
+    git config --unset "url.$base.insteadOf"
+  done
+  git config -f "$gcfg" url.git@.pushInsteadOf 'https://'
+  GIT_CONFIG_GLOBAL="$gcfg" run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.example* ]]
+}
+
+@test "git-baseline unmasks a main-checkout remote url through an alias only a linked worktree sees (#686)" {
+  local wt="$BATS_TEST_TMPDIR/alias-wt"
+  git commit -q --allow-empty -m init
+  git worktree add -q -b feat/alias-wt "$wt"
+  seed_git_baseline
+  git config extensions.worktreeConfig true
+  git -C "$wt" config --worktree url..insteadOf 'https://'
+  git config remote.origin.url 'https://evil.example:x@github.com/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.example* ]]
+}
+
+@test "git-baseline reprints whole a baselined remote url a drifted alias rewrites (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://evil.invalid:x@trusted.invalid/o/r.git'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config url.git@.insteadOf 'https://'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"rewritten by the alias above: remote.origin.url="*evil.invalid*"(main checkout, "* ]]
+}
+
+@test "git-baseline prints whole a remote url a baselined alias rewrites (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config url.git@.insteadOf 'https://'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config --unset url.git@.insteadOf
+  git config remote.origin.url 'https://evil.invalid:x@trusted.invalid/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.invalid* ]]
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config url.git@.insteadOf 'https://'
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+}
+
+@test "git-baseline masks a scheme-less http.proxy (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config http.proxy 'u:fakepass0686@proxy.example:3128'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *proxy.example* ]]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *fakepass0686* ]]
+}
+
+@test "git-baseline --accept masks the token on screen but stores it in full (#686)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  seed_git_baseline
+  git config remote.origin.url 'https://x-access-token:FAKETOKEN0686@github.com/o/r.git'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *FAKETOKEN0686* ]]
+  [ "$(grep -c FAKETOKEN0686 "$B")" -ge 1 ]
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}
+
 @test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {
   git commit -q --allow-empty -m init
   : >"$TEST_REPO/.git/crew/git-config-baseline"

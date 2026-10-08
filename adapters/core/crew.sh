@@ -2661,6 +2661,8 @@ baseline the worktree guard enforces.
             exits 1 on drift or a missing baseline, 0 when clean.
 
 Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
+URL userinfo and query values in redirect values and URL-subsection keys are masked
+with a sha256 fingerprint of the full value; the baseline stores full values.
 
   crew git-baseline
 HELP
@@ -7636,7 +7638,9 @@ git-baseline)
   # Lists — or, with --accept, merges into — the exec-capable and redirecting
   # git-config baseline _wt_cfg_guard enforces (#557, #585, #678). Only a dispatch records one
   # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
-  # terminal, and --accept writes exactly the pairs this run printed: each
+  # terminal, URL userinfo and query values in redirect values and URL-subsection
+  # keys are masked with a sha256 fingerprint of the full value (the baseline
+  # stores full values), and --accept writes exactly the pairs this run printed: each
   # context is read once, and a pair is shown and collected in one step.
   case "$#:${1:-}" in
   0:) accept= ;;
@@ -7663,14 +7667,20 @@ git-baseline)
     exit 1
   fi
 
-  declare -A gb_base=() gb_seen=()
+  declare -A gb_base=() gb_seen=() gb_re=()
   gb_canon=
   gb_marked=
+  gb_aliases=()
   gb_real="$(realpath -e -- "$common")" || gb_real=
   for gb_rec in "${gb_recs[@]}"; do
     [ -n "$gb_rec" ] || continue
     # shellcheck disable=SC2154 # set by the sourced worktree-git lib
     [ "$gb_rec" != "$_wt_cfg_redirect_mark" ] || gb_marked=1
+    # A baselined alias the worker unset now can come back without drift.
+    gb_key="${gb_rec%%$'\n'*}"
+    if [[ $gb_rec == *$'\n'* && ($gb_key == url.*.insteadof || $gb_key == url.*.pushinsteadof) ]]; then
+      gb_aliases+=("${gb_rec#*$'\n'}")
+    fi
     _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
     gb_base["$gb_canon"]=1
   done
@@ -7684,7 +7694,10 @@ git-baseline)
     echo "git-config baseline $baseline_file predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does"
   fi
 
+  # Every context's aliases apply to every pair: git in a linked worktree
+  # may rewrite the main checkout's url through an alias only it sees.
   gb_shown=()
+  gb_all=()
   for gb_ctx in "${gb_ctxs[@]}"; do
     gb_label="main checkout"
     [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
@@ -7694,19 +7707,47 @@ git-baseline)
       exit 1
     fi
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
-      [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
       gb_rec="${gb_listing[gb_i + 2]}"
-      [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
-      gb_key="${gb_rec%%$'\n'*}"
-      gb_value="${gb_rec#"$gb_key"$'\n'}"
-      _wt_cfg_guarded "$gb_key" "$gb_value" || continue
-      _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
-      [ -z "${gb_base["$gb_canon"]+x}" ] || continue
-      gb_origin="${gb_listing[gb_i + 1]#file:}"
-      [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
-      gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "$gb_origin"
-      gb_shown+=("$gb_rec")
+      gb_all+=("$gb_label" "${gb_listing[gb_i]}" "${gb_listing[gb_i + 1]}" "$gb_rec")
+      # A human's global insteadOf rewrites a local remote url too.
+      [[ ${gb_rec%%$'\n'*} == url.*.insteadof || ${gb_rec%%$'\n'*} == url.*.pushinsteadof ]] || continue
+      [[ $gb_rec == *$'\n'* ]] && gb_aliases+=("${gb_rec#*$'\n'}")
+    done
+  done
+  for ((gb_j = 0; gb_j + 3 < ${#gb_all[@]}; gb_j += 4)); do
+    [[ ${gb_all[gb_j + 1]} == local || ${gb_all[gb_j + 1]} == worktree ]] || continue
+    gb_label="${gb_all[gb_j]}"
+    gb_rec="${gb_all[gb_j + 3]}"
+    [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
+    gb_key="${gb_rec%%$'\n'*}"
+    gb_value="${gb_rec#"$gb_key"$'\n'}"
+    _wt_cfg_guarded "$gb_key" "$gb_value" || continue
+    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
+    [ -z "${gb_base["$gb_canon"]+x}" ] || continue
+    gb_origin="${gb_all[gb_j + 2]#file:}"
+    [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
+    gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
+    _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp gb_aliases
+    # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
+    printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
+    gb_shown+=("$gb_rec")
+    [[ $gb_key == url.*.insteadof || $gb_key == url.*.pushinsteadof ]] || continue
+    # The alias may redirect a remote url accepted earlier while shown masked.
+    # shellcheck disable=SC2034 # read by name in _wt_cfg_rewritten and _wt_cfg_show_pair
+    gb_alias=("$gb_value")
+    gb_re=()
+    for ((gb_k = 0; gb_k + 3 < ${#gb_all[@]}; gb_k += 4)); do
+      [[ ${gb_all[gb_k + 1]} == local || ${gb_all[gb_k + 1]} == worktree ]] || continue
+      gb_rrec="${gb_all[gb_k + 3]}"
+      gb_rkey="${gb_rrec%%$'\n'*}"
+      [[ $gb_rrec == *$'\n'* && ($gb_rkey == remote.*.url || $gb_rkey == remote.*.pushurl) ]] || continue
+      gb_rvalue="${gb_rrec#*$'\n'}"
+      _wt_cfg_rewritten "$gb_rvalue" gb_alias || continue
+      gb_rorigin="${gb_all[gb_k + 2]#file:}"
+      [ -z "${gb_re["$gb_rorigin"$'\n'"$gb_rrec"]+x}" ] || continue
+      gb_re["$gb_rorigin"$'\n'"$gb_rrec"]=1
+      _wt_cfg_show_pair "$gb_rkey" "$gb_rvalue" gb_disp gb_alias
+      printf '  rewritten by the alias above: %s (%s, %q)\n' "$gb_disp" "${gb_all[gb_k]}" "$gb_rorigin"
     done
   done
 
