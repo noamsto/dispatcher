@@ -2567,17 +2567,19 @@ reap row, else `gh pr list --head`.
               Save a finished worker's uncommitted state, then reclaim it
 
 --discard acts on one done/failed/exited worker whose PR is MERGED or CLOSED,
-or that has no PR and whose claimed issue(s) are all CLOSED. It saves tracked,
-staged and untracked changes as one patch, <crew dir>/artifacts/<branch>/
-discarded-<UTC ts>.patch (path printed; `git apply` it on the branch tip).
-Ignored files are not saved. The worktree is then removed the same anchored way,
-keeping the local branch. It refuses an open PR, a live engine pane and a
-non-terminal latest status. Never implicit: plain reap and the stream's reaps
-never discard.
+or on a done/failed worker with no PR whose claimed issue(s) are all CLOSED. It
+saves tracked, staged and untracked changes as one patch, <crew dir>/artifacts/
+<branch>/discarded-<UTC ts>.patch (path printed; `git apply` it on the branch
+tip). Ignored files are not saved, and a staged version since overwritten in
+the work tree is not kept. The worktree is then removed the same anchored way,
+keeping the local branch. It refuses an open PR, a live engine pane, a
+non-terminal latest status, a busy reap lock and a tree holding an embedded git
+repository. Never implicit: plain reap and the stream's reaps never discard.
 
-Kept: an open PR, uncommitted changes, a live engine, or no PR with a done/failed
-worker whose claimed issue is not CLOSED, has no claim-issue row, or has commits
-on no remote and not patch-equivalent to the default branch.
+Kept: an open PR, uncommitted changes, a live engine, a tip past the head of a
+PR that is not the latest session's own, or no PR with a done/failed worker
+whose claimed issue is not CLOSED, has no claim-issue row, or has commits on no
+remote and not patch-equivalent to the default branch.
 
 No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
 
@@ -7720,10 +7722,11 @@ reap)
   }
 
   # _reap_find_pr — with pr "-", look the branch's PR up on GitHub: pr becomes
-  # its URL, or stays "-" when there is none. Status 1 sets why.
+  # its URL (pr_src fallback), or stays "-" when there is none. Status 1 sets why.
   _reap_find_pr() {
     local prs
     [ "$pr" = "-" ] || return 0
+    pr_src=fallback
     if ! prs=$(gh pr list --head "$branch" --state all --json url,state,headRefOid,isCrossRepository 2>/dev/null); then
       why="could not list PRs for $branch"
       return 1
@@ -8049,11 +8052,14 @@ SCAFFOLD
   reap_lock="$dir/reap.lock.d"
   waited=0
   until _lock_acquire "$reap_lock" "$$"; do
+    # A skipped --discard would read as done, its state neither saved nor reclaimed.
     if [ -n "$nowait" ]; then
+      [ -z "$discard" ] || refuse "another reap is running"
       note "another reap is running — skipped"
       exit 0
     fi
     if [ "$waited" -ge 120 ]; then
+      [ -z "$discard" ] || refuse "another reap is still running after 120s"
       note "another reap is still running after 120s — skipped"
       exit 0
     fi
@@ -8099,6 +8105,8 @@ SCAFFOLD
   # out so a prior terminal status can resurface.
   # pr_open is a candidate here only, never for idle release. `later`: some
   # session of the branch posted after the terminal status, so it is not idle.
+  # pr_src: "own" when the PR is the latest session's, else "fallback" — an
+  # earlier session's or a reap row's PR predates any later session's commits.
   # With a branch: that branch's row whatever its state ("none" when no
   # status), for --discard.
   _reap_latest() {
@@ -8132,7 +8140,25 @@ SCAFFOLD
             | if $only == "" then map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
               else map(select(.branch == $only)) end
           )
-        | .[] | [.branch, (.state // "none"), (.pr_url // $prs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
+        | .[] | [.branch, (.state // "none"), (.pr_url // $prs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end),
+            (if .pr_url != null then "own" else "fallback" end)] | @tsv' "$log"
+  }
+
+  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
+  # first offender, when a component from $dir/artifacts down to the branch's
+  # leaf is a symlink or exists as a non-directory.
+  _artifacts_dir_bad() {
+    local p="$dir/artifacts" part
+    local -a parts
+    IFS=/ read -ra parts <<<"$1"
+    for part in "" "${parts[@]}"; do
+      p="$p${part:+/$part}"
+      if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+        printf '%s\n' "$p"
+        return 0
+      fi
+    done
+    return 1
   }
 
   # --discard <branch>: a human's explicit call to drop a finished worker's
@@ -8150,7 +8176,7 @@ SCAFFOLD
     latest=$(_reap_latest "$branch") || refuse "could not read the bus"
     state=none
     pr="-"
-    [ -z "$latest" ] || IFS=$'\t' read -r _ state pr _ _ <<<"$latest"
+    [ -z "$latest" ] || IFS=$'\t' read -r _ state pr _ _ _ <<<"$latest"
     case "$state" in
     done | failed | exited) ;;
     *) refuse "latest status is $state" ;;
@@ -8200,32 +8226,47 @@ SCAFFOLD
     fi
     # A throwaway index seeded from the branch tip: `add -A` then stages
     # tracked, staged and untracked non-ignored files without touching the
-    # worker's own index, and the diff against the tip is the whole state.
-    mkdir -p "$dir/artifacts/$branch" || refuse "could not save uncommitted state"
+    # worker's own index. The diff captures the work tree as `add -A` sees it:
+    # a staged version since overwritten in the work tree is not kept.
+    # $dir is ours, so the temp dir and the patch built in it are too.
     tmpidx=$(mktemp -d "$dir/discard.XXXXXX") || refuse "could not save uncommitted state"
-    saved=""
-    if GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" read-tree "refs/heads/$branch" >/dev/null 2>&1 &&
-      GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" add -A >/dev/null 2>&1 &&
-      GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" diff --cached --binary --full-index \
-        --no-ext-diff --no-textconv "refs/heads/$branch" -- >"$discard_patch.tmp" 2>/dev/null; then
-      saved=1
+    discard_fail() {
+      rm -rf -- "$tmpidx"
+      refuse "$1"
+    }
+    if ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" read-tree "refs/heads/$branch" >/dev/null 2>&1 ||
+      ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" add -A >/dev/null 2>&1; then
+      discard_fail "could not save uncommitted state"
     fi
-    rm -rf -- "$tmpidx"
-    if [ -z "$saved" ]; then
-      rm -f -- "$discard_patch.tmp"
-      refuse "could not save uncommitted state"
-    fi
-    if [ -s "$discard_patch.tmp" ]; then
-      mv -- "$discard_patch.tmp" "$discard_patch" || {
-        rm -f -- "$discard_patch.tmp"
-        refuse "could not save uncommitted state"
-      }
+    # add -A stages an untracked nested repo as a bare gitlink: the patch would
+    # hold only its commit id while the removal deletes its contents.
+    tmpstage=$(GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" ls-files --stage) ||
+      discard_fail "could not save uncommitted state"
+    ! grep -q '^160000 ' <<<"$tmpstage" || discard_fail "it holds an embedded git repository"
+    # Pinned diff options: the operator's diff.* and color.* config would
+    # otherwise reshape the patch so `git apply` rejects it.
+    GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" diff --cached --binary --full-index \
+      --no-color --src-prefix=a/ --dst-prefix=b/ --no-relative \
+      --no-ext-diff --no-textconv "refs/heads/$branch" -- >"$tmpidx/patch" 2>/dev/null ||
+      discard_fail "could not save uncommitted state"
+    if [ -s "$tmpidx/patch" ]; then
+      # artifacts/<branch> is worker-writable: a symlink on it redirects the patch.
+      ! bad=$(_artifacts_dir_bad "$branch") || discard_fail "$bad is a symlink or not a directory"
+      mkdir -p -- "$dir/artifacts/$branch" || discard_fail "could not save uncommitted state"
+      ! bad=$(_artifacts_dir_bad "$branch") || discard_fail "$bad is a symlink or not a directory"
+      if [ -e "$discard_patch" ] || [ -L "$discard_patch" ]; then
+        discard_fail "$discard_patch already exists"
+      fi
+      mv -nT -- "$tmpidx/patch" "$discard_patch" 2>/dev/null || true
+      if [ -e "$tmpidx/patch" ] || [ ! -f "$discard_patch" ] || [ -L "$discard_patch" ]; then
+        discard_fail "could not save uncommitted state"
+      fi
       say "saved uncommitted state to $discard_patch"
     else
-      rm -f -- "$discard_patch.tmp"
       discard_patch=""
       say "no uncommitted changes to save"
     fi
+    rm -rf -- "$tmpidx"
     if ! post_st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || [ "$post_st" != "$pre_st" ]; then
       say "keeping $branch — changed while saving"
       exit 1
@@ -8292,7 +8333,7 @@ EOF
   _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state pr cand_ts later; do
+  while IFS=$'\t' read -r branch state pr cand_ts later pr_src; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
@@ -8324,6 +8365,23 @@ EOF
         ;;
       esac
       label="$pr_state"
+      # A PR from an earlier session, a reap row or GitHub predates any later
+      # session's work: it vouches only for a tip at or behind its head.
+      if [ "$pr_src" != own ]; then
+        pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
+        if [ -z "$pr_head" ]; then
+          note "keeping $branch — could not verify $pr's head"
+          continue
+        fi
+        if ! _wt_cfg_guard "$common"; then
+          note "keeping $branch — git config drift"
+          continue
+        fi
+        if ! _wt_git_common "$common" merge-base --is-ancestor "refs/heads/$branch" "$pr_head" 2>/dev/null; then
+          note "keeping $branch — its tip has commits past $pr"
+          continue
+        fi
+      fi
     fi
 
     engine_panes=()
