@@ -851,6 +851,58 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# argv limit regression (#838): the sweep passed the folded store, and the
+# patch map, to jq as single command-line arguments. Past Linux's per-argument
+# limit (MAX_ARG_STRLEN, 128 KiB) execve fails with E2BIG — and the store only
+# grows, so every autosweep past that size died before appending anything. The
+# second row pins window 1, whose jq runs in a process substitution: an E2BIG
+# there skips every gh call silently instead of erroring.
+# ---------------------------------------------------------------------------
+
+# pad_store — a ratings store of ~300 KiB of filler rows, each a valid stored
+# row with its own run_id so it survives the last-wins fold.
+pad_store() {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -nc 'range(0; 600) as $i
+    | {repo: "acme/widgets", run_id: ("pad-" + ($i | tostring)), engine: "claude",
+       model: "opus", tier: "standard", outcome: "done", reached_pr: false,
+       pr_state: null, swept_at: 1, pad: ("x" * 350)}' >"$XDG_DATA_HOME/crew/ratings.jsonl"
+  [ "$(wc -c <"$XDG_DATA_HOME/crew/ratings.jsonl")" -gt 204800 ]
+}
+
+@test "sweep: a store over 200 KiB sweeps and appends its row (#838)" {
+  seed_dispatch feat/padded 1000
+  CREW_ID=c1 run_crew status "worker:feat/padded" done
+  pad_store
+  before=$(wc -c <"$XDG_DATA_HOME/crew/ratings.jsonl")
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+
+  rows="$(store_rows)"
+  run jq -e 'map(select(.branch == "feat/padded")) | length == 1' <<<"$rows"
+  [ "$status" -eq 0 ]
+  [ "$(wc -c <"$XDG_DATA_HOME/crew/ratings.jsonl")" -gt "$before" ]
+}
+
+@test "sweep: a store over 200 KiB still reconciles a PR-owning run (#838)" {
+  seed_dispatch feat/padded-pr 1000
+  seed_status worker:feat/padded-pr 1500 pr_open "https://github.com/acme/widgets/pull/7"
+  pad_store
+  set_view '{"state":"MERGED","closedAt":null,"mergedAt":"1970-01-01T00:00:10Z","mergeCommit":{"oid":"deadbeef"},"commits":[],"reviews":[]}'
+
+  run run_crew rate
+  [ "$status" -eq 0 ]
+
+  # Window 1's snapshot is what decides whether to call gh at all: an E2BIG in
+  # that jq yields zero rows to reconcile and a silently unmeasured sweep.
+  run grep -c 'pr view https://github.com/acme/widgets/pull/7' "$STUB_LOG"
+  [ "$output" = "1" ]
+  run jq -r 'map(select(.branch == "feat/padded-pr"))[0] | "\(.pr_state) \(.merged)"' <<<"$(store_rows)"
+  [ "$output" = "MERGED true" ]
+}
+
+# ---------------------------------------------------------------------------
 # crew watch
 # ---------------------------------------------------------------------------
 
