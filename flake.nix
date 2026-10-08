@@ -49,11 +49,12 @@
         # config) and the function-hooks gate the test runner needs is set.
         modTests = pkgs.writeShellApplication {
           name = "mod-tests";
+          runtimeInputs = [pkgs.git];
           text = ''
             home=$(mktemp -d)
             trap 'rm -rf "$home"' EXIT
             export HOME=$home CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
-            ${claudeCode}/bin/claude plugin test "''${1:-adapters/claude-code/plugin}"
+            ${claudeCode}/bin/claude plugin test "''${1:-$(git rev-parse --show-toplevel)/adapters/claude-code/plugin}"
           '';
         };
         # The package set with `lockedSettings` (a JSON file, or null for none)
