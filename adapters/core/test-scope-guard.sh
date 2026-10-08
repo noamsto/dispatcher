@@ -80,13 +80,16 @@ split_words() { # <command>
   while ((i < n)); do
     c=${s:i:1}
     case $c in
-    ' ' | $'\t' | $'\n')
+    ' ' | $'\t')
       if [[ -n $w ]]; then
         printf '%s\n' "$w"
         w=''
       fi
       ;;
-    ';' | '|' | '&' | '(' | ')' | '`')
+    ';' | '|' | '&' | '(' | ')' | '`' | $'\n')
+      # A newline ends a command just as `;` does: without the empty line the
+      # next line's words are still arguments of the first command, so a
+      # `bats tests/` on line 2 reads as an argument of `git status` on line 1.
       if [[ -n $w ]]; then
         printf '%s\n' "$w"
         w=''
@@ -140,10 +143,26 @@ split_words() { # <command>
         i=$((i + 1))
       done
       if [[ ${s:i:1} == '&' ]]; then i=$((i + 1)); fi
+      # The target is one word, quotes and escapes included: `> "/tmp/o f"`,
+      # `2> 'error log'`, `> /tmp/o\ f`. Stopping at the space inside the
+      # quotes would leave the tail behind as an operand.
       while ((i < n)); do
         d=${s:i:1}
         case $d in
         ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>' | '`') break ;;
+        "'" | '"')
+          q=$d
+          i=$((i + 1))
+          while ((i < n)); do
+            d=${s:i:1}
+            i=$((i + 1))
+            if [[ $d == "$q" ]]; then break; fi
+          done
+          continue
+          ;;
+        \\)
+          i=$((i + 1))
+          ;;
         esac
         i=$((i + 1))
       done

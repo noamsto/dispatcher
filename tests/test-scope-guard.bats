@@ -202,6 +202,27 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
+@test "test-scope-guard: a newline ends one command and starts the next" {
+  for cmd in "$(printf 'git status\nbats tests/')" "$(printf 'cd /tmp\nbats-affected')" \
+    "$(printf 'go build ./...\nbats -r tests 2>&1')"; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_block "$WHY"
+  done
+  for cmd in "$(printf 'bats tests/a.bats\nbats tests/b.bats')" \
+    "$(printf 'set -euo pipefail\nbats tests/crew.bats --filter reap')"; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_allow
+  done
+}
+
+@test "test-scope-guard: a quoted or escaped redirection target is one word" {
+  for cmd in 'bats tests/a.bats > "/tmp/out file"' 'bats tests/a.bats 2>"error log"' \
+    'bats tests/a.bats > /tmp/out\ file' "bats tests/a.bats > '/tmp/out file' 2>&1"; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_allow
+  done
+}
+
 @test "test-scope-guard: a backslash escape keeps a path whole" {
   run run_guard <<<"$(pi_bash 'bats tests/a\ b.bats')"
   assert_allow
