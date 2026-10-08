@@ -131,6 +131,52 @@ setup_worker_wt() { # [extra header lines...]
   seed_git_baseline
 }
 
+# #817: `dispatch resume --help` is a grouped screen, not the one-line synopsis.
+# The flag list comes from this file's own parse arms, and each flag has to own
+# a line of the help — anchored, because the synopsis repeats every flag.
+@test "resume --help and -h list every flag it parses and exit 0 (#817)" {
+  local form flag missing
+  for form in --help -h; do
+    run run_resume "$form"
+    [ "$status" -eq 0 ] || { echo "$form: status $status"; return 1; }
+    [[ "$output" == *"usage: dispatch resume"* ]] || { echo "$form: no synopsis"; return 1; }
+    missing=()
+    while IFS= read -r flag; do
+      grep -Eq "^  ${flag}([ =]|\$)" <<<"$output" || missing+=("$flag")
+    done < <(grep -E '^  --[a-z-]+\)' "$RESUME" | sed -E 's/^  (--[a-z-]+)\).*/\1/' | sort -u)
+    [ "${#missing[@]}" -eq 0 ] || { echo "$form missing: ${missing[*]}"; return 1; }
+  done
+}
+
+@test "resume --help lists the target forms and an example (#817)" {
+  run run_resume --help
+  [ "$status" -eq 0 ]
+  local need
+  for need in 'worker:<branch>#<session>' 'a codename' 'a branch' 'dispatch resume' 'dispatch-wt'; do
+    grep -Fq -- "$need" <<<"$output" || { echo "help missing: $need"; return 1; }
+  done
+}
+
+# The help path must stay above every lookup a broken environment can fail — a
+# bare directory, no crew id, no settings file.
+@test "resume --help works with no repo, crew id or settings file (#817)" {
+  local sandbox
+  sandbox="$BATS_TEST_TMPDIR/norepo"
+  mkdir -p "$sandbox"
+  (
+    cd "$sandbox" || exit 1
+    env -u CREW_ID -u CREW_WORKER_ID -u CREW_REAL \
+      HOME="$sandbox/home" XDG_CONFIG_HOME="$sandbox/config" XDG_DATA_HOME="$sandbox/data" \
+      bash -euo pipefail "$(realpath "$RESUME")" --help
+  ) >"$sandbox/out" 2>"$sandbox/err"
+  [ -s "$sandbox/out" ]
+  grep -q '^usage: dispatch resume' "$sandbox/out"
+  if [ -s "$sandbox/err" ]; then
+    echo "stderr: $(cat "$sandbox/err")"
+    return 1
+  fi
+}
+
 @test "refuses outside a worktree carrying a task document" {
   run run_resume
   [ "$status" -eq 1 ]
