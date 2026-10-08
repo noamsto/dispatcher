@@ -675,7 +675,8 @@ protocol skew.
 direnv allow          # or: nix develop
 bats tests/           # full suite -- run before pushing
 bats tests/dispatch.bats   # one file -- the fast inner loop while editing
-nix flake check       # formatting + pre-commit
+nix flake check       # formatting + pre-commit + mod tests
+mod-tests             # claude plugin mod tests only (devShell command)
 ./scripts/gen-adapters.sh   # regenerate adapters after editing a command body
 ./scripts/cache-report.sh   # read-only: per-model pi prompt-cache hit rate across worker sessions
 ```
@@ -691,6 +692,11 @@ regenerates every adapter and fails if committed output differs.
 `nix flake check` reports `homeManagerModules` as _unchecked_ — it never
 evaluates the module. `tests/module.bats` closes that gap by forcing the config
 body, not just the options.
+
+`mod-tests` runs `claude plugin test` on `adapters/claude-code/plugin` with a
+pinned unwrapped `claude-code` (the nix `claude` wrapper rejects `plugin test`)
+and a scratch `HOME`, so it needs no network or login. The `mod-tests` flake
+check runs the same command, which is how CI covers the mod.
 
 `tests/live/` holds checks needing a real tmux server; run those by hand.
 

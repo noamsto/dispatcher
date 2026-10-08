@@ -3,6 +3,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Separate pin: `claude plugin test` landed after the main nixpkgs lock's
+    # claude-code (2.1.220). Only the mod-tests runner reads it.
+    nixpkgs-claude.url = "github:NixOS/nixpkgs/7a0f122f5090cf4c2ade2a13a0e229d4e19ba71f";
     flake-parts.url = "github:hercules-ci/flake-parts";
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
@@ -30,8 +33,29 @@
       perSystem = {
         pkgs,
         config,
+        system,
         ...
       }: let
+        # `claude plugin test` is the only runner for the mod's
+        # `claude-code/testing` kit (it ships inside the binary), and the
+        # binary is unfree. Allow just that one package; the wrapped `claude`
+        # on a dev machine rejects `plugin test`, so the pin is the way in.
+        claudeCode =
+          (import inputs.nixpkgs-claude {
+            inherit system;
+            config.allowUnfreePredicate = p: pkgs.lib.getName p == "claude-code";
+          }).claude-code;
+        # Runs the mod tests hermetically: HOME is a scratch dir (no login, no
+        # config) and the function-hooks gate the test runner needs is set.
+        modTests = pkgs.writeShellApplication {
+          name = "mod-tests";
+          text = ''
+            home=$(mktemp -d)
+            trap 'rm -rf "$home"' EXIT
+            export HOME=$home CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+            ${claudeCode}/bin/claude plugin test "''${1:-adapters/claude-code/plugin}"
+          '';
+        };
         # The package set with `lockedSettings` (a JSON file, or null for none)
         # baked into dispatch-config as its locked layer. nix/hm-module.nix
         # calls it with the file it generates.
@@ -298,6 +322,13 @@
           # `nix flake check` only evaluates packages, not builds them — these
           # make it build, which runs buildGoModule's `go test ./...` (doCheck).
           inherit (config.packages) crew-dash crew-go;
+
+          # Runs adapters/claude-code/plugin/hooks/*.test.ts, which nothing else
+          # in CI executes.
+          mod-tests = pkgs.runCommand "mod-tests" {} ''
+            ${modTests}/bin/mod-tests ${./adapters/claude-code/plugin}
+            touch $out
+          '';
         };
 
         packages = mkPackages null;
@@ -329,6 +360,9 @@
               pkgs.gh
               pkgs.go
               pkgs.golangci-lint
+              # mod-tests: runs the claude plugin mod tests the way the
+              # `mod-tests` flake check does.
+              modTests
               # mawk, nawk, and (on Linux) BusyBox awk: tests/secret-read-guard.bats
               # runs the credential-read rule under each awk implementation.
               # BusyBox is wrapped as busybox-awk because busybox on PATH would
