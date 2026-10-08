@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-# Phase-status hook: post a dispatched worker's phase from its own tool calls,
-# so the roster moves even when the model never writes a status (#839).
-#
-# pi has no native subagents, so a whole run is often one long turn, and a small
-# model drops a status instruction buried in an ~80 KB protocol — the roster sat
-# at `plan` for two local workers while one implemented and the other had
-# finished its tests. Deriving the phase mechanically from the tool stream is
-# what removes the model from the loop.
+# Phase-status hook: post a dispatched worker's phase from its own tool calls, so
+# the roster moves even when the model never writes a status (#839): pi has no
+# native subagents, so a run is often one long turn, with no seam in which a
+# prompted "post your status" instruction can land.
 #
 # Two hookyard registrations of this one script:
 #
@@ -14,49 +10,38 @@
 #   pre_tool   verdict lane     `awaiting <role>` only
 #
 # `awaiting <role>` has to come from pre_tool: `crew await --from role:…` is a
-# blocking Bash call, so pi's tool_result — the event post_tool rides — fires
-# only after the verdict lands. pre_tool is a guard slot on pi (hookyard's
-# verdict.HasGuardSlot), and a fire-and-forget handler is refused there, so that
-# entry sits in the verdict lane and ALWAYS ABSTAINS: no stdout, exit 0, it can
-# never gate the call it observes.
+# blocking Bash call, so pi's tool_result — the event post_tool rides — fires only
+# after the verdict lands. pre_tool is a guard slot on pi (hookyard's
+# verdict.HasGuardSlot) and hookyard refuses a fire-and-forget handler there, so
+# that entry sits in the verdict lane and ALWAYS ABSTAINS: no stdout, exit 0.
 #
 # Workers only, and leads only: a session without CREW_WORKER_ID (a human at a
 # prompt, a dispatcher) exits before jq and the git call, and a grid role pane
-# inherits the lead's CREW_WORKER_ID while its own tool calls are not the lead's
-# phase — posting them would scramble the lead's phase and race it for one state
-# file.
+# inherits the lead's CREW_WORKER_ID while its own tool calls are not the lead's.
 #
-# What it posts: `crew status "$CREW_WORKER_ID" working "<phase> (auto)"`, only
-# when the phase CHANGED (a loop of `bats` calls posts once). `(auto)` is the
-# marker: `crew status` builds its row as {state, detail, pr_url, restamp}, so
+# Posts `crew status "$CREW_WORKER_ID" working "<phase> (auto)"` only when the
+# phase CHANGED (a loop of `bats` calls posts once). `(auto)` marks the source in
+# the detail: `crew status` builds its row as {state, detail, pr_url, restamp}, so
 # there is no source field to set from here.
 #
-# Two rules keep the worker's own words on top, and both read the bus rather
-# than a mirror of observed `crew status` calls — a mirror latches on the
-# refused ones (`crew status … pr_open` is routinely refused until the seams
-# exist, and a premature attempt would silence the handler for the rest of the
-# run, which is the bug this hook exists to fix):
+# The worker's own words stay on top: never overwrite a non-working state it
+# posted itself, never post after a terminal one. Both are reads of the bus rather
+# than a mirror of observed `crew status` calls, because a mirror latches on the
+# refused ones — `crew status … pr_open` is routinely refused until the review and
+# deslop seams exist. The read is bounded and rare: only once the throttle says the
+# phase changed, over the last 2000 rows (the window crew.sh's _unread_scan
+# accepts). A row older than that reads as absent, so the cost is a duplicate
+# `working` post or, rarely, an overwritten terminal row.
 #
-#   * never overwrite a non-working state the worker posted itself;
-#   * never post after a terminal one.
+# A watchdog `blocked` row does not suppress: dispatch spawns
+# `crew stall-watch "$worker_id"`, and crew.sh posts that row under the worker's
+# own session id (WORKER_PROTOCOL.md: a watchdog `blocked` means you are alive).
 #
-# That read is bounded and rare: only after the throttle says the phase changed,
-# so a handful of times per run, over the last 2000 rows — the window crew.sh's
-# _unread_scan accepts. A watchdog `blocked` row is not suppressing: dispatch
-# spawns `crew stall-watch "$worker_id"` and crew.sh posts under that session id,
-# so it would otherwise latch the handler shut on exactly the lane #839 targets
-# (WORKER_PROTOCOL.md: a watchdog `blocked` means you are alive, carry on). The
-# residual cuts both ways — a row older than the window reads as absent, so a
-# duplicate `working` post is harmless and an aged-out terminal row can be
-# overwritten — and the throttle is what keeps either rare.
-#
-# Accepted imprecision, on purpose: a phase names what a call was attempting,
-# not its outcome (a failed `git push` still marks `pr`), and two parallel tool
-# calls can both post one phase. It is a read of the command string, not a shell:
-# an operand assembled from a variable (`bats $t`) is not classified, a
-# here-document body is skipped rather than parsed (see classify_command), and a
-# command hidden inside another program's argument is invisible — each of those
-# costs a missed phase, never a wrong one, until the next transition.
+# A phase names what a call was attempting, not its outcome — a failed `git push`
+# still marks `pr`. This is a read of the command string, not a shell: an operand
+# assembled from a variable (`bats $t`) is not classified, a here-document body is
+# skipped rather than parsed (classify_command), a command inside another
+# program's argument is invisible. Each costs a missed phase, never a wrong one.
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
