@@ -17,8 +17,7 @@ import (
 )
 
 // EngineCommands are the pane commands `_is_engine_cmd` accepts once a leading
-// "." and a trailing "-wrapped" are stripped. A test guards the list against
-// drift from crew.sh.
+// "." and a trailing "-wrapped" are stripped.
 var EngineCommands = []string{"claude", "codex", "cursor-agent", "node", "pi"}
 
 // ExitError is a failed external command: its exit status and stderr.
@@ -362,8 +361,7 @@ func ageSeconds(ts jsonv.Value, nowSec float64) (jsonv.Value, error) {
 // reread is the arm's `jq -c '.[]'` over $base: every row is printed and parsed
 // again, so a number jq computed (age_s, or an infinity it clamps to
 // 1.7976931348623157e+308) comes back as a literal and prints in decNumber's
-// form, 1.7976931348623157E+308. The later `--argjson` and final jq stages
-// re-read literals, which changes nothing.
+// form, 1.7976931348623157E+308.
 func reread(rows []jsonv.Value) ([]jsonv.Value, error) {
 	out := make([]jsonv.Value, len(rows))
 	for i, row := range rows {

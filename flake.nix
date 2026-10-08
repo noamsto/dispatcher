@@ -118,8 +118,7 @@
           # references nothing in the flake, so crew listing it closes no
           # eval-time cycle. git and tmux come from crew's own PATH at run
           # time, and git is a check input because the bus tests run real
-          # `git init`/`git worktree`. Not in `default` or the hm module: only
-          # crew.sh invokes it. buildGoModule names the binary after the
+          # `git init`/`git worktree`. buildGoModule names the binary after the
           # module path's last element ("crew"), so postInstall renames it.
           crew-go = pkgs.buildGoModule {
             # `name`, not just pname/version, for the same reason as crew-dash.
