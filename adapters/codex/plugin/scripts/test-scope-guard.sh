@@ -4,10 +4,10 @@
 # `tests/*.bats` — when its task needs a handful of targeted files. CI runs
 # the full suite on every push (#841).
 #
-# Workers only: the rule is about a fleet burning its own CPU, so a session
-# without CREW_WORKER_ID (a human at a prompt, a dispatcher) exits before jq,
-# the parse and the git call, and the hook costs a human nothing. Role panes
-# inherit the lead's CREW_WORKER_ID, so they are guarded too.
+# Workers only: a session without CREW_WORKER_ID (a human at a prompt, a
+# dispatcher) exits before jq, the parse and the git call, so the hook costs a
+# human nothing. Role panes inherit the lead's CREW_WORKER_ID, so they are
+# guarded too.
 #
 # Opt out per task: a `tests: full` line in the WORKER_TASK.md header (the
 # block before the first blank line) allows everything, for the rare task that
@@ -18,19 +18,18 @@
 #   pi(hookyard)  canonical_event        tool_input.command     hookSpecificOutput deny
 #                 pre_tool Bash
 #
-# Allow is no stdout, exit 0. The deny hands the reason back to the agent, so
-# it retries with targeted files instead of stopping on an unexplained refusal.
+# Allow is no stdout, exit 0; a deny's reason is handed back to the agent, so
+# it retries with targeted files.
 #
-# This is a speed bump over the command string, not a sandbox: an operand
-# built from a variable (`bats $f`) is not classified, and neither is a runner
-# that shells out from inside another program. It only has to catch the habit,
-# which is typing `bats tests/`.
+# A speed bump over the command string, not a sandbox: an operand assembled
+# from a variable (`bats $f`) is not classified, nor is a bats run buried in
+# another program's argument.
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
 set -euo pipefail
 
-# Workers only, and before anything else runs.
+# Workers only, ahead of everything else.
 [[ -n ${CREW_WORKER_ID:-} ]] || exit 0
 
 command -v jq >/dev/null || {
@@ -71,10 +70,9 @@ cwd=$(jq -r '.[2]' <<<"$parsed")
 cwd=${cwd:-$PWD}
 
 # Quote-aware split of the command line: one word per line, and an empty line
-# wherever a shell control operator (`; && || | ( )` and newlines) ends a
+# wherever a shell control operator (`; && || | ( )`) or a newline ends a
 # command. Quotes are stripped, never interpreted — the guard never evaluates
-# the command it is checking. Words containing a literal newline are split,
-# which is fine for the habit this catches.
+# the command it is checking.
 split_words() { # <command>
   local s=$1 i=0 n=${#1} c d q w=''
   while ((i < n)); do
@@ -87,9 +85,8 @@ split_words() { # <command>
       fi
       ;;
     ';' | '|' | '&' | '(' | ')' | '`' | $'\n')
-      # A newline ends a command just as `;` does: without the empty line the
-      # next line's words are still arguments of the first command, so a
-      # `bats tests/` on line 2 reads as an argument of `git status` on line 1.
+      # The empty line is what puts the next word in command position: without
+      # it, a `bats tests/` on line 2 is still an argument of line 1's command.
       if [[ -n $w ]]; then
         printf '%s\n' "$w"
         w=''
@@ -144,8 +141,7 @@ split_words() { # <command>
       done
       if [[ ${s:i:1} == '&' ]]; then i=$((i + 1)); fi
       # The target is one word, quotes and escapes included: `> "/tmp/o f"`,
-      # `2> 'error log'`, `> /tmp/o\ f`. Stopping at the space inside the
-      # quotes would leave the tail behind as an operand.
+      # `2> 'error log'`, `> /tmp/o\ f`.
       while ((i < n)); do
         d=${s:i:1}
         case $d in
@@ -197,8 +193,8 @@ while IFS= read -r w; do
   fi
 
   if ((at_cmd)); then
-    # Past any `FOO=bar` prefixes and interpreter wrappers, so a guard sees
-    # `bash scripts/bats-affected.sh` and `timeout 300 bats tests/` too.
+    # Past any `FOO=bar` prefixes and interpreter wrappers, so
+    # `bash scripts/bats-affected.sh` and `timeout 300 bats tests/` are seen.
     if [[ $w == *=* && $w != */* ]]; then continue; fi
     if ((skip_shell_flag)); then
       skip_shell_flag=0
@@ -246,10 +242,9 @@ while IFS= read -r w; do
   case $w in
   -*)
     # `-r`, `--recursive`, and any short cluster holding an r (`-rT`): no
-    # other bats short flag carries an r, and a long one (`--report-formatter`)
-    # is excluded by the `--` prefix. The r probe is a separate test because
-    # bash will not backtrack `[A-Za-z]*` to zero width, so one pattern for
-    # the cluster and the bare flag silently misses `-r`.
+    # other bats short flag carries an r, and the `--` prefix keeps long ones
+    # like `--report-formatter` out. The r is probed separately because bash
+    # will not backtrack `[A-Za-z]*` to zero width, which misses bare `-r`.
     if [[ $w == --recursive || $w != --* && $w == *r* ]]; then
       verdict=recursive
       break
@@ -268,8 +263,7 @@ while IFS= read -r w; do
   # An operand assembled from a variable is not classified here.
   if [[ $w == *'$'* ]]; then continue; fi
 
-  # A glob reaches the whole directory: the shell has not expanded it yet, the
-  # guard sees the pattern.
+  # The shell has not expanded a glob yet, so the pattern itself is the operand.
   case $w in
   *'*'* | *'?'* | *'['*)
     verdict=glob
@@ -277,8 +271,8 @@ while IFS= read -r w; do
     ;;
   esac
 
-  # bats takes `.bats` files or directories, so an operand with no extension
-  # is a directory; the `-d` probe catches one that has a dot in its name.
+  # bats takes `.bats` files or directories: no extension means a directory,
+  # and the `-d` probe catches a directory with a dot in its name.
   path=$w
   [[ $path == /* ]] || path=$cwd/$w
   if [[ ${w##*/} != *.* || -d $path ]]; then
@@ -308,7 +302,7 @@ if [[ -n $toplevel && -f $toplevel/WORKER_TASK.md ]]; then
 fi
 
 case $verdict in
-affected) what='bats-affected runs the affected set, which is thousands of tests' ;;
+affected) what='bats-affected runs the affected set' ;;
 recursive) what='-r/--recursive walks a directory tree' ;;
 dir) what="a directory operand ($w) runs every .bats file under it" ;;
 glob) what="a glob operand ($w) expands to the whole suite" ;;
