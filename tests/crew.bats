@@ -5755,6 +5755,7 @@ GH
   CREW_ID=c1 run_crew status "worker:done#s1-1" done "" "https://github.com/o/r/pull/5"
   CREW_ID=c1 run_crew status "worker:done#s2-2" failed "boom"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:8999999999998, crew_id:"c1", from:"worker:", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/96"}}' >>"$log"
   jq -nc '{ts:8999999999999, crew_id:"c1", from:"worker:#a", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/97"}}' >>"$log"
   jq -nc '{ts:9000000000000, crew_id:"c1", from:"worker:#b", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/99"}}' >>"$log"
   jq -nc '{ts:9000000000001, crew_id:"c1", from:"worker:feat/other#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"", pr_url:"https://github.com/o/r/pull/98"}}' >>"$log"
