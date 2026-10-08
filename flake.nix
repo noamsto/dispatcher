@@ -256,13 +256,15 @@
             #
             # ^dash/.*/testdata/: golden ui View() frames are width-padded on
             # purpose and carry trailing spaces as part of the fixture.
-            excludes = ["\\.bats$" "^adapters/" "^dash/.*/testdata/"];
+            # ^crew/.*/testdata/: byte-exact jq output goldens (concatenated
+            # JSON values, escapes, trailing blank lines) that jq produced.
+            excludes = ["\\.bats$" "^adapters/" "^dash/.*/testdata/" "^crew/.*/testdata/"];
           };
           check-merge-conflicts.enable = true;
           trim-trailing-whitespace = {
             enable = true;
-            # Same padded-goldens reason as prettier's exclude above.
-            excludes = ["^dash/.*/testdata/"];
+            # Same goldens reason as prettier's exclude above.
+            excludes = ["^dash/.*/testdata/" "^crew/.*/testdata/"];
           };
         };
 

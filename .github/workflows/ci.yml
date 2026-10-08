@@ -12,6 +12,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
+      - name: go vet + golangci-lint (crew)
+        run: nix develop -c sh -c 'cd crew && go vet ./... && golangci-lint run ./...'
       - name: adapters are in sync
         run: |
           nix develop -c ./scripts/gen-adapters.sh
