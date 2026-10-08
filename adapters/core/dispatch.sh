@@ -1932,10 +1932,13 @@ watch_role_prompts() {
 # A pane stamped `@crew_delivery pull` (cursor) is never captured and never
 # sent keys: the role holds `crew await` itself and fetches its assignments.
 # The watcher still queues them and keeps @crew_state, and treats the role's
-# `crew status … working "assignment: …"` post as the ack that clears the queue.
-# A bare `working` status (the boot announce) is not an ack. An assignment
-# still un-acked after --defer-notice seconds is reported to the lead once as
-# `assignment_deferred` with `delivery:"pull"`. An empty stamp means typed.
+# `crew status … working "assignment: …"` post as the ack that clears every
+# older entry. A bare `working` status (the boot announce) is not an ack, but
+# it starts the clock (5x --defer-notice before it). An ack holds the clock
+# until the role's next verdict; an assignment still un-acked --defer-notice
+# seconds after that is reported to the lead once as `assignment_deferred`
+# with `delivery:"pull"`. A final release is never queued. An empty stamp
+# means typed.
 #
 # A sent Enter is verified, not assumed: the assignment is dropped from
 # the queue only once a later capture no longer shows it in the input box. If it
