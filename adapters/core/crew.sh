@@ -1585,8 +1585,9 @@ _rr_d2() {
     def trunc($n): (if type == "string" then . elif . == null then "" else tojson end)
       | if length <= $n then .
         else .[0:$n - 1] as $c
-          | (if (.[$n - 1:$n] | test("\\s")) or ($c | test("\\s") | not) then $c
-             else $c | sub("\\s+\\S*$"; "") end | sub("\\s+$"; "")) + "…"
+          | ($c | sub("\\s+\\S*$"; "")) as $w
+          | (if (.[$n - 1:$n] | test("\\s")) or ($w | length) < ($n / 2) then $c else $w end
+             | sub("\\s+$"; "")) + "…"
         end;
     def orq: if . == "" then "?" else . end;
     def q: gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; "")
@@ -1618,7 +1619,7 @@ _rr_d2() {
            else [] end) as $rp
         | "\($k): \($name) {",
           "  grid-columns: 1",
-          "  style: {fill: transparent; \(if .color | among($palette) then "stroke: \"\($hex[.color] // "")\"; " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
+          "  style: {fill: transparent; \(if .color | among($palette) then ($hex[.color] | if . then "stroke: \"\(.)\"; " else "" end) else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
           "  info: \($info) {shape: text}",
           (if ($rp | length) > 0 then
              "  roles: \"\" {grid-rows: 1; style: {stroke-width: 0; fill: transparent}}",

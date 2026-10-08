@@ -11394,6 +11394,25 @@ EOF
   grep -qF 'working · execute: lint · since 08:25" {shape: text}' "$target"
 }
 
+@test "roster-render: long title is cut at a word boundary" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local long="word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "$long" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 atlas blue colour32 "$(printf 'x%.0s' {1..100})" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working
+  _rr_status 'worker:feat/2-b#s1' 1791361800000 working
+  _rr_stubs ""
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$(_rr_file)"
+  # Cut lands mid-"omicron": the partial word is dropped, never half a word.
+  grep -qF '  info: "word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi…\n' "$target"
+  # One unbroken word has no boundary: hard cut.
+  grep -qF "  info: \"$(printf 'x%.0s' {1..79})…\\n" "$target"
+}
+
 @test "roster-render: hostile text stays inside quoted labels" {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
