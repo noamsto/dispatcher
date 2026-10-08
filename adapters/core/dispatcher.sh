@@ -70,6 +70,7 @@ protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
 agent=claude
 model=""
 effort=""
+autocompact=""
 task=""
 
 while [ $# -gt 0 ]; do
@@ -99,6 +100,14 @@ while [ $# -gt 0 ]; do
     effort="${2:-}"
     [ -n "$effort" ] || {
       echo "dispatcher: --effort needs a value (low, medium, high, xhigh, max, or ultra)" >&2
+      exit 1
+    }
+    shift 2
+    ;;
+  --autocompact)
+    autocompact="${2:-}"
+    [ -n "$autocompact" ] || {
+      echo "dispatcher: --autocompact needs a value (auto, or a token count)" >&2
       exit 1
     }
     shift 2
@@ -166,6 +175,18 @@ if [ -n "$effort" ]; then
     ;;
   esac
 fi
+
+if [ -n "$autocompact" ] && [ "$autocompact" != auto ]; then
+  [[ "$autocompact" =~ ^[1-9][0-9]*$ ]] || {
+    echo "dispatcher: --autocompact must be 'auto' or a positive integer" >&2
+    exit 1
+  }
+fi
+
+# Auto-compact window: the per-engine default in orchestratorDefaults, or the
+# --autocompact flag. `auto` keeps the engine's own default (no knob passed).
+# pi and cursor have no per-launch compaction knob and warn below.
+ac="${autocompact:-$(orch_default autoCompact)}"
 
 # Fixed identity for the orchestrator window so it stands out from the
 # per-branch worker windows it spawns. Guarded on $TMUX — the dispatcher can be
@@ -253,6 +274,7 @@ claude)
   # below: blocked workers wait on a bounded ~2h in-band window.
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
+  [ -n "$ac" ] && [ "$ac" != auto ] && set -- "$@" --autocompact "$ac"
   claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
@@ -265,15 +287,19 @@ codex | cursor)
     # window; xhigh turns would let blocks go stale. service_tier pinned — the
     # interactive /fast toggle persists locally and would otherwise leak into
     # the unattended dispatcher at 2.5x cost.
+    ac_flag=()
+    [ -n "$ac" ] && [ "$ac" != auto ] && ac_flag=(-c "model_auto_compact_token_limit=$ac")
     codex --profile worker \
       -m "${model:-$(orch_default model)}" \
       -c "model_reasoning_effort=\"${effort:-$(orch_default effort)}\"" \
       -c 'service_tier="default"' \
+      "${ac_flag[@]}" \
       --dangerously-bypass-approvals-and-sandbox "$prompt"
   else
     # kimi-k3-high: third-family model, strong agentic tool use. --effort is
     # accepted-and-ignored (cursor encodes effort in the model id).
     [ -n "$effort" ] && echo "dispatcher: --effort is ignored for cursor (effort lives in the model id)" >&2
+    [ -n "$ac" ] && [ "$ac" != auto ] && echo "dispatcher: --autocompact is ignored for cursor (no compaction knob)" >&2
     cursor-agent --model "${model:-$(orch_default model)}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
@@ -286,6 +312,7 @@ pi)
   # orchestrator runs in the dispatcher repo, and global ~/.pi/agent config
   # (auth, packages) still loads.
   # See dispatch-orchestration.md → "Orchestrator engines".
+  [ -n "$ac" ] && [ "$ac" != auto ] && echo "dispatcher: --autocompact is ignored for pi (no per-launch compaction knob)" >&2
   set -- --name "$session_name" \
     --model "${model:-$(orch_default model)}" \
     --thinking "${effort:-$(orch_default effort)}" \
