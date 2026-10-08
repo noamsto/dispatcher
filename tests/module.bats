@@ -152,6 +152,13 @@ let
       contextWindow = 131072;
       maxConcurrent = 1;
     };
+    localModels."lemonade/Reasoner" = {
+      baseUrl = "http://halo:13305/v1";
+      contextWindow = 4096;
+      reasoning = true;
+      thinkingFormat = "qwen-chat-template";
+      effortThinking.low = "off";
+    };
     userSettings = "/home/u/cfg/settings.json";
   };
 
@@ -602,7 +609,7 @@ placeholder_three_row() { # token bin bin bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
+  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}}' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Every routing option left unset: the locked layer holds only the two

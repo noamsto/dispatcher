@@ -276,11 +276,16 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "keyed <provider>/<model> with letters, digits, \".\", \"_\", \"-\" and \"/\" (no \":\")"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers"]),
+            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
             ($v.baseUrl | select(type != "string" or (test("^https?://[^[:space:]]*[^/[:space:]]$") | not)) | [$p + ["baseUrl"], "an http(s) URL without whitespace or a trailing \"/\""]),
             ($v.contextWindow | select(pos_int | not) | [$p + ["contextWindow"], "a positive integer"]),
             ($v | select(has("maxConcurrent") and (.maxConcurrent | pos_int | not)) | [$p + ["maxConcurrent"], "a positive integer"]),
             ($v | select(has("tiers") and ((.tiers | type == "array" and length > 0 and all(.[]; IN("trivial", "standard", "deep"))) | not)) | [$p + ["tiers"], "a non-empty array of trivial, standard or deep"]),
+            ($v | select(has("reasoning") and (.reasoning | type != "boolean")) | [$p + ["reasoning"], "a boolean"]),
+            ($v | select(has("thinkingFormat") and (.thinkingFormat | type != "string" or length == 0)) | [$p + ["thinkingFormat"], "a non-empty string"]),
+            ($v | to_entries[] | select(.key | IN("thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel")) | select((.value | type != "object") or (.key == "thinkingLevelMap" and (.value | all(.[]; . == null or type == "string")) == false) or (.key == "samplingParamsByThinkingLevel" and (.value | all(.[]; type == "object")) == false)) | [$p + [.key], (if .key == "thinkingLevelMap" then "an object of strings or null" elif .key == "samplingParamsByThinkingLevel" then "an object of objects" else "an object" end)]),
+            ($v | select(has("effortThinking") and ((.effortThinking | type == "object" and all(.[]; IN("off", "minimal", "low", "medium", "high", "xhigh", "max"))) | not)) | [$p + ["effortThinking"], "an object of pi thinking levels (off, minimal, low, medium, high, xhigh or max)"]),
+            ($v | select(has("effortThinking") and (.effortThinking | type == "object") and ((.effortThinking | keys - ["low", "medium", "high", "xhigh", "max"] | length) > 0)) | [$p + ["effortThinking"], "keyed by low, medium, high, xhigh or max"]),
             ($prov | select(IN($reserved[])) | [$p, "a provider outside the hosted pi ladder (\($prov) is reserved for it)"]),
             ([$all | to_entries[] | select(.key | split("/")[0] | ascii_downcase == $prov)][0].value.baseUrl as $first
               | select($first != $v.baseUrl) | [$p + ["baseUrl"], "the same URL as the other \($prov) entries"])
