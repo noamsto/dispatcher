@@ -93,24 +93,24 @@ _wt_cfg_show_url() { # <string> <var> [proxy] — set <var> to <string> with URL
   fi
   if [[ $_wt_s_str =~ $_wt_s_url ]]; then
     case "${BASH_REMATCH[1],,}" in
-      http | https | ftp | ftps) ;;
-      ssh | git+ssh | ssh+git)
-        # git url_decode()s an ssh url before splitting off the host.
-        [[ ${BASH_REMATCH[3]} != *%* ]] || {
-          printf -v "$2" %q "$_wt_s_in"
-          return 0
-        }
-        ;;
-      socks4 | socks4a | socks5 | socks5h)
-        [[ ${3-} == proxy ]] || {
-          printf -v "$2" %q "$_wt_s_in"
-          return 0
-        }
-        ;;
-      *)
+    http | https | ftp | ftps) ;;
+    ssh | git+ssh | ssh+git)
+      # git url_decode()s an ssh url before splitting off the host.
+      [[ ${BASH_REMATCH[3]} != *%* ]] || {
         printf -v "$2" %q "$_wt_s_in"
         return 0
-        ;;
+      }
+      ;;
+    socks4 | socks4a | socks5 | socks5h)
+      [[ ${3-} == proxy ]] || {
+        printf -v "$2" %q "$_wt_s_in"
+        return 0
+      }
+      ;;
+    *)
+      printf -v "$2" %q "$_wt_s_in"
+      return 0
+      ;;
     esac
     _wt_s_q="${BASH_REMATCH[8]#\?}"
     if [[ -z ${BASH_REMATCH[2]} && -z $_wt_s_q ]]; then
@@ -176,10 +176,10 @@ _wt_cfg_show_pair() { # <key> <value> <var> [aliases] — set <var> to `key=valu
   printf -v _wt_s_v %q "$2"
   if _wt_cfg_match _wt_redirect_keys "$1" "$2"; then
     case "$1" in
-      http.proxy | http.*.proxy | remote.*.proxy) _wt_cfg_show_url "$2" _wt_s_v proxy ;;
-      # git contacts the rewritten url, whose host the mask could hide.
-      remote.*.url | remote.*.pushurl) _wt_cfg_rewritten "$2" "${4-}" || _wt_cfg_show_url "$2" _wt_s_v ;;
-      *) _wt_cfg_show_url "$2" _wt_s_v ;;
+    http.proxy | http.*.proxy | remote.*.proxy) _wt_cfg_show_url "$2" _wt_s_v proxy ;;
+    # git contacts the rewritten url, whose host the mask could hide.
+    remote.*.url | remote.*.pushurl) _wt_cfg_rewritten "$2" "${4-}" || _wt_cfg_show_url "$2" _wt_s_v ;;
+    *) _wt_cfg_show_url "$2" _wt_s_v ;;
     esac
   fi
   printf -v "$3" '%s=%s' "$_wt_s_k" "$_wt_s_v"
