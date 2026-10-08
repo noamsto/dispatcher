@@ -1848,6 +1848,11 @@ pi_skill_args() {
   return 0
 }
 
+# role_delivery <agent> — how a role's assignments reach its pane. Cursor has no
+# idle frame verified across its models, so its roles pull assignments with
+# `crew await` instead of being typed into.
+role_delivery() { case "$1" in cursor) echo pull ;; *) echo typed ;; esac; }
+
 # launch_role <pane> <worktree> <role> <agent> <model> <effort> — launch the role's engine
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name and $branch from the caller scope.
@@ -1864,6 +1869,7 @@ launch_role() {
   printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
+  [ "$(role_delivery "$r_agent")" != pull ] || first+=' Your assignments are pulled, not typed: follow GRID_PROTOCOL.md "Pull delivery".'
   shell_quote quoted_prompt "$prompt"
   shell_quote quoted_first "$first"
   case "$r_agent" in
@@ -1882,14 +1888,16 @@ launch_role() {
   write_launch_script launch_line "$cmd"
   write_launch_script exit_line "$exit_cmd" exit
   tmux set-option -p -t "$pane" @crew_model "$r_model" 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_delivery "$(role_delivery "$r_agent")" 2>/dev/null || true
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
-# watch_role <role> <pane> <agent> — spawn the detached, engine-agnostic bus
+# watch_role <role> <pane> <agent> <crew> — spawn the detached, engine-agnostic bus
 # watcher for a role pane. It types each assignment into the pane and keeps
-# @crew_state fresh, so the role never holds a repainting `crew await`.
+# @crew_state fresh, so the role never holds a repainting `crew await`. <crew>
+# is the crew dispatch resolved, so the watcher never inherits the caller's.
 watch_role() {
-  nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
+  CREW_ID="$4" nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
 }
 
 # watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
@@ -1920,6 +1928,18 @@ watch_role_prompts() {
 # seconds (default 60) of deferral it tells the lead once with an
 # `assignment_deferred` msg, so a role that never receives its assignment is not
 # mistaken for one that is working.
+#
+# A pane stamped `@crew_delivery pull` (cursor) is never captured and never
+# sent keys: the role holds `crew await` itself and fetches its assignments.
+# The watcher still queues them and keeps @crew_state, and treats the role's
+# `crew status … working "assignment: …"` post as the ack that clears every
+# older entry; a verdict clears every entry up to it the same way. A bare
+# `working` status (the boot announce) is not an ack, but it starts the clock
+# (5x --defer-notice before it). An ack holds the clock until the role's next
+# verdict; an assignment still un-acked --defer-notice
+# seconds after that is reported to the lead once as `assignment_deferred`
+# with `delivery:"pull"`. A final release is never queued. An empty stamp
+# means typed.
 #
 # A sent Enter is verified, not assumed: the assignment is dropped from
 # the queue only once a later capture no longer shows it in the input box. If it
@@ -1974,8 +1994,8 @@ if [ "${1:-}" = "--role-watch" ]; then
     echo "dispatch: --role-watch: role 'lead' is never watched" >&2
     exit 1
   }
-  watch_stamp="$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}' 2>/dev/null || true)"
-  IFS='|' read -r w_role w_win <<<"$watch_stamp"
+  watch_stamp="$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}|#{@crew_delivery}' 2>/dev/null || true)"
+  IFS='|' read -r w_role w_win w_delivery <<<"$watch_stamp"
   [ "$w_role" = "$role" ] || {
     echo "dispatch: --role-watch: pane $watch_pane's @crew_role ($w_role) does not match --role $role" >&2
     exit 1
@@ -1986,6 +2006,9 @@ if [ "${1:-}" = "--role-watch" ]; then
     exit 1
   }
   w_crew="$(tmux show-options -wqv -t "$w_win" @crew_id 2>/dev/null || true)"
+  # `crew msg` falls back to env CREW_ID outside a worktree, and the caller's
+  # env is not the crew dispatch resolved.
+  [ -z "$w_crew" ] || export CREW_ID="$w_crew"
   # Branches may contain `#`; only the trailing `#s…` is the session (crew.sh
   # strips it with `sub("#s[^#]*$";"")`).
   _rw_sender_allowed() {
@@ -2550,9 +2573,11 @@ if [ "${1:-}" = "--role-watch" ]; then
   # escalate on the first exhaustion (`assignment_unsubmitted`) and are left
   # in place: nothing else is typed until the box clears.
   # `pending_from` runs parallel to `pending` so the escalation reaches the
-  # sender of the assignment that stalled.
+  # sender of the assignment that stalled; `pending_ts` is each msg's bus ts,
+  # which a pull role's ack must postdate.
   pending=()
   pending_from=()
+  pending_ts=()
   pending_max=50
   inflight=""
   inflight_from=""
@@ -2569,15 +2594,47 @@ if [ "${1:-}" = "--role-watch" ]; then
   lead_id=""
   deferred_since=0
   deferred_told=0
+  role_ready=0
+  role_busy=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
   while [ "$(tmux display-message -p -t "$watch_pane" '#{pane_id}' 2>/dev/null || true)" = "$watch_pane" ]; do
     watch_exited && break
     if [ -f "$log" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
-        'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
+        'select((.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me))) or (.kind=="status" and .ts>$since and .from==$me))' "$log" 2>/dev/null || true)"
       if [ -n "$batch" ]; then
         while IFS= read -r ev; do
+          if [ "$(printf '%s' "$ev" | jq -r '.kind')" = status ]; then
+            [ "$w_delivery" = pull ] || continue
+            printf '%s' "$ev" | jq -e '.body.state=="working"' >/dev/null || continue
+            # Any working status is the role up and pulling: the bare announce
+            # or an ack. Its boot time must not count against the deferral clock.
+            [ "$role_ready" -eq 1 ] || { role_ready=1; deferred_since=0; }
+            printf '%s' "$ev" | jq -e '(.body.detail // "") | startswith("assignment:")' >/dev/null || continue
+            role_busy=1
+            [ "${#pending[@]}" -gt 0 ] || continue
+            ack_ts="$(printf '%s' "$ev" | jq -r '.ts')"
+            # Anything un-pulled is still on the bus and the role's next await
+            # returns it, so the ack clears every older entry from any sender:
+            # at worst a notice is missed, never a false one.
+            keep=()
+            keep_from=()
+            keep_ts=()
+            for i in "${!pending[@]}"; do
+              [ "${pending_ts[i]}" -lt "$ack_ts" ] && continue
+              keep+=("${pending[i]}")
+              keep_from+=("${pending_from[i]}")
+              keep_ts+=("${pending_ts[i]}")
+            done
+            pending=("${keep[@]}")
+            pending_from=("${keep_from[@]}")
+            pending_ts=("${keep_ts[@]}")
+            deferred_since=0
+            deferred_told=0
+            watch_set_state working
+            continue
+          fi
           to="$(printf '%s' "$ev" | jq -r '.to // ""')"
           if [ "$to" = "$role_id" ]; then
             from="$(printf '%s' "$ev" | jq -r '.from // ""')"
@@ -2592,10 +2649,34 @@ if [ "${1:-}" = "--role-watch" ]; then
             [ -n "$body" ] || continue
             lead_id="$from"
             [[ $from != worker:* ]] || lead_worker="$from"
-            [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); }
+            # A final release needs no ack, and the role never pulls it as work.
+            [ "$w_delivery" = pull ] && printf '%s' "$body" | jq -eR 'fromjson? | objects | .final == true' >/dev/null && continue
+            [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); pending_ts=("${pending_ts[@]:1}"); }
             pending+=("$body")
             pending_from+=("$from")
-            watch_set_state working
+            pending_ts+=("$(printf '%s' "$ev" | jq -r '.ts')")
+            [ "$w_delivery" = pull ] || watch_set_state working
+          elif [[ $to != dispatcher:* ]] && [ "$w_delivery" = pull ] &&
+            [ -z "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" ]; then
+            # The role's verdict (the watcher's own deferral carries an event):
+            # it proves the role pulled whatever preceded it, even without an
+            # ack; newer entries stay queued with their clock restarted.
+            verdict_ts="$(printf '%s' "$ev" | jq -r '.ts')"
+            keep=()
+            keep_from=()
+            keep_ts=()
+            for i in "${!pending[@]}"; do
+              [ "${pending_ts[i]}" -le "$verdict_ts" ] && continue
+              keep+=("${pending[i]}")
+              keep_from+=("${pending_from[i]}")
+              keep_ts+=("${pending_ts[i]}")
+            done
+            pending=("${keep[@]}")
+            pending_from=("${keep_from[@]}")
+            pending_ts=("${keep_ts[@]}")
+            role_busy=0
+            deferred_since=0
+            [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
           elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
             # The role answered while its assignment is still being verified; its
             # own assignment_unsubmitted posts (from the same id) are not a verdict.
@@ -2644,6 +2725,7 @@ if [ "${1:-}" = "--role-watch" ]; then
           # would clear the re-paste before Enter.
           pending=("$inflight" "${pending[@]}")
           pending_from=("$inflight_from" "${pending_from[@]}")
+          pending_ts=("0" "${pending_ts[@]}")
           inflight=""
           inflight_from=""
           submitting=0
@@ -2664,6 +2746,22 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "${#pending[@]}" -eq 0 ]; then
       deferred_since=0
       deferred_told=0
+    elif [ "$w_delivery" = pull ] && [ "$role_busy" -eq 1 ]; then
+      deferred_since=0
+    elif [ "$w_delivery" = pull ]; then
+      [ "$deferred_since" -gt 0 ] || deferred_since="$(_rw_now)"
+      pull_wait="$defer_notice"
+      pull_detail="assignment not picked up: the role pulls its assignments with crew await and has not acked this one"
+      if [ "$role_ready" -eq 0 ]; then
+        pull_wait=$((defer_notice * 5))
+        pull_detail="assignment not picked up: the role has not announced itself (still booting, or never started)"
+      fi
+      if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
+        [ $(($(_rw_now) - deferred_since)) -ge "$pull_wait" ]; then
+        deferred_told=1
+        crew msg "$role_id" "${lead_worker:-$lead_id}" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" --arg d "$pull_detail" \
+          '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"pull",detail:$d}')" 2>/dev/null || true
+      fi
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
@@ -2682,6 +2780,7 @@ if [ "${1:-}" = "--role-watch" ]; then
               inflight_from="${pending_from[0]}"
               pending=("${pending[@]:1}")
               pending_from=("${pending_from[@]:1}")
+              pending_ts=("${pending_ts[@]:1}")
               submitting=1
               submit_tries=0
               unknown_ticks=0
@@ -2719,7 +2818,7 @@ if [ "${1:-}" = "--role-watch" ]; then
           [ $(($(_rw_now) - deferred_since)) -ge "$defer_notice" ]; then
           deferred_told=1
           crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
-            '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
+            '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"typed",detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
         fi
       fi
     fi
@@ -2886,9 +2985,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 0
   fi
   spawn_worker_id="${CREW_WORKER_ID:-$(sed -n 's/^worker_id: //p' WORKER_TASK.md)}"
-  spawn_crew_id="${CREW_ID:-$(sed -n 's/^crew_id: //p' WORKER_TASK.md)}"
+  spawn_crew_id="$(tmux show-options -wqv -t "$win" @crew_id 2>/dev/null || true)"
+  [ -n "$spawn_crew_id" ] || spawn_crew_id="$(sed -n 's/^crew_id: //p' WORKER_TASK.md)"
   if [ -z "$spawn_worker_id" ] || [ -z "$spawn_crew_id" ]; then
-    echo "dispatch: --spawn-role: no worker_id/crew_id in the environment or WORKER_TASK.md — a role pane without them runs as a personal session" >&2
+    echo "dispatch: --spawn-role: no worker_id/crew_id (worker_id from the environment or WORKER_TASK.md, crew_id from the window stamp or WORKER_TASK.md) — a role pane without them runs as a personal session" >&2
     exit 1
   fi
   # A local id spends no OpenRouter quota; its budget is the endpoint's slots.
@@ -2913,7 +3013,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   wait_grid_refit "$win" "$sig_before"
   guard_role_width "$win"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
-  watch_role "$role" "$role_pane" "$spawn_agent"
+  watch_role "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the
   # role (a died or stalled pane) must come back at the same rung, not silently
@@ -5216,7 +5316,7 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 for i in "${!role_panes[@]}"; do
   role="${role_names[$i]}"
   launch_role "${role_panes[$i]}" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
-  watch_role "$role" "${role_panes[$i]}" "${role_agents[$i]}"
+  watch_role "$role" "${role_panes[$i]}" "${role_agents[$i]}" "$crew_id"
   watch_role_prompts "$role" "${role_panes[$i]}" "${role_agents[$i]}" "$crew_id"
 done
 if [ -n "$status_pane" ]; then

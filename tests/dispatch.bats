@@ -5058,6 +5058,26 @@ EOF
   run ! grep -q 'stall-watch role:feat/42-do-a-thing:plan-critic' "$STUB_LOG"
 }
 
+@test "crew anchor: a full dispatch's role watchers and mods run under --crew-id, and a cursor role pulls (#849)" {
+  stub_launch_bins
+  _grid_tmux_stub
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "CREW_ID=$CREW_ID $*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude cursor" CREW_ID=c9 run run_dispatch standard sonnet --agent claude --roles "reviewer=cursor:composer-2.5" --effort high --crew-id c1 42 "crew anchor"
+  [ "$status" -eq 0 ]
+  wait_for_log '^CREW_ID=c1 stall-watch role:feat/42-crew-anchor:reviewer'
+  wait_for_log '^CREW_ID=c1 roster-render'
+  run ! grep -E '^CREW_ID=c9 (stall-watch|roster-render)' "$STUB_LOG"
+  grep -qx 'set-option -p -t %6 @crew_delivery pull' "$STUB_LOG"
+}
+
 @test "--ignore-budget: a --spawn-role role's stall-watch is told --no-budget" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet --ignore-budget
@@ -8217,6 +8237,7 @@ show-options)
   case "${*: -1}" in
   @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
   @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  @crew_id) [ -e "$STUB_DIR/crew_id" ] && cat "$STUB_DIR/crew_id" ;;
   esac
   ;;
 list-panes) ;;
@@ -8420,13 +8441,29 @@ _spawn_role_anchor_fixture() {
   [ "$(_env_of CREW_ROLE_ID "$line")" = "role:feat/9-x:reviewer" ]
 }
 
-@test "grid: --spawn-role prefers the lead's own environment over the task doc" {
+@test "grid: --spawn-role takes CREW_WORKER_ID from the lead's environment but ignores a caller CREW_ID" {
   _spawn_role_fixture
   CREW_WORKER_ID='worker:feat/9-x#s2-2' CREW_ID=c2 run run_dispatch --spawn-role reviewer
   [ "$status" -eq 0 ]
   line="$(grep '^split-window' "$STUB_LOG")"
   [ "$(_env_of CREW_WORKER_ID "$line")" = "worker:feat/9-x#s2-2" ]
-  [ "$(_env_of CREW_ID "$line")" = c2 ]
+  [ "$(_env_of CREW_ID "$line")" = c1 ]
+}
+
+@test "grid: --spawn-role anchors CREW_ID on the window's @crew_id stamp over env and task doc (#849)" {
+  _spawn_role_fixture
+  printf 'c7\n' >"$STUB_DIR/crew_id"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "CREW_ID=$CREW_ID $*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  CREW_ID=c2 run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep '^split-window' "$STUB_LOG")"
+  [ "$(_env_of CREW_ID "$line")" = c7 ]
+  wait_for_log '^CREW_ID=c7 stall-watch role:feat/9-x:reviewer'
 }
 
 @test "grid: --spawn-role refuses to split a pane that would have no worker identity" {
@@ -10246,7 +10283,9 @@ case "$1" in
 display-message)
   case "$*" in
   *'#{@crew_exited}'*) printf '%s\n' 0 ;;
-  *'#{@crew_role}|#{window_id}'*) printf '%s\n' 'reviewer|@1' ;;
+  *'#{@crew_role}|#{window_id}'*)
+    if [ -e "$STUB_DIR/pull" ]; then printf '%s\n' 'reviewer|@1|pull'; else printf '%s\n' 'reviewer|@1'; fi
+    ;;
   *)
     [ -e "$STUB_DIR/stop" ] && exit 1
     printf '%s\n' '%6'
@@ -10820,6 +10859,34 @@ EOF
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
+@test "role-watch: a deferral posts under the window's crew, not the caller's CREW_ID (#849 wrong crew)" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+msg) shift; exec bash "$CREW_REAL" msg "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  # A fresh dispatch spawns the watcher from the main checkout, which has no
+  # WORKER_TASK.md; the worktree fixture's cwd would hide the bug.
+  (cd "$TEST_REPO" && CREW_ID=c9 bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1 >/dev/null 2>&1) &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  _rw_poll "jq -e 'select(.from == \"role:feat/9-x:reviewer\")' \"$common/crew/events.jsonl\" >/dev/null 2>&1"
+  _rw_stop
+  jq -e 'select(.from == "role:feat/9-x:reviewer" and (.body | contains("assignment_deferred"))) | .crew_id == "c1"' "$common/crew/events.jsonl"
+  run ! jq -e 'select(.from == "role:feat/9-x:reviewer" and .crew_id == "c9")' "$common/crew/events.jsonl"
+}
+
 @test "role-watch: DISPATCH_ROLE_WATCH_CLOCK reports a deferral without wall sleep" {
   _spawn_role_fixture
   _rw_stub rw_frame_permission
@@ -10883,6 +10950,264 @@ EOF
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
   [ "$(grep -c '^display-message' "$STUB_LOG")" -lt 40 ]
   _rw_stop
+}
+
+# Derived from the #849 issue frame, not a real capture: a cursor pane parked
+# idle after its boot announce, composer empty of the watcher's text.
+rw_frame_cursor_pull_idle() {
+  cat <<'EOF'
+  Parking now — idle until the first assignment.
+  → Add a follow-up
+  Kimi K3 High · 9.6%     Run Everything -- INSERT --
+  ~/git/.worktrees/noamsto/dispatcher/feat-832-crew-go
+  -port-stall-watch ·
+  feat/832-crew-go-port-stall-watch
+EOF
+}
+
+# _rw_launch <engine> — start the watcher and wait for its startup idle, posting
+# nothing; sets $common and RW_PID.
+_rw_launch() {
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  # shellcheck disable=SC2086
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine "$1" --branch feat/9-x --interval 0.2 ${RW_EXTRA:-} >/dev/null 2>&1 &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\"" || return 1
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+}
+
+# _rw_assign_row [ts-offset-ms] — one lead assignment row to the role.
+_rw_assign_row() {
+  jq -nc --argjson off "${1:-0}" '{ts:((now*1000|floor)+$off), crew_id:"c1", kind:"msg", from:"worker:feat/9-x#s1-1", to:"role:feat/9-x:reviewer", body:"plan the seam"}'
+}
+
+# _rw_status_row <state> [detail] [ts-offset-ms] — one status row from the role,
+# addressed to its dispatcher as crew.sh writes it.
+_rw_status_row() {
+  jq -nc --arg s "$1" --arg d "${2:-}" --argjson off "${3:-0}" \
+    '{ts:((now*1000|floor)+$off), crew_id:"c1", from:"role:feat/9-x:reviewer", to:"dispatcher:c1", kind:"status", body:({state:$s} + (if $d == "" then {} else {detail:$d} end))}'
+}
+
+# _rw_append <row>... — append rows to events.jsonl in one write, so the watcher
+# reads them in a single batch.
+_rw_append() {
+  printf '%s\n' "$@" >>"$common/crew/events.jsonl"
+}
+
+_rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred'; }
+
+@test "role-watch: a pull pane is never captured or typed into" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_settle 24
+  _rw_stop
+  run ! grep -E '^(capture-pane|send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a pull role's assignment ack marks it working, and its verdict idles it" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working 'assignment: plan' 1)"
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state working' \"\$STUB_LOG\"" || { echo "never marked working"; return 1; }
+  _rw_settle 24
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_poll "sed -n '/@crew_state working/,\$p' \"\$STUB_LOG\" | grep -qF '@crew_state idle'" || { echo "verdict never idled it"; return 1; }
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 0 ]
+  run ! grep -qE '^(capture-pane|send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a pull role's assignment does not mark it working before the ack" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_wait_deferred
+  _rw_stop
+  run ! grep -qF '@crew_state working' "$STUB_LOG"
+}
+
+@test "role-watch: a pull role's boot announce is not an ack" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working '' 1)" "$(_rw_status_row working 'parked, awaiting assignment' 2)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  grep -q '^msg .*assignment_deferred.*"delivery":"pull"' "$STUB_LOG"
+  run ! grep -qF '@crew_state working' "$STUB_LOG"
+}
+
+@test "role-watch: an un-acked pull assignment is deferred to the lead once, naming pull" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working '' 1)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  grep -q '^msg .*assignment_deferred.*"delivery":"pull"' "$STUB_LOG"
+  grep -q '^msg .*assignment_deferred.*has not acked' "$STUB_LOG"
+}
+
+@test "role-watch: a final release to a pull role is never queued or deferred" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"worker:feat/9-x#s1-1", to:"role:feat/9-x:reviewer", body:"{\"final\":true}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: a pull assignment is not deferred while the role is still booting" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 2" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_settle 12
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: a pull assignment is deferred once after the role announced but never acked" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 2" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_settle 4
+  _rw_append "$(_rw_status_row working '' 1)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull role that never announces is deferred once after the boot grace, naming the boot" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  grep -q '^msg .*assignment_deferred.*has not announced itself (still booting, or never started)' "$STUB_LOG"
+}
+
+@test "role-watch: a pull ack clears every backlog entry before it and holds the deferral while the role works" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append \
+    "$(_rw_assign_row | jq -c '.from = "dispatcher:c1"')" \
+    "$(_rw_assign_row 1)" \
+    "$(_rw_status_row working '' 2)" \
+    "$(_rw_status_row working 'assignment: plan' 3)"
+  _rw_settle 40
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: an assignment posted while the role works is held, and one posted after its verdict is deferred" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working '' 1)" "$(_rw_status_row working 'assignment: plan' 2)"
+  _rw_settle 8
+  _rw_append "$(_rw_assign_row 10)"
+  _rw_settle 40
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+  jq -nc '{ts:((now*1000|floor)+20), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_append "$(_rw_assign_row 50)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull role's verdict without an ack clears what it answered" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 30" _rw_launch cursor
+  _rw_append "$(_rw_status_row working '' 0)" "$(_rw_assign_row 1)"
+  _rw_settle 2
+  jq -nc '{ts:((now*1000|floor)+10), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 40
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 0 ]
+}
+
+@test "role-watch: an assignment newer than a pull verdict is still deferred" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_status_row working '' 0)"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 2
+  _rw_append "$(_rw_assign_row 50)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull deferral goes to the lead worker, not the dispatcher that posted last" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append \
+    "$(_rw_assign_row)" \
+    "$(_rw_assign_row 1 | jq -c '.from = "dispatcher:c1"')" \
+    "$(_rw_status_row working '' 2)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  [ "$(_rw_count '^msg role:feat/9-x:reviewer dispatcher:c1 .*assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: a pull role receives its assignment from crew await" {
+  _spawn_role_fixture
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  _rw_append "$(_rw_assign_row)"
+  run env CREW_ID=c1 bash "$CREW_REAL" await role:feat/9-x:reviewer --timeout 0
+  echo "$output"
+  [[ $output == *"plan the seam"* ]]
+}
+
+@test "role-watch: a typed pane ignores status rows" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_launch claude
+  _rw_append "$(_rw_status_row working '' 0)" "$(_rw_assign_row 1)"
+  _rw_poll "[ \"\$(_rw_deliveries)\" -ge 1 ]"
+  _rw_settle
+  _rw_stop
+  [ "$(_rw_deliveries)" -eq 1 ]
 }
 
 @test "role-watch: a role verdict does not flip the role idle while an assignment is queued" {
