@@ -12085,11 +12085,10 @@ _rr_mini() {
   [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.pane")" = "%7" ]
 }
 
-# The daemon upgrading itself into a newer installed build (#810). A build
-# stand-in is a copy of the crew under test, so `_rr_self` really is the build and
-# the copy's own prologue records which build a pid runs, and with what arguments —
-# at each of its roster-render starts only, not from the `crew roster` child
-# `_rr_model` spawns.
+# The daemon upgrading itself into a newer installed build (#810). A build stand-in
+# is a copy of the crew under test, so `_rr_self` really is the build; its prologue
+# logs which build a pid runs and with what argv, at roster-render starts only — the
+# `crew roster` child `_rr_model` spawns would otherwise log once per pass.
 _rr_fake_build() { # <name> -> path of the build's crew
   local dir="$BATS_TEST_TMPDIR/rr-build-$1"
   mkdir -p "$dir"
@@ -12120,8 +12119,8 @@ _rr_fakebin() {
 _rr_swap_build() { ln -sfn "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"; }
 _rr_point_build() { ln -sfn "$BATS_TEST_TMPDIR/rr-build-$1/crew" "$RR_FAKEBIN/crew"; }
 _rr_build_ran() { grep -q "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
-# Single awk/grep per helper: these run under errexit+pipefail inside _rr_wait and
-# `!`, where a pipeline whose reader exits early (grep -q, head) reads as a failure.
+# One awk or grep per helper: they run under errexit+pipefail, where a pipeline whose
+# reader exits early (grep -q, head) reads as the writer's failure.
 _rr_build_seen() { grep -q "^$1 " "$RR_BUILDS_LOG"; }
 _rr_build_args() {
   awk -v pre="$1 $2 " 'index($0, pre) == 1 { print substr($0, length(pre) + 1); exit }' "$RR_BUILDS_LOG"
@@ -12141,9 +12140,7 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
 
   _rr_swap_build B
   _rr_wait _rr_build_ran B "$pid"
-  # Same pid, so the lock never changed hands and no window opened without a
-  # renderer: exec keeps the pid, runs no EXIT trap, and `_lock_acquire` is
-  # idempotent for the owner's own pid.
+  # Same pid: the lock never changed hands, so the crew was never without a renderer.
   _rr_lock_is "$pid"
   kill -0 "$pid"
   # and the new build was handed the daemon's own argv, --no-open included
@@ -12166,9 +12163,8 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   [ "$n" -eq 1 ]
 }
 
-# The production shape AC2 cannot tell apart: the daemon runs one build while the
-# entry names another, which is the baseline the loop compares against. Without it
-# every fresh daemon would exec the ambient build on its first pass.
+# The daemon running one build while the entry names another: the baseline is what
+# stops its first pass from hopping into the installed build.
 @test "roster-render: a daemon started while another build is installed keeps its own" {
   _rr_mini working 'execute: tests'
   _rr_fakebin B
@@ -12183,8 +12179,8 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   kill -0 "$pid"
 }
 
-# And the other guard: the entry moving to the build already running — a rollback —
-# is no upgrade either.
+# And the entry moving back onto the build already running — a rollback — is no
+# upgrade either.
 @test "roster-render: an entry naming the running build does not re-exec" {
   _rr_mini working 'execute: tests'
   _rr_fakebin B
@@ -12213,9 +12209,8 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   _rr_wait _rr_build_seen B
-  # The newcomer, and the daemon it detached, both exit on the held lock rather
-  # than taking the crew's renderer away; the PATH entry never moved, so the
-  # incumbent has nothing to upgrade into and keeps the lock it was given.
+  # The newcomer, and the daemon it detached, both exit on the held lock rather than
+  # taking the crew's renderer away.
   for p in $(_rr_build_pids B); do _rr_wait _rr_pid_gone "$p"; done
   _rr_lock_is "$pid"
   sleep 2
@@ -12224,8 +12219,7 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   run ! _rr_build_ran B "$pid"
 }
 
-# A drained crew is left to exit rather than upgraded: the hop would restart the
-# quiet window in the new build, and the next dispatch starts that build anyway.
+# A drained crew is left to exit rather than upgraded.
 @test "roster-render: a drained crew exits on its quiet window instead of upgrading" {
   _rr_mini done
   date +%s >"$CREW_CLOCK"
