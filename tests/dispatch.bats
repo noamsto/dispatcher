@@ -1259,6 +1259,49 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "grid: a failing fallback layout still launches the role (best-effort)" {
+  _spawn_role_fixture
+  _grid_refit_stub
+  # Width 1 forces the guard into layout_grid, and layout_grid's own tmux
+  # calls fail (a window vanishing mid-spawn): under set -euo pipefail an
+  # unguarded one would abort dispatch before the role ever launches.
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
+show-options)
+  case "${*: -1}" in
+  @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
+list-panes)
+  case "$*" in
+  *pane_width*) printf '%s\n' '%6|reviewer|1' ;;
+  esac
+  ;;
+set-window-option)
+  case "$*" in
+  *main-pane-width*) exit 1 ;;
+  esac
+  ;;
+select-layout) exit 1 ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"spawned role reviewer"* ]]
+}
+
 @test "grid: an eager role pane that comes up 1 column wide falls back too" {
   stub_launch_bins
   _grid_tmux_stub

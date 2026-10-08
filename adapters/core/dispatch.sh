@@ -1339,11 +1339,14 @@ decorate_pane() {
 # layout_grid <window> — main-vertical, pinning the lead (pane 1, created
 # before any role pane splits off it) to 60% width. Role panes only carry
 # short verdict traffic and need far less room than the lead's diff/test/tool
-# output. The built-in fallback for a host without tmux-og's tmux-grid-refit.
+# output. The built-in fallback for a host without tmux-og's tmux-grid-refit,
+# and the tool guard_role_width reaches for. Best-effort like the other grid
+# hint writers: a window that vanished mid-spawn must never abort dispatch
+# under set -e.
 layout_grid() {
   local win="$1"
-  tmux set-window-option -t "$win" main-pane-width 60%
-  tmux select-layout -t "$win" main-vertical
+  tmux set-window-option -t "$win" main-pane-width 60% 2>/dev/null || true
+  tmux select-layout -t "$win" main-vertical 2>/dev/null || true
 }
 
 # refit_grid <window> — hand the responsive layout to tmux-og when its
