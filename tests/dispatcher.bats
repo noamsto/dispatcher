@@ -47,7 +47,7 @@ teardown() {
   # Without an explicit value guard, `shift 2` fails and `set -e` kills the
   # script with no message — a regression against the fish original, which
   # fell through to its validation error. Each flag must say what it needs.
-  for flag in --agent --model --effort; do
+  for flag in --agent --model --effort --autocompact; do
     run run_launcher "$flag"
     [ "$status" -eq 1 ]
     [[ "$output" == *"$flag needs a value"* ]]
@@ -259,6 +259,58 @@ ROWS
 @test "warns that effort is ignored for cursor" {
   DISPATCH_PROFILE=work CREW_ID=c1 run run_launcher --agent cursor --effort high
   [[ "$output" == *"--effort is ignored for cursor"* ]]
+}
+
+@test "the claude launch carries the default 300k auto-compact window" {
+  CREW_ID=c1 run_launcher
+  run grep -F -- '--autocompact 300000' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "--autocompact auto keeps the engine default (no flag)" {
+  CREW_ID=c1 run_launcher --autocompact auto
+  run grep -c -- '--autocompact' "$STUB_LOG"
+  [ "$output" = "0" ]
+  DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex --autocompact auto
+  run grep -c 'model_auto_compact_token_limit' "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "--autocompact overrides the default window" {
+  CREW_ID=c1 run_launcher --autocompact 250000
+  run grep -F -- '--autocompact 250000' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "the settings layer overrides the auto-compact window" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"orchestratorDefaults":{"claude":{"model":"opus","autoCompact":250000}}}\n' \
+    >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c1 run_launcher
+  run grep -F -- '--autocompact 250000' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "codex gets the auto-compact window through -c" {
+  DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
+  run grep -F -- 'model_auto_compact_token_limit=300000' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex --autocompact 250000
+  run grep -F -- 'model_auto_compact_token_limit=250000' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "warns that auto-compact is ignored for pi and cursor" {
+  CREW_ID=c1 run run_launcher --agent pi --autocompact 250000
+  [[ "$output" == *"--autocompact is ignored for pi"* ]]
+  DISPATCH_PROFILE=work CREW_ID=c1 run run_launcher --agent cursor --autocompact 250000
+  [[ "$output" == *"--autocompact is ignored for cursor"* ]]
+}
+
+@test "rejects a bad --autocompact value" {
+  run run_launcher --autocompact bogus
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--autocompact must be"* ]]
 }
 
 @test "skips tmux window stamping when not inside tmux" {

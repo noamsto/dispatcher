@@ -326,6 +326,16 @@ ROWS
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"orchestratorDefaults.claude.effort must be a string"* ]]
+
+  user_settings '{"orchestratorDefaults":{"claude":{"model":"opus","autoCompact":"lots"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"orchestratorDefaults.claude.autoCompact must be a positive integer"* ]]
+
+  user_settings '{"orchestratorDefaults":{"claude":{"model":"opus","autoCompact":0}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"orchestratorDefaults.claude.autoCompact must be a positive integer"* ]]
 }
 
 # F23: a well-shaped partial layer is accepted. The burnClasses row overrides
@@ -339,8 +349,9 @@ ROWS
   done <<'ROWS'
 burn-orch|{"burnClasses":[{"match":"*opus*","byEffort":{"low":{"class":"standard","weight":2},"default":{"class":"premium","weight":4}}}],"orchestratorDefaults":{"pi":{"model":"openrouter/deepseek/deepseek-v4-flash"}}}|.orchestratorDefaults.pi.model == "openrouter/deepseek/deepseek-v4-flash"|.orchestratorDefaults.pi.effort == "high"
 map-pace|{"modelMap":{"cursor":{"deep":{"regex":["^x$"]}}},"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["opus"]}]}},"paceDowngrades":{"claude":[{"models":["opus"],"to":"sonnet"}]}}|.modelMap.cursor.deep.regex == ["^x$"]|.paceDowngrades.claude == [{"models":["opus"],"to":"sonnet"}]
+orch-ac|{"orchestratorDefaults":{"claude":{"model":"opus","autoCompact":250000}}}|.orchestratorDefaults.claude.autoCompact == 250000|.orchestratorDefaults.claude.effort == "high"
 ROWS
-  finish_rows 2
+  finish_rows 3
 }
 
 @test "a malformed base defaults file is refused, naming the base layer" {

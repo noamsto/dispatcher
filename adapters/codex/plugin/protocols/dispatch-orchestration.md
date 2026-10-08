@@ -548,12 +548,12 @@ The dispatcher itself can run on any engine in the machine-local
 Orchestrator defaults — sourced from `orchestratorDefaults` in
 `adapters/core/defaults.json`; bump that when a model ships:
 
-| engine | model | effort |
-| ------ | ----- | ------ |
-| claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex |
-| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, grok-4.7-*) |
-| pi | **`openrouter/deepseek/deepseek-v4.1-flash`** | **high** through `--thinking` |
+| engine | model | effort | auto-compact window |
+| ------ | ----- | ------ | ------------------- |
+| claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex | **300000** via `--autocompact` |
+| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window | **300000** via `-c model_auto_compact_token_limit` |
+| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, grok-4.7-*) | none — no knob |
+| pi | **`openrouter/deepseek/deepseek-v4.1-flash`** | **high** through `--thinking` | none — no per-launch knob |
 
 All four rows are pinned in `adapters/core/defaults.json` →
 `orchestratorDefaults`, claude included — `dispatcher.sh` only reads them via
@@ -561,6 +561,19 @@ All four rows are pinned in `adapters/core/defaults.json` →
 persist across sessions, so an unpinned claude dispatcher would inherit whatever
 a previous cheap session left set and judge the whole fan-out on it. `--model` /
 `--effort` still override per launch.
+
+The auto-compact window is capped well below the model default because a
+dispatcher session's context only grows — it starts near 107k, most turns run
+above 150k and it peaks at 704k (#701) — and every turn re-reads all of it while
+its durable state lives on the crew bus. `--autocompact <N|auto>` overrides the
+window per launch (`auto` keeps the engine default), and
+`orchestratorDefaults.<engine>.autoCompact` sets the per-engine default through
+the same settings layers as `model`/`effort`. claude and codex take the value at
+launch. pi and cursor have no per-launch compaction knob: pi's trigger is
+`compaction.reserveTokens` in its agent `settings.json`, and `PI_CODING_AGENT_DIR`
+*replaces* the ambient config dir (so a launch-scoped settings dir would re-seed
+auth/packages/hookyard), while the only existing pi agent-dir seeder is the
+shared worker dir — so pi is left at its engine default.
 
 Claude and pi bake `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
 inject it as the first prompt. The judging rubric
