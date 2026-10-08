@@ -22,6 +22,20 @@ if [[ ${1:-} == --turn-end ]]; then
 fi
 
 event="$(cat)"
+
+# An in-process session switch is not a session end. pi's /new, /resume and /fork
+# (AgentSessionRuntime.teardownCurrent) and /reload (extension-runner rebuild)
+# emit session_shutdown for the old instance while the process stays alive;
+# Claude Code's SessionEnd reason `clear` (/clear) and `resume` (/resume) are the
+# same shape. Skip only these known reasons: an unknown or missing reason still
+# posts `exited`, because a missed `exited` costs the watchdog 30+ minutes,
+# while a duplicate is harmless. --turn-end (cursor `stop`) carries no reason
+# and is unaffected.
+if [ "$mode" = session-end ]; then
+  case "$(jq -r '.reason // empty' <<<"$event")" in
+  new | resume | fork | reload | clear) exit 0 ;;
+  esac
+fi
 # Cursor leaves .cwd empty and delivers the workspace in workspace_roots[0].
 cwd="$(jq -r 'if (.cwd // "") != "" then .cwd else (.workspace_roots[0] // empty) end' <<<"$event")"
 [[ -f "$cwd/WORKER_TASK.md" ]] || exit 0

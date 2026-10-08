@@ -26,6 +26,46 @@ run_notify() {
     bash -euo pipefail "$NOTIFY"
 }
 
+# run_notify_reason <reason> — a SessionEnd payload with an explicit `reason`,
+# or the key omitted for `__absent__`. The hook keys only on mode and reason, so
+# one claude-shaped payload covers pi's and claude's SessionEnd alike.
+run_notify_reason() {
+  if [ "$1" = __absent__ ]; then
+    jq -nc --arg c "$PWD" '{cwd:$c,hook_event_name:"SessionEnd"}' |
+      bash -euo pipefail "$NOTIFY"
+  else
+    jq -nc --arg c "$PWD" --arg r "$1" '{cwd:$c,hook_event_name:"SessionEnd",reason:$r}' |
+      bash -euo pipefail "$NOTIFY"
+  fi
+}
+
+# in_process_switch_posts_nothing <reason> — the switch reasons (#866) must not
+# post `exited` or ping while the worker is still alive.
+in_process_switch_posts_nothing() {
+  stub_tmux
+  task_doc %9
+  seed_status working
+  before="$BATS_TEST_TMPDIR/events.before"
+  cp "$LOG" "$before"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_reason "$1"
+  [ "$status" -eq 0 ]
+
+  cmp -s "$LOG" "$before"
+  run ! grep -q display-message "$STUB_LOG"
+}
+
+# real_end_still_posts_exited <reason> — a genuine process end must still post.
+real_end_still_posts_exited() {
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify_reason "$1"
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
+
 # seed_status <state> — a prior status from the live session.
 seed_status() {
   CREW_ID=c1 bash -euo pipefail "$CREW" status 'worker:feat/x#s1-1' "$1"
@@ -193,6 +233,47 @@ run_notify_cursor() {
 
   run ! grep -q '"state":"exited"' "$LOG"
   run ! grep -q display-message "$STUB_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# #866: in-process session switches emit a session-end event while the process
+# stays alive — they are not a worker death.
+# ---------------------------------------------------------------------------
+
+@test "notify: in-process switch reason new posts nothing" {
+  in_process_switch_posts_nothing new
+}
+
+@test "notify: in-process switch reason resume posts nothing" {
+  in_process_switch_posts_nothing resume
+}
+
+@test "notify: in-process switch reason fork posts nothing" {
+  in_process_switch_posts_nothing fork
+}
+
+@test "notify: in-process switch reason reload posts nothing" {
+  in_process_switch_posts_nothing reload
+}
+
+@test "notify: in-process switch reason clear posts nothing" {
+  in_process_switch_posts_nothing clear
+}
+
+@test "notify: a real quit still posts exited" {
+  real_end_still_posts_exited quit
+}
+
+@test "notify: a missing reason still posts exited" {
+  real_end_still_posts_exited __absent__
+}
+
+@test "notify: reason prompt_input_exit still posts exited" {
+  real_end_still_posts_exited prompt_input_exit
+}
+
+@test "notify: reason logout still posts exited" {
+  real_end_still_posts_exited logout
 }
 
 # ---------------------------------------------------------------------------
