@@ -6,8 +6,7 @@ green with its tests unmodified.
 
 ## Layout
 
-- `crew/main.go`: argv dispatch. Module `github.com/noamsto/dispatcher/crew`,
-  stdlib only.
+- `crew/main.go`: argv dispatch; `crew/` is a stdlib-only Go module.
 - `crew/internal/jsonv`: ordered JSON values with jq semantics (decode, total
   order, compact and pretty encoding, number and string rules, TTY colours).
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads.
@@ -41,8 +40,9 @@ arm and delete its old arm.
 - External calls: `tmux` and `git worktree list` keep argv, count and order.
   Equivalent git queries may differ: Go runs `git -C <cwd>` and repeats the
   preamble's common-dir lookup.
-- A bus on which jq fails exits 5 with empty stdout and one `crew: <sub>: <log>:
-...` stderr line. Sanctioned divergences: that wording differs from jq's; the
+- A bus on which jq fails exits 5 (corrupt) or 2 (unreadable; `sessions` still
+  prints `[]`) with one `crew: <sub>: <log>: ...` stderr line and otherwise
+  empty stdout. Sanctioned divergences: that wording differs from jq's; the
   `JQ_COLORS` warning prints once, not once per jq process; and, unreachable
   with real git branches, the shell rewrites the arm applies to bus-supplied
   branch strings (glob expansion of `$(...)` words, NUL bytes dropped by
