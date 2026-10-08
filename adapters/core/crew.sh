@@ -2552,19 +2552,37 @@ HELP
     ;;
   reap)
     cat <<'HELP'
-usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S]
+usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH]
 
 Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
-elapsed time, is the gate: a done worker sits for as long as its PR takes.
+elapsed time, is the gate: a done worker sits for as long as its PR takes. The
+PR is the latest session's, else any earlier session of the branch or a past
+reap row, else `gh pr list --head`.
 
   --quiet     Suppress the per-worker notes
   --dry-run   Print what would be reclaimed, change nothing
   --no-wait   Do not wait out the idle threshold on a terminal lead
   --idle      Idle seconds before the idle-release phase kills the window (default 300)
+  --discard BRANCH
+              Save a finished worker's uncommitted state, then reclaim it
+
+--discard acts on one done/failed/exited worker whose PR is MERGED or CLOSED,
+or that has no PR and whose claimed issue(s) are all CLOSED. It saves tracked,
+staged and untracked changes as one patch, <crew dir>/artifacts/<branch>/
+discarded-<UTC ts>.patch (path printed; `git apply` it on the branch tip).
+Ignored files are not saved. The worktree is then removed the same anchored way,
+keeping the local branch. It refuses an open PR, a live engine pane and a
+non-terminal latest status. Never implicit: plain reap and the stream's reaps
+never discard.
+
+Kept: an open PR, uncommitted changes, a live engine, or no PR with a done/failed
+worker whose claimed issue is not CLOSED, has no claim-issue row, or has commits
+on no remote and not patch-equivalent to the default branch.
 
 No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
 
   crew reap --dry-run
+  crew reap --discard feat/240-x
 HELP
     ;;
   git-baseline)
