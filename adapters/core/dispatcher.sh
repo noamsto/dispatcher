@@ -177,7 +177,7 @@ if [ -n "$effort" ]; then
 fi
 
 if [ -n "$autocompact" ] && [ "$autocompact" != auto ]; then
-  [[ "$autocompact" =~ ^[1-9][0-9]*$ ]] || {
+  [[ $autocompact =~ ^[1-9][0-9]*$ ]] || {
     echo "dispatcher: --autocompact must be 'auto' or a positive integer" >&2
     exit 1
   }
