@@ -5150,6 +5150,125 @@ GH
   [ ! -d "$wt_path" ]
 }
 
+@test "reap: a PR found only via gh pr list is reaped and its branch deleted (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/ghlist
+  wt_path="$BATS_TEST_TMPDIR/ghlist-wt"
+  git worktree add -q "$wt_path" feat/ghlist
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/ghlist)
+case "$*" in
+*"pr list"*) printf '[{"url":"https://github.com/o/r/pull/7","state":"MERGED","headRefOid":"%s","isCrossRepository":false}]\n' "$tip" ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghlist" done
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/ghlist (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+  run ! git show-ref --verify --quiet refs/heads/feat/ghlist
+}
+
+@test "reap: a failing gh pr list keeps the worker (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/ghfail
+  wt_path="$BATS_TEST_TMPDIR/ghfail-wt"
+  git worktree add -q "$wt_path" feat/ghfail
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*"pr list"*) exit 1 ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghfail" done
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/ghfail — could not list PRs for feat/ghfail"* ]]
+  [ -d "$wt_path" ]
+}
+
+# reap_issue_fixture <slug> <issue state> [claim] — a done worker on feat/<slug>
+# with one commit, no PR anywhere, and (with `claim`) a claim-issue row for #77.
+reap_issue_fixture() {
+  git commit -q --allow-empty -m init
+  git branch "feat/$1"
+  wt_path="$BATS_TEST_TMPDIR/$1-wt"
+  git worktree add -q "$wt_path" "feat/$1"
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'x\n' >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m work
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '%s\n' '[]' ;;
+*"issue view"*) printf '%s\n' '$2' ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/$1" done
+  if [ "${3:-}" = claim ]; then
+    jq -nc --arg b "feat/$1" '{ts:(now*1000|floor), crew_id:"c1", kind:"claim-issue", issue:"77", branch:$b, pid:1}' >>"$log"
+  fi
+}
+
+@test "reap: done with no PR and a CLOSED claimed issue reclaims, keeping the branch (#836)" {
+  reap_issue_fixture issue-closed CLOSED claim
+  git cherry-pick "$(git rev-parse refs/heads/feat/issue-closed)" >/dev/null
+  git update-ref refs/remotes/origin/main main
+  git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/issue-closed (issue #77 CLOSED)"* ]]
+  [ ! -d "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/issue-closed
+  grep -qF 'issue edit 77 --remove-label dispatched' "$STUB_LOG"
+  jq -se 'map(select(.kind == "reap" and .branch == "feat/issue-closed")) | .[0] | .pr == "" and .pr_state == "ISSUE_CLOSED" and .issues == ["77"]' "$log"
+}
+
+@test "reap: a closed issue with commits on no remote keeps the worker (#836)" {
+  reap_issue_fixture issue-unpushed CLOSED claim
+  git update-ref refs/remotes/origin/main main
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-unpushed — done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: an OPEN claimed issue keeps the worker (#836)" {
+  reap_issue_fixture issue-open OPEN claim
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-open — done but no PR on the bus or GitHub; issue #77 is OPEN"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: no PR and no claim-issue row keeps the worker (#836)" {
+  reap_issue_fixture issue-none CLOSED
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-none — done but no PR on the bus or GitHub; no claim-issue row"* ]]
+  [ -d "$wt_path" ]
+}
+
 @test "msg: an oversized JSON body stays parseable JSON" {
   big="$(head -c 6000 /dev/zero | tr '\0' x)"
   body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"

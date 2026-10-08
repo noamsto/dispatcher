@@ -7901,22 +7901,86 @@ EOF
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     [ -n "$wtpath" ] && [ -d "$wtpath" ] || continue
 
+    mode="pr"
+    issues=()
     if [ "$pr" = "-" ]; then
-      note "keeping $branch — $state but no PR on the bus"
-      continue
+      if ! prs=$(gh pr list --head "$branch" --state all --json url,state,headRefOid,isCrossRepository 2>/dev/null); then
+        note "keeping $branch — could not list PRs for $branch"
+        continue
+      fi
+      # A fork's PR on the same head name is not this branch's.
+      if [ -n "$prs" ] && ! pr=$(jq -er 'map(select(.isCrossRepository == false)) | first
+          | if . == null then "-"
+            elif (.url | type == "string" and test("^https://[^\\s]+/pull/[0-9]+$")) then .url
+            else error("not a PR url") end' <<<"$prs" 2>/dev/null); then
+        note "keeping $branch — could not read PRs for $branch"
+        continue
+      fi
     fi
-    pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
-    case "$pr_state" in
-    MERGED | CLOSED) ;;
-    "")
-      note "keeping $branch — could not read PR state ($pr)"
-      continue
-      ;;
-    *)
-      note "keeping $branch — PR $pr_state"
-      continue
-      ;;
-    esac
+    if [ "$pr" = "-" ]; then
+      mode=issue
+      nopr="$state but no PR on the bus or GitHub"
+      case "$state" in
+      done | failed) ;;
+      *)
+        note "keeping $branch — $nopr; only done/failed reclaim on a closed issue"
+        continue
+        ;;
+      esac
+      if ! claimed=$(jq -s -r --arg b "$branch" '
+          map(select(.kind == "claim-issue" and .branch == $b and .issue != null) | .issue | tostring)
+          | unique | .[]' "$log" 2>/dev/null); then
+        note "keeping $branch — $nopr; could not read the bus"
+        continue
+      fi
+      if [ -z "$claimed" ]; then
+        note "keeping $branch — $nopr; no claim-issue row"
+        continue
+      fi
+      mapfile -t claimed_list <<<"$claimed"
+      issue_keep=""
+      for n in "${claimed_list[@]}"; do
+        if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+          issue_keep="claim-issue row names a non-numeric issue"
+          break
+        fi
+        istate=$(gh issue view "$n" --json state --jq .state 2>/dev/null || true)
+        if [ -z "$istate" ]; then
+          issue_keep="could not read issue #$n"
+          break
+        fi
+        if [ "$istate" != CLOSED ]; then
+          issue_keep="issue #$n is $istate"
+          break
+        fi
+        issues+=("$n")
+      done
+      if [ -n "$issue_keep" ]; then
+        note "keeping $branch — $nopr; $issue_keep"
+        continue
+      fi
+      pr=""
+      pr_state=ISSUE_CLOSED
+      label="issue #${issues[0]}"
+      for n in "${issues[@]:1}"; do
+        label+=", #$n"
+      done
+      label+=" CLOSED"
+    else
+      pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
+      case "$pr_state" in
+      MERGED | CLOSED) ;;
+      "")
+        note "keeping $branch — could not read PR state ($pr)"
+        continue
+        ;;
+      *)
+        note "keeping $branch — PR $pr_state"
+        continue
+        ;;
+      esac
+      label="$pr_state"
+    fi
 
     engine_panes=()
     while IFS=$'\t' read -r pwin ppane pcmd ppath; do
@@ -8014,6 +8078,41 @@ PANES
       continue
     fi
 
+    # No PR vouches for the branch, so every commit must already be on a
+    # remote or patch-equivalent (e.g. squashed) on the default branch.
+    if [ "$mode" = issue ]; then
+      if ! _wt_cfg_guard "$common"; then
+        note "keeping $branch — git config drift"
+        continue
+      fi
+      if ! def=$(_wt_git_common "$common" symbolic-ref -q refs/remotes/origin/HEAD); then
+        def=""
+        if _wt_git_common "$common" show-ref --verify --quiet refs/remotes/origin/main; then
+          def=refs/remotes/origin/main
+        fi
+      fi
+      if [ -z "$def" ]; then
+        note "keeping $branch — $nopr; no origin default branch ref"
+        continue
+      fi
+      if ! unpushed=$(_wt_git_common "$common" rev-list "refs/heads/$branch" --not --remotes) ||
+        ! cherry=$(_wt_git_common "$common" cherry "$def" "refs/heads/$branch"); then
+        note "keeping $branch — $nopr; could not compare its commits to ${def#refs/remotes/}"
+        continue
+      fi
+      ahead=0
+      while read -r mark sha; do
+        [ "$mark" = + ] || continue
+        if grep -qxF -- "$sha" <<<"$unpushed"; then
+          ahead=$((ahead + 1))
+        fi
+      done <<<"$cherry"
+      if [ "$ahead" -gt 0 ]; then
+        note "keeping $branch — $nopr; $ahead commit(s) not on any remote and not patch-equivalent to ${def#refs/remotes/}"
+        continue
+      fi
+    fi
+
     # Kill idle-engine windows, role panes with them. The first sample is
     # seconds stale by now (gh, git status): a pane that changed at all, or a
     # branch that posted since, keeps everything.
@@ -8089,7 +8188,7 @@ PROCS
     anchor="$(_worktree_anchor_path "$wtpath")"
 
     if [ -n "$dry" ]; then
-      say "would reap $branch ($pr_state) @ $wtpath"
+      say "would reap $branch ($label) @ $wtpath"
       say "would prune record $anchor"
       continue
     fi
@@ -8151,13 +8250,14 @@ SCAFFOLD
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
       reaped=$((reaped + 1))
-      say "reaped $branch ($pr_state)"
+      say "reaped $branch ($label)"
       # The record's worktree is gone, so prune it now (#556). `|| true`: a
       # failed unlink (EACCES/EROFS) must not abort the reap row, branch delete
       # and label release below.
       rm -f -- "$anchor" || true
-      line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
-        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
+      line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" --arg mode "$mode" \
+        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}
+        + (if $mode == "issue" then {issues: $ARGS.positional} else {} end)' --args "${issues[@]}")
       _bus_append "$log" "$line"
 
       # A squash-merged PR's branch is never an ancestor of main, so git
@@ -8168,7 +8268,7 @@ SCAFFOLD
       # (recoverable via reflog, but not by glance). Only a MERGED PR: a
       # CLOSED PR's branch may hold work worth reviving, and a branch already
       # deleted (a real merge or a prior reap) is a no-op.
-      if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
+      if [ "$mode" = pr ] && [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
           if _wt_cfg_guard "$common"; then
@@ -8188,7 +8288,9 @@ SCAFFOLD
       # failure here must not block the sweep. The resolve call logs its own
       # failure rather than swallowing it, so it can't be confused with "no
       # closing issues" and leave the label stuck with no trace.
-      if ! closing_issues=$(gh pr view "$pr" --json closingIssuesReferences \
+      if [ "$mode" = issue ]; then
+        closing_issues="${issues[*]}"
+      elif ! closing_issues=$(gh pr view "$pr" --json closingIssuesReferences \
         --jq '.closingIssuesReferences[].number' 2>&1); then
         note "could not resolve closing issues for PR $pr ($branch): $closing_issues"
         closing_issues=""
