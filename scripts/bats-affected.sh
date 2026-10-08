@@ -79,6 +79,7 @@ map_file() {
   adapters/core/refresh-models.sh) add adapters dispatch module refresh-models ;;
   adapters/core/refresh-scores.sh) add adapters dispatch module refresh-scores ;;
   adapters/core/secret-read-guard.sh) add adapters dispatch secret-read-guard ;;
+  adapters/core/test-scope-guard.sh) add adapters test-scope-guard ;;
   adapters/core/reviewers/resolve-roster.sh) add "${prompt_set[@]}" ;;
   adapters/core/commands/*.md) add adapters dispatch ;;
   adapters/core/protocols/WORKER_PROTOCOL.md) add "${prompt_set[@]}" crew ;;
@@ -88,7 +89,7 @@ map_file() {
   scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters crew public-leak-guard secret-read-guard ;;
+  hookyard.json) add adapters crew public-leak-guard secret-read-guard test-scope-guard ;;
   crew/*) add "${crew_set[@]}" ;;
   dash/*) add crew-dash module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;

@@ -109,7 +109,7 @@ for f in "$src"/*.md; do
   } >"$cx/$name/SKILL.md"
 done
 
-# Ship the notify hook, both guards, and the protocols inside both
+# Ship the notify hook, the guards, and the protocols inside both
 # plugin trees, so a plugin is self-contained: the command bodies tell the
 # agent to fall back to the plugin-local protocols when
 # $DISPATCHER_PROTOCOL_DIR is unset (a non-Nix install, where nothing exports
@@ -122,6 +122,8 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   chmod +x "$d/scripts/secret-read-guard.sh"
   cp "$root/adapters/core/public-leak-guard.sh" "$d/scripts/public-leak-guard.sh"
   chmod +x "$d/scripts/public-leak-guard.sh"
+  cp "$root/adapters/core/test-scope-guard.sh" "$d/scripts/test-scope-guard.sh"
+  chmod +x "$d/scripts/test-scope-guard.sh"
   rm -rf "$d/protocols" "$d/reviewers"
   cp -r "$protocols" "$d/protocols"
   cp -r "$reviewers" "$d/reviewers"
@@ -150,6 +152,8 @@ cp "$root/adapters/core/secret-read-guard.sh" "$root/adapters/cursor/scripts/sec
 chmod +x "$root/adapters/cursor/scripts/secret-read-guard.sh"
 cp "$root/adapters/core/public-leak-guard.sh" "$root/adapters/cursor/scripts/public-leak-guard.sh"
 chmod +x "$root/adapters/cursor/scripts/public-leak-guard.sh"
+cp "$root/adapters/core/test-scope-guard.sh" "$root/adapters/cursor/scripts/test-scope-guard.sh"
+chmod +x "$root/adapters/cursor/scripts/test-scope-guard.sh"
 
 # Both rosters and the protocols ship loose for cursor: a cursor worker
 # resolves these references by path, and without these copies the only
