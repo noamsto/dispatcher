@@ -11306,23 +11306,32 @@ _rr_seed() {
 title: "Crew roster" {near: top-center; shape: text}
 legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
 dispatcher: "dispatcher" {style.bold: true}
-w1: "sage\nAlpha task\nstandard·claude·sonnet\nworking · plan-critic r2↻ · since 08:20" {
-  style: {stroke: green; stroke-width: 3}
-  r1: "spec-critic\nclaude · idle"
+w1: "sage" {
+  grid-columns: 1
+  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3}
+  info: "Alpha task\nstandard·claude·sonnet\nworking · plan-critic r2↻ · since 08:20" {shape: text}
+  roles: "" {grid-rows: 1; style: {stroke-width: 0; fill: transparent}}
+  roles.r1: "spec-critic\nclaude · idle"
 }
 dispatcher -> w1
-w2: "atlas\nBravo task\nstandard·codex·gpt-5\ndone · since 08:40" {
-  style: {stroke: blue; stroke-width: 3}
+w2: "atlas" {
+  grid-columns: 1
+  style: {fill: transparent; stroke: "#6b8fd6"; stroke-width: 3}
+  info: "Bravo task\nstandard·codex·gpt-5\ndone · since 08:40" {shape: text}
 }
 dispatcher -> w2
 w2_pr: "https://github.com/o/r/pull/124" {shape: page}
 w2 -> w2_pr: "#124"
-w3: "nova\nCharlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {
-  style: {stroke: magenta; stroke-width: 3; stroke-dash: 3}
+w3: "nova" {
+  grid-columns: 1
+  style: {fill: transparent; stroke: "#c46bb5"; stroke-width: 3; stroke-dash: 3}
+  info: "Charlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {shape: text}
 }
 dispatcher -> w3
-w4: "ember\nDelta task\nquick·cursor·composer\ndispatched · since 08:03" {
-  style: {stroke: orange; stroke-width: 3}
+w4: "ember" {
+  grid-columns: 1
+  style: {fill: transparent; stroke: "#d49a62"; stroke-width: 3}
+  info: "Delta task\nquick·cursor·composer\ndispatched · since 08:03" {shape: text}
 }
 dispatcher -> w4
 w3 -> w1: "stacked on"
@@ -11334,9 +11343,10 @@ EOF
   diff -u "$BATS_TEST_TMPDIR/expected.d2" "$(_rr_file)"
 }
 
-# The renderer writes each identity color as a bare `stroke:` value, so every
-# palette entry must name a color d2 accepts. This renders one worker per entry
-# and compiles the result: a palette name d2 does not know fails the compile.
+# The renderer writes each identity color as a quoted hex stroke looked up by
+# palette name, so every palette entry needs a hex. This renders one worker per
+# entry and compiles the result: an entry with no hex gets no stroke and fails
+# the count below.
 @test "roster-render: every palette color compiles through d2" {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
@@ -11352,7 +11362,7 @@ EOF
   target="$(_rr_file)"
 
   # Every entry reached a stroke, so the compile below cannot pass vacuously.
-  run grep -c '^  style: {stroke: ' "$target"
+  run grep -c '^  style: {fill: transparent; stroke: "#' "$target"
   [ "$output" -eq "$i" ]
 
   run d2 "$target" "$BATS_TEST_TMPDIR/palette.svg"
@@ -11381,7 +11391,26 @@ EOF
   [ "$(stat -c '%i %Y' "$target")" != "$before" ]
   [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^>')" -eq 1 ]
   [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^<')" -eq 1 ]
-  grep -qF 'working · execute: lint · since 08:25" {' "$target"
+  grep -qF 'working · execute: lint · since 08:25" {shape: text}' "$target"
+}
+
+@test "roster-render: long title is cut at a word boundary" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local long="word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "$long" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 atlas blue colour32 "$(printf 'x%.0s' {1..100})" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working
+  _rr_status 'worker:feat/2-b#s1' 1791361800000 working
+  _rr_stubs ""
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$(_rr_file)"
+  # Cut lands mid-"omicron": the partial word is dropped, never half a word.
+  grep -qF '  info: "word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi…\n' "$target"
+  # One unbroken word has no boundary: hard cut.
+  grep -qF "  info: \"$(printf 'x%.0s' {1..79})…\\n" "$target"
 }
 
 @test "roster-render: hostile text stays inside quoted labels" {
@@ -11407,12 +11436,12 @@ EOF
   [ "$status" -eq 0 ]
   target="$(_rr_file)"
 
-  grep -qFx 'w1: "atlas\na\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {' "$target"
-  grep -qFx '  style: {stroke-width: 3}' "$target"
-  grep -qFx '  r1: "spec-critic\n? · idle"' "$target"
-  grep -qFx 'w2: "sage\nPlain\nstandard·claude·sonnet\nworking · since 08:30" {' "$target"
-  grep -qFx '  style: {stroke: green; stroke-width: 3}' "$target"
-  grep -qFx '  r1: "critic\n? · idle"' "$target"
+  grep -qFx '  info: "a\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {shape: text}' "$target"
+  grep -qFx '  style: {fill: transparent; stroke-width: 3}' "$target"
+  grep -qFx '  roles.r1: "spec-critic\n? · idle"' "$target"
+  grep -qFx '  info: "Plain\nstandard·claude·sonnet\nworking · since 08:30" {shape: text}' "$target"
+  grep -qFx '  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3}' "$target"
+  grep -qFx '  roles.r1: "critic\n? · idle"' "$target"
   grep -qFx 'h1: "hold h\"1\$\nwaiting on claude 5h\nuntil 10-07 12:00" {shape: hexagon}' "$target"
 
   # The hostile role pane and non-palette color leave no trace.
@@ -11420,7 +11449,7 @@ EOF
   [ "$output" = 0 ]
 
   # Only generated keys start a line; a lone `}` closes a container.
-  run grep -vE '^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|r[0-9]+)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])' "$target"
+  run grep -vE '^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|grid-columns|info|roles(\.r[0-9]+)?)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])' "$target"
   [ "$status" -eq 1 ]
   run grep -qP '[\x00-\x09\x0b-\x1f]' "$target"
   [ "$status" -eq 1 ]
