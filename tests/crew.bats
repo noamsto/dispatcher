@@ -4426,6 +4426,36 @@ crew_tty() {
   [[ "$output" == *remote.origin.url=*evil.example* ]]
 }
 
+@test "git-baseline reprints whole a baselined remote url a drifted alias rewrites (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://evil.invalid:x@trusted.invalid/o/r.git'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config url.git@.insteadOf 'https://'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"rewritten by the alias above: remote.origin.url="*evil.invalid*"(main checkout, "* ]]
+}
+
+@test "git-baseline prints whole a remote url a baselined alias rewrites (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config url.git@.insteadOf 'https://'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config --unset url.git@.insteadOf
+  git config remote.origin.url 'https://evil.invalid:x@trusted.invalid/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.invalid* ]]
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  git config url.git@.insteadOf 'https://'
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+}
+
 @test "git-baseline masks a scheme-less http.proxy (#686)" {
   git commit -q --allow-empty -m init
   seed_git_baseline

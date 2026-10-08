@@ -778,8 +778,9 @@ branch instead; the worktree carries over under `resume: true`.
   ssh schemes, socks proxies, scp form, scheme-less proxy) where git, curl and ssh agree on the
   host, and anything else (brackets, ssh `%`-escapes, other schemes,
   fragments, spaces, a query with no path, a remote URL an `insteadOf` alias
-  rewrites, `includeIf` condition keys) prints whole, so masking never hides the endpoint git contacts, but such a value may
-  still carry a credential; exec-class values (a `credential.helper` argument)
+  (listed or baselined) rewrites, `includeIf` condition keys) prints whole, so masking never hides the endpoint git contacts, but such a value may
+  still carry a credential; an alias drift line is followed by every remote URL
+  it rewrites, printed whole even if baselined; exec-class values (a `credential.helper` argument)
   still print verbatim, so the human runs `crew git-baseline` in their own
   terminal, never the dispatcher;
   gh-based repo
