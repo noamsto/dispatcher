@@ -5,6 +5,8 @@ setup() {
   CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  # reap only trusts a bus pr_url of this repo's origin.
+  case "$BATS_TEST_DESCRIPTION" in reap:*) git config remote.origin.url https://github.com/o/r.git ;; esac
   # A dispatch records it before any worker exists; reap never does (#557).
   seed_git_baseline
   unset CREW_ID
@@ -701,7 +703,7 @@ echo MERGED
 exit 0
 EOF
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/reap-me" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would reap feat/reap-me"* ]]
@@ -2401,7 +2403,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --dry-run
   [[ "$output" == *"would reap feat/reap-me"* ]]
 }
@@ -2423,7 +2425,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   export CREW_REAP_PROC_CMD="printf '4242\t$wt_path/subdir\n9999\t/elsewhere\n'"
-  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --dry-run
   [[ "$output" == *"would kill pid 4242"* ]]
   [[ "$output" != *"would kill pid 9999"* ]]
@@ -2449,7 +2451,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   export CREW_REAP_PROC_CMD="printf '4242\t$wt_path/subdir\n9999\t/elsewhere\n'"
-  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"killed pid 4242"* ]]
   [[ "$output" != *"killed pid 9999"* ]]
@@ -2475,7 +2477,7 @@ EOF
   # 4-field panes query, no frame planted: an unreadable/empty capture keeps
   # too (defensive rule), so this still asserts the same substring.
   stub_tmux_frames "" "$(printf '@1\t%%1\t.claude-wrapped\t%s\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/reap-live#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-live#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" == *"an engine is still running there"* ]]
   [ -d "$wt_path" ]
@@ -2502,7 +2504,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   stub_tmux_frames "" "$(printf '@1\t%%1\t.claude-wrapped\t%s-sibling\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/reap-sib#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/reap-sib#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [[ "$output" != *"an engine is still running there"* ]]
 }
@@ -2832,11 +2834,11 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/42-reap-me" done "" "https://example.com/pr/7"
+  CREW_ID=c1 run_crew status "worker:feat/42-reap-me" done "" "https://github.com/o/r/pull/7"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/42-reap-me"* ]]
-  grep -q 'pr view https://example.com/pr/7 --json closingIssuesReferences' "$STUB_LOG"
+  grep -q 'pr view https://github.com/o/r/pull/7 --json closingIssuesReferences' "$STUB_LOG"
   grep -q 'issue edit 42 --remove-label dispatched' "$STUB_LOG"
   # A merged PR's squash-merged branch is not an ancestor of main — reap
   # deletes it deliberately once gh confirms the merge (#194). The stub's
@@ -2861,7 +2863,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/42-reap-bundle" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/42-reap-bundle" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/42-reap-bundle"* ]]
@@ -2887,7 +2889,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/43-reap-me" done "" "https://example.com/pr/9"
+  CREW_ID=c1 run_crew status "worker:feat/43-reap-me" done "" "https://github.com/o/r/pull/9"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/43-reap-me"* ]]
@@ -2913,11 +2915,11 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/45-reap-me" done "" "https://example.com/pr/11"
+  CREW_ID=c1 run_crew status "worker:feat/45-reap-me" done "" "https://github.com/o/r/pull/11"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/45-reap-me"* ]]
-  [[ "$output" == *"could not resolve closing issues for PR https://example.com/pr/11 (feat/45-reap-me)"* ]]
+  [[ "$output" == *"could not resolve closing issues for PR https://github.com/o/r/pull/11 (feat/45-reap-me)"* ]]
   run ! grep -q 'issue edit' "$STUB_LOG"
 }
 
@@ -2937,7 +2939,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/44-reap-me" done "" "https://example.com/pr/10"
+  CREW_ID=c1 run_crew status "worker:feat/44-reap-me" done "" "https://github.com/o/r/pull/10"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/44-reap-me"* ]]
@@ -2979,11 +2981,11 @@ exit 1
 EOF
   chmod +x "$STUB_DIR/wt"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/squash-me" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/squash-me" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/squash-me (MERGED)"* ]]
-  grep -q 'pr view https://example.com/pr/8 --json closingIssuesReferences' "$STUB_LOG"
+  grep -q 'pr view https://github.com/o/r/pull/8 --json closingIssuesReferences' "$STUB_LOG"
   grep -q 'issue edit 99 --remove-label dispatched' "$STUB_LOG"
   jq -e 'select(.kind=="reap" and .branch=="feat/squash-me")' "$log" >/dev/null
   [ ! -d "$wt_path" ]
@@ -3015,7 +3017,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/anchor-me" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/anchor-me" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/anchor-me (MERGED)"* ]]
@@ -3044,7 +3046,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/anchor-kept" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/anchor-kept" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/anchor-kept — PR OPEN"* ]]
@@ -3075,7 +3077,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/anchor-dry" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/anchor-dry" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would reap feat/anchor-dry (MERGED) @ $wt_path"* ]]
@@ -3095,7 +3097,7 @@ EOF
   mkdir -p "$(dirname "$anchor")"
   printf 'record\n' >"$anchor"
   stub_tmux "" ""
-  CREW_ID=c1 run_crew status "worker:feat/ghost" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/ghost" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [ -e "$anchor" ]
@@ -3128,7 +3130,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/anchor-dir" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/anchor-dir" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/anchor-dir (MERGED)"* ]]
@@ -3163,7 +3165,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/diverged" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/diverged" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/diverged (MERGED)"* ]]
@@ -3195,7 +3197,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   git worktree lock "$wt_path"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/stuck" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/stuck" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/stuck — worktree removal failed"* ]]
@@ -3243,7 +3245,7 @@ fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/gtrash"
-  CREW_ID=c1 run_crew status "worker:feat/noted" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/noted" done "" "https://github.com/o/r/pull/8"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/noted (MERGED)"* ]]
@@ -3304,7 +3306,7 @@ fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/gtrash"
-  CREW_ID=c1 run_crew status "worker:feat/grid-me#s1-1" done "" "https://example.com/pr/30"
+  CREW_ID=c1 run_crew status "worker:feat/grid-me#s1-1" done "" "https://github.com/o/r/pull/30"
   CREW_ID=c1 run run_crew reap --idle 0 --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"released @23"* ]]
@@ -3338,7 +3340,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/exited-me" exited "" "https://example.com/pr/20"
+  CREW_ID=c1 run_crew status "worker:feat/exited-me" exited "" "https://github.com/o/r/pull/20"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would reap feat/exited-me"* ]]
@@ -3362,7 +3364,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/failed-open" failed "" "https://example.com/pr/21"
+  CREW_ID=c1 run_crew status "worker:feat/failed-open" failed "" "https://github.com/o/r/pull/21"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/failed-open — PR OPEN"* ]]
@@ -3395,7 +3397,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/scaffold-me" done "" "https://example.com/pr/22"
+  CREW_ID=c1 run_crew status "worker:feat/scaffold-me" done "" "https://github.com/o/r/pull/22"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would reap feat/scaffold-me"* ]]
@@ -3422,7 +3424,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/tracked-dirty" done "" "https://example.com/pr/23"
+  CREW_ID=c1 run_crew status "worker:feat/tracked-dirty" done "" "https://github.com/o/r/pull/23"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/tracked-dirty — uncommitted changes"* ]]
@@ -3445,7 +3447,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/stray-file" done "" "https://example.com/pr/24"
+  CREW_ID=c1 run_crew status "worker:feat/stray-file" done "" "https://github.com/o/r/pull/24"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/stray-file — uncommitted changes"* ]]
@@ -3482,7 +3484,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/539-a" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run_crew status "worker:feat/539-a" done "" "https://github.com/o/r/pull/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3523,7 +3525,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/539-b" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run_crew status "worker:feat/539-b" done "" "https://github.com/o/r/pull/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3558,7 +3560,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/539-c" done "" "https://example.com/pr/539"
+  CREW_ID=c1 run_crew status "worker:feat/539-c" done "" "https://github.com/o/r/pull/539"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3600,7 +3602,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/557-a" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/557-a" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3640,7 +3642,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/578-a" done "" "https://example.com/pr/578"
+  CREW_ID=c1 run_crew status "worker:feat/578-a" done "" "https://github.com/o/r/pull/578"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3682,7 +3684,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/557-b" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/557-b" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3716,7 +3718,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/557-c" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/557-c" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -3749,7 +3751,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/557-d" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/557-d" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/557-d"* ]]
@@ -3822,7 +3824,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://github.com/o/r/pull/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -3867,7 +3869,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://github.com/o/r/pull/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
   [ -e "$BATS_TEST_TMPDIR/swapped" ]
@@ -3894,7 +3896,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/633-here" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/633-here" done "" "https://github.com/o/r/pull/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -3917,7 +3919,7 @@ EOF
   rm -f "$w1/.git"
   mv "$scratch/.git" "$w1/.git"
   stub_tmux "" ""
-  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://example.com/pr/8"
+  CREW_ID=c1 run_crew status "worker:feat/633-cand" done "" "https://github.com/o/r/pull/8"
   cd "$w1"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 1 ]
@@ -3991,7 +3993,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/wt"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/677-a" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run_crew status "worker:feat/677-a" done "" "https://github.com/o/r/pull/677"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ -e "$BATS_TEST_TMPDIR/swapped" ]
@@ -4066,7 +4068,7 @@ exit 0
 EOF2
   chmod +x "$STUB_DIR/gh"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/677-b" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run_crew status "worker:feat/677-b" done "" "https://github.com/o/r/pull/677"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ -e "$BATS_TEST_TMPDIR/swapped" ]
@@ -4117,7 +4119,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/677-c" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run_crew status "worker:feat/677-c" done "" "https://github.com/o/r/pull/677"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ -e "$BATS_TEST_TMPDIR/staged" ]
@@ -4155,7 +4157,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/677-d" done "" "https://example.com/pr/677"
+  CREW_ID=c1 run_crew status "worker:feat/677-d" done "" "https://github.com/o/r/pull/677"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/677-d — removal failed partway; $wt_path is no longer a worktree"* ]]
@@ -4471,7 +4473,7 @@ esac
 exit 0
 EOF2
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/557-e" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/557-e" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [ -d "$wt_path" ]
@@ -4502,7 +4504,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/live-engine-me" exited "" "https://example.com/pr/25"
+  CREW_ID=c1 run_crew status "worker:feat/live-engine-me" exited "" "https://github.com/o/r/pull/25"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/live-engine-me — an engine is still running there"* ]]
@@ -4562,7 +4564,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/idle-reap#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/idle-reap#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/idle-reap"* ]]
@@ -4586,7 +4588,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/meter-keep#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/meter-keep#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"an engine is still running there (live turn, unsent input, or no idle input box)"* ]]
@@ -4612,7 +4614,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/open-pr-idle#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/open-pr-idle#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"PR OPEN"* ]]
@@ -4641,7 +4643,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/dirty-idle#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/dirty-idle#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"uncommitted changes"* ]]
@@ -4657,7 +4659,7 @@ EOF
   stub_bin gh
   gh_stub_state MERGED
   stub_tmux_frames "" "$(printf '@1\t%%1\tfish\t%s\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/no-engine#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/no-engine#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/no-engine"* ]]
@@ -4680,7 +4682,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/idle-dry#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/idle-dry#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"would kill window @1"* ]]
@@ -4707,7 +4709,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/input-box#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/input-box#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"input box"* ]]
@@ -4732,7 +4734,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/later-msg#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/later-msg#s1-1" done "" "https://github.com/o/r/pull/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   later_ts=$(jq -nc 'now*1000|floor + 1000')
   jq -nc --argjson ts "$later_ts" \
@@ -4761,7 +4763,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/exited-idle#s1-1" exited "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/exited-idle#s1-1" exited "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/exited-idle — an engine is still running there"* ]]
@@ -4787,7 +4789,7 @@ EOF
 EOF
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$log")"
-  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/pr-open-idle#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"pr_open", pr_url:"https://example.com/pr/1"}}' >>"$log"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/pr-open-idle#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"pr_open", pr_url:"https://github.com/o/r/pull/1"}}' >>"$log"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/pr-open-idle"* ]]
@@ -4812,7 +4814,7 @@ EOF
 @test "reap: a live reap.lock.d held by another live pid is skipped" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   log_dir="$(dirname "$log")"
-  CREW_ID=c1 run_crew status "worker:feat/locked-out#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/locked-out#s1-1" done "" "https://github.com/o/r/pull/1"
   mkdir -p "$log_dir/reap.lock.d"
   echo $$ >"$log_dir/reap.lock.d/pid"
   stub_bin gh
@@ -4831,7 +4833,7 @@ EOF
   stub_bin gh
   gh_stub_state MERGED
   stub_tmux_frames "" ""
-  CREW_ID=c1 run_crew status "worker:feat/lock-wait#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/lock-wait#s1-1" done "" "https://github.com/o/r/pull/1"
   log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   sleep 2 &
   holder=$!
@@ -4864,7 +4866,7 @@ EOF
 ──────────────────
   -- INSERT -- ⏵⏵ auto mode on · ← for agents
 EOF
-  CREW_ID=c1 run_crew status "worker:feat/idle-c-locale#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/idle-c-locale#s1-1" done "" "https://github.com/o/r/pull/1"
   LC_ALL=C CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/idle-c-locale"* ]]
@@ -4880,7 +4882,7 @@ EOF
   gh_stub_state MERGED
   stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
   printf '  \xe2\x8e\xbf  Done (14 tool uses \xc2\xb7 58.2k tokens \xc2\xb7 1m 9s)\n\xe2\x9c\xbb Churned for 36s \xc2\xb7 done 11:20 AM\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80 reef \xe2\x94\x80\n\xe2\x9d\xaf \xc2\xa0\n\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\n  -- INSERT -- \xe2\x8f\xb5\xe2\x8f\xb5 auto mode on \xc2\xb7 \xe2\x86\x90 for agents\n' >"$STUB_DIR/frames/%1"
-  CREW_ID=c1 run_crew status "worker:feat/idle-nbsp#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/idle-nbsp#s1-1" done "" "https://github.com/o/r/pull/1"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/idle-nbsp"* ]]
@@ -4898,7 +4900,7 @@ reap_idle_fixture() {
   stub_bin gh
   gh_stub_state MERGED
   stub_tmux_frames "" "$(printf '@1\t%%1\t%s\t%s\n' "${2:-claude}" "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/$1#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/$1#s1-1" done "" "https://github.com/o/r/pull/1"
 }
 
 # assert_engine_kept <reason> — reap kept the worker for <reason> and touched
@@ -5116,7 +5118,7 @@ esac
 exit 0
 GH
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/xsess#s1-1" done "" "https://example.com/pr/5"
+  CREW_ID=c1 run_crew status "worker:feat/xsess#s1-1" done "" "https://github.com/o/r/pull/5"
   CREW_ID=c1 run_crew status "worker:feat/xsess#s2-2" failed "boom"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
@@ -5143,7 +5145,7 @@ GH
   chmod +x "$STUB_DIR/gh"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   CREW_ID=c1 run_crew status "worker:feat/reaprow" done
-  jq -nc '{ts:(now*1000|floor - 1000), kind:"reap", branch:"feat/reaprow", pr:"https://example.com/pr/6", pr_state:"MERGED", worktree:"/old/path"}' >>"$log"
+  jq -nc '{ts:(now*1000|floor - 1000), kind:"reap", branch:"feat/reaprow", pr:"https://github.com/o/r/pull/6", pr_state:"MERGED", worktree:"/old/path"}' >>"$log"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/reaprow (MERGED)"* ]]
@@ -5175,6 +5177,130 @@ GH
   [[ "$output" == *"reaped feat/ghlist (MERGED)"* ]]
   [ ! -d "$wt_path" ]
   run ! git show-ref --verify --quiet refs/heads/feat/ghlist
+}
+
+@test "reap: a cross-repo pr_url to a merged PR is ignored and keeps the worktree (#843)" {
+  git commit -q --allow-empty -m init
+  git branch feat/xrepo
+  wt_path="$BATS_TEST_TMPDIR/xrepo-wt"
+  git worktree add -q "$wt_path" feat/xrepo
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/xrepo)
+case "$*" in
+*"pr list"*) printf '[]\n' ;;
+*"issue view"*) printf '%s\n' 'CLOSED' ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/xrepo" done "" "https://github.com/evil/other/pull/7"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/xrepo"* ]]
+  [[ "$output" == *"ignoring cross-repo pr_url https://github.com/evil/other/pull/7"* ]]
+  [ -d "$wt_path" ]
+  run ! grep -q 'remove-label' "$STUB_LOG"
+  run ! grep -q 'pr view https://github.com/evil' "$STUB_LOG"
+  run run_crew reap
+  [ "$status" -eq 0 ]
+  [ -d "$wt_path" ]
+  run ! grep -q 'remove-label' "$STUB_LOG"
+}
+
+@test "reap: a cross-repo pr_url falls through to a same-repo merged PR from gh pr list (#843)" {
+  git commit -q --allow-empty -m init
+  git branch feat/xfall
+  wt_path="$BATS_TEST_TMPDIR/xfall-wt"
+  git worktree add -q "$wt_path" feat/xfall
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/xfall)
+case "$*" in
+*"pr list"*) printf '[{"url":"https://github.com/o/r/pull/7","state":"MERGED","headRefOid":"%s","isCrossRepository":false}]\n' "$tip" ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/xfall" done "" "https://github.com/evil/other/pull/7"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/xfall (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+  run ! grep -q 'pr view https://github.com/evil' "$STUB_LOG"
+}
+
+@test "reap: a github.com pr_url is ignored when origin is not on github.com (#843)" {
+  git config remote.origin.url https://ghe.example.com/o/r.git
+  seed_git_baseline
+  git commit -q --allow-empty -m init
+  git branch feat/ghe
+  wt_path="$BATS_TEST_TMPDIR/ghe-wt"
+  git worktree add -q "$wt_path" feat/ghe
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/ghe)
+case "$*" in
+*"pr list"*) printf '[]\n' ;;
+*"issue view"*) printf '%s\n' 'CLOSED' ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghe" done "" "https://github.com/o/r/pull/7"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/ghe"* ]]
+  [[ "$output" == *"ignoring cross-repo pr_url https://github.com/o/r/pull/7"* ]]
+  [ -d "$wt_path" ]
+  run ! grep -q 'pr view https://github.com/o/r' "$STUB_LOG"
+}
+
+@test "reap: an empty pr_url does not promote an earlier session's PR to the latest session's (#843)" {
+  git commit -q --allow-empty -m init
+  git branch feat/emptyurl
+  wt_path="$BATS_TEST_TMPDIR/emptyurl-wt"
+  git worktree add -q "$wt_path" feat/emptyurl
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  old=$(git rev-parse feat/emptyurl)
+  git -C "$wt_path" commit -q --allow-empty -m more
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '[]\n' ;;
+*headRefOid*) printf '%s\n' '$old' ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", from:"worker:feat/emptyurl#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/7"}}' >>"$log"
+  jq -nc '{ts:2000, crew_id:"c1", from:"worker:feat/emptyurl#s2-2", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:""}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/emptyurl"* ]]
+  [[ "$output" == *"its tip has commits past https://github.com/o/r/pull/7"* ]]
+  [[ "$output" != *"would reap"* ]]
+  [ -d "$wt_path" ]
 }
 
 @test "reap: a failing gh pr list keeps the worker (#836)" {
@@ -5395,7 +5521,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/discard-557" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run_crew status "worker:feat/discard-557" done "" "https://github.com/o/r/pull/557"
   CREW_ID=c1 run run_crew reap --discard feat/discard-557
   [ "$status" -eq 1 ]
   [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
@@ -5433,7 +5559,7 @@ esac
 exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/discard-578" done "" "https://example.com/pr/578"
+  CREW_ID=c1 run_crew status "worker:feat/discard-578" done "" "https://github.com/o/r/pull/578"
   CREW_ID=c1 run run_crew reap --discard feat/discard-578
   [ "$status" -eq 0 ]
   [[ "$output" == *"saved uncommitted state to "* ]]
@@ -5561,11 +5687,11 @@ esac
 exit 0
 GH
   chmod +x "$STUB_DIR/gh"
-  CREW_ID=c1 run_crew status "worker:feat/xpast#s1-1" done "" "https://example.com/pr/5"
+  CREW_ID=c1 run_crew status "worker:feat/xpast#s1-1" done "" "https://github.com/o/r/pull/5"
   CREW_ID=c1 run_crew status "worker:feat/xpast#s2-2" failed "boom"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
-  [[ "$output" == *"keeping feat/xpast — its tip has commits past https://example.com/pr/5"* ]]
+  [[ "$output" == *"keeping feat/xpast — its tip has commits past https://github.com/o/r/pull/5"* ]]
   [ -d "$wt_path" ]
 }
 
@@ -9246,13 +9372,15 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 # fixed at launch.
 _stream_seed_reapable() {
   local branch="$1" crew="$2" wt_path
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
   git branch "$branch"
   wt_path="$BATS_TEST_TMPDIR/${branch//\//-}-wt"
   git worktree add -q "$wt_path" "$branch"
   stub_bin gh
   gh_stub_state MERGED
   stub_tmux_frames "" ""
-  CREW_ID="$crew" run_crew status "worker:$branch#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID="$crew" run_crew status "worker:$branch#s1-1" done "" "https://github.com/o/r/pull/1"
 }
 
 has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
@@ -9276,6 +9404,8 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
 
 @test "stream: a terminal batch triggers an immediate reap, cadence aside" {
   git commit -q --allow-empty -m init
+  git config remote.origin.url https://github.com/o/r.git
+  seed_git_baseline
   git branch feat/x
   wt_path="$BATS_TEST_TMPDIR/feat-x-wt"
   git worktree add -q "$wt_path" feat/x
@@ -9283,7 +9413,7 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
   gh_stub_state MERGED
   stub_tmux_frames "" ""
   start_stream --crew c1 --reap-every 3600 --park 1 --interval 1
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done "" "https://github.com/o/r/pull/1"
   poll_for 150 has_reap_line
 
   line="$(grep '"stream":"reap"' "$STREAM_OUT" | head -n1)"
@@ -10972,7 +11102,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://example.com/pr/30"
+  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://github.com/o/r/pull/30"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
   [[ "$output" == *"keeping feat/10-parent — PR OPEN"* ]]
@@ -11010,7 +11140,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://example.com/pr/31"
+  CREW_ID=c1 run_crew status "worker:feat/10-parent" done "" "https://github.com/o/r/pull/31"
   CREW_ID=c1 run run_crew reap --quiet
   [ "$status" -eq 0 ]
   [[ "$output" == *"reaped feat/10-parent (MERGED)"* ]]

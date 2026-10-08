@@ -12,6 +12,8 @@ setup() {
   # shellcheck disable=SC2329  # invoked via `run run_crew`
   run_crew() { bash -euo pipefail "$CREW" "$@"; }
   setup_repo
+  # reap only trusts a bus pr_url of this repo's origin.
+  git config remote.origin.url https://github.com/o/r.git
   seed_git_baseline
   unset CREW_ID
 }
@@ -166,7 +168,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   stub_tmux "" ""
-  CREW_ID=c1 run_crew status "worker:feat/race-wt#s1-1" "done" "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/race-wt#s1-1" "done" "" "https://github.com/o/r/pull/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   claim_ts=$(jq -nc 'now*1000|floor')
   jq -nc --argjson ts "$claim_ts" \
@@ -193,7 +195,7 @@ EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
   stub_tmux "" ""
-  CREW_ID=c1 run_crew status "worker:feat/future-claim#s1-1" "done" "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/future-claim#s1-1" "done" "" "https://github.com/o/r/pull/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:feat/future-claim#s2-2", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
@@ -229,7 +231,7 @@ EOF
   claim_ts=$((now_ms - 7100000))
   jq -nc --argjson ts "$status_ts" \
     '{ts:$ts, crew_id:"c1", from:"worker:feat/aged-claim#s1-1", to:"dispatcher:c1", kind:"status",
-      body:{state:"done", pr_url:"https://example.com/pr/1"}}' >>"$log"
+      body:{state:"done", pr_url:"https://github.com/o/r/pull/1"}}' >>"$log"
   jq -nc --argjson ts "$claim_ts" \
     '{ts:$ts, crew_id:"c1", from:"worker:feat/aged-claim#s2-2", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
@@ -253,7 +255,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/gh"
   stub_bin wt
-  CREW_ID=c1 run_crew status "worker:feat/stale-done#s1-1" "done" "" "https://example.com/pr/1"
+  CREW_ID=c1 run_crew status "worker:feat/stale-done#s1-1" "done" "" "https://github.com/o/r/pull/1"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   jq -nc '{ts:9999999999999, crew_id:"c1", from:"worker:other-branch#s9-9", kind:"claim"}' >>"$log"
   CREW_ID=c1 run run_crew reap --dry-run
