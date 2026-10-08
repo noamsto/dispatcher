@@ -11,7 +11,9 @@ setup() {
   # and fails on a personal one. HOME points at the throwaway repo so the codex
   # cache fixture and the --mcp config paths cannot reach the developer's own.
   export HOME="$TEST_REPO"
-  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS
+  # A pi session exports PI_CODING_AGENT_DIR; dispatch seeds its worker pi dir
+  # from it and records it, so a pi worker's own dir leaks into both (#816).
+  unset CREW_WORKER_ID DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE DISPATCH_DRAFT_PR DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS PI_CODING_AGENT_DIR
   # The pane a tmux stub's display-message answers `#{pane_pid}` with, for
   # dispatch's ancestry gate (_pane_is_ancestor): the bats test process is a
   # genuine ancestor of any dispatch run under `run`.
