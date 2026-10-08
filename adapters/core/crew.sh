@@ -2639,6 +2639,8 @@ baseline the worktree guard enforces.
             exits 1 on drift or a missing baseline, 0 when clean.
 
 Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
+URL userinfo and query values in redirect values and URL-subsection keys are masked
+with a sha256 fingerprint of the full value; the baseline stores full values.
 
   crew git-baseline
 HELP
@@ -7611,7 +7613,9 @@ git-baseline)
   # Lists — or, with --accept, merges into — the exec-capable and redirecting
   # git-config baseline _wt_cfg_guard enforces (#557, #585, #678). Only a dispatch records one
   # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
-  # terminal, and --accept writes exactly the pairs this run printed: each
+  # terminal, URL userinfo and query values in redirect values and URL-subsection
+  # keys are masked with a sha256 fingerprint of the full value (the baseline
+  # stores full values), and --accept writes exactly the pairs this run printed: each
   # context is read once, and a pair is shown and collected in one step.
   case "$#:${1:-}" in
   0:) accept= ;;
@@ -7680,7 +7684,9 @@ git-baseline)
       gb_origin="${gb_listing[gb_i + 1]#file:}"
       [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
       gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-      printf '%q=%q (%s, %q)\n' "$gb_key" "$gb_value" "$gb_label" "$gb_origin"
+      _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp
+      # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
+      printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
       gb_shown+=("$gb_rec")
     done
   done

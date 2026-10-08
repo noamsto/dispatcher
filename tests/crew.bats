@@ -4378,6 +4378,49 @@ crew_tty() {
   [[ "$output" == *remote.origin.url=attacker.example:x@github.com:o/r.git* ]]
 }
 
+@test "git-baseline masks URL credentials in redirect values and keys, keeping hosts (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://x-access-token:FAKETOKEN0686@github.com/o/r.git'
+  git config http.proxy 'http://u:fakepass0686@proxy.example:3128'
+  git config http.https://p.example/.proxy 'u:fakepass0686@proxy.example:3128'
+  git config 'url.https://x:FAKETOKEN0686@evil.example/.insteadOf' 'https://github.com/'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *github.com* ]]
+  [[ "$output" == *proxy.example* ]]
+  [[ "$output" == *evil.example* ]]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *FAKETOKEN0686* ]]
+  [[ "$output" != *fakepass0686* ]]
+}
+
+@test "git-baseline masks a scheme-less http.proxy (#686)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config http.proxy 'u:fakepass0686@proxy.example:3128'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *proxy.example* ]]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *fakepass0686* ]]
+}
+
+@test "git-baseline --accept masks the token on screen but stores it in full (#686)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  seed_git_baseline
+  git config remote.origin.url 'https://x-access-token:FAKETOKEN0686@github.com/o/r.git'
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 0 ]
+  [[ "$output" == *sha256:* ]]
+  [[ "$output" != *FAKETOKEN0686* ]]
+  [ "$(grep -c FAKETOKEN0686 "$B")" -ge 1 ]
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}
+
 @test "git-baseline notes a baseline that predates redirect-key coverage (#678)" {
   git commit -q --allow-empty -m init
   : >"$TEST_REPO/.git/crew/git-config-baseline"
