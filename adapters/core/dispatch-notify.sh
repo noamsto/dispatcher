@@ -23,14 +23,12 @@ fi
 
 event="$(cat)"
 
-# An in-process session switch is not a session end. pi's /new, /resume and /fork
-# (AgentSessionRuntime.teardownCurrent) and /reload (extension-runner rebuild)
-# emit session_shutdown for the old instance while the process stays alive;
-# Claude Code's SessionEnd reason `clear` (/clear) and `resume` (/resume) are the
-# same shape. Skip only these known reasons: an unknown or missing reason still
-# posts `exited`, because a missed `exited` costs the watchdog 30+ minutes,
-# while a duplicate is harmless. --turn-end (cursor `stop`) carries no reason
-# and is unaffected.
+# An in-process session switch is not a session end: pi emits session_shutdown
+# for /new, /resume, /fork (AgentSessionRuntime.teardownCurrent) and an extension
+# reload, and Claude Code SessionEnd reason `clear` or `resume`, all while the
+# process stays alive. Skip only these known reasons — an unknown or missing
+# reason still posts `exited`, because a missed `exited` costs the watchdog
+# 30+ minutes, while a duplicate is harmless.
 if [ "$mode" = session-end ]; then
   case "$(jq -r '.reason // empty' <<<"$event")" in
   new | resume | fork | reload | clear) exit 0 ;;
