@@ -12406,12 +12406,13 @@ _rr_segments_le80() {
 
 # The roster-render daemon (#806). _rr_daemon starts it in the background from
 # RR_CWD (default: here) with output off bats' fds, so a stuck daemon cannot
-# hang the run; teardown kills RR_PID/RR_PID2.
+# hang the run; teardown kills RR_PID/RR_PID2. RR_ENTRY overrides which crew it
+# starts as (a fake installed build, for the re-exec rows below).
 _rr_daemon() {
   local n=1 log
   [ -z "${RR_PID:-}" ] || n=2
   log="$BATS_TEST_TMPDIR/rr-daemon-$n.log"
-  (cd -- "${RR_CWD:-.}" && exec bash -euo pipefail "$CREW" roster-render \
+  (cd -- "${RR_CWD:-.}" && exec bash -euo pipefail "${RR_ENTRY:-$CREW}" roster-render \
     --crew c1 --interval 1 "$@") >"$log" 2>&1 3>&- &
   if [ "$n" -eq 1 ]; then RR_PID=$!; else RR_PID2=$!; fi
 }
@@ -12563,6 +12564,199 @@ _rr_mini() {
   _rr_wait _rr_lock_taken
   kill -0 "$RR_PID"
   [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.pane")" = "%7" ]
+}
+
+# The daemon upgrading itself into a newer installed build (#810). A build stand-in
+# is a copy of the crew under test, so `_rr_self` really is the build; its prologue
+# logs which build a pid runs and with what argv, at roster-render starts only — the
+# `crew roster` child `_rr_model` spawns would otherwise log once per pass.
+_rr_fake_build() { # <name> -> path of the build's crew
+  local dir="$BATS_TEST_TMPDIR/rr-build-$1"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    printf 'if [ "${1:-}" = roster-render ]; then printf "%%s %%s %%s\\n" "%s" "$$" "$*" >>"$RR_BUILDS_LOG"; fi\n' "$1"
+    cat "$CREW"
+  } >"$dir/crew"
+  chmod +x "$dir/crew"
+  printf '%s' "$dir/crew"
+}
+
+# _rr_fakebin <name> — $RR_FAKEBIN, a PATH dir holding nothing but a `crew` symlink
+# to <name>'s build: the entry a home-manager switch repoints under a running
+# daemon, which is what the daemon resolves between passes.
+_rr_fakebin() {
+  RR_FAKEBIN="$BATS_TEST_TMPDIR/rr-fakebin"
+  mkdir -p "$RR_FAKEBIN"
+  RR_BUILDS_LOG="$BATS_TEST_TMPDIR/rr-builds.log"
+  : >"$RR_BUILDS_LOG"
+  ln -s "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"
+  export RR_BUILDS_LOG PATH="$RR_FAKEBIN:$PATH" RR_ENTRY="$RR_FAKEBIN/crew"
+}
+
+# _rr_swap_build <name> — point the entry at a fresh build (a rebuild).
+# _rr_point_build <name> — point it at a build already built, which is how a row
+# reaches "the entry names the build that is already running".
+_rr_swap_build() { ln -sfn "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"; }
+_rr_point_build() { ln -sfn "$BATS_TEST_TMPDIR/rr-build-$1/crew" "$RR_FAKEBIN/crew"; }
+_rr_build_ran() { grep -q "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
+# One awk or grep per helper: they run under errexit+pipefail, where a pipeline whose
+# reader exits early (grep -q, head) reads as the writer's failure.
+_rr_build_seen() { grep -q "^$1 " "$RR_BUILDS_LOG"; }
+_rr_build_args() {
+  awk -v pre="$1 $2 " 'index($0, pre) == 1 { print substr($0, length(pre) + 1); exit }' "$RR_BUILDS_LOG"
+}
+_rr_build_pids() { awk -v n="$1" '$1 == n { print $2 }' "$RR_BUILDS_LOG"; }
+_rr_build_count() { grep -c "^$1 $2 " "$RR_BUILDS_LOG" || true; } # <name> <pid>
+_rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
+
+@test "roster-render: the daemon re-execs into a newer installed crew, keeping its pid and lock" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin A
+  _rr_daemon --quiet 30 --no-open
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID"
+  _rr_lock_is "$pid"
+  _rr_wait _rr_build_ran A "$pid"
+
+  _rr_swap_build B
+  _rr_wait _rr_build_ran B "$pid"
+  # Same pid: the lock never changed hands, so the crew was never without a renderer.
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+  # and the new build was handed the daemon's own argv, --no-open included
+  [ "$(_rr_build_args B "$pid")" = "roster-render --crew c1 --interval 1 --quiet 30 --no-open" ]
+}
+
+@test "roster-render: an unchanged installed crew never makes the daemon re-exec" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin A
+  _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" n
+  _rr_wait _rr_build_ran A "$pid"
+
+  # Several --interval 1 passes, each of which re-resolves the installed crew.
+  sleep 3
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+  n=$(_rr_build_count A "$pid")
+  [ "$n" -eq 1 ]
+}
+
+# The daemon running one build while the entry names another: the baseline is what
+# stops its first pass from hopping into the installed build.
+@test "roster-render: a daemon started while another build is installed keeps its own" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin B
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID"
+  _rr_wait _rr_build_ran A "$pid"
+
+  sleep 3
+  run ! _rr_build_seen B
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+}
+
+# And the entry moving back onto the build already running — a rollback — is no
+# upgrade either.
+@test "roster-render: an entry naming the running build does not re-exec" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin B
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" n
+  _rr_wait _rr_build_ran A "$pid"
+
+  _rr_point_build A
+  sleep 3
+  n=$(_rr_build_count A "$pid")
+  [ "$n" -eq 1 ]
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+}
+
+@test "roster-render: a newer build's --detach while the daemon holds the lock is still a silent no-op" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin A
+  _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" p
+  _rr_wait _rr_build_ran A "$pid"
+
+  run timeout 10 bash -euo pipefail "$(_rr_fake_build B)" roster-render --crew c1 --detach --interval 1 3>&-
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  _rr_wait _rr_build_seen B
+  # The newcomer, and the daemon it detached, both exit on the held lock rather than
+  # taking the crew's renderer away.
+  for p in $(_rr_build_pids B); do _rr_wait _rr_pid_gone "$p"; done
+  _rr_lock_is "$pid"
+  sleep 2
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+  run ! _rr_build_ran B "$pid"
+}
+
+# A drained crew is left to exit rather than upgraded.
+@test "roster-render: a drained crew exits on its quiet window instead of upgrading" {
+  _rr_mini done
+  date +%s >"$CREW_CLOCK"
+  _rr_fakebin A
+  _rr_daemon --quiet 30
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" t0
+  t0=$(cat "$CREW_CLOCK")
+  _rr_wait _rr_build_ran A "$pid"
+
+  # Drained, inside the quiet window: the entry moving now goes unfollowed.
+  printf '%s\n' "$((t0 + 15))" >"$CREW_CLOCK"
+  _rr_swap_build B
+  sleep 3
+  run ! _rr_build_seen B
+  # The window still runs from the first drain: a build that had hopped would set
+  # its own idle-since at +15 and still be alive at +31.
+  printf '%s\n' "$((t0 + 31))" >"$CREW_CLOCK"
+  _rr_exited "$pid" 5
+  [ "$RR_RC" -eq 0 ]
+}
+
+# _rr_installed_crew_of <path> — the resolver extracted from the source (the
+# _rr_palette idiom) run against exactly that PATH: the /nix/store skip no daemon
+# row can reach on a box that has crew installed, which is under /nix/store.
+_rr_installed_crew_of() {
+  bash -c '
+    set -euo pipefail
+    eval "$(sed -n "/^_rr_installed_crew()/,/^}/p" "$1")"
+    PATH="$2"
+    printf "%s" "$(_rr_installed_crew)"
+  ' _ "$CREW" "$1"
+}
+
+@test "roster-render: the installed-crew lookup skips store paths and non-regular entries" {
+  local d want
+  d="$BATS_TEST_TMPDIR/rr-installed"
+  mkdir -p "$d/noexec" "$d/dircrew/crew" "$d/real" "$d/link"
+  printf '#!/usr/bin/env bash\n' >"$d/noexec/crew"
+  printf '#!/usr/bin/env bash\n' >"$d/real/crew"
+  chmod +x "$d/real/crew"
+  ln -s "$d/real/crew" "$d/link/crew"
+  # readlink is the resolver's only external; a PATH without it reads as "no crew
+  # installed" rather than failing the caller, which is why it is passed in.
+  want=$(readlink -f -- "$d/real/crew")
+  local cu
+  cu=$(dirname "$(command -v readlink)")
+
+  [ "$(_rr_installed_crew_of "/nix/store/fake-crew/bin:$d/real:$cu")" = "$want" ]
+  [ "$(_rr_installed_crew_of "/nix/store:$d/real:$cu")" = "$want" ]
+  [ "$(_rr_installed_crew_of "$d/noexec:$d/dircrew:$d/real:$cu")" = "$want" ]
+  [ "$(_rr_installed_crew_of "$d/link:$cu")" = "$want" ]
+  [ "$(_rr_installed_crew_of "$d/noexec:$d/dircrew:$cu")" = "" ]
+  [ "$(_rr_installed_crew_of "/nix/store/fake-crew/bin:$cu")" = "" ]
+  # A relative entry would resolve against the bus dir the daemon runs from.
+  [ "$(cd "$d/real" && _rr_installed_crew_of ".:$cu")" = "" ]
 }
 
 # --- crew --help: per-subcommand and grouped top-level (#812) ---------------
