@@ -672,7 +672,7 @@ EOF
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]
-  [[ "$output" == *"reap takes --quiet, --dry-run, --no-wait and --idle S"* ]]
+  [[ "$output" == *"reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH"* ]]
 }
 
 @test "reap: is a no-op when the bus has no events" {
@@ -5097,6 +5097,487 @@ EOF
   jq -nc '{ts:(now*1000|floor + 1000), crew_id:"c1", from:"worker:feat/idle-sibling#s2-2", to:"dispatcher:c1", kind:"msg", body:"hi"}' >>"$log"
   CREW_ID=c1 run run_crew reap
   assert_engine_kept "session posted after its done"
+}
+
+@test "reap: a branch whose latest session failed with no pr_url reaps via an earlier session's MERGED PR (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/xsess
+  wt_path="$BATS_TEST_TMPDIR/xsess-wt"
+  git worktree add -q "$wt_path" feat/xsess
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/xsess)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/xsess#s1-1" done "" "https://example.com/pr/5"
+  CREW_ID=c1 run_crew status "worker:feat/xsess#s2-2" failed "boom"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/xsess (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: a kind:reap row's PR is used when no session posted one (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/reaprow
+  wt_path="$BATS_TEST_TMPDIR/reaprow-wt"
+  git worktree add -q "$wt_path" feat/reaprow
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/reaprow)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/reaprow" done
+  jq -nc '{ts:(now*1000|floor - 1000), kind:"reap", branch:"feat/reaprow", pr:"https://example.com/pr/6", pr_state:"MERGED", worktree:"/old/path"}' >>"$log"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/reaprow (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: a PR found only via gh pr list is reaped and its branch deleted (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/ghlist
+  wt_path="$BATS_TEST_TMPDIR/ghlist-wt"
+  git worktree add -q "$wt_path" feat/ghlist
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/ghlist)
+case "$*" in
+*"pr list"*) printf '[{"url":"https://github.com/o/r/pull/7","state":"MERGED","headRefOid":"%s","isCrossRepository":false}]\n' "$tip" ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghlist" done
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/ghlist (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+  run ! git show-ref --verify --quiet refs/heads/feat/ghlist
+}
+
+@test "reap: a failing gh pr list keeps the worker (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/ghfail
+  wt_path="$BATS_TEST_TMPDIR/ghfail-wt"
+  git worktree add -q "$wt_path" feat/ghfail
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*"pr list"*) exit 1 ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghfail" done
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/ghfail — could not list PRs for feat/ghfail"* ]]
+  [ -d "$wt_path" ]
+}
+
+# reap_issue_fixture <slug> <issue state> [claim] — a done worker on feat/<slug>
+# with one commit, no PR anywhere, and (with `claim`) a claim-issue row for #77.
+reap_issue_fixture() {
+  git commit -q --allow-empty -m init
+  git branch "feat/$1"
+  wt_path="$BATS_TEST_TMPDIR/$1-wt"
+  git worktree add -q "$wt_path" "feat/$1"
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'x\n' >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m work
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '%s\n' '[]' ;;
+*"issue view"*) printf '%s\n' '$2' ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/$1" done
+  if [ "${3:-}" = claim ]; then
+    jq -nc --arg b "feat/$1" '{ts:(now*1000|floor), crew_id:"c1", kind:"claim-issue", issue:"77", branch:$b, pid:1}' >>"$log"
+  fi
+}
+
+@test "reap: done with no PR and a CLOSED claimed issue reclaims, keeping the branch (#836)" {
+  reap_issue_fixture issue-closed CLOSED claim
+  git cherry-pick "$(git rev-parse refs/heads/feat/issue-closed)" >/dev/null
+  git update-ref refs/remotes/origin/main main
+  git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/issue-closed (issue #77 CLOSED)"* ]]
+  [ ! -d "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/issue-closed
+  grep -qF 'issue edit 77 --remove-label dispatched' "$STUB_LOG"
+  jq -se 'map(select(.kind == "reap" and .branch == "feat/issue-closed")) | .[0] | .pr == "" and .pr_state == "ISSUE_CLOSED" and .issues == ["77"]' "$log"
+}
+
+@test "reap: a closed issue with commits on no remote keeps the worker (#836)" {
+  reap_issue_fixture issue-unpushed CLOSED claim
+  git update-ref refs/remotes/origin/main main
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-unpushed — done but no PR on the bus or GitHub; 1 commit(s) not on any remote and not patch-equivalent to origin/main"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: an OPEN claimed issue keeps the worker (#836)" {
+  reap_issue_fixture issue-open OPEN claim
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-open — done but no PR on the bus or GitHub; issue #77 is OPEN"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: no PR and no claim-issue row keeps the worker (#836)" {
+  reap_issue_fixture issue-none CLOSED
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/issue-none — done but no PR on the bus or GitHub; no claim-issue row"* ]]
+  [ -d "$wt_path" ]
+}
+
+# reap_discard_fixture <slug> <PR state> — a done worker on feat/<slug> with a
+# bus PR in that state and a dirty tree: an unstaged edit, a staged edit, an
+# untracked file and an untracked scaffold file.
+reap_discard_fixture() {
+  printf 'a\n' >t.txt
+  printf 'b\n' >s.txt
+  git add t.txt s.txt
+  git commit -q -m init
+  git branch "feat/$1"
+  wt_path="$BATS_TEST_TMPDIR/$1-wt"
+  git worktree add -q "$wt_path" "feat/$1"
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf 'a2\n' >"$wt_path/t.txt"
+  printf 'b2\n' >"$wt_path/s.txt"
+  git -C "$wt_path" add s.txt
+  printf 'new\n' >"$wt_path/new.txt"
+  printf 'notes\n' >"$wt_path/REVIEW_NOTES.md"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '%s\n' '[]' ;;
+*"issue view"*) printf '%s\n' 'CLOSED' ;;
+*headRefOid*) git rev-parse "refs/heads/feat/$1" ;;
+*state*) printf '%s\n' '$2' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  log="$common/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/$1" done "" "https://github.com/o/r/pull/9"
+}
+
+@test "reap: --discard saves a dirty merged tree as a patch that applies to the branch tip, then removes it (#836)" {
+  reap_discard_fixture discard-ok MERGED
+  CREW_ID=c1 run run_crew reap --discard feat/discard-ok
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"saved uncommitted state to $common/crew/artifacts/feat/discard-ok/discarded-"*".patch"* ]]
+  [[ "$output" == *"reaped feat/discard-ok (MERGED, discarded)"* ]]
+  patch=$(printf '%s\n' "$common"/crew/artifacts/feat/discard-ok/discarded-*.patch)
+  [ -s "$patch" ]
+  [ ! -e "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/discard-ok
+  jq -se --arg p "$patch" 'map(select(.kind == "reap" and .branch == "feat/discard-ok")) | .[0].discarded == $p' "$log"
+  fresh="$BATS_TEST_TMPDIR/discard-ok-fresh"
+  git worktree add -q "$fresh" feat/discard-ok
+  git -C "$fresh" apply --check "$patch"
+  git -C "$fresh" apply "$patch"
+  [ "$(cat "$fresh/t.txt")" = a2 ]
+  [ "$(cat "$fresh/s.txt")" = b2 ]
+  [ "$(cat "$fresh/new.txt")" = new ]
+  [ "$(cat "$fresh/REVIEW_NOTES.md")" = notes ]
+}
+
+@test "reap: --discard refuses an OPEN PR and touches nothing (#836)" {
+  reap_discard_fixture discard-open OPEN
+  CREW_ID=c1 run run_crew reap --discard feat/discard-open
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-open — PR OPEN"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-open" ]
+}
+
+@test "reap: --discard refuses a tree with a live engine pane (#836)" {
+  reap_discard_fixture discard-live MERGED
+  stub_tmux_frames "" "$(printf '@1\t%%1\tclaude\t%s\n' "$wt_path")"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-live
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-live — an engine is running there"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-live" ]
+}
+
+@test "reap: --discard refuses a branch whose latest status is working (#836)" {
+  reap_discard_fixture discard-working MERGED
+  CREW_ID=c1 run_crew status "worker:feat/discard-working" working
+  CREW_ID=c1 run run_crew reap --discard feat/discard-working
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-working — latest status is working"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-working" ]
+}
+
+@test "reap: --discard on a clean tree with a closed issue removes it, keeping the branch and writing no patch (#836)" {
+  reap_issue_fixture discard-issue CLOSED claim
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-issue --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no uncommitted changes to save"* ]]
+  [[ "$output" == *"reaped feat/discard-issue (issue #77 CLOSED, discarded)"* ]]
+  [ ! -e "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/discard-issue
+  [ -z "$(find "$common/crew/artifacts" -name 'discarded-*' 2>/dev/null)" ]
+  jq -se 'map(select(.kind == "reap" and .branch == "feat/discard-issue")) | .[0].discarded == ""' "$log"
+}
+
+@test "reap: --discard never runs a worker-planted clean filter (#836)" {
+  git commit -q --allow-empty -m init
+  printf '' >f
+  printf 'f filter=x\n' >.gitattributes
+  git add f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git branch feat/discard-557
+  wt_path="$BATS_TEST_TMPDIR/discard-557-wt"
+  git worktree add -q "$wt_path" feat/discard-557
+  wt_path=$(cd "$wt_path" && pwd -P)
+  cat >"$BATS_TEST_TMPDIR/hit.sh" <<EOF
+#!/usr/bin/env bash
+touch "$BATS_TEST_TMPDIR/SENTINEL"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/hit.sh"
+  seed_git_baseline
+  git config filter.x.clean "$BATS_TEST_TMPDIR/hit.sh"
+  echo x >"$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/discard-557" done "" "https://example.com/pr/557"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-557
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ -d "$wt_path" ]
+  [[ "$output" == *"refusing --discard feat/discard-557"* ]]
+}
+
+@test "reap: --discard never runs a baselined worktree-relative filter the worker rewrote (#836)" {
+  mkdir -p tools
+  printf '#!/bin/sh\ncat\n' >tools/conv.sh
+  chmod +x tools/conv.sh
+  printf a >f
+  printf 'f filter=x\n' >.gitattributes
+  git add tools/conv.sh f .gitattributes
+  git commit -q -m 'track f under filter x'
+  git config filter.x.clean tools/conv.sh
+  seed_git_baseline
+  git branch feat/discard-578
+  wt_path="$BATS_TEST_TMPDIR/discard-578-wt"
+  git worktree add -q "$wt_path" feat/discard-578
+  wt_path=$(cd "$wt_path" && pwd -P)
+  printf '#!/bin/sh\ntouch %q\ncat\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$wt_path/tools/conv.sh"
+  git -C "$wt_path" commit -qam rewrite
+  rm -f "$BATS_TEST_TMPDIR/SENTINEL"
+  printf b >"$wt_path/f"
+  printf 'u\n' >"$wt_path/untracked.txt"
+  touch -d '+5 seconds' "$wt_path/f"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/discard-578" done "" "https://example.com/pr/578"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-578
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"saved uncommitted state to "* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: --discard --dry-run reports the patch path and writes nothing (#836)" {
+  reap_discard_fixture discard-dry MERGED
+  CREW_ID=c1 run run_crew reap --discard feat/discard-dry --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would save uncommitted state to $common/crew/artifacts/feat/discard-dry/discarded-"* ]]
+  [[ "$output" == *"would reap feat/discard-dry (MERGED) @ $wt_path"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$common/crew/artifacts/feat/discard-dry" ]
+}
+
+@test "reap: --discard refuses an invalid branch name (#836)" {
+  CREW_ID=c1 run_crew status "worker:feat/x" done
+  CREW_ID=c1 run run_crew reap --discard '@{-1}'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard @{-1} — not a valid branch name"* ]]
+}
+
+@test "reap: plain reap never discards a dirty merged tree (#836)" {
+  reap_discard_fixture discard-plain MERGED
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/discard-plain — uncommitted changes"* ]]
+  [ -d "$wt_path" ]
+  [ -z "$(find "$common/crew/artifacts" -name 'discarded-*' 2>/dev/null)" ]
+}
+
+@test "reap: --discard refuses a symlinked artifacts dir and writes nothing through it (#836)" {
+  reap_discard_fixture discard-sym MERGED
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$common/crew/artifacts/feat"
+  ln -s "$victim" "$common/crew/artifacts/feat/discard-sym"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-sym
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-sym — $common/crew/artifacts/feat/discard-sym is a symlink or not a directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: --discard refuses a symlink at a parent of a slashed branch's artifacts dir (#836)" {
+  reap_discard_fixture discard-par MERGED
+  victim="$BATS_TEST_TMPDIR/victim"
+  mkdir -p "$victim" "$common/crew/artifacts"
+  ln -s "$victim" "$common/crew/artifacts/feat"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-par
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-par — $common/crew/artifacts/feat is a symlink or not a directory"* ]]
+  [ -z "$(ls -A "$victim")" ]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: --discard never writes through a symlink planted at a predictable temp name (#836)" {
+  reap_discard_fixture discard-tmp MERGED
+  victim="$BATS_TEST_TMPDIR/victim.txt"
+  printf 'keep\n' >"$victim"
+  art="$common/crew/artifacts/feat/discard-tmp"
+  mkdir -p "$art"
+  now=$(date -u +%s)
+  for off in -1 0 1 2 3 4 5 6 7 8 9 10; do
+    ln -sf "$victim" "$art/discarded-$(date -u -d "@$((now + off))" +%Y%m%dT%H%M%SZ).patch.tmp"
+  done
+  CREW_ID=c1 run run_crew reap --discard feat/discard-tmp
+  [ "$status" -eq 0 ]
+  [ "$(cat "$victim")" = keep ]
+  [ ! -e "$wt_path" ]
+}
+
+@test "reap: --discard refuses a tree holding an untracked nested git repo (#836)" {
+  reap_discard_fixture discard-nest MERGED
+  git init -q "$wt_path/sub"
+  printf 'inner\n' >"$wt_path/sub/inner.txt"
+  git -C "$wt_path/sub" add inner.txt
+  git -C "$wt_path/sub" -c user.email=t@e -c user.name=t commit -q -m inner
+  CREW_ID=c1 run run_crew reap --discard feat/discard-nest
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-nest — it holds an embedded git repository"* ]]
+  [ -d "$wt_path/sub/.git" ]
+  [ -f "$wt_path/sub/inner.txt" ]
+  [ -z "$(find "$common/crew/artifacts" -name 'discarded-*' 2>/dev/null)" ]
+}
+
+@test "reap: --discard writes a standard patch whatever the operator's diff config (#836)" {
+  reap_discard_fixture discard-cfg MERGED
+  gcfg="$BATS_TEST_TMPDIR/global.gitconfig"
+  printf '[diff]\n\tnoprefix = true\n\tmnemonicPrefix = true\n[color]\n\tdiff = always\n' >"$gcfg"
+  GIT_CONFIG_GLOBAL="$gcfg" CREW_ID=c1 run run_crew reap --discard feat/discard-cfg
+  [ "$status" -eq 0 ]
+  patch=$(printf '%s\n' "$common"/crew/artifacts/feat/discard-cfg/discarded-*.patch)
+  fresh="$BATS_TEST_TMPDIR/discard-cfg-fresh"
+  git worktree add -q "$fresh" feat/discard-cfg
+  git -C "$fresh" apply --check "$patch"
+}
+
+@test "reap: --discard with the reap lock busy refuses instead of skipping (#836)" {
+  reap_discard_fixture discard-lock MERGED
+  mkdir -p "$common/crew/reap.lock.d"
+  echo $$ >"$common/crew/reap.lock.d/pid"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-lock --no-wait
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing --discard feat/discard-lock — another reap is running"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: an earlier session's MERGED PR does not vouch for commits past its head (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/xpast
+  wt_path="$BATS_TEST_TMPDIR/xpast-wt"
+  git worktree add -q "$wt_path" feat/xpast
+  wt_path=$(cd "$wt_path" && pwd -P)
+  git -C "$wt_path" commit -q --allow-empty -m later
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/xpast~1)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/xpast#s1-1" done "" "https://example.com/pr/5"
+  CREW_ID=c1 run_crew status "worker:feat/xpast#s2-2" failed "boom"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/xpast — its tip has commits past https://example.com/pr/5"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: a closed issue whose commits sit on a remote-tracking ref reclaims, keeping the branch (#836)" {
+  reap_issue_fixture issue-pushed CLOSED claim
+  git update-ref refs/remotes/origin/main main
+  git update-ref refs/remotes/origin/feat/issue-pushed refs/heads/feat/issue-pushed
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/issue-pushed (issue #77 CLOSED)"* ]]
+  [ ! -d "$wt_path" ]
+  git show-ref --verify --quiet refs/heads/feat/issue-pushed
 }
 
 @test "msg: an oversized JSON body stays parseable JSON" {

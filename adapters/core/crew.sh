@@ -2552,19 +2552,39 @@ HELP
     ;;
   reap)
     cat <<'HELP'
-usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S]
+usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH]
 
 Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
-elapsed time, is the gate: a done worker sits for as long as its PR takes.
+elapsed time, is the gate: a done worker sits for as long as its PR takes. The
+PR is the latest session's, else any earlier session of the branch or a past
+reap row, else `gh pr list --head`.
 
   --quiet     Suppress the per-worker notes
   --dry-run   Print what would be reclaimed, change nothing
   --no-wait   Do not wait out the idle threshold on a terminal lead
   --idle      Idle seconds before the idle-release phase kills the window (default 300)
+  --discard BRANCH
+              Save a finished worker's uncommitted state, then reclaim it
+
+--discard acts on one done/failed/exited worker whose PR is MERGED or CLOSED,
+or on a done/failed worker with no PR whose claimed issue(s) are all CLOSED. It
+saves tracked, staged and untracked changes as one patch, <crew dir>/artifacts/
+<branch>/discarded-<UTC ts>.patch (path printed; `git apply` it on the branch
+tip). Ignored files are not saved, and a staged version since overwritten in
+the work tree is not kept. The worktree is then removed the same anchored way,
+keeping the local branch. It refuses an open PR, a live engine pane, a
+non-terminal latest status, a busy reap lock and a tree holding an embedded git
+repository. Never implicit: plain reap and the stream's reaps never discard.
+
+Kept: an open PR, uncommitted changes, a live engine, a tip past the head of a
+PR that is not the latest session's own, or no PR with a done/failed worker
+whose claimed issue is not CLOSED, has no claim-issue row, or has commits on no
+remote and not patch-equivalent to the default branch.
 
 No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
 
   crew reap --dry-run
+  crew reap --discard feat/240-x
 HELP
     ;;
   git-baseline)
@@ -7621,6 +7641,9 @@ reap)
   quiet=""
   dry=""
   nowait=""
+  discard=""
+  discard_patch=""
+  discard_st=""
   idle=$release_grace
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -7635,8 +7658,16 @@ reap)
       idle="$2"
       shift
       ;;
+    --discard)
+      [ -n "${2:-}" ] || {
+        echo "crew: --discard needs a branch" >&2
+        exit 1
+      }
+      discard="$2"
+      shift
+      ;;
     *)
-      echo "crew: reap takes --quiet, --dry-run, --no-wait and --idle S (got '$1')" >&2
+      echo "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '$1')" >&2
       exit 1
       ;;
     esac
@@ -7657,11 +7688,18 @@ reap)
   # cwd still decides which worktree is kept.
   reap_cwd="$PWD"
   _wt_trusted_cwd "$common" || exit 1
-  [ -f "$log" ] || exit 0
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
   note() { [ -n "$quiet" ] || echo "crew reap: $1"; }
+  refuse() {
+    echo "crew reap: refusing --discard $discard — $1" >&2
+    exit 1
+  }
+  if [ ! -f "$log" ]; then
+    [ -z "$discard" ] || refuse "latest status is none"
+    exit 0
+  fi
 
   # _reap_procs — emit "pid<TAB>cwd" lines for every enumerable process (the
   # caller filters by cwd prefix and ancestor). Linux /proc only, which is fine:
@@ -7681,6 +7719,258 @@ reap)
       [ -n "$cwd" ] || continue
       printf '%s\t%s\n' "$pid" "$cwd"
     done
+  }
+
+  # _reap_find_pr — with pr "-", look the branch's PR up on GitHub: pr becomes
+  # its URL (pr_src fallback), or stays "-" when there is none. Status 1 sets why.
+  _reap_find_pr() {
+    local prs
+    [ "$pr" = "-" ] || return 0
+    pr_src=fallback
+    if ! prs=$(gh pr list --head "$branch" --state all --json url,state,headRefOid,isCrossRepository 2>/dev/null); then
+      why="could not list PRs for $branch"
+      return 1
+    fi
+    # A fork's PR on the same head name is not this branch's.
+    if [ -n "$prs" ] && ! pr=$(jq -er 'map(select(.isCrossRepository == false)) | first
+        | if . == null then "-"
+          elif (.url | type == "string" and test("^https://[^\\s]+/pull/[0-9]+$")) then .url
+          else error("not a PR url") end' <<<"$prs" 2>/dev/null); then
+      why="could not read PRs for $branch"
+      return 1
+    fi
+  }
+
+  # _reap_issue_closed — no PR: a done/failed branch whose claimed issues are
+  # all CLOSED. Sets issues, pr, pr_state, label and nopr; status 1 sets why.
+  _reap_issue_closed() {
+    local claimed n istate
+    local -a claimed_list
+    nopr="$state but no PR on the bus or GitHub"
+    case "$state" in
+    done | failed) ;;
+    *)
+      why="$nopr; only done/failed reclaim on a closed issue"
+      return 1
+      ;;
+    esac
+    if ! claimed=$(jq -s -r --arg b "$branch" '
+        map(select(.kind == "claim-issue" and .branch == $b and .issue != null) | .issue | tostring)
+        | unique | .[]' "$log" 2>/dev/null); then
+      why="$nopr; could not read the bus"
+      return 1
+    fi
+    if [ -z "$claimed" ]; then
+      why="$nopr; no claim-issue row"
+      return 1
+    fi
+    mapfile -t claimed_list <<<"$claimed"
+    issues=()
+    for n in "${claimed_list[@]}"; do
+      if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+        why="$nopr; claim-issue row names a non-numeric issue"
+        return 1
+      fi
+      istate=$(gh issue view "$n" --json state --jq .state 2>/dev/null || true)
+      if [ -z "$istate" ]; then
+        why="$nopr; could not read issue #$n"
+        return 1
+      fi
+      if [ "$istate" != CLOSED ]; then
+        why="$nopr; issue #$n is $istate"
+        return 1
+      fi
+      issues+=("$n")
+    done
+    pr=""
+    pr_state=ISSUE_CLOSED
+    label="issue #${issues[0]}"
+    for n in "${issues[@]:1}"; do
+      label+=", #$n"
+    done
+    label+=" CLOSED"
+  }
+
+  # _reap_remove — the anchored removal tail shared by the candidate loop and
+  # --discard. Reads the loop's branch wtpath admin state pr pr_state label
+  # mode issues, plus discard discard_patch discard_st (empty in plain reap);
+  # sets removed=1 on success. Always returns 0: callers run it
+  # bare, since a conditional call would switch set -e off inside it.
+  _reap_remove() {
+    removed=""
+    # Kill leftover processes reparented out of the pane but still rooted in this
+    # worktree (the #187 class: `yes` hogs reparented to systemd). Skip our own
+    # process and its ancestors; a dangling cwd (dir already gone) still matches
+    # by string. Runs BEFORE the --dry-run return so dry runs report it too.
+    ancestors="$$ $BASHPID"
+    p="$BASHPID"
+    while [ "$p" -gt 1 ]; do
+      pp=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null || true)
+      [ -n "$pp" ] || break
+      ancestors="$ancestors $pp"
+      p="$pp"
+    done
+    while IFS=$'\t' read -r rpid rcwd; do
+      [ -n "$rpid" ] || continue
+      case " $ancestors " in
+      *" $rpid "*) continue ;;
+      esac
+      case "$rcwd/" in
+      "$wtpath"/*) ;;
+      *) continue ;;
+      esac
+      if [ -n "$dry" ]; then
+        say "would kill pid $rpid (cwd $rcwd)"
+        continue
+      fi
+      kill "$rpid" 2>/dev/null || true
+      say "killed pid $rpid (cwd $rcwd)"
+    done <<PROCS
+$(_reap_procs)
+PROCS
+
+    # The resume record's path is keyed by the worktree's own realpath, so it
+    # must be computed while the directory still exists — before the removal (#556).
+    anchor="$(_worktree_anchor_path "$wtpath")"
+
+    if [ -n "$dry" ]; then
+      say "would reap $branch ($label) @ $wtpath"
+      say "would prune record $anchor"
+      return 0
+    fi
+
+    # Every scaffold artifact is untracked, and the re-check before the removal
+    # treats ANY status line as dirt — the dirt check above only declares them
+    # non-dirt so our own pipeline never pins a finished tree forever; each
+    # file must ALSO be moved out physically, or the re-check keeps the tree
+    # (feat/113-116-127-142 all sat blocked by untracked PLAN.md/SPEC.md
+    # alone). gtrash everything so a post-mortem can still recover it.
+    # --discard's patch already holds them, and its re-check compares
+    # against the status saved with it, so they stay put.
+    if [ -z "$discard" ]; then
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        scaffold=$(printf '%s' "$line" | sed -nE 's/^\?\? (.*)$/\1/p')
+        [ -n "$scaffold" ] || continue
+        gtrash put "$wtpath/$scaffold" >/dev/null 2>&1 || true
+      done <<SCAFFOLD
+$(_wt_status "$admin" "$wtpath" --untracked-files=all | grep -E "$reap_scaffold_re" || true)
+SCAFFOLD
+    fi
+    for wid in $(tmux list-windows -a -F '#{window_id} #{pane_current_path} #{@worktree}' 2>/dev/null |
+      awk -v p="$wtpath" '$2 == p || $3 == p {print $1}'); do
+      tmux kill-window -t "$wid" 2>/dev/null || true
+    done
+    # Remove anchored (#677): --git-dir=<common> discovers nothing through the
+    # tree's worker-writable .git, and --force skips git's clean-check child (a
+    # status run in the tree), so no git reads the tree's config or attributes.
+    # The re-checks just before it are the keep gates; a single --force still
+    # refuses a locked worktree. The cwd guard covers reap's remaining
+    # cwd-discovered calls (worktree list, show-ref, rev-parse).
+    if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
+      note "keeping $branch — git config drift"
+      return 0
+    fi
+    if ! _wt_gitlink_ok "$admin" "$wtpath"; then
+      say "keeping $branch — $tampered"
+      return 0
+    fi
+    # --force skips git's own submodule refusal, and the status below hides
+    # gitlinks: one staged since the first gate would go with its embedded repo.
+    if ! staged=$(_wt_git "$admin" "$wtpath" ls-files --stage); then
+      say "keeping $branch — could not read its index"
+      return 0
+    fi
+    if grep -q '^160000 ' <<<"$staged"; then
+      say "keeping $branch — it has submodules"
+      return 0
+    fi
+    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all); then
+      say "keeping $branch — git status failed"
+      return 0
+    fi
+    # A new path or state change after the --discard save (a killed process
+    # flushing on exit) is not in the patch, so it keeps the tree. Status lines
+    # carry no content: a later write to an already-dirty path goes unseen.
+    if [ -n "$discard" ]; then
+      if [ "$st" != "$discard_st" ]; then
+        say "keeping $branch — changed while saving"
+        return 0
+      fi
+    elif [ -n "$st" ]; then
+      say "keeping $branch — uncommitted changes"
+      return 0
+    fi
+    _wt_git_common "$common" worktree remove --force "$wtpath" >/dev/null 2>&1 || true
+    # Judge success by the observable outcome, not the exit status (#194). The
+    # removal never deletes the branch; reap deletes it below for a MERGED PR.
+    wtleft=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
+      removed=1
+      say "reaped $branch ($label${discard:+, discarded})"
+      # The record's worktree is gone, so prune it now (#556). `|| true`: a
+      # failed unlink (EACCES/EROFS) must not abort the reap row, branch delete
+      # and label release below.
+      rm -f -- "$anchor" || true
+      line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" --arg mode "$mode" \
+        --arg discard "$discard" --arg patch "$discard_patch" \
+        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}
+        + (if $mode == "issue" then {issues: $ARGS.positional} else {} end)
+        + (if $discard != "" then {discarded: $patch} else {} end)' --args "${issues[@]}")
+      _bus_append "$log" "$line"
+
+      # A squash-merged PR's branch is never an ancestor of main, so git
+      # still reads it as unmerged — delete it deliberately now that
+      # gh has confirmed the merge, but ONLY when the local tip is exactly
+      # the merged PR head. A resumed run or a human may have committed past
+      # the merge, and those commits would be orphaned by a forced delete
+      # (recoverable via reflog, but not by glance). Only a MERGED PR: a
+      # CLOSED PR's branch may hold work worth reviving, and a branch already
+      # deleted (a real merge or a prior reap) is a no-op. --discard keeps it:
+      # its patch applies to that branch's tip.
+      if [ -z "$discard" ] && [ "$mode" = pr ] && [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
+        pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
+        if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
+          if _wt_cfg_guard "$common"; then
+            _wt_git_common "$common" branch -D "$branch" >/dev/null 2>&1 || true
+          else
+            note "kept local branch $branch — git config drift"
+          fi
+        elif [ -z "$pr_head" ]; then
+          note "kept local branch $branch — could not verify the merged PR head"
+        else
+          note "kept local branch $branch — tip diverges from the merged PR head"
+        fi
+      fi
+
+      # Release the claim: drop `dispatched` from the issue(s) this PR
+      # closes. Best-effort — a Linear PR closes no GitHub issue, and any gh
+      # failure here must not block the sweep. The resolve call logs its own
+      # failure rather than swallowing it, so it can't be confused with "no
+      # closing issues" and leave the label stuck with no trace.
+      if [ "$mode" = issue ]; then
+        closing_issues="${issues[*]}"
+      elif ! closing_issues=$(gh pr view "$pr" --json closingIssuesReferences \
+        --jq '.closingIssuesReferences[].number' 2>&1); then
+        note "could not resolve closing issues for PR $pr ($branch): $closing_issues"
+        closing_issues=""
+      fi
+      for issue in $closing_issues; do
+        gh issue edit "$issue" --remove-label dispatched >/dev/null 2>&1 ||
+          note "could not remove the dispatched label from #$issue ($branch)"
+      done
+    elif [ ! -d "$admin" ]; then
+      # git validates the gitfile before deleting anything, so a gone admin dir
+      # means a real tree whose contents only partly went (e.g. a read-only
+      # subdir). It is no longer a worktree, so no later reap will see it.
+      say "keeping $branch — removal failed partway; $wtpath is no longer a worktree: tell the human (fix its permissions, then remove it)"
+      rm -f -- "$anchor" || true
+    elif ! _wt_gitlink_ok "$admin" "$wtpath"; then
+      say "keeping $branch — $tampered"
+    else
+      say "keeping $branch — worktree removal failed"
+    fi
   }
 
   # CREW_RATE_AUTOSWEEP: unset/1 (default) = detached async sweep; sync =
@@ -7739,6 +8029,8 @@ reap)
     autosweep=1
     ;;
   esac
+  # --discard acts on one branch only.
+  [ -z "$discard" ] || autosweep=0
   case "$autosweep" in
   0) ;;
   *)
@@ -7761,11 +8053,14 @@ reap)
   reap_lock="$dir/reap.lock.d"
   waited=0
   until _lock_acquire "$reap_lock" "$$"; do
+    # A skipped --discard would read as done, its state neither saved nor reclaimed.
     if [ -n "$nowait" ]; then
+      [ -z "$discard" ] || refuse "another reap is running"
       note "another reap is running — skipped"
       exit 0
     fi
     if [ "$waited" -ge 120 ]; then
+      [ -z "$discard" ] || refuse "another reap is still running after 120s"
       note "another reap is still running after 120s — skipped"
       exit 0
     fi
@@ -7797,6 +8092,191 @@ reap)
   # real file merely named e.g. `src/PLAN.md` still counts as dirt.
   reap_scaffold_re='^\?\? (WORKER_TASK\.md|SPEC\.md|PLAN\.md|DECOMPOSITION\.md|REVIEW_NOTES\.md|PLAN_ROUND[0-9]+\.md|docs/superpowers/plans/[^/]*\.md)$'
   tampered="its .git changed during the reap; possible tampering: tell the human"
+
+  # _reap_latest [branch] — latest status per worker across every crew; keep
+  # the ones in a terminal state (the idle-release pass's set too — see
+  # $reap_terminal_states).
+  # pr_url is carried forward because the `done` event itself drops it (same
+  # reason roster does this). Fresh claims join the fold here only (not
+  # idle-release permanence, not dispatch retract): a claim-latest session has
+  # no body.state so it masks but never qualifies; a claim's age must be
+  # nonnegative and under $claim_mask_ttl to mask at all — a future-dated
+  # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
+  # must not win the fold forever, and claims older than $claim_mask_ttl drop
+  # out so a prior terminal status can resurface.
+  # pr_open is a candidate here only, never for idle release. `later`: some
+  # session of the branch posted after the terminal status, so it is not idle.
+  # pr_src: "own" when the PR is the latest session's, else "fallback" — an
+  # earlier session's or a reap row's PR predates any later session's commits.
+  # With a branch: that branch's row whatever its state ("none" when no
+  # status), for --discard.
+  _reap_latest() {
+    jq -s -r --arg only "${1:-}" --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
+        def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
+        (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
+            | {branch: (.from | wid_branch), ts})
+          | group_by(.branch) | map({key: .[0].branch, value: (map(.ts) | max)}) | from_entries) as $last
+        # The latest session of a re-dispatched branch may not carry the PR: use the
+        # newest status pr_url of any session, else the newest reap row PR.
+        | ((map(select(.kind == "reap" and ((.pr // "") | type == "string" and . != ""))
+                | {branch, ts, pr}) | group_by(.branch)
+              | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)
+            + (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and .body.pr_url != null)
+                | {branch: (.from | wid_branch), ts, pr: .body.pr_url}) | group_by(.branch)
+              | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)) as $prs
+        | (map(select(
+                ((.from // "") | startswith("worker:"))
+                and (
+                  .kind == "status"
+                  or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
+                )))
+            | group_by(.from) | map(
+                (max_by(.ts)) as $latest
+                | {branch: ($latest.from | wid_branch),
+                   session: $latest.from,
+                   ts: $latest.ts,
+                   state: $latest.body.state,
+                   pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+            | group_by(.branch) | map(sort_by(.ts) | last)
+            | if $only == "" then map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
+              else map(select(.branch == $only)) end
+          )
+        | .[] | [.branch, (.state // "none"), (.pr_url // $prs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end),
+            (if .pr_url != null then "own" else "fallback" end)] | @tsv' "$log"
+  }
+
+  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
+  # first offender, when a component from $dir/artifacts down to the branch's
+  # leaf is a symlink or exists as a non-directory.
+  _artifacts_dir_bad() {
+    local p="$dir/artifacts" part
+    local -a parts
+    IFS=/ read -ra parts <<<"$1"
+    for part in "" "${parts[@]}"; do
+      p="$p${part:+/$part}"
+      if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
+        printf '%s\n' "$p"
+        return 0
+      fi
+    done
+    return 1
+  }
+
+  # --discard <branch>: a human's explicit call to drop a finished worker's
+  # uncommitted state. Every refusal below touches nothing; the state is saved
+  # as a patch before the shared removal tail runs.
+  if [ -n "$discard" ]; then
+    command -v gh >/dev/null || refuse "needs gh"
+    # --branch also expands @{-N}, so the name must come back unchanged.
+    canon=$(git check-ref-format --branch "$discard" 2>/dev/null) || refuse "not a valid branch name"
+    [ "$canon" = "$discard" ] || refuse "not a valid branch name"
+    branch="$discard"
+    wtpath=$(git worktree list --porcelain |
+      awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
+    [ -n "$wtpath" ] && [ -d "$wtpath" ] || refuse "no worktree for it"
+    latest=$(_reap_latest "$branch") || refuse "could not read the bus"
+    state=none
+    pr="-"
+    [ -z "$latest" ] || IFS=$'\t' read -r _ state pr _ _ _ <<<"$latest"
+    case "$state" in
+    done | failed | exited) ;;
+    *) refuse "latest status is $state" ;;
+    esac
+    live=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}' 2>/dev/null || true)
+    while IFS=$'\t' read -r _ _ pcmd ppath; do
+      [ -n "$pcmd" ] || continue
+      ! _pane_is_engine_at "$pcmd $ppath" "$wtpath" || refuse "an engine is running there"
+    done <<<"$live"
+    case "$reap_cwd/" in
+    "$wtpath"/*) refuse "it is the current worktree" ;;
+    esac
+    mode="pr"
+    issues=()
+    _reap_find_pr || refuse "$why"
+    if [ "$pr" = "-" ]; then
+      mode=issue
+      _reap_issue_closed || refuse "$why"
+    else
+      pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
+      case "$pr_state" in
+      MERGED | CLOSED) ;;
+      "") refuse "could not read PR state ($pr)" ;;
+      *) refuse "PR $pr_state" ;;
+      esac
+      label="$pr_state"
+    fi
+    admin=$(_wt_admin_dir "$common" "$wtpath") || refuse "no git admin dir for $wtpath"
+    _wt_gitlink_ok "$admin" "$wtpath" || refuse "its .git does not point at its git admin dir"
+    if [ -e "$admin/config.worktree" ] || [ -L "$admin/config.worktree" ]; then
+      refuse "$admin/config.worktree exists"
+    fi
+    staged=$(_wt_git "$admin" "$wtpath" ls-files --stage) || refuse "could not read its index"
+    ! grep -q '^160000 ' <<<"$staged" || refuse "it has submodules"
+    { _wt_cfg_guard "$common" "$admin" && _wt_cfg_guard_cwd "$common"; } || refuse "git config drift"
+
+    pre_st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || refuse "git status failed"
+    discard_patch="$dir/artifacts/$branch/discarded-$(date -u +%Y%m%dT%H%M%SZ).patch"
+    if [ -n "$dry" ]; then
+      if [ -n "$pre_st" ]; then
+        say "would save uncommitted state to $discard_patch"
+      else
+        say "no uncommitted changes to save"
+      fi
+      say "would reap $branch ($label) @ $wtpath"
+      exit 0
+    fi
+    # A throwaway index seeded from the branch tip: `add -A` then stages
+    # tracked, staged and untracked non-ignored files without touching the
+    # worker's own index. The diff captures the work tree as `add -A` sees it:
+    # a staged version since overwritten in the work tree is not kept.
+    # $dir is ours, so the temp dir and the patch built in it are too.
+    tmpidx=$(mktemp -d "$dir/discard.XXXXXX") || refuse "could not save uncommitted state"
+    discard_fail() {
+      rm -rf -- "$tmpidx"
+      refuse "$1"
+    }
+    if ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" read-tree "refs/heads/$branch" >/dev/null 2>&1 ||
+      ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" add -A >/dev/null 2>&1; then
+      discard_fail "could not save uncommitted state"
+    fi
+    # add -A stages an untracked nested repo as a bare gitlink: the patch would
+    # hold only its commit id while the removal deletes its contents.
+    tmpstage=$(GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" ls-files --stage) ||
+      discard_fail "could not save uncommitted state"
+    ! grep -q '^160000 ' <<<"$tmpstage" || discard_fail "it holds an embedded git repository"
+    # Pinned diff options: the operator's diff.* and color.* config would
+    # otherwise reshape the patch so `git apply` rejects it.
+    GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" diff --cached --binary --full-index \
+      --no-color --src-prefix=a/ --dst-prefix=b/ --no-relative \
+      --no-ext-diff --no-textconv "refs/heads/$branch" -- >"$tmpidx/patch" 2>/dev/null ||
+      discard_fail "could not save uncommitted state"
+    if [ -s "$tmpidx/patch" ]; then
+      # artifacts/<branch> is worker-writable: a symlink on it redirects the patch.
+      ! bad=$(_artifacts_dir_bad "$branch") || discard_fail "$bad is a symlink or not a directory"
+      mkdir -p -- "$dir/artifacts/$branch" || discard_fail "could not save uncommitted state"
+      ! bad=$(_artifacts_dir_bad "$branch") || discard_fail "$bad is a symlink or not a directory"
+      if [ -e "$discard_patch" ] || [ -L "$discard_patch" ]; then
+        discard_fail "$discard_patch already exists"
+      fi
+      mv -nT -- "$tmpidx/patch" "$discard_patch" 2>/dev/null || true
+      if [ -e "$tmpidx/patch" ] || [ ! -f "$discard_patch" ] || [ -L "$discard_patch" ]; then
+        discard_fail "could not save uncommitted state"
+      fi
+      say "saved uncommitted state to $discard_patch"
+    else
+      discard_patch=""
+      say "no uncommitted changes to save"
+    fi
+    rm -rf -- "$tmpidx"
+    if ! post_st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || [ "$post_st" != "$pre_st" ]; then
+      say "keeping $branch — changed while saving"
+      exit 1
+    fi
+    discard_st=$pre_st
+    _reap_remove
+    [ -n "$removed" ] || exit 1
+    exit 0
+  fi
 
   # Idle release: a session that reached a terminal state but whose window is
   # still sitting there keeps the tree occupied, and the PR gate below deliberately
@@ -7841,40 +8321,7 @@ EOF
 $(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}' 2>/dev/null || true)
 EOF
 
-  # Latest status per worker across every crew; keep the ones in a terminal
-  # state (same set the idle-release pass above uses — see $reap_terminal_states).
-  # pr_url is carried forward because the `done` event itself drops it (same
-  # reason roster does this). Fresh claims join the fold here only (not
-  # idle-release permanence, not dispatch retract): a claim-latest session has
-  # no body.state so it masks but never qualifies; a claim's age must be
-  # nonnegative and under $claim_mask_ttl to mask at all — a future-dated
-  # timestamp (clock skew, bad fixture, bad actor) yields a negative age and
-  # must not win the fold forever, and claims older than $claim_mask_ttl drop
-  # out so a prior terminal status can resurface.
-  # pr_open is a candidate here only, never for idle release. `later`: some
-  # session of the branch posted after the terminal status, so it is not idle.
-  candidates=$(jq -s -r --argjson terminal "$reap_terminal_states" --argjson claim_ttl "$claim_mask_ttl" '
-      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-      (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
-          | {branch: (.from | wid_branch), ts})
-        | group_by(.branch) | map({key: .[0].branch, value: (map(.ts) | max)}) | from_entries) as $last
-      | (map(select(
-              ((.from // "") | startswith("worker:"))
-              and (
-                .kind == "status"
-                or (.kind == "claim" and ((((now*1000) - .ts) / 1000) as $age | $age >= 0 and $age < $claim_ttl))
-              )))
-          | group_by(.from) | map(
-              (max_by(.ts)) as $latest
-              | {branch: ($latest.from | wid_branch),
-                 session: $latest.from,
-                 ts: $latest.ts,
-                 state: $latest.body.state,
-                 pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
-          | group_by(.branch) | map(sort_by(.ts) | last)
-          | map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
-        )
-      | .[] | [.branch, .state, (.pr_url // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log")
+  candidates=$(_reap_latest)
   [ -n "$candidates" ] || {
     note "nothing done to reap"
     exit 0
@@ -7887,28 +8334,56 @@ EOF
   _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state pr cand_ts later; do
+  while IFS=$'\t' read -r branch state pr cand_ts later pr_src; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
     [ -n "$wtpath" ] && [ -d "$wtpath" ] || continue
 
-    if [ "$pr" = "-" ]; then
-      note "keeping $branch — $state but no PR on the bus"
+    mode="pr"
+    issues=()
+    if ! _reap_find_pr; then
+      note "keeping $branch — $why"
       continue
     fi
-    pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
-    case "$pr_state" in
-    MERGED | CLOSED) ;;
-    "")
-      note "keeping $branch — could not read PR state ($pr)"
-      continue
-      ;;
-    *)
-      note "keeping $branch — PR $pr_state"
-      continue
-      ;;
-    esac
+    if [ "$pr" = "-" ]; then
+      mode=issue
+      if ! _reap_issue_closed; then
+        note "keeping $branch — $why"
+        continue
+      fi
+    else
+      pr_state=$(gh pr view "$pr" --json state --jq .state 2>/dev/null || true)
+      case "$pr_state" in
+      MERGED | CLOSED) ;;
+      "")
+        note "keeping $branch — could not read PR state ($pr)"
+        continue
+        ;;
+      *)
+        note "keeping $branch — PR $pr_state"
+        continue
+        ;;
+      esac
+      label="$pr_state"
+      # A PR from an earlier session, a reap row or GitHub predates any later
+      # session's work: it vouches only for a tip at or behind its head.
+      if [ "$pr_src" != own ]; then
+        pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
+        if [ -z "$pr_head" ]; then
+          note "keeping $branch — could not verify $pr's head"
+          continue
+        fi
+        if ! _wt_cfg_guard "$common"; then
+          note "keeping $branch — git config drift"
+          continue
+        fi
+        if ! _wt_git_common "$common" merge-base --is-ancestor "refs/heads/$branch" "$pr_head" 2>/dev/null; then
+          note "keeping $branch — its tip has commits past $pr"
+          continue
+        fi
+      fi
+    fi
 
     engine_panes=()
     while IFS=$'\t' read -r pwin ppane pcmd ppath; do
@@ -8006,6 +8481,41 @@ PANES
       continue
     fi
 
+    # No PR vouches for the branch, so every commit must already be on a
+    # remote or patch-equivalent to one on the default branch.
+    if [ "$mode" = issue ]; then
+      if ! _wt_cfg_guard "$common"; then
+        note "keeping $branch — git config drift"
+        continue
+      fi
+      if ! def=$(_wt_git_common "$common" symbolic-ref -q refs/remotes/origin/HEAD); then
+        def=""
+        if _wt_git_common "$common" show-ref --verify --quiet refs/remotes/origin/main; then
+          def=refs/remotes/origin/main
+        fi
+      fi
+      if [ -z "$def" ]; then
+        note "keeping $branch — $nopr; no origin default branch ref"
+        continue
+      fi
+      if ! unpushed=$(_wt_git_common "$common" rev-list "refs/heads/$branch" --not --remotes) ||
+        ! cherry=$(_wt_git_common "$common" cherry "$def" "refs/heads/$branch"); then
+        note "keeping $branch — $nopr; could not compare its commits to ${def#refs/remotes/}"
+        continue
+      fi
+      ahead=0
+      while read -r mark sha; do
+        [ "$mark" = + ] || continue
+        if grep -qxF -- "$sha" <<<"$unpushed"; then
+          ahead=$((ahead + 1))
+        fi
+      done <<<"$cherry"
+      if [ "$ahead" -gt 0 ]; then
+        note "keeping $branch — $nopr; $ahead commit(s) not on any remote and not patch-equivalent to ${def#refs/remotes/}"
+        continue
+      fi
+    fi
+
     # Kill idle-engine windows, role panes with them. The first sample is
     # seconds stale by now (gh, git status): a pane that changed at all, or a
     # branch that posted since, keeps everything.
@@ -8045,161 +8555,8 @@ PANES
       done < <(printf '%s\n' "${idle_windows[@]}" | sort -u)
     fi
 
-    # Kill leftover processes reparented out of the pane but still rooted in this
-    # worktree (the #187 class: `yes` hogs reparented to systemd). Skip our own
-    # process and its ancestors; a dangling cwd (dir already gone) still matches
-    # by string. Runs BEFORE the --dry-run continue so dry runs report it too.
-    ancestors="$$ $BASHPID"
-    p="$BASHPID"
-    while [ "$p" -gt 1 ]; do
-      pp=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null || true)
-      [ -n "$pp" ] || break
-      ancestors="$ancestors $pp"
-      p="$pp"
-    done
-    while IFS=$'\t' read -r rpid rcwd; do
-      [ -n "$rpid" ] || continue
-      case " $ancestors " in
-      *" $rpid "*) continue ;;
-      esac
-      case "$rcwd/" in
-      "$wtpath"/*) ;;
-      *) continue ;;
-      esac
-      if [ -n "$dry" ]; then
-        say "would kill pid $rpid (cwd $rcwd)"
-        continue
-      fi
-      kill "$rpid" 2>/dev/null || true
-      say "killed pid $rpid (cwd $rcwd)"
-    done <<PROCS
-$(_reap_procs)
-PROCS
-
-    # The resume record's path is keyed by the worktree's own realpath, so it
-    # must be computed while the directory still exists — before the removal (#556).
-    anchor="$(_worktree_anchor_path "$wtpath")"
-
-    if [ -n "$dry" ]; then
-      say "would reap $branch ($pr_state) @ $wtpath"
-      say "would prune record $anchor"
-      continue
-    fi
-
-    # Every scaffold artifact is untracked, and the re-check before the removal
-    # treats ANY status line as dirt — the dirt check above only declares them
-    # non-dirt so our own pipeline never pins a finished tree forever; each
-    # file must ALSO be moved out physically, or the re-check keeps the tree
-    # (feat/113-116-127-142 all sat blocked by untracked PLAN.md/SPEC.md
-    # alone). gtrash everything so a post-mortem can still recover it.
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      scaffold=$(printf '%s' "$line" | sed -nE 's/^\?\? (.*)$/\1/p')
-      [ -n "$scaffold" ] || continue
-      gtrash put "$wtpath/$scaffold" >/dev/null 2>&1 || true
-    done <<SCAFFOLD
-$(_wt_status "$admin" "$wtpath" --untracked-files=all | grep -E "$reap_scaffold_re" || true)
-SCAFFOLD
-    for wid in $(tmux list-windows -a -F '#{window_id} #{pane_current_path} #{@worktree}' 2>/dev/null |
-      awk -v p="$wtpath" '$2 == p || $3 == p {print $1}'); do
-      tmux kill-window -t "$wid" 2>/dev/null || true
-    done
-    # Remove anchored (#677): --git-dir=<common> discovers nothing through the
-    # tree's worker-writable .git, and --force skips git's clean-check child (a
-    # status run in the tree), so no git reads the tree's config or attributes.
-    # The re-checks just before it are the keep gates; a single --force still
-    # refuses a locked worktree. The cwd guard covers reap's remaining
-    # cwd-discovered calls (worktree list, show-ref, rev-parse).
-    if ! _wt_cfg_guard "$common" "$admin" || ! _wt_cfg_guard_cwd "$common"; then
-      note "keeping $branch — git config drift"
-      continue
-    fi
-    if ! _wt_gitlink_ok "$admin" "$wtpath"; then
-      say "keeping $branch — $tampered"
-      continue
-    fi
-    # --force skips git's own submodule refusal, and the status below hides
-    # gitlinks: one staged since the first gate would go with its embedded repo.
-    if ! staged=$(_wt_git "$admin" "$wtpath" ls-files --stage); then
-      say "keeping $branch — could not read its index"
-      continue
-    fi
-    if grep -q '^160000 ' <<<"$staged"; then
-      say "keeping $branch — it has submodules"
-      continue
-    fi
-    if ! st=$(_wt_status "$admin" "$wtpath" --untracked-files=all); then
-      say "keeping $branch — git status failed"
-      continue
-    fi
-    if [ -n "$st" ]; then
-      say "keeping $branch — uncommitted changes"
-      continue
-    fi
-    _wt_git_common "$common" worktree remove --force "$wtpath" >/dev/null 2>&1 || true
-    # Judge success by the observable outcome, not the exit status (#194). The
-    # removal never deletes the branch; reap deletes it below for a MERGED PR.
-    wtleft=$(git worktree list --porcelain |
-      awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
-    if [ -z "$wtleft" ] && [ ! -e "$wtpath" ]; then
-      reaped=$((reaped + 1))
-      say "reaped $branch ($pr_state)"
-      # The record's worktree is gone, so prune it now (#556). `|| true`: a
-      # failed unlink (EACCES/EROFS) must not abort the reap row, branch delete
-      # and label release below.
-      rm -f -- "$anchor" || true
-      line=$(jq -nc --arg branch "$branch" --arg pr "$pr" --arg pr_state "$pr_state" --arg wt "$wtpath" \
-        '{ts:(now*1000|floor), kind:"reap", branch:$branch, pr:$pr, pr_state:$pr_state, worktree:$wt}')
-      _bus_append "$log" "$line"
-
-      # A squash-merged PR's branch is never an ancestor of main, so git
-      # still reads it as unmerged — delete it deliberately now that
-      # gh has confirmed the merge, but ONLY when the local tip is exactly
-      # the merged PR head. A resumed run or a human may have committed past
-      # the merge, and those commits would be orphaned by a forced delete
-      # (recoverable via reflog, but not by glance). Only a MERGED PR: a
-      # CLOSED PR's branch may hold work worth reviving, and a branch already
-      # deleted (a real merge or a prior reap) is a no-op.
-      if [ "$pr_state" = MERGED ] && git show-ref --verify --quiet "refs/heads/$branch"; then
-        pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
-        if [ -n "$pr_head" ] && [ "$(git rev-parse "refs/heads/$branch")" = "$pr_head" ]; then
-          if _wt_cfg_guard "$common"; then
-            _wt_git_common "$common" branch -D "$branch" >/dev/null 2>&1 || true
-          else
-            note "kept local branch $branch — git config drift"
-          fi
-        elif [ -z "$pr_head" ]; then
-          note "kept local branch $branch — could not verify the merged PR head"
-        else
-          note "kept local branch $branch — tip diverges from the merged PR head"
-        fi
-      fi
-
-      # Release the claim: drop `dispatched` from the issue(s) this PR
-      # closes. Best-effort — a Linear PR closes no GitHub issue, and any gh
-      # failure here must not block the sweep. The resolve call logs its own
-      # failure rather than swallowing it, so it can't be confused with "no
-      # closing issues" and leave the label stuck with no trace.
-      if ! closing_issues=$(gh pr view "$pr" --json closingIssuesReferences \
-        --jq '.closingIssuesReferences[].number' 2>&1); then
-        note "could not resolve closing issues for PR $pr ($branch): $closing_issues"
-        closing_issues=""
-      fi
-      for issue in $closing_issues; do
-        gh issue edit "$issue" --remove-label dispatched >/dev/null 2>&1 ||
-          note "could not remove the dispatched label from #$issue ($branch)"
-      done
-    elif [ ! -d "$admin" ]; then
-      # git validates the gitfile before deleting anything, so a gone admin dir
-      # means a real tree whose contents only partly went (e.g. a read-only
-      # subdir). It is no longer a worktree, so no later reap will see it.
-      say "keeping $branch — removal failed partway; $wtpath is no longer a worktree: tell the human (fix its permissions, then remove it)"
-      rm -f -- "$anchor" || true
-    elif ! _wt_gitlink_ok "$admin" "$wtpath"; then
-      say "keeping $branch — $tampered"
-    else
-      say "keeping $branch — worktree removal failed"
-    fi
+    _reap_remove
+    [ -z "$removed" ] || reaped=$((reaped + 1))
   done <<EOF
 $candidates
 EOF
