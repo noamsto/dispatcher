@@ -2835,6 +2835,33 @@ EOF
   grep -qF -- 'http://halo.test:13305/v1/models' "$STUB_LOG"
 }
 
+@test "local lane: effortThinking overrides the pi --thinking level for a lead" {
+  stub_launch_bins
+  local_lane_fixture ',"reasoning":true,"thinkingFormat":"qwen-chat-template","effortThinking":{"low":"off"}'
+  run run_dispatch trivial "$LOCAL_ID" --agent pi --effort low --crew-id c1 42 "t"
+  [ "$status" -eq 0 ]
+  run grep -F -- "--model $LOCAL_ID --thinking off --session-id" <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
+@test "local lane: an effort effortThinking does not name keeps the current mapping" {
+  stub_launch_bins
+  local_lane_fixture ',"effortThinking":{"low":"off"}'
+  run run_dispatch trivial "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 0 ]
+  run grep -F -- "--model $LOCAL_ID --thinking medium --session-id" <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
+@test "local lane: a local role pane takes effortThinking too" {
+  stub_launch_bins
+  local_lane_fixture ',"effortThinking":{"low":"off"}'
+  run run_dispatch standard gpt-5.6-sol --agent codex --ignore-map --roles "critic=pi:$LOCAL_ID@low" --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 0 ]
+  run grep -F -- "pi --name iris-critic --model $LOCAL_ID --thinking off" <(launch_log)
+  [ "$status" -eq 0 ]
+}
+
 @test "local lane: a tier outside the entry is refused; --ignore-map admits it" {
   local_lane_fixture
   DISPATCH_PRECHECK=1 run run_dispatch deep "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"

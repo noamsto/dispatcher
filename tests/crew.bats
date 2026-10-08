@@ -904,6 +904,19 @@ EOF
   [ ! -e "$WORKER/models.json" ]
 }
 
+@test "pi-agent-dir: models.json carries the declared reasoning fields only" {
+  _pi_fixture
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  cat >"$XDG_CONFIG_HOME/dispatcher/settings.json" <<'EOF'
+{"localModels": {
+  "lemonade/R": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 4096, "reasoning": true, "thinkingFormat": "qwen-chat-template", "thinkingLevelMap": {"minimal": null}, "samplingParams": {"temperature": 0.6}, "samplingParamsByThinkingLevel": {"off": {"temperature": 0.7}}, "effortThinking": {"low": "off"}},
+  "lemonade/P": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 2048}
+}}
+EOF
+  run_crew pi-agent-dir >/dev/null
+  jq -e '.providers.lemonade.models == [{id: "P", contextWindow: 2048}, {id: "R", contextWindow: 4096, reasoning: true, compat: {thinkingFormat: "qwen-chat-template"}, thinkingLevelMap: {minimal: null}, samplingParams: {temperature: 0.6}, samplingParamsByThinkingLevel: {off: {temperature: 0.7}}}]' "$WORKER/models.json"
+}
+
 @test "pi-agent-dir: invalid dispatcher settings refuse to seed models.json" {
   _pi_fixture
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"

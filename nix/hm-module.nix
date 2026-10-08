@@ -26,7 +26,9 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
-    // lib.optionalAttrs (cfg.localModels != null) {inherit (cfg) localModels;};
+    // lib.optionalAttrs (cfg.localModels != null) {
+      localModels = lib.mapAttrs (_: lib.filterAttrs (_: v: v != null)) cfg.localModels;
+    };
   localModelKeyValid = k:
     builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*" k
     != null
@@ -34,6 +36,12 @@ self: {
   badLocalModelKeys =
     lib.optionals (cfg.localModels != null)
     (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
+  effortRungs = ["low" "medium" "high" "xhigh" "max"];
+  badEffortThinking = lib.optionals (cfg.localModels != null) (lib.concatMap
+    (id:
+      lib.optionals (cfg.localModels.${id}.effortThinking != null)
+      (map (k: "${id}.effortThinking.${k}") (lib.subtractLists effortRungs (builtins.attrNames cfg.localModels.${id}.effortThinking))))
+    (builtins.attrNames cfg.localModels));
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -135,6 +143,38 @@ in {
             default = ["trivial" "standard"];
             description = "Tiers this model may serve.";
           };
+          reasoning = lib.mkOption {
+            type = lib.types.nullOr lib.types.bool;
+            default = null;
+            description = "Whether the model reasons; pi sends no thinking control without it.";
+          };
+          thinkingFormat = lib.mkOption {
+            type = lib.types.nullOr lib.types.nonEmptyStr;
+            default = null;
+            example = "qwen-chat-template";
+            description = "pi's compat.thinkingFormat, e.g. `qwen-chat-template` or `qwen`.";
+          };
+          thinkingLevelMap = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf (lib.types.nullOr lib.types.str));
+            default = null;
+            description = "pi thinking level to provider value; null hides a level. Passed through.";
+          };
+          samplingParams = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf lib.types.anything);
+            default = null;
+            description = "pi samplingParams, passed through.";
+          };
+          samplingParamsByThinkingLevel = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf (lib.types.attrsOf lib.types.anything));
+            default = null;
+            description = "pi samplingParamsByThinkingLevel, passed through.";
+          };
+          effortThinking = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf (lib.types.enum ["off" "minimal" "low" "medium" "high" "xhigh" "max"]));
+            default = null;
+            example = {low = "off";};
+            description = "Dispatch `--effort` rung to the pi thinking level launched; unlisted rungs map unchanged.";
+          };
         };
       }));
       default = null;
@@ -149,8 +189,9 @@ in {
         ids `<provider>/<model>`; a malformed key or an `openrouter` provider
         fails the build. Size `maxConcurrent` for the endpoint's other
         consumers (chat bots, interactive sessions), which dispatch does not
-        count. Set, each declared entry pins all four fields in the locked
-        settings layer, so the user settings file cannot change them; it can
+        count. Set, each declared entry pins the fields it sets in the locked
+        settings layer, so the user settings file cannot change them (object
+        fields still merge per key with the user file's entry); it can
         still add other ids (the locked layer only governs the ids it
         declares). Unset, the key is left out and the user file governs alone.
       '';
@@ -232,6 +273,10 @@ in {
       {
         assertion = badLocalModelKeys == [];
         message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badEffortThinking == [];
+        message = "programs.dispatcher.localModels: invalid effortThinking rung(s) ${lib.concatStringsSep ", " badEffortThinking} -- rungs are ${lib.concatStringsSep ", " effortRungs}; dispatch-config would refuse them at runtime, taking every dispatch down.";
       }
     ];
 

@@ -531,6 +531,16 @@ ROWS
 {"lemonade/q:7b":{$ok}}|lemonade/q:7b
 {"qwen":{$ok}}|qwen
 {"lemonade/q":{"contextWindow":8192}}|lemonade/q.baseUrl
+{"lemonade/q":{$ok,"reasoning":"yes"}}|lemonade/q.reasoning
+{"lemonade/q":{$ok,"thinkingFormat":7}}|lemonade/q.thinkingFormat
+{"lemonade/q":{$ok,"thinkingLevelMap":[]}}|lemonade/q.thinkingLevelMap
+{"lemonade/q":{$ok,"thinkingLevelMap":{"high":5}}}|lemonade/q.thinkingLevelMap
+{"lemonade/q":{$ok,"samplingParamsByThinkingLevel":{"off":0.7}}}|lemonade/q.samplingParamsByThinkingLevel
+{"lemonade/q":{$ok,"samplingParams":"hot"}}|lemonade/q.samplingParams
+{"lemonade/q":{$ok,"samplingParamsByThinkingLevel":1}}|lemonade/q.samplingParamsByThinkingLevel
+{"lemonade/q":{$ok,"effortThinking":{"low":false}}}|lemonade/q.effortThinking
+{"lemonade/q":{$ok,"effortThinking":{"ultra":"off"}}}|lemonade/q.effortThinking
+{"lemonade/q":{$ok,"effortThinking":{"low":"off; id"}}}|lemonade/q.effortThinking
 {"lemonade/q":{"baseUrl":"ftp://x","contextWindow":8192}}|lemonade/q.baseUrl
 {"lemonade/q":{"baseUrl":"http://h:1/v1/","contextWindow":8192}}|lemonade/q.baseUrl
 {"lemonade/q":{"baseUrl":"http://h:1/v1"}}|lemonade/q.contextWindow
@@ -544,7 +554,7 @@ ROWS
 {"lemonade/a":{$ok},"lemonade/b":{"baseUrl":"http://other:1/v1","contextWindow":8192}}|lemonade/b
 []|localModels
 EOF
-  finish_rows 15
+  finish_rows 25
 }
 
 @test "a baked build ignores DISPATCH_LOCKED_SETTINGS, warning when it differs" {

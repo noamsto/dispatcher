@@ -306,9 +306,26 @@ a locked entry winning per field:
 
 `baseUrl` is `http(s)://…` with no trailing slash; `maxConcurrent` defaults to
 `1` and `tiers` to `trivial` + `standard`. Declare entries in the locked
-home-manager layer (`programs.dispatcher.localModels`): the option pins all four
-fields of each id it declares, so a stray user file can't widen the cap or the
-tiers. The user file can still add other ids.
+home-manager layer (`programs.dispatcher.localModels`): the option pins every
+field set on each id it declares, so a stray user file can't widen the cap or
+the tiers. The user file can still add other ids.
+
+Optional thinking fields (all omitted from `models.json` when unset). Without
+`reasoning`, pi treats the model as non-reasoning and sends no thinking control,
+so `--effort` never reaches it and a Qwen chat template thinks at full depth:
+- `reasoning` (bool) and `thinkingFormat` (string; rendered as pi's
+  `compat.thinkingFormat`, e.g. `qwen-chat-template` sends
+  `chat_template_kwargs.enable_thinking`, `qwen` a top-level `enable_thinking`).
+  Qwen's flag is on/off: on for every pi level but `off`.
+- `thinkingLevelMap`, `samplingParams`, `samplingParamsByThinkingLevel`
+  (objects, passed through to pi).
+- `effortThinking`: dispatch `--effort` rung (`low` … `max`) to the pi
+  `--thinking` level launched, for a local lead and a local role; unlisted
+  rungs map unchanged. The effort on the bus stays the dispatch effort.
+
+This lane's recommended entry adds `"reasoning": true, "thinkingFormat":
+"qwen-chat-template", "effortThinking": {"low": "off"}`: `--effort low` runs
+with thinking off, every other rung with it on.
 
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
