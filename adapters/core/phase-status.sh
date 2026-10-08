@@ -52,7 +52,11 @@
 #
 # Accepted imprecision, on purpose: a phase names what a call was attempting,
 # not its outcome (a failed `git push` still marks `pr`), and two parallel tool
-# calls can both post one phase.
+# calls can both post one phase. It is a read of the command string, not a shell:
+# an operand assembled from a variable (`bats $t`) is not classified, a
+# here-document body is skipped rather than parsed (see classify_command), and a
+# command hidden inside another program's argument is invisible — each of those
+# costs a missed phase, never a wrong one, until the next transition.
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
@@ -100,6 +104,10 @@ when='' cmd='' path='' cwd=''
 # @sh owns the quoting, so a multi-line command survives intact; nothing here
 # came from outside the jq program that produced it.
 eval "$assign"
+# Resolve the session directory before classifying: the plan-doc match is against
+# paths under it. (The git calls stay behind the "is there a phase at all" check,
+# so an inert command pays neither.)
+[[ -n $cwd && -d $cwd ]] || cwd=$PWD
 
 phase=''
 
@@ -172,8 +180,16 @@ split_words() { # <command>
 }
 
 classify_command() { # <command>
-  local words=() n i=0 w name at_cmd=1 args=() j k a b v role
-  while IFS= read -r w; do words+=("$w"); done < <(split_words "$1")
+  local words=() n i=0 w name at_cmd=1 args=() j k a b v role line=$1
+  # A here-document body is data, not commands. The newline that ends the
+  # opening line would otherwise put every body line in command position, so
+  # `cat > f <<EOF` carrying `git push origin main` would post `pr`. Classify
+  # the line that opens the heredoc and stop there: a real command written after
+  # the heredoc is then a miss, never a wrong phase.
+  if [[ $line == *'<<'* ]]; then
+    line=${line%%$'\n'*}
+  fi
+  while IFS= read -r w; do words+=("$w"); done < <(split_words "$line")
   n=${#words[@]}
 
   while ((i < n)); do
@@ -294,13 +310,23 @@ classify_command() { # <command>
 
 if [[ $when == post ]]; then
   if [[ -n $path ]]; then
-    # The plan artifact — <crew dir>/artifacts/<branch>/plan.md, or a PLAN.md at
-    # the worktree root — is plan work; every other edit is implementation.
-    if [[ $(printf '%s' "${path##*/}" | tr '[:upper:]' '[:lower:]') == plan.md ]]; then
+    # Plan work is the plan artifact and the plan doc, not any file that happens
+    # to be named plan.md: the crew artifact
+    # <git-common-dir>/crew/artifacts/<branch>/plan.md, or PLAN.md at the
+    # session's own directory (where spec-plan-critic writes and where a resume
+    # reads), or under docs/superpowers/. Every other edit is implementation.
+    lc_cwd=$(printf '%s' "$cwd" | tr '[:upper:]' '[:lower:]')
+    lc=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
+    case $lc in
+    /*) ;;
+    *) lc="$lc_cwd/$lc" ;;
+    esac
+    case $lc in
+    */crew/artifacts/*/plan.md | "$lc_cwd"/plan.md | "$lc_cwd"/docs/superpowers/plan.md)
       phase=plan
-    else
-      phase=implement
-    fi
+      ;;
+    *) phase=implement ;;
+    esac
   elif [[ -n $cmd ]]; then
     classify_command "$cmd"
   fi
@@ -310,7 +336,6 @@ fi
 
 [[ -n $phase ]] || exit 0
 
-[[ -n $cwd && -d $cwd ]] || cwd=$PWD
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
 [[ -n $common && -d $common ]] || exit 0
 

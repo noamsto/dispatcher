@@ -222,6 +222,38 @@ reset_state() {
   assert_posted 'test (auto)'
 }
 
+@test "phase-status: a here-document body is data, not commands" {
+  heredoc_cmd="cat > /tmp/notes.md <<'EOF'
+git push origin main
+bats tests/a.bats
+EOF"
+  run_handler <<<"$(post_bash "$heredoc_cmd")"
+  assert_no_posts
+
+  # The line that opens the heredoc is still the command: this is a commit.
+  commit_cmd="git commit -F - <<'MSG'
+feat: something
+
+It replaces the manual git push step entirely.
+MSG"
+  run_handler <<<"$(post_bash "$commit_cmd")"
+  assert_posted 'commit (auto)'
+}
+
+@test "phase-status: only the plan artifact and the plan doc are plan" {
+  run_handler <<<"$(post_edit edit "$PWD/src/plan.md")"
+  assert_posted 'implement (auto)'
+  reset_state
+  run_handler <<<"$(post_edit edit "$PWD/docs/plan.md")"
+  assert_posted 'implement (auto)'
+  reset_state
+  run_handler <<<"$(post_edit Write "$PWD/PLAN.md")"
+  assert_posted 'plan (auto)'
+  reset_state
+  run_handler <<<"$(post_edit edit "$PWD/docs/superpowers/PLAN.md")"
+  assert_posted 'plan (auto)'
+}
+
 @test "phase-status: foreign events and junk input exit silently" {
   run_handler <<<"$(jq -nc --arg d "$PWD" '{canonical_event:"turn_end",native_event:"turn_end",cwd:$d,tool_name:"Bash",tool_input:{command:"bats tests/a.bats"}}')"
   run_handler <<<''
