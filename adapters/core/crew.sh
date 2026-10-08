@@ -1941,8 +1941,9 @@ HELP
     add)
       cat <<'HELP'
 usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
-                     --branch B --tier T --model M --effort F [--plan P] [--mcp P]
-                     [--draft] [--shape S] [--spec FILE] [--crew ID] <title...>
+                     --branch B --tier T --model M --effort F
+                     [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
+                     [--crew ID] <title...>
 
 Queue a dispatch to be taken once the quota window it is parked on resets.
 
@@ -1966,7 +1967,7 @@ Queue a dispatch to be taken once the quota window it is parked on resets.
 --engine and --agent stay distinct and neither is inferred from the other.
 
   crew hold add --engine claude --window week --resets-at 1791600000 \
-    --agent pi --ref main --branch feat/812-x --tier standard \
+    --agent pi --ref main --branch feat/x --tier standard \
     --model lemonade/Qwen3.8-Flash --effort medium "Echo task"
 HELP
       ;;
@@ -1979,7 +1980,7 @@ Every hold on the crew, with its window, reset time and target branch.
   --crew  Crew id; defaults to this repo's crew
   --json  Machine-readable rows
 
-  crew hold list --crew 1791397224-2162184
+  crew hold list --crew <crew-id>
 HELP
       ;;
     due)
@@ -1999,12 +2000,14 @@ HELP
       cat <<'HELP'
 usage: crew hold park <default> [--crew ID]
 
-Set the default park length, in seconds, a hold with no explicit reset gets.
+Print how many seconds to park a watch for: the earlier of <default> and the
+moment the earliest outstanding hold's window resets, never below 1. Writes
+nothing — it is the length to hand 'crew watch --timeout'.
 
-  <default>  Positive whole seconds
+  <default>  Positive whole seconds; used when no hold is outstanding
   --crew     Crew id; defaults to this repo's crew
 
-  crew hold park 3600
+  crew watch --timeout "$(crew hold park 3600)"
 HELP
       ;;
     release)
@@ -2023,8 +2026,9 @@ HELP
     '')
       cat <<'HELP'
 usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
-                     --branch B --tier T --model M --effort F [--plan P] [--mcp P]
-                     [--draft] [--shape S] [--spec FILE] [--crew ID] <title...>
+                     --branch B --tier T --model M --effort F
+                     [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
+                     [--crew ID] <title...>
        crew hold list [--crew ID] [--json]
        crew hold due [--crew ID] [--json]
        crew hold park <default> [--crew ID]
@@ -2036,7 +2040,7 @@ wake or pollute the dispatcher that wrote them, and `crew log` still shows them.
 
 Run 'crew hold <action> --help' for one action's flags.
 
-  crew hold list --crew 1791397224-2162184
+  crew hold list --crew <crew-id>
 HELP
       ;;
     *)
@@ -2080,7 +2084,7 @@ Post a message from one agent to another on the crew bus.
 A recipient left as a bare prefix (`dispatcher:` from an id that expanded to
 nothing) is rejected rather than posted where nobody reads it.
 
-  crew msg "$CREW_WORKER_ID" dispatcher:1791397224-2162184 "gate is green"
+  crew msg "$CREW_WORKER_ID" dispatcher:<crew-id> "gate is green"
 HELP
     ;;
   reply)
@@ -2093,7 +2097,7 @@ Post a message as dispatcher:<crew>, so a dispatcher never rebuilds its own id.
   <body>  One argument
   --crew  Crew id when the caller's env carries no CREW_ID
 
-  crew reply "worker:feat/812-x#s1791403690-3448584" "rebase onto main"
+  crew reply "worker:feat/x#s<epoch>-<pid>" "rebase onto main"
 HELP
     ;;
   await)
@@ -2112,7 +2116,7 @@ Every due message from the reply's sender prints, oldest first, one compact JSON
 object per line, so a backlog drains instead of hiding. A held poll, not a spin
 loop: zero token cost while it waits.
 
-  crew await "$CREW_WORKER_ID" --from "dispatcher:1791397224-2162184" --timeout 300
+  crew await "$CREW_WORKER_ID" --from "dispatcher:<crew-id>" --timeout 300
 HELP
     ;;
   inbox)
@@ -2135,7 +2139,9 @@ HELP
     cat <<'HELP'
 usage: crew log [crew]
 
-Print every bus event for a crew as JSON lines: status, msg, holds, metrics.
+Print every bus event for a crew as JSON lines — status rows and msg rows,
+including the synthetic hold:, retro:, metrics:, review: and deslop: sinks that
+wake nobody.
 
   [crew]  Crew id; defaults to this repo's crew
 
@@ -2186,7 +2192,7 @@ batches instead of re-arming a one-shot park every turn.
 Crew-resolution and usage failures exit 64, not 1, so a `--status` call that
 could not find its crew does not read as the `dead` state it never measured.
 
-  crew stream --crew 1791397224-2162184 --park 300
+  crew stream --crew <crew-id> --park 300
 HELP
     ;;
   stall-watch)
@@ -2226,7 +2232,7 @@ one parked on a prompt looks exactly like one that is working.
 Every detector posts a recoverable blocked state; only quiet: and turn-stall:
 escalate, and only after the second --dead evidence check.
 
-  crew stall-watch "worker:feat/812-x#s1791403690-3448584" --pane %204 --grace 45
+  crew stall-watch "worker:feat/x#s<epoch>-<pid>" --pane %N --grace 45
 HELP
     ;;
   pr-watch)
@@ -2244,7 +2250,7 @@ an armed `crew watch` wakes.
 The park, the change signals and the per-PR cursor live in the pr-watch binary;
 empty stdout is that binary's timeout marker, not a failure.
 
-  crew pr-watch 812 --timeout 600
+  crew pr-watch 123 --timeout 600
 HELP
     ;;
   nudge)
@@ -2263,7 +2269,7 @@ expired reads the directive `crew reply` already posted.
 Exit 0 typed and accepted, 1 usage or resolution error, 2 refused before typing,
 3 typed but not accepted.
 
-  crew nudge feat/812-x --crew 1791397224-2162184
+  crew nudge feat/x --crew <crew-id>
 HELP
     ;;
   roster)
@@ -2298,7 +2304,7 @@ it to the aeye carousel beside the recorded dispatcher pane.
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.
 
-  crew roster-render --crew 1791397224-2162184 --pane %90 --detach
+  crew roster-render --crew <crew-id> --pane %N --detach
 HELP
     ;;
   sessions)
@@ -2311,7 +2317,7 @@ ones a watchdog or a reply may be addressed to.
   <branch>  Branch name
   --crew    Crew id; defaults to this repo's crew
 
-  crew sessions feat/812-crew-per-subcommand-help
+  crew sessions feat/x
 HELP
     ;;
   where)
@@ -2321,7 +2327,7 @@ usage: crew where <codename|branch|%id> [--crew ID]
 A human-usable address for a worker's pane: codename, session:window.pane, window
 name, role and the jump command.
 
-  <target>  Codename (lime), branch, or a tmux pane id such as %204
+  <target>  Codename (lime), branch, or a tmux pane id such as %N
   --crew    Crew id; defaults to this repo's crew
 
 Resolved from dispatcher-anchored state only — never git discovery in a worktree
@@ -2338,7 +2344,7 @@ Per-run dispatch table for a crew: engine, model, tier, shape, outcome, duration
 
   [crew]  Crew id; defaults to this repo's crew
 
-  crew report 1791397224-2162184
+  crew report <crew-id>
 HELP
     ;;
   rate)
@@ -2418,7 +2424,7 @@ call; --hash goes the other way, from a name to its identity.
   <branch>  Branch whose identity to print or assign
   [crew]    Crew the assignment is recorded for; defaults to this repo's crew
 
-  crew identity feat/812-crew-per-subcommand-help
+  crew identity feat/x
 HELP
     ;;
   occupants)
@@ -2430,7 +2436,7 @@ would reuse or replace before it launches.
 
   <worktree-path>  Absolute path, exactly as the window records it
 
-  crew occupants /home/me/git/.worktrees/repo/feat/812-x
+  crew occupants /home/me/git/.worktrees/repo/feat/x
 HELP
     ;;
   register)
@@ -2478,7 +2484,7 @@ Re-attach to an on-disk crew after a restart lost CREW_ID.
 
 --force is stripped from anywhere in the args, so it can never land as the pid.
 
-  crew adopt 1791397224-2162184
+  crew adopt <crew-id>
 HELP
     ;;
   resolve-target)
@@ -2492,7 +2498,7 @@ Resolve a target to one TSV line: branch, codename, host and crew.
 
 Exit 1 when nothing matches, 2 when several branches do (all of them listed).
 
-  crew resolve-target '#812'
+  crew resolve-target '#123'
 HELP
     ;;
   pi-agent-dir)
