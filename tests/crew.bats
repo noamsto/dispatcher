@@ -5755,7 +5755,8 @@ GH
   CREW_ID=c1 run_crew status "worker:done#s1-1" done "" "https://github.com/o/r/pull/5"
   CREW_ID=c1 run_crew status "worker:done#s2-2" failed "boom"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  jq -nc '{ts:9000000000000, crew_id:"c1", from:"worker:", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/99"}}' >>"$log"
+  jq -nc '{ts:8999999999999, crew_id:"c1", from:"worker:#a", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/97"}}' >>"$log"
+  jq -nc '{ts:9000000000000, crew_id:"c1", from:"worker:#b", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/99"}}' >>"$log"
   jq -nc '{ts:9000000000001, crew_id:"c1", from:"worker:feat/other#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"", pr_url:"https://github.com/o/r/pull/98"}}' >>"$log"
   CREW_ID=c1 run run_crew reap
   [ "$status" -eq 0 ]
@@ -5768,6 +5769,40 @@ GH
   [ "$status" -eq 1 ]
   [[ "$output" == *"latest status is none"* ]]
   [ -d "$wt_path" ]
+}
+
+@test "reap: idle release ignores an empty-branch bus row instead of shifting it onto a real branch (#836)" {
+  git commit --allow-empty -q -m init
+  git branch done
+  wt_path="$BATS_TEST_TMPDIR/idle-empty-wt"
+  git worktree add -q "$wt_path" done
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tfish\n')"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:1000, crew_id:"c1", from:"worker:#done", to:"dispatcher:c1", kind:"status", body:{state:"done"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --idle 0 --quiet
+  [ "$status" -eq 0 ]
+  run ! grep -q 'kill-window' "$STUB_LOG"
+  [ -d "$wt_path" ]
+}
+
+@test "reap: idle release keeps the state column when a session id is empty (#836)" {
+  git commit --allow-empty -q -m init
+  git branch feat/xsess-empty
+  wt_path="$BATS_TEST_TMPDIR/xsess-empty-wt"
+  git worktree add -q "$wt_path" feat/xsess-empty
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_bin gh
+  stub_bin wt
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\t.claude-wrapped\n')"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:1000, crew_id:"c1", from:"worker:feat/xsess-empty#", to:"dispatcher:c1", kind:"status", body:{state:"exited"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --idle 0
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/xsess-empty — exited but an engine is still running there"* ]]
+  run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
 @test "reap: an earlier session's MERGED PR does not vouch for commits past its head (#836)" {

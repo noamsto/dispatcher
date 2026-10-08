@@ -7918,8 +7918,9 @@ reap)
 
   # _reap_remove — the anchored removal tail shared by the candidate loop and
   # --discard. Reads the loop's branch wtpath admin state pr pr_state label
-  # mode issues, plus discard discard_patch discard_st (empty in plain reap);
-  # sets removed=1 on success. Always returns 0: callers run it
+  # mode issues, plus discard discard_patch discard_st discard_tree (empty in
+  # plain reap; under --discard it also uses that block's _discard_tree and
+  # tmpidx); sets removed=1 on success. Always returns 0: callers run it
   # bare, since a conditional call would switch set -e off inside it.
   _reap_remove() {
     removed=""
@@ -8030,7 +8031,11 @@ SCAFFOLD
       fi
       [ -z "$tmpidx" ] || rm -rf -- "$tmpidx"
       tmpidx=""
-      if [ -z "$now_tree" ] || [ "$now_tree" != "$discard_tree" ]; then
+      if [ -z "$now_tree" ]; then
+        say "keeping $branch — could not re-check its uncommitted state"
+        return 0
+      fi
+      if [ "$now_tree" != "$discard_tree" ]; then
         say "keeping $branch — changed while saving"
         return 0
       fi
@@ -8450,7 +8455,7 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     # A watchdog-posted failed marks a hung pane: keep it as evidence.
     | map(select((.body.source // "") != "watchdog" or .body.state != "failed"))
     | map(select((((now*1000) - .ts) / 1000) >= $idle))
-    | .[] | [(.from | wid_branch), ((.from | wid_session) // "-"), .body.state, .ts] | @tsv' "$log")
+    | .[] | [(.from | wid_branch), (((.from | wid_session) // "") | if . == "" then "-" else . end), .body.state, .ts] | @tsv' "$log")
 EOF
   command -v gh >/dev/null || {
     note "needs gh"
