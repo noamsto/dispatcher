@@ -3643,17 +3643,14 @@ register | deregister)
   fi
   ;;
 crews)
-  # --mine (#824): the crews that belong to THIS process's session — the one it
-  # registered, plus any `crew adopt` re-attached to it (adopt records the
-  # adopting pid exactly like register, so a pid among our ancestors is ours).
-  # The roster mod needs all of them: after a restart the workers keep posting
-  # to the crew they were adopted into, and a pane that follows only $CREW_ID
-  # shows an empty roster.
+  # --mine: the crews whose recorded dispatcher pid is a live ancestor of this
+  # process. `register` and `adopt` both write that pid file, so a crew adopted
+  # after a restart belongs to the adopting session exactly as its own does.
   #
-  # Only the pid files matter — an id with no pid file (a crew dir `watch`
-  # created, or an id seen only in events.jsonl) records no dispatcher, so it
-  # can never be ours. Skipping the log keeps --mine a directory scan plus a
-  # bounded `ps` walk per live pid.
+  # Only pid files count — an id with no pid file (a crew dir `watch` created,
+  # or an id seen only in events.jsonl) records no dispatcher, so it can never
+  # be ours. Skipping the log keeps --mine a directory scan plus a bounded `ps`
+  # walk per live pid.
   case "${1:-}" in
   --mine)
     [ -d "$dir/crews" ] || exit 0

@@ -184,10 +184,9 @@ EOF
 
 # ---- crews --mine -----------------------------------------------------
 #
-# `--mine` is the roster mod's (#824): the crews whose recorded dispatcher pid
-# is a live ancestor of the caller are exactly the ones this session registered
-# or adopted, so the pane follows all of them after a `crew adopt` left it on an
-# empty crew. One bare id per line, no header.
+# The crews whose recorded dispatcher pid is a live ancestor of the caller: the
+# one this session registered plus any `crew adopt` re-attached to it. One bare
+# id per line, no header.
 
 @test "crews --mine: lists the crew whose pid is an ancestor of the caller" {
   # $$ is the bats test shell: `run` forks, and the fork's parent chain still

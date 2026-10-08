@@ -23,10 +23,9 @@ const view = atom(
 
 let timer: Timer | undefined
 
-// The id of the newest refresh. Ticks fire every REFRESH_MS and a `crew` call
-// can take its full 10s timeout, so an older tick can finish after a newer one
-// and paint stale rows over fresh; a refresh writes the view only while it is
-// still the newest.
+// The newest refresh wins: ticks fire every REFRESH_MS and a `crew` call can
+// take its full 10s timeout, so an older tick can finish after a newer one and
+// paint stale rows over fresh.
 let refreshId = 0
 
 const message = (err: unknown): string =>
@@ -54,11 +53,10 @@ async function fetchSection(
   }
 }
 
-// Auto mode's follow list: $CREW_ID plus every other crew this process owns —
-// the ones `crew adopt` re-attached to it after a restart, which is where the
-// workers still post (#824). A failed scan (`crew` older than `--mine`, no
-// repo) reports the reason and leaves crews null: the caller keeps showing what
-// it was, plus the error line, instead of emptying the pane in silence.
+// Auto mode's follow list: $CREW_ID plus every other crew this process owns. A
+// failed scan (`crew` older than `--mine`, no repo) reports the reason and
+// leaves crews null, so the caller keeps the crews it was showing rather than
+// emptying the pane — with the failure on screen.
 async function ownedCrews($: EngineInterface): Promise<{
   crews: string[] | null
   error: string | null

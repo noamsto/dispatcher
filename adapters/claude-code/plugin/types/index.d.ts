@@ -20,13 +20,11 @@ export type RosterSection = {
 }
 
 export type RosterView = {
-  // One section per crew this session follows — $CREW_ID plus every crew
-  // `crew crews --mine` says this process owns (#824).
+  // One section per crew this session follows (#824).
   sections: RosterSection[]
   // An explicit `/roster <crew-id>`: follow only that crew, never scan.
   pinned: string | null
-  // The last ownership scan's failure, kept alongside the sections it could
-  // not refresh; null while the scan works.
+  // The last ownership scan's failure — kept while its sections stay on screen.
   scanError: string | null
   crews: string | null
 }
