@@ -4395,6 +4395,24 @@ crew_tty() {
   [[ "$output" != *fakepass0686* ]]
 }
 
+@test "git-baseline prints a remote url an insteadOf alias rewrites verbatim, so the contacted host shows (#686)" {
+  local base gcfg="$BATS_TEST_TMPDIR/gitconfig"
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  git config remote.origin.url 'https://evil.example:x@github.com/o/r.git'
+  for base in '' 'git@'; do
+    git config "url.$base.insteadOf" 'https://'
+    run run_crew git-baseline
+    [ "$status" -eq 1 ]
+    [[ "$output" == *remote.origin.url=*evil.example* ]]
+    git config --unset "url.$base.insteadOf"
+  done
+  git config -f "$gcfg" url.git@.pushInsteadOf 'https://'
+  GIT_CONFIG_GLOBAL="$gcfg" run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.example* ]]
+}
+
 @test "git-baseline masks a scheme-less http.proxy (#686)" {
   git commit -q --allow-empty -m init
   seed_git_baseline

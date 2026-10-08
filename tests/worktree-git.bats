@@ -956,6 +956,40 @@ fp8() { printf %s "$1" | sha256sum | cut -c1-8; }
   [ "$disp" = "credential.helper=$(printf %q '!sh -c x@y')" ]
 }
 
+@test "_wt_cfg_show_pair prints a remote url verbatim when an insteadOf alias rewrites it (#686)" {
+  local disp a v='https://evil.example:x@github.com/o/r.git'
+  local -a aliases
+  for a in '' 'https://' 'https://evil'; do
+    aliases=('ssh://other.example/' "$a")
+    _wt_cfg_show_pair remote.origin.url "$v" disp aliases
+    [ "$disp" = "remote.origin.url=$(printf %q "$v")" ]
+    _wt_cfg_show_pair remote.origin.pushurl "$v" disp aliases
+    [ "$disp" = "remote.origin.pushurl=$(printf %q "$v")" ]
+  done
+  _wt_cfg_show_pair remote.origin.url "$v" disp
+  [ "$disp" = "remote.origin.url=https://***@github.com/o/r.git [sha256:$(fp8 "$v")]" ]
+}
+
+@test "_wt_cfg_show_pair masks a remote url no insteadOf alias prefixes (#686)" {
+  local disp v='https://x:FAKETOKEN0686@github.com/o/r.git'
+  local -a aliases=('ssh://github.com/' 'https://gitlab.example/')
+  _wt_cfg_show_pair remote.origin.url "$v" disp aliases
+  [ "$disp" = "remote.origin.url=https://***@github.com/o/r.git [sha256:$(fp8 "$v")]" ]
+  [[ $disp != *FAKETOKEN0686* ]]
+}
+
+@test "_wt_cfg_show_url masks a %-escape in http and proxy userinfo, not in ssh (#686)" {
+  local disp v='https://user:p%40ssFAKE@h.example/x'
+  _wt_cfg_show_url "$v" disp
+  [ "$disp" = "https://***@h.example/x [sha256:$(fp8 "$v")]" ]
+  v='u:p%40FAKE@proxy.example:8080'
+  _wt_cfg_show_url "$v" disp proxy
+  [ "$disp" = "***@proxy.example:8080 [sha256:$(fp8 "$v")]" ]
+  v='ssh://evil.example%2f@github.com/o/r'
+  _wt_cfg_show_url "$v" disp
+  [ "$disp" = "$(printf %q "$v")" ]
+}
+
 @test "guard refusal masks a credential in the key and hints edit, not --unset-all (#686)" {
   _wt_cfg_baseline_init "$COMMON"
   git config 'url.https://x:FAKETOKEN0686@evil.example/.insteadOf' https://github.com/

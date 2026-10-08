@@ -78,7 +78,7 @@ _wt_cfg_url_subsection_keys=('url.*.insteadof' 'url.*.pushinsteadof' 'http.*.*' 
 _wt_cfg_show_url() { # <string> <var> [proxy] — set <var> to <string> with URL userinfo and query values masked, else %q
   local LC_ALL=C _wt_s_in="$1" _wt_s_str="$1" _wt_s_pre='' _wt_s_out _wt_s_q _wt_s_part _wt_s_fp
   # Bracket expressions: `]` first and `[` before a non-`:` are literal.
-  local _wt_s_u=$'[^]@/?#[\\\\%[:space:][:cntrl:]]' _wt_s_us=$'[^]@/?#[\\\\%:[:space:][:cntrl:]]'
+  local _wt_s_u=$'[^]@/?#[\\\\[:space:][:cntrl:]]' _wt_s_us=$'[^]@/?#[\\\\%:[:space:][:cntrl:]]'
   local _wt_s_pc=$'[A-Za-z0-9._~!$&\'()*+,;=:@%/-]'
   local _wt_s_url="^([A-Za-z][A-Za-z0-9+.-]*)://((${_wt_s_u}*)@)?([A-Za-z0-9.-]+)(:[0-9]+)?((/${_wt_s_pc}*)(\\?(${_wt_s_pc}|\\?)*)?)?\$"
   local _wt_s_scp="^(${_wt_s_us}+)@([A-Za-z0-9.-]+):(${_wt_s_pc}*)\$"
@@ -93,7 +93,14 @@ _wt_cfg_show_url() { # <string> <var> [proxy] — set <var> to <string> with URL
   fi
   if [[ $_wt_s_str =~ $_wt_s_url ]]; then
     case "${BASH_REMATCH[1],,}" in
-      http | https | ftp | ftps | ssh | git+ssh | ssh+git) ;;
+      http | https | ftp | ftps) ;;
+      ssh | git+ssh | ssh+git)
+        # git url_decode()s an ssh url before splitting off the host.
+        [[ ${BASH_REMATCH[3]} != *%* ]] || {
+          printf -v "$2" %q "$_wt_s_in"
+          return 0
+        }
+        ;;
       socks4 | socks4a | socks5 | socks5h)
         [[ ${3-} == proxy ]] || {
           printf -v "$2" %q "$_wt_s_in"
@@ -155,13 +162,23 @@ _wt_cfg_show_key() { # <key> <var> — set <var> to <key>, its URL subsection ma
   fi
   printf -v "$2" '%s' "$_wt_s_disp"
 }
-_wt_cfg_show_pair() { # <key> <value> <var> — set <var> to `key=value`, masking a redirect value's URL credentials
+_wt_cfg_rewritten() { # <url> [aliases] — status 0 when a value in the array named [aliases] prefixes <url>
+  local _wt_s_a _wt_s_ref="${2-}[@]"
+  [[ -n ${2-} ]] || return 1
+  for _wt_s_a in "${!_wt_s_ref}"; do
+    [[ $1 != "$_wt_s_a"* ]] || return 0
+  done
+  return 1
+}
+_wt_cfg_show_pair() { # <key> <value> <var> [aliases] — set <var> to `key=value`, masking a redirect value's URL credentials unless an insteadOf alias in [aliases] rewrites it
   local _wt_s_k _wt_s_v
   _wt_cfg_show_key "$1" _wt_s_k
   printf -v _wt_s_v %q "$2"
   if _wt_cfg_match _wt_redirect_keys "$1" "$2"; then
     case "$1" in
       http.proxy | http.*.proxy | remote.*.proxy) _wt_cfg_show_url "$2" _wt_s_v proxy ;;
+      # git contacts the rewritten url, whose host the mask could hide.
+      remote.*.url | remote.*.pushurl) _wt_cfg_rewritten "$2" "${4-}" || _wt_cfg_show_url "$2" _wt_s_v ;;
       *) _wt_cfg_show_url "$2" _wt_s_v ;;
     esac
   fi

@@ -7672,6 +7672,13 @@ git-baseline)
       echo "crew: cannot list the git config of $gb_ctx" >&2
       exit 1
     fi
+    # A human's global insteadOf rewrites a local remote url too.
+    gb_aliases=()
+    for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
+      gb_rec="${gb_listing[gb_i + 2]}"
+      [[ ${gb_rec%%$'\n'*} == url.*.insteadof || ${gb_rec%%$'\n'*} == url.*.pushinsteadof ]] || continue
+      [[ $gb_rec == *$'\n'* ]] && gb_aliases+=("${gb_rec#*$'\n'}")
+    done
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
       [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
       gb_rec="${gb_listing[gb_i + 2]}"
@@ -7684,7 +7691,7 @@ git-baseline)
       gb_origin="${gb_listing[gb_i + 1]#file:}"
       [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
       gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-      _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp
+      _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp gb_aliases
       # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
       printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
       gb_shown+=("$gb_rec")

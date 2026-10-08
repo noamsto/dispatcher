@@ -771,14 +771,14 @@ branch instead; the worktree carries over under `resume: true`.
   config, not the program; refusals name the key and its file, never the
   value; refusals, dispatch's baseline-recorded note and `crew git-baseline`
   (listing and `--accept` prompt) mask URL userinfo and query values in redirect-key values
-  and in URL-subsection keys (`url.<base>.insteadOf`, `http.<url>.*`,
+  and in URL-subsection keys (`url.<base>.(push)insteadOf`, `http.<url>.*`,
   `credential.<url>.*`), showing host/path plus an 8-hex `sha256:` fingerprint
-  of the full value so two secrets never look alike (an `insteadOf` base shows
-  as a prefix); masking is output-only, comparison and the baseline file use
+  of the full value so two secrets never look alike; masking is output-only, comparison and the baseline file use
   full values; it applies only to URLs in a strict grammar (http/https/ftp/ftps/
   ssh schemes, socks proxies, scp form, scheme-less proxy) where git, curl and ssh agree on the
-  host, and anything else (brackets, other schemes, fragments, spaces) prints
-  whole, so masking never hides the endpoint git contacts, but such a value may
+  host, and anything else (brackets, ssh `%`-escapes, other schemes,
+  fragments, spaces, a query with no path, a remote URL an `insteadOf` alias
+  rewrites, `includeIf` condition keys) prints whole, so masking never hides the endpoint git contacts, but such a value may
   still carry a credential; exec-class values (a `credential.helper` argument)
   still print verbatim, so the human runs `crew git-baseline` in their own
   terminal, never the dispatcher;
