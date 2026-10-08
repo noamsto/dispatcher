@@ -1929,6 +1929,14 @@ watch_role_prompts() {
 # `assignment_deferred` msg, so a role that never receives its assignment is not
 # mistaken for one that is working.
 #
+# A pane stamped `@crew_delivery pull` (cursor) is never captured and never
+# sent keys: the role holds `crew await` itself and fetches its assignments.
+# The watcher still queues them and keeps @crew_state, and treats the role's
+# `crew status … working "assignment: …"` post as the ack that clears the queue.
+# A bare `working` status (the boot announce) is not an ack. An assignment
+# still un-acked after --defer-notice seconds is reported to the lead once as
+# `assignment_deferred` with `delivery:"pull"`. An empty stamp means typed.
+#
 # A sent Enter is verified, not assumed: the assignment is dropped from
 # the queue only once a later capture no longer shows it in the input box. If it
 # is still there, only Enter is re-sent (`--submit-retries N`, default 3, with
@@ -1982,8 +1990,8 @@ if [ "${1:-}" = "--role-watch" ]; then
     echo "dispatch: --role-watch: role 'lead' is never watched" >&2
     exit 1
   }
-  watch_stamp="$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}' 2>/dev/null || true)"
-  IFS='|' read -r w_role w_win <<<"$watch_stamp"
+  watch_stamp="$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}|#{@crew_delivery}' 2>/dev/null || true)"
+  IFS='|' read -r w_role w_win w_delivery <<<"$watch_stamp"
   [ "$w_role" = "$role" ] || {
     echo "dispatch: --role-watch: pane $watch_pane's @crew_role ($w_role) does not match --role $role" >&2
     exit 1
@@ -2561,9 +2569,11 @@ if [ "${1:-}" = "--role-watch" ]; then
   # escalate on the first exhaustion (`assignment_unsubmitted`) and are left
   # in place: nothing else is typed until the box clears.
   # `pending_from` runs parallel to `pending` so the escalation reaches the
-  # sender of the assignment that stalled.
+  # sender of the assignment that stalled; `pending_ts` is each msg's bus ts,
+  # which a pull role's ack must postdate.
   pending=()
   pending_from=()
+  pending_ts=()
   pending_max=50
   inflight=""
   inflight_from=""
@@ -2586,9 +2596,24 @@ if [ "${1:-}" = "--role-watch" ]; then
     watch_exited && break
     if [ -f "$log" ]; then
       batch="$(jq -c --arg me "$role_id" --argjson since "$since" \
-        'select(.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me)))' "$log" 2>/dev/null || true)"
+        'select((.kind=="msg" and .ts>$since and ((.to==$me) or (.from==$me))) or (.kind=="status" and .ts>$since and .from==$me))' "$log" 2>/dev/null || true)"
       if [ -n "$batch" ]; then
         while IFS= read -r ev; do
+          if [ "$(printf '%s' "$ev" | jq -r '.kind')" = status ]; then
+            [ "$w_delivery" = pull ] || continue
+            if [ "${#pending[@]}" -gt 0 ] &&
+              printf '%s' "$ev" | jq -e --argjson oldest "${pending_ts[0]}" \
+                '.body.state=="working" and ((.body.detail // "") | startswith("assignment:")) and .ts>$oldest' >/dev/null; then
+              # The role's await prints its whole backlog from that sender at once.
+              pending=()
+              pending_from=()
+              pending_ts=()
+              deferred_since=0
+              deferred_told=0
+              watch_set_state working
+            fi
+            continue
+          fi
           to="$(printf '%s' "$ev" | jq -r '.to // ""')"
           if [ "$to" = "$role_id" ]; then
             from="$(printf '%s' "$ev" | jq -r '.from // ""')"
@@ -2603,10 +2628,11 @@ if [ "${1:-}" = "--role-watch" ]; then
             [ -n "$body" ] || continue
             lead_id="$from"
             [[ $from != worker:* ]] || lead_worker="$from"
-            [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); }
+            [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); pending_ts=("${pending_ts[@]:1}"); }
             pending+=("$body")
             pending_from+=("$from")
-            watch_set_state working
+            pending_ts+=("$(printf '%s' "$ev" | jq -r '.ts')")
+            [ "$w_delivery" = pull ] || watch_set_state working
           elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
             # The role answered while its assignment is still being verified; its
             # own assignment_unsubmitted posts (from the same id) are not a verdict.
@@ -2655,6 +2681,7 @@ if [ "${1:-}" = "--role-watch" ]; then
           # would clear the re-paste before Enter.
           pending=("$inflight" "${pending[@]}")
           pending_from=("$inflight_from" "${pending_from[@]}")
+          pending_ts=("0" "${pending_ts[@]}")
           inflight=""
           inflight_from=""
           submitting=0
@@ -2675,6 +2702,14 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "${#pending[@]}" -eq 0 ]; then
       deferred_since=0
       deferred_told=0
+    elif [ "$w_delivery" = pull ]; then
+      [ "$deferred_since" -gt 0 ] || deferred_since="$(_rw_now)"
+      if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
+        [ $(($(_rw_now) - deferred_since)) -ge "$defer_notice" ]; then
+        deferred_told=1
+        crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
+          '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"pull",detail:"assignment not picked up: the role pulls its assignments with crew await and has not acked this one"}')" 2>/dev/null || true
+      fi
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
@@ -2693,6 +2728,7 @@ if [ "${1:-}" = "--role-watch" ]; then
               inflight_from="${pending_from[0]}"
               pending=("${pending[@]:1}")
               pending_from=("${pending_from[@]:1}")
+              pending_ts=("${pending_ts[@]:1}")
               submitting=1
               submit_tries=0
               unknown_ticks=0
@@ -2730,7 +2766,7 @@ if [ "${1:-}" = "--role-watch" ]; then
           [ $(($(_rw_now) - deferred_since)) -ge "$defer_notice" ]; then
           deferred_told=1
           crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
-            '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
+            '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"typed",detail:"assignment not delivered: the pane is not at an idle input box (a permission dialog, prompt, live turn or unrecognised frame), or its engine has no recognised idle frame"}')" 2>/dev/null || true
         fi
       fi
     fi

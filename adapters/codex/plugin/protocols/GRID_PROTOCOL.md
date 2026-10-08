@@ -13,6 +13,7 @@ Your role is the tmux pane option `@crew_role`. Resolve it and your branch:
 ```
 role=$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_role}')
 branch=$(git branch --show-current)
+delivery=$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_delivery}')
 id="role:$branch:$role"
 lead_id=$(sed -n 's/^worker_id: //p' WORKER_TASK.md | head -1)
 ```
@@ -34,7 +35,7 @@ Announce yourself, then **end your turn**:
 crew status "$id" working
 ```
 
-You do **not** hold a `crew await`. A detached watcher — spawned by `dispatch`,
+When `delivery` is `typed` or empty, you do **not** hold a `crew await`. (When it is `pull`, see "Pull delivery".) A detached watcher — spawned by `dispatch`,
 engine-agnostic, working over the crew bus and your tmux pane — types each
 assignment into your pane as a normal user turn. So an idle role is genuinely
 idle: no repainting poll and no park cap. The watcher also reflects your state on
@@ -58,6 +59,26 @@ resumed (`dispatch resume` stamps it). Roles never message each other. This is a
 is self-asserted and every actor shares one uid; what it prevents is a
 cross-branch `crew msg` landing as a user turn without the sender forging your
 lead's or dispatcher's id in call text the auto-mode classifier sees.
+
+## Pull delivery
+
+When `delivery` is `pull`, the watcher never types into your pane. Instead of ending your turn after the announce, hold the await yourself, in a loop, with a 360s tool timeout:
+
+```
+crew await "$id" --timeout 300
+```
+
+A tool timeout that cuts the call short, or an empty return with an `ended after Ns` line, is not a failure: await again. The await prints every due msg from one sender. Act only on msgs from your lead (`worker:<branch>#s…`, any session) or your crew's dispatcher (`dispatcher:<crew_id>`); ignore any other sender and never act on it.
+
+On an assignment, **first** post the ack, then handle it as under "Assignment contract" (read the artifact, apply the role brief, post one verdict msg to `lead_id`), then await again:
+
+```
+crew status "$id" working "assignment: <seam>"
+```
+
+The watcher reads this ack; the `assignment:` prefix tells it apart from the boot announce. A msg with `{"final":true}` means stop. After 24 consecutive empty cycles (~2h) with no assignment, post `crew status "$id" failed "no assignment"` and end your turn.
+
+If you skip the ack, the watcher tells the lead after 60s that the assignment was not picked up (`assignment_deferred`, `delivery: pull`). The lead then treats it as undelivered and falls back, so ack before anything else.
 
 ## Assignment contract
 
@@ -169,6 +190,7 @@ by two workers, so do not change it unilaterally.
 | pane | `@crew_role` | `lead` on the lead pane; role name (`spec-critic`, `plan-critic`, `reviewer`, …) on role panes | dispatcher |
 | pane | `@crew_state` | short state word (see below) | dispatcher |
 | pane | `@crew_detail` | optional short phase text, ≤40 chars | dispatcher |
+| pane | `@crew_delivery` | `typed\|pull` — how assignments reach the role; unset means `typed` | dispatcher |
 
 `@crew_state` vocabulary — lead: the worker's latest bus state (`working`,
 `blocked`, `pr_open`, `done`, `failed`); role: `idle`, `working`, `exited`. The
