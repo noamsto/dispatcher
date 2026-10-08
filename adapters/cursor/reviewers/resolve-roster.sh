@@ -153,6 +153,61 @@ _fm_json() {
   yq -p yaml -o json '.' "$1" >"$2" 2>/dev/null && jq -e 'type == "object"' "$2" >/dev/null
 }
 
+# Is $1 covered by some harness glob (bash pattern semantics, as the callers use).
+_covered_by_glob() {
+  local g
+  for g in "${harness_globs[@]}"; do
+    # shellcheck disable=SC2053 # the glob is the point
+    [[ $1 == $g ]] && return 0
+  done
+  return 1
+}
+
+# Is interpreter $1 a harness shebang entry: equal, or plus a version suffix.
+# Prefix by glob compare so entry text never reaches a regex.
+_covered_by_shebang() {
+  local s
+  for s in "${harness_shebangs[@]}"; do
+    [[ $1 == "$s" ]] && return 0
+    [[ $1 == "$s"* ]] && [[ ${1#"$s"} =~ ^[-.]?[0-9]+([-.][0-9]+)*$ ]] && return 0
+  done
+  return 1
+}
+
+# The interpreter a #! line selects, per the documented probe grammar: env
+# prefix dropped (inline -S<cmd> and --opt=<cmd> yield the interpreter),
+# NAME=value assignments skipped. Fails when the file is gone, is a symlink,
+# or names no interpreter.
+_probe_interpreter() {
+  local first line tok interp="" i n
+  [[ -f $1 && ! -L $1 ]] || return 1
+  line=$(head -c 256 -- "$1" 2>/dev/null | head -n1) || return 1
+  [[ $line == '#!'* ]] || return 1
+  read -ra toks <<<"${line:2}" || true
+  first=${toks[0]:-}
+  if [[ ${first##*/} == env ]]; then
+    n=${#toks[@]}
+    for ((i = 1; i < n; i++)); do
+      tok=${toks[i]}
+      if [[ $tok == '-S'?* ]]; then
+        interp=${tok#-S}
+        break
+      fi
+      if [[ $tok == --?*=* ]]; then
+        interp=${tok#*=}
+        break
+      fi
+      [[ $tok == -* || $tok == ?[A-Za-z0-9_]*=* ]] && continue
+      interp=$tok
+      break
+    done
+  else
+    interp=${toks[0]:-}
+  fi
+  [ -n "$interp" ] || return 1
+  printf '%s' "${interp##*/}"
+}
+
 # Repo frontmatter $1 for entry $2. On success sets fm_globs and fm_shebang
 # (compact JSON lists) and fm_when (the raw value); otherwise sets reason.
 # Grammar: blank and `#` lines skipped; every other line is `key: value` with
@@ -348,4 +403,39 @@ jq -n --arg base "$base" \
               end ]
         | sort_by(.path)),
       ignored_branch_changes: $ARGS.positional
-    }' --args "${changes[@]}"
+    }' --args "${changes[@]}" >"$tmp/roster.json"
+
+# Per-file fallback (#864): emit the roster as-is unless every changed file in
+# the caller's review diff ($commit...HEAD — three-dot, not two-dot from the
+# discovery pin, so a moved default cannot swallow listed files) is covered by
+# a harness route: .harness_globs/.harness_shebang only, since a repo-local
+# route never suppresses the fallback. Unsafe paths count as uncovered and are
+# never printed; deleted files keep glob coverage by name but skip the probe.
+fallback_needed=true
+mapfile -d '' changed_files < <(git -C "$repo" diff --name-only --no-renames -z "$commit...HEAD" -- .)
+if [ ${#changed_files[@]} -gt 0 ]; then
+  mapfile -t harness_globs < <(jq -r '.reviewers[] | select(.fallback | not) | .harness_globs[]' "$tmp/roster.json")
+  mapfile -t harness_shebangs < <(jq -r '.reviewers[] | select(.fallback | not) | .harness_shebang[]' "$tmp/roster.json")
+  fallback_needed=false
+  for changed_path in "${changed_files[@]}"; do
+    if [[ ! $changed_path =~ ^[A-Za-z0-9._/-]+$ ]]; then
+      fallback_needed=true
+      break
+    fi
+    if ! _covered_by_glob "$changed_path"; then
+      file_name=${changed_path##*/}
+      # Extensionless = the basename carries no `.` after its first character.
+      if [[ ${file_name:1} == *.* ]] ||
+        ! _covered_by_shebang "$(_probe_interpreter "$repo/$changed_path" || true)"; then
+        fallback_needed=true
+        break
+      fi
+    fi
+  done
+fi
+
+if $fallback_needed; then
+  cat "$tmp/roster.json"
+else
+  jq 'del(.reviewers[] | select(.fallback))' "$tmp/roster.json"
+fi
