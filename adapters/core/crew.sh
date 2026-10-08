@@ -2001,10 +2001,11 @@ HELP
 usage: crew hold park <default> [--crew ID]
 
 Print how many seconds to park a watch for: the earlier of <default> and the
-moment the earliest outstanding hold's window resets, never below 1. Writes
-nothing — it is the length to hand 'crew watch --timeout'.
+moment the earliest outstanding hold's window resets, never below 1 — or
+<default> itself when no hold is outstanding, or the earliest already matured.
+Writes nothing; it is the length to hand 'crew watch --timeout'.
 
-  <default>  Positive whole seconds; used when no hold is outstanding
+  <default>  Positive whole seconds
   --crew     Crew id; defaults to this repo's crew
 
   crew watch --timeout "$(crew hold park 3600)"
@@ -2062,7 +2063,7 @@ Post or update a session's state on the crew bus.
   <state>    working | blocked | pr_open | done | failed | exited
   [detail]   Short context; put -- before one that starts with a dash
   [pr]       PR url, which pr_open names
-  --restamp  Refresh liveness without re-delivering a pending reply
+  --restamp  blocked only: refresh liveness without re-delivering a reply
   --         Everything after this is positional
 
 pr_open and done are refused on a standard/deep implement run until the branch
@@ -2108,8 +2109,9 @@ Block until a message answers <agent>'s outstanding question, print it, exit 0.
 
   <agent>     The id that asked — usually "$CREW_WORKER_ID"
   --from      Accept a reply only from this exact sender id
-  --timeout   Seconds to wait (default 300); on expiry print nothing, print the
-              "ended after Ns" line on stderr, and exit non-zero
+  --timeout   Seconds to wait (default 300). On expiry stdout stays empty and
+              stderr gets "ended after Ns" — that line is the marker, the exit
+              code stays 0, so never branch on $? here
   --interval  Poll interval in seconds (default 2)
 
 Every due message from the reply's sender prints, oldest first, one compact JSON
@@ -2130,7 +2132,8 @@ Print the messages addressed to <agent> — messages only, never status rows.
   --since   One non-blocking pass over messages strictly newer than TS
 
 Omitting --since returns everything, unchanged; a directive posted mid-stage is
-only visible at the next peek, so carry the cursor forward.
+only visible at the next peek, so carry the cursor forward. A worker:<…> reader
+marks what it prints as delivered, so a later `crew await` will not return it.
 
   crew inbox "$CREW_WORKER_ID" --since 1791400000000
 HELP
@@ -2209,7 +2212,8 @@ one parked on a prompt looks exactly like one that is working.
   <target>    worker:<branch>#s…, a bare branch, or role:<branch>:<role> (a role
               id selects prompt-only mode)
   --pane      tmux pane id to sample (required)
-  --engine    Engine family; detected from the pane command when omitted
+  --engine    Engine family (claude|codex|cursor|pi); the default "unknown"
+              leaves the prompt, meter, quota and runaway detectors off
   --grace     Silence after launch (default 45)
   --stall     Meter-advancing/token-static window before turn-stall: (default 300)
   --window    Startup window a static pane may still be starting in (default 900)
@@ -2276,13 +2280,13 @@ HELP
     cat <<'HELP'
 usage: crew roster [crew]
 
-One row per branch — folded per session first, so three sessions on a branch
-never read as one flip-flopping identity — with state, age, engine, model, tier,
-PR, codename and pane.
+A JSON array with one object per branch — sessions folded to the latest first,
+so three sessions on a branch never read as one flip-flopping identity — each
+with state, detail, age_s, engine, model, tier, pr_url, codename and colour.
 
   [crew]  Crew id; defaults to this repo's crew
 
-  crew roster | column -t -s $'\t'
+  crew roster | jq -r '.[] | [.branch, .state, .name] | @tsv'
 HELP
     ;;
   roster-render)
@@ -2300,7 +2304,8 @@ it to the aeye carousel beside the recorded dispatcher pane.
   --once       Render one frame and exit
   --detach     Record the pane, start the daemon detached, return
   --interval   Redraw interval (default 2)
-  --quiet      Repaint at least every S seconds even with no change (default 1800)
+  --quiet      Exit after S seconds with no live role pane (default 1800;
+               0 exits as soon as the crew drains)
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.
 
@@ -2483,6 +2488,8 @@ Re-attach to an on-disk crew after a restart lost CREW_ID.
   [pid]    Dispatcher pid to record; defaults to the nearest non-shell ancestor
 
 --force is stripped from anywhere in the args, so it can never land as the pid.
+Adopting a crew whose recorded dispatcher pid is dead also releases the
+`dispatched` label from the GitHub issues that crew claimed but never finished.
 
   crew adopt <crew-id>
 HELP
@@ -2536,8 +2543,9 @@ usage: crew git-baseline [--accept]
 List — or, with --accept, merge into — the exec-capable and redirecting git-config
 baseline the worktree guard enforces.
 
-  --accept  Accept exactly the pairs this run prints; nothing else this command
-            writes changes the baseline
+  --accept  Merge exactly the pairs this run prints into the baseline. Needs a
+            real terminal and a typed yes, and is refused otherwise. Listing
+            exits 1 on drift or a missing baseline, 0 when clean.
 
 Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
 
