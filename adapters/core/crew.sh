@@ -2139,9 +2139,9 @@ HELP
     cat <<'HELP'
 usage: crew log [crew]
 
-Print every bus event for a crew as JSON lines — status rows and msg rows,
-including the synthetic hold:, retro:, metrics:, review: and deslop: sinks that
-wake nobody.
+Print every bus event for a crew as JSON lines: status rows, and msg rows to
+real recipients or to the synthetic hold:, retro:, metrics: and review: sinks
+that wake nobody — a deslop seam rides review:<crew>, not a sink of its own.
 
   [crew]  Crew id; defaults to this repo's crew
 
