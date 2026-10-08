@@ -8482,7 +8482,7 @@ PANES
     fi
 
     # No PR vouches for the branch, so every commit must already be on a
-    # remote or patch-equivalent (e.g. squashed) on the default branch.
+    # remote or patch-equivalent to one on the default branch.
     if [ "$mode" = issue ]; then
       if ! _wt_cfg_guard "$common"; then
         note "keeping $branch — git config drift"
