@@ -11720,3 +11720,111 @@ _rr_mini() {
   kill -0 "$RR_PID"
   [ "$(cat "$(_rr_crewdir)/crews/c1/roster-render.pane")" = "%7" ]
 }
+
+# --- crew --help: per-subcommand and grouped top-level (#812) ---------------
+
+# _crew_cli_subs — every top-level subcommand, parsed out of the dispatcher
+# itself: the arms of the top-level `case "$sub"` (they sit at column 0) plus the
+# `if [ "$sub" = … ]` blocks that run ahead of it. A command that gains an arm
+# and no help entry fails the rows below, which is the point.
+_crew_cli_subs() {
+  {
+    grep -E '^[a-z][a-z0-9_| -]*\)$' "$CREW" | tr -d ' ' | tr '|' '\n' | sed 's/)$//'
+    grep -oE '^if \[ "\$sub" = [a-z-]+ \]' "$CREW" | sed -E 's/.* = ([a-z-]+) \]/\1/'
+  } | grep -v '^$' | sort -u
+}
+
+# _crew_help_rows — the subcommand rows of the grouped list: two spaces, the
+# name, padding, its purpose. Group headers sit at column 0, so they never count
+# as a row, and a name printed twice reads as two rows.
+_crew_help_rows() { # <help text>
+  printf '%s\n' "$1" | sed -nE 's/^  ([a-z][a-z0-9-]+) +[^ ].*$/\1/p' | sort
+}
+
+@test "help: --help, -h and help each print every subcommand exactly once" {
+  local f listed want
+  want=$(_crew_cli_subs)
+  [ -n "$want" ]
+  for f in --help -h help; do
+    run run_crew "$f"
+    [ "$status" -eq 0 ]
+    listed=$(_crew_help_rows "$output")
+    if [ "$listed" != "$want" ]; then
+      printf '%s: top-level help drifted\nrows:\n%s\nsubcommands:\n%s\n' \
+        "$f" "$listed" "$want" >&2
+      return 1
+    fi
+    [[ "$output" == *"Run 'crew <command> --help'"* ]]
+  done
+}
+
+@test "help: every subcommand answers --help with no repo and no crew id" {
+  local n
+  cd / || return 1
+  while read -r n; do
+    [ -n "$n" ] || continue
+    run run_crew "$n" --help
+    if [ "$status" -ne 0 ]; then
+      printf 'crew %s --help exited %s: %s\n' "$n" "$status" "$output" >&2
+      return 1
+    fi
+    if [[ "${lines[0]}" != "usage: crew $n"* ]]; then
+      printf 'crew %s --help printed %s\n' "$n" "${lines[0]}" >&2
+      return 1
+    fi
+  done <<<"$(_crew_cli_subs)"
+}
+
+@test "help: crew hold <action> --help prints that action's synopsis" {
+  local a
+  for a in add list due park release; do
+    run run_crew hold "$a" --help
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" == "usage: crew hold $a "* ]]
+  done
+  # `crew hold --help` names every action, since it is the one that has to.
+  run run_crew hold --help
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "usage: crew hold add "* ]]
+  for a in add list due park release; do
+    [[ "$output" == *"crew hold $a "* ]]
+  done
+  run run_crew hold bogus --help
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no help for hold bogus"* ]]
+  # and an action with no --help still reads the way it always did
+  run run_crew hold bogus
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"hold add|list|due|park|release"* ]]
+}
+
+@test "help: a detail of --help is no help request, and -- keeps it literal" {
+  # Unchanged from before #812: only the first position means help, so the
+  # parser's own rejection still fires…
+  CREW_ID=c1 run run_crew status w1 working --help
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"status: unknown arg '--help'"* ]]
+  [[ "$output" != *"Post or update a session's state"* ]]
+  # …and the documented escape still posts `--help` as the detail verbatim.
+  CREW_ID=c1 run run_crew status w1 working -- --help
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | .body.detail'"
+  [ "$output" = "--help" ]
+}
+
+@test "help: bare crew and an unknown subcommand print the list to stderr and fail" {
+  local listed want
+  want=$(_crew_cli_subs)
+  run --separate-stderr run_crew
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  listed=$(_crew_help_rows "$stderr")
+  if [ "$listed" != "$want" ]; then
+    printf 'bare crew: rows:\n%s\nsubcommands:\n%s\n' "$listed" "$want" >&2
+    return 1
+  fi
+  run --separate-stderr run_crew bogus
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
+}
