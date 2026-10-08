@@ -2586,8 +2586,7 @@ case "$sub" in
   exit $?
   ;;
 hold)
-  # `crew hold <action> --help` sits here too: inside the hold arm it would
-  # land behind the repo and crew-id lookups this path must not need.
+  # hold takes an action, so its --help is the second argument, not the first.
   case "${2:-}" in
   --help | -h)
     _crew_help hold "${1:-}"
