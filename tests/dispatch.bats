@@ -11100,7 +11100,7 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
 }
 
-@test "role-watch: an assignment posted while the role works is deferred only after the role's verdict" {
+@test "role-watch: an assignment posted while the role works is held, and one posted after its verdict is deferred" {
   _spawn_role_fixture
   _rw_stub rw_frame_cursor_pull_idle
   touch "$STUB_DIR/pull"
@@ -11111,6 +11111,35 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   _rw_settle 40
   [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
   jq -nc '{ts:((now*1000|floor)+20), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_append "$(_rw_assign_row 50)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull role's verdict without an ack clears what it answered" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 30" _rw_launch cursor
+  _rw_append "$(_rw_status_row working '' 0)" "$(_rw_assign_row 1)"
+  _rw_settle 2
+  jq -nc '{ts:((now*1000|floor)+10), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 40
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 0 ]
+}
+
+@test "role-watch: an assignment newer than a pull verdict is still deferred" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_status_row working '' 0)"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 2
+  _rw_append "$(_rw_assign_row 50)"
   _rw_wait_deferred
   _rw_settle 24
   _rw_stop

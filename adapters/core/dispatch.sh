@@ -1933,9 +1933,10 @@ watch_role_prompts() {
 # sent keys: the role holds `crew await` itself and fetches its assignments.
 # The watcher still queues them and keeps @crew_state, and treats the role's
 # `crew status … working "assignment: …"` post as the ack that clears every
-# older entry. A bare `working` status (the boot announce) is not an ack, but
-# it starts the clock (5x --defer-notice before it). An ack holds the clock
-# until the role's next verdict; an assignment still un-acked --defer-notice
+# older entry; a verdict clears every entry up to it the same way. A bare
+# `working` status (the boot announce) is not an ack, but it starts the clock
+# (5x --defer-notice before it). An ack holds the clock until the role's next
+# verdict; an assignment still un-acked --defer-notice
 # seconds after that is reported to the lead once as `assignment_deferred`
 # with `delivery:"pull"`. A final release is never queued. An empty stamp
 # means typed.
@@ -2658,8 +2659,21 @@ if [ "${1:-}" = "--role-watch" ]; then
           elif [[ $to != dispatcher:* ]] && [ "$w_delivery" = pull ] &&
             [ -z "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" ]; then
             # The role's verdict (the watcher's own deferral carries an event):
-            # it stopped working the acked assignment, so the deferral clock
-            # restarts for whatever is still pending.
+            # it proves the role pulled whatever preceded it, even without an
+            # ack; newer entries stay queued with their clock restarted.
+            verdict_ts="$(printf '%s' "$ev" | jq -r '.ts')"
+            keep=()
+            keep_from=()
+            keep_ts=()
+            for i in "${!pending[@]}"; do
+              [ "${pending_ts[i]}" -le "$verdict_ts" ] && continue
+              keep+=("${pending[i]}")
+              keep_from+=("${pending_from[i]}")
+              keep_ts+=("${pending_ts[i]}")
+            done
+            pending=("${keep[@]}")
+            pending_from=("${keep_from[@]}")
+            pending_ts=("${keep_ts[@]}")
             role_busy=0
             deferred_since=0
             [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
