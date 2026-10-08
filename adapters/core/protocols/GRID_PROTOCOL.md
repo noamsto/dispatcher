@@ -80,6 +80,8 @@ crew status "$id" working "assignment: <seam>"
 
 The watcher reads this ack; the `assignment:` prefix tells it apart from the boot announce. A msg with `{"final":true}` means stop and needs no ack. After 24 consecutive empty cycles (~2h) with no assignment, post `crew status "$id" failed "no assignment"` and end your turn.
 
+Once you ack, the watcher waits for your verdict before it counts anything else as un-pulled, so post the verdict, then await again.
+
 If you skip the ack, the watcher tells the lead after 60s that the assignment was not picked up (`assignment_deferred`, `delivery: pull`). The lead then treats it as undelivered and falls back, so ack before anything else.
 
 ## Assignment contract

@@ -2591,6 +2591,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   deferred_since=0
   deferred_told=0
   role_ready=0
+  role_busy=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
   while [ "$(tmux display-message -p -t "$watch_pane" '#{pane_id}' 2>/dev/null || true)" = "$watch_pane" ]; do
@@ -2606,23 +2607,18 @@ if [ "${1:-}" = "--role-watch" ]; then
             # Any working status is the role up and pulling: the bare announce
             # or an ack. Its boot time must not count against the deferral clock.
             [ "$role_ready" -eq 1 ] || { role_ready=1; deferred_since=0; }
-            [ "${#pending[@]}" -gt 0 ] || continue
             printf '%s' "$ev" | jq -e '(.body.detail // "") | startswith("assignment:")' >/dev/null || continue
+            role_busy=1
+            [ "${#pending[@]}" -gt 0 ] || continue
             ack_ts="$(printf '%s' "$ev" | jq -r '.ts')"
-            # The role's await prints only the due backlog of the sender of its
-            # newest due message, so the ack clears that sender's entries alone.
-            ack_from=""
-            for i in "${!pending[@]}"; do
-              [ "${pending_ts[i]}" -lt "$ack_ts" ] && ack_from="${pending_from[i]}"
-            done
-            [ -n "$ack_from" ] || continue
+            # Anything un-pulled is still on the bus and the role's next await
+            # returns it, so the ack clears every older entry from any sender:
+            # at worst a notice is missed, never a false one.
             keep=()
             keep_from=()
             keep_ts=()
             for i in "${!pending[@]}"; do
-              if [ "${pending_from[i]}" = "$ack_from" ] && [ "${pending_ts[i]}" -lt "$ack_ts" ]; then
-                continue
-              fi
+              [ "${pending_ts[i]}" -lt "$ack_ts" ] && continue
               keep+=("${pending[i]}")
               keep_from+=("${pending_from[i]}")
               keep_ts+=("${pending_ts[i]}")
@@ -2656,6 +2652,14 @@ if [ "${1:-}" = "--role-watch" ]; then
             pending_from+=("$from")
             pending_ts+=("$(printf '%s' "$ev" | jq -r '.ts')")
             [ "$w_delivery" = pull ] || watch_set_state working
+          elif [[ $to != dispatcher:* ]] && [ "$w_delivery" = pull ] &&
+            [ -z "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" ]; then
+            # The role's verdict (the watcher's own deferral carries an event):
+            # it stopped working the acked assignment, so the deferral clock
+            # restarts for whatever is still pending.
+            role_busy=0
+            deferred_since=0
+            [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
           elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
             # The role answered while its assignment is still being verified; its
             # own assignment_unsubmitted posts (from the same id) are not a verdict.
@@ -2725,6 +2729,8 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "${#pending[@]}" -eq 0 ]; then
       deferred_since=0
       deferred_told=0
+    elif [ "$w_delivery" = pull ] && [ "$role_busy" -eq 1 ]; then
+      deferred_since=0
     elif [ "$w_delivery" = pull ]; then
       [ "$deferred_since" -gt 0 ] || deferred_since="$(_rw_now)"
       pull_wait="$defer_notice"
@@ -2736,7 +2742,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
         [ $(($(_rw_now) - deferred_since)) -ge "$pull_wait" ]; then
         deferred_told=1
-        crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" --arg d "$pull_detail" \
+        crew msg "$role_id" "${lead_worker:-$lead_id}" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" --arg d "$pull_detail" \
           '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"pull",detail:$d}')" 2>/dev/null || true
       fi
     elif [ "$cooldown" -gt 0 ]; then

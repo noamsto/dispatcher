@@ -11085,7 +11085,7 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   grep -q '^msg .*assignment_deferred.*has not announced itself (still booting, or never started)' "$STUB_LOG"
 }
 
-@test "role-watch: a pull ack clears only the sender whose backlog await printed" {
+@test "role-watch: a pull ack clears every backlog entry before it and holds the deferral while the role works" {
   _spawn_role_fixture
   _rw_stub rw_frame_cursor_pull_idle
   touch "$STUB_DIR/pull"
@@ -11093,11 +11093,44 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   _rw_append \
     "$(_rw_assign_row | jq -c '.from = "dispatcher:c1"')" \
     "$(_rw_assign_row 1)" \
-    "$(_rw_status_row working 'assignment: plan' 2)"
+    "$(_rw_status_row working '' 2)" \
+    "$(_rw_status_row working 'assignment: plan' 3)"
+  _rw_settle 40
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: an assignment posted while the role works is deferred only after the role's verdict" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working '' 1)" "$(_rw_status_row working 'assignment: plan' 2)"
+  _rw_settle 8
+  _rw_append "$(_rw_assign_row 10)"
+  _rw_settle 40
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+  jq -nc '{ts:((now*1000|floor)+20), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"verdict\":\"accept\"}"}' >>"$common/crew/events.jsonl"
   _rw_wait_deferred
   _rw_settle 24
   _rw_stop
-  [ "$(_rw_count 'assignment_deferred')" -eq 1 ]
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull deferral goes to the lead worker, not the dispatcher that posted last" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append \
+    "$(_rw_assign_row)" \
+    "$(_rw_assign_row 1 | jq -c '.from = "dispatcher:c1"')" \
+    "$(_rw_status_row working '' 2)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  [ "$(_rw_count '^msg role:feat/9-x:reviewer dispatcher:c1 .*assignment_deferred')" -eq 0 ]
 }
 
 @test "role-watch: a pull role receives its assignment from crew await" {
