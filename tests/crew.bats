@@ -1374,6 +1374,64 @@ _pi_assert_refused() {
   [[ "$output" == *"sessions <branch>"* ]]
 }
 
+@test "roster: a garbage log line exits 5 with empty stdout" {
+  seed_raw "worker:feat/x#s1-1" working
+  echo garbage >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run --separate-stderr run_crew roster c1
+  [ "$status" -eq 5 ]
+  [ -z "$output" ]
+  [[ "$stderr" == "crew: roster: "* ]]
+}
+
+@test "sessions: a garbage log line exits 5 with empty stdout" {
+  seed_raw "worker:feat/x#s1-1" working
+  echo garbage >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run --separate-stderr run_crew sessions x
+  [ "$status" -eq 5 ]
+  [ -z "$output" ]
+  [[ "$stderr" == "crew: sessions: "* ]]
+}
+
+@test "roster: an unreadable log exits 2 with empty stdout" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode 000 file"
+  seed_raw "worker:feat/x#s1-1" working
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  chmod 000 "$logf"
+  run --separate-stderr run_crew roster c1
+  chmod 600 "$logf"
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
+  [[ "$stderr" == "crew: roster: "* ]]
+}
+
+@test "sessions: an unreadable log exits 2 and prints []" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode 000 file"
+  seed_raw "worker:feat/x#s1-1" working
+  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  chmod 000 "$logf"
+  run --separate-stderr run_crew sessions x
+  chmod 600 "$logf"
+  [ "$status" -eq 2 ]
+  [ "$output" = "[]" ]
+  [[ "$stderr" == "crew: sessions: "* ]]
+}
+
+@test "roster: stdout is jq's pretty form byte for byte" {
+  seed_raw "worker:feat/x#s1-1" working
+  f="$BATS_TEST_TMPDIR/roster.out"
+  run_crew roster c1 >"$f"
+  [ "$(jq length "$f")" -ge 1 ]
+  cmp "$f" <(jq . "$f")
+}
+
+@test "sessions: stdout is jq's compact form plus one extra newline, byte for byte" {
+  seed_raw "worker:feat/x#s1-1" working
+  f="$BATS_TEST_TMPDIR/sessions.out"
+  run_crew sessions feat/x >"$f"
+  [ "$(jq length "$f")" -ge 1 ]
+  cmp "$f" <(jq -c . "$f"; echo)
+}
+
 @test "sessions: the arm execs CREW_GO_BIN with argv and stdin, passing its stderr and exit status" {
   stub="$BATS_TEST_TMPDIR/go-stub"
   cat >"$stub" <<'STUB'

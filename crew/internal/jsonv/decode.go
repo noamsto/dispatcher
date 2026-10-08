@@ -129,6 +129,7 @@ func (p *parser) object(depth int) (Value, error) {
 	}
 	p.pos++
 	obj := Value{kind: KindObject}
+	var index map[string]int // built once the object outgrows a linear scan
 	if c, err := p.next(); err != nil {
 		return Value{}, err
 	} else if c == '}' {
@@ -155,7 +156,7 @@ func (p *parser) object(depth int) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		obj.Set(key, v)
+		index = setMember(&obj, index, key, v)
 		c, err := p.next()
 		if err != nil {
 			return Value{}, err
@@ -170,6 +171,33 @@ func (p *parser) object(depth int) (Value, error) {
 			return Value{}, p.fail("expected separator between values")
 		}
 	}
+}
+
+// scanLimit is the member count up to which a duplicate key is found by
+// scanning, so small objects skip allocating an index.
+const scanLimit = 16
+
+// setMember is Value.Set for the parser, with a key-to-position index so an
+// object of N unique keys costs O(N) rather than O(N²). It returns the index.
+func setMember(obj *Value, index map[string]int, key string, v Value) map[string]int {
+	if index == nil {
+		obj.Set(key, v)
+		if len(obj.m) <= scanLimit {
+			return nil
+		}
+		index = make(map[string]int, 2*len(obj.m))
+		for i, m := range obj.m {
+			index[m.Key] = i
+		}
+		return index
+	}
+	if i, ok := index[key]; ok {
+		obj.m[i].Val = v
+		return index
+	}
+	index[key] = len(obj.m)
+	obj.m = append(obj.m, Member{Key: key, Val: v})
+	return index
 }
 
 // str parses a string starting at its opening quote. Escapes are decoded first

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -195,3 +196,16 @@ func TestUnique(t *testing.T) {
 }
 
 func errorsAs(err error, target **jsonv.TypeError) bool { return errors.As(err, target) }
+
+func TestCompareLargeObjectsIsLinearish(t *testing.T) {
+	const n = 200_000
+	a := one(t, bigObject(n, false))
+	b := one(t, bigObject(n, true))
+	start := time.Now()
+	if c := jsonv.Compare(a, b); c != 0 {
+		t.Errorf("same members in another order compare %d, want 0", c)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("comparing %d-key objects took %v, want well under 2s", n, d)
+	}
+}

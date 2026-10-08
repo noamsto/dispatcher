@@ -2,9 +2,11 @@ package jsonv_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -162,3 +164,41 @@ var errBoom = errors.New("boom")
 type errReader struct{ err error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// bigObject renders {"k0":0,...,"k<n-1>":n-1} with the keys in the given order.
+func bigObject(n int, reverse bool) string {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	for i := range n {
+		k := i
+		if reverse {
+			k = n - 1 - i
+		}
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, `"k%d":%d`, k, k)
+	}
+	sb.WriteByte('}')
+	return sb.String()
+}
+
+func TestDecodeStreamManyKeysIsLinearish(t *testing.T) {
+	const n = 200_000
+	src := bigObject(n, false)
+	start := time.Now()
+	vs := decode(t, src)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("decoding %d unique keys took %v, want well under 2s", n, d)
+	}
+	if got := vs[0].Len(); got != n {
+		t.Errorf("%d members, want %d", got, n)
+	}
+}
+
+func TestDecodeStreamDuplicateKeysKeepFirstPositionLastValue(t *testing.T) {
+	got := compact(decode(t, `{"a":1,"b":2,"a":3,"c":4,"b":5}`))
+	if want := `{"a":3,"b":5,"c":4}`; got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+}

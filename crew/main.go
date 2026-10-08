@@ -4,10 +4,13 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"time"
@@ -27,24 +30,38 @@ const (
 	exitUsage     = 64
 )
 
-func main() {
-	os.Exit(run(context.Background(), os.Args[1:]))
+// env is everything run reads from the process, so tests can supply their own.
+type env struct {
+	getwd    func() (string, error)
+	jqColors string // $JQ_COLORS
+	color    bool   // stdout is a terminal and $NO_COLOR is unset
+	probes   func(ctx context.Context, cwd string) roster.Probes
 }
 
-func run(ctx context.Context, args []string) int {
+func main() {
+	e := env{
+		getwd:    os.Getwd,
+		jqColors: os.Getenv("JQ_COLORS"),
+		color:    bus.IsTerminal(1) && os.Getenv("NO_COLOR") == "",
+		probes:   probes,
+	}
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
 	if len(args) == 0 || (args[0] != "roster" && args[0] != "sessions") {
-		fmt.Fprintln(os.Stderr, usage)
+		say(stderr, "%s\n", usage)
 		return exitUsage
 	}
 	sub, args := args[0], args[1:]
-	cwd, err := os.Getwd()
+	cwd, err := e.getwd()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "crew:", err)
+		say(stderr, "crew: %v\n", err)
 		return exitFailure
 	}
 	paths, err := bus.Locate(ctx, cwd)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "crew: not in a git repo")
+		say(stderr, "crew: not in a git repo\n")
 		return exitFailure
 	}
 
@@ -55,7 +72,7 @@ func run(ctx context.Context, args []string) int {
 	if sub == "sessions" {
 		var msg string
 		if branch, crew, msg = parseSessions(args); msg != "" {
-			fmt.Fprintln(os.Stderr, msg)
+			say(stderr, "%s\n", msg)
 			return exitFailure
 		}
 	} else {
@@ -68,42 +85,63 @@ func run(ctx context.Context, args []string) int {
 		}
 	}
 
+	out := bufio.NewWriterSize(stdout, 64<<10)
 	events, err := bus.ReadEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		if sub == "sessions" {
-			fmt.Println("[]")
+			say(out, "[]\n")
 		}
-		return 0
+		return flush(out, stderr, 0)
 	}
-	palette, valid := jsonv.ParseJQColors(os.Getenv("JQ_COLORS"))
+	// From here jq would have started, so it warns about a bad $JQ_COLORS even
+	// when it then fails to open the log.
+	palette, valid := jsonv.ParseJQColors(e.jqColors)
 	if !valid {
-		fmt.Fprintln(os.Stderr, "Failed to set $JQ_COLORS")
+		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
-	raw, code := fold(sub, events, err, paths.Log, func(evs []jsonv.Value) (jsonv.Value, error) {
+	opts := jsonv.Options{Indent: pretty}
+	if e.color {
+		opts.Colors = &palette
+	}
+
+	raw, code := fold(sub, events, err, paths.Log, stderr, func(evs []jsonv.Value) (jsonv.Value, error) {
 		now := time.Now()
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 		if sub == "sessions" {
 			return sessions.Fold(evs, branch, crew, nowSec)
 		}
-		return roster.Fold(evs, crew, nowSec, probes(ctx, cwd))
+		return roster.Fold(evs, crew, nowSec, e.probes(ctx, cwd))
 	})
-	if code != 0 {
+	if code == exitOpen && sub == "sessions" {
+		// jq slurps zero inputs when it cannot open the file, so the program
+		// runs on [] and prints its result before exiting 2.
+		raw = jsonv.Array()
+	} else if code != 0 {
 		return code
 	}
 
-	opts := jsonv.Options{Indent: pretty}
-	if bus.IsTerminal(1) && os.Getenv("NO_COLOR") == "" {
-		opts.Colors = &palette
-	}
-	out := append(jsonv.Append(nil, raw, opts), '\n')
-	if sub == "sessions" {
-		out = append(out, '\n') // the arm's `printf '\n'` after jq -c
-	}
-	if _, err := os.Stdout.Write(out); err != nil {
-		fmt.Fprintln(os.Stderr, "crew:", err)
+	if err := jsonv.Encode(out, raw, opts); err != nil {
+		say(stderr, "crew: %v\n", err)
 		return exitFailure
 	}
-	return 0
+	say(out, "\n")
+	if sub == "sessions" && code == 0 {
+		say(out, "\n") // the arm's `printf '\n'` after jq -c
+	}
+	return flush(out, stderr, code)
+}
+
+// say writes to a stream whose failure is reported elsewhere (out, through
+// flush) or has nowhere to go (stderr).
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+
+// flush writes out what is buffered and keeps code unless the write fails.
+func flush(out *bufio.Writer, stderr io.Writer, code int) int {
+	if err := out.Flush(); err != nil {
+		say(stderr, "crew: %v\n", err)
+		return exitFailure
+	}
+	return code
 }
 
 // parseSessions mirrors the bash arm: branch is the first argument, the rest
@@ -129,7 +167,7 @@ func parseSessions(args []string) (branch, crew, msg string) {
 
 // fold runs the subcommand's fold over the read events, or maps the read or
 // fold error to its stderr line and exit status.
-func fold(sub string, events []bus.Event, readErr error, log string, f func([]jsonv.Value) (jsonv.Value, error)) (jsonv.Value, int) {
+func fold(sub string, events []bus.Event, readErr error, log string, stderr io.Writer, f func([]jsonv.Value) (jsonv.Value, error)) (jsonv.Value, int) {
 	var v jsonv.Value
 	err := readErr
 	if err == nil {
@@ -143,25 +181,34 @@ func fold(sub string, events []bus.Event, readErr error, log string, f func([]js
 		return v, 0
 	}
 	var (
-		open *bus.OpenError
-		exit *roster.ExitError
+		open   *bus.OpenError
+		decode *bus.DecodeError
+		exit   *roster.ExitError
 	)
 	switch {
 	case errors.As(err, &exit):
-		fmt.Fprint(os.Stderr, exit.Stderr)
+		say(stderr, "%s", exit.Stderr)
 		return v, exit.Code
 	case errors.As(err, &open):
-		if sub == "sessions" {
-			// jq slurps zero inputs when it cannot open the file, so the
-			// program runs on [] and prints its result before exiting 2.
-			fmt.Println("[]")
-		}
-		fmt.Fprintf(os.Stderr, "crew: %s: %s: %v\n", sub, log, open.Err)
+		say(stderr, "crew: %s: %s: %v\n", sub, log, withoutPath(open.Err))
 		return v, exitOpen
+	case errors.As(err, &decode):
+		say(stderr, "crew: %s: %s: %v\n", sub, log, decode.Err)
+		return v, exitType
 	default:
-		fmt.Fprintf(os.Stderr, "crew: %s: %s: %v\n", sub, log, err)
+		say(stderr, "crew: %s: %s: %v\n", sub, log, err)
 		return v, exitType
 	}
+}
+
+// withoutPath is err minus the "op path:" prefix of an *fs.PathError, since the
+// caller prints the path itself.
+func withoutPath(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

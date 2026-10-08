@@ -5,6 +5,7 @@
 package roster
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"regexp"
@@ -52,6 +53,9 @@ var idSuffix = regexp.MustCompile(`(?:[a-z]+/)?([A-Za-z]+-[0-9]+|[0-9]+)`)
 func Fold(events []jsonv.Value, crew string, nowSec float64, p Probes) (jsonv.Value, error) {
 	rows, err := base(events, crew, nowSec)
 	if err != nil {
+		return jsonv.Value{}, err
+	}
+	if rows, err = reread(rows); err != nil {
 		return jsonv.Value{}, err
 	}
 	// $(...) drops trailing newlines, so the here-doc over $live is exactly
@@ -346,19 +350,30 @@ func prevStateOf(g []jsonv.Value) (jsonv.Value, error) {
 	return at(best, "body", "state")
 }
 
-// ageSeconds is `(now - ($latest.ts/1000)) | floor`. The arm pipes its rows
-// through jq between stages, so the computed double reaches the output as the
-// number literal of its printed form: 1e+16 comes out as 1E+16.
+// ageSeconds is `(now - ($latest.ts/1000)) | floor`.
 func ageSeconds(ts jsonv.Value, nowSec float64) (jsonv.Value, error) {
 	f, ok := ts.AsFloat()
 	if !ok {
 		return jsonv.Value{}, jsonv.TypeErrorf("%s and number cannot be divided", ts.Kind())
 	}
-	vs, err := jsonv.DecodeStream(strings.NewReader(jsonv.FormatComputed(math.Floor(nowSec - f/1000))))
-	if err != nil || len(vs) != 1 {
-		return jsonv.Value{}, fmt.Errorf("roster: age_s does not reparse: %v", err)
+	return jsonv.Num(math.Floor(nowSec - f/1000)), nil
+}
+
+// reread is the arm's `jq -c '.[]'` over $base: every row is printed and parsed
+// again, so a number jq computed (age_s, or an infinity it clamps to
+// 1.7976931348623157e+308) comes back as a literal and prints in decNumber's
+// form, 1.7976931348623157E+308. The later `--argjson` and final jq stages
+// re-read literals, which changes nothing.
+func reread(rows []jsonv.Value) ([]jsonv.Value, error) {
+	out := make([]jsonv.Value, len(rows))
+	for i, row := range rows {
+		vs, err := jsonv.DecodeStream(bytes.NewReader(jsonv.Append(nil, row, jsonv.Options{})))
+		if err != nil || len(vs) != 1 {
+			return nil, fmt.Errorf("roster: row does not reparse: %v", err)
+		}
+		out[i] = vs[0]
 	}
-	return vs[0], nil
+	return out, nil
 }
 
 // collapse is the second group_by: the newest session's row per branch plus
@@ -481,6 +496,11 @@ func isEngineCmd(cmd string) bool {
 // The arm builds its identity map from `for br in $(jq -r '.[].branch')`, so
 // a branch holding a space, tab or newline splits into words and never keys
 // itself: such a row gets no identity.
+//
+// Not mirrored, since git refuses such branch names: the unquoted `$(...)`
+// would also glob-expand a word holding `*`, `?` or `[`, a NUL byte in a
+// bus-supplied branch is dropped by `$(...)`, and awk's `-v` processes
+// backslash escapes in the branch it is given (see worktreePath).
 func withIdentity(events []jsonv.Value, rows []jsonv.Value) []jsonv.Value {
 	counts := map[string]int{}
 	for i := range rows {

@@ -46,10 +46,18 @@ func ParseJQColors(s string) (Palette, bool) {
 	return p, true
 }
 
-// Encode writes v as jq would print it, without a trailing newline.
+// flushAt is the buffered size at which a streaming encoder writes out, so
+// memory stays bounded however much output a deeply nested value pretty-prints to.
+const flushAt = 32 << 10
+
+// Encode streams v as jq would print it to w, without a trailing newline.
 func Encode(w io.Writer, v Value, opts Options) error {
-	_, err := w.Write(Append(nil, v, opts))
-	return err
+	e := encoder{w: w, opts: opts}
+	e.value(v, 0)
+	if e.err == nil && len(e.b) > 0 {
+		_, e.err = w.Write(e.b)
+	}
+	return e.err
 }
 
 // Append appends v's jq encoding to b.
@@ -62,6 +70,21 @@ func Append(b []byte, v Value, opts Options) []byte {
 type encoder struct {
 	b    []byte
 	opts Options
+	w    io.Writer // nil when appending to b
+	err  error     // first write error; encoding stops once set
+}
+
+// spill writes the buffer out once it is large; called between tokens.
+func (e *encoder) spill() {
+	if e.w == nil {
+		return
+	}
+	if e.err == nil && len(e.b) >= flushAt {
+		_, e.err = e.w.Write(e.b)
+	}
+	if e.err != nil || len(e.b) >= flushAt {
+		e.b = e.b[:0]
+	}
 }
 
 func (e *encoder) start(col int) {
@@ -83,6 +106,7 @@ func (e *encoder) token(col int, text string) {
 }
 
 func (e *encoder) newline(level int) {
+	e.spill()
 	if !e.opts.Indent {
 		return
 	}
@@ -93,6 +117,9 @@ func (e *encoder) newline(level int) {
 }
 
 func (e *encoder) value(v Value, level int) {
+	if e.err != nil {
+		return
+	}
 	col := int(v.kind)
 	switch v.kind {
 	case KindNull:

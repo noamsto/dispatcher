@@ -494,6 +494,21 @@ var cases = []rosterCase{
 		wantErr: "type",
 	},
 	{
+		name: "a computed infinity reads back as a literal",
+		events: []string{
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"a","tier":Infinity}`,
+			`{"ts":Infinity,"crew_id":"c1","kind":"status","from":"worker:a#s1-1","body":{"state":"w"}}`,
+		},
+		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":null,"source":null,"ts":1.7976931348623157E+308,"pr_url":null,"age_s":-1.7976931348623157E+308,"title":null,"engine":null,"model":null,"tier":1.7976931348623157E+308,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":-1.7976931348623157E+308}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
+	},
+	{
+		name: "an overflowing literal in detail reads back as a literal",
+		events: []string{
+			`{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:a#s1-1","body":{"state":"w","detail":[1e1000000000,-1e1000000000,NaN,1.5,100]}}`,
+		},
+		want: `[{"from":"worker:a#s1-1","branch":"a","session":"s1-1","state":"w","detail":[1.7976931348623157E+308,-1.7976931348623157E+308,null,1.5,100],"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"w","age_s":99}],"name":"orchid","color":"orchid","tmux":"colour169"}]`,
+	},
+	{
 		name:    "a missing ts on the latest event is a type error",
 		events:  []string{`{"crew_id":"c1","kind":"status","from":"worker:feat/x","body":{"state":"working"}}`},
 		wantErr: "type",

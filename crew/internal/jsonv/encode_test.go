@@ -2,6 +2,7 @@ package jsonv_test
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"path/filepath"
 	"strconv"
@@ -203,3 +204,50 @@ func TestEncodeWriteError(t *testing.T) {
 type errWriter struct{}
 
 func (errWriter) Write([]byte) (int, error) { return 0, errBoom }
+
+type sizeWriter struct{ writes, max, total int }
+
+func (w *sizeWriter) Write(p []byte) (int, error) {
+	w.writes++
+	w.max = max(w.max, len(p))
+	w.total += len(p)
+	return len(p), nil
+}
+
+func TestEncodeStreamsDeepNesting(t *testing.T) {
+	const depth = 3000
+	src := strings.Repeat("[", depth) + strings.Repeat("]", depth)
+	v := one(t, src)
+	opts := jsonv.Options{Indent: true}
+	want := jsonv.Append(nil, v, opts)
+
+	var w sizeWriter
+	if err := jsonv.Encode(&w, v, opts); err != nil {
+		t.Fatal(err)
+	}
+	if w.total != len(want) {
+		t.Errorf("wrote %d bytes, want %d", w.total, len(want))
+	}
+	if w.writes < 2 || w.max > len(want)/4 {
+		t.Errorf("%d writes, largest %d of %d bytes: output was not streamed", w.writes, w.max, len(want))
+	}
+	var buf bytes.Buffer
+	if err := jsonv.Encode(&buf, v, opts); err != nil || !bytes.Equal(buf.Bytes(), want) {
+		t.Errorf("streamed output differs from Append (err %v)", err)
+	}
+}
+
+func TestEncodeStopsAtFirstWriteError(t *testing.T) {
+	v := one(t, strings.Repeat("[", 3000)+strings.Repeat("]", 3000))
+	w := &failAfter{}
+	if err := jsonv.Encode(w, v, jsonv.Options{Indent: true}); !errors.Is(err, errBoom) {
+		t.Errorf("got %v, want the writer's error", err)
+	}
+	if w.calls != 1 {
+		t.Errorf("%d writes after the first failure, want none", w.calls-1)
+	}
+}
+
+type failAfter struct{ calls int }
+
+func (w *failAfter) Write([]byte) (int, error) { w.calls++; return 0, errBoom }

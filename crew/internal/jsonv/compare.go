@@ -50,27 +50,22 @@ func compareNumbers(a, b Value) int {
 
 // compareObjects orders by sorted key list first, then by the values in key order.
 func compareObjects(a, b Value) int {
-	ka, kb := sortedKeys(a), sortedKeys(b)
-	if c := slices.Compare(ka, kb); c != 0 {
+	ma, mb := sortedMembers(a), sortedMembers(b)
+	if c := slices.CompareFunc(ma, mb, func(x, y Member) int { return strings.Compare(x.Key, y.Key) }); c != 0 {
 		return c
 	}
-	for _, k := range ka {
-		x, _ := a.Get(k)
-		y, _ := b.Get(k)
-		if c := Compare(x, y); c != 0 {
+	for i := range ma {
+		if c := Compare(ma[i].Val, mb[i].Val); c != 0 {
 			return c
 		}
 	}
 	return 0
 }
 
-func sortedKeys(o Value) []string {
-	keys := make([]string, len(o.m))
-	for i, m := range o.m {
-		keys[i] = m.Key
-	}
-	slices.Sort(keys)
-	return keys
+func sortedMembers(o Value) []Member {
+	ms := slices.Clone(o.m)
+	slices.SortFunc(ms, func(x, y Member) int { return strings.Compare(x.Key, y.Key) })
+	return ms
 }
 
 type keyed struct{ key, val Value }
