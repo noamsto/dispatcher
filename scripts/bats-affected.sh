@@ -89,6 +89,7 @@ map_file() {
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters crew public-leak-guard secret-read-guard ;;
+  crew/*) add "${crew_set[@]}" ;;
   dash/*) add crew-dash module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;
   *) full_suite "full suite: $f has no map row" ;;

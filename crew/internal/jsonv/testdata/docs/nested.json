@@ -1,0 +1,2 @@
+{"ts":1791451165027,"from":"worker:feat/x#s1-1","body":{"state":"working","detail":["a",{"b":[1,2,[3,[]]]},null],"flags":{"x":true,"y":false,"z":null}},"list":[[1,2],[3,4],[]],"tail":{"k":{"k":{"k":"v"}}}}
+[{"a":1},{"b":[true,false,null]},"x",0,[[],[[]]]]

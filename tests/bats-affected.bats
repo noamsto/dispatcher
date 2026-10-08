@@ -32,6 +32,14 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 
+@test "affected: crew/ Go sources select crew.sh's 19 files" {
+  affected --files crew/main.go
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 19 ]
+  [[ "$output" == *tests/crew.bats* ]]
+  [[ "$output" != *tests/secret-read-guard.bats* ]]
+}
+
 @test "affected: tests/helpers.bash selects the full suite and says why on stderr" {
   affected --files tests/helpers.bash
   [ "$status" -eq 0 ]
