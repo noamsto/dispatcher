@@ -7663,7 +7663,11 @@ git-baseline)
     echo "git-config baseline $baseline_file predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does"
   fi
 
+  # Every context's aliases apply to every pair: git in a linked worktree
+  # may rewrite the main checkout's url through an alias only it sees.
   gb_shown=()
+  gb_all=()
+  gb_aliases=()
   for gb_ctx in "${gb_ctxs[@]}"; do
     gb_label="main checkout"
     [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
@@ -7672,30 +7676,31 @@ git-baseline)
       echo "crew: cannot list the git config of $gb_ctx" >&2
       exit 1
     fi
-    # A human's global insteadOf rewrites a local remote url too.
-    gb_aliases=()
     for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
       gb_rec="${gb_listing[gb_i + 2]}"
+      gb_all+=("$gb_label" "${gb_listing[gb_i]}" "${gb_listing[gb_i + 1]}" "$gb_rec")
+      # A human's global insteadOf rewrites a local remote url too.
       [[ ${gb_rec%%$'\n'*} == url.*.insteadof || ${gb_rec%%$'\n'*} == url.*.pushinsteadof ]] || continue
       [[ $gb_rec == *$'\n'* ]] && gb_aliases+=("${gb_rec#*$'\n'}")
     done
-    for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
-      [[ ${gb_listing[gb_i]} == local || ${gb_listing[gb_i]} == worktree ]] || continue
-      gb_rec="${gb_listing[gb_i + 2]}"
-      [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
-      gb_key="${gb_rec%%$'\n'*}"
-      gb_value="${gb_rec#"$gb_key"$'\n'}"
-      _wt_cfg_guarded "$gb_key" "$gb_value" || continue
-      _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
-      [ -z "${gb_base["$gb_canon"]+x}" ] || continue
-      gb_origin="${gb_listing[gb_i + 1]#file:}"
-      [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
-      gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-      _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp gb_aliases
-      # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
-      printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
-      gb_shown+=("$gb_rec")
-    done
+  done
+  for ((gb_j = 0; gb_j + 3 < ${#gb_all[@]}; gb_j += 4)); do
+    [[ ${gb_all[gb_j + 1]} == local || ${gb_all[gb_j + 1]} == worktree ]] || continue
+    gb_label="${gb_all[gb_j]}"
+    gb_rec="${gb_all[gb_j + 3]}"
+    [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
+    gb_key="${gb_rec%%$'\n'*}"
+    gb_value="${gb_rec#"$gb_key"$'\n'}"
+    _wt_cfg_guarded "$gb_key" "$gb_value" || continue
+    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
+    [ -z "${gb_base["$gb_canon"]+x}" ] || continue
+    gb_origin="${gb_all[gb_j + 2]#file:}"
+    [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
+    gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
+    _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp gb_aliases
+    # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
+    printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
+    gb_shown+=("$gb_rec")
   done
 
   if [ "${#gb_shown[@]}" -eq 0 ] && [ -f "$baseline_file" ] && [ -n "$gb_marked" ]; then

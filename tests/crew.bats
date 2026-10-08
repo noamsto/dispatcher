@@ -4413,6 +4413,19 @@ crew_tty() {
   [[ "$output" == *remote.origin.url=*evil.example* ]]
 }
 
+@test "git-baseline unmasks a main-checkout remote url through an alias only a linked worktree sees (#686)" {
+  local wt="$BATS_TEST_TMPDIR/alias-wt"
+  git commit -q --allow-empty -m init
+  git worktree add -q -b feat/alias-wt "$wt"
+  seed_git_baseline
+  git config extensions.worktreeConfig true
+  git -C "$wt" config --worktree url..insteadOf 'https://'
+  git config remote.origin.url 'https://evil.example:x@github.com/o/r.git'
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *remote.origin.url=*evil.example* ]]
+}
+
 @test "git-baseline masks a scheme-less http.proxy (#686)" {
   git commit -q --allow-empty -m init
   seed_git_baseline
