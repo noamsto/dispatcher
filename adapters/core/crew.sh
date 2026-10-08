@@ -5258,8 +5258,12 @@ EOF_REPOS
     costmap=$(printf '%s' "$costmap" | jq -c --arg m "$model" --arg e "$effort" --arg c "$class" --argjson w "$weight" \
       '. + {(($m) + "\t" + ($e)): [$c, $w]}')
   done <<<"$targets"
-  records=$(jq -s --arg repo "$repo" --argjson costmap "$costmap" '
-    (map(select(.kind=="dispatch"))) as $disp
+  # The burn table reaches jq as a file, not an argument: one argument past
+  # MAX_ARG_STRLEN (128 KiB) fails execve with E2BIG, and this one grows with
+  # the bus (#838).
+  records=$(jq -s --arg repo "$repo" --slurpfile costmap_file <(printf '%s\n' "$costmap") '
+    ($costmap_file[0]) as $costmap
+    | (map(select(.kind=="dispatch"))) as $disp
     | [ ($disp | map(.branch) | unique)[] as $b
         | ($disp | map(select(.branch==$b)) | sort_by(.ts)) as $runs
         | ($runs|length) as $n
@@ -5538,10 +5542,14 @@ EOF_REPOS
       patch=$(printf '%s' "$patch" | jq -c --argjson ok "$ok" '. + {last_query_ok: $ok}')
     fi
     patches=$(printf '%s' "$patches" | jq -c --arg id "$run_id" --argjson p "$patch" '. + {($id): $p}')
-  done < <(printf '%s' "$records" | jq -r --argjson snap "$snapshot" '
-    ($snap | map({key: .run_id, value: .}) | from_entries) as $S
+  # The folded store crosses over stdin for the same per-argument limit;
+  # `input` reads the two values in printf order.
+  done < <(printf '%s\n%s\n' "$records" "$snapshot" | jq -r -n '
+    input as $records
+    | input as $snap
+    | ($snap | map({key: .run_id, value: .}) | from_entries) as $S
     | (now * 1000) as $now
-    | .[] as $r
+    | $records[] as $r
     | ($S[$r.run_id] // {}) as $s
     | select($r.owns_pr)
     # Per-call finality (spec §Per-call finality): a run-level skip would
@@ -5563,15 +5571,18 @@ EOF_REPOS
   trap '_lock_release "$lockd"' EXIT
   fresh=$(jq -s -c "$store_fold" "$store" 2>/dev/null || true)
   fresh="${fresh:-[]}"
-  printf '%s' "$records" | jq -c --argjson stored "$fresh" --argjson patches "$patches" '
+  printf '%s\n%s\n%s\n' "$records" "$fresh" "$patches" | jq -c -n '
+    input as $records
+    | input as $stored
+    | input as $patches
     # The window-1 snapshot decided which calls to skip; carrying values
     # forward from it would drop a t2 upgrade another sweep landed while this
     # one was on the network.
-    ($stored | map({key: .run_id, value: .}) | from_entries) as $S
+    | ($stored | map({key: .run_id, value: .}) | from_entries) as $S
     | (now * 1000 | floor) as $sw
     | ["pr_state","closed_at_ms","merged_at_ms","merge_commit",
        "review_rounds","first_ci_green","unresolved_notes","reverted"] as $t2keys
-    | .[] as $r
+    | $records[] as $r
     | ($S[$r.run_id] // {}) as $s
     | ($patches[$r.run_id] // {}) as $p
     # For every field whose call did not succeed, the STORED value carries
