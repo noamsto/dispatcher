@@ -82,8 +82,27 @@ func keyAll(vs []Value, key func(Value) (Value, error)) ([]keyed, error) {
 	return ks, nil
 }
 
+// sortKeyed is jq's sort_by comparison. Compare is a strict weak order except
+// for NaN keys: Compare(nan, nan) is -1, so the pair is "less" in both
+// directions. Such a pair must be equal, or the stable sort cannot keep input
+// order the way jq's does.
 func sortKeyed(ks []keyed) {
-	slices.SortStableFunc(ks, func(a, b keyed) int { return Compare(a.key, b.key) })
+	slices.SortStableFunc(ks, func(a, b keyed) int { return compareKeys(a.key, b.key) })
+}
+
+// compareKeys is a three-way comparator for keys: exactly one direction less
+// orders the pair, both or neither is equal.
+func compareKeys(a, b Value) int {
+	ab := Compare(a, b) < 0
+	ba := Compare(b, a) < 0
+	switch {
+	case ab && !ba:
+		return -1
+	case ba && !ab:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // SortBy is jq's sort_by: a stable sort by key, returning a new slice.

@@ -122,6 +122,20 @@ func TestSortBy(t *testing.T) {
 	}
 }
 
+// Compare(nan, nan) is -1 in both directions, so treating it as a strict
+// "less" makes the comparator inconsistent; sort_by must still keep input
+// order the way jq's stable sort does.
+func TestSortByNaNAllEqual(t *testing.T) {
+	in := decode(t, `{"id":1,"k":NaN} {"id":2,"k":NaN} {"id":3,"k":NaN}`)
+	got, err := jsonv.SortBy(in, byK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "1,2,3"; ids(got) != want {
+		t.Errorf("sorted ids %s, want %s (NaN keys sort equal, input order kept)", ids(got), want)
+	}
+}
+
 func TestGroupBy(t *testing.T) {
 	got, err := jsonv.GroupBy(one(t, rows).Elems(), byK)
 	if err != nil {
