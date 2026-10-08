@@ -5099,6 +5099,57 @@ EOF
   assert_engine_kept "session posted after its done"
 }
 
+@test "reap: a branch whose latest session failed with no pr_url reaps via an earlier session's MERGED PR (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/xsess
+  wt_path="$BATS_TEST_TMPDIR/xsess-wt"
+  git worktree add -q "$wt_path" feat/xsess
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/xsess)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/xsess#s1-1" done "" "https://example.com/pr/5"
+  CREW_ID=c1 run_crew status "worker:feat/xsess#s2-2" failed "boom"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/xsess (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+}
+
+@test "reap: a kind:reap row's PR is used when no session posted one (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/reaprow
+  wt_path="$BATS_TEST_TMPDIR/reaprow-wt"
+  git worktree add -q "$wt_path" feat/reaprow
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/reaprow)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/reaprow" done
+  jq -nc '{ts:(now*1000|floor - 1000), kind:"reap", branch:"feat/reaprow", pr:"https://example.com/pr/6", pr_state:"MERGED", worktree:"/old/path"}' >>"$log"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"reaped feat/reaprow (MERGED)"* ]]
+  [ ! -d "$wt_path" ]
+}
+
 @test "msg: an oversized JSON body stays parseable JSON" {
   big="$(head -c 6000 /dev/zero | tr '\0' x)"
   body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"

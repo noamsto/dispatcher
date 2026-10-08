@@ -7858,6 +7858,14 @@ EOF
       (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
           | {branch: (.from | wid_branch), ts})
         | group_by(.branch) | map({key: .[0].branch, value: (map(.ts) | max)}) | from_entries) as $last
+      # The latest session of a re-dispatched branch may not carry the PR: use the
+      # newest status pr_url of any session, else the newest reap row PR.
+      | ((map(select(.kind == "reap" and ((.pr // "") | type == "string" and . != ""))
+              | {branch, ts, pr}) | group_by(.branch)
+            | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)
+          + (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and .body.pr_url != null)
+              | {branch: (.from | wid_branch), ts, pr: .body.pr_url}) | group_by(.branch)
+            | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)) as $prs
       | (map(select(
               ((.from // "") | startswith("worker:"))
               and (
@@ -7874,7 +7882,7 @@ EOF
           | group_by(.branch) | map(sort_by(.ts) | last)
           | map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
         )
-      | .[] | [.branch, .state, (.pr_url // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log")
+      | .[] | [.branch, .state, (.pr_url // $prs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log")
   [ -n "$candidates" ] || {
     note "nothing done to reap"
     exit 0
