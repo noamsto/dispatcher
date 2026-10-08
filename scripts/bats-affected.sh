@@ -73,6 +73,7 @@ map_file() {
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
+  adapters/core/phase-status.sh) add adapters phase-status ;;
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;
   adapters/core/public-leak-guard.sh) add "${dispatch_set[@]}" public-leak-guard ;;
   adapters/core/refresh-budget.sh) add adapters crew-dash dispatch module refresh-budget ;;
@@ -89,7 +90,7 @@ map_file() {
   scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters crew public-leak-guard secret-read-guard test-scope-guard ;;
+  hookyard.json) add adapters crew phase-status public-leak-guard secret-read-guard test-scope-guard ;;
   crew/*) add "${crew_set[@]}" ;;
   dash/*) add crew-dash module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;

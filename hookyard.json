@@ -30,6 +30,21 @@
       "engines": ["pi"],
       "match": ["Bash"],
       "timeout_ms": 4000
+    },
+    {
+      "id": "phase-status",
+      "exec": "adapters/core/phase-status.sh",
+      "events": ["post_tool"],
+      "engines": ["pi"],
+      "lane": "fire_and_forget"
+    },
+    {
+      "id": "phase-status-await",
+      "exec": "adapters/core/phase-status.sh",
+      "events": ["pre_tool"],
+      "engines": ["pi"],
+      "match": ["Bash"],
+      "timeout_ms": 4000
     }
   ]
 }
