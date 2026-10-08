@@ -16,6 +16,7 @@ You review Go changes for the defects that ship in a green build: a race the sch
 - **Command injection**: unvalidated input in `os/exec`
 - **Path traversal**: user-controlled file paths — prefer `os.Root` / `os.OpenRoot` (Go 1.24+) for sandboxed FS access; fall back to `filepath.Clean` + prefix check only when `os.Root` doesn't fit
 - **Race conditions**: shared state without synchronization
+- **Unsafe package**: `unsafe.Pointer` conversions outside the patterns `go vet` accepts, or `unsafe.String`/`unsafe.Slice` over memory later mutated or freed
 - **Hardcoded secrets**: API keys, passwords in source
 - **Insecure TLS**: `InsecureSkipVerify: true`
 - **Known CVEs**: `govulncheck ./...` findings must be triaged before merge
@@ -39,6 +40,7 @@ You review Go changes for the defects that ship in a green build: a race the sch
 
 #### Code Quality
 - **Typed-nil interface trap**: returning an interface from a `nil` concrete pointer yields a *non-nil* interface — callers' `x != nil` checks silently pass. Verify constructors that return an interface return a true nil.
+- **Cache aliasing**: cached values handed to several callers share their pointer fields; a caller writing through one corrupts the cache — copy on read or write
 - **Comment vs. code drift**: a comment/docstring asserting an invariant the code doesn't back. Treat stale narrative as a live bug, not a nit — it misleads the next reader.
 
 #### Test Quality
@@ -50,10 +52,18 @@ You review Go changes for the defects that ship in a green build: a race the sch
 #### Performance
 - **N+1 queries**: database or API calls in loops
 - **String concatenation in loops**: use `strings.Builder`
+- **Slice pre-allocation**: `make([]T, 0, n)` sized to the *expected* length. Reserving a worst-case bound (`make([]byte, 0, maxBytes)`) in a long-lived per-instance object pays the bound on every instance; let it grow.
+- **Allocations in hot paths**: per-call objects a loop could reuse
+- **Pollers redoing work on unchanged input**: re-reading, re-parsing or rebuilding string signatures every tick; gate on a cheap check (`os.Stat` size/mtime) and compare comparable structs with `==`
+- **Per-instance cost × instance count**: for a type or process created per session/connection/worker, check what its constructor allocates, including inside dependencies (a third-party library can reserve MiBs per instance), and whether re-creation ("reset", "reseed") repeats it.
+- **Runtime tuning without numbers**: `GOMAXPROCS`/`GOGC`/`GOMEMLIMIT` changes need a benchmark or `gctrace` behind them. `GOMEMLIMIT` below the live heap makes the GC run continuously.
+- **Memory-pinning caches**: consider `weak.Pointer` (Go 1.24+) for caches that should not block GC
 - **Old benchmark loop**: replace `for i := 0; i < b.N; i++` with `for b.Loop()` (Go 1.24+)
 
 #### Maintenance
 - **Deferred call in loop**: defer in a loop accumulates until the function returns
+- **Mutable package-level state**: a global written at runtime is a hidden input that races and leaks between tests
+- **`omitempty` on struct-typed fields**: it never omits them; use `omitzero` (Go 1.24+)
 - **Missing error wrapping**: `return err` with no context where the caller cannot otherwise tell which call failed — `fmt.Errorf("context: %w", err)`
 - **Modernizer findings**: run `go fix ./...` (Go 1.26+) or `gopls/modernize` and do not hand-flag what they flag; flag only `context.WithoutCancel` goroutines that can outlive shutdown
 
@@ -65,6 +75,7 @@ staticcheck ./...
 golangci-lint run
 go test -race ./...
 govulncheck ./...
+go test -run '^$' -bench . -benchmem ./...  # perf changes: compare before/after
 ```
 
 ## Findings and verdict

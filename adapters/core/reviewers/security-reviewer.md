@@ -26,6 +26,7 @@ Start by naming the trust boundaries the diff crosses: which input is attacker-c
 - **SSRF**: `fetch(userUrl)` or any outbound request whose host comes from caller input, with no allowlist of resolved hosts
 - **Unpinned third-party actions or dependencies**: a CI action referenced by tag or branch instead of a commit SHA, or a dependency added with no lockfile hash; prefer short-lived credentials via OIDC federation over a stored long-lived key
 - **Fail-open error path**: a lock, quota, or permission check whose error branch defaults to allow instead of deny, or an internal error, stack trace, or query fragment returned to the caller instead of a generic message with the detail logged operator-side
+- **Unvalidated tokens and open CORS**: a JWT accepted without a pinned algorithm and checks of signature, expiry, and audience, or `Access-Control-Allow-Origin` reflecting the request origin (or `null`) together with `Access-Control-Allow-Credentials: true`
 - **XSS sinks**: `innerHTML`, `dangerouslySetInnerHTML`, or a template's `|safe` filter fed unescaped user content
 - **Prompt injection**: user or fetched content interpolated into a tool call, and tool output re-injected into context unsanitized — treat both as untrusted, and never trust generated text as code
 
@@ -33,6 +34,8 @@ Start by naming the trust boundaries the diff crosses: which input is attacker-c
 
 - **Missing rate limiting** on an endpoint that does real work per request — a global limit does not stop credential stuffing against one route
 - **Missing security headers**: CSP, `X-Content-Type-Options`, `Strict-Transport-Security` absent on a new response path
+- **Weak token lifecycle**: an OAuth public client without PKCE, or a long-lived access JWT with no revocation path, or refresh tokens reused instead of rotated
+- **GraphQL introspection** left enabled in production
 - **Security events neither logged nor alerted on**: an auth failure, permission denial, or admin action with no audit trail anyone watches
 
 ## OWASP Top 10:2025

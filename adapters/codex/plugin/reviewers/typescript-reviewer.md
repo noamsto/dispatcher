@@ -24,7 +24,7 @@ Identify whether the diff is server-side (Node), browser, or React before judgin
 #### Type Safety
 - **`any` without justification**: Use `unknown` and narrow, or a precise type
 - **Non-null assertion abuse**: `value!` without a preceding guard
-- **`as` casts that bypass checks**: Fix the type instead
+- **`as` casts that bypass checks**: Fix the type instead; for a literal that must conform to a type, use `satisfies` (validates without widening)
 - **Relaxed compiler settings**: `tsconfig.json` weakening strictness
 
 #### Async Correctness
@@ -36,6 +36,7 @@ Identify whether the diff is server-side (Node), browser, or React before judgin
 - **Swallowed errors**: Empty `catch` blocks
 - **Untrusted input parsed without validation**: `JSON.parse`, `URL`, query params consumed without a schema or type guard
 - **Throwing non-Error objects**: Always `throw new Error("message")`
+- **Cleanup that leaks on throw**: a release called after the work with no `finally`, or several releases in one `finally` where an earlier throw skips the rest — `using`/`await using` (TS 5.2+, runtime with `Symbol.dispose`) handles both
 
 #### Test Quality
 - **Coverage on the changed line**: a bug-fix or new branch needs a test that exercises *that specific path*, not just a green suite.
@@ -50,6 +51,7 @@ Identify whether the diff is server-side (Node), browser, or React before judgin
 - **State mutation**: Return new objects
 - **Key prop using index**: Use stable unique IDs
 - **Effect for derived state**: compute during render instead of syncing via `useEffect`
+- **Missing error boundary**: a route or independently-failing subtree with none (`getDerivedStateFromError` class or `react-error-boundary`), so one render throw blanks the app
 
 #### Performance
 - **Sequential awaits for independent work**: use `Promise.all`

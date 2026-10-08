@@ -49,6 +49,7 @@ Determine the target Python version (`requires-python` / `target-version` / `[to
 - **`Any` / missing annotations** on public functions; untyped `**kwargs` carrying real contracts
 - **`# type: ignore` without a code** (`# type: ignore[arg-type]`) or with no justification — silencing the checker instead of fixing the type
 - **`Optional` not handled**: a `T | None` dereferenced without a `None` check the type checker would catch (run it — don't eyeball)
+- **Exhaustiveness**: a `match`/`if` ladder over an enum that silently falls through on a new member — end with `case _: assert_never(x)` (3.11+) so the checker flags the gap
 - **Stale / wrong annotations**: signature says `-> TextRegion` but the body always raises (should be `NoReturn`); annotation contradicts behavior
 
 #### Async
@@ -70,8 +71,10 @@ Determine the target Python version (`requires-python` / `target-version` / `[to
 - **Modern typing**: `list`/`dict`/`X | Y`/`X | None` over `List`/`Dict`/`Optional`/`Union` on 3.10+, PEP 695 `type` aliases where the project already uses them — flag only where it's inconsistent with the project's own style
 - **Style and modernization** (`pathlib`, f-strings, `match`, dataclasses): flag only where the project's own linter would, or where the old form hides a bug
 - **Declared-but-unused dependency**: a package in `[project.dependencies]` with zero imports in `src/` — flag it (orphaned dep or unstated plan)
-- **Import-time side effects**: expensive work, network, or env reads at module import
+- **Import-time side effects**: expensive work, network, or env reads at module import; heavy optional imports (torch, pandas) not deferred to the call site
 - **N+1 queries or requests in loops**; `s += ...` string building in a loop where `"".join` is meant
+- **Repeated work in loops**: recomputed invariants, membership tests against a `list` where a `set`/`dict` is O(1), row-wise `.apply`/`iterrows` where a vectorized op exists
+- **Unnecessary materialization**: `list(...)` of a generator iterated once; large eager intermediates
 
 ## Diagnostics
 
