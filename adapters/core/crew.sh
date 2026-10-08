@@ -1459,6 +1459,14 @@ _origin_repo() {
     sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true
 }
 
+# _origin_github_repo — _origin_repo, only for a github.com origin: the slug
+# drops the host, and _pr_url_in_repo only accepts github.com PR URLs.
+_origin_github_repo() {
+  case "$(git config --get remote.origin.url 2>/dev/null || true)" in
+  https://github.com/* | git@github.com:*) _origin_repo ;;
+  esac
+}
+
 # _pr_url_in_repo <url> <owner/name> — succeed when url is exactly a GitHub PR
 # URL of that repo. A pr_url is unvalidated worker-written text, so it alone
 # must never pick the repo gh is pointed at.
@@ -5211,6 +5219,7 @@ EOF_REPOS
   # No crew filter — ratings are cross-run/cross-crew evidence.
   [ -f "$log" ] || exit 0
   repo=$(_origin_repo)
+  gh_repo=$(_origin_github_repo)
   repo="${repo:-$(basename "$(git rev-parse --show-toplevel)")}"
   # jq cannot call _burn_weight; resolve each distinct model+effort here and
   # key the lookup by both, so opus@low prices below opus@high (its class
@@ -5399,9 +5408,9 @@ EOF_REPOS
     # The gate is evaluated BEFORE any call: a pr_url that is not a PR URL of
     # this repo issues zero calls, so a store holding several repos never
     # cross-queries.
-    _pr_url_in_repo "$pr_url" "$repo" || continue
-    owner=${repo%%/*}
-    name=${repo#*/}
+    _pr_url_in_repo "$pr_url" "$gh_repo" || continue
+    owner=${gh_repo%%/*}
+    name=${gh_repo#*/}
     number=${pr_url##*/}
     patch='{}'
     tried=false
@@ -7694,7 +7703,7 @@ reap)
   reap_cwd="$PWD"
   _wt_trusted_cwd "$common" || exit 1
   # Resolved once, after the cwd is trusted: bus pr_urls are checked against it.
-  reap_repo=$(_origin_repo)
+  reap_repo=$(_origin_github_repo)
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
@@ -8151,7 +8160,7 @@ SCAFFOLD
         | (map(select(.kind == "reap" and ((.pr // "") | type == "string" and . != ""))
               | {branch, ts, pr}) | group_by(.branch)
             | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries) as $reapprs
-        | (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and (.body.pr_url | type == "string"))
+        | (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and (.body.pr_url | type == "string" and . != ""))
               | {branch: (.from | wid_branch), from, ts, pr: .body.pr_url})) as $statprs
         | (map(select(
                 ((.from // "") | startswith("worker:"))
@@ -8165,7 +8174,7 @@ SCAFFOLD
                    session: $latest.from,
                    ts: $latest.ts,
                    state: $latest.body.state,
-                   pr_url: (map(.body.pr_url) | map(select(. != null)) | last)})
+                   pr_url: (map(.body.pr_url) | map(select(type == "string" and . != "")) | last)})
             | group_by(.branch) | map(sort_by(.ts) | last)
             | if $only == "" then map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
               else map(select(.branch == $only)) end
@@ -8391,11 +8400,11 @@ EOF
       case "$pr_state" in
       MERGED | CLOSED) ;;
       "")
-        note "keeping $branch — could not read PR state ($pr)"
+        note "keeping $branch — could not read PR state ($pr)${ignored:+ ($ignored)}"
         continue
         ;;
       *)
-        note "keeping $branch — PR $pr_state"
+        note "keeping $branch — PR $pr_state${ignored:+ ($ignored)}"
         continue
         ;;
       esac
@@ -8405,7 +8414,7 @@ EOF
       if [ "$pr_src" != own ]; then
         pr_head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null || true)
         if [ -z "$pr_head" ]; then
-          note "keeping $branch — could not verify $pr's head"
+          note "keeping $branch — could not verify $pr's head${ignored:+ ($ignored)}"
           continue
         fi
         if ! _wt_cfg_guard "$common"; then
@@ -8413,7 +8422,7 @@ EOF
           continue
         fi
         if ! _wt_git_common "$common" merge-base --is-ancestor "refs/heads/$branch" "$pr_head" 2>/dev/null; then
-          note "keeping $branch — its tip has commits past $pr"
+          note "keeping $branch — its tip has commits past $pr${ignored:+ ($ignored)}"
           continue
         fi
       fi

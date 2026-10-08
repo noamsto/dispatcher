@@ -5240,6 +5240,69 @@ GH
   run ! grep -q 'pr view https://github.com/evil' "$STUB_LOG"
 }
 
+@test "reap: a github.com pr_url is ignored when origin is not on github.com (#843)" {
+  git config remote.origin.url https://ghe.example.com/o/r.git
+  seed_git_baseline
+  git commit -q --allow-empty -m init
+  git branch feat/ghe
+  wt_path="$BATS_TEST_TMPDIR/ghe-wt"
+  git worktree add -q "$wt_path" feat/ghe
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+tip=$(git rev-parse refs/heads/feat/ghe)
+case "$*" in
+*"pr list"*) printf '[]\n' ;;
+*"issue view"*) printf '%s\n' 'CLOSED' ;;
+*headRefOid*) printf '%s\n' "$tip" ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/ghe" done "" "https://github.com/o/r/pull/7"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/ghe"* ]]
+  [[ "$output" == *"ignoring cross-repo pr_url https://github.com/o/r/pull/7"* ]]
+  [ -d "$wt_path" ]
+  run ! grep -q 'pr view https://github.com/o/r' "$STUB_LOG"
+}
+
+@test "reap: an empty pr_url does not promote an earlier session's PR to the latest session's (#843)" {
+  git commit -q --allow-empty -m init
+  git branch feat/emptyurl
+  wt_path="$BATS_TEST_TMPDIR/emptyurl-wt"
+  git worktree add -q "$wt_path" feat/emptyurl
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  old=$(git rev-parse feat/emptyurl)
+  git -C "$wt_path" commit -q --allow-empty -m more
+  cat >"$STUB_DIR/gh" <<GH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+*"pr list"*) printf '[]\n' ;;
+*headRefOid*) printf '%s\n' '$old' ;;
+*state*) printf '%s\n' 'MERGED' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", from:"worker:feat/emptyurl#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/7"}}' >>"$log"
+  jq -nc '{ts:2000, crew_id:"c1", from:"worker:feat/emptyurl#s2-2", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:""}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/emptyurl"* ]]
+  [[ "$output" == *"its tip has commits past https://github.com/o/r/pull/7"* ]]
+  [[ "$output" != *"would reap"* ]]
+  [ -d "$wt_path" ]
+}
+
 @test "reap: a failing gh pr list keeps the worker (#836)" {
   git commit -q --allow-empty -m init
   git branch feat/ghfail
