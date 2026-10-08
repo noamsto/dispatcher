@@ -1572,14 +1572,22 @@ EOF
 
 # _rr_d2 — model on stdin -> D2 text. Every bus-, record- or tmux-sourced string
 # reaches the output only inside a quoted label (q); keys are generated and the
-# only bare value, the stroke color, must be a palette entry mapped to a
-# d2-valid named color: some palette names (steel, rust, sky) are not CSS/d2
-# colors, so they are written under their nearest d2 equivalent. The compile
-# test in tests/crew.bats fails if a palette entry has no valid d2 name.
+# only bare value, the stroke color, is looked up in a fixed table of quoted hex
+# codes keyed by palette name (never taken from the record), so no bus text
+# reaches a style value. The table holds a muted catppuccin-like hue per name
+# that reads on both themes; a palette name without an entry gets no stroke. The
+# compile test in tests/crew.bats fails if a palette entry has no hex.
 _rr_d2() {
   jq -r --argjson palette "$(printf '%s\n' "${_colors[@]}" | jq -R . | jq -sc .)" \
-    --argjson d2map '{"steel":"steelblue","rust":"sienna","sky":"skyblue"}' '
+    --argjson hex '{"green":"#76a76b","blue":"#6b8fd6","magenta":"#c46bb5","orange":"#d49a62","teal":"#5fa8a0","purple":"#9a7fd0","yellow":"#c9b45f","salmon":"#d38b84","olive":"#9aa05a","steel":"#7a96ad","rust":"#b8765a","plum":"#a2709e","lime":"#9bbd5c","pink":"#d08aa8","sky":"#6fb0d6","grey":"#8b90a0","seagreen":"#5fa586","darkcyan":"#4f98a6","indigo":"#7c78c8","forestgreen":"#689a63","darkgoldenrod":"#b99342","mediumpurple":"#9d86d3","darkkhaki":"#aaa66e","dimgrey":"#7d8190","indianred":"#c27470","palevioletred":"#c9809c","peru":"#bf8b5a","crimson":"#c9606f","mediumvioletred":"#b8639a","hotpink":"#d983b3","orchid":"#b97fc7","royalblue":"#6f8ae0"}' '
     def cap($n): (if type == "string" then . elif . == null then "" else tojson end) | .[0:$n];
+    # Cut at a word boundary: a mid-word cut drops the partial word.
+    def trunc($n): (if type == "string" then . elif . == null then "" else tojson end)
+      | if length <= $n then .
+        else .[0:$n - 1] as $c
+          | (if (.[$n - 1:$n] | test("\\s")) or ($c | test("\\s") | not) then $c
+             else $c | sub("\\s+\\S*$"; "") end | sub("\\s+$"; "")) + "…"
+        end;
     def orq: if . == "" then "?" else . end;
     def q: gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; "")
       | gsub("\\\\"; "\\\\") | gsub("\""; "\\\"") | gsub("\\$"; "\\$") | gsub("\n"; "\\n")
@@ -1596,20 +1604,26 @@ _rr_d2() {
       "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
       "dispatcher: \"dispatcher\" {style.bold: true}",
       ($w[] | .key as $k
-        | ([(.name | cap(60) | orq), (.title | cap(80) | orq),
+        | ([(.title | trunc(80) | orq),
             ([.tier, .engine, .model] | map(cap(60) | orq) | join("·")),
             ((.state | cap(32) | orq)
              + (if .source == "watchdog" then " (watchdog)" else "" end)
-             + (.detail | cap(120) | if . == "" then "" else " · " + . + (if loop then "↻" else "" end) end)
+             + (.detail | trunc(120) | if . == "" then "" else " · " + . + (if loop then "↻" else "" end) end)
              + " · since " + (.ts | hhmm)
              + (.sessions | if length > 1 then " · \(length) sessions" else "" end))]
-           | join("\n") | q) as $label
-        | "\($k): \($label) {",
-          "  style: {\(if .color | among($palette) then "stroke: \($d2map[.color] // .color); " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
-          (if .state | among(["working", "blocked", "dispatched"]) then
-             .branch as $b
-             | [$roles[] | select(.branch == $b)] | sort_by(.role) | to_entries[]
-             | "  r\(.key + 1): \(.value | .role + "\n" + .engine + (if .state != "" then " · " + (.state | cap(32)) else "" end) | q)"
+           | join("\n") | q) as $info
+        | (.name | cap(60) | orq | q) as $name
+        | (if .state | among(["working", "blocked", "dispatched"]) then
+             .branch as $b | [$roles[] | select(.branch == $b)] | sort_by(.role)
+           else [] end) as $rp
+        | "\($k): \($name) {",
+          "  grid-columns: 1",
+          "  style: {fill: transparent; \(if .color | among($palette) then "stroke: \"\($hex[.color] // "")\"; " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
+          "  info: \($info) {shape: text}",
+          (if ($rp | length) > 0 then
+             "  roles: \"\" {grid-rows: 1; style: {stroke-width: 0; fill: transparent}}",
+             ($rp | to_entries[]
+              | "  roles.r\(.key + 1): \(.value | .role + "\n" + .engine + (if .state != "" then " · " + (.state | cap(32)) else "" end) | q)")
            else empty end),
           "}",
           "dispatcher -> \($k)",
