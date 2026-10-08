@@ -183,9 +183,8 @@ if [ -n "$autocompact" ] && [ "$autocompact" != auto ]; then
   }
 fi
 
-# Auto-compact window: the per-engine default in orchestratorDefaults, or the
-# --autocompact flag. `auto` keeps the engine's own default (no knob passed).
-# pi and cursor have no per-launch compaction knob and warn below.
+# Auto-compact window: orchestratorDefaults.<engine>.autoCompact, or the
+# --autocompact flag. `auto` keeps the engine default (no knob passed).
 ac="${autocompact:-$(orch_default autoCompact)}"
 
 # Fixed identity for the orchestrator window so it stands out from the

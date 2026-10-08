@@ -164,7 +164,7 @@ check_model_shapes() {
         else
          (if ((.value|has("model"))|not) or ((.value.model|type) != "string") then err("orchestratorDefaults.\(.key).model"; "a string") else empty end),
          (if (.value|has("effort")) and ((.value.effort|type) != "string") then err("orchestratorDefaults.\(.key).effort"; "a string") else empty end),
-         (if (.value|has("autoCompact")) and (((.value.autoCompact | (type == "number" and . > 0 and . == floor))|not)) then err("orchestratorDefaults.\(.key).autoCompact"; "a positive integer") else empty end)
+         (if (.value|has("autoCompact")) and ((.value.autoCompact | (type == "number" and . > 0 and . == floor))|not) then err("orchestratorDefaults.\(.key).autoCompact"; "a positive integer") else empty end)
         end
       ) end;
     def rosterdiagram($d):
