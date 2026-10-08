@@ -1340,10 +1340,12 @@ decorate_pane() {
 # before any role pane splits off it) to 60% width. Role panes only carry
 # short verdict traffic and need far less room than the lead's diff/test/tool
 # output. The built-in fallback for a host without tmux-og's tmux-grid-refit.
+# Best-effort like the other grid-hint writers: a window that vanished
+# mid-spawn must never abort dispatch under set -e.
 layout_grid() {
   local win="$1"
-  tmux set-window-option -t "$win" main-pane-width 60%
-  tmux select-layout -t "$win" main-vertical
+  tmux set-window-option -t "$win" main-pane-width 60% 2>/dev/null || true
+  tmux select-layout -t "$win" main-vertical 2>/dev/null || true
 }
 
 # refit_grid <window> — hand the responsive layout to tmux-og when its
@@ -1380,6 +1382,32 @@ wait_grid_refit() {
     prev="$cur"
     sleep 0.15
   done
+}
+
+# guard_role_width <window> — after the refit settles, any role pane still
+# below the readable minimum gets the built-in main-vertical fallback:
+# tmux-grid-refit leaves the bare split alone when a precondition is missing
+# (no @crew_grid, window zoomed, no lead tag, refit lock held) (#814). The
+# minimum is a per-pane floor (default 20), NOT the role-AREA minimum tmux-og
+# keeps in @grid_refit_min_role_cols (default 30); an explicit 0 disables
+# this guard. The stderr line carries the raw window layout so the next
+# occurrence captures the root cause. Best-effort like publish_grid_window:
+# a vanished window never fails a dispatch.
+guard_role_width() {
+  local win="$1" min out pane role width layout
+  min="$(tmux show-options -w -v -q -t "$win" @grid_refit_min_role_cols 2>/dev/null || true)"
+  case "$min" in '' | *[!0-9]*) min=20 ;; esac
+  out="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{pane_width}' 2>/dev/null || true)"
+  while IFS='|' read -r pane role width; do
+    case "$role" in '' | lead) continue ;; esac
+    case "$width" in '' | *[!0-9]*) continue ;; esac
+    if [ "$width" -lt "$min" ]; then
+      layout="$(tmux display-message -p -t "$win" '#{window_layout}' 2>/dev/null || true)"
+      echo "dispatch: role pane $pane is $width cols (min $min) after refit — window_layout=$layout; applying main-vertical fallback" >&2
+      layout_grid "$win"
+      return 0
+    fi
+  done <<<"$out"
 }
 
 # An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
@@ -2883,6 +2911,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   publish_grid_window "$win"
   refit_grid "$win"
   wait_grid_refit "$win" "$sig_before"
+  guard_role_width "$win"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
@@ -5180,6 +5209,7 @@ fi
 if [ "${#role_panes[@]}" -gt 0 ] || [ -n "$status_pane" ]; then
   refit_grid "$win"
   wait_grid_refit "$win" "$sig_before"
+  guard_role_width "$win"
 fi
 
 tmux send-keys -t "$pane" "$launch_line" Enter
