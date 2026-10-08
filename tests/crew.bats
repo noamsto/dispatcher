@@ -11191,13 +11191,16 @@ EOF
 
 _rr_bus() { printf '%s/crew/events.jsonl' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
 _rr_crewdir() { printf '%s/crew' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
-# _rr_file — crew c1's diagram for the repo here: one file per repo bus.
+# _rr_file [crew] — the crew's (default c1) diagram for the repo here: one file
+# per repo bus and crew. A non-numeric crew id stands in for the time.
 _rr_file() {
-  local common repo
+  local crew=${1:-c1} common repo when sum
   common=$(git rev-parse --path-format=absolute --git-common-dir)
   repo=${common%/*}
-  printf '%s/roster-c1-%s-%s.d2' "$CREW_ROSTER_DIR" "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')" \
-    "$(printf '%s' "$common" | cksum | cut -d' ' -f1)"
+  when=$(printf '%s' "$crew" | tr -c 'A-Za-z0-9._-' '_')
+  sum=$(printf '%s|%s' "$common" "$crew" | cksum)
+  printf '%s/roster-%s-%s-%04x.d2' "$CREW_ROSTER_DIR" "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')" \
+    "$when" $((${sum%% *} % 65536))
 }
 
 # _rr_palette — every identity color, parsed from the source so a new palette
@@ -11306,32 +11309,24 @@ _rr_seed() {
 title: "Crew roster" {near: top-center; shape: text}
 legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
 dispatcher: "dispatcher" {style.bold: true}
-w1: "sage" {
-  grid-columns: 1
-  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3}
-  info: "Alpha task\nstandard·claude·sonnet\nworking · plan-critic r2↻ · since 08:20" {shape: text}
-  roles: "" {grid-rows: 1; style: {stroke-width: 0; fill: transparent}}
-  roles.r1: "spec-critic\nclaude · idle"
+w1: "sage\nAlpha task\nstandard·claude·sonnet\nworking · plan-critic r2 (loop) · since 08:20" {
+  grid-rows: 1
+  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3; font-size: 16}
+  r1: "spec-critic\nclaude · idle"
 }
 dispatcher -> w1
-w2: "atlas" {
-  grid-columns: 1
-  style: {fill: transparent; stroke: "#6b8fd6"; stroke-width: 3}
-  info: "Bravo task\nstandard·codex·gpt-5\ndone · since 08:40" {shape: text}
+w2: "atlas\nBravo task\nstandard·codex·gpt-5\ndone · since 08:40" {
+  style: {fill: transparent; stroke: "#6b8fd6"; stroke-width: 3; font-size: 16}
 }
 dispatcher -> w2
-w2_pr: "https://github.com/o/r/pull/124" {shape: page}
+w2_pr: "PR #124" {shape: page}
 w2 -> w2_pr: "#124"
-w3: "nova" {
-  grid-columns: 1
-  style: {fill: transparent; stroke: "#c46bb5"; stroke-width: 3; stroke-dash: 3}
-  info: "Charlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {shape: text}
+w3: "nova\nCharlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {
+  style: {fill: transparent; stroke: "#c46bb5"; stroke-width: 3; font-size: 16; stroke-dash: 3}
 }
 dispatcher -> w3
-w4: "ember" {
-  grid-columns: 1
-  style: {fill: transparent; stroke: "#d49a62"; stroke-width: 3}
-  info: "Delta task\nquick·cursor·composer\ndispatched · since 08:03" {shape: text}
+w4: "ember\nDelta task\nquick·cursor·composer\ndispatched · since 08:03" {
+  style: {fill: transparent; stroke: "#d49a62"; stroke-width: 3; font-size: 16}
 }
 dispatcher -> w4
 w3 -> w1: "stacked on"
@@ -11391,7 +11386,7 @@ EOF
   [ "$(stat -c '%i %Y' "$target")" != "$before" ]
   [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^>')" -eq 1 ]
   [ "$(diff "$BATS_TEST_TMPDIR/before.d2" "$target" | grep -c '^<')" -eq 1 ]
-  grep -qF 'working · execute: lint · since 08:25" {shape: text}' "$target"
+  grep -qF 'working · execute: lint · since 08:25" {' "$target"
 }
 
 @test "roster-render: long title is cut at a word boundary" {
@@ -11408,9 +11403,9 @@ EOF
   [ "$status" -eq 0 ]
   target="$(_rr_file)"
   # Cut lands mid-"omicron": the partial word is dropped, never half a word.
-  grep -qF '  info: "word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi…\n' "$target"
+  grep -qF '\nword alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi…\n' "$target"
   # One unbroken word has no boundary: hard cut.
-  grep -qF "  info: \"$(printf 'x%.0s' {1..79})…\\n" "$target"
+  grep -qF "\\n$(printf 'x%.0s' {1..79})…\\n" "$target"
 }
 
 @test "roster-render: hostile text stays inside quoted labels" {
@@ -11436,12 +11431,12 @@ EOF
   [ "$status" -eq 0 ]
   target="$(_rr_file)"
 
-  grep -qFx '  info: "a\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {shape: text}' "$target"
-  grep -qFx '  style: {fill: transparent; stroke-width: 3}' "$target"
-  grep -qFx '  roles.r1: "spec-critic\n? · idle"' "$target"
-  grep -qFx '  info: "Plain\nstandard·claude·sonnet\nworking · since 08:30" {shape: text}' "$target"
-  grep -qFx '  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3}' "$target"
-  grep -qFx '  roles.r1: "critic\n? · idle"' "$target"
+  grep -qFx 'w1: "atlas\na\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {' "$target"
+  grep -qFx '  style: {fill: transparent; stroke-width: 3; font-size: 16}' "$target"
+  grep -qFx '  r1: "spec-critic\n? · idle"' "$target"
+  grep -qFx 'w2: "sage\nPlain\nstandard·claude·sonnet\nworking · since 08:30" {' "$target"
+  grep -qFx '  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3; font-size: 16}' "$target"
+  grep -qFx '  r1: "critic\n? · idle"' "$target"
   grep -qFx 'h1: "hold h\"1\$\nwaiting on claude 5h\nuntil 10-07 12:00" {shape: hexagon}' "$target"
 
   # The hostile role pane and non-palette color leave no trace.
@@ -11449,7 +11444,7 @@ EOF
   [ "$output" = 0 ]
 
   # Only generated keys start a line; a lone `}` closes a container.
-  run grep -vE '^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|grid-columns|info|roles(\.r[0-9]+)?)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])' "$target"
+  run grep -vE '^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|grid-rows|r[0-9]+)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])' "$target"
   [ "$status" -eq 1 ]
   run grep -qP '[\x00-\x09\x0b-\x1f]' "$target"
   [ "$status" -eq 1 ]
@@ -11602,10 +11597,185 @@ _rr_publishes() { grep '^aeye publish-diagram' "$STUB_LOG" || true; }
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
   [ "$(_rr_file)" != "$first" ]
+  [ "${first%-*}" = "$(_rr_file | sed 's/-[^-]*$//')" ]
   grep -qF 'from org x' "$first"
   grep -qF 'from org y' "$(_rr_file)"
   run grep -qF 'from org y' "$first"
   [ "$status" -eq 1 ]
+}
+
+# _rr_recrew <from> <to> — move the bus's events from one crew id to another,
+# rewriting only the crew_id and to fields.
+_rr_recrew() {
+  local bus tmp
+  bus="$(_rr_bus)"
+  tmp="$bus.tmp"
+  jq -c --arg from "$1" --arg to "$2" \
+    'if .crew_id == $from then .crew_id = $to | (if .to then .to |= sub(":" + $from + "$"; ":" + $to) else . end) else . end' \
+    "$bus" >"$tmp" && mv -f "$tmp" "$bus"
+}
+
+# _rr_segments_le80 <file> — every \n-separated segment of every worker-block
+# label stays within 80 chars.
+_rr_segments_le80() {
+  local line seg
+  while IFS= read -r line; do
+    line=${line#*: \"}
+    line=${line%\"*}
+    while [[ $line == *'\n'* ]]; do
+      seg=${line%%'\n'*}
+      [ "${#seg}" -le 80 ] || { echo "segment over 80: $seg"; return 1; }
+      line=${line#*'\n'}
+    done
+    [ "${#line}" -le 80 ] || { echo "segment over 80: $line"; return 1; }
+  done < <(grep -E '^w[0-9]+: "' "$1")
+}
+
+@test "roster-render: every worker-block line stays within 80 chars with a very long detail" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local cdir detail
+  cdir="$(_rr_crewdir)"
+  detail="$(printf 'lengthy detail words %.0s' {1..30})ending in r3"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working "$detail" watchdog
+  _rr_status 'worker:feat/1-a#s2' 1791361300000 working "$detail" watchdog
+  mkdir -p "$cdir/artifacts/feat/1-a"
+  printf '%s\n' '{"spec-critic":{"agent":"claude"}}' >"$cdir/artifacts/feat/1-a/roles.json"
+  _rr_stubs "$(printf '%s\tc1\tfeat/1-a\tspec-critic\tidle\t\n' "$cdir")"
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  local line seg n=0
+  while IFS= read -r line; do
+    line=${line#*: \"}
+    line=${line%\"*}
+    while [[ $line == *'\n'* ]]; do
+      seg=${line%%'\n'*}
+      [ "${#seg}" -le 80 ] || { echo "segment over 80: $seg"; false; }
+      line=${line#*'\n'}
+      n=$((n + 1))
+    done
+    [ "${#line}" -le 80 ] || { echo "segment over 80: $line"; false; }
+    n=$((n + 1))
+  done < <(grep -E '^(w[0-9]+|  r[0-9]+): "' "$(_rr_file)")
+  # name, title, engine line, status line, then the role's two lines.
+  [ "$n" -eq 6 ]
+}
+
+@test "roster-render: a long state, watchdog and many sessions keep the status line within 80 chars" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local i
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  for i in $(seq 12); do
+    _rr_status "worker:feat/1-a#s$i" "$((1791361200000 + i))" abcdefghijklmnopqrstuvwxyz \
+      'plan-critic revision 3 of the lengthy fix cycle r3' watchdog
+  done
+  _rr_stubs ""
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  grep -qF '12 sessions' "$(_rr_file)"
+  run _rr_segments_le80 "$(_rr_file)"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+@test "roster-render: a loop detail shows (loop) as text, even when truncated" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 atlas blue colour32 "Bravo task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 working 'plan-critic r2'
+  _rr_status 'worker:feat/2-b#s1' 1791361800000 working "$(printf 'lengthy detail words %.0s' {1..4})ending in r3"
+  _rr_stubs ""
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  grep -qF 'working · plan-critic r2 (loop) · since 08:20" {' "$(_rr_file)"
+  grep -qE 'lengthy detail[^"]*… \(loop\) · since 08:30" \{' "$(_rr_file)"
+  run grep -c '↻' "$(_rr_file)"
+  [ "$output" = 0 ]
+}
+
+@test "roster-render: the PR node is labelled by number and never carries the URL" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_seed
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  grep -qFx 'w2_pr: "PR #124" {shape: page}' "$(_rr_file)"
+  grep -qFx 'w2 -> w2_pr: "#124"' "$(_rr_file)"
+  run grep -c 'github.com' "$(_rr_file)"
+  [ "$output" = 0 ]
+}
+
+@test "roster-render: a PR url without /pull/N gets a bare PR label" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791361200000 pr_open '' '' https://example.com/x
+  _rr_stubs ""
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  grep -qFx 'w1_pr: "PR" {shape: page}' "$(_rr_file)"
+  grep -qFx 'w1 -> w1_pr' "$(_rr_file)"
+}
+
+@test "roster-render: the file name carries repo, crew start time and a per-crew hash" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local repo common first
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  repo=${common%/*}
+  repo=$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')
+  _rr_seed
+  _rr_recrew c1 1791360000-123
+  run run_crew roster-render --crew 1791360000-123 --once
+  [ "$status" -eq 0 ]
+  run ls "$CREW_ROSTER_DIR"
+  [[ $output =~ ^roster-${repo}-10-07-0800-[0-9a-f]{4}\.d2$ ]] || { echo "$output"; false; }
+  first=$output
+
+  # Another crew in the same minute is a different file.
+  _rr_recrew 1791360000-123 1791360000-456
+  run run_crew roster-render --crew 1791360000-456 --once
+  [ "$status" -eq 0 ]
+  run ls "$CREW_ROSTER_DIR"
+  [ "$(printf '%s\n' "$output" | wc -l)" -eq 2 ]
+  [[ $output == *roster-${repo}-10-07-0800-* ]]
+  [ "$(printf '%s\n' "$output" | sort -u | wc -l)" -eq 2 ]
+  [ -f "$CREW_ROSTER_DIR/$first" ]
+  local f
+  for f in "$CREW_ROSTER_DIR"/*.d2; do grep -qF 'Alpha task' "$f"; done
+}
+
+@test "roster-render: a leading-zero or 13-digit crew id falls back to sanitized text" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local repo common
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  repo=${common%/*}
+  repo=$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')
+  _rr_seed
+  _rr_recrew c1 0123-1
+  run run_crew roster-render --crew 0123-1 --once
+  [ "$status" -eq 0 ]
+  run ls "$CREW_ROSTER_DIR"
+  [[ $output =~ ^roster-${repo}-0123-1-[0-9a-f]{4}\.d2$ ]] || { echo "$output"; false; }
+}
+
+@test "roster-render: a non-numeric crew id stands in for the time in the file name" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local repo common
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  repo=${common%/*}
+  repo=$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')
+  _rr_seed
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  run ls "$CREW_ROSTER_DIR"
+  [[ $output =~ ^roster-${repo}-c1-[0-9a-f]{4}\.d2$ ]] || { echo "$output"; false; }
 }
 
 @test "roster-render: a --pane that is not %N is ignored" {
