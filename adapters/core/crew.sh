@@ -1453,6 +1453,20 @@ _gh_json() {
   return 0
 }
 
+# _origin_repo — owner/name of this checkout's origin remote, or empty.
+_origin_repo() {
+  git config --get remote.origin.url 2>/dev/null |
+    sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true
+}
+
+# _pr_url_in_repo <url> <owner/name> — succeed when url is exactly a GitHub PR
+# URL of that repo. A pr_url is unvalidated worker-written text, so it alone
+# must never pick the repo gh is pointed at.
+_pr_url_in_repo() {
+  [[ $1 =~ ^https://github\.com/([^/]+)/([^/]+)/pull/[0-9]+$ ]] &&
+    [ "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" = "$2" ]
+}
+
 # _hold_crew <raw> — resolve `crew hold`'s --crew flag (or _crew_id when
 # omitted) and apply the same caller-supplied-id guard `watch`/`stream` use
 # (crew.sh:889-894). Not containment — `<dir>/holds/<id>.md` embeds no crew
@@ -4941,7 +4955,7 @@ EOF_REPOS
     # (git config / git rev-parse, both local-only) to scope the report to
     # the current repo.
     if [ "$pooled" = false ]; then
-      current_repo=$(git config --get remote.origin.url 2>/dev/null | sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
+      current_repo=$(_origin_repo)
       toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
       current_repo="${current_repo:-$(basename "${toplevel:-unknown-repo}")}"
     fi
@@ -5196,8 +5210,7 @@ EOF_REPOS
   # dispatch on that branch). Append-only; readers fold last-wins by run_id.
   # No crew filter — ratings are cross-run/cross-crew evidence.
   [ -f "$log" ] || exit 0
-  repo=$(git config --get remote.origin.url 2>/dev/null |
-    sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##' || true)
+  repo=$(_origin_repo)
   repo="${repo:-$(basename "$(git rev-parse --show-toplevel)")}"
   # jq cannot call _burn_weight; resolve each distinct model+effort here and
   # key the lookup by both, so opus@low prices below opus@high (its class
@@ -5383,21 +5396,13 @@ EOF_REPOS
   patches='{}'
   gh_failures=0
   while IFS=$'\t' read -r run_id pr_url branch t0_ms win_end do_view do_actions do_threads s_commit s_merged; do
-    # The gate is evaluated BEFORE any call: a pr_url that is not a GitHub PR
-    # URL issues zero calls. owner/name come from THIS url, never from the
-    # sweeping checkout, so a store holding several repos never cross-queries.
-    if [[ ! $pr_url =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]]; then
-      continue
-    fi
-    owner="${BASH_REMATCH[1]}"
-    name="${BASH_REMATCH[2]}"
-    number="${BASH_REMATCH[3]}"
-    # `pr_url` is unvalidated worker-written text, so the URL alone must not
-    # decide which repo we spend the developer's gh credential on: a run can
-    # only ever reconcile a PR in the repo it was dispatched from.
-    if [ "$owner/$name" != "$repo" ]; then
-      continue
-    fi
+    # The gate is evaluated BEFORE any call: a pr_url that is not a PR URL of
+    # this repo issues zero calls, so a store holding several repos never
+    # cross-queries.
+    _pr_url_in_repo "$pr_url" "$repo" || continue
+    owner=${repo%%/*}
+    name=${repo#*/}
+    number=${pr_url##*/}
     patch='{}'
     tried=false
     ok=true
@@ -7688,6 +7693,8 @@ reap)
   # cwd still decides which worktree is kept.
   reap_cwd="$PWD"
   _wt_trusted_cwd "$common" || exit 1
+  # Resolved once, after the cwd is trusted: bus pr_urls are checked against it.
+  reap_repo=$(_origin_repo)
   # say: outcomes, always. note: kept-worker bookkeeping, silenced under --quiet
   # so the dispatch call site stays silent unless something actually happened.
   say() { echo "crew reap: $1"; }
@@ -7721,6 +7728,28 @@ reap)
     done
   }
 
+  # _reap_pick_pr <own> <earlier> <reap-row> — the first bus PR, in that order,
+  # that is a PR of this repo: sets pr and pr_src ("own" only for the latest
+  # session's), else pr "-" for _reap_find_pr. A mismatch is never MERGED or
+  # CLOSED, only "no PR from that source"; ignored names the last one skipped.
+  _reap_pick_pr() {
+    local u src=own
+    pr="-"
+    pr_src=fallback
+    ignored=""
+    for u in "$@"; do
+      if [ "$u" != - ]; then
+        if _pr_url_in_repo "$u" "$reap_repo"; then
+          pr=$u
+          pr_src=$src
+          return 0
+        fi
+        ignored="ignoring cross-repo pr_url ${u//[[:cntrl:]]/?}"
+      fi
+      src=fallback
+    done
+  }
+
   # _reap_find_pr — with pr "-", look the branch's PR up on GitHub: pr becomes
   # its URL (pr_src fallback), or stays "-" when there is none. Status 1 sets why.
   _reap_find_pr() {
@@ -7746,7 +7775,7 @@ reap)
   _reap_issue_closed() {
     local claimed n istate
     local -a claimed_list
-    nopr="$state but no PR on the bus or GitHub"
+    nopr="$state but no PR on the bus or GitHub${ignored:+ ($ignored)}"
     case "$state" in
     done | failed) ;;
     *)
@@ -8106,8 +8135,10 @@ SCAFFOLD
   # out so a prior terminal status can resurface.
   # pr_open is a candidate here only, never for idle release. `later`: some
   # session of the branch posted after the terminal status, so it is not idle.
-  # pr_src: "own" when the PR is the latest session's, else "fallback" — an
-  # earlier session's or a reap row's PR predates any later session's commits.
+  # Fields: branch state own earlier reaprow ts later. The three PR sources stay
+  # apart ("-" when absent) so _reap_pick_pr can validate each and decide pr_src:
+  # own is the latest session's pr_url, earlier the newest of the branch's other
+  # sessions, reaprow the newest reap row's.
   # With a branch: that branch's row whatever its state ("none" when no
   # status), for --discard.
   _reap_latest() {
@@ -8116,14 +8147,12 @@ SCAFFOLD
         (map(select((.kind == "msg" or .kind == "status") and ((.from // "") | startswith("worker:")))
             | {branch: (.from | wid_branch), ts})
           | group_by(.branch) | map({key: .[0].branch, value: (map(.ts) | max)}) | from_entries) as $last
-        # The latest session of a re-dispatched branch may not carry the PR: use the
-        # newest status pr_url of any session, else the newest reap row PR.
-        | ((map(select(.kind == "reap" and ((.pr // "") | type == "string" and . != ""))
-                | {branch, ts, pr}) | group_by(.branch)
-              | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)
-            + (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and .body.pr_url != null)
-                | {branch: (.from | wid_branch), ts, pr: .body.pr_url}) | group_by(.branch)
-              | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries)) as $prs
+        # The latest session of a re-dispatched branch may not carry the PR.
+        | (map(select(.kind == "reap" and ((.pr // "") | type == "string" and . != ""))
+              | {branch, ts, pr}) | group_by(.branch)
+            | map({key: .[0].branch, value: (max_by(.ts) | .pr)}) | from_entries) as $reapprs
+        | (map(select(.kind == "status" and ((.from // "") | startswith("worker:")) and (.body.pr_url | type == "string"))
+              | {branch: (.from | wid_branch), from, ts, pr: .body.pr_url})) as $statprs
         | (map(select(
                 ((.from // "") | startswith("worker:"))
                 and (
@@ -8141,8 +8170,10 @@ SCAFFOLD
             | if $only == "" then map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
               else map(select(.branch == $only)) end
           )
-        | .[] | [.branch, (.state // "none"), (.pr_url // $prs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end),
-            (if .pr_url != null then "own" else "fallback" end)] | @tsv' "$log"
+        | .[] | . as $c
+        | [.branch, (.state // "none"), (.pr_url // "-"),
+            ([$statprs[] | select(.branch == $c.branch and .from != $c.session)] | if length == 0 then "-" else max_by(.ts) | .pr end),
+            ($reapprs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
   }
 
   # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
@@ -8177,7 +8208,8 @@ SCAFFOLD
     latest=$(_reap_latest "$branch") || refuse "could not read the bus"
     state=none
     pr="-"
-    [ -z "$latest" ] || IFS=$'\t' read -r _ state pr _ _ _ <<<"$latest"
+    own="-" earlier="-" reaprow="-"
+    [ -z "$latest" ] || IFS=$'\t' read -r _ state own earlier reaprow _ _ <<<"$latest"
     case "$state" in
     done | failed | exited) ;;
     *) refuse "latest status is $state" ;;
@@ -8192,6 +8224,7 @@ SCAFFOLD
     esac
     mode="pr"
     issues=()
+    _reap_pick_pr "$own" "$earlier" "$reaprow"
     _reap_find_pr || refuse "$why"
     if [ "$pr" = "-" ]; then
       mode=issue
@@ -8334,7 +8367,7 @@ EOF
   _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state pr cand_ts later pr_src; do
+  while IFS=$'\t' read -r branch state own earlier reaprow cand_ts later; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
@@ -8342,8 +8375,9 @@ EOF
 
     mode="pr"
     issues=()
+    _reap_pick_pr "$own" "$earlier" "$reaprow"
     if ! _reap_find_pr; then
-      note "keeping $branch — $why"
+      note "keeping $branch — $why${ignored:+ ($ignored)}"
       continue
     fi
     if [ "$pr" = "-" ]; then
