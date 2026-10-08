@@ -13,10 +13,18 @@ export type RosterRow = {
   pr_url: string | null
 }
 
-export type RosterView = {
-  crew: string | null
+export type RosterSection = {
+  crew: string
   rows: RosterRow[]
   error: string | null
+}
+
+export type RosterView = {
+  // One section per crew this session follows — $CREW_ID plus every crew
+  // `crew crews --mine` says this process owns (#824).
+  sections: RosterSection[]
+  // An explicit `/roster <crew-id>`: follow only that crew, never scan.
+  pinned: string | null
   crews: string | null
 }
 

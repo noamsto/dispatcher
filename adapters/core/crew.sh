@@ -2499,13 +2499,20 @@ HELP
     ;;
   crews)
     cat <<'HELP'
-usage: crew crews
+usage: crew crews [--mine]
 
 List every crew with traffic on this repo's bus: id, last and first event, worker
 count, dispatcher pid and whether that pid is alive. Both sources count — a crew
 dir alone (watch creates one) and an id seen only in the log.
 
+  --mine  Print only the crews this caller owns — one id per line, no header —
+          meaning the crews whose recorded dispatcher pid is a live ancestor of
+          this process: the one it registered plus any 'crew adopt' re-attached
+          to it. A dispatcher that adopted a restarted crew's workers uses this
+          to watch every crew at once.
+
   crew crews
+  crew crews --mine
 HELP
     ;;
   adopt)
@@ -3636,6 +3643,38 @@ register | deregister)
   fi
   ;;
 crews)
+  # --mine (#824): the crews that belong to THIS process's session — the one it
+  # registered, plus any `crew adopt` re-attached to it (adopt records the
+  # adopting pid exactly like register, so a pid among our ancestors is ours).
+  # The roster mod needs all of them: after a restart the workers keep posting
+  # to the crew they were adopted into, and a pane that follows only $CREW_ID
+  # shows an empty roster.
+  #
+  # Only the pid files matter — an id with no pid file (a crew dir `watch`
+  # created, or an id seen only in events.jsonl) records no dispatcher, so it
+  # can never be ours. Skipping the log keeps --mine a directory scan plus a
+  # bounded `ps` walk per live pid.
+  case "${1:-}" in
+  --mine)
+    [ -d "$dir/crews" ] || exit 0
+    for d in "$dir"/crews/*/; do
+      [ -d "$d" ] || continue
+      mpid=$(cat "$d/pid" 2>/dev/null || true)
+      # The same positive-integer guard as the table below: `kill -0 0` signals
+      # our own process group, so a junk pid is never a liveness probe.
+      case "$mpid" in '' | *[!0-9]* | 0) continue ;; esac
+      _recorded_pid_live "$mpid" "$d/pid" || continue
+      _is_ancestor_pid "$mpid" || continue
+      printf '%s\n' "$(basename "$d")"
+    done
+    exit 0
+    ;;
+  '') ;;
+  *)
+    echo "crew: crews: unknown arg '$1'" >&2
+    exit 64
+    ;;
+  esac
   # Discovery primitive (#29): union crews/*/ (a crew dir — not necessarily
   # registered, since `watch` also mkdir -p's one) with distinct crew_id in
   # events.jsonl (a crew that posted, possibly via --crew-id alone and never

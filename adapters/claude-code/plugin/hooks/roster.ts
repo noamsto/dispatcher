@@ -39,3 +39,20 @@ export const parseRoster = (stdout: string): RosterRow[] => {
     detail: typeof row.detail === 'string' ? row.detail : null,
   }))
 }
+
+// The id grammar `crew register`/`crew adopt` enforce, so a line that could not
+// be a crew id never becomes one. That is what keeps a `crew` older than
+// `--mine` honest: it prints the whole `crew crews` table, and its `crew_id`
+// header or a stray JSON blob would otherwise become a crew to poll.
+const isCrewId = (id: string): boolean =>
+  /^[A-Za-z0-9._-]+$/.test(id) && !id.startsWith('-') && id !== '.' && id !== '..'
+
+// `crew crews --mine` — one bare crew id per line, no header.
+export const parseCrewIds = (stdout: string): string[] => {
+  const ids: string[] = []
+  for (const line of stdout.split('\n')) {
+    const id = line.trim()
+    if (isCrewId(id) && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
