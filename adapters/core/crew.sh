@@ -4764,15 +4764,18 @@ roster-render)
     # and the rebuild backstop read `_clock_now`, which tests drive via CREW_CLOCK.
     #
     # The sleep point is the only upgrade point, never mid-render: a build
-    # installed since the daemon started is picked up in place. `exec` keeps the
-    # pid, so the lock is never released or handed off (bash runs no EXIT trap on a
+    # installed since the daemon started is picked up in place. `exec` keeps the pid,
+    # so the lock is never released or handed off (bash runs no EXIT trap on a
     # successful exec, and `_lock_acquire` is idempotent for the owner's own pid).
-    # `_rr_self` is the flap guard: an entry that moved to the build already running
-    # is no upgrade. Each hop leaves the build it left on PATH, which only a fresh
-    # daemon resets, and which can never hide the next build — the lookup reads
-    # outside /nix/store.
+    # A crew already draining is left to exit instead of upgraded: the hop would
+    # restart its quiet window in the new build, and the next dispatch starts that
+    # build anyway. `_rr_self` is the flap guard — an entry that moved back to the
+    # build already running is no upgrade. Each hop leaves the build it left on
+    # PATH, which only a fresh daemon resets, and which can never hide the next
+    # build, since the lookup reads outside /nix/store.
     rr_want=$(_rr_installed_crew)
-    if [ -n "$rr_want" ] && [ "$rr_want" != "$rr_entry" ] && [ "$rr_want" != "$_rr_self" ]; then
+    if [ -z "$rr_idle_since" ] && [ -n "$rr_want" ] && [ "$rr_want" != "$rr_entry" ] &&
+      [ "$rr_want" != "$_rr_self" ]; then
       exec "$rr_want" roster-render "${rr_args[@]}"
     fi
     sleep "$rr_interval"

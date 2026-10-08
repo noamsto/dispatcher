@@ -12087,14 +12087,15 @@ _rr_mini() {
 
 # The daemon upgrading itself into a newer installed build (#810). A build
 # stand-in is a copy of the crew under test, so `_rr_self` really is the build and
-# the copy's own prologue records which build a pid runs — at each of its
-# roster-render starts only, not from the `crew roster` child `_rr_model` spawns.
+# the copy's own prologue records which build a pid runs, and with what arguments —
+# at each of its roster-render starts only, not from the `crew roster` child
+# `_rr_model` spawns.
 _rr_fake_build() { # <name> -> path of the build's crew
   local dir="$BATS_TEST_TMPDIR/rr-build-$1"
   mkdir -p "$dir"
   {
     printf '#!/usr/bin/env bash\nset -euo pipefail\n'
-    printf 'if [ "${1:-}" = roster-render ]; then printf "%%s %%s\\n" "%s" "$$" >>"$RR_BUILDS_LOG"; fi\n' "$1"
+    printf 'if [ "${1:-}" = roster-render ]; then printf "%%s %%s %%s\\n" "%s" "$$" "$*" >>"$RR_BUILDS_LOG"; fi\n' "$1"
     cat "$CREW"
   } >"$dir/crew"
   chmod +x "$dir/crew"
@@ -12113,16 +12114,22 @@ _rr_fakebin() {
   export RR_BUILDS_LOG PATH="$RR_FAKEBIN:$PATH" RR_ENTRY="$RR_FAKEBIN/crew"
 }
 
+# _rr_swap_build <name> — point the entry at a fresh build (a rebuild).
+# _rr_point_build <name> — point it at a build already built, which is how a row
+# reaches "the entry names the build that is already running".
 _rr_swap_build() { ln -sfn "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"; }
-_rr_build_ran() { grep -qxF "$1 $2" "$RR_BUILDS_LOG"; } # <name> <pid>
+_rr_point_build() { ln -sfn "$BATS_TEST_TMPDIR/rr-build-$1/crew" "$RR_FAKEBIN/crew"; }
+_rr_build_ran() { grep -q "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
+_rr_build_args() { sed -nE "s/^$1 $2 //p" "$RR_BUILDS_LOG" | head -1; }
 _rr_build_pids() { awk -v n="$1" '$1 == n { print $2 }' "$RR_BUILDS_LOG"; }
 _rr_build_seen() { _rr_build_pids "$1" | grep -q .; }
+_rr_build_count() { grep -c "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
 _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
 
 @test "roster-render: the daemon re-execs into a newer installed crew, keeping its pid and lock" {
   _rr_mini working 'execute: tests'
   _rr_fakebin A
-  _rr_daemon
+  _rr_daemon --quiet 30 --no-open
   _rr_wait _rr_lockpid
   local pid="$RR_PID"
   _rr_lock_is "$pid"
@@ -12135,6 +12142,8 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   # idempotent for the owner's own pid.
   _rr_lock_is "$pid"
   kill -0 "$pid"
+  # and the new build was handed the daemon's own argv, --no-open included
+  [ "$(_rr_build_args B "$pid")" = "roster-render --crew c1 --interval 1 --quiet 30 --no-open" ]
 }
 
 @test "roster-render: an unchanged installed crew never makes the daemon re-exec" {
@@ -12149,8 +12158,43 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   sleep 3
   _rr_lock_is "$pid"
   kill -0 "$pid"
-  n=$(grep -cxF "A $pid" "$RR_BUILDS_LOG")
+  n=$(_rr_build_count A "$pid")
   [ "$n" -eq 1 ]
+}
+
+# The production shape AC2 cannot tell apart: the daemon runs one build while the
+# entry names another, which is the baseline the loop compares against. Without it
+# every fresh daemon would exec the ambient build on its first pass.
+@test "roster-render: a daemon started while another build is installed keeps its own" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin B
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID"
+  _rr_wait _rr_build_ran A "$pid"
+
+  sleep 3
+  ! _rr_build_seen B
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+}
+
+# And the other guard: the entry moving to the build already running — a rollback —
+# is no upgrade either.
+@test "roster-render: an entry naming the running build does not re-exec" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin B
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" n
+  _rr_wait _rr_build_ran A "$pid"
+
+  _rr_point_build A
+  sleep 3
+  n=$(_rr_build_count A "$pid")
+  [ "$n" -eq 1 ]
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
 }
 
 @test "roster-render: a newer build's --detach while the daemon holds the lock is still a silent no-op" {
@@ -12174,6 +12218,30 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   _rr_lock_is "$pid"
   kill -0 "$pid"
   ! _rr_build_ran B "$pid"
+}
+
+# A drained crew is left to exit rather than upgraded: the hop would restart the
+# quiet window in the new build, and the next dispatch starts that build anyway.
+@test "roster-render: a drained crew exits on its quiet window instead of upgrading" {
+  _rr_mini done
+  date +%s >"$CREW_CLOCK"
+  _rr_fakebin A
+  _rr_daemon --quiet 30
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" t0
+  t0=$(cat "$CREW_CLOCK")
+  _rr_wait _rr_build_ran A "$pid"
+
+  # Drained, inside the quiet window: the entry moving now goes unfollowed.
+  printf '%s\n' "$((t0 + 15))" >"$CREW_CLOCK"
+  _rr_swap_build B
+  sleep 3
+  ! _rr_build_seen B
+  # The window still runs from the first drain: a build that had hopped would set
+  # its own idle-since at +15 and still be alive at +31.
+  printf '%s\n' "$((t0 + 31))" >"$CREW_CLOCK"
+  _rr_exited "$pid" 5
+  [ "$RR_RC" -eq 0 ]
 }
 
 # _rr_installed_crew_of <path> — the resolver extracted from the source (the
