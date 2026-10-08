@@ -1605,52 +1605,64 @@ _rr_d2() {
       "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
       "dispatcher: \"dispatcher\" {style.bold: true}",
       ($w[] | .key as $k
-        | ([(.title | trunc(80) | orq),
-            ([.tier, .engine, .model] | map(cap(60) | orq) | join("·")),
-            ((.state | cap(32) | orq)
-             + (if .source == "watchdog" then " (watchdog)" else "" end)
-             + (.detail | trunc(120) | if . == "" then "" else " · " + . + (if loop then "↻" else "" end) end)
-             + " · since " + (.ts | hhmm)
-             + (.sessions | if length > 1 then " · \(length) sessions" else "" end))]
-           | join("\n") | q) as $info
-        | (.name | cap(60) | orq | q) as $name
+        | (.detail | if type == "string" then . elif . == null then "" else tojson end) as $full
+        | ((.state | cap(24) | orq) + (if .source == "watchdog" then " (watchdog)" else "" end)) as $pre
+        | (" · since " + (.ts | hhmm) + (.sessions | if length > 1 then " · \(length) sessions" else "" end)) as $post
+        | ($full | loop) as $lp
+        | (if $lp then " (loop)" else "" end) as $mark
+        | (80 - ($pre | length) - ($post | length) - ($mark | length) - 3) as $room
+        | (if $room < 10 then "" else $full | trunc($room) end) as $detail
+        | ([(.name | cap(60) | orq),
+            (.title | trunc(80) | orq),
+            ([.tier, .engine, .model] | map(cap(60) | orq) | join("·") | trunc(80)),
+            ($pre + (if $detail == "" then "" else " · " + $detail + $mark end) + $post)]
+           | join("\n") | q) as $label
         | (if .state | among(["working", "blocked", "dispatched"]) then
              .branch as $b | [$roles[] | select(.branch == $b)] | sort_by(.role)
            else [] end) as $rp
-        | "\($k): \($name) {",
-          "  grid-columns: 1",
-          "  style: {fill: transparent; \(if .color | among($palette) then ($hex[.color] | if . then "stroke: \"\(.)\"; " else "" end) else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
-          "  info: \($info) {shape: text}",
-          (if ($rp | length) > 0 then
-             "  roles: \"\" {grid-rows: 1; style: {stroke-width: 0; fill: transparent}}",
-             ($rp | to_entries[]
-              | "  roles.r\(.key + 1): \(.value | .role + "\n" + .engine + (if .state != "" then " · " + (.state | cap(32)) else "" end) | q)")
-           else empty end),
+        | "\($k): \($label) {",
+          (if ($rp | length) > 0 then "  grid-rows: 1" else empty end),
+          "  style: {fill: transparent; \(if .color | among($palette) then ($hex[.color] | if . then "stroke: \"\(.)\"; " else "" end) else "" end)stroke-width: 3; font-size: 16\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
+          ($rp | to_entries[]
+           | "  r\(.key + 1): \(.value | .role + "\n" + .engine + (if .state != "" then " · " + (.state | cap(32)) else "" end) | q)"),
           "}",
           "dispatcher -> \($k)",
           ((.pr_url | cap(200)) as $u
            | if (.state | among(["pr_open", "done"])) and $u != "" then
-               "\($k)_pr: \($u | q) {shape: page}",
-               "\($k) -> \($k)_pr\(first(($u | capture("/pull/(?<n>[0-9]+)") | ": " + ("#" + .n | q)), ""))"
+               first(($u | capture("/pull/(?<n>[0-9]+)") | .n), "") as $n
+               | "\($k)_pr: \(if $n == "" then "PR" else "PR #" + $n end | q) {shape: page}",
+                 "\($k) -> \($k)_pr\(if $n == "" then "" else ": " + ("#" + $n | q) end)"
              else empty end)),
       ($w[] | .key as $k | .base as $base
         | first($w[] | select(.branch == $base and .key != $k
                               and (.state | among(["working", "blocked", "pr_open", "dispatched"]))))
         | "\($k) -> \(.key): \"stacked on\""),
       (.holds | sort_by(.id) | to_entries[] | "h\(.key + 1)" as $k | .value
-        | ("hold " + (.task.ref | cap(60)) + "\nwaiting on " + (.wait.engine | cap(60)) + " " + (.wait.window | cap(60))
-           + "\nuntil " + (.wait.resets_at | if type == "number" then strflocaltime("%m-%d %H:%M") else "?" end)) as $label
+        | ([(("hold " + (.task.ref | cap(60))) | trunc(80)),
+            (("waiting on " + (.wait.engine | cap(60)) + " " + (.wait.window | cap(60))) | trunc(80)),
+            ("until " + (.wait.resets_at | if type == "number" then strflocaltime("%m-%d %H:%M") else "?" end))]
+           | join("\n")) as $label
         | "\($k): \($label | q) {shape: hexagon}",
           "dispatcher -> \($k): {style.stroke-dash: 3}")'
 }
 
-# _rr_target <crew> — one diagram per crew per repo bus, named after the repo
-# dir that owns the bus plus a hash of the bus path, so two repos' renderers
-# never write the same file.
+# _rr_target <crew> — one diagram per crew per repo bus:
+# roster-<repo>-<MM-DD-HHMM>-<h4>.d2. <repo> is the dir that owns the bus; the
+# time is the crew id's epoch prefix in the renderer's local timezone (the crew
+# id's own sanitized text when the prefix is not a plain 1-12 digit number
+# without a leading zero); h4 is a 16-bit checksum of bus path + crew, so two
+# repos' renderers, or two crews started in the same minute, collide only
+# with practically negligible probability.
 _rr_target() {
-  local repo=${common%/*}
-  printf '%s/roster-%s-%s-%s.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" "$1" \
-    "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$common" | cksum | cut -d' ' -f1)"
+  local repo=${common%/*} when=${1%%-*} sum
+  if [[ $when =~ ^[1-9][0-9]{0,11}$ ]]; then
+    printf -v when '%(%m-%d-%H%M)T' "$when"
+  else
+    when=$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')
+  fi
+  sum=$(printf '%s|%s' "$common" "$1" | cksum)
+  printf '%s/roster-%s-%s-%04x.d2' "${CREW_ROSTER_DIR:-/tmp/claude-status/images/diagrams/src}" \
+    "$(printf '%s' "${repo##*/}" | tr -c 'A-Za-z0-9._-' '_')" "$when" $((${sum%% *} % 65536))
 }
 
 # _rr_put <target> <content> — same-dir temp + mv, so a reader never sees a
@@ -4558,7 +4570,7 @@ sessions | roster)
   ;;
 roster-render)
   # roster-render --crew ID [--pane %N] [--no-open] [--once | --detach] [--interval S] [--quiet S]
-  # Draws the crew's roster diagram (roster-<crew>-<repo>-<hash>.d2) from the bus and
+  # Draws the crew's roster diagram (roster-<repo>-<time>-<hash>.d2) from the bus and
   # the crew's live role panes, and publishes it to the aeye carousel beside the
   # recorded dispatcher pane. One renderer per repo bus: a crew spanning several
   # repos gets one diagram per repo, <repo> naming the dir that owns the bus.
