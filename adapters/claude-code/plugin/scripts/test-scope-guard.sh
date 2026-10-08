@@ -110,6 +110,45 @@ split_words() { # <command>
       i=$((i + 1))
       continue
       ;;
+    '#')
+      # A word-initial `#` comments out the rest of the line; mid-word it is
+      # an ordinary character.
+      if [[ -z $w ]]; then
+        while ((i < n)); do
+          if [[ ${s:i:1} == $'\n' ]]; then break; fi
+          i=$((i + 1))
+        done
+        continue
+      fi
+      w+=$c
+      ;;
+    '<' | '>')
+      # A redirection and its target are never operands: `2>&1`, `> log`,
+      # `< /dev/null`, `<<EOF`. A bare fd number glued to the operator goes
+      # with it; anything else before the operator was a word.
+      if [[ -n $w ]]; then
+        if [[ $w == *[0-9] && $w != *[!0-9]* ]]; then
+          w=''
+        else
+          printf '%s\n' "$w"
+        fi
+      fi
+      i=$((i + 1))
+      if [[ ${s:i:1} == "$c" ]]; then i=$((i + 1)); fi
+      while ((i < n)); do
+        if [[ ${s:i:1} != ' ' && ${s:i:1} != $'\t' ]]; then break; fi
+        i=$((i + 1))
+      done
+      if [[ ${s:i:1} == '&' ]]; then i=$((i + 1)); fi
+      while ((i < n)); do
+        d=${s:i:1}
+        case $d in
+        ' ' | $'\t' | $'\n' | ';' | '|' | '&' | '(' | ')' | '<' | '>' | '`') break ;;
+        esac
+        i=$((i + 1))
+      done
+      continue
+      ;;
     *) w+=$c ;;
     esac
     i=$((i + 1))

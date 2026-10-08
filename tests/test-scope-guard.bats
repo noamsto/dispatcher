@@ -188,6 +188,20 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
+@test "test-scope-guard: a redirection or a comment is not a test operand" {
+  for cmd in 'bats tests/crew.bats 2>&1' 'bats tests/crew.bats 2>/dev/null' \
+    'bats tests/crew.bats > /tmp/log' 'bats tests/crew.bats </dev/null' \
+    'bats tests/crew.bats # a note' 'bats tests/crew.bats 2>&1 | tail -3' \
+    'bats tests/a.bats tests/b.bats 2>&1' 'bats tests/a.bats --filter reap >>out.log'; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_allow
+  done
+  for cmd in 'bats tests/ 2>&1' 'bats tests/*.bats > /tmp/log' 'bats -r tests 2>&1'; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_block "$WHY"
+  done
+}
+
 @test "test-scope-guard: a backslash escape keeps a path whole" {
   run run_guard <<<"$(pi_bash 'bats tests/a\ b.bats')"
   assert_allow
