@@ -7744,6 +7744,7 @@ reap)
   discard=""
   discard_patch=""
   discard_st=""
+  discard_tree=""
   idle=$release_grace
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -8015,9 +8016,21 @@ SCAFFOLD
     fi
     # A new path or state change after the --discard save (a killed process
     # flushing on exit) is not in the patch, so it keeps the tree. Status lines
-    # carry no content: a later write to an already-dirty path goes unseen.
+    # carry no content, so the tree comparison catches a later write to an
+    # already-dirty path.
     if [ -n "$discard" ]; then
       if [ "$st" != "$discard_st" ]; then
+        say "keeping $branch — changed while saving"
+        return 0
+      fi
+      tmpidx=$(mktemp -d "$dir/discard.XXXXXX") || tmpidx=""
+      now_tree=""
+      if [ -n "$tmpidx" ] && _discard_tree; then
+        now_tree=$(GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" write-tree 2>/dev/null) || now_tree=""
+      fi
+      [ -z "$tmpidx" ] || rm -rf -- "$tmpidx"
+      tmpidx=""
+      if [ -z "$now_tree" ] || [ "$now_tree" != "$discard_tree" ]; then
         say "keeping $branch — changed while saving"
         return 0
       fi
@@ -8191,7 +8204,8 @@ SCAFFOLD
     sleep 1
     waited=$((waited + 1))
   done
-  trap '_lock_release "$reap_lock"' EXIT
+  tmpidx=""
+  trap '_lock_release "$reap_lock"; [ -z "$tmpidx" ] || rm -rf -- "$tmpidx"' EXIT
 
   # The set of states a worker session ends in — shared by the idle-release
   # filter below and the reclaim filter further down so they can't drift
@@ -8261,14 +8275,15 @@ SCAFFOLD
                    ts: $latest.ts,
                    state: $latest.body.state,
                    pr_url: (map(.body.pr_url) | map(select(type == "string" and . != "")) | last)})
+            | map(select(.branch != ""))
             | group_by(.branch) | map(sort_by(.ts) | last)
             | if $only == "" then map(select(.state as $st | (($terminal + ["pr_open"]) | index($st)) != null))
               else map(select(.branch == $only)) end
           )
         | .[] | . as $c
-        | [.branch, (.state // "none"), (.pr_url // "-"),
+        | [.branch, (.state | if . == null or . == "" then "none" else . end), (.pr_url // "-"),
             ([$statprs[] | select(.branch == $c.branch and .from != $c.session)] | if length == 0 then "-" else max_by(.ts) | .pr end),
-            ($reapprs[.branch] // "-"), .ts, (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
+            ($reapprs[.branch] // "-"), (.ts // 0), (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
   }
 
   # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
@@ -8361,17 +8376,21 @@ SCAFFOLD
     tmpidx=$(mktemp -d "$dir/discard.XXXXXX") || refuse "could not save uncommitted state"
     discard_fail() {
       rm -rf -- "$tmpidx"
+      tmpidx=""
       refuse "$1"
     }
-    if ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" read-tree "refs/heads/$branch" >/dev/null 2>&1 ||
-      ! GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" add -A >/dev/null 2>&1; then
-      discard_fail "could not save uncommitted state"
-    fi
+    _discard_tree() {
+      GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" read-tree "refs/heads/$branch" >/dev/null 2>&1 &&
+        GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" add -A >/dev/null 2>&1
+    }
+    _discard_tree || discard_fail "could not save uncommitted state"
     # add -A stages an untracked nested repo as a bare gitlink: the patch would
     # hold only its commit id while the removal deletes its contents.
     tmpstage=$(GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" ls-files --stage) ||
       discard_fail "could not save uncommitted state"
     ! grep -q '^160000 ' <<<"$tmpstage" || discard_fail "it holds an embedded git repository"
+    discard_tree=$(GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" write-tree) ||
+      discard_fail "could not save uncommitted state"
     # Pinned diff options: the operator's diff.* and color.* config would
     # otherwise reshape the patch so `git apply` rejects it.
     GIT_INDEX_FILE="$tmpidx/index" _wt_git "$admin" "$wtpath" diff --cached --binary --full-index \
@@ -8396,6 +8415,7 @@ SCAFFOLD
       say "no uncommitted changes to save"
     fi
     rm -rf -- "$tmpidx"
+    tmpidx=""
     if ! post_st=$(_wt_status "$admin" "$wtpath" --untracked-files=all) || [ "$post_st" != "$pre_st" ]; then
       say "keeping $branch — changed while saving"
       exit 1
@@ -8423,7 +8443,7 @@ $(jq -s -r --argjson idle "$idle" --argjson terminal "$reap_terminal_states" '
     # It has no `body`, so it can never pass the terminal-state filter below —
     # it can only mask a stale prior `done` by winning the per-branch
     # max_by(.ts), never cause a release on its own.
-    map(select((.kind=="status" or .kind=="claim") and ((.from // "") | startswith("worker:"))))
+    map(select((.kind=="status" or .kind=="claim") and ((.from // "") | startswith("worker:")) and ((.from | wid_branch) != "")))
     | group_by(.from) | map(max_by(.ts))
     | group_by(.from | wid_branch) | map(max_by(.ts))
     | map(select(.body.state as $st | ($terminal | index($st)) != null))
@@ -8507,8 +8527,13 @@ EOF
           note "keeping $branch — git config drift"
           continue
         fi
-        if ! _wt_git_common "$common" merge-base --is-ancestor "refs/heads/$branch" "$pr_head" 2>/dev/null; then
+        anc_rc=0
+        _wt_git_common "$common" merge-base --is-ancestor "refs/heads/$branch" "$pr_head" 2>/dev/null || anc_rc=$?
+        if [ "$anc_rc" = 1 ]; then
           note "keeping $branch — its tip has commits past $pr${ignored:+ ($ignored)}"
+          continue
+        elif [ "$anc_rc" != 0 ]; then
+          note "keeping $branch — could not compare with $pr head (not fetched?)${ignored:+ ($ignored)}"
           continue
         fi
       fi

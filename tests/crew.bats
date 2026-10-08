@@ -5669,6 +5669,107 @@ EOF
   [ -d "$wt_path" ]
 }
 
+@test "reap: --discard keeps a tree written into an already-dirty path after the save (#836)" {
+  reap_discard_fixture discard-race MERGED
+  cat >"$STUB_DIR/tmux" <<TMUX
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+list-windows) printf 'late\n' >>"$wt_path/t.txt" ;;
+esac
+exit 0
+TMUX
+  CREW_ID=c1 run run_crew reap --discard feat/discard-race
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"keeping feat/discard-race — changed while saving"* ]]
+  [ -d "$wt_path" ]
+  [ -z "$(find "$common/crew" -maxdepth 1 -name 'discard.*')" ]
+}
+
+@test "reap: a --discard killed by TERM mid-save leaves no discard temp dir (#836)" {
+  reap_discard_fixture discard-term MERGED
+  real_git=$(command -v git)
+  cat >"$STUB_DIR/git" <<GIT
+#!/usr/bin/env bash
+case "\$*" in
+*" add -A"*)
+  case "\${GIT_INDEX_FILE:-}" in
+  */discard.*) kill -TERM \$PPID; sleep 1 ;;
+  esac
+  ;;
+esac
+exec "$real_git" "\$@"
+GIT
+  chmod +x "$STUB_DIR/git"
+  CREW_ID=c1 run run_crew reap --discard feat/discard-term
+  [ "$status" -ne 0 ]
+  [ -d "$wt_path" ]
+  [ -z "$(find "$common/crew" -maxdepth 1 -name 'discard.*')" ]
+}
+
+@test "reap: an unfetched PR head gives a could-not-compare keep reason (#836)" {
+  git commit -q --allow-empty -m init
+  git branch feat/unfetched
+  wt_path="$BATS_TEST_TMPDIR/unfetched-wt"
+  git worktree add -q "$wt_path" feat/unfetched
+  wt_path=$(cd "$wt_path" && pwd -P)
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' '0123456789abcdef0123456789abcdef01234567' ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/unfetched#s1-1" done "" "https://github.com/o/r/pull/5"
+  CREW_ID=c1 run_crew status "worker:feat/unfetched#s2-2" failed "boom"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping feat/unfetched — could not compare with https://github.com/o/r/pull/5 head (not fetched?)"* ]]
+  [[ "$output" != *"commits past"* ]]
+  [ -d "$wt_path" ]
+}
+
+@test "reap: an empty branch or empty state on the bus shifts no other branch's columns (#836)" {
+  git commit -q --allow-empty -m init
+  git branch done
+  wt_path="$BATS_TEST_TMPDIR/done-wt"
+  git worktree add -q "$wt_path" done
+  wt_path=$(cd "$wt_path" && pwd -P)
+  git -C "$wt_path" commit -q --allow-empty -m later
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*"pr list"*) printf '%s\n' '[]' ;;
+*state*) printf '%s\n' 'MERGED' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/done~1)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:done#s1-1" done "" "https://github.com/o/r/pull/5"
+  CREW_ID=c1 run_crew status "worker:done#s2-2" failed "boom"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  jq -nc '{ts:9000000000000, crew_id:"c1", from:"worker:", to:"dispatcher:c1", kind:"status", body:{state:"done", pr_url:"https://github.com/o/r/pull/99"}}' >>"$log"
+  jq -nc '{ts:9000000000001, crew_id:"c1", from:"worker:feat/other#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"", pr_url:"https://github.com/o/r/pull/98"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"keeping done — its tip has commits past https://github.com/o/r/pull/5"* ]]
+  [[ "$output" != *"reaped"* ]]
+  [ "$(grep -c 'keeping done' <<<"$output")" -eq 1 ]
+  [ -d "$wt_path" ]
+  jq -nc '{ts:9000000000002, crew_id:"c1", from:"worker:done#s3-3", to:"dispatcher:c1", kind:"status", body:{state:"", pr_url:"https://github.com/o/r/pull/97"}}' >>"$log"
+  CREW_ID=c1 run run_crew reap --discard done
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"latest status is none"* ]]
+  [ -d "$wt_path" ]
+}
+
 @test "reap: an earlier session's MERGED PR does not vouch for commits past its head (#836)" {
   git commit -q --allow-empty -m init
   git branch feat/xpast
