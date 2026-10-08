@@ -146,6 +146,23 @@ test('the pane follows every crew this session owns, not only $CREW_ID', async (
   expect(names).toEqual(['mauve', 'teal'])
 })
 
+test('a failing ownership scan keeps the rows and shows an error line', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  on('process.run', async (_$, e) =>
+    e.argv[2] === '--mine' ? done(2, '', 'scan boom') : ok(JSON.stringify(ROWS)),
+  )
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  expect(await ui.find({ text: /crew crews --mine failed: scan boom/ })).toBeDefined()
+  expect(await ui.find({ text: /blocked \(watchdog\)/ })).toBeDefined()
+})
+
 test('/roster <crew-id> pins that one crew and stops scanning', async ($, on) => {
   mock.env(on, { CREW_ID: 'A' })
   stubEngine(on)

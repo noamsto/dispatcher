@@ -25,6 +25,9 @@ export type RosterView = {
   sections: RosterSection[]
   // An explicit `/roster <crew-id>`: follow only that crew, never scan.
   pinned: string | null
+  // The last ownership scan's failure, kept alongside the sections it could
+  // not refresh; null while the scan works.
+  scanError: string | null
   crews: string | null
 }
 

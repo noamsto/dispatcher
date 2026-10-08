@@ -18,7 +18,7 @@ const DETAIL_MAX = 48
 
 const view = atom(
   { plugin: 'dispatcher', key: 'roster' } as const,
-  { sections: [], pinned: null, crews: null } as RosterView,
+  { sections: [], pinned: null, scanError: null, crews: null } as RosterView,
 )
 
 let timer: Timer | undefined
@@ -56,27 +56,42 @@ async function fetchSection(
 
 // Auto mode's follow list: $CREW_ID plus every other crew this process owns —
 // the ones `crew adopt` re-attached to it after a restart, which is where the
-// workers still post (#824). Null when the scan itself failed (a `crew` older
-// than `--mine`, no repo): the caller then keeps what it was showing instead of
-// emptying the pane.
-async function ownedCrews($: EngineInterface): Promise<string[] | null> {
+// workers still post (#824). A failed scan (`crew` older than `--mine`, no
+// repo) reports the reason and leaves crews null: the caller keeps showing what
+// it was, plus the error line, instead of emptying the pane in silence.
+async function ownedCrews($: EngineInterface): Promise<{
+  crews: string[] | null
+  error: string | null
+}> {
   const own = await $.env.get('CREW_ID')
   try {
     const ran = await $.process.run(['crew', 'crews', '--mine'], { timeoutMs: 10_000 })
-    if (ran.exitCode !== 0) return null
+    if (ran.exitCode !== 0) {
+      return {
+        crews: null,
+        error: ran.stderr.trim() || `crew crews --mine exited ${ran.exitCode}`,
+      }
+    }
     const crews = parseCrewIds(ran.stdout)
-    return [...new Set(own ? [own, ...crews] : crews)]
-  } catch {
-    return null
+    return { crews: [...new Set(own ? [own, ...crews] : crews)], error: null }
+  } catch (err) {
+    return { crews: null, error: message(err) }
   }
 }
 
-async function paint($: EngineInterface, crews: string[], id: number) {
+async function paint(
+  $: EngineInterface,
+  crews: string[],
+  id: number,
+  scanError: string | null,
+) {
   const previous = (await read($, view)).sections
   const sections = await Promise.all(
     crews.map(crew => fetchSection($, crew, previous)),
   )
-  await update($, view, v => (refreshId !== id ? v : { ...v, sections }))
+  await update($, view, v =>
+    refreshId !== id ? v : { ...v, sections, scanError },
+  )
 }
 
 async function refresh($: EngineInterface) {
@@ -84,14 +99,15 @@ async function refresh($: EngineInterface) {
   try {
     const current = await read($, view)
     if (current.pinned) {
-      await paint($, [current.pinned], id)
+      await paint($, [current.pinned], id, null)
       return
     }
     // Nothing followed: the pane is showing the `crew crews` list.
     if (current.sections.length === 0) return
-    const crews = (await ownedCrews($)) ?? current.sections.map(s => s.crew)
+    const scan = await ownedCrews($)
+    const crews = scan.crews ?? current.sections.map(s => s.crew)
     if (crews.length === 0) return
-    await paint($, crews, id)
+    await paint($, crews, id, scan.error)
   } catch {
     // a failing state call must not escape the timer callback
   }
@@ -104,6 +120,7 @@ async function follow($: EngineInterface, crews: string[], pinned: string | null
   await update($, view, () => ({
     sections: crews.map(crew => ({ crew, rows: [], error: null })),
     pinned,
+    scanError: null,
     crews: null,
   }))
   await refresh($)
@@ -122,7 +139,7 @@ async function listCrews($: EngineInterface) {
     crews = `crew crews failed: ${message(err)}`
   }
   await update($, view, v =>
-    v.sections.length ? v : { sections: [], pinned: null, crews },
+    v.sections.length ? v : { sections: [], pinned: null, scanError: null, crews },
   )
 }
 
@@ -161,7 +178,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Link } = $.ui.resolve(e)
-    const { sections, crews } = await read($, view)
+    const { sections, scanError, crews } = await read($, view)
 
     if (sections.length === 0) {
       return (
@@ -176,6 +193,9 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
+        {scanError && (
+          <Text color="red">crew crews --mine failed: {scanError}</Text>
+        )}
         {sections.map(section => (
           <Box key={section.crew} flexDirection="column">
             <Text dimColor>crew {section.crew}</Text>
