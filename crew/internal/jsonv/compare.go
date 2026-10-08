@@ -90,8 +90,6 @@ func sortKeyed(ks []keyed) {
 	slices.SortStableFunc(ks, func(a, b keyed) int { return compareKeys(a.key, b.key) })
 }
 
-// compareKeys is a three-way comparator for keys: exactly one direction less
-// orders the pair, both or neither is equal.
 func compareKeys(a, b Value) int {
 	ab := Compare(a, b) < 0
 	ba := Compare(b, a) < 0
