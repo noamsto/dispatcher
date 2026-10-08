@@ -11200,6 +11200,12 @@ _rr_file() {
     "$(printf '%s' "$common" | cksum | cut -d' ' -f1)"
 }
 
+# _rr_palette — every identity color, parsed from the source so a new palette
+# entry cannot be added without the compile test below seeing it.
+_rr_palette() {
+  bash -c 'eval "$(sed -n "/^_colors=(/,/)/p" "$1")"; printf "%s\n" "${_colors[@]}"' _ "$CREW"
+}
+
 # _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
 _rr_dispatch() {
   local logf
@@ -11297,7 +11303,7 @@ _rr_seed() {
   # stacked edge still comes from the earlier dispatch that named the base.
   _rr_dispatch feat/3-c 1791362700000 nova magenta colour127 "Charlie task" deep claude opus
   cat >"$BATS_TEST_TMPDIR/expected.d2" <<'EOF'
-title: "Crew roster" {near: top-center}
+title: "Crew roster" {near: top-center; shape: text}
 legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
 dispatcher: "dispatcher" {style.bold: true}
 w1: "sage\nAlpha task\nstandard·claude·sonnet\nworking · plan-critic r2↻ · since 08:20" {
@@ -11326,6 +11332,31 @@ EOF
   run run_crew roster-render --crew c1 --once
   [ "$status" -eq 0 ]
   diff -u "$BATS_TEST_TMPDIR/expected.d2" "$(_rr_file)"
+}
+
+# The renderer writes each identity color as a bare `stroke:` value, so every
+# palette entry must name a color d2 accepts. This renders one worker per entry
+# and compiles the result: a palette name d2 does not know fails the compile.
+@test "roster-render: every palette color compiles through d2" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  local i=0 color
+  while IFS= read -r color; do
+    i=$((i + 1))
+    _rr_dispatch "feat/pal-$i" $((1791360000000 + i * 1000)) "pal$i" "$color" colour28 "Palette $i" standard claude sonnet
+  done < <(_rr_palette)
+  _rr_stubs ""
+
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$(_rr_file)"
+
+  # Every entry reached a stroke, so the compile below cannot pass vacuously.
+  run grep -c '^  style: {stroke: ' "$target"
+  [ "$output" -eq "$i" ]
+
+  run d2 "$target" "$BATS_TEST_TMPDIR/palette.svg"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
 @test "roster-render: an unchanged bus writes nothing; a working detail change writes once" {
