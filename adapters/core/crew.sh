@@ -1721,6 +1721,41 @@ _rr_pass() {
   printf '%s\n' "$live"
 }
 
+# _rr_installed_crew — the `crew` this process's environment resolves to, realpath'd,
+# or nothing when nothing does. A writeShellApplication wrapper — crew's own, and
+# every caller that lists crew in its runtimeInputs, `dispatch` first — prepends its
+# store bin dirs to PATH, so `command -v crew` inside a running daemon answers the
+# build that started it and never a home-manager switch. The ambient PATH, the one a
+# switch repoints, starts at the first entry outside /nix/store. realpath'd so the
+# answer reads like `_rr_self`, which is one: an entry that is a symlink into the
+# running build names the build already running. Always returns 0, and prints
+# nothing rather than failing when no entry resolves: the caller captures it in an
+# assignment, where a failing status would end the daemon.
+_rr_installed_crew() {
+  local d t p="${PATH-}"
+  while [ -n "$p" ]; do
+    case "$p" in
+    *:*)
+      d="${p%%:*}"
+      p="${p#*:}"
+      ;;
+    *)
+      d="$p"
+      p=""
+      ;;
+    esac
+    # Absolute only: the daemon runs from $common, so a relative entry would
+    # resolve against the bus dir rather than anywhere a crew is installed.
+    case "$d" in /*) ;; *) continue ;; esac
+    case "$d" in /nix/store | /nix/store/*) continue ;; esac
+    t="$d/crew"
+    [ -f "$t" ] && [ -x "$t" ] || continue
+    readlink -f -- "$t" 2>/dev/null || true
+    return 0
+  done
+  return 0
+}
+
 # _write_if_changed — running pi workers share the target dir, so replace via a
 # same-dir temp + mv (never truncate in place) and skip identical content.
 _write_if_changed() { # $1=target $2=mode $3=content
@@ -4668,12 +4703,15 @@ roster-render)
       echo "crew: roster-render: --pane '$rr_pane' is not this caller's pane — ignored" >&2
     fi
   fi
+  # The daemon's own argv, shared by `--detach` and by the re-exec below so both
+  # start the loop with the same already-validated arguments: `--pane` is a file
+  # record, never an argument, and `--once`/`--detach` are not forwarded.
+  rr_args=(--crew "$rr_crew" --interval "$rr_interval" --quiet "$rr_quiet")
+  [ -z "$rr_no_open" ] || rr_args+=(--no-open)
   rr_lockd="$cdir/roster-render.lock.d"
   if [ -n "$rr_detach" ]; then
     # A nohup'd child of the caller can be reparented before it checks
     # ancestry, so the pane was validated above and the daemon reads the record.
-    rr_args=(--crew "$rr_crew" --interval "$rr_interval" --quiet "$rr_quiet")
-    [ -z "$rr_no_open" ] || rr_args+=(--no-open)
     CREW_ID="$rr_crew" nohup bash -euo pipefail "$_rr_self" roster-render "${rr_args[@]}" </dev/null >/dev/null 2>&1 &
     exit 0
   fi
@@ -4683,14 +4721,19 @@ roster-render)
   fi
   # Acquired before the traps are armed, like `stream`: a refused start must
   # not release the incumbent's lock. A held lock is a silent no-op — the pane
-  # record above already retargeted the running renderer.
-  # Known limit: a running renderer keeps its build until the crew drains past
-  # --quiet; a later dispatch of a new build is a no-op while it holds the lock.
+  # record above already retargeted the running renderer, and a newer build's
+  # start is no more than that: the incumbent upgrades itself (below) rather than
+  # being signalled, because a TERM it acts on only after its current pass lets
+  # the newcomer exit on the still-held lock and leaves the crew with no renderer.
   _lock_acquire "$rr_lockd" "$$" || exit 0
   # `_lock_release` is unconditional; the pid check keeps a renderer whose lock
   # was reclaimed (crew dir removed and re-created) from deleting the new owner's.
   trap '[ "$(cat "$rr_lockd/pid" 2>/dev/null || true)" != "$$" ] || _lock_release "$rr_lockd"' EXIT
   trap 'exit 0' INT TERM
+  # The baseline for the loop's own re-resolution, taken once: a daemon started
+  # while a newer build was already installed keeps running the one it was started
+  # with, and follows the entry from then on.
+  rr_entry=$(_rr_installed_crew)
   rr_live=1
   rr_sig=""
   rr_last_build=0
@@ -4719,6 +4762,19 @@ roster-render)
     fi
     # Wall-clock sleep: the poll interval is real time, while the quiet window
     # and the rebuild backstop read `_clock_now`, which tests drive via CREW_CLOCK.
+    #
+    # The sleep point is the only upgrade point, never mid-render: a build
+    # installed since the daemon started is picked up in place. `exec` keeps the
+    # pid, so the lock is never released or handed off (bash runs no EXIT trap on a
+    # successful exec, and `_lock_acquire` is idempotent for the owner's own pid).
+    # `_rr_self` is the flap guard: an entry that moved to the build already running
+    # is no upgrade. Each hop leaves the build it left on PATH, which only a fresh
+    # daemon resets, and which can never hide the next build — the lookup reads
+    # outside /nix/store.
+    rr_want=$(_rr_installed_crew)
+    if [ -n "$rr_want" ] && [ "$rr_want" != "$rr_entry" ] && [ "$rr_want" != "$_rr_self" ]; then
+      exec "$rr_want" roster-render "${rr_args[@]}"
+    fi
     sleep "$rr_interval"
   done
   ;;
