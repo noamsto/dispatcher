@@ -7889,8 +7889,9 @@ SCAFFOLD
       say "keeping $branch — git status failed"
       return 0
     fi
-    # A write landing after the --discard save (a killed process flushing on
-    # exit) is not in the patch, so it keeps the tree.
+    # A new path or state change after the --discard save (a killed process
+    # flushing on exit) is not in the patch, so it keeps the tree. Status lines
+    # carry no content: a later write to an already-dirty path goes unseen.
     if [ -n "$discard" ]; then
       if [ "$st" != "$discard_st" ]; then
         say "keeping $branch — changed while saving"
