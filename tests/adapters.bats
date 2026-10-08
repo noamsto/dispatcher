@@ -333,9 +333,9 @@ commands_reach_row() { # path template containing $ROOT and $n
   [ "$status" -eq 0 ]
 }
 
-# F02: secret-read-guard and public-leak-guard ship executable and byte-identical
-# in the three generated trees. Read-only; no per-row reset.
-@test "generated guards ship executable and byte-identical in all three trees" {
+# F02: the notify hook, the guards and the phase-status hook ship executable and
+# byte-identical in the three generated trees. Read-only; no per-row reset.
+@test "generated hooks and guards ship executable and byte-identical in all three trees" {
   begin_rows
   local row name
   while IFS='|' read -r row name; do
@@ -345,8 +345,9 @@ commands_reach_row() { # path template containing $ROOT and $n
 secret-read|secret-read-guard.sh
 public-leak|public-leak-guard.sh
 test-scope|test-scope-guard.sh
+phase-status|phase-status.sh
 ROWS
-  finish_rows 3
+  finish_rows 4
 }
 
 guard_ships_row() { # script basename
@@ -391,6 +392,23 @@ guard_ships_row() { # script basename
 @test "claude PreToolUse hook wires the test-scope guard on Bash" {
   run jq -e '.hooks.PreToolUse[2] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/test-scope-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
   [ "$status" -eq 0 ]
+}
+
+# The phase-status hook is wired for pi only (#839), as two entries: the
+# fire-and-forget post_tool one for every phase, and a pre_tool one for
+# `awaiting <role>` — pre_tool is a guard slot on pi, where hookyard refuses a
+# fire-and-forget handler, so that entry rides the verdict lane and abstains. It
+# ships in the codex and cursor trees because every hook does, unwired there.
+@test "hookyard.json wires the phase-status hook for pi, on both events" {
+  run jq -e '(.handlers[] | select(.id == "phase-status") |
+      (.exec == "adapters/core/phase-status.sh") and (.events == ["post_tool"]) and
+      (.engines == ["pi"]) and (.lane == "fire_and_forget") and (has("timeout_ms") | not)) and
+    (.handlers[] | select(.id == "phase-status-await") |
+      (.exec == "adapters/core/phase-status.sh") and (.events == ["pre_tool"]) and
+      (.engines == ["pi"]) and (.match == ["Bash"]) and (.timeout_ms == 4000) and
+      (has("lane") | not))' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/phase-status.sh" ]
 }
 
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {
