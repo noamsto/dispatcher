@@ -12,7 +12,7 @@ Read the task and weigh its actual signals. Do not map mechanically from a label
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------- |
 | Underspecified / ambiguous, architectural, security-sensitive, wide blast radius, needs the spec→crit→plan judgment loop | `deep`     | per model map — opus, ↑opus @xhigh → Fable (last resort) |
 | Bounded, clear shape, a few files, low ambiguity                                                                         | `standard` | per model map — sonnet @medium, ↑opus to escalate |
-| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet @low, ↑opus @low to escalate |
+| Mechanical, single-file, lockfile/docs/rename, no design judgment                                                        | `trivial`  | per model map — sonnet @low, ↑opus @low to escalate; haiku only per "When haiku replaces sonnet" |
 
 **Tier and model control different things — don't conflate them.** Tier sets the worker's _pipeline depth_: `trivial` runs **no critics** (implement → gate → PR), `standard` adds a plan-critic, `deep` adds spec + plan critics. Model sets how strong the orchestrator/implementer is. So "small but risky" means **raise the tier**, not just the model: a security-critical change is `standard`/`deep` even if it's only a few lines — bumping the model alone ships it _smarter but still unreviewed_. Across `trivial`/`standard` the model is often the same (`sonnet`, with `opus` as the escalation); the tier is what decides whether anything reviews the work. When genuinely on the fence about **model**, pick the **cheaper** rung and say
 why — an underpowered worker can escalate via the bus. **One-rung escalation:**
@@ -120,7 +120,7 @@ This holds for the model too: claude sonnet leads `standard` at `medium` and
 `trivial` at `low`, and an opus escalation on those rows keeps the same
 tier-typical effort; it must not carry deep's `high` down with it. On sonnet
 the ceiling is `high`: `dispatch` refuses sonnet at `xhigh`/`max`, and the next
-step past sonnet@`high` is opus@`medium` (standard) — never sonnet `xhigh`/`max`.
+step past sonnet@`high` is opus@`medium` (standard) — never sonnet `xhigh`/`max`. Haiku has no such ceiling; when it may stand in for sonnet is the "When haiku replaces sonnet" rule in `dispatch-orchestration.md`.
 When the pace gate refuses opus (its `high`+ rungs; `low`/`medium` already burn
 at the standard class and are not refused), shed to `sonnet` at the same effort,
 or to `sonnet at high` when the refused effort was `xhigh`/`max`, not to a
