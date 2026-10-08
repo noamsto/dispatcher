@@ -829,6 +829,124 @@ globs: ["*.rs"]' 'REPO-GENERAL-BODY'
   [ -z "$(_routed src/main.rs)" ]
 }
 
+# #864 per-file fallback: the resolver carries the fallback entry exactly when a
+# changed file matches no harness route, so only the fallback-dropping cases
+# below discriminate against always carrying it.
+@test "resolver: an unmatched file routes the fallback alongside the matched reviewer" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  mkdir -p deploy
+  echo 'echo deploy' >deploy/rollout.sh
+  echo '{}' >hookyard.json
+  _roster_commit mixed
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+  [ -n "$(_reviewer shell-reviewer .name)" ]
+  # The mixed diff alone does not discriminate: main always carried the fallback.
+  # A fully covered resolution is the discriminating half.
+  base2="$(git rev-parse HEAD)"
+  echo 'echo more' >more.sh
+  _roster_commit covered
+  _resolve "$base2"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 0 ]
+  [ -n "$(_reviewer shell-reviewer .name)" ]
+}
+
+@test "resolver: a fully covered diff drops the fallback entry" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  echo 'echo a' >a.sh
+  mkdir -p cmd
+  echo 'package main' >cmd/x.go
+  _roster_commit covered
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 0 ]
+  [ -n "$(_reviewer shell-reviewer .name)" ]
+  [ -n "$(_reviewer go-reviewer .name)" ]
+}
+
+@test "resolver: a diff nothing matches keeps the fallback" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  echo 'notes' >notes.xyz
+  _roster_commit unmatched
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+}
+
+@test "resolver: an extensionless file with a matched shebang is covered" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  mkdir -p bin
+  printf '#!/usr/bin/env bash\necho run\n' >bin/run
+  _roster_commit shebang
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 0 ]
+}
+
+@test "resolver: an extensionless file without a shebang is uncovered" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  mkdir -p bin
+  printf 'just text\n' >bin/run
+  _roster_commit no-shebang
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+}
+
+@test "resolver: a deleted extensionless script is uncovered" {
+  _roster_repo
+  mkdir -p bin
+  printf '#!/bin/bash\necho run\n' >bin/run
+  _roster_commit script
+  base="$(git rev-parse HEAD)"
+  git rm -q bin/run
+  _roster_commit deleted
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+}
+
+@test "resolver: env -S and versioned interpreters count as covered" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  mkdir -p bin
+  printf '#!/usr/bin/env -S bash -u\necho a\n' >bin/a
+  printf '#!/bin/bash-5.1\necho b\n' >bin/b
+  _roster_commit inline
+  _resolve "$base"
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 0 ]
+}
+
+@test "resolver: a repo-local route covers no file for fallback purposes" {
+  _roster_repo
+  _roster_entry rust-fan 'name: rust-fan
+globs: ["*.rs"]' 'REPO-RS-BODY'
+  _roster_commit entry
+  base="$(git rev-parse HEAD)"
+  mkdir -p src
+  echo 'fn main() {}' >src/main.rs
+  _roster_commit rs
+  _resolve "$base"
+  [ -n "$(_reviewer rust-fan .name)" ]
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+}
+
+@test "resolver: coverage uses the caller's review diff when the default has moved" {
+  _roster_repo
+  git checkout -qb feat
+  echo 'echo a' >a.sh
+  echo '{}' >hookyard.json
+  _roster_commit feat
+  # main independently gains the identical hookyard.json: a two-dot diff against
+  # the default's tip would drop it and silently lose the fallback.
+  git checkout -q main
+  echo '{}' >hookyard.json
+  _roster_commit main-side
+  git checkout -q feat
+  _resolve main "$TEST_REPO" main
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 1 ]
+}
+
 @test "resolver: a repo entry overrides a harness reviewer by name inside a framed brief" {
   _roster_repo
   _roster_entry go-reviewer 'name: go-reviewer
