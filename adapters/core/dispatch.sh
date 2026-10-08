@@ -1339,10 +1339,9 @@ decorate_pane() {
 # layout_grid <window> — main-vertical, pinning the lead (pane 1, created
 # before any role pane splits off it) to 60% width. Role panes only carry
 # short verdict traffic and need far less room than the lead's diff/test/tool
-# output. The built-in fallback for a host without tmux-og's tmux-grid-refit,
-# and the tool guard_role_width reaches for. Best-effort like the other grid
-# hint writers: a window that vanished mid-spawn must never abort dispatch
-# under set -e.
+# output. The built-in fallback for a host without tmux-og's tmux-grid-refit.
+# Best-effort like the other grid-hint writers: a window that vanished
+# mid-spawn must never abort dispatch under set -e.
 layout_grid() {
   local win="$1"
   tmux set-window-option -t "$win" main-pane-width 60% 2>/dev/null || true
@@ -1386,15 +1385,14 @@ wait_grid_refit() {
 }
 
 # guard_role_width <window> — after the refit settles, any role pane still
-# below the readable minimum gets the built-in main-vertical fallback.
+# below the readable minimum gets the built-in main-vertical fallback:
 # tmux-grid-refit leaves the bare split alone when a precondition is missing
-# (no @crew_grid, window zoomed, no lead tag, refit lock held), and one such
-# window once shipped a 1-column reviewer pane (#814). Logs the window's raw
-# layout to stderr so the next occurrence captures the root cause. Best-effort
-# like publish_grid_window: a vanished window never fails a dispatch. The
-# minimum is a per-pane floor (default 20, task-sanctioned), NOT tmux-og's
-# role-AREA minimum its @grid_refit_min_role_cols defaults to 30; an explicit
-# 0 disables this guard.
+# (no @crew_grid, window zoomed, no lead tag, refit lock held) (#814). The
+# minimum is a per-pane floor (default 20), NOT the role-AREA minimum tmux-og
+# keeps in @grid_refit_min_role_cols (default 30); an explicit 0 disables
+# this guard. The stderr line carries the raw window layout so the next
+# occurrence captures the root cause. Best-effort like publish_grid_window:
+# a vanished window never fails a dispatch.
 guard_role_width() {
   local win="$1" min out pane role width layout
   min="$(tmux show-options -w -v -q -t "$win" @grid_refit_min_role_cols 2>/dev/null || true)"

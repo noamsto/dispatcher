@@ -1262,9 +1262,9 @@ EOF
 @test "grid: a failing fallback layout still launches the role (best-effort)" {
   _spawn_role_fixture
   _grid_refit_stub
-  # Width 1 forces the guard into layout_grid, and layout_grid's own tmux
-  # calls fail (a window vanishing mid-spawn): under set -euo pipefail an
-  # unguarded one would abort dispatch before the role ever launches.
+  # Width 1 forces the fallback, and layout_grid's own tmux calls fail (a
+  # window vanishing mid-spawn): an unguarded one aborts dispatch under
+  # set -euo pipefail before the role ever launches.
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -1305,8 +1305,8 @@ EOF
 @test "grid: an eager role pane that comes up 1 column wide falls back too" {
   stub_launch_bins
   _grid_tmux_stub
-  # Same pane_width-gated list-panes row as _spawn_role_width_stub, over the
-  # eager stub (new-window returns the window and lead pane %1).
+  # The pane_width-gated list-panes row again, over the eager stub
+  # (new-window returns the window and lead pane %1).
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
