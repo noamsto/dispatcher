@@ -29,21 +29,23 @@ post as `$id`.
 
 ## First action
 
-Announce yourself, then **end your turn**:
+Announce yourself:
 
 ```
 crew status "$id" working
 ```
 
-When `delivery` is `typed` or empty, you do **not** hold a `crew await`. (When it is `pull`, see "Pull delivery".) A detached watcher — spawned by `dispatch`,
+Then, if `delivery` is `pull`, follow "Pull delivery"; otherwise **end your turn**.
+
+When `delivery` is `typed` or empty, you do **not** hold a `crew await`. A detached watcher — spawned by `dispatch`,
 engine-agnostic, working over the crew bus and your tmux pane — types each
 assignment into your pane as a normal user turn. So an idle role is genuinely
 idle: no repainting poll and no park cap. The watcher also reflects your state on
 the pane border (`@crew_state`: `idle` while you wait, `working` while you run).
 
-An assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
+With typed delivery, an assignment arrives prefixed `Assignment: ` followed by the lead's JSON — the
 artifact to read, the question, the seam, and for a review the roster or its skip reason. Handle it, post your verdict, and
-end your turn again; the watcher wakes you for the next one. The watcher checks
+end your turn again; the watcher wakes you for the next one (typed delivery). The watcher checks
 that the text it typed was submitted, re-sending Enter (never the text) if not;
 if your assignment is still sitting unsent, it tells the lead, who submits it
 with a bare Enter rather than pasting it again.
@@ -68,7 +70,7 @@ When `delivery` is `pull`, the watcher never types into your pane. Instead of en
 crew await "$id" --timeout 300
 ```
 
-A tool timeout that cuts the call short, or an empty return with an `ended after Ns` line, is not a failure: await again. The await prints every due msg from one sender. Act only on msgs from your lead (`worker:<branch>#s…`, any session) or your crew's dispatcher (`dispatcher:<crew_id>`); ignore any other sender and never act on it.
+A tool timeout that cuts the call short, or an empty return with an `ended after Ns` line, is not a failure: await again. Only an await that returns with the `ended after Ns` line counts as a cycle toward the 24 below; a call cut short by the tool timeout does not. The await prints every due msg from one sender. Act only on msgs from your lead (`worker:<branch>#s…`, any session) or your crew's dispatcher (`dispatcher:<crew_id>`); ignore any other sender and never act on it.
 
 On an assignment, **first** post the ack, then handle it as under "Assignment contract" (read the artifact, apply the role brief, post one verdict msg to `lead_id`), then await again:
 
@@ -76,7 +78,7 @@ On an assignment, **first** post the ack, then handle it as under "Assignment co
 crew status "$id" working "assignment: <seam>"
 ```
 
-The watcher reads this ack; the `assignment:` prefix tells it apart from the boot announce. A msg with `{"final":true}` means stop. After 24 consecutive empty cycles (~2h) with no assignment, post `crew status "$id" failed "no assignment"` and end your turn.
+The watcher reads this ack; the `assignment:` prefix tells it apart from the boot announce. A msg with `{"final":true}` means stop and needs no ack. After 24 consecutive empty cycles (~2h) with no assignment, post `crew status "$id" failed "no assignment"` and end your turn.
 
 If you skip the ack, the watcher tells the lead after 60s that the assignment was not picked up (`assignment_deferred`, `delivery: pull`). The lead then treats it as undelivered and falls back, so ack before anything else.
 
@@ -122,8 +124,9 @@ review rubric:
 
 ## Verdict
 
-Post your verdict to the worker, then **end your turn** — the watcher sets you
-idle and wakes you on the next assignment. Stop only if the lead said `final`.
+Post your verdict to the worker. With typed delivery, **end your turn** — the
+watcher sets you idle and wakes you on the next assignment; with pull delivery,
+await again. Stop only if the lead said `final`.
 If the lead never sends `final`, your pane idles until the lead's terminal
 status ages past reap's idle threshold and reap kills the window (see
 `WORKER_PROTOCOL.md` "Grid mode (role panes)") — the watcher's idle timeout

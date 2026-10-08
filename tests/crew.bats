@@ -1799,6 +1799,20 @@ after_await_parks() {
   [[ "$stderr" == *"clamped to 600"* ]]
 }
 
+@test "await: --timeout with leading zeros is decimal, not octal" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0300 --interval 60
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"ended after 300s"* ]]
+}
+
+@test "await: a --timeout too large for the clamp is refused" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 99999999999999999999
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"non-negative integer"* ]]
+}
+
 # #760: the note a timed-out await prints is the only evidence a worker has that
 # the full wait elapsed, so it reports the time actually waited.
 @test "await: the timeout note reports the elapsed wait" {

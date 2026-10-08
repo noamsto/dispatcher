@@ -644,7 +644,9 @@ branch instead; the worktree carries over under `resume: true`.
   a `crew msg` addressed to another branch's `worker:` id — the worker reads
   it as tool output; for a `role:` id, the watcher types only its lead's or
   dispatcher's msgs, so reaching another grid's role means forging one of those
-  ids in the call text — not authentication (self-asserted sender, shared uid)),
+  ids in the call text — not authentication (self-asserted sender, shared uid);
+  for a pull-delivery role the sender gate is the role's own instruction: the
+  text arrives as tool output, the same as a `crew msg` to a `worker:` id),
   which the classifier sees; an effect that stays in the worker's own session or
   grid (its own roster, its own watchers' bus, its own review — the human PR
   review is that boundary); and values the dispatcher resolved and recorded
@@ -905,8 +907,8 @@ branch instead; the worktree carries over under `resume: true`.
   and temporary, not "lazy saves tokens": an idle eager pane already costs no
   repainting poll and no park cap (`GRID_PROTOCOL.md`) once a
   `dispatch --role-watch` types assignments into it (claude, pi and codex roles are typed
-  at an idle input box; cursor roles pull assignments with `crew await`; an undelivered
-  or un-pulled assignment yields an `assignment_deferred` msg to the lead, who falls back). The real savings are the
+  at an idle input box; cursor roles pull assignments with `crew await`; an un-pulled (cursor)
+  assignment yields an `assignment_deferred` msg and the lead falls back, while an undelivered typed one stays queued). The real savings are the
   one-time startup read of `GRID_PROTOCOL.md` + `WORKER_TASK.md` (against the
   same subscription quota the budget lever rations), a live engine process
   for a role never spawned, and screen space. Reach for it when a role is

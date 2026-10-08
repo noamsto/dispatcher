@@ -3602,10 +3602,11 @@ await)
       ;;
     esac
   done
-  [[ "$timeout" =~ ^[0-9]+$ ]] || {
+  [[ "$timeout" =~ ^[0-9]{1,9}$ ]] || {
     echo "crew: --timeout needs a non-negative integer (seconds)" >&2
     exit 1
   }
+  timeout=$((10#$timeout))
   # A held await past the 600s tool ceiling is killed by the harness mid-wait.
   if [ "$timeout" -gt 600 ]; then
     echo "crew: await --timeout $timeout clamped to 600 (the 600s tool ceiling)" >&2

@@ -2590,6 +2590,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   lead_id=""
   deferred_since=0
   deferred_told=0
+  role_ready=0
   # Exits when the pane is gone (role reaped, or the window closed) or its
   # engine has exited.
   while [ "$(tmux display-message -p -t "$watch_pane" '#{pane_id}' 2>/dev/null || true)" = "$watch_pane" ]; do
@@ -2601,17 +2602,37 @@ if [ "${1:-}" = "--role-watch" ]; then
         while IFS= read -r ev; do
           if [ "$(printf '%s' "$ev" | jq -r '.kind')" = status ]; then
             [ "$w_delivery" = pull ] || continue
-            if [ "${#pending[@]}" -gt 0 ] &&
-              printf '%s' "$ev" | jq -e --argjson oldest "${pending_ts[0]}" \
-                '.body.state=="working" and ((.body.detail // "") | startswith("assignment:")) and .ts>$oldest' >/dev/null; then
-              # The role's await prints its whole backlog from that sender at once.
-              pending=()
-              pending_from=()
-              pending_ts=()
-              deferred_since=0
-              deferred_told=0
-              watch_set_state working
-            fi
+            printf '%s' "$ev" | jq -e '.body.state=="working"' >/dev/null || continue
+            # Any working status is the role up and pulling: the bare announce
+            # or an ack. Its boot time must not count against the deferral clock.
+            [ "$role_ready" -eq 1 ] || { role_ready=1; deferred_since=0; }
+            [ "${#pending[@]}" -gt 0 ] || continue
+            printf '%s' "$ev" | jq -e '(.body.detail // "") | startswith("assignment:")' >/dev/null || continue
+            ack_ts="$(printf '%s' "$ev" | jq -r '.ts')"
+            # The role's await prints only the due backlog of the sender of its
+            # newest due message, so the ack clears that sender's entries alone.
+            ack_from=""
+            for i in "${!pending[@]}"; do
+              [ "${pending_ts[i]}" -lt "$ack_ts" ] && ack_from="${pending_from[i]}"
+            done
+            [ -n "$ack_from" ] || continue
+            keep=()
+            keep_from=()
+            keep_ts=()
+            for i in "${!pending[@]}"; do
+              if [ "${pending_from[i]}" = "$ack_from" ] && [ "${pending_ts[i]}" -lt "$ack_ts" ]; then
+                continue
+              fi
+              keep+=("${pending[i]}")
+              keep_from+=("${pending_from[i]}")
+              keep_ts+=("${pending_ts[i]}")
+            done
+            pending=("${keep[@]}")
+            pending_from=("${keep_from[@]}")
+            pending_ts=("${keep_ts[@]}")
+            deferred_since=0
+            deferred_told=0
+            watch_set_state working
             continue
           fi
           to="$(printf '%s' "$ev" | jq -r '.to // ""')"
@@ -2628,6 +2649,8 @@ if [ "${1:-}" = "--role-watch" ]; then
             [ -n "$body" ] || continue
             lead_id="$from"
             [[ $from != worker:* ]] || lead_worker="$from"
+            # A final release needs no ack, and the role never pulls it as work.
+            [ "$w_delivery" = pull ] && printf '%s' "$body" | jq -eR 'fromjson? | objects | .final == true' >/dev/null && continue
             [ "${#pending[@]}" -lt "$pending_max" ] || { pending=("${pending[@]:1}"); pending_from=("${pending_from[@]:1}"); pending_ts=("${pending_ts[@]:1}"); }
             pending+=("$body")
             pending_from+=("$from")
@@ -2704,11 +2727,17 @@ if [ "${1:-}" = "--role-watch" ]; then
       deferred_told=0
     elif [ "$w_delivery" = pull ]; then
       [ "$deferred_since" -gt 0 ] || deferred_since="$(_rw_now)"
+      pull_wait="$defer_notice"
+      pull_detail="assignment not picked up: the role pulls its assignments with crew await and has not acked this one"
+      if [ "$role_ready" -eq 0 ]; then
+        pull_wait=$((defer_notice * 5))
+        pull_detail="assignment not picked up: the role has not announced itself (still booting, or never started)"
+      fi
       if [ "$deferred_told" -eq 0 ] && [ -n "$lead_id" ] &&
-        [ $(($(_rw_now) - deferred_since)) -ge "$defer_notice" ]; then
+        [ $(($(_rw_now) - deferred_since)) -ge "$pull_wait" ]; then
         deferred_told=1
-        crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
-          '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"pull",detail:"assignment not picked up: the role pulls its assignments with crew await and has not acked this one"}')" 2>/dev/null || true
+        crew msg "$role_id" "$lead_id" "$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" --arg d "$pull_detail" \
+          '{role:$r,event:"assignment_deferred",pane:$p,engine:$e,delivery:"pull",detail:$d}')" 2>/dev/null || true
       fi
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))

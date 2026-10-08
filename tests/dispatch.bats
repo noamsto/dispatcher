@@ -11027,13 +11027,77 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   _rw_stub rw_frame_cursor_pull_idle
   touch "$STUB_DIR/pull"
   RW_EXTRA="--defer-notice 1" _rw_launch cursor
-  _rw_append "$(_rw_assign_row)"
+  _rw_append "$(_rw_assign_row)" "$(_rw_status_row working '' 1)"
   _rw_wait_deferred
   _rw_settle 24
   _rw_stop
   [ "$(_rw_deferrals)" -eq 1 ]
   grep -q '^msg .*assignment_deferred.*"delivery":"pull"' "$STUB_LOG"
   grep -q '^msg .*assignment_deferred.*has not acked' "$STUB_LOG"
+}
+
+@test "role-watch: a final release to a pull role is never queued or deferred" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"worker:feat/9-x#s1-1", to:"role:feat/9-x:reviewer", body:"{\"final\":true}"}' >>"$common/crew/events.jsonl"
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: a pull assignment is not deferred while the role is still booting" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 2" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_settle 12
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
+}
+
+@test "role-watch: a pull assignment is deferred once after the role announced but never acked" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 2" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_settle 4
+  _rw_append "$(_rw_status_row working '' 1)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+}
+
+@test "role-watch: a pull role that never announces is deferred once after the boot grace, naming the boot" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append "$(_rw_assign_row)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_deferrals)" -eq 1 ]
+  grep -q '^msg .*assignment_deferred.*has not announced itself (still booting, or never started)' "$STUB_LOG"
+}
+
+@test "role-watch: a pull ack clears only the sender whose backlog await printed" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_cursor_pull_idle
+  touch "$STUB_DIR/pull"
+  RW_EXTRA="--defer-notice 1" _rw_launch cursor
+  _rw_append \
+    "$(_rw_assign_row | jq -c '.from = "dispatcher:c1"')" \
+    "$(_rw_assign_row 1)" \
+    "$(_rw_status_row working 'assignment: plan' 2)"
+  _rw_wait_deferred
+  _rw_settle 24
+  _rw_stop
+  [ "$(_rw_count 'assignment_deferred')" -eq 1 ]
 }
 
 @test "role-watch: a pull role receives its assignment from crew await" {
