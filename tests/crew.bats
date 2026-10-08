@@ -12120,10 +12120,14 @@ _rr_fakebin() {
 _rr_swap_build() { ln -sfn "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"; }
 _rr_point_build() { ln -sfn "$BATS_TEST_TMPDIR/rr-build-$1/crew" "$RR_FAKEBIN/crew"; }
 _rr_build_ran() { grep -q "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
-_rr_build_args() { sed -nE "s/^$1 $2 //p" "$RR_BUILDS_LOG" | head -1; }
+# Single awk/grep per helper: these run under errexit+pipefail inside _rr_wait and
+# `!`, where a pipeline whose reader exits early (grep -q, head) reads as a failure.
+_rr_build_seen() { grep -q "^$1 " "$RR_BUILDS_LOG"; }
+_rr_build_args() {
+  awk -v pre="$1 $2 " 'index($0, pre) == 1 { print substr($0, length(pre) + 1); exit }' "$RR_BUILDS_LOG"
+}
 _rr_build_pids() { awk -v n="$1" '$1 == n { print $2 }' "$RR_BUILDS_LOG"; }
-_rr_build_seen() { _rr_build_pids "$1" | grep -q .; }
-_rr_build_count() { grep -c "^$1 $2 " "$RR_BUILDS_LOG"; } # <name> <pid>
+_rr_build_count() { grep -c "^$1 $2 " "$RR_BUILDS_LOG" || true; } # <name> <pid>
 _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
 
 @test "roster-render: the daemon re-execs into a newer installed crew, keeping its pid and lock" {
@@ -12174,7 +12178,7 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   _rr_wait _rr_build_ran A "$pid"
 
   sleep 3
-  ! _rr_build_seen B
+  run ! _rr_build_seen B
   _rr_lock_is "$pid"
   kill -0 "$pid"
 }
@@ -12217,7 +12221,7 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   sleep 2
   _rr_lock_is "$pid"
   kill -0 "$pid"
-  ! _rr_build_ran B "$pid"
+  run ! _rr_build_ran B "$pid"
 }
 
 # A drained crew is left to exit rather than upgraded: the hop would restart the
@@ -12236,7 +12240,7 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   printf '%s\n' "$((t0 + 15))" >"$CREW_CLOCK"
   _rr_swap_build B
   sleep 3
-  ! _rr_build_seen B
+  run ! _rr_build_seen B
   # The window still runs from the first drain: a build that had hopped would set
   # its own idle-since at +15 and still be alive at +31.
   printf '%s\n' "$((t0 + 31))" >"$CREW_CLOCK"
