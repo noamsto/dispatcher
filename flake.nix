@@ -107,7 +107,29 @@
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
-            text = sub (builtins.readFile ./adapters/core/crew.sh);
+            # @crewGoBin@ is the Go port's binary, substituted for crew alone
+            # (not in the shared `sub`): only crew.sh's ported-arm exec uses it.
+            text =
+              builtins.replaceStrings ["@crewGoBin@"] ["${crew-go}/bin/crew-go"]
+              (sub (builtins.readFile ./adapters/core/crew.sh));
+          };
+
+          # The Go port of crew's ported subcommands; crew.sh execs it. It
+          # references nothing in the flake, so crew listing it closes no
+          # eval-time cycle. git and tmux come from crew's own PATH at run
+          # time, and git is a check input because the bus tests run real
+          # `git init`/`git worktree`. Not in `default` or the hm module: only
+          # crew.sh invokes it. buildGoModule names the binary after the
+          # module path's last element ("crew"), so postInstall renames it.
+          crew-go = pkgs.buildGoModule {
+            # `name`, not just pname/version, for the same reason as crew-dash.
+            name = "crew-go";
+            pname = "crew-go";
+            version = "0.1.0";
+            src = ./crew;
+            vendorHash = null;
+            nativeCheckInputs = [pkgs.git];
+            postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
 
           # crew is deliberately NOT a runtime input of crew-dash: crew lists
@@ -268,14 +290,16 @@
           };
         };
 
-        # Fails `nix flake check` on doc drift even without a full checkout run
-        # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
-        # role for dispatch.sh, but for the generated doc regions.
-        checks.model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+        checks = {
+          # Fails `nix flake check` on doc drift even without a full checkout run
+          # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
+          # role for dispatch.sh, but for the generated doc regions.
+          model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
 
-        # `nix flake check` only evaluates packages, not builds them — this
-        # makes it build, which runs buildGoModule's `go test ./...` (doCheck).
-        checks.crew-dash = config.packages.crew-dash;
+          # `nix flake check` only evaluates packages, not builds them — these
+          # make it build, which runs buildGoModule's `go test ./...` (doCheck).
+          inherit (config.packages) crew-dash crew-go;
+        };
 
         packages = mkPackages null;
 
@@ -300,6 +324,7 @@
               pkgs.tmux
               pkgs.gh
               pkgs.go
+              pkgs.golangci-lint
               # mawk, nawk, and (on Linux) BusyBox awk: tests/secret-read-guard.bats
               # runs the credential-read rule under each awk implementation.
               # BusyBox is wrapped as busybox-awk because busybox on PATH would

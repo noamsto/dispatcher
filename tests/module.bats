@@ -421,6 +421,16 @@ placeholder_three_row() { # token bin bin bin
   done
 }
 
+@test "the crew-go placeholder is substituted in crew and points at an executable" {
+  run grep -c '@crewGoBin@' "$OUT_CREW/bin/crew"
+  [ "$output" = "0" ]
+  go_bin="$(grep -o '/nix/store/[^"}[:space:]]*-crew-go/bin/crew-go' "$OUT_CREW/bin/crew" | head -1)"
+  [ -n "$go_bin" ]
+  [ -x "$go_bin" ]
+  run "$go_bin"
+  [ "$status" -eq 64 ]
+}
+
 @test "the built scripts and the built protocol dir carry the same revision" {
   # The baked @protocolRev@ (guard marker, #184/#193) must equal the runtime
   # hash of the baked default protocol dir: sorted `name:sha256;` entries,
