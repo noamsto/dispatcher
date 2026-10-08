@@ -1374,6 +1374,81 @@ _pi_assert_refused() {
   [[ "$output" == *"sessions <branch>"* ]]
 }
 
+@test "sessions: the arm execs CREW_GO_BIN with argv and stdin, passing its stderr and exit status" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
+cat >"$BATS_TEST_TMPDIR/stub.stdin"
+echo boom >&2
+exit 7
+STUB
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run --separate-stderr run_crew sessions feat/x --crew c1 <<<"in"
+  [ "$status" -eq 7 ]
+  [ "$stderr" = "boom" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "sessions feat/x --crew c1" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.stdin")" = "in" ]
+}
+
+@test "roster: the arm execs CREW_GO_BIN with argv" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
+STUB
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run run_crew roster c1 extra
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "roster c1 extra" ]
+}
+
+@test "roster: --help is answered by bash, never the Go binary" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  printf '#!/usr/bin/env bash\ntouch "%s/stub.called"\nexit 99\n' "$BATS_TEST_TMPDIR" >"$stub"
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run run_crew roster --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"usage: crew roster"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/stub.called" ]
+}
+
+# Drift guard: the bash _sessions helper stays until its last caller is ported,
+# so it must keep agreeing with the Go fold on the same bus.
+@test "sessions: the bash _sessions helper and crew sessions agree on a shared bus" {
+  t=$(($(date +%s) * 1000))
+  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
+  bus_tick
+  seed_start dispatch s2-2 "$t"
+  seed_raw "worker:feat/x#s2-2" working "" "" "$((t + 1000))"
+  # session-less row after a live session: joins it
+  seed_raw worker:feat/x blocked "" "" "$((t + 2000))"
+  seed_start resume s3-3 "$((t + 3000))"
+  seed_raw "worker:feat/x#s3-3" done "" "" "$((t + 4000))"
+  # session-less row after a terminal session: stays a null session
+  seed_raw worker:feat/x working "" "" "$((t + 5000))"
+  # dispatch-only session
+  seed_start dispatch s4-4 "$((t + 6000))"
+  CREW_ID=c1 run_crew status "worker:feat/a#b#s9-9" working
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  helper="$(sed -n '/^_sessions() {/,/^}/p' "$CREW")"
+  want="$(
+    eval "$helper"
+    _sessions feat/x ""
+  )"
+  run run_crew sessions feat/x
+  [ "$status" -eq 0 ]
+  [ "$(jq length <<<"$want")" -ge 4 ]
+  [ "$(jq -c 'map(del(.age_s))' <<<"$want")" = "$(jq -c 'map(del(.age_s))' <<<"$output")" ]
+  want="$(
+    eval "$helper"
+    _sessions 'feat/a#b' ""
+  )"
+  run run_crew sessions 'feat/a#b'
+  [ "$(jq length <<<"$want")" -ge 1 ]
+  [ "$(jq -c 'map(del(.age_s))' <<<"$want")" = "$(jq -c 'map(del(.age_s))' <<<"$output")" ]
+}
+
 @test "reply: a branch-only worker target resolves to the newest live session" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
   CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
