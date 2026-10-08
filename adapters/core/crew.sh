@@ -1572,9 +1572,13 @@ EOF
 
 # _rr_d2 — model on stdin -> D2 text. Every bus-, record- or tmux-sourced string
 # reaches the output only inside a quoted label (q); keys are generated and the
-# only bare value, the stroke color, must be a palette entry.
+# only bare value, the stroke color, must be a palette entry mapped to a
+# d2-valid named color: some palette names (steel, rust, sky) are not CSS/d2
+# colors, so they are written under their nearest d2 equivalent. The compile
+# test in tests/crew.bats fails if a palette entry has no valid d2 name.
 _rr_d2() {
-  jq -r --argjson palette "$(printf '%s\n' "${_colors[@]}" | jq -R . | jq -sc .)" '
+  jq -r --argjson palette "$(printf '%s\n' "${_colors[@]}" | jq -R . | jq -sc .)" \
+    --argjson d2map '{"steel":"steelblue","rust":"sienna","sky":"skyblue"}' '
     def cap($n): (if type == "string" then . elif . == null then "" else tojson end) | .[0:$n];
     def orq: if . == "" then "?" else . end;
     def q: gsub("[\u0000-\u0009\u000b-\u001f\u007f-\u009f]"; "")
@@ -1588,7 +1592,7 @@ _rr_d2() {
     | def cnt($s): [$rows[] | select(.state | among($s))] | length;
     ($rows | to_entries | map(.value + {key: "w\(.key + 1)"})) as $w
     | cnt(["failed", "exited"]) as $f
-    | "title: \"Crew roster\" {near: top-center}",
+    | "title: \"Crew roster\" {near: top-center; shape: text}",
       "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
       "dispatcher: \"dispatcher\" {style.bold: true}",
       ($w[] | .key as $k
@@ -1601,7 +1605,7 @@ _rr_d2() {
              + (.sessions | if length > 1 then " · \(length) sessions" else "" end))]
            | join("\n") | q) as $label
         | "\($k): \($label) {",
-          "  style: {\(if .color | among($palette) then "stroke: \(.color); " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
+          "  style: {\(if .color | among($palette) then "stroke: \($d2map[.color] // .color); " else "" end)stroke-width: 3\(if .source == "watchdog" then "; stroke-dash: 3" else "" end)}",
           (if .state | among(["working", "blocked", "dispatched"]) then
              .branch as $b
              | [$roles[] | select(.branch == $b)] | sort_by(.role) | to_entries[]
