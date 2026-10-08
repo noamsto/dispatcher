@@ -1872,9 +1872,722 @@ _pi_agent_dir() {
   printf '%s\n' "$dir"
 }
 
+# Per-subcommand help (#812): one case entry per top-level subcommand — synopsis,
+# one-line purpose, one line per flag, one example. Synopses come from each
+# command's own flag parser below, never from memory: a flag listed here but not
+# parsed there is a bug. Output goes to stdout and exits 0, so `crew x --help |
+# grep` works; an unknown subcommand writes to stderr and returns 1.
+_crew_help() { # [<sub> [<subsub>]]
+  local sub="${1:-}" subsub="${2:-}"
+
+  if [ -z "$sub" ]; then
+    cat <<'HELP'
+crew — file-based coordination bus for dispatcher and worker sessions
+
+Usage: crew <command> [args]
+
+Run 'crew <command> --help' for one command's flags and an example.
+
+Bus I/O:
+  status          Post or update a session's state on the bus
+  msg             Post a message from one agent to another
+  reply           Post a message as dispatcher:<crew>
+  await           Block until a message answers an outstanding question
+  inbox           Print the messages addressed to one agent
+  log             Print every bus event for a crew
+
+Watching:
+  watch           Park until a qualifying event lands, then print it
+  stream          Long-lived watch that pushes batches to a streaming lane
+  stall-watch     Per-pane liveness watchdog, spawned per worker
+  pr-watch        Park until a PR changes, then post the event
+  nudge           Type a wake-up line into an idle lead's input box
+
+Roster and reporting:
+  roster          One row per branch: state, age, engine, model, PR
+  roster-render   Draw and publish the crew's roster diagram
+  sessions        Every session id recorded on a branch
+  where           A human-usable address for a worker's pane
+  report          Per-run dispatch table for a crew
+  rate            Sweep the bus into the ratings store, or report it
+  retro           Roll up the retro notes runs posted
+  dash            Terminal dashboard over the bus
+
+Identity and crews:
+  id              Print this session's crew id (never mints one)
+  new             Mint a fresh crew id
+  identity        Print the codename assigned to a branch
+  occupants       Print the crewed panes holding a worktree path
+  register        Register this crew on the repo bus
+  deregister      Drop this crew's registration
+  crews           List every crew with traffic on this repo's bus
+  adopt           Re-attach to an on-disk crew id
+  resolve-target  Resolve a target to branch, codename, host and crew
+  pi-agent-dir    Print the pi agent dir prepared for a dispatch
+
+Holds:
+  hold            Park a queued dispatch on a quota window
+
+Maintenance:
+  reap            Reclaim the window and worktree of a landed PR
+  git-baseline    List or accept the exec-capable git-config baseline
+  engine-cmd      Whether a tmux pane command is an engine
+HELP
+    return 0
+  fi
+
+  if [ "$sub" = hold ]; then
+    case "$subsub" in
+    add)
+      cat <<'HELP'
+usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
+                     --branch B --tier T --model M --effort F [--plan P] [--mcp P]
+                     [--draft] [--shape S] [--spec FILE] [--crew ID] <title...>
+
+Queue a dispatch to be taken once the quota window it is parked on resets.
+
+  --engine      Engine whose quota is being waited on (required)
+  --window      Window name, e.g. week (required)
+  --resets-at   Epoch seconds when that window resets (required)
+  --agent       Engine the task will be dispatched to (required; task.engine)
+  --ref         Branch or commit to dispatch from (required)
+  --branch      Branch the worktree gets (required)
+  --tier        trivial | standard | deep (required)
+  --model       Model to launch (required)
+  --effort      Reasoning effort to launch (required)
+  --plan        Path to the plan of record
+  --mcp         MCP config to pass through
+  --draft       Open the PR as a draft
+  --shape       Task shape recorded on the dispatch row
+  --spec        Spec file to seed the worktree with
+  --crew        Crew id; defaults to this repo's crew
+  <title...>    One-line task title
+
+--engine and --agent stay distinct and neither is inferred from the other.
+
+  crew hold add --engine claude --window week --resets-at 1791600000 \
+    --agent pi --ref main --branch feat/812-x --tier standard \
+    --model lemonade/Qwen3.8-Flash --effort medium "Echo task"
+HELP
+      ;;
+    list)
+      cat <<'HELP'
+usage: crew hold list [--crew ID] [--json]
+
+Every hold on the crew, with its window, reset time and target branch.
+
+  --crew  Crew id; defaults to this repo's crew
+  --json  Machine-readable rows
+
+  crew hold list --crew 1791397224-2162184
+HELP
+      ;;
+    due)
+      cat <<'HELP'
+usage: crew hold due [--crew ID] [--json]
+
+Only the holds whose quota window has already reset — what a dispatcher may
+dispatch now.
+
+  --crew  Crew id; defaults to this repo's crew
+  --json  Machine-readable rows
+
+  crew hold due --json
+HELP
+      ;;
+    park)
+      cat <<'HELP'
+usage: crew hold park <default> [--crew ID]
+
+Set the default park length, in seconds, a hold with no explicit reset gets.
+
+  <default>  Positive whole seconds
+  --crew     Crew id; defaults to this repo's crew
+
+  crew hold park 3600
+HELP
+      ;;
+    release)
+      cat <<'HELP'
+usage: crew hold release <id> [--crew ID]
+
+Drop a hold so it is never dispatched again (a task dispatched by hand, or one
+the owner cancelled).
+
+  <id>     Hold id from `crew hold list`
+  --crew   Crew id; defaults to this repo's crew
+
+  crew hold release h-1
+HELP
+      ;;
+    '')
+      cat <<'HELP'
+usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
+                     --branch B --tier T --model M --effort F [--plan P] [--mcp P]
+                     [--draft] [--shape S] [--spec FILE] [--crew ID] <title...>
+       crew hold list [--crew ID] [--json]
+       crew hold due [--crew ID] [--json]
+       crew hold park <default> [--crew ID]
+       crew hold release <id> [--crew ID]
+
+A queued dispatch parked on a quota window, so a successor session can resume it
+without a human. Records go to the synthetic hold:<crew> sink — they can never
+wake or pollute the dispatcher that wrote them, and `crew log` still shows them.
+
+Run 'crew hold <action> --help' for one action's flags.
+
+  crew hold list --crew 1791397224-2162184
+HELP
+      ;;
+    *)
+      printf 'crew: no help for hold %s\n' "$subsub" >&2
+      return 1
+      ;;
+    esac
+    return 0
+  fi
+
+  case "$sub" in
+  status)
+    cat <<'HELP'
+usage: crew status <from> <state> [detail] [pr] [--restamp] [--]
+
+Post or update a session's state on the crew bus.
+
+  <from>     The posting session: worker:<branch>#s… or dispatcher:<crew>
+  <state>    working | blocked | pr_open | done | failed | exited
+  [detail]   Short context; put -- before one that starts with a dash
+  [pr]       PR url, which pr_open names
+  --restamp  Refresh liveness without re-delivering a pending reply
+  --         Everything after this is positional
+
+pr_open and done are refused on a standard/deep implement run until the branch
+carries a review seam and a deslop seam.
+
+  crew status "$CREW_WORKER_ID" working "execute: tests"
+HELP
+    ;;
+  msg)
+    cat <<'HELP'
+usage: crew msg <from> <to> <body>
+
+Post a message from one agent to another on the crew bus.
+
+  <from>   Sender id, e.g. "$CREW_WORKER_ID"
+  <to>     Recipient: dispatcher:<crew>, worker:<branch>#s…, role:<branch>:<role>
+  <body>   One argument, so its quoting survives
+
+A recipient left as a bare prefix (`dispatcher:` from an id that expanded to
+nothing) is rejected rather than posted where nobody reads it.
+
+  crew msg "$CREW_WORKER_ID" dispatcher:1791397224-2162184 "gate is green"
+HELP
+    ;;
+  reply)
+    cat <<'HELP'
+usage: crew reply <to> <body> [--crew ID]
+
+Post a message as dispatcher:<crew>, so a dispatcher never rebuilds its own id.
+
+  <to>    Recipient id (worker:<branch>#s…, role:<branch>:<role>)
+  <body>  One argument
+  --crew  Crew id when the caller's env carries no CREW_ID
+
+  crew reply "worker:feat/812-x#s1791403690-3448584" "rebase onto main"
+HELP
+    ;;
+  await)
+    cat <<'HELP'
+usage: crew await <agent> [--from SENDER] [--timeout S] [--interval S]
+
+Block until a message answers <agent>'s outstanding question, print it, exit 0.
+
+  <agent>     The id that asked — usually "$CREW_WORKER_ID"
+  --from      Accept a reply only from this exact sender id
+  --timeout   Seconds to wait (default 300); on expiry print nothing, print the
+              "ended after Ns" line on stderr, and exit non-zero
+  --interval  Poll interval in seconds (default 2)
+
+Every due message from the reply's sender prints, oldest first, one compact JSON
+object per line, so a backlog drains instead of hiding. A held poll, not a spin
+loop: zero token cost while it waits.
+
+  crew await "$CREW_WORKER_ID" --from "dispatcher:1791397224-2162184" --timeout 300
+HELP
+    ;;
+  inbox)
+    cat <<'HELP'
+usage: crew inbox <agent> [crew] [--since TS]
+
+Print the messages addressed to <agent> — messages only, never status rows.
+
+  <agent>   worker:<branch>#s… (the session suffix is required), role:<branch>:<role>
+  [crew]    Crew id; defaults to this repo's crew
+  --since   One non-blocking pass over messages strictly newer than TS
+
+Omitting --since returns everything, unchanged; a directive posted mid-stage is
+only visible at the next peek, so carry the cursor forward.
+
+  crew inbox "$CREW_WORKER_ID" --since 1791400000000
+HELP
+    ;;
+  log)
+    cat <<'HELP'
+usage: crew log [crew]
+
+Print every bus event for a crew as JSON lines: status, msg, holds, metrics.
+
+  [crew]  Crew id; defaults to this repo's crew
+
+  crew log | jq -r 'select(.kind=="msg") | .from + " -> " + .to'
+HELP
+    ;;
+  watch)
+    cat <<'HELP'
+usage: crew watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID]
+
+Park until any worker event qualifies, then print {"cursor":TS,"events":[…]}.
+
+  --since     Cursor to read from; omitted, it self-seeds from the crew's cursor
+              file so a stale caller cursor cannot re-deliver
+  --states    States that qualify (default blocked,pr_open,done,failed,exited);
+              a msg to the dispatcher always qualifies
+  --timeout   Park length in seconds (default 3300). An indefinite park is
+              rejected: a reaped indefinite watch is undetectable
+  --interval  Poll interval in seconds (default 2)
+  --crew      Crew id when the caller's env carries no CREW_ID
+
+An expired park exits 0 with empty stdout — that is the marker, not a failure.
+
+  crew watch --since "$seen" --timeout 300
+HELP
+    ;;
+  stream)
+    cat <<'HELP'
+usage: crew stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S]
+                   [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S]
+       crew stream --status [--crew ID]
+
+Wrap `crew watch` in a long-lived process, so a streaming lane gets pushed
+batches instead of re-arming a one-shot park every turn.
+
+  --crew         Crew id — required in spirit: the command string a lane arms
+                 carries no ambient CREW_ID
+  --states       States that qualify (default blocked,pr_open,done,failed,exited)
+  --park         Park per cycle in seconds (default 300)
+  --heartbeat    Idle heartbeat every S seconds (default 3300)
+  --coalesce     Collapse events within S seconds (default 5)
+  --retry        Reconnect every S seconds after a failure (default 30)
+  --interval     Inner watch poll interval (default 2)
+  --force        Take over a lane that is already streaming
+  --reap-every   Reap finished workers every S seconds (default 900)
+  --status       Report the daemon's state instead of running one
+
+Crew-resolution and usage failures exit 64, not 1, so a `--status` call that
+could not find its crew does not read as the `dead` state it never measured.
+
+  crew stream --crew 1791397224-2162184 --park 300
+HELP
+    ;;
+  stall-watch)
+    cat <<'HELP'
+usage: crew stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E]
+                        [--grace S] [--stall S] [--window S] [--interval S] [--idle S]
+                        [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S]
+                        [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]
+                        [--no-budget] [--budget-refresh S] [--no-nudge]
+
+Lifetime-scoped liveness watchdog: the bus reflects only what a worker posts, so
+one parked on a prompt looks exactly like one that is working.
+
+  <target>    worker:<branch>#s…, a bare branch, or role:<branch>:<role> (a role
+              id selects prompt-only mode)
+  --pane      tmux pane id to sample (required)
+  --engine    Engine family; detected from the pane command when omitted
+  --grace     Silence after launch (default 45)
+  --stall     Meter-advancing/token-static window before turn-stall: (default 300)
+  --window    Startup window a static pane may still be starting in (default 900)
+  --interval  Sample interval (default 15)
+  --idle      Byte-identical pane that counts as quiet: (default 1800)
+  --dead      Second-evidence delay before an episode escalates to failed (default 1800)
+  --max-life  Watchdog lifetime cap (default 43200)
+  --load      Host-load window for load: (default 300)
+  --release   Wait after a done/failed before releasing the window (default 300)
+  --bg-wait   How long a finished turn waiting on a background shell holds the
+              static-pane and quiet detectors (default 7200)
+  --launch    Seconds after which a bare shell with no engine is stalled: (default 150)
+  --unread    Age of an undelivered directive that trips unread: (default 600)
+  --runaway-hits    Samples of a leaked model sentinel before runaway: (default 3)
+  --runaway-tokens  Output growth required alongside it (default 1500)
+  --no-budget       Turn off the quota-window detector (dispatch's --ignore-budget)
+  --budget-refresh  Refresh the engine budget cache every S (default 900)
+  --no-nudge        Do not auto-nudge a lead past an overdue directive
+
+Every detector posts a recoverable blocked state; only quiet: and turn-stall:
+escalate, and only after the second --dead evidence check.
+
+  crew stall-watch "worker:feat/812-x#s1791403690-3448584" --pane %204 --grace 45
+HELP
+    ;;
+  pr-watch)
+    cat <<'HELP'
+usage: crew pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]
+
+Park until PR <N> changes, print the event, and post it to dispatcher:<crew> so
+an armed `crew watch` wakes.
+
+  <N>         Pull request number
+  --repo      owner/name; defaults to the current repo
+  --timeout   Seconds to park
+  --interval  Poll interval
+
+The park, the change signals and the per-PR cursor live in the pr-watch binary;
+empty stdout is that binary's timeout marker, not a failure.
+
+  crew pr-watch 812 --timeout 600
+HELP
+    ;;
+  nudge)
+    cat <<'HELP'
+usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]
+
+Type the constant wake-up line into a lead's idle input box, so a lead whose wake
+expired reads the directive `crew reply` already posted.
+
+  <target>  Codename, branch or session id; the pane comes from the window's
+            dispatcher-anchored stamps, never a saved pane id
+  --crew    Crew id when the caller's env carries no CREW_ID
+  --wait    Keep trying while the lead is on a live turn, up to SECONDS
+            (default 1800)
+
+Exit 0 typed and accepted, 1 usage or resolution error, 2 refused before typing,
+3 typed but not accepted.
+
+  crew nudge feat/812-x --crew 1791397224-2162184
+HELP
+    ;;
+  roster)
+    cat <<'HELP'
+usage: crew roster [crew]
+
+One row per branch — folded per session first, so three sessions on a branch
+never read as one flip-flopping identity — with state, age, engine, model, tier,
+PR, codename and pane.
+
+  [crew]  Crew id; defaults to this repo's crew
+
+  crew roster | column -t -s $'\t'
+HELP
+    ;;
+  roster-render)
+    cat <<'HELP'
+usage: crew roster-render --crew ID [--pane %N] [--no-open] [--once | --detach]
+                          [--interval S] [--quiet S]
+
+Draw the crew's roster diagram from the bus and its live role panes, and publish
+it to the aeye carousel beside the recorded dispatcher pane.
+
+  --crew       Crew id (required). One renderer per repo bus: a crew spanning
+               several repos gets one diagram per repo, named by the owner
+  --pane       Dispatcher pane to publish beside
+  --no-open    Render and record without opening the carousel
+  --once       Render one frame and exit
+  --detach     Record the pane, start the daemon detached, return
+  --interval   Redraw interval (default 2)
+  --quiet      Repaint at least every S seconds even with no change (default 1800)
+
+Usage errors exit 64, like `stream`; --once and --detach together are one.
+
+  crew roster-render --crew 1791397224-2162184 --pane %90 --detach
+HELP
+    ;;
+  sessions)
+    cat <<'HELP'
+usage: crew sessions <branch> [--crew ID]
+
+Every session id recorded on <branch> — the ids a resume continues from, and the
+ones a watchdog or a reply may be addressed to.
+
+  <branch>  Branch name
+  --crew    Crew id; defaults to this repo's crew
+
+  crew sessions feat/812-crew-per-subcommand-help
+HELP
+    ;;
+  where)
+    cat <<'HELP'
+usage: crew where <codename|branch|%id> [--crew ID]
+
+A human-usable address for a worker's pane: codename, session:window.pane, window
+name, role and the jump command.
+
+  <target>  Codename (lime), branch, or a tmux pane id such as %204
+  --crew    Crew id; defaults to this repo's crew
+
+Resolved from dispatcher-anchored state only — never git discovery in a worktree
+or the caller's env. Non-zero with a readable message when the pane is gone.
+
+  crew where lime
+HELP
+    ;;
+  report)
+    cat <<'HELP'
+usage: crew report [crew]
+
+Per-run dispatch table for a crew: engine, model, tier, shape, outcome, duration.
+
+  [crew]  Crew id; defaults to this repo's crew
+
+  crew report 1791397224-2162184
+HELP
+    ;;
+  rate)
+    cat <<'HELP'
+usage: crew rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...]
+
+Sweep a repo's bus into the global ratings store, or render that store.
+
+  (no flags)  Sweep this repo's bus into the ratings store
+  --report    Render the per-(engine, model, tier) rollup instead; reads only the
+              global store — no bus, no network
+  --pooled    Pool the tiers into one row per engine and model
+  --json      Machine-readable report
+  --sweep-all Walk every repo instead of this one — the one command with no use
+              for the caller's own, so it runs outside a repo
+  --root      Repo root to sweep; repeatable, only with --sweep-all
+
+  crew rate --report --json
+HELP
+    ;;
+  retro)
+    cat <<'HELP'
+usage: crew retro [--report [--json]]
+
+Read-only rollup of the retro notes workers and the dispatcher post to the
+synthetic retro: and metrics: sinks.
+
+  (no flags)  One row per run: branch, engine, model, tier, outcome, tags
+  --report    Aggregate rollup of tags across runs
+  --json      Machine-readable; only with --report
+
+No crew filter and no positional: notes are cross-run evidence, like `rate`.
+
+  crew retro --report
+HELP
+    ;;
+  dash)
+    cat <<'HELP'
+usage: crew dash [--once|--json]
+
+Terminal dashboard over the crew bus: roster, budget, holds, retro.
+
+  --once  Print one snapshot and exit instead of running the UI
+  --json  Emit that snapshot as JSON
+
+  crew dash --once
+HELP
+    ;;
+  id)
+    cat <<'HELP'
+usage: crew id
+
+Print this session's crew id, resolved from WORKER_TASK.md and then CREW_ID.
+Read-only: it never mints one. Exit 1 with the recovery hints when there is none.
+
+  crew id
+HELP
+    ;;
+  new)
+    cat <<'HELP'
+usage: crew new
+
+Mint a fresh crew id (timestamp-pid, unique by construction) and print it.
+Registers nothing — the dispatcher records it on its first event.
+
+  CREW_ID=$(crew new)
+HELP
+    ;;
+  identity)
+    cat <<'HELP'
+usage: crew identity <branch> [crew]
+       crew identity --hash <name>
+
+Print the codename and colours for <branch>, assigning one from the pool on first
+call; --hash goes the other way, from a name to its identity.
+
+  <branch>  Branch whose identity to print or assign
+  [crew]    Crew the assignment is recorded for; defaults to this repo's crew
+
+  crew identity feat/812-crew-per-subcommand-help
+HELP
+    ;;
+  occupants)
+    cat <<'HELP'
+usage: crew occupants <worktree-path>
+
+Print the crewed windows and panes standing on <worktree-path> — what a dispatch
+would reuse or replace before it launches.
+
+  <worktree-path>  Absolute path, exactly as the window records it
+
+  crew occupants /home/me/git/.worktrees/repo/feat/812-x
+HELP
+    ;;
+  register)
+    cat <<'HELP'
+usage: crew register [pid]
+
+Register this crew on the repo bus. N crews may share a repo, each keyed by its
+crew id, so there is no cross-crew lock.
+
+  [pid]  Long-lived dispatcher pid to record; defaults to the nearest non-shell
+         ancestor, which is what an agent's shell tool needs
+
+  crew register
+HELP
+    ;;
+  deregister)
+    cat <<'HELP'
+usage: crew deregister
+
+Drop this crew's registration from the repo bus. Its events stay in the log.
+
+  crew deregister
+HELP
+    ;;
+  crews)
+    cat <<'HELP'
+usage: crew crews
+
+List every crew with traffic on this repo's bus: id, last and first event, worker
+count, dispatcher pid and whether that pid is alive. Both sources count — a crew
+dir alone (watch creates one) and an id seen only in the log.
+
+  crew crews
+HELP
+    ;;
+  adopt)
+    cat <<'HELP'
+usage: crew adopt [--force] <id> [pid]
+
+Re-attach to an on-disk crew after a restart lost CREW_ID.
+
+  --force  Adopt even though another pid is recorded as its dispatcher
+  <id>     Crew id, from `crew crews`
+  [pid]    Dispatcher pid to record; defaults to the nearest non-shell ancestor
+
+--force is stripped from anywhere in the args, so it can never land as the pid.
+
+  crew adopt 1791397224-2162184
+HELP
+    ;;
+  resolve-target)
+    cat <<'HELP'
+usage: crew resolve-target <target> [--crew ID]
+
+Resolve a target to one TSV line: branch, codename, host and crew.
+
+  <target>  `#N`, a Linear id, a branch, a codename or a worker id
+  --crew    Restrict the lookup to one crew
+
+Exit 1 when nothing matches, 2 when several branches do (all of them listed).
+
+  crew resolve-target '#812'
+HELP
+    ;;
+  pi-agent-dir)
+    cat <<'HELP'
+usage: crew pi-agent-dir
+
+Print the pi agent dir prepared for a dispatch, refreshing models.json from the
+dispatch config. Fails when a local provider name would shadow a credential the
+user stored in auth.json.
+
+  PI_OFFICIAL_CACHE_DIR=$(crew pi-agent-dir)
+HELP
+    ;;
+  reap)
+    cat <<'HELP'
+usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S]
+
+Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
+elapsed time, is the gate: a done worker sits for as long as its PR takes.
+
+  --quiet     Suppress the per-worker notes
+  --dry-run   Print what would be reclaimed, change nothing
+  --no-wait   Do not wait out the idle threshold on a terminal lead
+  --idle      Idle seconds before the idle-release phase kills the window (default 300)
+
+No crew filter: the workers worth reaping belong to earlier dispatcher sessions.
+
+  crew reap --dry-run
+HELP
+    ;;
+  git-baseline)
+    cat <<'HELP'
+usage: crew git-baseline [--accept]
+
+List — or, with --accept, merge into — the exec-capable and redirecting git-config
+baseline the worktree guard enforces.
+
+  --accept  Accept exactly the pairs this run prints; nothing else this command
+            writes changes the baseline
+
+Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
+
+  crew git-baseline
+HELP
+    ;;
+  engine-cmd)
+    cat <<'HELP'
+usage: crew engine-cmd <pane_current_command>
+
+Whether a tmux pane command is an engine (claude, codex, cursor-agent, pi, node).
+Exit 0 when it is, 1 when it is not; prints nothing.
+
+  <pane_current_command>  tmux's #{pane_current_command}; a leading dot and a
+                          -wrapped suffix are tolerated
+
+  crew engine-cmd node && echo engine
+HELP
+    ;;
+  *)
+    printf 'crew: no help for %s\n\n' "$sub" >&2
+    _crew_help '' >&2
+    return 1
+    ;;
+  esac
+}
+
 sub="${1:-}"
 shift || true
 
+# --help anywhere it can mean "help": as the command itself, and as the FIRST
+# argument of one (#812). Deliberately before the repo, crew-id and bus access
+# below, so `crew <sub> --help` answers in a bare temp dir. Only the first
+# position counts — `crew status w1 working --help` keeps --help as the detail.
+case "$sub" in
+--help | -h | help)
+  _crew_help "${1:-}" "${2:-}"
+  exit $?
+  ;;
+hold)
+  # `crew hold <action> --help` sits here too: inside the hold arm it would
+  # land behind the repo and crew-id lookups this path must not need.
+  case "${2:-}" in
+  --help | -h)
+    _crew_help hold "${1:-}"
+    exit $?
+    ;;
+  esac
+  ;;
+esac
+case "${1:-}" in
+--help | -h)
+  _crew_help "$sub"
+  exit $?
+  ;;
+esac
 # `id`, `new` and `identity` need no repo / no crew id.
 if [ "$sub" = id ]; then
   # Read-only: resolves via _crew_id (WORKER_TASK.md, else env) and never mints.
@@ -7573,7 +8286,9 @@ EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
   ;;
 *)
-  echo "usage: crew id | new | identity <branch> | occupants <worktree-path> | pi-agent-dir | status <from> <state> [detail] [pr] [--restamp] [--] | msg <from> <to> <body> | reply <to> <body> [--crew ID] | await <agent> [--from SENDER] [--timeout S] [--interval S] | register [pid] | deregister | crews | adopt [--force] <id> [pid] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] [--status] | sessions <branch> [--crew ID] | roster [crew] | inbox <agent> [crew] [--since TS] | where <codename|branch|%id> [--crew ID] | nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|role:branch:role> --pane <id> [--grace S] [--stall S] [--window S] [--interval S] [--load S] [--no-budget] [--budget-refresh S] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | log [crew] | report [crew] | rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...] | retro [--report [--json]] | dash [--once|--json] | hold add --engine E --window W --resets-at EPOCH --agent A --ref R --branch B --tier T --model M --effort F [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE] [--crew ID] <title...> | hold list [--crew ID] [--json] | hold due [--crew ID] [--json] | hold park <default> [--crew ID] | hold release <id> [--crew ID] | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S]" >&2
+  # Bare `crew` and an unknown subcommand: the grouped list on stderr, not the
+  # one 2,000-character line (#812). Exit stays 1.
+  _crew_help '' >&2
   exit 1
   ;;
 esac
