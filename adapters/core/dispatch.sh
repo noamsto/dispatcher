@@ -1848,6 +1848,11 @@ pi_skill_args() {
   return 0
 }
 
+# role_delivery <agent> — how a role's assignments reach its pane. Cursor has no
+# idle frame verified across its models, so its roles pull assignments with
+# `crew await` instead of being typed into.
+role_delivery() { case "$1" in cursor) echo pull ;; *) echo typed ;; esac; }
+
 # launch_role <pane> <worktree> <role> <agent> <model> <effort> — launch the role's engine
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
 # otherwise). Reads $agent_name and $branch from the caller scope.
@@ -1864,6 +1869,7 @@ launch_role() {
   printf -v exit_cmd "%q --role-exited %q --branch %q --pane '%s' --since %s" "$dispatch_self" "$role" "$branch" "$pane" "$(jq -nc 'now*1000|floor')"
   prompt="You are the $role role pane in this task grid. Read WORKER_TASK.md, resolve your role from @crew_role, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment."
   first="Read $PROTOCOL_DIR/GRID_PROTOCOL.md and WORKER_TASK.md, then follow GRID_PROTOCOL.md: announce yourself and park for an assignment (you are the $role role)."
+  [ "$(role_delivery "$r_agent")" != pull ] || first+=' Your assignments are pulled, not typed: follow GRID_PROTOCOL.md "Pull delivery".'
   shell_quote quoted_prompt "$prompt"
   shell_quote quoted_first "$first"
   case "$r_agent" in
@@ -1882,14 +1888,16 @@ launch_role() {
   write_launch_script launch_line "$cmd"
   write_launch_script exit_line "$exit_cmd" exit
   tmux set-option -p -t "$pane" @crew_model "$r_model" 2>/dev/null || true
+  tmux set-option -p -t "$pane" @crew_delivery "$(role_delivery "$r_agent")" 2>/dev/null || true
   tmux send-keys -t "$pane" "$launch_line ; $exit_line" Enter
 }
 
-# watch_role <role> <pane> <agent> — spawn the detached, engine-agnostic bus
+# watch_role <role> <pane> <agent> <crew> — spawn the detached, engine-agnostic bus
 # watcher for a role pane. It types each assignment into the pane and keeps
-# @crew_state fresh, so the role never holds a repainting `crew await`.
+# @crew_state fresh, so the role never holds a repainting `crew await`. <crew>
+# is the crew dispatch resolved, so the watcher never inherits the caller's.
 watch_role() {
-  nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
+  CREW_ID="$4" nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
 }
 
 # watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
@@ -1986,6 +1994,9 @@ if [ "${1:-}" = "--role-watch" ]; then
     exit 1
   }
   w_crew="$(tmux show-options -wqv -t "$w_win" @crew_id 2>/dev/null || true)"
+  # `crew msg` falls back to env CREW_ID outside a worktree, and the caller's
+  # env is not the crew dispatch resolved.
+  [ -z "$w_crew" ] || export CREW_ID="$w_crew"
   # Branches may contain `#`; only the trailing `#s…` is the session (crew.sh
   # strips it with `sub("#s[^#]*$";"")`).
   _rw_sender_allowed() {
@@ -2886,9 +2897,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
     exit 0
   fi
   spawn_worker_id="${CREW_WORKER_ID:-$(sed -n 's/^worker_id: //p' WORKER_TASK.md)}"
-  spawn_crew_id="${CREW_ID:-$(sed -n 's/^crew_id: //p' WORKER_TASK.md)}"
+  spawn_crew_id="$(tmux show-options -wqv -t "$win" @crew_id 2>/dev/null || true)"
+  [ -n "$spawn_crew_id" ] || spawn_crew_id="$(sed -n 's/^crew_id: //p' WORKER_TASK.md)"
   if [ -z "$spawn_worker_id" ] || [ -z "$spawn_crew_id" ]; then
-    echo "dispatch: --spawn-role: no worker_id/crew_id in the environment or WORKER_TASK.md — a role pane without them runs as a personal session" >&2
+    echo "dispatch: --spawn-role: no worker_id/crew_id (worker_id from the environment or WORKER_TASK.md, crew_id from the window stamp or WORKER_TASK.md) — a role pane without them runs as a personal session" >&2
     exit 1
   fi
   # A local id spends no OpenRouter quota; its budget is the endpoint's slots.
@@ -2913,7 +2925,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   wait_grid_refit "$win" "$sig_before"
   guard_role_width "$win"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
-  watch_role "$role" "$role_pane" "$spawn_agent"
+  watch_role "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
   # Persist the spec this pane actually launched with: a bare respawn of the
   # role (a died or stalled pane) must come back at the same rung, not silently
@@ -5216,7 +5228,7 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 for i in "${!role_panes[@]}"; do
   role="${role_names[$i]}"
   launch_role "${role_panes[$i]}" "$wt_path" "$role" "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
-  watch_role "$role" "${role_panes[$i]}" "${role_agents[$i]}"
+  watch_role "$role" "${role_panes[$i]}" "${role_agents[$i]}" "$crew_id"
   watch_role_prompts "$role" "${role_panes[$i]}" "${role_agents[$i]}" "$crew_id"
 done
 if [ -n "$status_pane" ]; then

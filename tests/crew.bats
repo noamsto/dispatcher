@@ -1789,6 +1789,16 @@ after_await_parks() {
   [[ "$output" == *'"body":"A2"'* ]]
 }
 
+# #849: a lead held one await for 13539s, past the protocol's 600s tool ceiling.
+@test "await: --timeout above 600 is clamped to 600 with a note" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5000 --interval 60
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"ended after 600s"* ]]
+  [[ "$stderr" == *"clamped to 600"* ]]
+}
+
 # #760: the note a timed-out await prints is the only evidence a worker has that
 # the full wait elapsed, so it reports the time actually waited.
 @test "await: the timeout note reports the elapsed wait" {

@@ -2173,8 +2173,9 @@ Block until a message answers <agent>'s outstanding question, print it, exit 0.
 
   <agent>     The id that asked — usually "$CREW_WORKER_ID"
   --from      Accept a reply only from this exact sender id
-  --timeout   Seconds to wait (default 300). On expiry stdout stays empty and
-              stderr gets "ended after Ns" — that line is the marker, the exit
+  --timeout   Seconds to wait (default 300, capped at 600 — the tool ceiling).
+              On expiry stdout stays empty and stderr gets "ended after Ns"
+              — that line is the marker, the exit
               code stays 0, so never branch on $? here
   --interval  Poll interval in seconds (default 2)
 
@@ -3601,6 +3602,15 @@ await)
       ;;
     esac
   done
+  [[ "$timeout" =~ ^[0-9]+$ ]] || {
+    echo "crew: --timeout needs a non-negative integer (seconds)" >&2
+    exit 1
+  }
+  # A held await past the 600s tool ceiling is killed by the harness mid-wait.
+  if [ "$timeout" -gt 600 ]; then
+    echo "crew: await --timeout $timeout clamped to 600 (the 600s tool ceiling)" >&2
+    timeout=600
+  fi
   start=$(_clock_now_ms)
   deadline=$((start + timeout * 1000))
   delivered=$(_await_marks "$crew" "$me")

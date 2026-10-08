@@ -5031,6 +5031,26 @@ EOF
   run ! grep -q 'stall-watch role:feat/42-do-a-thing:plan-critic' "$STUB_LOG"
 }
 
+@test "crew anchor: a full dispatch's role watchers and mods run under --crew-id, and a cursor role pulls (#849)" {
+  stub_launch_bins
+  _grid_tmux_stub
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "CREW_ID=$CREW_ID $*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude cursor" CREW_ID=c9 run run_dispatch standard sonnet --agent claude --roles "reviewer=cursor:composer-2.5" --effort high --crew-id c1 42 "crew anchor"
+  [ "$status" -eq 0 ]
+  wait_for_log '^CREW_ID=c1 stall-watch role:feat/42-crew-anchor:reviewer'
+  wait_for_log '^CREW_ID=c1 roster-render'
+  run ! grep -E '^CREW_ID=c9 (stall-watch|roster-render)' "$STUB_LOG"
+  grep -qx 'set-option -p -t %6 @crew_delivery pull' "$STUB_LOG"
+}
+
 @test "--ignore-budget: a --spawn-role role's stall-watch is told --no-budget" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet --ignore-budget
@@ -8190,6 +8210,7 @@ show-options)
   case "${*: -1}" in
   @crew_dir) printf '%s\n' "$STUB_CREW_DIR" ;;
   @crew_branch) printf '%s\n' "$STUB_CREW_BRANCH" ;;
+  @crew_id) [ -e "$STUB_DIR/crew_id" ] && cat "$STUB_DIR/crew_id" ;;
   esac
   ;;
 list-panes) ;;
@@ -8393,13 +8414,29 @@ _spawn_role_anchor_fixture() {
   [ "$(_env_of CREW_ROLE_ID "$line")" = "role:feat/9-x:reviewer" ]
 }
 
-@test "grid: --spawn-role prefers the lead's own environment over the task doc" {
+@test "grid: --spawn-role takes CREW_WORKER_ID from the lead's environment but ignores a caller CREW_ID" {
   _spawn_role_fixture
   CREW_WORKER_ID='worker:feat/9-x#s2-2' CREW_ID=c2 run run_dispatch --spawn-role reviewer
   [ "$status" -eq 0 ]
   line="$(grep '^split-window' "$STUB_LOG")"
   [ "$(_env_of CREW_WORKER_ID "$line")" = "worker:feat/9-x#s2-2" ]
-  [ "$(_env_of CREW_ID "$line")" = c2 ]
+  [ "$(_env_of CREW_ID "$line")" = c1 ]
+}
+
+@test "grid: --spawn-role anchors CREW_ID on the window's @crew_id stamp over env and task doc (#849)" {
+  _spawn_role_fixture
+  printf 'c7\n' >"$STUB_DIR/crew_id"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "CREW_ID=$CREW_ID $*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  CREW_ID=c2 run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep '^split-window' "$STUB_LOG")"
+  [ "$(_env_of CREW_ID "$line")" = c7 ]
+  wait_for_log '^CREW_ID=c7 stall-watch role:feat/9-x:reviewer'
 }
 
 @test "grid: --spawn-role refuses to split a pane that would have no worker identity" {
@@ -10791,6 +10828,34 @@ EOF
   _rw_stop
   [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a deferral posts under the window's crew, not the caller's CREW_ID (#849 wrong crew)" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_permission
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+msg) shift; exec bash "$CREW_REAL" msg "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  # A fresh dispatch spawns the watcher from the main checkout, which has no
+  # WORKER_TASK.md; the worktree fixture's cwd would hide the bug.
+  (cd "$TEST_REPO" && CREW_ID=c9 bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1 >/dev/null 2>&1) &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/crew"
+  jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
+  _rw_poll "jq -e 'select(.from == \"role:feat/9-x:reviewer\")' \"$common/crew/events.jsonl\" >/dev/null 2>&1"
+  _rw_stop
+  jq -e 'select(.from == "role:feat/9-x:reviewer" and (.body | contains("assignment_deferred"))) | .crew_id == "c1"' "$common/crew/events.jsonl"
+  run ! jq -e 'select(.from == "role:feat/9-x:reviewer" and .crew_id == "c9")' "$common/crew/events.jsonl"
 }
 
 @test "role-watch: DISPATCH_ROLE_WATCH_CLOCK reports a deferral without wall sleep" {
