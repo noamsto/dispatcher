@@ -151,6 +151,7 @@ let
       baseUrl = "http://halo:13305/v1";
       contextWindow = 131072;
       maxConcurrent = 1;
+      workerNotes = "- Run only targeted bats files.";
     };
     localModels."lemonade/Reasoner" = {
       baseUrl = "http://halo:13305/v1";
@@ -159,6 +160,15 @@ let
       thinkingFormat = "qwen-chat-template";
       effortThinking.low = "off";
     };
+    # A second id with no workerNotes: its locked entry must come out without
+    # the field, not as JSON null (dispatch-config would refuse a null there).
+    localModels."lemonade/Plain" = {
+      baseUrl = "http://halo:13305/v1";
+      contextWindow = 8192;
+    };
+    laneProfiles."pi/lemonade/*" = {name = "local";};
+    laneProfiles.claude = {name = "security";};
+    laneProfiles."pi/gemma/*" = {name = "local";notes = "- targeted only";};
     userSettings = "/home/u/cfg/settings.json";
   };
 
@@ -223,6 +233,25 @@ in {
         .engines
         true))
     .success;
+  # A lane profile name reaches a task header line and a notes filename, so the
+  # option type refuses whitespace, `/` and `..` at eval time.
+  badLaneProfileNamesRejected = builtins.length (builtins.filter (x: !x.success) [
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        laneProfiles = {"pi/m" = {name = "bad name";};};
+      }).programs.dispatcher.laneProfiles
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        laneProfiles = {"pi/m" = {name = "../evil";};};
+      }).programs.dispatcher.laneProfiles
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        laneProfiles = {"pi/m" = {name = "ok-1";};};
+      }).programs.dispatcher.laneProfiles
+      true))
+  ]);
 }
 NIXEOF
   sed -i "s|@ROOT@|$root|" "$BATS_FILE_TMPDIR/eval-expr.nix"
@@ -428,6 +457,17 @@ placeholder_three_row() { # token bin bin bin
   done
 }
 
+# The default `local` notes ship as a repo file, baked into dispatch as a store
+# directory (#842) — an unsubstituted token is not a readable path, and a store
+# path without the file would silently drop the lane's notes.
+@test "the lane-profiles placeholder is substituted and carries the local notes" {
+  run grep -c '@laneProfilesDir@' "$OUT_DISPATCH/bin/dispatch"
+  [ "$output" = "0" ]
+  dir="$(grep -o '/nix/store/[^"} ]*-lane-profiles' "$OUT_DISPATCH/bin/dispatch" | head -1)"
+  [ -n "$dir" ]
+  [ -f "$dir/local.md" ]
+}
+
 @test "the crew-go placeholder is substituted in crew and points at an executable" {
   run grep -c '@crewGoBin@' "$OUT_CREW/bin/crew"
   [ "$output" = "0" ]
@@ -549,6 +589,13 @@ placeholder_three_row() { # token bin bin bin
   [ "$status" -eq 0 ]
   run jq -e '(.options | index("localModels")) != null' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '(.options | index("laneProfiles")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the laneProfiles option type rejects a name that is not a profile id" {
+  run jq -e '.badLaneProfileNamesRejected == 2' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the module declares an assertion that rejects bad localModels keys" {
@@ -609,7 +656,14 @@ placeholder_three_row() { # token bin bin bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}}' "$EVAL"
+  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
+  [ "$status" -eq 0 ]
+
+  # Lane profiles: set entries land in the locked layer, and a name-only entry
+  # carries no `notes` field at all (an emitted null would fail dispatch-config).
+  run jq -e '.full.locked.laneProfiles == {"pi/lemonade/*": {"name": "local"}, "pi/gemma/*": {"name": "local", "notes": "- targeted only"}, "claude": {"name": "security"}}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.laneProfiles."pi/lemonade/*" | has("notes") | not' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Every routing option left unset: the locked layer holds only the two

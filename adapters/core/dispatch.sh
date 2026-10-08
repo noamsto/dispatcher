@@ -835,6 +835,114 @@ _local_id() {
   [ -n "$(_local_entry "$settings" "$1")" ]
 }
 
+# Lane profiles (#842): harness-owned worker notes chosen from the engine and
+# model a dispatch was given, so a lane's recurring rules (a local model's "how
+# to work" footer, a security lane's guard rules) are harness knowledge, not text
+# every spec re-authors. The notes ship in
+# adapters/core/lane-profiles/<name>.md; settings only select or override them.
+lane_profiles_dir="@laneProfilesDir@"
+if [ ! -d "$lane_profiles_dir" ]; then
+  lane_profiles_dir="$(dirname -- "${BASH_SOURCE[0]}")/lane-profiles"
+fi
+# The heading is emitted here rather than stored per profile, so an inline
+# `notes` override cannot drop the "re-read after any compaction" contract, and
+# _strip_lane_notes can anchor a region on opener+heading.
+lane_notes_heading='## How to work (re-read after any compaction)'
+
+# _lane_profile_key <engine> <model> — the winning `laneProfiles` key for this
+# launch. Keys are globs, tried against `<engine>/<model>` first and the bare
+# `<engine>` second; within a pass the longest key wins, ties lexicographically.
+# Prints nothing when no key matches.
+_lane_profile_key() {
+  local engine="$1" model="$2" target key best=""
+  local keys
+  keys="$(jq -r '.laneProfiles // {} | keys[]' <<<"$settings" | LC_ALL=C sort)"
+  for target in "$engine/$model" "$engine"; do
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      # shellcheck disable=SC2053 # the unquoted RHS is the glob
+      if [[ $target == $key ]]; then
+        if [ "${#key}" -gt "${#best}" ]; then best="$key"; fi
+      fi
+    done <<<"$keys"
+    if [ -n "$best" ]; then break; fi
+  done
+  printf '%s' "$best"
+}
+
+# _resolve_lane_profile — set $lane_profile_name (empty when this target is in
+# no lane) and $lane_profile_notes (the block body, empty for a name-only
+# profile). A `laneProfiles` match wins wholesale; otherwise a configured
+# localModels id takes the built-in `local` profile, whose shipped text that
+# entry's `workerNotes` replaces. The profile is the *dispatch's* lane: a resume
+# keeps the stamp and block it was launched with (dispatch-resume never
+# re-resolves), a re-dispatch re-resolves.
+_resolve_lane_profile() {
+  local key
+  lane_profile_name="" lane_profile_notes=""
+  key="$(_lane_profile_key "$agent" "$model")"
+  if [ -n "$key" ]; then
+    lane_profile_name="$(jq -r --arg k "$key" '.laneProfiles[$k].name // ""' <<<"$settings")"
+    lane_profile_notes="$(jq -r --arg k "$key" '.laneProfiles[$k].notes // ""' <<<"$settings")"
+  elif [ "$agent" = pi ] && _local_id "$model"; then
+    lane_profile_name=local
+    lane_profile_notes="$(jq -r --arg id "$model" '.localModels[$id].workerNotes // ""' <<<"$settings")"
+  fi
+  # The name reaches the task header and a path component. dispatch-config
+  # restricts it to the same pattern; re-checking here means a raw-source run
+  # cannot inject a header line or read outside $lane_profiles_dir.
+  if [[ ! ${lane_profile_name:-} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    lane_profile_name=""
+    return 0
+  fi
+  if [ -z "$lane_profile_notes" ] && [ -f "$lane_profiles_dir/$lane_profile_name.md" ]; then
+    lane_profile_notes="$(cat "$lane_profiles_dir/$lane_profile_name.md")"
+  fi
+}
+
+# _strip_lane_notes — drop the harness worker-notes block from stdin, so a
+# re-dispatch onto an existing branch replaces it instead of stacking a copy
+# (the carried body starts at `## Task` and includes the previous run's block).
+# A region is a closer paired with the nearest opener above it whose next
+# non-blank line is the constant heading: pairing is what protects the
+# worker-writable body, which may quote an opener, the heading or a closer of its
+# own. Unpaired markers are emitted verbatim, and blank lines trailing the last
+# stripped region go with it, so the doc cannot gain one per dispatch.
+_strip_lane_notes() {
+  awk -v heading="$lane_notes_heading" -v closer='<!-- /lane-profile -->' '
+    { line[NR] = $0 }
+    BEGIN { last = 0 }
+    END {
+      cl = NR
+      while (cl >= 1) {
+        while (cl >= 1 && line[cl] != closer) cl--
+        s = 0
+        for (o = cl - 1; o >= 1; o--) {
+          if (line[o] !~ /^<!-- lane-profile:/) continue
+          for (j = o + 1; j < cl && line[j] == ""; j++) {}
+          if (j < cl && line[j] == heading) { s = o; break }
+        }
+        if (s > 0) {
+          for (i = s; i <= cl; i++) drop[i] = 1
+          if (last == 0) last = s
+          cl = s - 1
+        } else {
+          cl--
+        }
+      }
+      # Only a region that ends the doc takes its preceding blank lines with it;
+      # one followed by other text (the review contract) leaves its separator.
+      trim = (last > 0)
+      for (i = last + 1; trim && i <= NR; i++) if (!drop[i] && line[i] != "") trim = 0
+      for (i = 1; i <= NR; i++) {
+        if (drop[i]) continue
+        if (trim && i > last && line[i] == "") continue
+        print line[i]
+      }
+    }
+  '
+}
+
 # local_slot_cap <id> <target>... — refuse when the id's live holders plus this
 # dispatch's targets on it (in order; "" is the lead, else a role name) exceed
 # its maxConcurrent, naming the first target past the cap. --ignore-budget
@@ -4784,6 +4892,10 @@ if [ "$switch_mode" = resume ] && [ -z "${DISPATCH_SPEC:-}" ] && [ -f "$wt_path/
     echo "dispatch: dropped an owner-authorization section from the carried task — it was not in a launch prompt; pass --owner-auth to carry one" >&2
   fi
   carried="$carried_stripped"
+  # A re-dispatch carries the previous run's worker-notes block inside the
+  # `## Task` body; the writer below appends the current one, so drop the
+  # carried copy instead of stacking a second block (#842).
+  carried="$(printf '%s\n' "$carried" | _strip_lane_notes)"
 fi
 
 # A re-dispatch onto an existing branch (switch_mode=resume) is a resume, so
@@ -4880,6 +4992,11 @@ _record_worktree_anchor "$wt_path" "$wt_admin"
 # line, and the full task body from $DISPATCH_SPEC (falls back to the title).
 # The review contract is appended so the dispatcher never re-authors it as
 # per-worker prose.
+#
+# The lane profile is resolved per launch from the engine and model, and is
+# frozen for the doc's life from here: `dispatch resume` patches header lines
+# only, so a resume keeps the lane this task was dispatched in.
+_resolve_lane_profile
 {
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
@@ -4905,6 +5022,9 @@ _record_worktree_anchor "$wt_path" "$wt_admin"
   [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
   # A lazy grid creates no role panes up front; the lead spawns each at its seam.
   [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
+  # The lane this task was dispatched in, resolved from the engine and model
+  # (#842). No consumer groups by it yet; it records the lane the notes came from.
+  [ -n "$lane_profile_name" ] && printf 'profile: %s\n' "$lane_profile_name"
   [ -n "$owner_auth" ] && printf '\n## Owner authorization\n\n%s\n' "$owner_auth"
   if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ]; then
     printf '\n## Task\n\n'
@@ -4912,6 +5032,13 @@ _record_worktree_anchor "$wt_path" "$wt_admin"
   elif [ -n "$carried" ]; then
     # $carried already opens with its own `## Task` heading.
     printf '\n%s\n' "$carried"
+  fi
+  # The lane's worker notes, last under `## Task` so they are what the worker
+  # re-reads after a compaction (the protocol re-reads this file). The sentinels
+  # are what _strip_lane_notes anchors on to replace, not stack, the block.
+  if [ -n "$lane_profile_name" ] && [ -n "$lane_profile_notes" ]; then
+    printf '\n<!-- lane-profile: %s -->\n\n%s\n\n%s\n\n<!-- /lane-profile -->\n' \
+      "$lane_profile_name" "$lane_notes_heading" "$lane_profile_notes"
   fi
   if [ "$kind" = review ]; then
     printf '\n'

@@ -28,6 +28,10 @@
 # localModels maps "<provider>/<model>" dispatch ids to local OpenAI-compatible
 # endpoints for pi; it is validated on the merged tree and has no env var.
 #
+# laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
+# name, and optionally inline notes text) that `dispatch` applies to the task
+# doc; like localModels it is validated on the merged tree and has no env var.
+#
 # Tracker map keys (repoTrackers/orgTrackers) are lowercased within each layer
 # before the merge, so a later layer's entry for the same key (any case)
 # collapses and wins.
@@ -276,11 +280,12 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "keyed <provider>/<model> with letters, digits, \".\", \"_\", \"-\" and \"/\" (no \":\")"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
+            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers", "workerNotes", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers, workerNotes, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
             ($v.baseUrl | select(type != "string" or (test("^https?://[^[:space:]]*[^/[:space:]]$") | not)) | [$p + ["baseUrl"], "an http(s) URL without whitespace or a trailing \"/\""]),
             ($v.contextWindow | select(pos_int | not) | [$p + ["contextWindow"], "a positive integer"]),
             ($v | select(has("maxConcurrent") and (.maxConcurrent | pos_int | not)) | [$p + ["maxConcurrent"], "a positive integer"]),
             ($v | select(has("tiers") and ((.tiers | type == "array" and length > 0 and all(.[]; IN("trivial", "standard", "deep"))) | not)) | [$p + ["tiers"], "a non-empty array of trivial, standard or deep"]),
+            ($v | select(has("workerNotes") and (($v.workerNotes | type) != "string")) | [$p + ["workerNotes"], "a string"]),
             ($v | select(has("reasoning") and (.reasoning | type != "boolean")) | [$p + ["reasoning"], "a boolean"]),
             ($v | select(has("thinkingFormat") and (.thinkingFormat | type != "string" or length == 0)) | [$p + ["thinkingFormat"], "a non-empty string"]),
             ($v | to_entries[] | select(.key | IN("thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel")) | select((.value | type != "object") or (.key == "thinkingLevelMap" and (.value | all(.[]; . == null or type == "string")) == false) or (.key == "samplingParamsByThinkingLevel" and (.value | all(.[]; type == "object")) == false)) | [$p + [.key], (if .key == "thinkingLevelMap" then "an object of strings or null" elif .key == "samplingParamsByThinkingLevel" then "an object of objects" else "an object" end)]),
@@ -289,6 +294,22 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
             ($prov | select(IN($reserved[])) | [$p, "a provider outside the hosted pi ladder (\($prov) is reserved for it)"]),
             ([$all | to_entries[] | select(.key | split("/")[0] | ascii_downcase == $prov)][0].value.baseUrl as $first
               | select($first != $v.baseUrl) | [$p + ["baseUrl"], "the same URL as the other \($prov) entries"])
+          end
+      end;
+  # One [path, what] per violation in .laneProfiles, entries in key order. The
+  # name is a profile id: it reaches a task header line and a notes filename, so
+  # it never holds a path separator, whitespace, or a newline.
+  def lane_profile_violations:
+    .laneProfiles as $all
+    | if ($all | type) != "object" then [["laneProfiles"], "an object"]
+      else
+        ($all | to_entries[]) as {key: $k, value: $v}
+        | ["laneProfiles", $k] as $p
+        | if ($v | type) != "object" then [$p, "an object"]
+          else
+            ($v | keys[] | select(IN("name", "notes") | not) | [$p + [.], "one of name, notes"]),
+            ($v | select((has("name") | not) or (($v.name | type) != "string") or (($v.name | test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) | not)) | [$p + ["name"], "a string of letters, digits, \".\", \"_\" or \"-\""]),
+            ($v | select(has("notes") and (($v.notes | type) != "string")) | [$p + ["notes"], "a string"])
           end
       end;
   def tag($layers; $p):
@@ -310,4 +331,5 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
+  | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'

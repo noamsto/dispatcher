@@ -257,6 +257,7 @@ programs.dispatcher = {
     baseUrl = "http://halo:13305/v1";
     contextWindow = 131072;
   };
+  laneProfiles."pi/lemonade/*" = {name = "local";};
   userSettings = "/home/me/nix-config/home/ai/dispatcher/settings.json";
 };
 ```
@@ -268,7 +269,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -320,11 +321,33 @@ hand-managed `~/.cursor` files.
 
 `localModels` declares self-hosted models for the pi lane, keyed by the pi
 dispatch id `<provider>/<model>` (`baseUrl`, `contextWindow`, optional
-`maxConcurrent` and `tiers`). It merges per key across layers, and a locked
-entry wins per field. `programs.dispatcher.localModels` pins all four fields of
-each id it declares (the user file can still add other ids). `dispatch` caps live panes on each id at
-`maxConcurrent`; it does not see the endpoint's other consumers, so size it for
-them. See `dispatch-orchestration.md` → "Local models".
+`maxConcurrent`, `tiers` and `workerNotes`). It merges per key across layers, and
+a locked entry wins per field. `programs.dispatcher.localModels` pins every field
+it sets for each id it declares — `workerNotes` only when the module sets it, so
+the user file can still set notes for a pinned id (and can still add other ids).
+`dispatch` caps live panes on each id at `maxConcurrent`; it does not see the
+endpoint's other consumers, so size it for them. See
+`dispatch-orchestration.md` → "Local models".
+
+`laneProfiles` picks a **lane profile**: a bundle of harness-owned worker notes
+`dispatch` appends to `WORKER_TASK.md` (under `## Task`) and stamps as
+`profile: <name>` in the task header, chosen from the engine and model it was
+given rather than re-authored per spec — lane knowledge, not task knowledge. Keys
+are globs over `<engine>/<model>` or the bare `<engine>`; a model glob is tried
+before an engine glob, longest key wins within a pass. The name is both the
+stamp and the notes file, `adapters/core/lane-profiles/<name>.md`; a `notes`
+string replaces that text inline. One profile ships: `local`, which any
+`localModels` id takes with no entry here (its text is what a spec's hand-written
+"How to work" footer used to be), and that entry's `workerNotes` replaces its
+text per id. A matching `laneProfiles` entry replaces the built-in wholesale, so
+that is also how a lane opts out. The stamp is the lane the task was _dispatched_
+in: `dispatch resume` keeps the block and stamp it launched with, a re-dispatch
+re-resolves both. `programs.dispatcher.laneProfiles` governs only the globs it
+declares — like `localModels` it merges per key, so a user-file key for a more
+specific glob still wins selection (pin the glob you mean to win); a `name`
+outside `[A-Za-z0-9._-]` is refused by the option type and by `dispatch-config`.
+Notes are text and a stamp: executor "personas" are out of scope, since what
+moves executor quality is the brief, the guards and the tests.
 
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
 settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case
