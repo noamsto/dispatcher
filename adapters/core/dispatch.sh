@@ -1382,6 +1382,33 @@ wait_grid_refit() {
   done
 }
 
+# guard_role_width <window> — after the refit settles, any role pane still
+# below the readable minimum gets the built-in main-vertical fallback.
+# tmux-grid-refit leaves the bare split alone when a precondition is missing
+# (no @crew_grid, window zoomed, no lead tag, refit lock held), and one such
+# window once shipped a 1-column reviewer pane (#814). Logs the window's raw
+# layout to stderr so the next occurrence captures the root cause. Best-effort
+# like publish_grid_window: a vanished window never fails a dispatch. The
+# minimum is a per-pane floor (default 20, task-sanctioned), NOT tmux-og's
+# role-AREA minimum its @grid_refit_min_role_cols defaults to 30; an explicit
+# 0 disables this guard.
+guard_role_width() {
+  local win="$1" min out pane role width layout
+  min="$(tmux show-options -w -v -q -t "$win" @grid_refit_min_role_cols 2>/dev/null || true)"
+  case "$min" in '' | *[!0-9]*) min=20 ;; esac
+  out="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{pane_width}' 2>/dev/null || true)"
+  while IFS='|' read -r pane role width; do
+    case "$role" in '' | lead) continue ;; esac
+    case "$width" in '' | *[!0-9]*) continue ;; esac
+    if [ "$width" -lt "$min" ]; then
+      layout="$(tmux display-message -p -t "$win" '#{window_layout}' 2>/dev/null || true)"
+      echo "dispatch: role pane $pane is $width cols (min $min) after refit — window_layout=$layout; applying main-vertical fallback" >&2
+      layout_grid "$win"
+      return 0
+    fi
+  done <<<"$out"
+}
+
 # An empty PI_CODING_AGENT_DIR falls back to ~/.pi/agent, so a broken seeder
 # must abort before pi ever launches.
 pi_agent_dir=""
@@ -2883,6 +2910,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
   publish_grid_window "$win"
   refit_grid "$win"
   wait_grid_refit "$win" "$sig_before"
+  guard_role_width "$win"
   launch_role "$role_pane" "$wt_root" "$role" "$spawn_agent" "$spawn_model" "$effort"
   watch_role "$role" "$role_pane" "$spawn_agent"
   watch_role_prompts "$role" "$role_pane" "$spawn_agent" "$spawn_crew_id"
@@ -5180,6 +5208,7 @@ fi
 if [ "${#role_panes[@]}" -gt 0 ] || [ -n "$status_pane" ]; then
   refit_grid "$win"
   wait_grid_refit "$win" "$sig_before"
+  guard_role_width "$win"
 fi
 
 tmux send-keys -t "$pane" "$launch_line" Enter

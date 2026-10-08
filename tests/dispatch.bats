@@ -1184,6 +1184,118 @@ EOF
   [ "$refit" -lt "$launch" ]
 }
 
+# _spawn_role_width_stub <width> — _spawn_role_fixture's tmux stub, but a
+# list-panes whose format carries pane_width reports the new role pane at
+# <width> columns (guard_role_width's probe). The existing-pane probe formats
+# carry no pane_width, so they still see no live pane and the spawn proceeds.
+_spawn_role_width_stub() {
+  local width="$1"
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1" in
+display-message)
+  case "\${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "\$STUB_PANE_PID" ;;
+  *) printf '%s\n' '@1' ;;
+  esac
+  ;;
+show-options)
+  case "\${*: -1}" in
+  @crew_dir) printf '%s\n' "\$STUB_CREW_DIR" ;;
+  @crew_branch) printf '%s\n' "\$STUB_CREW_BRANCH" ;;
+  esac
+  ;;
+list-panes)
+  case "\$*" in
+  *pane_width*) printf '%s\n' '%6|reviewer|'"$width" ;;
+  esac
+  ;;
+split-window) printf '%s\n' '%6' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# _grid_refit_stub — a tmux-grid-refit that only logs, so refit_grid itself
+# never emits select-layout and any main-vertical line in the log is the
+# guard_role_width fallback.
+_grid_refit_stub() {
+  cat >"$STUB_DIR/tmux-grid-refit" <<'EOF'
+#!/usr/bin/env bash
+printf 'tmux-grid-refit %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux-grid-refit"
+}
+
+@test "grid: a 1-column role pane after refit falls back to main-vertical" {
+  _spawn_role_fixture
+  _spawn_role_width_stub 1
+  _grid_refit_stub
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  dispatch_output="$output" # later `run` calls reset $output
+  run grep -F -- 'select-layout -t @1 main-vertical' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  # The fallback lands after the refit and before the role engine boots.
+  refit="$(_line_of 'tmux-grid-refit @1')"
+  fallback="$(_line_of 'select-layout -t @1 main-vertical')"
+  launch="$(_line_of 'send-keys -t %6 ')"
+  [ "$refit" -lt "$fallback" ]
+  [ "$fallback" -lt "$launch" ]
+  # The diagnostic names the raw layout so the root cause is captured.
+  [[ "$dispatch_output" == *window_layout* ]]
+}
+
+@test "grid: a normal-width role pane after refit triggers no fallback" {
+  _spawn_role_fixture
+  _spawn_role_width_stub 48
+  _grid_refit_stub
+  run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  run grep -F -- 'select-layout' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "grid: an eager role pane that comes up 1 column wide falls back too" {
+  stub_launch_bins
+  _grid_tmux_stub
+  # Same pane_width-gated list-panes row as _spawn_role_width_stub, over the
+  # eager stub (new-window returns the window and lead pane %1).
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new-window) printf '%s %s\n' '%1' '%1' ;;
+split-window) printf '%s\n' '%6' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  esac
+  ;;
+list-panes)
+  case "$*" in
+  *pane_width*) printf '%s\n' '%6|reviewer|1' ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  _grid_refit_stub
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "eager narrow"
+  [ "$status" -eq 0 ]
+  run grep -F -- 'select-layout -t %1 main-vertical' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+  refit="$(_line_of 'tmux-grid-refit %1')"
+  fallback="$(_line_of 'select-layout -t %1 main-vertical')"
+  role_launch="$(_line_of 'send-keys -t %6 ')"
+  [ "$refit" -lt "$fallback" ]
+  [ "$fallback" -lt "$role_launch" ]
+}
+
 @test "grid: --reap-roles unsets @crew_grid once the last role pane is gone" {
   _spawn_role_fixture
   cat >"$STUB_DIR/tmux" <<'EOF'
