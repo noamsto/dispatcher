@@ -344,8 +344,9 @@ commands_reach_row() { # path template containing $ROOT and $n
   done <<'ROWS'
 secret-read|secret-read-guard.sh
 public-leak|public-leak-guard.sh
+test-scope|test-scope-guard.sh
 ROWS
-  finish_rows 2
+  finish_rows 3
 }
 
 guard_ships_row() { # script basename
@@ -377,6 +378,19 @@ guard_ships_row() { # script basename
   run jq -e '.handlers[] | select(.id == "public-leak-guard") | (.exec == "adapters/core/public-leak-guard.sh") and (.events | index("pre_tool")) and (.engines == ["pi"]) and (.match == ["Bash"])' "$ROOT/hookyard.json"
   [ "$status" -eq 0 ]
   [ -x "$ROOT/adapters/core/public-leak-guard.sh" ]
+}
+
+# The test-scope guard is wired for pi and claude only (#841); it ships in the
+# codex and cursor trees because every guard does, unwired there for now.
+@test "hookyard.json wires the test-scope guard for pi" {
+  run jq -e '.handlers[] | select(.id == "test-scope-guard") | (.exec == "adapters/core/test-scope-guard.sh") and (.events | index("pre_tool")) and (.engines == ["pi"]) and (.match == ["Bash"]) and (.timeout_ms == 4000)' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/test-scope-guard.sh" ]
+}
+
+@test "claude PreToolUse hook wires the test-scope guard on Bash" {
+  run jq -e '.hooks.PreToolUse[2] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/test-scope-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
 }
 
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {

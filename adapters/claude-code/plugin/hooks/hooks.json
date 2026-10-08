@@ -18,6 +18,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/public-leak-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/test-scope-guard.sh"
+          }
+        ]
       }
     ],
     "SessionEnd": [

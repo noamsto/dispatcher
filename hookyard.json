@@ -22,6 +22,14 @@
       "engines": ["pi"],
       "match": ["Bash"],
       "timeout_ms": 4000
+    },
+    {
+      "id": "test-scope-guard",
+      "exec": "adapters/core/test-scope-guard.sh",
+      "events": ["pre_tool"],
+      "engines": ["pi"],
+      "match": ["Bash"],
+      "timeout_ms": 4000
     }
   ]
 }
