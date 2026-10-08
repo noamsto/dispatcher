@@ -26,9 +26,13 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
-    // lib.optionalAttrs (cfg.localModels != null) {
-      localModels = lib.mapAttrs (_: lib.filterAttrs (_: v: v != null)) cfg.localModels;
-    };
+    // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
+    // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;};
+  # Submodule defaults are emitted into the evalModules result, so an unset
+  # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
+  # and dispatch-config would refuse it -- drop the unset fields per entry, the
+  # way openrouterLocked drops its unset leaves.
+  lockFields = lib.mapAttrs (_: lib.filterAttrs (_: v: v != null));
   localModelKeyValid = k:
     builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*" k
     != null
@@ -143,6 +147,12 @@ in {
             default = ["trivial" "standard"];
             description = "Tiers this model may serve.";
           };
+          workerNotes = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "- Run only targeted bats files locally.";
+            description = "Worker-notes text replacing the shipped `local` lane profile body for this id alone. Unset, the shipped text is used. A laneProfiles entry matching this model replaces the profile wholesale, so this field is ignored there.";
+          };
           reasoning = lib.mkOption {
             type = lib.types.nullOr lib.types.bool;
             default = null;
@@ -193,7 +203,47 @@ in {
         settings layer, so the user settings file cannot change them (object
         fields still merge per key with the user file's entry); it can
         still add other ids (the locked layer only governs the ids it
-        declares). Unset, the key is left out and the user file governs alone.
+        declares), and for a pinned id it can still set `workerNotes`, which a
+        module entry leaves out of the locked layer when unset here. Unset, the
+        key is left out and the user file governs alone.
+      '';
+    };
+
+    laneProfiles = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
+        options = {
+          name = lib.mkOption {
+            type = lib.types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*";
+            example = "local";
+            description = "The profile `dispatch` stamps on the task doc (`profile: <name>`) and looks its notes up by, in adapters/core/lane-profiles/<name>.md.";
+          };
+          notes = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "- Run only targeted bats files locally.";
+            description = "Inline notes body, replacing the shipped file for this profile. Unset, the shipped file is used; a profile with neither stamps the header and appends nothing.";
+          };
+        };
+      }));
+      default = null;
+      example = {
+        "pi/lemonade/*" = {name = "local";};
+        claude = {name = "security";};
+      };
+      description = ''
+        Lane profiles: harness-owned worker notes `dispatch` appends to a task
+        doc from the engine and model it was given, so a lane's recurring rules
+        are not re-authored per spec. Keys are globs over `<engine>/<model>` or
+        the bare `<engine>`; a model-glob match is tried before an engine-glob
+        one, and the longest matching key wins within a pass. A match replaces
+        the built-in `local` profile (the one any `localModels` id takes with no
+        entry here), which is also how a lane opts out of it: name another
+        profile. Set, each entry lands in the locked settings layer and governs
+        the glob it declares -- like `localModels` the merge is per key, so a
+        user-file key for a more specific glob still wins selection; pin the glob
+        you mean to win. Unset, the key is left out and the user file governs
+        alone. Executor "personas" are out of scope: this is text and a header
+        stamp, not a different way to run a model.
       '';
     };
 

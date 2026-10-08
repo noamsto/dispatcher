@@ -2973,6 +2973,259 @@ EOF
   grep -qxF -- "set-option -p -t %6 @crew_model $LOCAL_ID" "$STUB_LOG"
 }
 
+# #842 lane profiles: harness-owned worker notes chosen from the engine and
+# model, so a lane's recurring rules are not re-authored per spec.
+# lane_profile_settings extends local_lane_fixture's settings file with extra
+# top-level keys (e.g. a laneProfiles entry) and, in the second argument, extra
+# raw fields for the fixture's localModels entry (e.g. ',"workerNotes":"…"').
+lane_profile_settings() { # [extra-top-level-json] [extra-entry-fields]
+  local_lane_fixture "${2:-}"
+  if [ -n "${1:-}" ]; then
+    local f="$XDG_CONFIG_HOME/dispatcher/settings.json"
+    jq -s '.[0] * .[1]' "$f" <(printf '%s' "$1") >"$f.tmp" && mv "$f.tmp" "$f"
+  fi
+}
+
+# The notes block's constant heading, and the count of blocks in a task doc.
+LANE_HEADING='## How to work (re-read after any compaction)'
+
+# lane_profile_resume_ready — arm a re-dispatch onto the branch the launch just
+# created: stub_crew_gate's empty-window answers for the reuse-or-refuse gate
+# (#17) — keeping setup()'s pi-agent-dir delegation so a local worker still
+# seeds its pi dir — plus a wt stub that accepts a plain switch (stub_launch_bins'
+# only knows `-c`).
+lane_profile_resume_ready() {
+  printf '%s' '[]' >"$STUB_DIR/occ.json"
+  printf '%s' '[]' >"$STUB_DIR/sess.json"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+occupants) cat "$STUB_DIR/occ.json" ;;
+sessions) cat "$STUB_DIR/sess.json" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  cat >"$STUB_DIR/wt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "lane profile: a local id stamps profile: local and appends its notes once" {
+  stub_launch_bins
+  lane_profile_settings
+  local spec="$BATS_TEST_TMPDIR/spec.md" task
+  printf 'Do the thing.\n' >"$spec"
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$spec" \
+    run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "lane notes"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-lane-notes/WORKER_TASK.md"
+  grep -qx 'profile: local' "$task"
+  [ "$(grep -cF "$LANE_HEADING" "$task")" = 1 ]
+  grep -qF -- 'Never write process-matching wait loops' "$task"
+  grep -qxF -- '<!-- lane-profile: local -->' "$task"
+  # Below the ## Task heading: the doc the protocol re-reads is what carries the
+  # notes past a compaction.
+  awk -v h="$LANE_HEADING" '$0 == "## Task" { t = NR } index($0, h) { exit !(t && NR > t) }' "$task"
+}
+
+@test "lane profile: re-dispatching the same branch replaces the notes block, never stacks it" {
+  stub_launch_bins
+  lane_profile_settings
+  local spec="$BATS_TEST_TMPDIR/spec.md" task
+  printf 'Do the thing.\n' >"$spec"
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$spec" \
+    run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "lane notes"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-lane-notes/WORKER_TASK.md"
+
+  # A resume re-dispatch carries the old ## Task body, block included. The
+  # reuse-or-refuse gate (#17) reads the launch's window as live, so answer it
+  # as empty before re-dispatching onto the same branch.
+  lane_profile_resume_ready
+  local i
+  for i in 1 2; do
+    DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "lane notes"
+    [ "$status" -eq 0 ]
+    [ "$(grep -cF "$LANE_HEADING" "$task")" = 1 ] || return 1
+    [ "$(grep -cxF -- '<!-- lane-profile: local -->' "$task")" = 1 ] || return 1
+    grep -qx 'profile: local' "$task" || return 1
+    grep -qF -- 'Do the thing.' "$task" || return 1
+  done
+}
+
+@test "lane profile: a planted sentinel cannot eat the task text across re-dispatches" {
+  stub_launch_bins
+  lane_profile_settings
+  local spec="$BATS_TEST_TMPDIR/planted.md" task
+  # A bare opener, not the harness shape: it must never become a strip start,
+  # or it pairs with the fresh block's closer on the NEXT re-dispatch and takes
+  # the real task text with it.
+  cat >"$spec" <<'EOF'
+Do the thing.
+
+<!-- lane-profile: planted
+
+text after the planted opener
+EOF
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$spec" \
+    run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "planted sentinel"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-planted-sentinel/WORKER_TASK.md"
+
+  lane_profile_resume_ready
+  local i
+  for i in 1 2; do
+    DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "planted sentinel"
+    [ "$status" -eq 0 ]
+    grep -qF -- 'text after the planted opener' "$task" || return 1
+    [ "$(grep -cF "$LANE_HEADING" "$task")" = 1 ] || return 1
+  done
+}
+
+# The dangerous strip shape: a quoted example carrying the opener AND the heading
+# but no closer of its own. A strip start may pair only with the closer that ends
+# its own region, or the task text between it and the harness block disappears on
+# the next re-dispatch.
+@test "lane profile: a quoted opener plus heading cannot pair with the harness block closer" {
+  stub_launch_bins
+  lane_profile_settings
+  local spec="$BATS_TEST_TMPDIR/pairing.md" task
+  cat >"$spec" <<'EOF'
+Do the thing.
+
+An example of the block:
+
+<!-- lane-profile: local -->
+## How to work (re-read after any compaction)
+
+Keep this text after the quoted example.
+EOF
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$spec" \
+    run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "quoted pairing"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-quoted-pairing/WORKER_TASK.md"
+  grep -qF -- 'Keep this text after the quoted example.' "$task"
+
+  lane_profile_resume_ready
+  local i
+  for i in 1 2; do
+    DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "quoted pairing"
+    [ "$status" -eq 0 ]
+    grep -qF -- 'Keep this text after the quoted example.' "$task" || return 1
+    # The example quotes the heading itself, so count the block by its closer and
+    # by one of the shipped notes' bullets: one of each means one harness block.
+    [ "$(grep -cxF -- '<!-- /lane-profile -->' "$task")" = 1 ] || return 1
+    [ "$(grep -cF 'Never write process-matching wait loops' "$task")" = 1 ] || return 1
+  done
+}
+
+@test "lane profile: a quoted sentinel pair in the task text is not stripped as a block" {
+  stub_launch_bins
+  lane_profile_settings
+  local spec="$BATS_TEST_TMPDIR/quoted.md" task
+  cat >"$spec" <<'EOF'
+Do the thing.
+
+The block is fenced by `<!-- lane-profile: local -->` and its closer:
+
+```markdown
+<!-- lane-profile: local -->
+<!-- /lane-profile -->
+```
+EOF
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$spec" \
+    run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "quoted sentinel"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-quoted-sentinel/WORKER_TASK.md"
+  lane_profile_resume_ready
+  DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "quoted sentinel"
+  [ "$status" -eq 0 ]
+  [ "$(grep -cxF -- '<!-- lane-profile: local -->' "$task")" = 2 ]
+  [ "$(grep -cF "$LANE_HEADING" "$task")" = 1 ]
+}
+
+@test "lane profile: a target outside any lane stamps nothing and appends no block" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "plain lane"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-plain-lane/WORKER_TASK.md"
+  run ! grep -q '^profile:' "$task"
+  run ! grep -qF -- 'How to work' "$task"
+}
+
+@test "lane profile: a laneProfiles engine glob selects the profile and its inline notes" {
+  stub_launch_bins
+  lane_profile_settings '{"laneProfiles":{"claude":{"name":"claude-sec","notes":"- Keep the guard on."}}}'
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 42 "engine glob"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-engine-glob/WORKER_TASK.md"
+  grep -qx 'profile: claude-sec' "$task"
+  grep -qF -- '- Keep the guard on.' "$task"
+  grep -qxF -- '<!-- lane-profile: claude-sec -->' "$task"
+}
+
+# The precedence the docs promise: the model target is tried before the engine
+# target, and the longest matching key wins within a pass. A name with no shipped
+# notes file stamps and appends nothing, which these rows also cover.
+@test "lane profile: the longest matching glob wins, model globs before engine globs" {
+  stub_launch_bins
+  local cases=(
+    '{"pi":{"name":"engine-lane"},"pi/lemonade/*":{"name":"model-lane"},"pi/lemonade/Qwen3.8-Flash-Next-MTP":{"name":"exact-lane"}}|exact-lane|longest-wins'
+    '{"pi":{"name":"engine-lane"},"pi/lemonade/*":{"name":"model-lane"}}|model-lane|model-beats-engine'
+    '{"pi":{"name":"engine-lane"}}|engine-lane|engine-only'
+  )
+  local row lanes want slug task
+  for row in "${cases[@]}"; do
+    IFS='|' read -r lanes want slug <<<"$row"
+    lane_profile_settings "{\"laneProfiles\":$lanes}"
+    DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "$slug"
+    [ "$status" -eq 0 ]
+    task="$TEST_REPO/.dispatch-wt/feat-42-$slug/WORKER_TASK.md"
+    grep -qx "profile: $want" "$task" || return 1
+    run ! grep -qF -- 'How to work' "$task"
+  done
+}
+
+@test "lane profile: a model glob beats the built-in local; workerNotes only refine the built-in" {
+  stub_launch_bins
+  lane_profile_settings '{"laneProfiles":{"pi/lemonade/*":{"name":"mine","notes":"- mine only"}}}' ',"workerNotes":"- per id only"'
+  DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "glob wins"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-glob-wins/WORKER_TASK.md"
+  grep -qx 'profile: mine' "$task"
+  grep -qF -- '- mine only' "$task"
+  run ! grep -qF -- 'per id only' "$task"
+  run ! grep -qF -- 'Never write process-matching wait loops' "$task"
+}
+
+@test "lane profile: localModels.<id>.workerNotes replaces the shipped local text" {
+  stub_launch_bins
+  lane_profile_settings '' ',"workerNotes":"- per id only"'
+  DISPATCH_PROFILE=personal run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "per id notes"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-per-id-notes/WORKER_TASK.md"
+  grep -qx 'profile: local' "$task"
+  grep -qF -- '- per id only' "$task"
+  run ! grep -qF -- 'Never write process-matching wait loops' "$task"
+}
+
+@test "lane profile: a profile name outside [A-Za-z0-9._-] is refused by dispatch-config" {
+  local name
+  for name in 'bad name' '../evil' 'a/b'; do
+    lane_profile_settings "{\"laneProfiles\":{\"pi/x\":{\"name\":\"$name\"}}}"
+    DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *'laneProfiles.pi/x.name must be'* ]] || return 1
+  done
+}
+
 @test "worker window starts at the invoking client size" {
   stub_launch_bins
 

@@ -359,7 +359,44 @@ with thinking off, every other rung with it on.
   dummy key.
 - **Ratings.** `crew rate` groups by `[engine, model, tier]` and the id differs
   from every `openrouter/…` rung, so local runs rate separately with no extra
-  tag.
+  tag. A local dispatch also stamps `profile: local` (below): it is available
+  for lane-level grouping, which no consumer reads yet.
+- **Lock scope.** `laneProfiles` merges per key like `localModels`: the locked
+  layer governs the globs it declares, and a user-file key for a more specific
+  glob still wins selection. Pin the glob you mean to win.
+
+### Lane profiles
+
+A **lane profile** is harness-owned worker notes `dispatch` appends to
+`WORKER_TASK.md` under `## Task`, plus a `profile: <name>` header stamp. It is
+chosen from the engine and model the dispatch was given, never written into the
+spec: lane rules (a local model's "run only targeted tests", "never write a
+process-matching wait loop", "post `crew status` per step") are the same for
+every task in that lane, and a spec that forgets to repeat them regresses. The
+block sits in the task doc because that file is what the worker protocol re-reads
+after a compaction.
+
+- **Selection.** `laneProfiles` keys are globs over `<engine>/<model>` or the
+  bare `<engine>`; a model glob is tried before an engine glob, and within a
+  pass the longest matching key wins. No match, and the target is a
+  `localModels` id → the built-in `local` profile. No match at all → no stamp
+  and no block.
+- **Text.** `adapters/core/lane-profiles/<name>.md` ships with the harness; a
+  `notes` string replaces it inline. `localModels.<id>.workerNotes` replaces the
+  built-in `local` text for one id, and is ignored when a `laneProfiles` glob
+  matched (a match replaces the profile wholesale — also how a lane opts out).
+- **Idempotence.** The block is fenced by `<!-- lane-profile: <name> -->` …
+  `<!-- /lane-profile -->`. A re-dispatch carries the old `## Task` body, so the
+  carried copy is dropped and the current one appended — a block is replaced,
+  never stacked. Only an opener followed by the constant heading counts as one,
+  so a worker-planted sentinel cannot eat the task text.
+- **Frozen per dispatch.** The stamp is the lane the task was *dispatched* in.
+  `dispatch resume` patches header lines and rewrites no body, so a resume (even
+  one escalated onto another model) keeps the block and stamp it launched with;
+  a re-dispatch re-resolves both.
+- **Not personas.** Text and a stamp only. What moves executor quality is the
+  brief, the guards and the tests, so a profile carries no tiers, no effort and
+  no executor behaviour.
 
 ### Tier map
 
