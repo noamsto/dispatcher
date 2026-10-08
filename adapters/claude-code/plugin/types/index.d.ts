@@ -13,10 +13,19 @@ export type RosterRow = {
   pr_url: string | null
 }
 
-export type RosterView = {
-  crew: string | null
+export type RosterSection = {
+  crew: string
   rows: RosterRow[]
   error: string | null
+}
+
+export type RosterView = {
+  // One section per crew this session follows (#824).
+  sections: RosterSection[]
+  // An explicit `/roster <crew-id>`: follow only that crew, never scan.
+  pinned: string | null
+  // The last ownership scan's failure — kept while its sections stay on screen.
+  scanError: string | null
   crews: string | null
 }
 

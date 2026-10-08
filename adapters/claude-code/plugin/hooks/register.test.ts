@@ -107,13 +107,91 @@ test('the roster refreshes on the timer and treats empty output as no workers', 
   })
   await $.session.start(START)
   await clock.advance(25_000)
-  expect(argv.length).toBe(3)
-  expect(argv[0]).toEqual(['crew', 'roster', 'c1'])
+  // Every tick is one ownership scan plus one roster call per followed crew.
+  const rosters = argv.filter(call => call[1] === 'roster')
+  expect(rosters.length).toBe(3)
+  expect(rosters[0]).toEqual(['crew', 'roster', 'c1'])
+  expect(
+    argv.filter(call => call[1] === 'crews' && call[2] === '--mine').length,
+  ).toBe(3)
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
   })
   expect(await ui.find({ text: /No workers yet/ })).toBeDefined()
+})
+
+test('the pane follows every crew this session owns, not only $CREW_ID', async ($, on) => {
+  mock.env(on, { CREW_ID: 'A' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  const argv: string[][] = []
+  on('process.run', async (_$, e) => {
+    argv.push([...e.argv])
+    if (e.argv[2] === '--mine') return ok('A\nB\n')
+    return ok(JSON.stringify(e.argv[2] === 'A' ? [ROWS[0]] : [ROWS[2]]))
+  })
+  await $.session.start(START)
+  await clock.settle()
+  expect(argv).toContainEqual(['crew', 'crews', '--mine'])
+  expect(argv).toContainEqual(['crew', 'roster', 'A'])
+  expect(argv).toContainEqual(['crew', 'roster', 'B'])
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const headers = (await ui.findAll({ type: 'Text', text: /^crew [AB]$/ })).map(x => x.text)
+  expect(headers).toEqual(['crew A', 'crew B'])
+  const names = (await ui.findAll({ type: 'Text', text: /^(mauve|teal)$/ })).map(x => x.text)
+  expect(names).toEqual(['mauve', 'teal'])
+})
+
+test('a failing ownership scan keeps the rows and shows an error line', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  on('process.run', async (_$, e) =>
+    e.argv[2] === '--mine' ? done(2, '', 'scan boom') : ok(JSON.stringify(ROWS)),
+  )
+  await $.session.start(START)
+  await clock.settle()
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  expect(await ui.find({ text: /crew crews --mine failed: scan boom/ })).toBeDefined()
+  expect(await ui.find({ text: /blocked \(watchdog\)/ })).toBeDefined()
+})
+
+test('/roster <crew-id> pins that one crew and stops scanning', async ($, on) => {
+  mock.env(on, { CREW_ID: 'A' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  const argv: string[][] = []
+  on('process.run', async (_$, e) => {
+    argv.push([...e.argv])
+    if (e.argv[2] === '--mine') return ok('A\nB\n')
+    return ok('')
+  })
+  await $.session.start(START)
+  await clock.settle()
+  await $.command.run({
+    command: 'roster',
+    args: 'C',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 100 },
+  })
+  // The pin's own refresh already ran; a tick later polls only crew C, and the
+  // ownership scan never runs again while pinned.
+  argv.length = 0
+  await clock.advance(13_000)
+  expect(argv).toEqual([['crew', 'roster', 'C']])
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const headers = (await ui.findAll({ type: 'Text', text: /^crew [ABC]$/ })).map(x => x.text)
+  expect(headers).toEqual(['crew C'])
 })
 
 test('/roster with no crew lists crews, or hints when only the header exists', async ($, on) => {

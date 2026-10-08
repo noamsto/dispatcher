@@ -39,3 +39,19 @@ export const parseRoster = (stdout: string): RosterRow[] => {
     detail: typeof row.detail === 'string' ? row.detail : null,
   }))
 }
+
+// The id grammar `crew register`/`crew adopt` enforce. A `crew` older than
+// `--mine` prints the whole `crew crews` table, and without this its `crew_id`
+// header would become a crew to poll.
+const isCrewId = (id: string): boolean =>
+  /^[A-Za-z0-9._-]+$/.test(id) && !id.startsWith('-') && id !== '.' && id !== '..'
+
+// `crew crews --mine` — one bare crew id per line, no header.
+export const parseCrewIds = (stdout: string): string[] => {
+  const ids: string[] = []
+  for (const line of stdout.split('\n')) {
+    const id = line.trim()
+    if (isCrewId(id) && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}

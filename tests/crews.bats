@@ -182,6 +182,59 @@ EOF
   [ "$output" = "$expected" ]
 }
 
+# ---- crews --mine -----------------------------------------------------
+#
+# The crews whose recorded dispatcher pid is a live ancestor of the caller: the
+# one this session registered plus any `crew adopt` re-attached to it. One bare
+# id per line, no header.
+
+@test "crews --mine: lists the crew whose pid is an ancestor of the caller" {
+  # $$ is the bats test shell: `run` forks, and the fork's parent chain still
+  # passes through it, so crew.sh sees it as an ancestor.
+  CREW_ID=c-mine run_crew register "$$"
+  run run_crew crews --mine
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-mine" ]
+}
+
+@test "crews --mine: omits a crew owned by a live child and one with a dead pid" {
+  CREW_ID=c-mine run_crew register "$$"
+  sleep 30 &
+  child=$!
+  CREW_ID=c-child run_crew register "$child"
+  (exit 0) &
+  dead=$!
+  wait "$dead" 2>/dev/null || true
+  CREW_ID=c-dead run_crew register "$dead"
+  run run_crew crews --mine
+  [ "$status" -eq 0 ]
+  [ "$output" = "c-mine" ]
+  kill "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+}
+
+@test "crews --mine: a crew with no pid file and a crew with only log traffic are never ours" {
+  CREW_ID=c-events run_crew status "worker:feat/x#s1" working
+  mkdir -p "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-nopid"
+  run run_crew crews --mine
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "crews --mine: no crews at all prints nothing and exits 0" {
+  run run_crew crews --mine
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "crews: an unknown flag is a usage error, not the full table" {
+  CREW_ID=c1 run_crew register "$$"
+  run --separate-stderr run_crew crews --mine=yes
+  [ "$status" -eq 64 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"crews: unknown arg '--mine=yes'"* ]]
+}
+
 # ---- id -----------------------------------------------------------------
 
 @test "id: two consecutive calls with CREW_ID unset both refuse, no id is minted" {
