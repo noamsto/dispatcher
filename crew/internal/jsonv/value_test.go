@@ -1,7 +1,6 @@
 package jsonv_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -21,29 +20,23 @@ func TestObjectOrder(t *testing.T) {
 	if got := compact([]jsonv.Value{o}); got != `{"a":"x","b":2,"c":null}` {
 		t.Errorf("Set: %s", got)
 	}
-	o.Delete("b")
-	o.Delete("missing")
-	if got := compact([]jsonv.Value{o}); got != `{"a":"x","c":null}` {
-		t.Errorf("Delete: %s", got)
-	}
 	if v, ok := o.Get("c"); !ok || !v.IsNull() {
 		t.Errorf("Get(c) = %v, %v", v, ok)
 	}
-	if _, ok := o.Get("b"); ok {
-		t.Error("Get(b) found a deleted key")
+	if _, ok := o.Get("missing"); ok {
+		t.Error("Get(missing) found an absent key")
 	}
-	if o.Len() != 2 || len(o.Members()) != 2 {
+	if o.Len() != 3 || len(o.Members()) != 3 {
 		t.Errorf("Len = %d", o.Len())
 	}
 }
 
 func TestArrayAccess(t *testing.T) {
-	a := jsonv.Array(jsonv.Num(1))
-	a.Push(jsonv.Str("x"))
+	a := jsonv.Array(jsonv.Num(1), jsonv.Str("x"))
 	if got := compact([]jsonv.Value{a}); got != `[1,"x"]` {
-		t.Errorf("Push: %s", got)
+		t.Errorf("Array: %s", got)
 	}
-	if v, ok := a.At(1); !ok || !v.Equal(jsonv.Str("x")) {
+	if v, ok := a.At(1); !ok || compact([]jsonv.Value{v}) != `"x"` {
 		t.Errorf("At(1) = %v, %v", v, ok)
 	}
 	if _, ok := a.At(2); ok {
@@ -61,86 +54,27 @@ func TestArrayAccess(t *testing.T) {
 }
 
 func TestMutatorsRejectWrongKind(t *testing.T) {
-	for name, f := range map[string]func(){
-		"Set":    func() { v := jsonv.Num(1); v.Set("a", jsonv.Null()) },
-		"Delete": func() { v := jsonv.Array(); v.Delete("a") },
-		"Push":   func() { v := jsonv.Object(); v.Push(jsonv.Null()) },
-	} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("%s on the wrong kind did not panic", name)
-				}
-			}()
-			f()
-		}()
-	}
-}
-
-func TestIndex(t *testing.T) {
-	o := one(t, `{"a":1,"b":null}`)
-	for key, want := range map[string]string{"a": "1", "b": "null", "missing": "null"} {
-		v, err := o.Index(key)
-		if err != nil || compact([]jsonv.Value{v}) != want {
-			t.Errorf("Index(%q) = %v, %v; want %s", key, v, err, want)
-		}
-	}
-	if v, err := jsonv.Null().Index("a"); err != nil || !v.IsNull() {
-		t.Errorf("null.a = %v, %v", v, err)
-	}
-	for _, src := range []string{`1`, `"s"`, `true`, `false`, `[]`} {
-		var te *jsonv.TypeError
-		if _, err := one(t, src).Index("a"); !errors.As(err, &te) {
-			t.Errorf("%s.a: want TypeError, got %v", src, err)
-		}
-	}
-}
-
-func TestSliceString(t *testing.T) {
-	tests := []struct {
-		in       string
-		from, to int
-		want     string
-		bad      bool
-	}{
-		{`"héllo"`, 0, 2, `"hé"`, false},
-		{`"héllo"`, 0, 120, `"héllo"`, false},
-		{`"😀😀😀"`, 0, 2, `"😀😀"`, false},
-		{`"abc"`, 5, 9, `""`, false},
-		{`"abc"`, -2, 3, `"bc"`, false},
-		{`"abc"`, 2, 1, `""`, false},
-		{`[1,2,3]`, 0, 2, `[1,2]`, false},
-		{`[1,2,3]`, 1, 120, `[2,3]`, false},
-		{`null`, 0, 120, `null`, false},
-		{`5`, 0, 120, ``, true},
-		{`true`, 0, 120, ``, true},
-		{`{}`, 0, 120, ``, true},
-		{`false`, 0, 120, ``, true},
-	}
-	for _, tc := range tests {
-		got, err := one(t, tc.in).SliceString(tc.from, tc.to)
-		var te *jsonv.TypeError
-		if tc.bad {
-			if !errors.As(err, &te) {
-				t.Errorf("%s[%d:%d]: want TypeError, got %v", tc.in, tc.from, tc.to, err)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("Set on the wrong kind did not panic")
 			}
-			continue
-		}
-		if err != nil || compact([]jsonv.Value{got}) != tc.want {
-			t.Errorf("%s[%d:%d] = %v, %v; want %s", tc.in, tc.from, tc.to, got, err, tc.want)
-		}
-	}
+		}()
+		v := jsonv.Num(1)
+		v.Set("a", jsonv.Null())
+	}()
 }
 
 func TestTruthyAndAlt(t *testing.T) {
 	def := jsonv.Str("d")
+	defStr := compact([]jsonv.Value{def})
 	for src, want := range map[string]bool{"null": false, "false": false, "true": true, "0": true, `""`: true, "[]": true, "{}": true} {
 		v := one(t, src)
 		if v.Truthy() != want {
 			t.Errorf("Truthy(%s) = %v", src, v.Truthy())
 		}
-		if got := v.Or(def); got.Equal(def) == want {
-			t.Errorf("%s // \"d\" = %v", src, got)
+		if got, isDef := compact([]jsonv.Value{v.Or(def)}), compact([]jsonv.Value{v.Or(def)}) == defStr; isDef == want {
+			t.Errorf("%s // \"d\" = %s", src, got)
 		}
 	}
 }
@@ -157,6 +91,15 @@ func TestExtraction(t *testing.T) {
 	}
 	if _, ok := jsonv.Str("1").AsFloat(); ok {
 		t.Error("AsFloat on a string")
+	}
+	if s := one(t, `1.0E+3`).NumberText(); s != "1.0E+3" {
+		t.Errorf("NumberText = %q, want 1.0E+3", s)
+	}
+	if s := jsonv.Num(1).NumberText(); s != "" {
+		t.Errorf("NumberText on a computed number = %q, want empty", s)
+	}
+	if v, ok := jsonv.ParseNumber("12345678901234567891"); !ok || string(jsonv.Append(nil, v, jsonv.Options{})) != "12345678901234567891" {
+		t.Errorf("ParseNumber round-trip: %v %v", v, ok)
 	}
 	for src, want := range map[string]string{"null": "null", "false": "boolean", "true": "boolean", "1": "number", `""`: "string", "[]": "array", "{}": "object"} {
 		if got := one(t, src).Kind().String(); got != want {

@@ -1487,7 +1487,9 @@ STUB
 }
 
 # Drift guard: the bash _sessions helper stays until its last caller is ported,
-# so it must keep agreeing with the Go fold on the same bus.
+# so it must keep agreeing with the Go fold on the same bus. -S: the gojq fold
+# returns objects as Go maps, so key order is engine-internal; the guard pins
+# values, not key order (#861).
 @test "sessions: the bash _sessions helper and crew sessions agree on a shared bus" {
   t=$(($(date +%s) * 1000))
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
@@ -1512,14 +1514,14 @@ STUB
   run run_crew sessions feat/x
   [ "$status" -eq 0 ]
   [ "$(jq length <<<"$want")" -ge 4 ]
-  [ "$(jq -c 'map(del(.age_s))' <<<"$want")" = "$(jq -c 'map(del(.age_s))' <<<"$output")" ]
+  [ "$(jq -S -c 'map(del(.age_s))' <<<"$want")" = "$(jq -S -c 'map(del(.age_s))' <<<"$output")" ]
   want="$(
     eval "$helper"
     _sessions 'feat/a#b' ""
   )"
   run run_crew sessions 'feat/a#b'
   [ "$(jq length <<<"$want")" -ge 1 ]
-  [ "$(jq -c 'map(del(.age_s))' <<<"$want")" = "$(jq -c 'map(del(.age_s))' <<<"$output")" ]
+  [ "$(jq -S -c 'map(del(.age_s))' <<<"$want")" = "$(jq -S -c 'map(del(.age_s))' <<<"$output")" ]
 }
 
 @test "reply: a branch-only worker target resolves to the newest live session" {

@@ -317,6 +317,11 @@ func (p *parser) literal() (Value, error) {
 	return Value{}, p.fail("invalid numeric literal")
 }
 
+// ParseNumber parses one number literal (or jq's Infinity/NaN spellings)
+// exactly as the decoder does, keeping the literal's canonical text. Callers
+// rebuild values a jq engine handed back without losing precision.
+func ParseNumber(tok string) (Value, bool) { return parseNumber(tok) }
+
 // parseNumber reads a finite literal, keeping its canonical text, or one of
 // decNumber's Infinity and NaN spellings, which jq turns into plain doubles.
 func parseNumber(tok string) (Value, bool) {

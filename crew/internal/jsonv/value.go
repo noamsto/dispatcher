@@ -1,7 +1,6 @@
 package jsonv
 
 import (
-	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -54,16 +53,6 @@ type Value struct {
 	s    string // string content, or the canonical text of a number literal
 	a    []Value
 	m    []Member
-}
-
-// TypeError is a jq runtime type error. Callers map it to jq's exit status 5.
-type TypeError struct{ Msg string }
-
-func (e *TypeError) Error() string { return e.Msg }
-
-// TypeErrorf builds a *TypeError for a jq program port to return.
-func TypeErrorf(format string, args ...any) error {
-	return &TypeError{Msg: fmt.Sprintf(format, args...)}
 }
 
 func Null() Value { return Value{} }
@@ -120,6 +109,17 @@ func (v Value) AsFloat() (float64, bool) {
 	return v.n, true
 }
 
+// NumberText is the canonical text of a decoded number literal ("1E+1000",
+// "12345678901234567891"), or "" for a computed number. Callers handing
+// literals to a jq engine pass this text so its exact value survives:
+// gojq keeps json.Number literals verbatim and orders big integers exactly.
+func (v Value) NumberText() string {
+	if v.kind != KindNumber {
+		return ""
+	}
+	return v.s
+}
+
 // Len is the element count of an array or object, and 0 for anything else.
 func (v Value) Len() int {
 	switch v.kind {
@@ -141,14 +141,6 @@ func (v Value) At(i int) (Value, bool) {
 		return Value{}, false
 	}
 	return v.a[i], true
-}
-
-// Push appends to an array.
-func (v *Value) Push(x Value) {
-	if v.kind != KindArray {
-		panic("jsonv: Push on " + v.kind.String())
-	}
-	v.a = append(v.a, x)
 }
 
 // Members returns the object's entries in order. The slice is shared; do not modify it.
@@ -176,63 +168,6 @@ func (v *Value) Set(key string, x Value) {
 		}
 	}
 	v.m = append(v.m, Member{Key: key, Val: x})
-}
-
-// Delete removes a member, keeping the order of the rest.
-func (v *Value) Delete(key string) {
-	if v.kind != KindObject {
-		panic("jsonv: Delete on " + v.kind.String())
-	}
-	for i := range v.m {
-		if v.m[i].Key == key {
-			v.m = append(v.m[:i], v.m[i+1:]...)
-			return
-		}
-	}
-}
-
-// Index is jq's `.key`: null yields null, an object yields the member or null,
-// anything else is a TypeError.
-func (v Value) Index(key string) (Value, error) {
-	switch v.kind {
-	case KindNull:
-		return Value{}, nil
-	case KindObject:
-		x, _ := v.Get(key)
-		return x, nil
-	case KindFalse, KindTrue, KindNumber, KindString, KindArray:
-	}
-	return Value{}, TypeErrorf("Cannot index %s with %q", v.kind, key)
-}
-
-// SliceString is jq's `.[from:to]`: strings are cut by codepoint, arrays by
-// element, null stays null, and any other type is a TypeError.
-func (v Value) SliceString(from, to int) (Value, error) {
-	switch v.kind {
-	case KindNull:
-		return Value{}, nil
-	case KindString:
-		runes := []rune(v.s)
-		from, to = clampSlice(from, to, len(runes))
-		return Str(string(runes[from:to])), nil
-	case KindArray:
-		from, to = clampSlice(from, to, len(v.a))
-		return Array(v.a[from:to:to]...), nil
-	case KindFalse, KindTrue, KindNumber, KindObject:
-	}
-	return Value{}, TypeErrorf("Cannot index %s with object", v.kind)
-}
-
-func clampSlice(from, to, n int) (int, int) {
-	if from < 0 {
-		from += n
-	}
-	if to < 0 {
-		to += n
-	}
-	from = min(max(from, 0), n)
-	to = min(max(to, from), n)
-	return from, to
 }
 
 // validUTF8 replaces invalid UTF-8 as jq's jvp_utf8_next does: a bad lead or

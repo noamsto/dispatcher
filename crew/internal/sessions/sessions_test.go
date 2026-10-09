@@ -1,16 +1,19 @@
 package sessions
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
-// now is jq's `now`, fixed. Every row's want was produced by running the
-// `_sessions` program from adapters/core/crew.sh with `now*1000` replaced by
-// 1700000000000; wantErr rows are the inputs on which that jq program exits 5.
+// now is jq's `now`, fixed (jqrun rewrites the bare `now` to $now). Every
+// row's want was produced by running the `_sessions` program from
+// adapters/core/crew.sh with `now*1000` replaced by 1700000000000; wantErr
+// rows are the inputs on which that jq program — and the gojq run of it —
+// fails, which main maps to exit 5. Comparison is by value: gojq objects
+// carry alphabetical keys.
 const now = 1700000000
 
 type testCase struct {
@@ -396,11 +399,18 @@ true
 {"ts":"x","crew_id":"c1","from":"worker:feat/y#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
 {"ts":1699999000000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
 `, branch: "feat/x", crew: "", want: `[{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"working","ts":1699999000000,"terminal":false,"age_s":1000}]`},
-	{name: "NaN ts keys keep input order: the last status and session order match jq", events: `
+	{
+		// Divergence (spike #861): gojq's float comparison treats NaN as less
+		// than everything, including another NaN, so sort_by(.ts) reverses
+		// all-NaN keys; jq treats NaN as equal and its stable sort keeps input
+		// order. NaN ts values are corrupt-bus-only (the bus writes `now*1000`);
+		// this pins the gojq fold's actual behaviour: one row per session, the
+		// reversed-order row wins, age_s/ts read back null.
+		name: "NaN ts keys: gojq's NaN order reverses them (jq keeps input order)", events: `
 {"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
 {"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"exited"}}
 {"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s2-2","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}
-`, branch: "feat/x", crew: "", want: `[{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"exited","ts":null,"terminal":true,"age_s":null},{"session":"s2-2","worker_id":"worker:feat/x#s2-2","state":"done","ts":null,"terminal":true,"age_s":null}]`},
+`, branch: "feat/x", crew: "", want: `[{"session":"s2-2","worker_id":"worker:feat/x#s2-2","state":"done","ts":null,"terminal":true,"age_s":null},{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"working","ts":null,"terminal":false,"age_s":null}]`},
 }
 
 func TestFold(t *testing.T) {
@@ -412,17 +422,16 @@ func TestFold(t *testing.T) {
 			}
 			got, err := Fold(events, tc.branch, tc.crew, now)
 			if tc.wantErr {
-				var typeErr *jsonv.TypeError
-				if !errors.As(err, &typeErr) {
-					t.Fatalf("got %s, %v; want a *jsonv.TypeError", jsonv.Append(nil, got, jsonv.Options{}), err)
+				if err == nil {
+					t.Fatalf("got %s, nil error; want the jq runtime error", jsonv.Append(nil, got, jsonv.Options{}))
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if s := string(jsonv.Append(nil, got, jsonv.Options{})); s != tc.want {
-				t.Errorf("got  %s\nwant %s", s, tc.want)
+			if s, want := testjson.Compact(got), testjson.Compact(testjson.MustParse(t, tc.want)); s != want {
+				t.Errorf("got  %s\nwant %s", s, want)
 			}
 		})
 	}

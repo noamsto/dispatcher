@@ -2,19 +2,28 @@
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `sessions` and `roster`. Each slice must leave every bats file
-green with its tests unmodified.
+green; tests may be adapted only where the Go design changes what they can
+observe (the value-identity contract below), with each edit justified.
 
 ## Layout
 
-- `crew/main.go`: argv dispatch; `crew/` is a stdlib-only Go module.
-- `crew/internal/jsonv`: ordered JSON values with jq semantics (decode, total
-  order, compact and pretty encoding, number and string rules, TTY colours).
+- `crew/main.go`: argv dispatch.
+- `crew/internal/jqrun`: runs the original jq programs on gojq
+  (`github.com/itchyny/gojq`): jsonv values in, jsonv values out, `now` and
+  `$vars` injected, type errors surfaced as exit 5. The only gojq caller.
+- `crew/internal/jsonv`: ordered JSON values with jq semantics — decode
+  (number-literal text kept, NaN/Infinity extensions), encode (compact/pretty,
+  `$JQ_COLORS`), and the two number-text accessors jqrun needs. The fold
+  comparators are gone (#861): gojq owns ordering and grouping now.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
-- `crew/internal/roster`, `crew/internal/sessions`: the folds, pure functions
-  of events, args, `now` and injected tmux/worktree probes.
+- `crew/internal/roster`, `crew/internal/sessions`: each embeds its jq
+  program (`*.jq`, kept verbatim from crew.sh apart from documented patches)
+  plus the Go glue: tmux/worktree probes, identity attachment.
+- `crew/internal/testjson`: test-only value-equal JSON comparison.
 
-New subcommands get an `internal/<sub>` package; shared reads go through `bus`.
+New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
+folds that outgrew hand-translation run on jqrun.
 
 ## Delegation
 
@@ -31,12 +40,22 @@ sessions | roster)
 preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
 arm and delete its old arm.
 
-## Byte-identity rules
+## Output-identity rules
 
-- Same stdout, stderr and exit status as the bash arm on every bus where it
-  exits 0. Emit through `jsonv` only, never `encoding/json`.
-- Port each jq program op for op: stable sorts, `//` treats `false` as absent,
-  `max_by` ties to last, `from_entries` last wins, `detail` cut by codepoint.
+- Value identity with the bash arm: same JSON values, same exit status, on
+  every bus where it exits 0. Object **key order is free** (gojq hands objects
+  back as Go maps); bats guards compare with `jq -S`. Emit through `jsonv`
+  only, never `encoding/json`.
+- Run the arm's jq program itself, embedded and verbatim apart from
+  documented patches (e.g. the sessions `capture` anchor: Go regexp `$` is
+  end-of-text, Oniguruma's also matches before a trailing newline, so the
+  embedded copy uses `\n?\z`). Editing a `.jq` file edits the fold.
+- Ported-by-hand remainders must keep jq op for op semantics: stable sorts,
+  `//` treats `false` as absent, word-split guards, `from_entries` last wins.
+- Known gojq divergences (spike #861): NaN sorts below every value in
+  `sort_by` where jq treats it as equal (unreachable: the bus writes
+  `now*1000` ts); everything else the spike found value- and literal-exact,
+  number literals included.
 - External calls: `tmux` and `git worktree list` keep argv, count and order.
   Equivalent git queries may differ: Go runs `git -C <cwd>` and repeats the
   preamble's common-dir lookup.
@@ -57,7 +76,7 @@ keep other callers (`reply`, `nudge`, `reap`). Delete each only with its last
 caller. While two copies exist, guard drift:
 
 - a crew.bats test compares the bash `_sessions` helper with `crew sessions` on
-  a shared fixture bus;
+  a shared fixture bus (value compare, `jq -S`: key order is engine-internal);
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
 

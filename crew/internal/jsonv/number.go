@@ -1,7 +1,6 @@
 package jsonv
 
 import (
-	"cmp"
 	"errors"
 	"math"
 	"strconv"
@@ -112,50 +111,6 @@ func (d decimal) String() string {
 func (d decimal) adjusted() int { return d.exp + len(d.digits) - 1 }
 
 func (d decimal) isZero() bool { return d.digits == "0" }
-
-func (d decimal) sign() int {
-	switch {
-	case d.isZero():
-		return 0
-	case d.neg:
-		return -1
-	}
-	return 1
-}
-
-// compareDecimals orders two literals exactly, as decNumberCompare does.
-func compareDecimals(x, y decimal) int {
-	if sx, sy := x.sign(), y.sign(); sx != sy || sx == 0 {
-		return cmp.Compare(sx, sy)
-	}
-	m := compareMagnitude(x, y)
-	if x.neg {
-		return -m
-	}
-	return m
-}
-
-func compareMagnitude(x, y decimal) int {
-	if ax, ay := len(x.digits)+x.exp, len(y.digits)+y.exp; ax != ay {
-		if ax < ay {
-			return -1
-		}
-		return 1
-	}
-	short, long := x.digits, y.digits
-	flip := 1
-	if len(short) > len(long) {
-		short, long = long, short
-		flip = -1
-	}
-	if c := strings.Compare(short, long[:len(short)]); c != 0 {
-		return c * flip
-	}
-	if strings.Trim(long[len(short):], "0") != "" {
-		return -flip
-	}
-	return 0
-}
 
 // FormatComputed prints a double the way jq prints arithmetic results:
 // shortest round-trip digits, exponential only when the decimal point falls

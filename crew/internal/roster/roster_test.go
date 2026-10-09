@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
 const crewScript = "../../../adapters/core/crew.sh"
@@ -557,9 +558,8 @@ func TestFold(t *testing.T) {
 			got, err := Fold(decodeEvents(t, c.events), crew, now, p)
 			switch c.wantErr {
 			case "type":
-				var te *jsonv.TypeError
-				if !errors.As(err, &te) {
-					t.Fatalf("err = %v, want a *jsonv.TypeError", err)
+				if err == nil {
+					t.Fatalf("err = nil, want the jq runtime error")
 				}
 				if panes != 0 {
 					t.Errorf("Panes called %d times after a failed base, want 0", panes)
@@ -574,8 +574,8 @@ func TestFold(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if s := string(jsonv.Append(nil, got, jsonv.Options{})); s != c.want {
-					t.Errorf("got\n %s\nwant\n %s", s, c.want)
+				if s, want := testjson.Compact(got), testjson.Compact(testjson.MustParse(t, c.want)); s != want {
+					t.Errorf("got\n %s\nwant\n %s", s, want)
 				}
 			}
 			if panes != 1 {

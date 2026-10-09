@@ -107,6 +107,29 @@ func recordedIn(ev jsonv.Value, branch string) (jsonv.Value, bool) {
 	), true
 }
 
+// RecordedAll folds every branch's recorded identity in a single pass: for
+// each branch, the identity of its last well-formed `dispatch` event, the
+// same predicate Recorded reports per branch. The roster builds its identity
+// map from this so a fold is O(events + rows), not O(rows × events) (#821).
+// Only branches with a recorded identity appear as keys.
+func RecordedAll(events []jsonv.Value) map[string]jsonv.Value {
+	last := map[string]jsonv.Value{}
+	for _, ev := range events {
+		if ev.Kind() != jsonv.KindObject {
+			continue
+		}
+		br, _ := ev.Get("branch")
+		branch, isStr := br.AsString()
+		if !isStr {
+			continue
+		}
+		if id, ok := recordedIn(ev, branch); ok {
+			last[branch] = id
+		}
+	}
+	return last
+}
+
 // stringMember reports whether ev[key] is a string satisfying ok.
 func stringMember(ev jsonv.Value, key string, ok func(string) bool) bool {
 	v, _ := ev.Get(key)
@@ -114,9 +137,11 @@ func stringMember(ev jsonv.Value, key string, ok func(string) bool) bool {
 	return isStr && ok(s)
 }
 
-// For is the recorded identity of branch, else its pool identity.
-func For(events []jsonv.Value, branch string) jsonv.Value {
-	if id, ok := Recorded(events, branch); ok {
+// For is the recorded identity of branch from a RecordedAll map, else its
+// pool identity. A branch that is empty or holds a space, tab or newline is
+// never looked up by the roster (the arm's `$(...)` word-split drops it).
+func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
+	if id, ok := recorded[branch]; ok {
 		return id
 	}
 	return At(Slot(branch))
