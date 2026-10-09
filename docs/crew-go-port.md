@@ -2,9 +2,10 @@
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
-`await` and `retro`. Each slice must leave every bats file green; tests may be
+`await`, `retro` and `rate --report` (report mode only; the sweep path stays in
+bash). Each slice must leave every bats file green; tests may be
 adapted only where the Go design changes what they can observe (the
-value-identity contract below), with each edit justified.
+output contract below), with each edit justified.
 
 ## Layout
 
@@ -65,6 +66,12 @@ value-identity contract below), with each edit justified.
   object is compared with `jq -S`. The fold reads the whole bus with no crew
   filter: a note is cross-run evidence, which is why a clean run prints nothing
   at all.
+- `crew/internal/rate`: the arm of #890, read-only like `report` and its first
+  partial delegation — bash keeps `rate`'s flag loop, refusals and sweep path
+  and execs Go only for `--report`. Its two folds (`dedupe.jq`, `report.jq`)
+  read the global ratings store, not the bus, and every store failure folds to
+  `[]` in silence — the arm's `2>/dev/null || true` — so an empty, missing or
+  unparseable store renders the header alone.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -85,118 +92,42 @@ crews | log | report | sessions | roster | inbox | hold | await | retro)
 preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
 arm and delete its old arm. `crew hold`'s per-action `--help` text lives only in
 that preamble — it never reaches Go, and `help: crew hold <action> --help` pins
-it.
+it. `rate` is the partial case: only its `--report` block execs Go (plus
+`--json`/`--pooled` as parsed), and the Go side refuses every other mode with
+one usage line.
 
-## Output-identity rules
+## Output contract
 
-- Value identity with the bash arm: same JSON values, same exit status, on
-  every bus where it exits 0. Object **key order is free** (gojq hands objects
-  back as Go maps); bats guards compare with `jq -S`. Emit through `jsonv`
-  only, never `encoding/json`.
-- Run the arm's jq program itself, embedded and verbatim apart from
-  documented patches (e.g. the sessions `capture` anchor: Go regexp `$` is
-  end-of-text, Oniguruma's also matches before a trailing newline, so the
-  embedded copy uses `\n?\z`). Editing a `.jq` file edits the fold.
-- Ported-by-hand remainders must keep jq op for op semantics: stable sorts,
-  `//` treats `false` as absent, word-split guards, `from_entries` last wins.
-- Known gojq divergences (spike #861): NaN sorts below every value in
-  `sort_by` where jq treats it as equal (unreachable: the bus writes
-  `now*1000` ts); everything else the spike found value- and literal-exact,
-  number literals included.
+Idiomatic Go, behaviour not bytes (#821). **Exact:** exit codes, usage and
+refusal lines, and the text people or agents read (the tables, the one-line
+errors). **Value-equal only:** JSON — key order, indentation and colour are
+free, compare with `jq -S`; emit through `jsonv`, never `encoding/json`.
+**Not mirrored, not documented:** incidental jq/bash quirks — the
+`$JQ_COLORS` warning count, TTY colouring, jq's own error wording, and the
+rewrites `$(...)`/`cut`/`awk` apply to strings.
+
+Rules that still bind a porter:
+
+- Run the arm's jq program verbatim through jqrun, documenting each patch in
+  the file header (the sessions `capture` anchor: Go regexp `$` is end-of-text,
+  Oniguruma's also matches before a trailing newline, so the embedded copy uses
+  `\n?\z`). Editing a `.jq` file edits the fold.
+- Hand-ported remainders keep jq op-for-op semantics: stable sorts, `//` treats
+  `false` as absent, `from_entries` last wins, word-split guards.
+- A bus on which the fold fails exits 5 (corrupt) or 2 (unreadable) with one
+  `crew: <sub>: <log>: …` stderr line and otherwise empty stdout.
+- gojq's one known divergence (spike #861): NaN sorts below every value in
+  `sort_by` where jq treats it as equal — unreachable, the bus writes
+  `now*1000` ts. Everything else is value- and literal-exact.
 - External calls: `tmux` and `git worktree list` keep argv, count and order.
   Equivalent git queries may differ: Go runs `git -C <cwd>` and repeats the
   preamble's common-dir lookup.
-- A bus on which jq fails exits 5 (corrupt) or 2 (unreadable; `sessions` still
-  prints `[]`) with one `crew: <sub>: <log>: ...` stderr line and otherwise
-  empty stdout. Sanctioned divergences: that wording differs from jq's; the
-  `JQ_COLORS` warning prints once, not once per jq process (and on neither side
-  where the arm started no jq at all: `list --json` and `due` on a missing log
-  print `[]` from the shell, and Go starts no fold); and, unreachable
-  with real git branches, the shell rewrites the arm applies to bus-supplied
-  branch strings (glob expansion of `$(...)` words, NUL bytes dropped by
-  `$(...)`, `cut -c`'s width following `$LC_ALL` where Go counts runes, awk `-v`
-  escape processing) are not mirrored. `crew crews` also
-  sorts its id union and `--mine` scan in byte order, not the caller's
-  `sort -u`/glob locale collation — observable only for id sets whose C
-  order differs from the run locale's, among no-stats rows or `last` ties;
-  a non-string `crew_id` contributes no id (the arm's `jq -r` printed
-  numbers and JSON fragments as id lines, an object spanning several); and
-  when the final pass fails (a stats row with a null `ts`), Go prints no
-  rows where the arm's `jq -r` had already streamed the rows before the
-  failing one — exit 5 and the one stderr line match.
-- `crew log` mirrors jq's _last-input_ exit rule, not a sticky one: a row it
-  cannot index (`5`, `[]`, `"s"`) prints one `crew: log: <log>: cannot index
-<type> with "crew_id"` line, and only such a row at the end of the stream
-  makes the command exit 5 — the arm's `jq` did the same, and its
-  `jq: error (at <log>:<line>): Cannot index … with string ("crew_id")` wording
-  is the sanctioned difference. A torn tail prints the prefix, then the parse
-  error, then 5, exactly like `jq -c`.
-- `crew report`'s fold yields one joined string (the `join("\n")` patch for
-  jqrun's one-value rule), so when a _later_ dispatch row makes the fold fail,
-  the arm's `jq -r` had already streamed the rows before it while Go prints the
-  header only — exit 5 and the one stderr line match, as with `crews` above.
-  The joined string is empty only when there are no rows at all, since a
-  6-column `@tsv` row always carries its five tabs.
-- `crew retro`'s bare mode takes the same `join("\n")` patch, and inherits the
-  same divergence: a row whose `@tsv` cannot format a cell (an `engine` that is
-  an object, say) leaves the arm with the rows before it on stdout and Go with
-  its header, both at exit 5 with one line each. Its `--report` mode already
-  ended in a `join("\n")` and `--report --json` emits one object, so neither
-  needed the patch.
-- `crew inbox`'s delivered marks are the one file another component still reads
-  while this port writes it, so the contract is the file, not stdout: same path
-  (`_await_state`'s sanitized key plus its cksum), same value, and the same
-  "any failure means redeliver" rule. Two byte-level differences are sanctioned
-  because every reader parses it with jq: gojq returns object keys sorted where
-  the arm's reduce keeps insertion order, and a msg whose ts is the literal
-  Infinity lands as 1.7976931348623157e+308 where jq writes the same value with
-  an uppercase exponent. Value-identical either way, pinned by a crew.bats row
-  against `_await_state`/`_await_record` and by `internal/marks` running the
-  helpers' own programs through jqrun.
-- Before deleting a bash arm, diff it against Go over a generated bus corpus
-  (mask `age_s`) and keep the evidence.
-- `crew hold` is the exception to value identity: the rows it appends are the
-  port's first **writes**, and a row's `body` is a string, so its key order is
-  part of the value a later reader compares and prints. `addRow` and the
-  release row are therefore built in Go over jsonv in the arm's construction
-  order (the body is `id`, then `wait`, then `task`, each with the arm's own
-  leaf order), and the corpus diff is byte-for-byte on every row — including
-  `_shrink`'s blob branch, which is `cut -c1-keep` inside `$(...)`: it caps each
-  newline-separated line on its own and loses every trailing newline. Four
-  sanctioned differences are bash's own text, not the port's: an out-of-int64
-  `--resets-at` or `park` default prints bash's `[: …: integer expression
-expected` before the arm's own line; a directory `--spec` prints `cp`'s
-  wording; a fold that fails on a row it cannot use prints gojq's `expected an
-object` where jq said `Cannot index number with string ("released")` (status 5
-  either way); and when `_fit_line` drives `keep` to 0 — reachable with a title
-  of many short lines, since a cut narrower than the line width is what finally
-  shrinks it — bash's `cut -c1-0` adds `cut: invalid decreasing range` to stderr
-  while appending the elided-only row Go appends.
-
-- `crew await` is the exception to the corrupt-bus rule: the arm ran its fold
-  under `2>/dev/null || true`, so a row it cannot index, a candidate whose
-  `from` is not a string, a torn tail, an unreadable log and a missing log all
-  mean _nothing due_ — no stderr line, no exit 5, poll again until the deadline
-  (which is itself exit 0: empty stdout is the marker, never the status). Its
-  rows come back through gojq, so their key order is sorted where the arm's
-  `jq -c` passed the source row through — the same difference the marks entry
-  above sanctions, and every await bats row asserts with a substring or `jq -S`.
-  Two orders differ on purpose: the rows are flushed _before_ the marks are
-  raised (the arm recorded before its `printf`, and a mark raised for rows nobody
-  received makes the next await skip them for good — inbox's #876 fix, same
-  reason), and the marks are raised under the `<agent>` argument verbatim as in
-  the arm, since only the session-suffix check is gated to `worker:*` — a role
-  pane's await raises its own marks file. Of the arm's two jq processes only
-  `_clock_now_ms`' stderr survived, so a broken `$JQ_COLORS` surfaced once per
-  poll; Go prints it once, and never under `CREW_CLOCK`, where that jq never
-  starts. Under `CREW_CLOCK` the interval is added the way bash's arithmetic adds
-  a decimal literal, a fraction rounded up. Bash's other forms are not mirrored:
-  `010` advances 10 where bash adds 8, and a token Go cannot read (`0x10`, `1e3`)
-  advances 0 where bash adds 16 or dies of `value too great for base` — under a
-  virtual clock the file never moves, so such a wait runs until something kills
-  it. A duration flag is never a hex literal. Go's poll costs no `jq` process
-  start, so a virtual poll keeps a 10ms floor: the same clock advance and the
-  same poll count as the arm, without reading the whole bus 20x harder.
+- `crew hold`'s appended rows are the exception to value identity: a row's
+  `body` is a string, so its key order is part of the value a later reader
+  compares, and those writes stay byte-exact in the arm's construction order.
+- Before deleting a bash arm, diff it against Go over a generated corpus and
+  keep the evidence: compare exit status, human/agent text and JSON values
+  (`jq -S`) — nothing else.
 
 ## Bash helpers that stay
 

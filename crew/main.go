@@ -22,6 +22,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
+	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/report"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -29,7 +30,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate --report [--json] [--pooled]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -62,7 +63,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro", "rate":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -138,6 +139,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// run like hold does.
 	if sub == "retro" {
 		return retro.Run(args, paths, stdout, stderr)
+	}
+
+	// rate is report mode only (the bash arm parses flags and execs this for
+	// --report). It reads the global ratings store, never the bus, so it takes
+	// no paths; Locate above keeps the outside-a-repo refusal the bash
+	// preamble's.
+	if sub == "rate" {
+		return rate.Run(args, cwd, stdout, stderr, rate.Options{})
 	}
 
 	// log and report print lines rather than one JSON value, and each reads the
