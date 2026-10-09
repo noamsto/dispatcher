@@ -167,7 +167,7 @@ func TestRecorded(t *testing.T) {
 
 func TestFor(t *testing.T) {
 	const b = "feat/x"
-	rec := events(t, `{"kind":"dispatch","branch":"feat/x","name":"zed","color":"red","tmux":"colour9"}`)
+	rec := RecordedAll(events(t, `{"kind":"dispatch","branch":"feat/x","name":"zed","color":"red","tmux":"colour9"}`))
 	if got, want := compact(For(rec, b)), `{"name":"zed","color":"red","tmux":"colour9"}`; got != want {
 		t.Errorf("For recorded = %s, want %s", got, want)
 	}
@@ -178,9 +178,35 @@ func TestFor(t *testing.T) {
 		`{"kind":"dispatch","branch":"feat/x","name":5,"tmux":"colour9"}`,
 		`{"kind":"dispatch","branch":"feat/y","name":"zed","tmux":"colour9"}`,
 	} {
-		if got := compact(For(events(t, src), b)); got != fallback(b) {
+		if got := compact(For(RecordedAll(events(t, src)), b)); got != fallback(b) {
 			t.Errorf("For(%s) = %s, want pool %s", src, got, fallback(b))
 		}
+	}
+}
+
+// TestRecordedAll cross-checks the one-pass map against the per-branch
+// reference implementation on a mixed bus.
+func TestRecordedAll(t *testing.T) {
+	src := `
+{"kind":"dispatch","branch":"feat/x","name":"zed","color":"red","tmux":"colour9"}
+{"kind":"dispatch","branch":"feat/y","name":"old","tmux":"colour1"}
+{"kind":"status","from":"worker:feat/y","body":{}}
+5
+{"kind":"dispatch","branch":"feat/y","name":"new","tmux":"colour2"}
+{"kind":"dispatch","branch":"feat/z","name":"Bad","tmux":"colour3"}
+{"kind":"dispatch","branch":"feat/z","name":"kai","color":"teal","tmux":"colour4"}
+`
+	evs := events(t, src)
+	all := RecordedAll(evs)
+	for _, b := range []string{"feat/x", "feat/y", "feat/z", "feat/none"} {
+		want, ok := Recorded(evs, b)
+		got, has := all[b]
+		if ok != has || (ok && compact(got) != compact(want)) {
+			t.Errorf("RecordedAll[%s] = %v %s, want %v %s", b, has, compact(got), ok, compact(want))
+		}
+	}
+	if _, has := all["feat/none"]; has {
+		t.Errorf("RecordedAll gained an unrecorded branch")
 	}
 }
 

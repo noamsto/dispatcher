@@ -49,11 +49,3 @@ while IFS= read -r c; do
   fi
   printf '%s\t%s\t%s\n' "$c" "$ok" "$out" >>jqcolors.tsv
 done <jqcolors.txt
-
-# compare.tsv rows: A TAB B TAB sign of jq's A <=> B (-1, 0, 1)
-: >compare.tsv
-while IFS=$'\t' read -r a b; do
-  c=$(jq -nc --argjson a "$a" --argjson b "$b" \
-    'if $a < $b then -1 elif $a == $b then 0 else 1 end')
-  printf '%s\t%s\t%s\n' "$a" "$b" "$c" >>compare.tsv
-done <compare.in
