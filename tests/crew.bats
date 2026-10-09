@@ -2414,6 +2414,45 @@ after_await_parks() {
   [[ "$output" == *"done"* ]]
 }
 
+# The contract every consumer of these two arms pipes against: `crew log` is one
+# compact JSON value per line, and a torn bus costs `crew report` its rows but
+# not its header.
+@test "log: one crew's events print as JSON lines for jq to read" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", engine:"claude"}' >>"$log"
+  jq -nc '{ts:1100, crew_id:"c2", kind:"msg", from:"dispatcher:c2", to:"worker:feat/y"}' >>"$log"
+  jq -nc '{ts:1200, crew_id:"c1", kind:"msg", from:"dispatcher:c1", to:"worker:feat/x", body:{text:"café 🚀"}}' >>"$log"
+  run run_crew log c1
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -s 'length')" = "2" ]
+  [ "$(echo "$output" | jq -rs 'map(.crew_id) | unique | join(",")')" = "c1" ]
+  [ "$(echo "$output" | jq -rs 'map(.kind) | join(",")')" = "dispatch,msg" ]
+  [ "$(echo "$output" | jq -rs '.[1].body.text')" = "café 🚀" ]
+}
+
+@test "log: a torn trailing line keeps its prefix and fails like jq" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"status", from:"worker:feat/x", body:{state:"working"}}' >>"$log"
+  printf '%s' '{"crew_id":"c1","ts":2' >>"$log"
+  run --separate-stderr run_crew log c1
+  [ "$status" -eq 5 ]
+  [ "$(echo "$output" | jq -r '.body.state')" = "working" ]
+  [ -n "$stderr" ]
+}
+
+@test "report: a torn bus keeps the header and prints no rows" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", engine:"claude", model:"sonnet", tier:"standard"}' >>"$log"
+  printf '%s' '{"crew_id":"c1","ts":2' >>"$log"
+  run --separate-stderr run_crew report c1
+  [ "$status" -eq 5 ]
+  [ "$output" = "engine	model	tier	shape	outcome	duration_s" ]
+  [ -n "$stderr" ]
+}
+
 @test "rate: sweeps a sessioned worker and records its session" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$log")"

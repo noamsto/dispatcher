@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -37,6 +38,37 @@ type DecodeError struct {
 
 func (e *DecodeError) Error() string { return fmt.Sprintf("%s: %v", e.Path, e.Err) }
 func (e *DecodeError) Unwrap() error { return e.Err }
+
+// jq's own statuses for a log it cannot use.
+const (
+	exitUnreadable = 2
+	exitCorrupt    = 5
+)
+
+// JQFailure maps a ReadEvents/ReadEventsTolerant error to how jq would fail on
+// the same file: the message it would print, minus the path its caller prints
+// itself, and the status it would take — 2 unreadable, 5 corrupt. A nil error
+// and ErrNoLog (the arm's `[ -f "$log" ]`, which never starts jq) are not
+// failures.
+func JQFailure(err error) (string, int) {
+	var open *OpenError
+	var decode *DecodeError
+	switch {
+	case err == nil || errors.Is(err, ErrNoLog):
+		return "", 0
+	case errors.As(err, &open):
+		var pe *fs.PathError
+		if errors.As(open.Err, &pe) {
+			return pe.Err.Error(), exitUnreadable
+		}
+		return open.Err.Error(), exitUnreadable
+	case errors.As(err, &decode):
+		// The caller names the path, so the wrapper's copy is dropped.
+		return decode.Err.Error(), exitCorrupt
+	default:
+		return err.Error(), exitCorrupt
+	}
+}
 
 // Kind is an event's `kind`. An unrecognised value is kept as-is.
 type Kind string

@@ -4586,7 +4586,7 @@ stream)
     fi
   done
   ;;
-crews | sessions | roster)
+crews | log | report | sessions | roster)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
@@ -4815,27 +4815,6 @@ inbox)
   # must not return them again (#290).
   case "$me" in worker:*) [ -z "$out" ] || _await_record "$crew" "$me" "$out" ;; esac
   exit "${rc:-0}"
-  ;;
-log)
-  crew="${1:-$(_crew_id)}"
-  [ -f "$log" ] || exit 0
-  jq -c --arg crew "$crew" 'select(.crew_id==$crew)' "$log"
-  ;;
-report)
-  crew="${1:-$(_crew_id)}"
-  [ -f "$log" ] || exit 0
-  printf 'engine\tmodel\ttier\tshape\toutcome\tduration_s\n'
-  jq -s -r --arg crew "$crew" '
-    map(select(.crew_id == $crew)) as $all
-    | ($all | map(select(.kind == "dispatch")))[]
-    | .branch as $b
-    | ($all | map(select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b))) as $st
-    | ($st | map(select(.body.state == "working")) | sort_by(.ts) | (.[0].ts // null)) as $start
-    | ($st | sort_by(.ts) | (.[-1] // null)) as $last
-    | [ .engine, .model, .tier, (.shape // "—"),
-        ($last.body.state // "—"),
-        (if ($start != null and $last != null) then (($last.ts - $start) / 1000 | floor | tostring) else "—" end)
-      ] | @tsv' "$log"
   ;;
 rate)
   # Sweep this repo's bus into the global ratings store, or (--report) render

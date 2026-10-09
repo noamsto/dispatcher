@@ -1,10 +1,10 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `sessions`, `roster` and `crews`. Each slice must leave every
-bats file green; tests may be adapted only where the Go design changes what
-they can observe (the value-identity contract below), with each edit
-justified.
+Ported so far: `log`, `report`, `sessions`, `roster` and `crews`. Each slice
+must leave every bats file green; tests may be adapted only where the Go design
+changes what they can observe (the value-identity contract below), with each
+edit justified.
 
 ## Layout
 
@@ -18,10 +18,13 @@ justified.
   comparators are gone (#861): gojq owns ordering and grouping now.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
-- `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`:
-  each embeds its jq program (`*.jq`, kept verbatim from crew.sh apart from
-  documented patches) plus the Go glue: tmux/worktree probes, identity
-  attachment, the crews pid-liveness and ancestor probes.
+- `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`,
+  `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
+  crew.sh apart from documented patches) plus the Go glue: tmux/worktree
+  probes, identity attachment, the crews pid-liveness and ancestor probes.
+- `crew/internal/log`: the arm that runs no jq — `select(.crew_id==$crew)` is a
+  member test, so it filters and re-encodes through jsonv, keeping `jq -c`'s
+  torn-tail prefix via `bus.ReadEventsTolerant`.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -32,7 +35,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | sessions | roster)
+crews | log | report | sessions | roster)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -76,6 +79,19 @@ arm and delete its old arm.
   when the final pass fails (a stats row with a null `ts`), Go prints no
   rows where the arm's `jq -r` had already streamed the rows before the
   failing one — exit 5 and the one stderr line match.
+- `crew log` mirrors jq's _last-input_ exit rule, not a sticky one: a row it
+  cannot index (`5`, `[]`, `"s"`) prints one `crew: log: <log>: cannot index
+<type> with "crew_id"` line, and only such a row at the end of the stream
+  makes the command exit 5 — the arm's `jq` did the same, and its
+  `jq: error (at <log>:<line>): Cannot index … with string ("crew_id")` wording
+  is the sanctioned difference. A torn tail prints the prefix, then the parse
+  error, then 5, exactly like `jq -c`.
+- `crew report`'s fold yields one joined string (the `join("\n")` patch for
+  jqrun's one-value rule), so when a _later_ dispatch row makes the fold fail,
+  the arm's `jq -r` had already streamed the rows before it while Go prints the
+  header only — exit 5 and the one stderr line match, as with `crews` above.
+  The joined string is empty only when there are no rows at all, since a
+  6-column `@tsv` row always carries its five tabs.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
 
