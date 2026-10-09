@@ -171,6 +171,28 @@ func TestGlobMatch(t *testing.T) {
 		{"[abc", "[abc", true},
 		{"a[b", "a[b", true},
 		{"a[b", "ab", false},
+		// Expectations below were checked with `case "$s" in $p)` in bash.
+		{"[[:alpha:]]x", "ax", true},
+		{"[[:alpha:]]x", "1x", false},
+		{"[[:alpha:]]x", "-x", false},
+		{"[![:digit:]]", "5", false},
+		{"[![:digit:]]", "a", true},
+		{"[[:alpha:]]", "]", false},
+		{"[[:alpha:][:digit:]]", "7", true},
+		{"[[:alpha:]-]", "-", true},
+		{"[[:alpha:]]", ":", false},
+		{`a\`, `a\`, true},
+		{`a\`, "a", false},
+		{`a\`, `a\b`, false},
+		{"?x", "éx", true},
+		{"?x", "x", false},
+		{"?", "é", true},
+		{"?", "éé", false},
+		{"[é]x", "éx", true},
+		{"[a-z]x", "éx", false},
+		{"[!a]x", "éx", true},
+		{"*[!é]", "é", false},
+		{"*[![:alpha:]]", "é", false},
 	} {
 		if got := globMatch(c.pattern, c.s); got != c.want {
 			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
