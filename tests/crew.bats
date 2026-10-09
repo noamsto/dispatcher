@@ -9167,6 +9167,37 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ ! -d "$cdir/watch.lock.d" ]
 }
 
+# The lock belongs to the park, so a park killed mid-sleep has to drop it: bash
+# ran its EXIT trap for TERM, INT and HUP, and `crew stream` stops and retries
+# its inner watch that way. A leaked watch.lock.d would refuse every later watch
+# of this crew until the dead pid was reclaimed.
+@test "watch: a TERM mid-park releases the lock and the next watch starts at once" {
+  cdir="$(crew_dir c1)"
+
+  # Not `run_crew … &`: backgrounding the helper function backgrounds a subshell
+  # of its own, and its pid is not the one the park writes in the lock.
+  bash -euo pipefail "$CREW" watch --crew c1 --timeout 30 --interval 1 >"$BATS_TEST_TMPDIR/park.out" 2>&1 &
+  local pid=$!
+  poll_for 100 test -f "$cdir/watch.lock.d/pid"
+  # The pid the arm wrote is `$$`, and the exec'd Go binary keeps it.
+  [ "$(cat "$cdir/watch.lock.d/pid")" = "$pid" ]
+
+  kill -TERM "$pid"
+  local rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 143 ]
+
+  [ ! -d "$cdir/watch.lock.d" ]
+  [ ! -e "$cdir/cursor" ]
+
+  # The assertion that matters: the next watch starts, rather than refusing.
+  CREW_ID=c1 run_crew status worker:feat/x done
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and .events[0].body.state == "done"' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 # The wake gate for `exited` (#396): a mid-run engine death (its previous state
 # was working/blocked) must wake the park, while the ordinary SessionEnd backstop
 # posted after the session's own terminal state must stay silent.

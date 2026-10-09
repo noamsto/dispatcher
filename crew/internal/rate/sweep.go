@@ -20,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
 //go:embed records.jq
@@ -246,11 +247,11 @@ func (s *sweep) plan(records, snapshot jsonv.Value) []jsonv.Value {
 // skip. A store the fold cannot read is the arm's `[]` — `2>/dev/null || true`
 // hid that a torn line costs every row to every reader.
 func (s *sweep) lockedFold() (jsonv.Value, int) {
-	if !lockAcquire(s.lockd, s.pid) {
+	if !lock.Acquire(s.lockd, s.pid) {
 		say(s.stderr, "%s\n", busy)
 		return jsonv.Value{}, exitFailure
 	}
-	defer lockRelease(s.lockd)
+	defer lock.Release(s.lockd)
 	return foldStore(s.store), 0
 }
 
@@ -258,11 +259,11 @@ func (s *sweep) lockedFold() (jsonv.Value, int) {
 // append — all under the lock, none of it across the network. The release is
 // deferred, so a fold or write failure cannot strand the lock either.
 func (s *sweep) lockedMerge(records, patches jsonv.Value) int {
-	if !lockAcquire(s.lockd, s.pid) {
+	if !lock.Acquire(s.lockd, s.pid) {
 		say(s.stderr, "%s\n", busy)
 		return exitFailure
 	}
-	defer lockRelease(s.lockd)
+	defer lock.Release(s.lockd)
 
 	rows, err := jqrun.Run(mergeProgram, nil, s.clock(), map[string]jsonv.Value{
 		"records": records,

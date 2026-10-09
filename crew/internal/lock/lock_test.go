@@ -1,4 +1,4 @@
-package rate
+package lock
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 func TestLockAcquireRelease(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
 
-	if !lockAcquire(dir, "12345") {
+	if !Acquire(dir, "12345") {
 		t.Fatal("first acquire refused")
 	}
 	pid, err := os.ReadFile(filepath.Join(dir, "pid"))
@@ -19,15 +19,15 @@ func TestLockAcquireRelease(t *testing.T) {
 		t.Errorf("pid file = %q, %v, want \"12345\\n\"", pid, err)
 	}
 	// The same owner is an idempotent success, not a refusal.
-	if !lockAcquire(dir, "12345") {
+	if !Acquire(dir, "12345") {
 		t.Error("re-acquire by the owner refused; the helper returns 0 idempotently")
 	}
-	lockRelease(dir)
+	Release(dir)
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Error("release left the lock dir behind")
 	}
 	// Release is unconditional, so a double release is a no-op.
-	lockRelease(dir)
+	Release(dir)
 }
 
 func TestLockHeldByLivePID(t *testing.T) {
@@ -37,13 +37,13 @@ func TestLockHeldByLivePID(t *testing.T) {
 	}
 	// This test process is live, so the lock reads as held.
 	writePID(t, dir, strconv.Itoa(os.Getpid()))
-	if lockAcquire(dir, "99998") {
+	if Acquire(dir, "99998") {
 		t.Error("acquire succeeded against a live holder")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "pid")); err != nil {
 		t.Errorf("a refused acquire touched the holder's pid file: %v", err)
 	}
-	if lockAcquire(dir, strconv.Itoa(os.Getpid())) != true {
+	if Acquire(dir, strconv.Itoa(os.Getpid())) != true {
 		t.Error("the live holder's own pid must re-acquire idempotently")
 	}
 }
@@ -60,7 +60,7 @@ func TestLockReclaimsDeadAndEmpty(t *testing.T) {
 				t.Fatal(err)
 			}
 			writePID(t, dir, tc.held)
-			if !lockAcquire(dir, "12345") {
+			if !Acquire(dir, "12345") {
 				t.Fatal("a stale lock was not reclaimed")
 			}
 			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
@@ -80,7 +80,7 @@ func TestLockReadsBashPidFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePID(t, dir, strconv.Itoa(os.Getpid())+"\n\n")
-	if lockAcquire(dir, "12345") {
+	if Acquire(dir, "12345") {
 		t.Error("trailing newlines hid a live holder")
 	}
 }
@@ -93,7 +93,7 @@ func TestLockZeroHolderIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePID(t, dir, "0")
-	if lockAcquire(dir, "12345") {
+	if Acquire(dir, "12345") {
 		t.Error("a `0` holder must read as held")
 	}
 }
