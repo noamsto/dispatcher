@@ -1,8 +1,8 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox` and
-`hold`. Each
+Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`
+and `await`. Each
 slice must leave every bats file green; tests may be adapted only where the Go
 design changes what they can observe (the value-identity contract below), with
 each edit justified.
@@ -45,8 +45,18 @@ each edit justified.
   `Options.CrewClock`.
 - `crew/internal/marks`: the delivered-marks file of #290 — `_await_state`'s
   path, `_await_marks`' read and `_await_record`'s atomic merge, the two jq
-  programs embedded verbatim. `await`, `nudge` and `stall-watch` still read and
-  write the same file from bash, so the name and the content are the contract.
+  programs embedded verbatim. `nudge` and `stall-watch` still read the same file
+  from bash, so the name and the content are the contract.
+- `crew/internal/clock`: the `$CREW_CLOCK` pair — `_clock_now`, `_clock_now_f`,
+  `_clock_now_ms` and `_clock_sleep` — shared by `hold` (which had the first two
+  privately until #884) and `await`. With no `CREW_CLOCK` these are `date +%s`,
+  jq's `now`, jq's `now*1000|floor` and the real `sleep` (same argv, so a
+  rejected interval costs coreutils' own message and status, which is what
+  killed the arm under `set -e`).
+- `crew/internal/await`: the arm of #884, and the first port that **polls**. Its
+  fold is the arm's jq through jqrun (`await.jq`), over rows the caller decoded
+  one per line — the arm's `-R` + `fromjson?` skip, with the repo's own decoder.
+  The clock, the marks and the deadline are Go; a timeout is exit 0.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -57,7 +67,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold)
+crews | log | report | sessions | roster | inbox | hold | await)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -149,6 +159,31 @@ object` where jq said `Cannot index number with string ("released")` (status 5
   shrinks it — bash's `cut -c1-0` adds `cut: invalid decreasing range` to stderr
   while appending the elided-only row Go appends.
 
+- `crew await` is the exception to the corrupt-bus rule: the arm ran its fold
+  under `2>/dev/null || true`, so a row it cannot index, a candidate whose
+  `from` is not a string, a torn tail, an unreadable log and a missing log all
+  mean _nothing due_ — no stderr line, no exit 5, poll again until the deadline
+  (which is itself exit 0: empty stdout is the marker, never the status). Its
+  rows come back through gojq, so their key order is sorted where the arm's
+  `jq -c` passed the source row through — the same difference the marks entry
+  above sanctions, and every await bats row asserts with a substring or `jq -S`.
+  Two orders differ on purpose: the rows are flushed _before_ the marks are
+  raised (the arm recorded before its `printf`, and a mark raised for rows nobody
+  received makes the next await skip them for good — inbox's #876 fix, same
+  reason), and the marks are raised under the `<agent>` argument verbatim as in
+  the arm, since only the session-suffix check is gated to `worker:*` — a role
+  pane's await raises its own marks file. Of the arm's two jq processes only
+  `_clock_now_ms`' stderr survived, so a broken `$JQ_COLORS` surfaced once per
+  poll; Go prints it once, and never under `CREW_CLOCK`, where that jq never
+  starts. Under `CREW_CLOCK` the interval is added the way bash's arithmetic adds
+  a decimal literal, a fraction rounded up. Bash's other forms are not mirrored:
+  `010` advances 10 where bash adds 8, and a token Go cannot read (`0x10`, `1e3`)
+  advances 0 where bash adds 16 or dies of `value too great for base` — under a
+  virtual clock the file never moves, so such a wait runs until something kills
+  it. A duration flag is never a hex literal. Go's poll costs no `jq` process
+  start, so a virtual poll keeps a 10ms floor: the same clock advance and the
+  same poll count as the arm, without reading the whole bus 20x harder.
+
 ## Bash helpers that stay
 
 `_sessions`, `_identity*`, `_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at`
@@ -160,12 +195,21 @@ caller. While two copies exist, guard drift:
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
 
-`_await_state`, `_await_marks` and `_await_record` stay for `await`, `nudge` and
-`stall-watch --unread` even though `crew inbox` no longer calls them: it writes
-the same file from `internal/marks`. Two of the three drift guards above apply —
-crew.bats compares the Go marks file with `_await_state`'s path and
-`_await_record`'s content on the same msgs, and `internal/marks` runs the
-helpers' own two programs through jqrun.
+`_await_state`, `_await_marks` and `_await_record` stay for `_unread_scan` (and
+through it `nudge` and `stall-watch --unread`), which read the marks file even
+though neither `crew await` nor `crew inbox` calls them any more: both write it
+from `internal/marks`. Two of the three drift guards above apply — crew.bats
+compares the Go marks file with `_await_state`'s path and `_await_record`'s
+content on the same msgs, and `internal/marks` runs the helpers' own two programs
+through jqrun — and two more read the other way: crew.bats hands the marks a Go
+`await` raised to the extracted `_unread_scan`, and to `crew nudge` itself.
+
+`_clock_now`, `_clock_now_f`, `_clock_now_ms` and `_clock_sleep` stay for `nudge`,
+`stall-watch` and `roster-render`, and `internal/clock` is their Go copy for
+`hold` and `await`. The guard is that both sides read and write one file: the
+suite exports `CREW_CLOCK`, so a Go `await`'s seeded clock is the file a bash
+`stall-watch` advances, and `crew clock: unset, await and hold still use real
+time` pins the no-`CREW_CLOCK` branch.
 
 `_hold_outstanding` stays for `roster-render`'s `_rr_model`, which reads the same
 bus `crew hold list` reads; `_hold_crew` and `_hold_render` lost their last
