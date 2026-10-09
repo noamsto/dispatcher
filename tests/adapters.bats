@@ -333,7 +333,7 @@ commands_reach_row() { # path template containing $ROOT and $n
   [ "$status" -eq 0 ]
 }
 
-# F02: the notify hook, the guards and the phase-status hook ship executable and
+# F02: the notify hook, the guards and the phase and directive hooks ship executable and
 # byte-identical in the three generated trees. Read-only; no per-row reset.
 @test "generated hooks and guards ship executable and byte-identical in all three trees" {
   begin_rows
@@ -346,8 +346,9 @@ secret-read|secret-read-guard.sh
 public-leak|public-leak-guard.sh
 test-scope|test-scope-guard.sh
 phase-status|phase-status.sh
+directive-delivery|directive-delivery.sh
 ROWS
-  finish_rows 4
+  finish_rows 5
 }
 
 guard_ships_row() { # script basename
@@ -409,6 +410,18 @@ guard_ships_row() { # script basename
       (has("lane") | not))' "$ROOT/hookyard.json"
   [ "$status" -eq 0 ]
   [ -x "$ROOT/adapters/core/phase-status.sh" ]
+}
+
+# The directive-delivery hook (#840) rides the verdict lane — hookyard reads
+# advice only from there — so it carries a timeout_ms and no lane, and has no
+# match: every tool result can carry a directive.
+@test "hookyard.json wires the directive-delivery hook for pi on post_tool" {
+  run jq -e '.handlers[] | select(.id == "directive-delivery") |
+      (.exec == "adapters/core/directive-delivery.sh") and (.events == ["post_tool"]) and
+      (.engines == ["pi"]) and (.timeout_ms == 4000) and
+      (has("lane") | not) and (has("match") | not)' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/directive-delivery.sh" ]
 }
 
 @test "the cursor rule sets alwaysApply, else cursor ignores it silently" {

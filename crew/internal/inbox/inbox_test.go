@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -245,6 +246,36 @@ func TestArgumentErrors(t *testing.T) {
 			args:       []string{me, "c1", "--since", "-1"},
 			wantCode:   1,
 			wantStderr: "crew: --since must be an integer ms timestamp\n",
+		},
+		{
+			name:       "--from without a value",
+			args:       []string{me, "c1", "--from"},
+			wantCode:   1,
+			wantStderr: "crew: --from needs a value\n",
+		},
+		{
+			name:       "--from with an empty value",
+			args:       []string{me, "c1", "--from", ""},
+			wantCode:   1,
+			wantStderr: "crew: --from needs a value\n",
+		},
+		{
+			name:       "--undelivered on a role id",
+			args:       []string{"role:feat/x:reviewer", "c1", "--undelivered"},
+			wantCode:   1,
+			wantStderr: "crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)\n",
+		},
+		{
+			name:       "--undelivered on a dispatcher id",
+			args:       []string{"dispatcher:c1", "--undelivered"},
+			wantCode:   1,
+			wantStderr: "crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)\n",
+		},
+		{
+			name:       "--undelivered on a branch-only worker id",
+			args:       []string{"worker:feat/x", "c1", "--undelivered"},
+			wantCode:   1,
+			wantStderr: "crew: inbox: 'worker:feat/x' has no session suffix",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -612,5 +643,232 @@ func TestGreaterThanNumber(t *testing.T) {
 		if got := greaterThanNumber(tc.v, "100"); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A marks file as `_await_record` leaves it, for a test that wants the session
+// to start with something already delivered.
+func seedMarks(t *testing.T, p bus.Paths, crew, who, body string) {
+	t.Helper()
+	path := marks.Path(p.Dir, crew, who)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFromKeepsOnlyThatSender(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, strings.Join([]string{msgRow, broadcast, otherTo, otherCrew}, "\n")+"\n")
+
+	stdout, stderr, code := run(t, p, me, "c1", "--from", "dispatcher:c1")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
+	}
+	if stdout != msgRow+"\n" {
+		t.Errorf("stdout = %q, want only %q", stdout, msgRow)
+	}
+	// Only what was printed is marked delivered, so the reviewer's broadcast is
+	// still there for a later await.
+	if got, want := readMarks(t, p, "c1", me), `{"dispatcher:c1":1785951264000}`; testjson.Compact(testjson.MustParse(t, got)) != want {
+		t.Errorf("marks = %s, want %s", got, want)
+	}
+}
+
+func TestFlagOrderIsFree(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, strings.Join([]string{msgRow, broadcast}, "\n")+"\n")
+
+	stdout, stderr, code := run(t, p, me, "--undelivered", "--from", "dispatcher:c1", "--since", "0", "c1")
+	if code != 0 || stderr != "" || stdout != msgRow+"\n" {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+}
+
+func TestUndeliveredPrintsEachMsgOnce(t *testing.T) {
+	const newer = `{"ts":1785951270000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"worker:feat/x#s1-1","body":{"text":"stop"}}`
+	p := fixture(t)
+	writeLog(t, p, msgRow+"\n")
+
+	args := []string{me, "c1", "--from", "dispatcher:c1", "--undelivered"}
+	if stdout, stderr, code := run(t, p, args...); code != 0 || stderr != "" || stdout != msgRow+"\n" {
+		t.Fatalf("first: code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	if stdout, stderr, code := run(t, p, args...); code != 0 || stderr != "" || stdout != "" {
+		t.Fatalf("second: code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+
+	writeLog(t, p, msgRow+"\n"+newer+"\n")
+	if stdout, stderr, code := run(t, p, args...); code != 0 || stderr != "" || stdout != newer+"\n" {
+		t.Fatalf("third: code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	if got, want := readMarks(t, p, "c1", me), `{"dispatcher:c1":1785951270000}`; testjson.Compact(testjson.MustParse(t, got)) != want {
+		t.Errorf("marks = %s, want %s", got, want)
+	}
+}
+
+// What a plain inbox, await or nudge already handed this session is not
+// undelivered, whichever of them wrote the mark.
+func TestUndeliveredHonoursExistingMarks(t *testing.T) {
+	for _, tc := range []struct{ name, marks, want string }{
+		{"mark at the msg's ts", `{"dispatcher:c1":1785951264000}`, ""},
+		{"mark past the msg", `{"dispatcher:c1":1785951264001}`, ""},
+		{"mark before the msg", `{"dispatcher:c1":1785951263999}`, msgRow + "\n"},
+		{"another sender's mark", `{"role:feat/x:reviewer":1785951999999}`, msgRow + "\n"},
+		{"a string mark outranks a number ts", `{"dispatcher:c1":"zz"}`, ""},
+		{"no marks file", ``, msgRow + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, msgRow+"\n")
+			if tc.marks != "" {
+				seedMarks(t, p, "c1", me, tc.marks)
+			}
+
+			stdout, stderr, code := run(t, p, me, "c1", "--from", "dispatcher:c1", "--undelivered")
+			if code != 0 || stderr != "" || stdout != tc.want {
+				t.Fatalf("code %d stderr %q stdout %q, want %q", code, stderr, stdout, tc.want)
+			}
+		})
+	}
+}
+
+func TestUndeliveredAfterAPlainInbox(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, msgRow+"\n")
+
+	if _, _, code := run(t, p, me, "c1"); code != 0 {
+		t.Fatalf("plain inbox code %d", code)
+	}
+	if stdout, stderr, code := run(t, p, me, "c1", "--undelivered"); code != 0 || stderr != "" || stdout != "" {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+}
+
+func TestUndeliveredWithoutFromCoversEverySender(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, strings.Join([]string{msgRow, broadcast, otherTo, otherCrew}, "\n")+"\n")
+	seedMarks(t, p, "c1", me, `{"dispatcher:c1":1785951264000}`)
+
+	stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
+	if code != 0 || stderr != "" || stdout != broadcast+"\n" {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	want := `{"dispatcher:c1":1785951264000,"role:feat/x:reviewer":1785951265000}`
+	if got := readMarks(t, p, "c1", me); testjson.Compact(testjson.MustParse(t, got)) != want {
+		t.Errorf("marks = %s, want %s", got, want)
+	}
+
+	// A fresh session sees every sender's msg.
+	stdout, _, code = run(t, fixtureWith(t, msgRow, broadcast), me, "c1", "--undelivered")
+	if code != 0 || stdout != msgRow+"\n"+broadcast+"\n" {
+		t.Errorf("fresh session: code %d stdout %q", code, stdout)
+	}
+}
+
+func fixtureWith(t *testing.T, rows ...string) bus.Paths {
+	t.Helper()
+	p := fixture(t)
+	writeLog(t, p, strings.Join(rows, "\n")+"\n")
+	return p
+}
+
+// A msg with no sender string has no mark to compare with and would fail the
+// whole marks write, so it is skipped and the others still print and record.
+func TestUndeliveredSkipsMsgsWithoutAStringSender(t *testing.T) {
+	for _, tc := range []struct{ name, from string }{
+		{"null", `"from":null,`},
+		{"number", `"from":7,`},
+		{"absent", ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := `{"ts":1785951263000,"crew_id":"c1","kind":"msg",` + tc.from + `"to":"worker:feat/x#s1-1","body":{"text":"anon"}}`
+			p := fixtureWith(t, bad, msgRow)
+
+			stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
+			if code != 0 || stderr != "" || stdout != msgRow+"\n" {
+				t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+			}
+			if got, want := readMarks(t, p, "c1", me), `{"dispatcher:c1":1785951264000}`; testjson.Compact(testjson.MustParse(t, got)) != want {
+				t.Errorf("marks = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
+// Sixteen readers of one session against one msg: the marks lock makes the
+// read-print-record cycle atomic, so the msg is printed by exactly one of them.
+func TestUndeliveredExactlyOnceUnderConcurrency(t *testing.T) {
+	p := fixtureWith(t, msgRow)
+
+	const readers = 16
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		lines int
+	)
+	for range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var out, errB bytes.Buffer
+			code := Run([]string{me, "c1", "--from", "dispatcher:c1", "--undelivered"}, p, &out, &errB, Options{CrewID: func() string { return "c1" }})
+			if code != 0 || errB.Len() != 0 {
+				t.Errorf("code %d stderr %q", code, errB.String())
+			}
+			mu.Lock()
+			lines += strings.Count(out.String(), "\n")
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if lines != 1 {
+		t.Errorf("printed %d lines across %d readers, want 1", lines, readers)
+	}
+}
+
+// The torn-tail exit is unchanged: the prefix is printed and recorded, then the
+// parse failure is reported.
+func TestUndeliveredTornTailKeepsThePrefix(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, msgRow+"\n"+`{"ts":1785951270000,"crew_id":"c1","kind":"msg","fr`)
+
+	stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
+	if code != exitType || stdout != msgRow+"\n" || !strings.Contains(stderr, "crew: inbox: ") {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	if got, want := readMarks(t, p, "c1", me), `{"dispatcher:c1":1785951264000}`; testjson.Compact(testjson.MustParse(t, got)) != want {
+		t.Errorf("marks = %s, want %s", got, want)
+	}
+}
+
+func TestUndeliveredLockFailurePrintsNothing(t *testing.T) {
+	p := fixtureWith(t, msgRow)
+	// A file where the lock directory belongs makes Lock's MkdirAll fail.
+	if err := os.WriteFile(p.Dir+"/await.lock", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
+	if code != 1 || stdout != "" || !strings.HasPrefix(stderr, "crew: inbox: cannot lock delivered marks: ") {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	if got := readMarks(t, p, "c1", me); got != "" {
+		t.Errorf("marks = %q", got)
+	}
+}
+
+// A missing log still exits 0 before anything else, the lock included.
+func TestUndeliveredWithoutALogIsSilent(t *testing.T) {
+	p := fixture(t)
+	stdout, stderr, code := run(t, p, me, "c1", "--undelivered")
+	if code != 0 || stdout != "" || stderr != "" {
+		t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
+	}
+	if left, _ := filepath.Glob(p.Dir + "/await.lock/*"); len(left) != 0 {
+		t.Errorf("lock dir holds %v", left)
 	}
 }

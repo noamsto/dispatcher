@@ -45,6 +45,13 @@
       "engines": ["pi"],
       "match": ["Bash"],
       "timeout_ms": 4000
+    },
+    {
+      "id": "directive-delivery",
+      "exec": "adapters/core/directive-delivery.sh",
+      "events": ["post_tool"],
+      "engines": ["pi"],
+      "timeout_ms": 4000
     }
   ]
 }

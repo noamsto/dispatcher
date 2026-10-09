@@ -51,7 +51,7 @@ add() {
 # Sets shared by several rows.
 dispatch_set=(adapters crews dispatch-comment dispatch-resume dispatch model-map module)
 prompt_set=(adapters crews dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
-crew_set=(adapters crew-dash crew-id crew crews dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher hold model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race retro)
+crew_set=(adapters crew-dash crew-id crew crews directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher hold model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race retro)
 
 map_file() {
   local f="$1"
@@ -70,6 +70,7 @@ map_file() {
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
   adapters/core/crew.sh | adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
+  adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
@@ -90,7 +91,7 @@ map_file() {
   scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters crew phase-status public-leak-guard secret-read-guard test-scope-guard ;;
+  hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard ;;
   crew/*) add "${crew_set[@]}" ;;
   dash/*) add crew-dash module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;

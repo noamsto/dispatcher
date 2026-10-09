@@ -440,7 +440,10 @@ For Claude Code, pass the plugin directory to `claude`:
   ambient-then-copy path. With no ambient bridge and the worker path not named
   in `programs.hookyard.piSettings`, the worker launches with no hooks, and a
   pi worker that dies is invisible to the bus until the dispatcher notices the
-  pane.
+  pane. The same
+  bridge carries `directive-delivery`, which appends the dispatcher's unread
+  `dispatcher:<crew>` msgs to the worker's next tool result, so a directive
+  reaches a pi worker mid-turn instead of at its next inbox seam.
 
 - **The Cursor `stop` hook.** `~/.cursor/hooks.json` is a single shared file
   several tools write, so this module does not own it. Without the stanza below
