@@ -1492,6 +1492,14 @@ wait_grid_refit() {
   done
 }
 
+# role_width_min <window> — the per-pane width floor guard_role_width enforces.
+role_width_min() {
+  local min
+  min="$(tmux show-options -w -v -q -t "$1" @grid_refit_min_role_cols 2>/dev/null || true)"
+  case "$min" in '' | *[!0-9]*) min=20 ;; esac
+  printf '%s\n' "$min"
+}
+
 # guard_role_width <window> — after the refit settles, any role pane still
 # below the readable minimum gets the built-in main-vertical fallback:
 # tmux-grid-refit leaves the bare split alone when a precondition is missing
@@ -1503,8 +1511,7 @@ wait_grid_refit() {
 # a vanished window never fails a dispatch.
 guard_role_width() {
   local win="$1" min out pane role width layout
-  min="$(tmux show-options -w -v -q -t "$win" @grid_refit_min_role_cols 2>/dev/null || true)"
-  case "$min" in '' | *[!0-9]*) min=20 ;; esac
+  min="$(role_width_min "$win")"
   out="$(tmux list-panes -t "$win" -F '#{pane_id}|#{@crew_role}|#{pane_width}' 2>/dev/null || true)"
   while IFS='|' read -r pane role width; do
     case "$role" in '' | lead) continue ;; esac
@@ -2642,6 +2649,28 @@ if [ "${1:-}" = "--role-watch" ]; then
     esac
   }
 
+  # _rw_reguard_width — the dispatch-time width guard ran once; a later relayout
+  # can collapse the side column again. When this pane is below the floor,
+  # re-run the guard for its window. Returns 0 when it attempted a re-guard, at most
+  # `reguard_max` times per assignment so a client too small to fit never
+  # thrashes. The before/after layouts go to stderr like the dispatch-time guard.
+  _rw_reguard_width() {
+    local width min before after
+    [ "$reguard_tries" -lt "$reguard_max" ] || return 1
+    # select-layout would unzoom a window the user zoomed on purpose.
+    [ "$(tmux display-message -p -t "$w_win" '#{window_zoomed_flag}' 2>/dev/null || true)" != 1 ] || return 1
+    width="$(tmux display-message -p -t "$watch_pane" '#{pane_width}' 2>/dev/null || true)"
+    case "$width" in '' | *[!0-9]*) return 1 ;; esac
+    min="$(role_width_min "$w_win")"
+    [ "$width" -lt "$min" ] || return 1
+    reguard_tries=$((reguard_tries + 1))
+    before="$(tmux display-message -p -t "$w_win" '#{window_layout}' 2>/dev/null || true)"
+    guard_role_width "$w_win"
+    after="$(tmux display-message -p -t "$w_win" '#{window_layout}' 2>/dev/null || true)"
+    echo "role-watch: pane $watch_pane was $width cols (min $min) mid-run — re-guarded window $w_win (attempt $reguard_tries/$reguard_max): layout $before -> $after" >&2
+    return 0
+  }
+
   # _rw_escalate <detail> — tell the assignment's sender, the lead and the
   # dispatcher (each once) that the typed assignment was not seen to start a
   # turn, so the lead stops awaiting a verdict blind. The text stays in the pane.
@@ -2716,6 +2745,8 @@ if [ "${1:-}" = "--role-watch" ]; then
   submit_tries=0
   unknown_ticks=0
   unknown_max=5
+  reguard_tries=0
+  reguard_max=3
   escalated=0
   retyped=0
   verdict_seen=0
@@ -2841,6 +2872,7 @@ if [ "${1:-}" = "--role-watch" ]; then
         submitting=0
         submit_tries=0
         unknown_ticks=0
+        reguard_tries=0
         escalated=0
         retyped=0
         cooldown=1
@@ -2876,7 +2908,14 @@ if [ "${1:-}" = "--role-watch" ]; then
         fi
         ;;
       *)
-        unknown_ticks=$((unknown_ticks + 1))
+        # A role pane squeezed to a sliver mid-run renders no frame the matchers
+        # know; restore its width and re-sample before counting it against the
+        # assignment.
+        if _rw_reguard_width; then
+          cooldown=1
+        else
+          unknown_ticks=$((unknown_ticks + 1))
+        fi
         if [ "$unknown_ticks" -ge "$unknown_max" ] && [ "$escalated" -eq 0 ]; then
           _rw_escalate "could not confirm the submit: the pane matches no recognised frame"
         fi

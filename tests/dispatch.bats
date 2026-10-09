@@ -10536,6 +10536,7 @@ case "$1" in
 display-message)
   case "$*" in
   *'#{@crew_exited}'*) printf '%s\n' 0 ;;
+  *'#{pane_width}'*) [ -e "$STUB_DIR/pane_width" ] && cat "$STUB_DIR/pane_width" ;;
   *'#{@crew_role}|#{window_id}'*)
     if [ -e "$STUB_DIR/pull" ]; then printf '%s\n' 'reviewer|@1|pull'; else printf '%s\n' 'reviewer|@1'; fi
     ;;
@@ -10567,6 +10568,15 @@ send-keys)
     cp "$STUB_DIR/frame_after" "$STUB_DIR/frame"
   fi
   [ -x "$STUB_DIR/hook" ] && "$STUB_DIR/hook" "$@"
+  ;;
+list-panes)
+  [ -e "$STUB_DIR/pane_width" ] && printf '%s\n' "%6|reviewer|$(cat "$STUB_DIR/pane_width")"
+  ;;
+select-layout)
+  if [ -e "$STUB_DIR/fixed_frame" ]; then
+    printf '%s\n' 90 >"$STUB_DIR/pane_width"
+    cp "$STUB_DIR/fixed_frame" "$STUB_DIR/frame"
+  fi
   ;;
 load-buffer)
   [ -e "$STUB_DIR/load_buffer_fail" ] && exit 1
@@ -11867,6 +11877,44 @@ _rw_scroll_case() {
   _rw_stop
   [ "$(_rw_enters)" -eq 1 ]
   [ "$(_rw_unsubmitted)" -ge 1 ]
+}
+
+# A role pane squeezed to a sliver mid-run renders no recognisable frame.
+# The watcher restores its width via the main-vertical fallback and re-samples.
+@test "role-watch: a 1-cell role pane is re-guarded and the frame then recognised, no assignment_unsubmitted" {
+  _spawn_role_fixture
+  _rw_sim claude rw_frame_idle rw_frame_unknown 0
+  rw_frame_live >"$STUB_DIR/fixed_frame"
+  printf '%s\n' 1 >"$STUB_DIR/pane_width"
+  _rw_start claude
+  _rw_poll "[ \"\$(_rw_count '^select-layout')\" -ge 1 ]"
+  _rw_settle 16
+  _rw_stop
+  [ "$(_rw_count '^select-layout')" -eq 1 ]
+  [ "$(_rw_unsubmitted)" -eq 0 ]
+  [ "$(_rw_deliveries)" -eq 1 ]
+}
+
+@test "role-watch: a window too narrow to fit is re-guarded a bounded number of times, then reports unsubmitted" {
+  _spawn_role_fixture
+  _rw_sim claude rw_frame_idle rw_frame_unknown 0
+  printf '%s\n' 1 >"$STUB_DIR/pane_width"
+  _rw_start claude
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_settle 16
+  _rw_stop
+  [ "$(_rw_count '^select-layout')" -eq 3 ]
+  grep -q '^msg .*assignment_unsubmitted.*the pane matches no recognised frame' "$STUB_LOG"
+}
+
+@test "role-watch: an unrecognised frame on a wide pane is never re-guarded" {
+  _spawn_role_fixture
+  _rw_sim claude rw_frame_idle rw_frame_unknown 0
+  printf '%s\n' 90 >"$STUB_DIR/pane_width"
+  _rw_start claude
+  _rw_poll "[ \"\$(_rw_unsubmitted)\" -ge 1 ]"
+  _rw_stop
+  [ "$(_rw_count '^select-layout')" -eq 0 ]
 }
 
 # A short human draft that merely occurs inside "Assignment: go" is not the
