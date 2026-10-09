@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
 
 // rowA is one swept, settled run of acme/widgets; rowB is another repo's row,
@@ -48,19 +50,20 @@ func run(t *testing.T, store *string, origin, toplevel string, args ...string) (
 		}
 	}
 	var out, errb bytes.Buffer
-	code := Run(args, "/repo", &out, &errb, Options{StorePath: path, Git: fakeGit(origin, toplevel)})
+	code := Run(args, bus.Paths{Log: filepath.Join(t.TempDir(), "events.jsonl")}, "/repo",
+		&out, &errb, Options{StorePath: path, Git: fakeGit(origin, toplevel)})
 	return out.String(), errb.String(), code
 }
 
 func ptr(s string) *string { return &s }
 
 func TestFlagRefusals(t *testing.T) {
-	for _, args := range [][]string{{}, {"--json"}, {"--pooled"}, {"--sweep-all"}, {"--report", "--root", "/x"}} {
+	for _, args := range [][]string{{"--json"}, {"--pooled"}, {"--sweep-all"}, {"--report", "--root", "/x"}} {
 		_, errb, code := run(t, ptr(""), "https://github.com/acme/widgets.git", "", args...)
 		if code != 1 {
 			t.Fatalf("args %v: exit %d, want 1", args, code)
 		}
-		if strings.Count(errb, "\n") != 1 || !strings.HasPrefix(errb, "crew-go: rate takes --report") {
+		if strings.Count(errb, "\n") != 1 || !strings.HasPrefix(errb, "crew-go: rate takes") {
 			t.Errorf("args %v: stderr = %q", args, errb)
 		}
 	}

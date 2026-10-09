@@ -2,8 +2,8 @@
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
-`await`, `retro`, `rate --report` (report mode only; the sweep path stays in
-bash) and `reply`. Each slice must leave every bats file green; tests may be
+`await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
+`--report` rollup of #890) and `reply`. Each slice must leave every bats file green; tests may be
 adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -66,12 +66,26 @@ output contract below), with each edit justified.
   object is compared with `jq -S`. The fold reads the whole bus with no crew
   filter: a note is cross-run evidence, which is why a clean run prints nothing
   at all.
-- `crew/internal/rate`: the arm of #890, read-only like `report` and its first
-  partial delegation — bash keeps `rate`'s flag loop, refusals and sweep path
-  and execs Go only for `--report`. Its two folds (`dedupe.jq`, `report.jq`)
-  read the global ratings store, not the bus, and every store failure folds to
-  `[]` in silence — the arm's `2>/dev/null || true` — so an empty, missing or
-  unparseable store renders the header alone.
+- `crew/internal/rate`: the whole `rate` arm — #890's read-only `--report` and
+  #895's sweep, which is the port's first writer that is not the bus. Bash keeps
+  the flag loop, the refusals and the `--sweep-all` loop (it discovers repos
+  from the registry and re-enters this arm per repo), and execs Go for both
+  modes. The sweep is the arm op-for-op: `records.jq` folds the bus into one row
+  per run, `plan.jq` decides per call (not per run) which gh queries a stored
+  row still needs, `view.jq`/`actions.jq`/`threads.jq` ingest the three
+  responses, and `merge.jq` merges forward against a fresh store read so a t2
+  upgrade another sweep landed during the network phase is not lost. `dedupe.jq`
+  is the store fold every reader shares, and every store failure folds to `[]`
+  in silence — the arm's `2>/dev/null || true` — so an empty, missing or
+  unparseable store renders the header alone and sweeps as new.
+  `burn.go` prices models from the settings `burnClasses` table, whose globs are
+  bash `case` patterns, not `path.Match` (`*` crosses `/`, and `|` is literal
+  because the helper matched an expanded pattern). `lock.go` is the
+  `ratings.lock.d` protocol — mkdir gate, `pid` file, bare `kill -0` liveness —
+  copied so an older installed `crew` and the autosweep spawner interoperate;
+  it is held for the two store windows and never across a gh call, and released
+  on every exit path while held. The batch append is one `O_APPEND` write, the
+  same single-write guarantee the arm's `dd bs=1048576` gave.
 - `crew/internal/reply`: the arm of #893, a writer like `hold` but with no fold
   of its own — it resolves a branch-only `worker:<branch>` target through
   `sessions.Fold`, and with no crew named through every crew the bus carries,
@@ -100,9 +114,9 @@ crews | log | report | sessions | roster | inbox | hold | await | retro | reply)
 preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
 arm and delete its old arm. `crew hold`'s per-action `--help` text lives only in
 that preamble — it never reaches Go, and `help: crew hold <action> --help` pins
-it. `rate` is the partial case: only its `--report` block execs Go (plus
-`--json`/`--pooled` as parsed), and the Go side refuses every other mode with
-one usage line.
+it. `rate` execs Go for both of its modes — no flags for the sweep, `--report`
+for the rollup — with `--sweep-all`/`--root` looping in bash and re-entering the
+arm; the Go side refuses anything else with one usage line.
 
 ## Output contract
 
