@@ -41,8 +41,8 @@ func run(t *testing.T, p bus.Paths, crew string, o Options) (string, string, int
 }
 
 // The expected tables below are `jq -s -r --arg crew c1 '<the arm program>'` on
-// the same fixture, byte for byte (docs/crew-go-port.md's value-identity rule);
-// the em dash is the fold's own "no value" column.
+// the same fixture, byte for byte (docs/crew-go-port.md's output contract; the
+// table text is exact); the em dash is the fold's own "no value" column.
 const dash = "—"
 
 func TestRowJoinsDispatchToItsSessionStatuses(t *testing.T) {
