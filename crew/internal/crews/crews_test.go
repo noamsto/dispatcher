@@ -259,3 +259,39 @@ func TestValidPidMatrix(t *testing.T) {
 		}
 	}
 }
+
+// A stats row whose only ts is missing makes the final pass subtract null:
+// both jq engines reject that, but the arm's jq -r had streamed the earlier
+// rows while gojq yields nothing until its single value completes. Go's
+// outcome — header only, one stderr line, exit 5 — is the documented
+// divergence, pinned here.
+func TestTableFinalPassFailureIsExit5WithNoRows(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, status(1785951200000, "a", "worker:feat/x#s1")+"\n"+
+		`{"crew_id":"b","kind":"status","from":"worker:feat/x#s1"}`+"\n")
+	out, errB, code := run(t, p, opts(nil, nil))
+	if code != 5 {
+		t.Fatalf("code %d, want 5", code)
+	}
+	if out != "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n" {
+		t.Errorf("stdout %q, want header only", out)
+	}
+	if !strings.HasPrefix(errB, "crew: crews: ") {
+		t.Errorf("stderr %q", errB)
+	}
+}
+
+// A non-string crew_id contributes no id: the arm's jq -r printed numbers
+// and JSON fragments as id lines; Go drops them (documented divergence).
+func TestTableNonStringCrewIDsDropped(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, `{"ts":1785951200000,"crew_id":5,"kind":"status"}`+"\n"+
+		`{"ts":1785951200000,"crew_id":{"o":1},"kind":"status"}`+"\n")
+	out, _, code := run(t, p, opts(nil, nil))
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if out != "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n" {
+		t.Errorf("stdout %q, want header only", out)
+	}
+}

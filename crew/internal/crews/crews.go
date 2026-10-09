@@ -162,7 +162,12 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	}
 	out, err := jqrun.Run(finalProgram, meta, nowSec, map[string]jsonv.Value{"stats": stats})
 	if err != nil {
-		// Unreachable with the values built above; jq's own failure status.
+		// Reachable on a corrupt bus: a stats row whose last/first is null
+		// (a crew whose only ts is missing) makes gojq subtract null, and
+		// both engines' jq rejects that. The arm's jq -r had streamed the
+		// rows before the failing one; gojq yields nothing until its single
+		// value completes, so Go prints zero rows — docs/crew-go-port.md's
+		// "otherwise empty stdout" rule. Exit 5 matches the arm.
 		say(stderr, "crew: crews: %v\n", err)
 		return 5
 	}

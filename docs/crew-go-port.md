@@ -70,7 +70,12 @@ arm and delete its old arm.
   `$(...)`, awk `-v` escape processing) are not mirrored. `crew crews` also
   sorts its id union and `--mine` scan in byte order, not the caller's
   `sort -u`/glob locale collation — observable only for id sets whose C
-  order differs from the run locale's, among no-stats rows or `last` ties.
+  order differs from the run locale's, among no-stats rows or `last` ties;
+  a non-string `crew_id` contributes no id (the arm's `jq -r` printed
+  numbers and JSON fragments as id lines, an object spanning several); and
+  when the final pass fails (a stats row with a null `ts`), Go prints no
+  rows where the arm's `jq -r` had already streamed the rows before the
+  failing one — exit 5 and the one stderr line match.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
 
