@@ -1,7 +1,7 @@
 ---
 name: shell-reviewer
 description: "Reviews bash and POSIX shell changes for quoting, word-splitting, exit-code handling and Linux/macOS portability."
-globs: ["*.sh", "*.bash", "*.bats", ".envrc"]
+globs: ["*.sh", "*.bash", "*.bats", ".envrc", "*.jq"]
 shebang: ["sh", "bash"]
 ---
 
@@ -28,6 +28,15 @@ shellcheck the changed script and every library it sources (`-x`); a `.bats` fil
 - **`set -e` false confidence**: `errexit` is disabled inside `if`/`&&`/`||` contexts and command substitutions — verify error handling doesn't silently rely on it there
 - **Empty-var edge cases**: `[ $x = y ]` breaking when `$x` is empty/unset; missing `${x:-}` under `set -u`
 - **Comment vs. code drift**: a comment asserting an invariant the code doesn't back. Treat stale narrative as a live bug, not a nit
+
+#### jq programs (`*.jq`)
+- **`//` treats `false` as absent**: `a // b` also fires when `a` is `false`, silently replacing a real "no" with the default; gate on `a != null` when only absence matters
+- **`try`/`?` swallowing errors that should surface**: `.foo?` on a type error hides a broken upstream shape as empty output — the same silent-failure class as a pipeline that eats an exit code
+- **`-e` reads the last output**: the exit status reflects only the final value, so a program that emits a trailing `null`/`false` after real results exits 1 (or the reverse) — set the exit deliberately, don't inherit it
+- **`sort_by`/`group_by` stability and type ordering**: jq's sort is stable but its ordering across mixed types (null < false/true < numbers < strings) is not what a UI or fold expects; group keys of mixed types group surprisingly
+- **`fromjson` on non-strings**: throws on an already-decoded value — know whether the field arrives as text or as parsed JSON before parsing it
+- **`--arg` vs `--argjson`**: `--arg` always produces a string, so a numeric or boolean variable becomes `"3"` and comparisons silently misbehave; use `--argjson` for non-strings
+- **`crew/internal/*.jq` is a verbatim copy** of a crew.sh program with only documented gojq patches (one output value per jqrun call, Go regexp anchors): an undocumented rewrite of the jq — even one that looks equivalent — is a divergence from the bash arm, not a cleanup
 
 ### HIGH
 

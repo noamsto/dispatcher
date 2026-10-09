@@ -852,6 +852,19 @@ globs: ["*.rs"]' 'REPO-GENERAL-BODY'
   [ -n "$(_reviewer shell-reviewer .name)" ]
 }
 
+# #886: the crew Go port keeps its logic in embedded jq programs, so a `.jq`
+# diff has to route to the shell reviewer, not only the general fallback.
+@test "resolver: a changed .jq file routes to shell-reviewer and covers the diff" {
+  _roster_repo
+  base="$(git rev-parse HEAD)"
+  mkdir -p crew/internal/await
+  printf '.\n' >crew/internal/await/await.jq
+  _roster_commit jq
+  _resolve "$base"
+  [[ "$(_routed crew/internal/await/await.jq)" == *shell-reviewer* ]]
+  [ "$(jq -r '[.reviewers[] | select(.fallback)] | length' "$ROSTER")" -eq 0 ]
+}
+
 @test "resolver: a fully covered diff drops the fallback entry" {
   _roster_repo
   base="$(git rev-parse HEAD)"
