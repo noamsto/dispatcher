@@ -4773,6 +4773,12 @@ roster-render)
   # Resolved before the cd below: `_rr_model` re-execs this script, and a
   # relative $0 would no longer resolve from $common.
   _rr_self=$(readlink -f "$0")
+  # The PATH this daemon started with, before any hop's wrapper prepended to it:
+  # recorded once, exported so every hop's process keeps it, and restored on
+  # every exec below — a hop then carries one wrapper prefix, not N.
+  if [ -z "${CREW_RR_START_PATH+x}" ]; then
+    export CREW_RR_START_PATH="$PATH"
+  fi
   # `dispatch resume` starts this from inside a worker worktree, and every
   # rebuild re-execs `crew roster`, which resolves the bus from cwd: once that
   # worktree is reaped the renderer would die with `not in a git repo`.
@@ -4816,10 +4822,6 @@ roster-render)
   # was reclaimed (crew dir removed and re-created) from deleting the new owner's.
   trap '[ "$(cat "$rr_lockd/pid" 2>/dev/null || true)" != "$$" ] || _lock_release "$rr_lockd"' EXIT
   trap 'exit 0' INT TERM
-  # The baseline for the loop's own re-resolution, taken once: a daemon started
-  # while a newer build was already installed keeps running the one it was started
-  # with, and follows the entry from then on.
-  rr_entry=$(_rr_installed_crew)
   rr_live=1
   rr_sig=""
   rr_last_build=0
@@ -4854,11 +4856,13 @@ roster-render)
     # successful exec, and `_lock_acquire` is idempotent for the owner's own pid. A
     # crew already draining is left to exit rather than upgraded, because the hop
     # would restart its quiet window in the new build and the next dispatch starts
-    # that build anyway; `_rr_self` skips a hop into the build already running.
+    # that build anyway. The entry is followed whenever it names a build other than
+    # the one running — at start too, and a rollback is no exception; only the
+    # running build is refused. PATH is restored to the recorded start first, so a
+    # hop never grows it and a devshell's own entries ride along inside it.
     rr_want=$(_rr_installed_crew)
-    if [ -z "$rr_idle_since" ] && [ -n "$rr_want" ] && [ "$rr_want" != "$rr_entry" ] &&
-      [ "$rr_want" != "$_rr_self" ]; then
-      exec "$rr_want" roster-render "${rr_args[@]}"
+    if [ -z "$rr_idle_since" ] && [ -n "$rr_want" ] && [ "$rr_want" != "$_rr_self" ]; then
+      PATH="${CREW_RR_START_PATH-$PATH}" exec "$rr_want" roster-render "${rr_args[@]}"
     fi
     sleep "$rr_interval"
   done
