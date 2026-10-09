@@ -46,6 +46,28 @@ func TestD8HelperFailureHolds(t *testing.T) {
 	}
 }
 
+// With no budget episode open, a budget helper that failed to run posts
+// nothing and arms nothing: its status is not an exhausted verdict.
+func TestD8HelperFailureNoEpisode(t *testing.T) {
+	for _, rc := range helperFailures {
+		t.Run(strconv.Itoa(rc), func(t *testing.T) {
+			f := newFake()
+			h, w := d8Watch(t, f)
+			h.writeRows(h.status("worker:feat/x", 1, `{"state":"working"}`))
+			f.sh = func(string, ...string) (string, int) { return "", rc }
+			pdOK(t, w, 0, 0, w.probePre)
+			pdOK(t, w, 60, 4, w.probePre)
+			wantRows(t, h)
+			if w.pd.d8At != 0 {
+				t.Errorf("d8At armed at %d", w.pd.d8At-w.start)
+			}
+			if n := countCalls(f, "budget "); n == 0 {
+				t.Error("budget helper never called")
+			}
+		})
+	}
+}
+
 // A failed unread scan skips the tick's verdict: the open episode neither
 // clears nor changes.
 func TestD6UnreadHelperFailureHolds(t *testing.T) {
