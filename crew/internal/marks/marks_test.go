@@ -1,11 +1,15 @@
 package marks
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
@@ -269,6 +273,83 @@ func TestRecordModeIsPrivate(t *testing.T) {
 	}
 	if st.Mode().Perm() != 0o600 {
 		t.Errorf("marks mode = %v, want -rw-------", st.Mode().Perm())
+	}
+}
+
+func TestLockPath(t *testing.T) {
+	got := LockPath("/x/crew", "c1", "worker:feat/x#s1-1")
+	if want := "/x/crew/await.lock/c1-worker_feat_x_s1-1.3454895548"; got != want {
+		t.Errorf("LockPath = %s, want %s", got, want)
+	}
+}
+
+// TestRecordConcurrent has 32 writers each add one sender to the same marks
+// file; without the lock, two reads of the same old object lose one's mark.
+func TestRecordConcurrent(t *testing.T) {
+	const me = "worker:feat/x#s1-1"
+	d := dir(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			msg := lines(t, fmt.Sprintf(`{"from":"s%d","ts":%d}`+"\n", i, i+1))
+			if !Record(d, "c1", me, msg) {
+				t.Errorf("Record s%d failed", i)
+			}
+		}()
+	}
+	wg.Wait()
+	marks := Read(d, "c1", me)
+	for i := 0; i < 32; i++ {
+		v, ok := marks.Get(fmt.Sprintf("s%d", i))
+		if !ok || testjson.Compact(v) != strconv.Itoa(i+1) {
+			t.Errorf("mark s%d = %v, want %d", i, ok, i+1)
+		}
+	}
+}
+
+func TestLockExcludes(t *testing.T) {
+	d := dir(t)
+	unlock, err := Lock(d, "c1", "me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan func())
+	go func() {
+		u, err := Lock(d, "c1", "me")
+		if err != nil {
+			t.Error(err)
+		}
+		got <- u
+	}()
+	select {
+	case <-got:
+		t.Fatal("second Lock returned while the first was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case u := <-got:
+		u()
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Lock still blocked after unlock")
+	}
+}
+
+// TestRecordKeepsAwaitDirClean pins that the lock file lives outside await/,
+// where callers glob for exactly the marks file.
+func TestRecordKeepsAwaitDirClean(t *testing.T) {
+	d := dir(t)
+	if !Record(d, "c1", "me", lines(t, `{"from":"a","ts":1}`+"\n")) {
+		t.Fatal("Record failed")
+	}
+	got, err := filepath.Glob(d + "/await/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != Path(d, "c1", "me") {
+		t.Errorf("await/ holds %v, want only %s", got, Path(d, "c1", "me"))
 	}
 }
 

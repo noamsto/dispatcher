@@ -3,6 +3,9 @@
 // this session has been handed}, so a reply taken through the straggler fold is
 // not handed back by the next read.
 //
+// Lock serializes a read-then-record cycle per file across processes; the bash
+// helpers do not take it, so they stay best effort against a Go writer.
+//
 // `crew inbox` is the first Go writer; the bash `await`, `stall-watch --unread`
 // and `nudge` readers still read and write the same file through crew.sh's
 // `_await_state`/`_await_marks`/`_await_record`. The path, the content and the
@@ -14,8 +17,10 @@ package marks
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	_ "embed"
 
@@ -30,11 +35,13 @@ var readProgram string
 //go:embed record.jq
 var recordProgram string
 
-// dirName is the await directory under the crew dir, and tmpPrefix the mktemp
-// template `_await_record` gives its staging file.
+// dirName is the await directory under the crew dir, lockDirName the sibling
+// holding the lock files, and tmpPrefix the mktemp template `_await_record`
+// gives its staging file.
 const (
-	dirName   = "await"
-	tmpPrefix = ".st."
+	dirName     = "await"
+	lockDirName = "await.lock"
+	tmpPrefix   = ".st."
 )
 
 // Path is `_await_state`: dir/await/<key with every [^A-Za-z0-9._-] byte mapped
@@ -55,6 +62,39 @@ func Path(dir, crew, me string) string {
 		}
 	}
 	return dir + "/" + dirName + "/" + name.String() + "." + strconv.FormatUint(uint64(identity.CKsum([]byte(key))), 10)
+}
+
+// LockPath is the flock file for Path's marks file. It sits beside await/, not
+// in it: callers and tests treat await/ as holding only marks files.
+func LockPath(dir, crew, me string) string {
+	return dir + "/" + lockDirName + "/" + filepath.Base(Path(dir, crew, me))
+}
+
+// Lock takes the exclusive flock on the marks file's lock file, blocking until
+// it is free; the kernel drops it if the holder dies. The lock file is never
+// the marks file itself, because Record replaces that by rename.
+func Lock(dir, crew, me string) (unlock func(), err error) {
+	if err := os.MkdirAll(dir+"/"+lockDirName, 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(LockPath(dir, crew, me), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+		if err != syscall.EINTR {
+			break
+		}
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // Read is `_await_marks`: the file as one JSON object, with a missing,
@@ -78,13 +118,28 @@ func Read(dir, crew, me string) jsonv.Value {
 	return old
 }
 
-// Record is `_await_record`: raise each sender's mark to the newest of msgs,
+// Record is `_await_record` under Lock: when the lock cannot be taken it records
+// unlocked, as before, since a lost mark only means redelivery.
+func Record(dir, crew, me string, msgs []jsonv.Value) bool {
+	if unlock, err := Lock(dir, crew, me); err == nil {
+		defer unlock()
+	}
+	return record(dir, crew, me, msgs)
+}
+
+// RecordHeld is Record for a caller that already holds Lock: a second flock
+// fd in the same process would block on the first and self-deadlock.
+func RecordHeld(dir, crew, me string, msgs []jsonv.Value) bool {
+	return record(dir, crew, me, msgs)
+}
+
+// record is `_await_record`: raise each sender's mark to the newest of msgs,
 // over the marks already held, and replace the file atomically. Best effort —
 // every failure path leaves the old file in place and only means redelivery.
 // The reduce is the helper's, so a msg whose `from` is not a string fails the
 // whole write rather than skipping that one msg, exactly as `jq` exiting 5
 // inside the helper's `if` does.
-func Record(dir, crew, me string, msgs []jsonv.Value) bool {
+func record(dir, crew, me string, msgs []jsonv.Value) bool {
 	if err := os.MkdirAll(dir+"/"+dirName, 0o755); err != nil {
 		return false
 	}
