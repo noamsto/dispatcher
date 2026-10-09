@@ -106,8 +106,9 @@ type folds struct {
 	warned bool
 }
 
-// call is one jq process: the warning first (once per call, not once per fold),
-// then the program.
+// call is one fold — the arm's one jq process, including its one $JQ_COLORS
+// warning, which the folds copy prints once per invocation rather than once per
+// step.
 func (f *folds) call(prog string, in []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, int) {
 	if !f.warned && f.o.JQColorsInvalid {
 		f.warned = true
@@ -148,8 +149,7 @@ func (f *folds) outstanding(crew string) (jsonv.Value, int) {
 // `list` and `due`: `[--json] [--crew ID]` in either order, as the arm's loop
 // left them. msg is the arm's stderr line when the arguments themselves fail.
 // jsonFlag is false for `park` and `release`, whose loops have no `--json` case
-// and so fall through to their `*)` usage branch — accepting the flag there
-// would turn a call bash rejects into a successful one.
+// and fall through to their `*)` usage branch.
 func parseRead(args []string, usage string, jsonFlag bool) (jsonOut bool, hcrew, msg string) {
 	for len(args) > 0 {
 		switch args[0] {
@@ -341,9 +341,8 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 	fl.title = strings.Join(args, " ")
 
-	// Reject a missing required field by name, the way `status` rejects an
-	// unknown state — fail loudly at the writer, not downstream. The order is the
-	// arm's and decides which line a doubly-incomplete call prints.
+	// Reject a missing required field by name. The order is the arm's, and it
+	// decides which line a doubly-incomplete call prints.
 	for _, req := range []struct{ flag, val string }{
 		{"--engine", fl.engine}, {"--window", fl.window}, {"--resets-at", fl.resetsAt},
 		{"--agent", fl.agent}, {"--ref", fl.ref}, {"--branch", fl.branch},
@@ -432,7 +431,6 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		say(stderr, "crew: hold add: %v\n", err)
 		return exitFailure
 	}
-	// Prints only the minted id, so a caller can `release <id>` later.
 	say(stdout, "%s\n", id)
 	return 0
 }
@@ -519,10 +517,8 @@ func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options
 	return 0
 }
 
-// resolveCrew is `_hold_crew`: the --crew flag, else this repo's crew, and the
-// same caller-supplied-id guard `watch`/`stream` apply. Not containment —
-// `<dir>/holds/<id>.md` embeds no crew id — but a write path with a
-// caller-supplied id guards like its siblings.
+// resolveCrew is `_hold_crew`: the --crew flag, else this repo's crew, under the
+// same id guard `watch`/`stream` apply to a caller-supplied crew.
 func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
 	crew := raw
 	if crew == "" && o.CrewID != nil {
@@ -609,8 +605,8 @@ func digitsLiteral(digits string) string {
 	return trimmed
 }
 
-// isDigits is the arm's `case "$x" in ”|*[!0-9]*)` rejection inverted: a
-// non-empty run of ASCII digits, which is all `--argjson` needs.
+// isDigits is the arm's digit case (an empty value or any non-digit rejects),
+// inverted: a non-empty run of ASCII digits, which is all `--argjson` needs.
 func isDigits(s string) bool {
 	if s == "" {
 		return false

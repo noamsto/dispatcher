@@ -2,8 +2,8 @@
 // `_bus_append` write plus the two helpers that keep a line short enough to
 // survive it (`_fit_line` and `_shrink`). They are ports of the crew.sh helpers
 // of the same name, which stay there while `status`, `msg` and `reply` call
-// them; the drift guards are `hold: the Go row's title is _shrink's own output
-// at the keep it implies` in crew.bats and TestCrewShLineContract here.
+// them; `TestCrewShLineContract` here and the `hold:` drift guards in crew.bats
+// keep the two copies equal.
 package bus
 
 import (
@@ -14,9 +14,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// LineMax is `_LINE_MAX`: the byte cap one bus line may reach. It is a cap on
-// the line, not on the text inside it, which is why FitLine re-measures the
-// encoded row instead of cutting the text to a computed length.
+// LineMax is `_LINE_MAX`: the byte cap one bus line may reach — a cap on the
+// encoded line, not on the text inside it.
 const LineMax = 4096
 
 // elided is `_ELIDED` — a leading space, a three-byte ellipsis, and the marker
@@ -92,9 +91,8 @@ func FitLine(build func(text string) string, full string) string {
 // Shrink is `_shrink`: shorten text to roughly keep characters. A sink body is
 // itself JSON, and cutting it as a blob ends the string mid-object — the bus line
 // stays valid but the body no longer parses, so a reader loses the whole record.
-// So a text that parses as JSON shortens each long string leaf and re-encodes,
-// which keeps the record's shape and its short keys intact; anything else gets
-// the blob cut.
+// So a text that parses as JSON shortens each long string leaf and re-encodes;
+// anything else gets the blob cut.
 //
 // The branch test is `jq -e 'type=="object" or type=="array"'` read off the whole
 // stream: jq's `-e` is the LAST output's truthiness, and its `jq -c walk(...)`
