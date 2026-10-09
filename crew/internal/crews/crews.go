@@ -29,7 +29,7 @@ var statsProgram string
 //go:embed crews_final.jq
 var finalProgram string
 
-// header is the arm's printf, TTS-aligned with the final pass's columns.
+// header is the arm's printf, matching the final pass's column order.
 const header = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive"
 
 // Options is everything Run reads beyond the bus: the process probes,
