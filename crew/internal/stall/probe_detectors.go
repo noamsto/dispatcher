@@ -70,8 +70,12 @@ func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok b
 // shWrite is shCall for an op that writes (nudge, release). The arm's `$(…)`
 // child outlived the arm's death and finished its write, so a signal must not
 // tear one between the keystroke or kill and its bus row; the watch still
-// ends with 128+signo once the op returns.
+// ends with 128+signo once the op returns. A write that has not started when
+// the signal lands never starts.
 func (w *watch) shWrite(op string, args ...string) (string, int, bool, error) {
+	if err := w.cancelled(); err != nil {
+		return "", 0, false, err
+	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
 	defer cancel()
 	return w.shOn(ctx, op, args...)

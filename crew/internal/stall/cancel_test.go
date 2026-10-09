@@ -3,6 +3,8 @@ package stall
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -140,5 +142,56 @@ func TestReleaseSurvivesCancel(t *testing.T) {
 	}
 	if !finished {
 		t.Error("the release was killed mid-write")
+	}
+}
+
+// A signal landing during the already-nudged log scan, after the last
+// cancellable call-out, must not start the write: the arm died before typing.
+func TestNudgeNotStartedAfterCancel(t *testing.T) {
+	s := &d6Script{}
+	h, f, w := d6Watch(t, s)
+	ctx, cancel := sigterm(t)
+	w.ctx = ctx
+	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	fifo := filepath.Join(t.TempDir(), "log.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.shc = func(_ context.Context, op string, args ...string) (string, int) {
+		if op == "unread" {
+			// Hold nudged()'s read open until the signal has landed.
+			w.paths.Log = fifo
+			go func() {
+				fh, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+				cancel()
+				if err == nil {
+					_ = fh.Close()
+				}
+			}()
+		}
+		return s.sh(op, args...)
+	}
+	if code, ok := codeOf(pdTick(t, w, 0, 0, w.d6)); !ok || code != 143 {
+		t.Errorf("d6 = (%d, %v), want 143", code, ok)
+	}
+	if n := countCalls(f, "nudge "); n != 0 {
+		t.Errorf("%d nudge calls after the signal, want none", n)
+	}
+	wantRows(t, h)
+}
+
+func TestShWriteNotStartedAfterCancel(t *testing.T) {
+	for _, op := range []string{"nudge", "release"} {
+		t.Run(op, func(t *testing.T) {
+			f := newFake()
+			_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+			ctx, cancel := sigterm(t)
+			cancel()
+			w.ctx = ctx
+			_, _, _, err := w.shWrite(op)
+			if code, ok := codeOf(err); !ok || code != 143 || len(f.shCalls) != 0 {
+				t.Errorf("shWrite = (%d, %v) with %d calls, want 143 and none", code, ok, len(f.shCalls))
+			}
+		})
 	}
 }
