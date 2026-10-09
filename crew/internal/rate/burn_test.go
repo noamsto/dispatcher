@@ -191,6 +191,8 @@ func TestGlobMatch(t *testing.T) {
 		{"[é]x", "éx", true},
 		{"[a-z]x", "éx", false},
 		{"[!a]x", "éx", true},
+		{"*[!é]", "é", false},
+		{"*[![:alpha:]]", "é", false},
 	} {
 		if got := globMatch(c.pattern, c.s); got != c.want {
 			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)

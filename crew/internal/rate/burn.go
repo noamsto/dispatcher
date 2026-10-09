@@ -163,12 +163,16 @@ func matchFrom(pat, s string, pi, si int) bool {
 			if pi == len(pat)-1 {
 				return true
 			}
-			for rest := si; rest <= len(s); rest++ {
+			for rest := si; ; {
 				if matchFrom(pat, s, pi+1, rest) {
 					return true
 				}
+				if rest >= len(s) {
+					return false
+				}
+				_, n := utf8.DecodeRuneInString(s[rest:])
+				rest += n
 			}
-			return false
 		case '?':
 			if si >= len(s) {
 				return false
