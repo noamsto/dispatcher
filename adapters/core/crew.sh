@@ -41,20 +41,16 @@ _identity() { # $1=branch -> {name,color,tmux}
   _identity_at "$(_identity_slot "$1")"
 }
 
-# _where_die <msg> — a `crew where` resolution failure: message on stderr and
-# a non-zero exit.
-_where_die() {
-  echo "crew: where: $*" >&2
-  exit 1
-}
-
 # _resolve_target <target> [crew] — one TSV line (branch, codename, host, crew)
 # per branch the target names, from the latest `dispatch` row of each branch in
 # the bus: `#N`/`N` (branch `<type>/N-…`, or an `also_closes` entry), a Linear
 # id (`eng-N-…`, or an `also_closes` entry), `worker:<branch>#<session>`, a
-# branch, or a codename. Shared by `crew where` and `crew resolve-target`. The
-# rows are unauthenticated (workers can append to the bus): a caller that acts
-# on the result must still gate on the dispatcher-written worktree record.
+# branch, or a codename. `crew where` and `crew resolve-target` are Go (#902,
+# crew/internal/resolve) with their own copy of this fold, so `nudge` is the
+# last bash caller; a crew.bats row replays this helper against
+# `crew resolve-target` on one fixture bus. The rows are unauthenticated
+# (workers can append to the bus): a caller that acts on the result must still
+# gate on the dispatcher-written worktree record.
 _resolve_target() {
   [ -f "$log" ] || return 0
   jq -nrR --arg t "$1" --arg c "${2:-}" '
@@ -2723,96 +2719,6 @@ if [ "$sub" = identity ]; then
 fi
 
 case "$sub" in
-where)
-  # where <codename|branch|%id> [--crew ID] — a human-usable address for a
-  # worker's pane: codename, session:window.pane, window name, role and the
-  # jump command. Resolved from dispatcher-anchored state only (the window's
-  # @crew_* stamps, the dispatch rows), never from git discovery in a worktree
-  # or the worker's env. Non-zero with a readable message when it is gone.
-  where_crew=$(_crew_id)
-  where_target=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --crew)
-      [ -n "${2:-}" ] || _where_die "--crew needs an id (usage: crew where <codename|branch|%id> [--crew ID])"
-      where_crew="$2"
-      shift 2
-      ;;
-    --*)
-      _where_die "unknown flag '$1' (usage: crew where <codename|branch|%id> [--crew ID])"
-      ;;
-    *)
-      [ -z "$where_target" ] || _where_die "one target only (usage: crew where <codename|branch|%id> [--crew ID])"
-      where_target="$1"
-      shift
-      ;;
-    esac
-  done
-  [ -n "$where_target" ] || _where_die "usage: crew where <codename|branch|%id> [--crew ID]"
-
-  # A tmux read failure is not "the target is gone".
-  where_wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}' 2>/dev/null) ||
-    _where_die "cannot read tmux windows (is a tmux server running?)"
-  where_panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}' 2>/dev/null) ||
-    _where_die "cannot read tmux panes (is a tmux server running?)"
-  # Windows anchored to this crew: a non-empty branch, this repo's crew dir,
-  # and this crew's id when the window carries one. Keep the display fields.
-  where_cwins=$(printf '%s\n' "$where_wins" |
-    awk -F'\t' -v dir="$dir" -v crew="$where_crew" \
-      'NF >= 8 && $2 != "" && $3 == dir && (crew == "" || $4 == "" || $4 == crew) { print $1 "\t" $2 "\t" $5 "\t" $6 "\t" $7 "\t" $8 }')
-
-  where_win=""
-  where_pane=""
-  case "$where_target" in
-  '%'[0-9]*)
-    # A pane id keeps that exact pane.
-    where_wid=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_target" '$2 == p { print $1; exit }')
-    [ -n "$where_wid" ] || _where_die "no pane $where_target"
-    where_win=$(printf '%s\n' "$where_cwins" | awk -F'\t' -v w="$where_wid" '$1 == w { print; exit }')
-    [ -n "$where_win" ] || _where_die "pane $where_target is not a pane of this crew"
-    where_pane="$where_target"
-    ;;
-  *)
-    where_win=$(printf '%s\n' "$where_cwins" | awk -F'\t' -v b="$where_target" '$2 == b { print; exit }')
-    if [ -z "$where_win" ]; then
-      where_matches=$(printf '%s\n' "$where_cwins" | awk -F'\t' -v n="$where_target" '$3 == n { print }')
-      where_n=$(printf '%s\n' "$where_matches" | grep -c . || true)
-      [ "$where_n" -le 1 ] || _where_die "ambiguous codename '$where_target' — matches $(printf '%s\n' "$where_matches" | cut -f2 | paste -sd, -); pass a branch or %pane"
-      where_win="$where_matches"
-    fi
-    if [ -z "$where_win" ]; then
-      where_dbr=$(_resolve_target "$where_target" "$where_crew" | cut -f1 | paste -sd, -)
-      case "$where_dbr" in
-      *,*) _where_die "ambiguous target '$where_target' — matches $where_dbr; pass a branch or %pane" ;;
-      ?*) _where_die "no live pane for '$where_target' (branch $where_dbr) — its window is gone" ;;
-      esac
-      _where_die "no worker matches '$where_target'"
-    fi
-    ;;
-  esac
-
-  where_wid=$(printf '%s' "$where_win" | cut -f1)
-  where_branch=$(printf '%s' "$where_win" | cut -f2)
-  where_name=$(printf '%s' "$where_win" | cut -f3)
-  where_sess=$(printf '%s' "$where_win" | cut -f4)
-  where_widx=$(printf '%s' "$where_win" | cut -f5)
-  where_wname=$(printf '%s' "$where_win" | cut -f6)
-
-  if [ -z "$where_pane" ]; then
-    where_pane=$(printf '%s\n' "$where_panes" | awk -F'\t' -v w="$where_wid" '$1 == w && $3 == "lead" { print $2; exit }')
-    [ -n "$where_pane" ] || where_pane=$(printf '%s\n' "$where_panes" | awk -F'\t' -v w="$where_wid" '$1 == w { print $2; exit }')
-  fi
-  [ -n "$where_pane" ] || _where_die "no pane in the window for '$where_target'"
-
-  where_role=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $3; exit }')
-  where_pidx=$(printf '%s\n' "$where_panes" | awk -F'\t' -v p="$where_pane" '$2 == p { print $4; exit }')
-  # A plain (non-grid) dispatch window stamps no @crew_role: its lone pane is lead.
-  [ -n "$where_role" ] || where_role=lead
-  [ -n "$where_name" ] || where_name=$(_identity "$where_branch" | jq -r .name)
-
-  printf '%s — %s:%s.%s "%s" (%s pane)   jump: ! tmux switch-client -t %s\n' \
-    "$where_name" "$where_sess" "$where_widx" "$where_pidx" "$where_wname" "$where_role" "$where_pane"
-  ;;
 nudge)
   # nudge <codename|branch|worker:<branch>#s…> [--crew ID] — type the constant
   # $_nudge_line into a worker lead's idle input box, so a lead whose wake
@@ -3005,52 +2911,6 @@ nudge)
       _nudge_wait_end timeout 2 "$nudge_out (waited ${nudge_waited}s)" "refused — $nudge_out (waited ${nudge_waited}s)"
     _clock_sleep "$nudge_interval"
   done
-  ;;
-resolve-target)
-  # resolve-target <target> [--crew ID] — the branch, codename, host and crew a
-  # `#N`, Linear id, branch, codename or worker id names, as one TSV line.
-  # Exit 1 when nothing matches, 2 when several branches do (all listed).
-  rt_crew=""
-  rt_target=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --crew)
-      [ -n "${2:-}" ] || {
-        echo "crew: resolve-target: --crew needs an id" >&2
-        exit 1
-      }
-      rt_crew="$2"
-      shift 2
-      ;;
-    --*)
-      echo "crew: resolve-target: unknown flag '$1'" >&2
-      exit 1
-      ;;
-    *)
-      [ -z "$rt_target" ] || {
-        echo "crew: resolve-target: one target only" >&2
-        exit 1
-      }
-      rt_target="$1"
-      shift
-      ;;
-    esac
-  done
-  [ -n "$rt_target" ] || {
-    echo "usage: crew resolve-target <target> [--crew ID]" >&2
-    exit 1
-  }
-  rt_out=$(_resolve_target "$rt_target" "$rt_crew")
-  rt_n=$(printf '%s\n' "$rt_out" | grep -c . || true)
-  if [ "$rt_n" -eq 0 ]; then
-    echo "crew: resolve-target: no worker matches '$rt_target'" >&2
-    exit 1
-  fi
-  if [ "$rt_n" -gt 1 ]; then
-    echo "crew: resolve-target: ambiguous target '$rt_target' — matches: $(printf '%s\n' "$rt_out" | cut -f1 | paste -sd, - | sed 's/,/, /g'); pass a branch" >&2
-    exit 2
-  fi
-  printf '%s\n' "$rt_out"
   ;;
 status | msg)
   crew=$(_crew_id)
@@ -4124,7 +3984,7 @@ stream)
     fi
   done
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"

@@ -11801,6 +11801,54 @@ EOF
   [[ "$output" == *"cannot read tmux windows"* ]]
 }
 
+@test "where: a bad argument is refused before tmux is read" {
+  # The stub logs every call, so an empty log is the proof: the arm's flag loop
+  # runs ahead of both tmux reads, exactly as the bash loop did.
+  _where_stub "" ""
+  for args in '--crew' '--crew --bogus' '--bogus nova' 'nova iris'; do
+    # shellcheck disable=SC2086
+    CREW_ID=c1 run run_crew where $args
+    [ "$status" -eq 1 ]
+  done
+  CREW_ID=c1 run run_crew where --crew
+  [[ "$output" == *"--crew needs an id (usage: crew where"* ]]
+  CREW_ID=c1 run run_crew where --bogus nova
+  [[ "$output" == *"unknown flag '--bogus' (usage: crew where"* ]]
+  CREW_ID=c1 run run_crew where nova iris
+  [[ "$output" == *"one target only (usage: crew where"* ]]
+  [ ! -s "$STUB_LOG" ]
+}
+
+# The bus is unauthenticated and the arm swallowed every jq failure, so a bus
+# the fold cannot use is the target being unknown: exit 1 and its own line,
+# never jq's 2 or 5 and an empty stdout.
+@test "where: a corrupt bus is no worker matches, not a fold failure" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "" ""
+  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","broken' >"$dir/events.jsonl"
+  CREW_ID=c1 run run_crew where sage
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches 'sage'"* ]]
+}
+
+# `--crew` is the arm's crew anchor: it overrides CREW_ID, and a window of
+# another crew stops answering. (The filter's third shape — a window carrying no
+# `@crew_id` at all — cannot be written through `stub_tmux`, whose canonicalizer
+# collapses an empty field; `internal/where`'s TestCrewAnchor pins it.)
+@test "where: --crew overrides CREW_ID and re-anchors the window set" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  _where_stub "$(printf '@624\tfeat/1-a\t%s\tc1\tnova\tsess\t3\twin-a\n@625\tfeat/2-b\t%s\tc2\tiris\tsess\t4\twin-b\n' "$dir" "$dir")" \
+    "$(printf '@624\t%%204\tlead\t1\n@625\t%%304\tlead\t1\n')"
+  CREW_ID=c1 run run_crew where --crew c2 iris
+  [ "$status" -eq 0 ]
+  [ "$output" = 'iris — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304' ]
+  CREW_ID=c1 run run_crew where --crew c2 nova
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no worker matches 'nova'"* ]]
+}
+
 # --- crew nudge -----------------------------------------------------------
 # Types the constant `crew inbox "$CREW_WORKER_ID"` line into an idle worker lead.
 
@@ -12473,6 +12521,69 @@ EOF
   run run_crew resolve-target nobody
   [ "$status" -eq 1 ]
   [[ "$output" == *"no worker matches 'nobody'"* ]]
+}
+
+@test "resolve-target: every argument refusal, the usage line unprefixed" {
+  run run_crew resolve-target --crew
+  [ "$status" -eq 1 ]
+  [ "$output" = "crew: resolve-target: --crew needs an id" ]
+  run run_crew resolve-target --bogus '#9'
+  [ "$status" -eq 1 ]
+  [ "$output" = "crew: resolve-target: unknown flag '--bogus'" ]
+  run run_crew resolve-target '#9' '#10'
+  [ "$status" -eq 1 ]
+  [ "$output" = "crew: resolve-target: one target only" ]
+  run run_crew resolve-target
+  [ "$status" -eq 1 ]
+  [ "$output" = "usage: crew resolve-target <target> [--crew ID]" ]
+}
+
+# Drift guard: `nudge` keeps the bash `_resolve_target` helper while both arms
+# read the Go fold, so the two must keep answering the same question the same
+# way. The helper prints every match and the arm one row or a refusal, so the
+# guard derives the arm's outcome from the helper's own rows — status, then the
+# row or the branch list byte for byte (`@tsv` text both sides wrote). A torn
+# row is in the fixture because both readers skip it.
+@test "resolve-target: the bash _resolve_target helper and crew resolve-target agree on a shared bus" {
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  mkdir -p "$dir"
+  {
+    printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage","host":"h1"}'
+    printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"eng-12-thing","name":"nova","also_closes":["ENG-13"]}'
+    printf '%s\n' '{"ts":3,"crew_id":"c2","kind":"dispatch","branch":"fix/10-b","name":"nova","host":"h2"}'
+    printf '%s\n' '{"ts":4,"crew_id":"c1","kind":"dispatch","branch":"feat/119-x","name":"ivy"}'
+    printf '%s\n' '{"ts":5,"crew_id":"c1","kind":"dispatch","broken'
+  } >"$dir/events.jsonl"
+  log="$dir/events.jsonl"
+  helper="$(sed -n '/^_resolve_target() {/,/^}/p' "$CREW")"
+  eval "$helper"
+  for target in '#9' 9 sage nova ENG-12 eng-13 119 'feat/119-x' 'worker:feat/9-gone#s1-2' nobody; do
+    for crew in '' c1 c2; do
+      want="$(_resolve_target "$target" "$crew")"
+      n=$(printf '%s\n' "$want" | grep -c . || true)
+      if [ -n "$crew" ]; then
+        run run_crew resolve-target "$target" --crew "$crew"
+      else
+        run run_crew resolve-target "$target"
+      fi
+      case "$n" in
+      0)
+        [ "$status" -eq 1 ]
+        [ "$output" = "crew: resolve-target: no worker matches '$target'" ]
+        ;;
+      1)
+        [ "$status" -eq 0 ]
+        [ "$output" = "$want" ]
+        ;;
+      *)
+        [ "$status" -eq 2 ]
+        [ "$output" = "crew: resolve-target: ambiguous target '$target' — matches: $(
+          printf '%s\n' "$want" | cut -f1 | paste -sd, - | sed 's/,/, /g'
+        ); pass a branch" ]
+        ;;
+      esac
+    done
+  done
 }
 
 # roster-render: bus + live tmux role panes -> D2 text (#806). Fixture times are
