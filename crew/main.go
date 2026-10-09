@@ -25,14 +25,16 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
+	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
+	"github.com/noamsto/dispatcher/crew/internal/where"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -65,7 +67,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -172,6 +174,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
+		})
+	}
+
+	// The two target readers own their run the way hold does: neither is a fold
+	// over every event.
+	if sub == "resolve-target" {
+		return resolve.Run(args, paths, stdout, stderr)
+	}
+	if sub == "where" {
+		return where.Run(args, paths, stdout, stderr, where.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Probes: whereProbes(ctx),
 		})
 	}
 
@@ -332,6 +346,30 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 	msg, code := bus.JQFailure(err)
 	say(stderr, "crew: %s: %s: %v\n", sub, log, msg)
 	return v, code
+}
+
+// whereProbes is the arm's two tmux reads, argv and all: a failed read is
+// `where`'s own refusal rather than "the target is gone".
+func whereProbes(ctx context.Context) where.Probes {
+	return where.Probes{
+		Windows: func() (string, error) {
+			return tmuxOutput(ctx, "list-windows", "-a", "-F",
+				"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}")
+		},
+		Panes: func() (string, error) {
+			return tmuxOutput(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}")
+		},
+	}
+}
+
+// tmuxOutput is `$(tmux args… 2>/dev/null)`: stdout, stderr dropped, and a
+// non-zero exit kept, because the two arms that read tmux refuse on it.
+func tmuxOutput(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "tmux", args...).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

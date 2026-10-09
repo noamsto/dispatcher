@@ -3,9 +3,10 @@
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
-`--report` rollup of #890), `reply` and `watch`. Each slice must leave every
-bats file green; tests may be adapted only where the Go design changes what
-they can observe (the output contract below), with each edit justified.
+`--report` rollup of #890), `reply`, `watch`, `resolve-target` and `where`.
+Each slice must leave every bats file green; tests may be adapted only where
+the Go design changes what they can observe (the output contract below), with
+each edit justified.
 
 ## Layout
 
@@ -118,6 +119,20 @@ they can observe (the output contract below), with each edit justified.
   leaked `watch.lock.d` refuses every later watch of the crew until the dead pid
   is reclaimed. The batch prints before the cursor moves, as the arm's `printf`
   preceded its `mv`.
+- `crew/internal/resolve`: `crew resolve-target`, and the fold `crew where` reads
+  for one question. `resolve.jq` is `_resolve_target`'s program and `Rows` is its
+  read — `jq -R` with `fromjson?`, so a line that will not decode is skipped and
+  its neighbours still resolve — and because the helper ran jq under
+  `2>/dev/null || true`, neither arm exits 2 or 5 off the bus: 2 is ambiguity
+  alone. `where`'s one use of it is the difference between a window that is gone
+  and a target nothing ever dispatched.
+- `crew/internal/where`: `crew where`, the address a dispatcher relays to a
+  human, so its line is exact text. It reads its two tmux queries through
+  injected probes (the arm's argv and `-F` formats; a failed read is the arm's
+  own refusal, not "the target is gone"), keeps the arm's trust rule — only the
+  window's `@crew_*` stamps and the bus's `dispatch` rows, never git discovery in
+  a worktree — and falls back to the pool identity (`identity`) for a window
+  stamped before `@crew_name` existed.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -128,7 +143,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -185,6 +200,15 @@ While two copies exist, guard drift:
   a shared fixture bus (value compare, `jq -S`: key order is engine-internal);
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
+
+`_resolve_target` stays for `nudge`, which reads its rows to phrase its own
+"ambiguous target … pass a branch" refusal — `crew resolve-target` exits 2 and
+prints nothing on stdout there, so `nudge` cannot be routed through the arm, and
+the recovery watcher would spawn the Go binary per nudge. Its Go copy is
+`internal/resolve`, and the guard is `_sessions'` shape: a crew.bats row replays
+the extracted helper against `crew resolve-target` over the target shapes on one
+fixture bus, deriving the arm's status and text from the helper's own rows —
+`@tsv` both sides, so a byte compare with no `jq -S` excuse.
 
 `_await_state`, `_await_marks` and `_await_record` stay for `_unread_scan` (and
 through it `nudge` and `stall-watch --unread`), which read the marks file even
