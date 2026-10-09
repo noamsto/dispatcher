@@ -7406,7 +7406,7 @@ EOF
   [ "${#lines[@]}" -eq 2 ]
   [[ "${lines[0]}" == "blocked|unread: dispatcher directive"* ]]
   [ "${lines[1]}" = "working|unread: cleared" ]
-  jq -e '.hookSpecificOutput.additionalContext | contains("[end directive]")' "$BATS_TEST_TMPDIR/delivered"
+  jq -e '.hookSpecificOutput.additionalContext | test("\\[end directive [0-9]+\\]")' "$BATS_TEST_TMPDIR/delivered"
 }
 
 @test "stall-watch: D6 keeps a dispatcher directive blocked while undelivered" {

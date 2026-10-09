@@ -47,8 +47,10 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 // msgs printed before the marks are raised.
 //
 // --undelivered keeps only the msgs past this session's marks and holds the
-// marks lock from reading them to recording them, so concurrent readers of one
-// session split a msg between them at most once.
+// marks lock from reading them to recording them, so concurrent --undelivered
+// readers of one session split a msg between them at most once. `crew await`
+// reads the marks once before its poll loop by design, so an await already
+// polling can still return a msg an --undelivered reader printed meanwhile.
 func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	q, msg := parse(args)
 	if msg != "" {

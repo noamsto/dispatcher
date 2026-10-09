@@ -35,12 +35,16 @@
 # costs one slow-path call. Every cursor write is the size read at the START of
 # the call: a row appended meanwhile is rechecked next call. A last byte that is
 # not a newline is a row its writer has not finished, so the cursor stays put and
-# that chunk is rescanned.
+# that chunk is rescanned. A row `crew inbox` cannot parse stops its read for good
+# (exit 5), so a complete tail moves the cursor past it anyway; otherwise every
+# later tool call would run the slow path.
 #
 # The msg body is data. It travels only as jq input: never eval'd, never a printf
-# format. Delimiter neutralisation turns any `[` that opens `end directive` or
-# `dispatcher directive` into `(`, so no body can print either marker and close
-# the advisory early or fake a second one.
+# format. Both markers carry a per-call nonce the body, written before this
+# handler ran, cannot know, so it cannot close the advisory early or fake a second
+# one. Neutralisation is a second layer: any `[` (or fullwidth `［`) that opens
+# `end directive` or `dispatcher directive`, through whitespace, format characters
+# or `_`/`-`, becomes `(`.
 #
 # Failure modes that drop a delivery (accepted): the router kills this handler
 # after the marks were raised, or the bridge drops the advisory (it declines a
@@ -62,7 +66,7 @@ command -v crew >/dev/null || exit 0
 # bus dir. Reading the dir here spares the `git rev-parse` fork.
 crew=''
 crew_dir=''
-if [[ -f $PWD/WORKER_TASK.md ]]; then
+if [[ -f $PWD/WORKER_TASK.md && -r $PWD/WORKER_TASK.md ]]; then
   while IFS= read -r line; do
     [[ -n $line ]] || break
     if [[ -z $crew && $line == crew_id:* ]]; then
@@ -99,19 +103,21 @@ curdir=$crew_dir/directive-delivery
 cursor_file=$curdir/$key
 
 cursor=0
-if [[ -f $cursor_file ]]; then
+if [[ -f $cursor_file && -r $cursor_file ]]; then
   {
     read -r cursor
     read -r owner
-  } <"$cursor_file" 2>/dev/null
+  } 2>/dev/null <"$cursor_file"
   [[ ${owner:-} == "$CREW_WORKER_ID" ]] || cursor=0
 fi
+# Base 10 throughout: a stored `08` is not octal.
 cursor=${cursor//[!0-9]/}
-cursor=${cursor:-0}
+cursor=$((10#${cursor:-0}))
 
-size=$(wc -c <"$log" 2>/dev/null) || exit 0
+size=$(wc -c 2>/dev/null <"$log") || exit 0
 size=${size//[!0-9]/}
 [[ -n $size ]] || exit 0
+size=$((10#$size))
 [[ $cursor != "$size" ]] || exit 0
 # Smaller log: truncated or rotated, so scan from the start.
 ((cursor <= size)) || cursor=0
@@ -122,7 +128,7 @@ save_cursor() { # <offset>
   local tmp
   mkdir -p "$curdir" 2>/dev/null || return 0
   tmp=$(mktemp "$curdir/.cur.XXXXXX" 2>/dev/null) || return 0
-  if printf '%s\n%s\n' "$1" "$CREW_WORKER_ID" >"$tmp" 2>/dev/null; then
+  if printf '%s\n%s\n' "$1" "$CREW_WORKER_ID" 2>/dev/null >"$tmp"; then
     mv "$tmp" "$cursor_file" 2>/dev/null || rm -f "$tmp"
   else
     rm -f "$tmp"
@@ -151,9 +157,10 @@ fi
 rows=$(crew inbox "$CREW_WORKER_ID" "$crew" --from "dispatcher:$crew" --undelivered 2>/dev/null)
 rc=$?
 # Whatever it printed is already marked delivered, so it is rendered even when
-# the exit was non-zero (a torn tail); the cursor advances only on success so a
-# failed call is retried.
-if ((rc == 0)); then
+# the exit was non-zero (a torn tail). The cursor advances on success, so a failed
+# call is retried; exit 5 over a complete tail is a corrupt row, which no retry
+# fixes, so it advances too. Any other exit (a dead crew) keeps the cursor.
+if ((rc == 0 || (rc == 5 && next == size))); then
   save_cursor "$next"
 fi
 [[ -n $rows ]] || exit 0
@@ -162,28 +169,29 @@ fi
 # counts, and JSON escaping can inflate a body of quotes and backslashes; so each
 # candidate is measured as the final object. Rows that do not fit are replaced by
 # a count and a `--since` that re-reads them (marks do not gate `--since`).
+nonce=$RANDOM$RANDOM
 # shellcheck disable=SC2016 # jq program, not a bash format string
 advisory=$(
-  jq -c -Rs '
-    def neut: gsub("\\[(?=\\s*(end|dispatcher)\\s+directive)"; "("; "i");
+  jq -c -Rs --arg nonce "$nonce" '
+    def neut: gsub("［"; "(") | gsub("\\[(?=[\\s\\p{Cf}]*(end|dispatcher)[\\s\\p{Cf}_-]*directive)"; "("; "i");
     def tsof: (try (fromjson | .ts) catch null) | if type == "number" then . else 0 end;
     split("\n") | map(select(length > 0)) as $raw
     | ($raw | length) as $n
     | ($raw | map(neut)) as $lines
     | def render($k):
         ($n - $k) as $cut
-        | ([ "[dispatcher directive — read and act before continuing]"
+        | ([ "[dispatcher directive \($nonce) — read and act before continuing]"
            , $lines[:$k][]
            , (if $cut > 0 then
                 "… \($cut) more — run crew inbox \"$CREW_WORKER_ID\" --since \(
                   if $k > 0 then ($raw[$k - 1] | tsof) else (($raw[0] | tsof) - 1) end)"
               else empty end)
-           , "[end directive]"
+           , "[end directive \($nonce)]"
            , "Delivered and marked read. Handle it now as a Checkpoint-peek directive. If"
            , "you were about to `crew await` a dispatcher reply, this is it: do not await"
-           , "it again. Your next `crew inbox --since <seen>` peek shows it again; it is"
-           , "already handled, so skip it there (advance your seen-cursor only as the"
-           , "protocol says, over msgs you handled)."
+           , "it again. Do not move your seen-cursor for this msg: your next `crew inbox"
+           , "--since <seen>` peek shows it again. Skip it there, and advance per the"
+           , "Checkpoint-peek rules."
            ] | join("\n"));
       def wrap($k): {hookSpecificOutput: {additionalContext: render($k)}};
       def fits($k): (wrap($k) | tojson | utf8bytelength) < 61440;

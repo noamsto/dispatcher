@@ -70,7 +70,7 @@ map_file() {
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
   adapters/core/crew.sh | adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
-  adapters/core/directive-delivery.sh) add adapters directive-delivery ;;
+  adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
