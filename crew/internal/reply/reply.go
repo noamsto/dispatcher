@@ -9,10 +9,9 @@
 // With no crew named the lookup widens across every crew on the bus and keeps
 // the one whose registered dispatcher pid is not known-dead (#327, #302).
 //
-// The row itself is a plain write through bus.FitLine/bus.Append, and unlike
-// `hold`'s it needs no byte-exact construction: `body` is the caller's text, not
-// embedded JSON, so a row's key order is not part of any value a reader compares
-// (docs/crew-go-port.md's output contract).
+// The row itself is a plain write through bus.FitLine/bus.Append: `body` is the
+// caller's text rather than embedded JSON, so a row's key order is not part of
+// any value a reader compares (docs/crew-go-port.md's output contract).
 package reply
 
 import (
@@ -21,7 +20,6 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -37,10 +35,9 @@ const (
 )
 
 // Options is everything Run reads beyond the bus: how to resolve the crew the
-// arm defaults to (`_crew_id`), the clock the row stamps (`RealMS` is jq's
-// `now*1000|floor`; the arm built `ts` with jq's `now`, so even a `CREW_CLOCK`
-// run stamps real milliseconds), and the pid probes the cross-crew lookup reads
-// through crews.PidAlive.
+// arm defaults to (`_crew_id`), the clock the row stamps — `RealMS`, jq's
+// `now*1000|floor`, which stays real time under `CREW_CLOCK` — and the pid probes
+// the cross-crew lookup reads through crews.PidAlive.
 type Options struct {
 	CrewID func() string
 	Clock  clock.Clock
@@ -96,13 +93,12 @@ func Run(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 
-	// Computed once, before the builder: FitLine calls the builder again for every
-	// shrink pass, and jq re-read `now` on each would stamp the row at however
-	// long the loop took.
+	// Computed once, before the builder: FitLine runs it again for every shrink
+	// pass, and a stamp taken inside would move with the loop.
 	ts := o.Clock.RealMS()
 	line := bus.FitLine(func(b string) string {
 		return compact(jsonv.Object(
-			jsonv.Member{Key: "ts", Val: tsValue(ts)},
+			jsonv.Member{Key: "ts", Val: jsonv.Num(float64(ts))},
 			jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
 			jsonv.Member{Key: "from", Val: jsonv.Str("dispatcher:" + crew)},
 			jsonv.Member{Key: "to", Val: jsonv.Str(to)},
@@ -118,9 +114,9 @@ func Run(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
 }
 
 // parse is the arm's flag loop: `--crew` is taken wherever it appears (the last
-// one wins, as each assignment overwrote the last) and everything else is
-// positional, in order. msg is the arm's line for a `--crew` with no value —
-// including an empty one, which `[ -n "${2:-}" ]` refuses too.
+// one wins) and everything else is positional, in order. msg is the arm's line
+// for a `--crew` with no value — an empty one included, which `[ -n "${2:-}" ]`
+// refuses too.
 func parse(args []string) (crew string, pos []string, msg string) {
 	for len(args) > 0 {
 		if args[0] == "--crew" {
@@ -197,11 +193,11 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 			alive: crews.PidAlive(o.Probes, o.Clock.Now(), pidfile, pid),
 		})
 	}
-	// Drop known-dead crews only while a not-known-dead candidate remains. If
-	// every candidate's crew is dead, keep them all — one still delivers, several
-	// still refuse naming both, exactly as before #327.
+	// Drop known-dead crews only while a not-known-dead candidate remains. If every
+	// candidate's crew is dead, keep them all: one still delivers, several still
+	// refuse naming both.
 	if slices.ContainsFunc(cands, func(c candidate) bool { return c.alive == nil || *c.alive }) {
-		cands = slices.DeleteFunc(slices.Clone(cands), func(c candidate) bool {
+		cands = slices.DeleteFunc(cands, func(c candidate) bool {
 			return c.alive != nil && !*c.alive
 		})
 	}
@@ -277,12 +273,11 @@ func refuse(newest jsonv.Value, branch string, stderr io.Writer) (bool, int) {
 	return true, 0
 }
 
-// text is `jq -r .<key>` on the row: a string verbatim, a number as jq prints it,
-// a boolean as `true`/`false` (which is how the arm compares `.terminal`), null
-// or a missing key as the four letters the arm compared, and an array or object
-// in jq's pretty form — `-r` only passes strings through bare, and `.state` is
-// read straight off the bus, so a hand-written row carrying anything else still
-// prints what jq printed rather than a misleading `null`.
+// text is `jq -r .<key>` on the row: a string bare, a number as jq prints it, a
+// boolean as `true`/`false` (how the arm compares `.terminal`), null or a missing
+// key as the four letters the arm compared, and an array or object in jq's pretty
+// form — `-r` passes only strings through bare, and `.state` is read straight off
+// the bus, so a row carrying a container prints the container.
 func text(v jsonv.Value, key string) string {
 	x, _ := v.Get(key)
 	switch x.Kind() {
@@ -300,16 +295,6 @@ func text(v jsonv.Value, key string) string {
 	case jsonv.KindNull:
 	}
 	return "null"
-}
-
-// tsValue is jq's `now*1000|floor` as the number the arm's jq wrote: the digits
-// of a whole-millisecond stamp, never an exponent.
-func tsValue(ms int64) jsonv.Value {
-	v, ok := jsonv.ParseNumber(strconv.FormatInt(ms, 10))
-	if !ok {
-		return jsonv.Num(float64(ms))
-	}
-	return v
 }
 
 func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
