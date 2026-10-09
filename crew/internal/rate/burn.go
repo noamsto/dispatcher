@@ -9,6 +9,8 @@ package rate
 import (
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -171,15 +173,20 @@ func matchFrom(pat, s string, pi, si int) bool {
 			if si >= len(s) {
 				return false
 			}
+			_, n := utf8.DecodeRuneInString(s[si:])
 			pi++
-			si++
+			si += n
 		case '[':
 			if end := setRange(pat, pi); end >= 0 {
-				if si >= len(s) || !matchSet(pat, s[si], pi) {
+				if si >= len(s) {
+					return false
+				}
+				c, n := utf8.DecodeRuneInString(s[si:])
+				if !matchSet(pat, c, pi) {
 					return false
 				}
 				pi = end
-				si++
+				si += n
 				continue
 			}
 			// Unterminated: bash's pattern grammar leaves it a literal `[`, so
@@ -190,10 +197,15 @@ func matchFrom(pat, s string, pi, si int) bool {
 			pi++
 			si++
 		case '\\':
-			if pi+1 >= len(pat) || si >= len(s) || s[si] != pat[pi+1] {
+			// A trailing `\` has nothing to escape and matches itself.
+			lit := pi + 1
+			if lit >= len(pat) {
+				lit = pi
+			}
+			if si >= len(s) || s[si] != pat[lit] {
 				return false
 			}
-			pi += 2
+			pi = lit + 1
 			si++
 		default:
 			if si >= len(s) || s[si] != pat[pi] {
@@ -222,6 +234,11 @@ func setRange(pat string, pi int) int {
 		case '\\':
 			i += 2
 			continue
+		case '[':
+			if _, next := posixClass(pat[i:]); next > 0 {
+				i += next
+				continue
+			}
 		case ']':
 			return i + 1
 		}
@@ -230,7 +247,50 @@ func setRange(pat string, pi int) int {
 	return -1
 }
 
-func matchSet(pat string, c byte, pi int) bool {
+// posixClass parses a leading `[:name:]` in s, returning the name and its
+// length, or 0 when s does not start with one.
+func posixClass(s string) (string, int) {
+	if !strings.HasPrefix(s, "[:") {
+		return "", 0
+	}
+	end := strings.Index(s[2:], ":]")
+	if end < 0 {
+		return "", 0
+	}
+	return s[2 : 2+end], end + 4
+}
+
+func inClass(name string, c rune) bool {
+	switch name {
+	case "alpha":
+		return unicode.IsLetter(c)
+	case "digit":
+		return c >= '0' && c <= '9'
+	case "alnum":
+		return unicode.IsLetter(c) || unicode.IsDigit(c)
+	case "upper":
+		return unicode.IsUpper(c)
+	case "lower":
+		return unicode.IsLower(c)
+	case "space":
+		return unicode.IsSpace(c)
+	case "blank":
+		return c == ' ' || c == '\t'
+	case "punct":
+		return unicode.IsPunct(c) || unicode.IsSymbol(c)
+	case "print":
+		return unicode.IsPrint(c)
+	case "graph":
+		return unicode.IsGraphic(c) && !unicode.IsSpace(c)
+	case "cntrl":
+		return unicode.IsControl(c)
+	case "xdigit":
+		return unicode.Is(unicode.ASCII_Hex_Digit, c)
+	}
+	return false
+}
+
+func matchSet(pat string, c rune, pi int) bool {
 	end := setRange(pat, pi)
 	if end < 0 {
 		return false
@@ -241,11 +301,20 @@ func matchSet(pat string, c byte, pi int) bool {
 		neg = true
 		body = body[1:]
 	}
-	return inSet(body, c) != neg
+	return inSet([]rune(body), c) != neg
 }
 
-func inSet(body string, c byte) bool {
+func inSet(body []rune, c rune) bool {
 	for i := 0; i < len(body); i++ {
+		if body[i] == '[' {
+			if name, n := posixClass(string(body[i:])); n > 0 {
+				if inClass(name, c) {
+					return true
+				}
+				i += utf8.RuneCountInString(string(body[i:])[:n]) - 1
+				continue
+			}
+		}
 		ch := body[i]
 		if ch == '\\' && i+1 < len(body) {
 			i++
