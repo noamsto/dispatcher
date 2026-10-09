@@ -1,4 +1,4 @@
-- Run only targeted test files locally (`bats tests/<file>.bats --filter <pattern>`). Never run the full suite or `bats-affected`: CI runs it.
+- Run only targeted test files locally, in parallel (`bats --jobs 8 tests/<file>.bats --filter <pattern>`), except `tests/module.bats` and `--filter-tags timing` tests, which stay serial. Never run the full suite or `bats-affected`: CI runs it.
 - Never write process-matching wait loops. Wait on a captured pid (`cmd & p=$!; wait $p`), or use `gh run watch <id> --exit-status` for CI.
 - Post `crew status` at every step (plan, implement, test, push, CI wait).
 - Don't deliberate over review-promotion or tier rules your task doesn't hit. Follow the tier stamped in the header.
