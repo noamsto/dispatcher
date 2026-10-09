@@ -80,10 +80,6 @@ func Fold(events []jsonv.Value, crew string, nowSec float64, p Probes) (jsonv.Va
 // word-splits, so a branch holding a space, tab or newline never keys
 // itself (and the empty word is dropped): such rows get no entry. Words
 // holding glob characters are not mirrored — git refuses those names.
-//
-// The recorded half is one pass over the bus (RecordedAll), not the arm's
-// per-branch scan: a fold over a 100k-branch bus would otherwise be
-// quadratic (#821).
 func identityMap(events, rows []jsonv.Value) jsonv.Value {
 	recorded := identity.RecordedAll(events)
 	var members []jsonv.Member

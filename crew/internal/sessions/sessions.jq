@@ -5,8 +5,7 @@
 # One engine patch: the split_wid anchor below. jq/Oniguruma `$` also matches
 # before one trailing newline; gojq uses Go regexp, where `$` is absolute
 # end-of-text. `\n?\z` (the regex the engine sees; doubled in this jq string
-# literal) reproduces Oniguruma exactly — as the hand port's sessionSuffix
-# once did.
+# literal) reproduces Oniguruma exactly.
 def split_wid: ltrimstr("worker:") as $r
         | ($r | capture("#(?<s>s[0-9]+-[0-9]+)\\n?\\z").s // null) as $s
         | {branch: (if $s == null then $r else ($r | rtrimstr("#" + $s)) end), session: $s};

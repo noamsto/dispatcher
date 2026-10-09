@@ -24,9 +24,6 @@ import (
 // rewritten to $now = nowSec so folds are deterministic. The program must
 // emit exactly one value; a gojq runtime error (jq's type error) is returned
 // as an error, which main maps to the jq-failure exit status.
-//
-// Programs are compiled per call: each crew subcommand process runs one fold,
-// so caching would only serve tests, and compilation is milliseconds.
 func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Value) (jsonv.Value, error) {
 	names := make([]string, 0, len(vars)+1)
 	values := make([]any, 0, len(vars)+1)
@@ -71,11 +68,8 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 	return fromGo(v)
 }
 
-// injectNow rewrites the bare `now` builtin to `$now`. A word-boundary scan
-// is enough for the embedded programs: the only other "now" is the "now" in
-// the comment word "last-known", which is not a standalone token. (A
-// strings.Replacer would do; regexp.ReplaceAllString would eat "$now" as a
-// capture reference.)
+// injectNow rewrites the bare `now` builtin to `$now`, on word boundaries so
+// words like "last-known" in program comments survive.
 func injectNow(prog string) string {
 	var b []byte
 	for i := 0; i < len(prog); {
