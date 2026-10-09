@@ -2035,7 +2035,12 @@ watch_role_prompts() {
 # prompt, a live turn, or an unrecognised frame — defers to the next tick. After --defer-notice
 # seconds (default 60) of deferral it tells the lead once with an
 # `assignment_deferred` msg, so a role that never receives its assignment is not
-# mistaken for one that is working.
+# mistaken for one that is working. A body carrying a C0 byte (newline, tab,
+# escape, …) can never be typed — tmux would read the byte as terminal input —
+# so the head assignment is dropped at once, never deferred and never retried,
+# and its sender and the lead get one `assignment_rejected` msg; the queue
+# behind it then proceeds. `crew msg` refuses such a body to a role: recipient
+# at send time, so a sender learns before it is ever queued.
 #
 # A pane stamped `@crew_delivery pull` (cursor) is never captured and never
 # sent keys: the role holds `crew await` itself and fetches its assignments.
@@ -2653,6 +2658,23 @@ if [ "${1:-}" = "--role-watch" ]; then
     done
   }
 
+  # _rw_reject <sender> — the head assignment's body carries a C0 byte, so
+  # tmux would read it as terminal input and it can never be typed. Tell its
+  # sender and the lead once (deduplicated) that it was dropped, rather than
+  # taking the pane-problem deferral: that misreports the cause and leaves the
+  # unsafe body at the head of the queue, blocking every assignment behind it.
+  _rw_reject() {
+    local note to sent=" "
+    note="$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg e "$engine" \
+      '{role:$r,event:"assignment_rejected",pane:$p,engine:$e,detail:"assignment not delivered: its body contains a control character (newline/tab/…); re-send it on one line, e.g. compact JSON via jq -c"}')"
+    for to in "$1" "$lead_worker"; do
+      [ -n "$to" ] || continue
+      case "$sent" in *" $to "*) continue ;; esac
+      sent="$sent$to "
+      crew msg "$role_id" "$to" "$note" 2>/dev/null || true
+    done
+  }
+
   # Assignments wait here until the pane is ready; one is delivered per tick so
   # the next capture sees the turn it started. `cooldown` skips the tick right
   # after a send, when the pane may not have repainted as busy yet. The text
@@ -2697,6 +2719,7 @@ if [ "${1:-}" = "--role-watch" ]; then
   escalated=0
   retyped=0
   verdict_seen=0
+  awaiting=0
   cooldown=0
   unsent=0
   lead_id=""
@@ -2787,17 +2810,22 @@ if [ "${1:-}" = "--role-watch" ]; then
             [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
           elif [[ $to != dispatcher:* ]] && [ "$submitting" -eq 1 ]; then
             # The role answered while its assignment is still being verified; its
-            # own assignment_unsubmitted posts (from the same id) are not a verdict.
+            # own assignment_unsubmitted post (from the same id) is not a verdict.
             # Match the event's own JSON field, not the raw text: a verdict that
             # merely quotes the string is still a verdict (#648).
             case "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" in
             assignment_unsubmitted) ;;
             *) verdict_seen=1 ;;
             esac
-          elif [[ $to != dispatcher:* ]] && [ "${#pending[@]}" -eq 0 ]; then
-            # A verdict from the role — it is idle again. The watcher's own
-            # drop posts go to dispatcher:* and must not idle a working role.
-            watch_set_state idle
+          elif [[ $to != dispatcher:* ]] &&
+            [ -z "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" ]; then
+            # A verdict from the role: it owes nothing more for what it answered.
+            # Idle only when nothing else is queued. The watcher's own posts
+            # carry an `event` field and are never a verdict — idling on the
+            # rejection of an unsafe head would misreport a role still working
+            # on an earlier unanswered assignment.
+            awaiting=0
+            [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
           fi
         done <<<"$batch"
         next="$(printf '%s\n' "$batch" | jq -s 'map(.ts) | max // empty')"
@@ -2818,7 +2846,12 @@ if [ "${1:-}" = "--role-watch" ]; then
         escalated=0
         retyped=0
         cooldown=1
-        [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ] && watch_set_state idle
+        if [ "$verdict_seen" -eq 1 ] && [ "${#pending[@]}" -eq 0 ]; then
+          awaiting=0
+          watch_set_state idle
+        else
+          awaiting=1
+        fi
         verdict_seen=0
         ;;
       dialog) ;;
@@ -2875,7 +2908,21 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif ! watch_exited; then
       frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
       frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
-      if _role_pane_ready "$frame" "$frame_e" "$unsent" && _role_assignment_safe "${pending[0]}"; then
+      if ! _role_assignment_safe "${pending[0]}"; then
+        # The head body carries a C0 byte, so tmux would read it as terminal
+        # input. It can never be typed: drop it (never deferred, never
+        # retried) and name the cause, so the sender learns why and the queue
+        # behind it proceeds instead of blocking forever.
+        _rw_reject "${pending_from[0]}"
+        pending=("${pending[@]:1}")
+        pending_from=("${pending_from[@]:1}")
+        pending_ts=("${pending_ts[@]:1}")
+        deferred_since=0
+        deferred_told=0
+        # The drop is not a delivery: idle only when nothing is queued behind it
+        # and no earlier delivered assignment is still awaiting a verdict.
+        [ "${#pending[@]}" -gt 0 ] || [ "$awaiting" -eq 1 ] || watch_set_state idle
+      elif _role_pane_ready "$frame" "$frame_e" "$unsent"; then
         [ "$unsent" -eq 1 ] && { tmux send-keys -t "$watch_pane" C-u 2>/dev/null || true; }
         buf="rw-assign-$$-$RANDOM"
         if printf 'Assignment: %s' "${pending[0]}" | tmux load-buffer -b "$buf" - 2>/dev/null; then

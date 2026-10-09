@@ -502,6 +502,28 @@ ROWS
   done
 }
 
+# #845: a role assignment is typed into a pane, so a control byte in its body
+# can never be delivered. Refuse it at send time for a role: recipient and
+# leave the bus untouched; a safe role: body and any other recipient are
+# unchanged.
+@test "msg: refuses a control-bearing body to a role recipient and logs nothing" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run run_crew msg worker 'role:feat/x:reviewer' $'{"seam":"review"}\n{"x":1}'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"role assignment body must be one line"* ]]
+  [[ "$output" == *"control character"* ]]
+  [[ "$output" == *"jq -c"* ]]
+  [ ! -s "$log" ]
+
+  # A one-line role: body still succeeds. A worker: body may still be multiline.
+  CREW_ID=c1 run run_crew msg worker 'role:feat/x:reviewer' '{"seam":"review"}'
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run run_crew msg worker 'worker:feat/x#s1-1' $'line1\nline2'
+  [ "$status" -eq 0 ]
+  run jq -e 'select(.kind=="msg") | (.to=="role:feat/x:reviewer" and .body=="{\"seam\":\"review\"}") or (.to=="worker:feat/x#s1-1" and .body=="line1\nline2")' "$log"
+  [ "$status" -eq 0 ]
+}
+
 @test "status: an oversized detail is clipped so the line stays one atomic write" {
   big="$(head -c 8192 /dev/zero | tr '\0' x)"
   CREW_ID=c1 run_crew status worker failed "$big"

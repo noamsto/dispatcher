@@ -10775,7 +10775,7 @@ EOF
   done
 }
 
-@test "role-watch: C0-bearing assignments are never typed and plain assignments still deliver for every engine" {
+@test "role-watch: C0-bearing assignments are rejected, never typed, and plain assignments still deliver for every engine" {
   _spawn_role_fixture
   for payload in $'go\nsecond line' $'go\eescape'; do
     for spec in \
@@ -10788,10 +10788,12 @@ EOF
       rm -f "$STUB_DIR/stop" "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" 2>/dev/null || true
       _rw_stub "$frame_fn"
       _rw_start "$eng" "$payload"
-      _rw_wait_captures 2
+      # The reject lands without a pane capture, so wait on the event, not a frame.
+      _rw_poll "grep -q 'assignment_rejected' \"\$STUB_LOG\""
       _rw_stop
-      [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
-      run ! grep -q '^send-keys -t %6 -l Assignment:' "$STUB_LOG"
+      grep -q 'assignment_rejected' "$STUB_LOG" || { echo "$eng: unsafe body was not rejected"; return 1; }
+      grep -q 'control character' "$STUB_LOG" || { echo "$eng: rejection does not name the control character"; return 1; }
+      run ! grep -qE '^(send-keys -t %6 -l Assignment:|paste Assignment:)' "$STUB_LOG"
     done
   done
 
@@ -10813,6 +10815,51 @@ EOF
     _rw_stop
     [ "$(_rw_sends)" -eq 1 ] || { echo "$eng: plain assignment did not deliver"; return 1; }
   done
+}
+
+@test "role-watch: an unsafe head is rejected and the next queued assignment still delivers" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude $'unsafe-head\nmore text'
+  # A safe assignment queued behind the unsafe one must not be blocked by it.
+  _rw_post "worker:feat/9-x#s1-1"
+  _rw_poll "grep -q 'assignment_rejected' \"\$STUB_LOG\""
+  _rw_wait_sends 1
+  _rw_settle
+  _rw_stop
+  [ "$(grep -c 'assignment_rejected' "$STUB_LOG")" -eq 1 ]
+  grep -q 'control character' "$STUB_LOG"
+  [ "$(_rw_sends)" -eq 1 ]
+  [ "$(grep -cE '^(paste |send-keys -t %6 -l )Assignment: go$' "$STUB_LOG")" -eq 1 ]
+  run ! grep -q 'unsafe-head' "$STUB_LOG"
+}
+
+@test "role-watch: an unsafe-only queue rejects and returns the pane to idle" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude $'unsafe-head\nmore text'
+  _rw_poll "grep -q 'assignment_rejected' \"\$STUB_LOG\""
+  _rw_settle
+  _rw_stop
+  grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
+  # Nothing was delivered, so the reject must return the pane to idle.
+  grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
+}
+
+@test "role-watch: the watcher's own event post to the lead does not idle a role with an unanswered assignment" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_start claude
+  _rw_wait_deliveries 1
+  _rw_settle
+  # A delivered assignment is still unanswered; the watcher's own
+  # assignment_rejected note (to the lead, so it re-enters via the from==$me
+  # filter) must not be read as the role's verdict.
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", kind:"msg", from:"role:feat/9-x:reviewer", to:"worker:feat/9-x#s1-1", body:"{\"event\":\"assignment_rejected\"}"}' >>"$common/crew/events.jsonl"
+  _rw_settle
+  _rw_stop
+  grep -qF 'set-option -p -t %6 @crew_state working' "$STUB_LOG"
+  run ! grep -qF 'set-option -p -t %6 @crew_state idle' <(sed -n '/set-option -p -t %6 @crew_state working/,$p' "$STUB_LOG")
 }
 
 @test "role-watch: real codex and cursor non-idle captures never receive keys" {
@@ -10928,8 +10975,12 @@ EOF
     "$after_fn" >"$STUB_DIR/frame_after"
     touch "$STUB_DIR/flip"
     _rw_start "$eng" "$rw_literal_newline_assignment"
-    _rw_wait_captures 3
+    # A literal newline is a C0 byte, so the head is rejected before any paste:
+    # the decoy confirm frame is never consulted and no keys reach the pane.
+    _rw_poll "grep -q 'assignment_rejected' \"\$STUB_LOG\""
     _rw_stop
+    grep -q 'control character' "$STUB_LOG"
+    run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
     run ! grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
   done
 }
@@ -11109,6 +11160,8 @@ EOF
   _rw_wait_deferred
   _rw_stop
   [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_deferred' "$STUB_LOG")" -eq 1 ]
+  grep -q 'the pane is not at an idle input box' "$STUB_LOG"
+  run ! grep -q 'assignment_rejected' "$STUB_LOG"
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 

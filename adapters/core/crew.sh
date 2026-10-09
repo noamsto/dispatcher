@@ -1362,6 +1362,17 @@ _fit_line() {
   printf '%s' "$line"
 }
 
+# tmux reads a C0 byte as terminal input, so a role assignment body must be one
+# line. Matches the watcher's own gate (`_role_assignment_safe` in dispatch.sh):
+# LC_ALL=C keeps [[:cntrl:]] meaning the C0 range under any ambient locale.
+_has_c0() {
+  local LC_ALL=C
+  case "$1" in
+  *[[:cntrl:]]*) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
 # Resolve the crew id: task-document-first, so a worker's own scaffold record
 # always wins over its environment — env can be lost (a re-exec, an
 # env-scrubbing nested shell, a worker resumed by other means) and silently
@@ -3406,6 +3417,21 @@ status | msg)
     *:)
       echo "crew: msg recipient '$to' is missing an id after the colon" >&2
       exit 1
+      ;;
+    esac
+    # tmux reads a control byte (newline, tab, escape, …) as terminal input, so
+    # the role-watch types an assignment only when its body is one line. Refuse
+    # it at send time, for every role: recipient, so the sender learns the cause
+    # and its fix immediately instead of queuing an assignment that can never be
+    # typed. A lead does not know its role's delivery mode and GRID_PROTOCOL.md
+    # treats assignments as one-line turns, so pull delivery does not exempt it.
+    # Other recipients are unchanged.
+    case "$to" in
+    role:*)
+      if _has_c0 "${3:-}"; then
+        echo "crew: msg: refusing to send to '$to': a role assignment body must be one line, but this one contains a control character (newline/tab/…); re-send it as compact JSON, e.g. jq -c" >&2
+        exit 1
+      fi
       ;;
     esac
     _build_msg() {
