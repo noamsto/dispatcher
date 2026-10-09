@@ -174,10 +174,20 @@ func matchFrom(pat, s string, pi, si int) bool {
 			pi++
 			si++
 		case '[':
-			if si >= len(s) || !matchSet(pat, s[si], pi) {
+			if end := setRange(pat, pi); end >= 0 {
+				if si >= len(s) || !matchSet(pat, s[si], pi) {
+					return false
+				}
+				pi = end
+				si++
+				continue
+			}
+			// Unterminated: bash's pattern grammar leaves it a literal `[`, so
+			// `[x` matches the three characters `[x` and nothing else.
+			if si >= len(s) || s[si] != '[' {
 				return false
 			}
-			pi = skipSet(pat, pi)
+			pi++
 			si++
 		case '\\':
 			if pi+1 >= len(pat) || si >= len(s) || s[si] != pat[pi+1] {
@@ -197,8 +207,8 @@ func matchFrom(pat, s string, pi, si int) bool {
 }
 
 // setRange returns the index just past pat's `[` set, or -1 when it is
-// unterminated — which bash leaves as a literal `[`, so the caller falls
-// through to the literal path by reporting no match on a set it cannot read.
+// unterminated — which the caller matches as a literal `[`, the way bash's
+// pattern grammar does.
 func setRange(pat string, pi int) int {
 	i := pi + 1
 	if i < len(pat) && (pat[i] == '!' || pat[i] == '^') {
@@ -253,12 +263,4 @@ func inSet(body string, c byte) bool {
 		}
 	}
 	return false
-}
-
-// skipSet returns the index just past the set starting at pi.
-func skipSet(pat string, pi int) int {
-	if end := setRange(pat, pi); end > 0 {
-		return end
-	}
-	return pi + 1
 }

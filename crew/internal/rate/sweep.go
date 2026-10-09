@@ -63,11 +63,18 @@ type sweep struct {
 	stderr io.Writer
 	o      Options
 	pid    string
-	now    float64
 	store  string
 	lockd  string
 	ghRepo string
 }
+
+// clock is jqrun's `now`, read at the moment the fold runs. The arm ran every
+// fold in its own jq process, so `now` was re-read each time: records and plan
+// before the network, merge after it. One value frozen at sweep start would
+// date the merged row to the start, and every reader folds the append-only
+// store last-wins by max_by(.swept_at) — so an overlapping sweep that started
+// earlier but merged later would have its fresher row discarded as stale.
+func (s *sweep) clock() float64 { return clockSeconds(s.o) }
 
 // runSweep is the arm, in the arm's order.
 func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
@@ -83,7 +90,6 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 		stderr: stderr,
 		o:      o.withDefaults(),
 		pid:    strconv.Itoa(os.Getpid()),
-		now:    clockSeconds(o),
 	}
 	s.store = storePath(s.o.StorePath, s.o.LookupEnv)
 	s.lockd = filepath.Join(filepath.Dir(s.store), "ratings.lock.d")
@@ -112,7 +118,10 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 	}
 	// `crew rate --sweep-all` also discovers repos from here, so a repo swept
 	// once stays found wherever it lives on disk.
-	appendRegistry(filepath.Join(dir, "repos"), paths.Common)
+	if err := appendRegistry(filepath.Join(dir, "repos"), paths.Common); err != nil {
+		say(stderr, "crew: rate: %s: %v\n", filepath.Join(dir, "repos"), err)
+		return exitFailure
+	}
 
 	// --- lock window 1: read the store to decide which calls to skip --------
 	snapshot, code := s.lockedFold()
@@ -143,7 +152,7 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 // reaches it as a priced map because jq cannot call `_burn_weight`: each
 // distinct model+effort of the dispatch rows resolves once, here.
 func (s *sweep) foldRecords(raws []jsonv.Value, repo string) (jsonv.Value, int) {
-	records, err := jqrun.Run(recordsProgram, raws, s.now, map[string]jsonv.Value{
+	records, err := jqrun.Run(recordsProgram, raws, s.clock(), map[string]jsonv.Value{
 		"repo":    jsonv.Str(repo),
 		"costmap": s.costmap(raws),
 	})
@@ -223,7 +232,7 @@ func (s *sweep) repoScopes() (repo, ghRepo string) {
 // finality), because a run-level skip would strand any field whose own call
 // failed on the sweep that first saw the merge.
 func (s *sweep) plan(records, snapshot jsonv.Value) []jsonv.Value {
-	rows, err := jqrun.Run(planProgram, nil, s.now, map[string]jsonv.Value{
+	rows, err := jqrun.Run(planProgram, nil, s.clock(), map[string]jsonv.Value{
 		"records": records,
 		"snap":    snapshot,
 	})
@@ -256,7 +265,7 @@ func (s *sweep) lockedMerge(records, patches jsonv.Value) int {
 	}
 	defer lockRelease(s.lockd)
 
-	rows, err := jqrun.Run(mergeProgram, nil, s.now, map[string]jsonv.Value{
+	rows, err := jqrun.Run(mergeProgram, nil, s.clock(), map[string]jsonv.Value{
 		"records": records,
 		"stored":  foldStore(s.store),
 		"patches": patches,
@@ -410,7 +419,7 @@ func (s *sweep) patch(prog string, gh jsonv.Value, vars ...jsonv.Member) (jsonv.
 	for _, v := range vars {
 		in[v.Key] = v.Val
 	}
-	return jqrun.Run(prog, nil, s.now, in)
+	return jqrun.Run(prog, nil, s.clock(), in)
 }
 
 // foldStore is the arm's `jq -s -c "$store_fold" "$store" 2>/dev/null || true`
@@ -453,21 +462,29 @@ func appendBatch(store string, rows []jsonv.Value) error {
 }
 
 // appendRegistry is `grep -qxF "$common" "$registry" || printf '%s\n' …`: an
-// exact whole-line check, then a one-line append.
-func appendRegistry(registry, line string) {
+// exact whole-line check, then a one-line append. The arm's redirect ran under
+// `set -e`, so a registry that cannot be opened aborted the sweep before any
+// store write: a repo that never enters the registry is invisible to every
+// later `--sweep-all`, which is not a failure the caller gets to miss.
+func appendRegistry(registry, line string) error {
 	if data, err := os.ReadFile(registry); err == nil {
 		for _, have := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
 			if have == line {
-				return
+				return nil
 			}
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = f.WriteString(line + "\n")
-	_ = f.Close()
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // prURLPattern is the arm's `_pr_url_in_repo` regex.

@@ -21,13 +21,14 @@ import (
 // the part a shell test cannot reach — a dead lock holder, an off-repo pr_url
 // with a call log to inspect, the exact argv gh is handed.
 type fixture struct {
-	t      *testing.T
-	paths  bus.Paths
-	store  string
-	calls  []string
-	gh     func(args string) (string, bool)
-	git    func(args string) (string, bool)
-	config string
+	t          *testing.T
+	paths      bus.Paths
+	store      string
+	calls      []string
+	gh         func(args string) (string, bool)
+	git        func(args string) (string, bool)
+	config     string
+	optionsNow func() time.Time
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -117,7 +118,12 @@ func (f *fixture) options() Options {
 			}
 			return ""
 		},
-		Now: func() time.Time { return time.Unix(1800000000, 0) },
+		Now: func() time.Time {
+			if f.optionsNow != nil {
+				return f.optionsNow()
+			}
+			return time.Unix(1800000000, 0)
+		},
 		Run: func(args ...string) (string, error) {
 			joined := strings.Join(args, " ")
 			f.calls = append(f.calls, joined)
@@ -448,6 +454,55 @@ func TestSweepStoreIsADirectory(t *testing.T) {
 	}
 	if !strings.Contains(f.callLog(), "gh ") {
 		t.Error("the sweep did not reach the reconcile before the append killed it")
+	}
+}
+
+// TestSweepRegistryUnwritable is the arm's `set -e` redirect: a registry that
+// cannot be opened aborts the sweep before any store write, because a repo that
+// never enters the registry is invisible to every later --sweep-all.
+func TestSweepRegistryUnwritable(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(f.store), "repos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := f.runQuiet(); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if _, err := os.Stat(f.store); !os.IsNotExist(err) {
+		t.Error("the failed registry append still wrote the store")
+	}
+}
+
+// TestSweepSweptAtIsMergeTimeClock pins the per-fold clock: the arm re-read
+// `now` in every jq process, so the merged row is dated when the merge fold
+// ran — after the network — not when the sweep started. Readers fold the store
+// last-wins by max_by(.swept_at), so a start-time stamp would let an
+// overlapping sweep's fresher t2 be discarded as stale.
+func TestSweepSweptAtIsMergeTimeClock(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	f.gh = func(string) (string, bool) { return `{"workflow_runs":[]}`, true }
+	var reads []time.Time
+	base := time.Unix(1800000000, 0)
+	f.optionsNow = func() time.Time {
+		t := base.Add(time.Duration(len(reads)) * time.Second)
+		reads = append(reads, t)
+		return t
+	}
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(reads) < 2 {
+		t.Fatalf("the folds read the clock %d times, want one read per fold", len(reads))
+	}
+	rows := f.rows()
+	want := float64(reads[len(reads)-1].UnixMicro()) / 1e6 * 1000
+	if got := rows[len(rows)-1]["swept_at"]; got != want {
+		t.Errorf("swept_at = %v, want the merge fold's clock %v (the first read is %v)", got, want,
+			float64(reads[0].UnixMicro())/1e6*1000)
 	}
 }
 

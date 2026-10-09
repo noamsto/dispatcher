@@ -161,6 +161,16 @@ func TestGlobMatch(t *testing.T) {
 		{"", "", true},
 		{"[a-z]*", "hello", true},
 		{"[a-z]*", "Hello", false},
+		// An unterminated set is a literal `[` in bash's pattern grammar, which
+		// a user-refined burnClasses table can hit.
+		{"[x", "[x", true},
+		{"[x", "x", false},
+		{"[x", "[abc", false},
+		{"[x", "[", false},
+		{"[abc", "a", false},
+		{"[abc", "[abc", true},
+		{"a[b", "a[b", true},
+		{"a[b", "ab", false},
 	} {
 		if got := globMatch(c.pattern, c.s); got != c.want {
 			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pattern, c.s, got, c.want)
@@ -178,11 +188,12 @@ func TestBurnRulesEdgeCases(t *testing.T) {
       {"match":"*by*","byEffort":{"low":{"class":"l","weight":1}}},
       {"match":"*def*","byEffort":{"default":{"class":"d","weight":3}}},
       {"match":"","class":"skipped","weight":9},
-      {"match":"*bare*"}
+      {"match":"*bare*"},
+      {"match":"[weird","class":"weird","weight":5}
     ]}`)
 	rules := burnRules(settings)
-	if len(rules) != 5 {
-		t.Fatalf("rules = %d, want 5 (the empty-match row is skipped)", len(rules))
+	if len(rules) != 6 {
+		t.Fatalf("rules = %d, want 6 (the empty-match row is skipped)", len(rules))
 	}
 	for _, c := range []struct {
 		model, effort, class string
@@ -194,6 +205,10 @@ func TestBurnRulesEdgeCases(t *testing.T) {
 		{"by", "high", "null", jsonv.Null()},
 		{"def", "anything", "d", jsonv.Num(3)},
 		{"bare", "high", "", jsonv.Null()},
+		// The reviewer's repro: bash priced the unterminated set as a literal,
+		// so `[weird` matches the model id `[weird` and nothing else — a table
+		// with `[weird` must not price the plain id.
+		{"[weird", "high", "weird", jsonv.Num(5)},
 	} {
 		class, weight, ok := burnWeight(rules, c.model, c.effort)
 		if !ok || class != c.class || weight.Kind() != c.weight.Kind() {
@@ -204,6 +219,9 @@ func TestBurnRulesEdgeCases(t *testing.T) {
 		if !c.weight.IsNull() && !weightTruth(weight, num(c.weight)) {
 			t.Errorf("burnWeight(%q, %q) weight = %v, want %v", c.model, c.effort, weight, c.weight)
 		}
+	}
+	if class, _, ok := burnWeight(rules, "weird", "high"); ok {
+		t.Errorf("burnWeight(\"weird\") = %q, want unclassed", class)
 	}
 }
 
