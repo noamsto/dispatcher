@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Directive-delivery hook: hand a pi worker the dispatcher's directives mid-turn
-# (#840). A pi turn can run for tens of minutes, and the worker reads its inbox
-# only at a seam, so a `crew reply` ("stop", "rebase first") sat unread while
-# D6's `unread: dispatcher directive` notice fired with nothing able to act on
-# it. hookyard's pi bridge appends this handler's `additionalContext` to the next
-# tool result, which is the only place a running turn looks.
+# Directive-delivery hook: hand a pi worker its unread dispatcher directives
+# mid-turn. A pi turn can run for tens of minutes between inbox seams; hookyard's
+# pi bridge appends this handler's `additionalContext` to the next tool result,
+# the only place a running turn looks.
 #
 # Registered on post_tool in the VERDICT lane (hookyard reads advice only from
 # there; a fire-and-forget handler's stdout is dropped). Protocol: print
