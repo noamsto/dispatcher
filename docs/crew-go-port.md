@@ -136,16 +136,18 @@ it.
   part of the value a later reader compares and prints. `addRow` and the
   release row are therefore built in Go over jsonv in the arm's construction
   order (the body is `id`, then `wait`, then `task`, each with the arm's own
-  leaf order), and the
-  corpus diff is byte-for-byte on every row. Four sanctioned differences are
-  bash's own text, not the port's: an out-of-int64 `--resets-at` or `park`
-  default prints bash's `[: …: integer expression expected` before the arm's own
-  line; a directory `--spec` prints `cp`'s wording; a fold that fails on a row
-  it cannot use prints gojq's `expected an object` where jq said `Cannot index
-number with string ("released")` (status 5 either way); and a title so long
-  that `_fit_line` would reach `keep` 0 makes bash's `cut -c1-0` fail on stderr
-  — unreachable for a hold row, whose fixed part is ~420 bytes against a 4096
-  cap.
+  leaf order), and the corpus diff is byte-for-byte on every row — including
+  `_shrink`'s blob branch, which is `cut -c1-keep` inside `$(...)`: it caps each
+  newline-separated line on its own and loses every trailing newline. Four
+  sanctioned differences are bash's own text, not the port's: an out-of-int64
+  `--resets-at` or `park` default prints bash's `[: …: integer expression
+expected` before the arm's own line; a directory `--spec` prints `cp`'s
+  wording; a fold that fails on a row it cannot use prints gojq's `expected an
+object` where jq said `Cannot index number with string ("released")` (status 5
+  either way); and when `_fit_line` drives `keep` to 0 — reachable with a title
+  of many short lines, since a cut narrower than the line width is what finally
+  shrinks it — bash's `cut -c1-0` adds `cut: invalid decreasing range` to stderr
+  while appending the elided-only row Go appends.
 
 ## Bash helpers that stay
 

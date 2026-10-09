@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -382,6 +383,61 @@ func TestAddLongTitleFitsAndKeepsItsShape(t *testing.T) {
 	}
 }
 
+// A title with newlines shrinks line by line, the way `cut -c` does: the line
+// count survives each cut, and a text whose lines never exceed keep shrinks all
+// the way to the elided marker (bash's `cut -c1-0` prints nothing either).
+func TestAddMultiLineTitleShrinksEachLine(t *testing.T) {
+	cases := map[string]struct {
+		title string
+		lines int
+	}{
+		"one char per line, so every cut is a no-op": {strings.Repeat("a\n", 5000), 0},
+		"wide lines keep their count": {
+			strings.Repeat("x\u00e9y"+strings.Repeat("y", 37)+"\n", 200), 200,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			_, err, code := tr.run(t, "add", "--engine", "e", "--window", "5h",
+				"--resets-at", future, "--agent", "a", "--ref", "r", "--branch", "b",
+				"--tier", "t", "--model", "m", "--effort", "f", tc.title)
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, err)
+			}
+			row := tr.rows(t)[0]
+			if len(row) > bus.LineMax {
+				t.Errorf("%d bytes, over the cap", len(row))
+			}
+			var body struct {
+				Task struct {
+					Title string `json:"title"`
+				} `json:"task"`
+			}
+			if err := json.Unmarshal([]byte(mustBody(t, row)), &body); err != nil {
+				t.Fatal(err)
+			}
+			title := body.Task.Title
+			if !strings.HasSuffix(title, elidedMarker) {
+				t.Errorf("no elided marker: %q", title)
+				return
+			}
+			// The title is one of Shrink's own outputs, at the keep its first
+			// line was cut to.
+			keep := utf8.RuneCountInString(strings.SplitN(title, "\n", 2)[0])
+			if title == elidedMarker {
+				keep = 0
+			}
+			if want := bus.Shrink(tc.title, keep); title != want {
+				t.Errorf("title is not Shrink(title, %d):\n got %q\nwant %q", keep, title, want)
+			}
+			if got := strings.Count(title, "\n"); tc.lines > 0 && got != tc.lines-1 {
+				t.Errorf("%d newlines, want %d", got, tc.lines-1)
+			}
+		})
+	}
+}
+
 func mustBody(t *testing.T, row string) string {
 	t.Helper()
 	var v struct {
@@ -635,6 +691,28 @@ func TestParkNeverReturnsZero(t *testing.T) {
 	out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), "park", "1")
 	if code != 0 || out != "1\n" {
 		t.Errorf("park 1: %q (%d)", out, code)
+	}
+}
+
+// Only `list` and `due` have a --json. The arm's `park` and `release` loops fall
+// through to their usage branch on it, in either order.
+func TestParkAndReleaseRejectJSON(t *testing.T) {
+	tr := setup(t)
+	cases := [][]string{
+		{"park", "5", "--json"},
+		{"park", "5", "--crew", "c9", "--json"},
+		{"release", "h1", "--json"},
+		{"release", "h1", "--crew", "c9", "--json"},
+	}
+	for _, args := range cases {
+		out, err, code := tr.run(t, args...)
+		want := "crew: hold park <default> [--crew ID]\n"
+		if args[0] == "release" {
+			want = "crew: hold release <id> [--crew ID]\n"
+		}
+		if code != 1 || out != "" || err != want {
+			t.Errorf("%v: code %d, stdout %q, stderr %q, want %q", args, code, out, err, want)
+		}
 	}
 }
 

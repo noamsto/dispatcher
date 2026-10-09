@@ -246,3 +246,45 @@ func crewShLine(src, name string) string {
 	}
 	return ""
 }
+
+// `cut -c1-keep` is line-oriented, and _shrink's blob branch runs the text
+// through it inside $(...): each line is capped on its own, and every trailing
+// newline is stripped. A whole-string cut of the same width is a different text
+// — and a hold row built from it is a different row.
+func TestShrinkCutsEachLine(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		keep int
+		want string
+	}{
+		{"one line", "abcdef", 3, "abc" + elided},
+		{"each line capped", "abcdef\nghijkl", 3, "abc\nghi" + elided},
+		{"short lines survive", "ab\ncdefgh\n", 4, "ab\ncdef" + elided},
+		{"trailing newlines go", "ab\n\n\n", 5, "ab" + elided},
+		{"runes, not bytes", "漢字abcdef", 3, "漢字a" + elided},
+		{"keep 0 is cut's invalid range", "abcdef\nghij", 0, elided},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Shrink(tc.text, tc.keep); got != tc.want {
+				t.Errorf("Shrink(%q, %d) = %q, want %q", tc.text, tc.keep, got, tc.want)
+			}
+		})
+	}
+}
+
+// A multi-line text that never shrinks a single line (each line is shorter than
+// keep) still loses nothing but its trailing newline — the loop then keeps
+// cutting until keep reaches the line width.
+func TestFitLineConvergesOnAMultiLineText(t *testing.T) {
+	full := strings.Repeat("a\n", 5000)
+	got := FitLine(func(text string) string { return `{"t":"` + text + `"}` }, full)
+	if len(got) > LineMax {
+		t.Fatalf("%d bytes, over the cap", len(got))
+	}
+	want := `{"t":"` + Shrink(full, 0) + `"}`
+	if got != want {
+		t.Errorf("the loop stopped early: %d bytes, want the keep-0 line (%d)", len(got), len(want))
+	}
+}

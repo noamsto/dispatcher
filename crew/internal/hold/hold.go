@@ -145,12 +145,18 @@ func (f *folds) outstanding(crew string) (jsonv.Value, int) {
 	})
 }
 
-// list and due: `[--json] [--crew ID]` in either order, as the arm's loop left
-// them. msg is the arm's stderr line when the arguments themselves fail.
-func parseRead(args []string, usage string, stderr io.Writer) (jsonOut bool, hcrew, msg string) {
+// `list` and `due`: `[--json] [--crew ID]` in either order, as the arm's loop
+// left them. msg is the arm's stderr line when the arguments themselves fail.
+// jsonFlag is false for `park` and `release`, whose loops have no `--json` case
+// and so fall through to their `*)` usage branch — accepting the flag there
+// would turn a call bash rejects into a successful one.
+func parseRead(args []string, usage string, jsonFlag bool) (jsonOut bool, hcrew, msg string) {
 	for len(args) > 0 {
 		switch args[0] {
 		case "--json":
+			if !jsonFlag {
+				return false, "", usage
+			}
 			jsonOut = true
 			args = args[1:]
 		case "--crew":
@@ -166,7 +172,7 @@ func parseRead(args []string, usage string, stderr io.Writer) (jsonOut bool, hcr
 }
 
 func list(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	jsonOut, hcrew, msg := parseRead(args, "crew: hold list [--crew ID] [--json]", stderr)
+	jsonOut, hcrew, msg := parseRead(args, "crew: hold list [--crew ID] [--json]", true)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitFailure
@@ -188,7 +194,7 @@ func list(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) i
 }
 
 func due(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	jsonOut, hcrew, msg := parseRead(args, "crew: hold due [--crew ID] [--json]", stderr)
+	jsonOut, hcrew, msg := parseRead(args, "crew: hold due [--crew ID] [--json]", true)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitFailure
@@ -240,7 +246,7 @@ func park(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) i
 	if err != nil || def <= 0 {
 		return badDefault()
 	}
-	_, hcrew, msg := parseRead(rest, "crew: hold park <default> [--crew ID]", stderr)
+	_, hcrew, msg := parseRead(rest, "crew: hold park <default> [--crew ID]", false)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitFailure
@@ -473,7 +479,7 @@ func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options
 		return exitFailure
 	}
 	hid, args := args[0], args[1:]
-	_, hcrew, msg := parseRead(args, "crew: hold release <id> [--crew ID]", stderr)
+	_, hcrew, msg := parseRead(args, "crew: hold release <id> [--crew ID]", false)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitFailure

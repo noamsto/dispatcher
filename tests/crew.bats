@@ -9078,32 +9078,41 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   helpers="$(sed -n '/^_shrink() {/,/^}/p; /^_fit_line() {/,/^}/p' "$CREW")"
   eval "$helpers"
 
-  full="$(head -c 5000 /dev/zero | tr '\0' 'x')"
-  run_crew hold add --crew c1 --engine claude --window 5h \
-    --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
-    --tier standard --model sonnet --effort medium "$full"
-  row="$(tail -n1 "$log")"
-  title="$(jq -r '.body | fromjson | .task.title' <<<"$row")"
+  # One long line, and the same bulk spread over 200 lines: `cut -c` caps each
+  # line on its own, so the two reach their `keep` by different routes.
+  local titles=()
+  titles+=("$(head -c 5000 /dev/zero | tr '\0' 'x')")
+  titles+=("$(awk 'BEGIN {
+    for (i = 0; i < 200; i++) printf "0123456789012345678901234567890123456789\n"
+  }')")
 
-  # escaped(text) is the leaf's byte length inside the row; the rest of the row
-  # is fixed, so the builder's line for any text is overhead + escaped(text).
-  escaped() { jq -nc --arg t "$1" '$t' | wc -c | awk '{print $1 - 1}'; }
-  local overhead n0
-  overhead=$(($(printf '%s' "$row" | wc -c) - $(escaped "$title")))
-  n0=$((overhead + $(escaped "$full")))
-  [ "$n0" -gt "$_LINE_MAX" ]
-  [ $((overhead + $(escaped "$title"))) -le "$_LINE_MAX" ]
+  for full in "${titles[@]}"; do
+    run_crew hold add --crew c1 --engine claude --window 5h \
+      --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
+      --tier standard --model sonnet --effort medium "$full"
+    row="$(tail -n1 "$log")"
+    title="$(jq -r '.body | fromjson | .task.title' <<<"$row")"
 
-  local text=$full keep=${#full} step
-  while :; do
-    n=$((overhead + $(escaped "$text")))
-    { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
-    step=$((keep * _LINE_MAX / n))
-    [ "$step" -lt "$((keep * 3 / 4))" ] || step=$((keep * 3 / 4))
-    keep=$step
-    text=$(_shrink "$full" "$keep")
+    # escaped(text) is the leaf's byte length inside the row; the rest of the row
+    # is fixed, so the builder's line for any text is overhead + escaped(text).
+    escaped() { jq -nc --arg t "$1" '$t' | wc -c | awk '{print $1 - 1}'; }
+    local overhead n0
+    overhead=$(($(printf '%s' "$row" | wc -c) - $(escaped "$title")))
+    n0=$((overhead + $(escaped "$full")))
+    [ "$n0" -gt "$_LINE_MAX" ]
+    [ $((overhead + $(escaped "$title"))) -le "$_LINE_MAX" ]
+
+    local text=$full keep=${#full} step
+    while :; do
+      n=$((overhead + $(escaped "$text")))
+      { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
+      step=$((keep * _LINE_MAX / n))
+      [ "$step" -lt "$((keep * 3 / 4))" ] || step=$((keep * 3 / 4))
+      keep=$step
+      text=$(_shrink "$full" "$keep")
+    done
+    [ "$text" = "$title" ]
   done
-  [ "$text" = "$title" ]
 }
 
 # `_bus_append`'s torn-tail rule, now enforced by the Go writer: a log whose last

@@ -100,6 +100,10 @@ func FitLine(build func(text string) string, full string) string {
 // stream: jq's `-e` is the LAST output's truthiness, and its `jq -c walk(...)`
 // then rewrites every value it parsed, one per line. A parse error, or no value at
 // all, is jq's exit 2 and 4 — the blob branch either way.
+//
+// The blob branch is `cut -c1-keep` inside `$(...)`, and cut is line-oriented: a
+// text with newlines has each of its lines capped on its own, so its line count
+// survives and its total length is nothing like a single cut of the same width.
 func Shrink(text string, keep int) string {
 	if vs, err := jsonv.DecodeStream(strings.NewReader(text)); err == nil && len(vs) > 0 {
 		container := false
@@ -116,11 +120,24 @@ func Shrink(text string, keep int) string {
 			return strings.Join(out, "\n")
 		}
 	}
-	r := []rune(text)
-	if keep > len(r) {
-		keep = len(r)
+	return cutChars(text, keep) + elided
+}
+
+// cutChars is `cut -c1-keep`: each newline-separated line capped to keep
+// characters, rejoined, with every trailing newline stripped the way `$(...)`
+// strips them. keep 0 is cut's invalid range, which prints nothing (and, on
+// bash's side only, `cut: invalid decreasing range` on stderr).
+func cutChars(text string, keep int) string {
+	if keep <= 0 {
+		return ""
 	}
-	return string(r[:keep]) + elided
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		if r := []rune(l); len(r) > keep {
+			lines[i] = string(r[:keep])
+		}
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
 // shrinkLeaves is jq's `walk(f)`: f applied to every value post-order, object key
