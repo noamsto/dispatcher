@@ -4857,11 +4857,9 @@ roster-render)
     # crew already draining is left to exit rather than upgraded, because the hop
     # would restart its quiet window in the new build and the next dispatch starts
     # that build anyway. The entry is followed whenever it names a build other than
-    # the one running — including at start, so a daemon started by an old build
-    # after a switch hops here instead of keeping that stale build as its baseline;
-    # a rollback of the entry is followed the same way. PATH is restored to the
-    # recorded start first (above), so a hop never grows it, and a devshell's own
-    # entries ride along inside that start PATH.
+    # the one running — at start too, and a rollback is no exception; only the
+    # running build is refused. PATH is restored to the recorded start first, so a
+    # hop never grows it and a devshell's own entries ride along inside it.
     rr_want=$(_rr_installed_crew)
     if [ -z "$rr_idle_since" ] && [ -n "$rr_want" ] && [ "$rr_want" != "$_rr_self" ]; then
       PATH="${CREW_RR_START_PATH-$PATH}" exec "$rr_want" roster-render "${rr_args[@]}"

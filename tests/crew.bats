@@ -13097,14 +13097,12 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   [ "$n" -eq 1 ]
 }
 
-# The daemon running one build while the entry names another: #810 turned the
-# old "keeps its own" baseline into "follow the entry" — such a daemon (started
-# by an old build after a switch) hops at its first sleep point instead of
-# waiting for the entry to move again. The no-hop control is the running build
-# equalling the entry, covered by `an unchanged installed crew…`.
+# A daemon whose running build differs from the installed entry follows the
+# entry at its first sleep point; the no-hop control — running build equalling
+# the entry — is `an unchanged installed crew never makes the daemon re-exec`.
 
-# AC1: the daemon restores the PATH it started with on every hop, so N hops
-# carry one wrapper prefix, not N (red on main: each hop stacks another wbin).
+# The daemon restores the PATH it started with on every hop, so N hops carry
+# one wrapper prefix, not N.
 @test "roster-render: the daemon restores its start PATH on every hop" {
   _rr_mini working 'execute: tests'
   _rr_fakebin A
@@ -13135,9 +13133,8 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   kill -0 "$pid"
 }
 
-# AC2: a daemon whose running build differs from the installed entry at start
-# hops at its first sleep point (red on main: the entry was its own baseline,
-# so it never moved and never hopped).
+# A daemon whose running build differs from the installed entry at start hops
+# at its first sleep point.
 @test "roster-render: a daemon started by an older build hops into the installed entry" {
   _rr_mini working 'execute: tests'
   _rr_fakebin B
