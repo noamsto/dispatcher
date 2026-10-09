@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
@@ -40,16 +41,21 @@ type Options struct {
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm: the agent, then `[crew] [--since TS]` in either order, the
-// crew defaulting to the caller's, a log that is not a regular file exiting 0
-// before `--since` is even validated, and the msgs printed before the marks
-// are raised.
+// Run is the arm: the agent, then `[crew] [--since TS] [--from SENDER]
+// [--undelivered]` in any order, the crew defaulting to the caller's, a log that
+// is not a regular file exiting 0 before `--since` is even validated, and the
+// msgs printed before the marks are raised.
+//
+// --undelivered keeps only the msgs past this session's marks and holds the
+// marks lock from reading them to recording them, so concurrent readers of one
+// session split a msg between them at most once.
 func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	me, crew, since, msg := parse(args)
+	q, msg := parse(args)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
 	}
+	me, crew, since := q.me, q.crew, q.since
 	if crew == "" {
 		crew = o.CrewID()
 	}
@@ -76,30 +82,51 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		return code
 	}
 
+	var held jsonv.Value
+	if q.undelivered {
+		unlock, err := marks.Lock(paths.Dir, crew, me)
+		if err != nil {
+			say(stderr, "crew: inbox: cannot lock delivered marks: %v\n", err)
+			return 1
+		}
+		defer unlock()
+		held = marks.Read(paths.Dir, crew, me)
+	}
+
 	opts := jsonv.Options{}
 	// `.crew_id` is jq's index: an object either carries the msg or does not,
 	// null indexes to null, and any other value is a type error — one stderr
 	// line each, and jq's exit status is the *last* input's outcome rather than
 	// a sticky flag (the rule internal/log documents).
 	failed := false
-	var printed []jsonv.Value
+	var selected []jsonv.Value
 	for _, ev := range events {
 		v := ev.Raw
 		switch v.Kind() {
 		case jsonv.KindObject:
 			failed = false
-			if !selects(v, crew, me, since) {
+			if !selects(v, crew, me, since, q.from) {
 				continue
 			}
-			printed = append(printed, v)
-			_ = jsonv.Encode(stdout, v, opts)
-			say(stdout, "\n")
+			selected = append(selected, v)
 		case jsonv.KindNull:
 			failed = false
 		case jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString, jsonv.KindArray:
 			say(stderr, "crew: inbox: %s: cannot index %v with \"crew_id\"\n", paths.Log, v.Kind())
 			failed = true
 		}
+	}
+	printed := selected
+	if q.undelivered {
+		var err error
+		if printed, err = pastMarks(selected, held); err != nil {
+			say(stderr, "crew: inbox: %v\n", err)
+			return 1
+		}
+	}
+	for _, v := range printed {
+		_ = jsonv.Encode(stdout, v, opts)
+		say(stdout, "\n")
 	}
 	// A session that has read its inbox has been handed these msgs, so a later
 	// await must not return them again (#290) — including the prefix of a bus
@@ -115,7 +142,11 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		}
 	}
 	if strings.HasPrefix(me, "worker:") && len(printed) > 0 {
-		marks.Record(paths.Dir, crew, me, printed)
+		if q.undelivered {
+			marks.RecordHeld(paths.Dir, crew, me, printed)
+		} else {
+			marks.Record(paths.Dir, crew, me, printed)
+		}
 	}
 	if decode != nil {
 		say(stderr, "crew: inbox: %s: %v\n", paths.Log, decode.Err)
@@ -127,31 +158,52 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	return 0
 }
 
-// parse reads the arm's arguments: `<agent> [crew] [--since TS]`. crew is the
-// last bare word and --since the last --since, as the arm's while loop left
-// them; msg is the arm's stderr line when the arguments themselves fail.
-func parse(args []string) (me, crew, since, msg string) {
+// request is the arm's arguments.
+type request struct {
+	me, crew, since, from string
+	undelivered           bool
+}
+
+// parse reads the arm's arguments: `<agent> [crew] [--since TS] [--from S]
+// [--undelivered]`. crew is the last bare word and --since and --from the last
+// of theirs, as the arm's while loop left them; msg is the arm's stderr line
+// when the arguments themselves fail.
+func parse(args []string) (q request, msg string) {
 	if len(args) > 0 {
-		me = args[0]
+		q.me = args[0]
 		args = args[1:]
 	}
 	// Only a worker id promises a session: a branch-only one matches no message
 	// the caller could be waiting for, and #290's marks are per session.
-	if strings.HasPrefix(me, "worker:") && !bus.IsSessionID(me) {
-		return "", "", "", fmt.Sprintf(
-			"crew: inbox: '%s' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", me)
+	if strings.HasPrefix(q.me, "worker:") && !bus.IsSessionID(q.me) {
+		return request{}, fmt.Sprintf(
+			"crew: inbox: '%s' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", q.me)
 	}
 	for len(args) > 0 {
-		if args[0] == "--since" {
+		switch args[0] {
+		case "--since", "--from":
+			flag := args[0]
 			if len(args) < 2 || args[1] == "" {
-				return "", "", "", "crew: --since needs a value"
+				return request{}, "crew: " + flag + " needs a value"
 			}
-			since, args = args[1], args[2:]
-			continue
+			if flag == "--since" {
+				q.since = args[1]
+			} else {
+				q.from = args[1]
+			}
+			args = args[2:]
+		case "--undelivered":
+			q.undelivered = true
+			args = args[1:]
+		default:
+			q.crew, args = args[0], args[1:]
 		}
-		crew, args = args[0], args[1:]
 	}
-	return me, crew, since, ""
+	// Marks exist only for a session; the suffix check above covers any worker id.
+	if q.undelivered && !strings.HasPrefix(q.me, "worker:") {
+		return request{}, "crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)"
+	}
+	return q, ""
 }
 
 // isDigits is what the arm's `--since` case test accepts: a non-empty run of
@@ -169,11 +221,14 @@ func isDigits(s string) bool {
 }
 
 // selects is the arm's select: the crew, the kind and the addressee are
-// member tests, and `.ts > $since` only runs with --since. Every test is jq's
-// `==`, so a non-string value matches nothing — the empty crew of a caller
-// with no id to default to included (#874).
-func selects(v jsonv.Value, crew, me, since string) bool {
+// member tests, `.from == $from` only runs with --from, and `.ts > $since` only
+// runs with --since. Every test is jq's `==`, so a non-string value matches
+// nothing — the empty crew of a caller with no id to default to included (#874).
+func selects(v jsonv.Value, crew, me, since, from string) bool {
 	if !member(v, "crew_id", crew) || !member(v, "kind", "msg") {
+		return false
+	}
+	if from != "" && !member(v, "from", from) {
 		return false
 	}
 	to, _ := v.Get("to")
@@ -189,6 +244,34 @@ func selects(v jsonv.Value, crew, me, since string) bool {
 		ts = jsonv.Null()
 	}
 	return greaterThanNumber(ts, since)
+}
+
+// pastMarks keeps the msgs newer than this session's mark for their sender:
+// `.ts > ($marks[.from] // 0)`, run by jq so a string mark a hand-edited file
+// left outranks a number ts as `_unread_scan` has it. A msg whose `from` is not
+// a string is dropped first — it has no mark to compare with, and record.jq
+// would fail the whole write over it.
+func pastMarks(rows []jsonv.Value, held jsonv.Value) ([]jsonv.Value, error) {
+	var named []jsonv.Value
+	for _, v := range rows {
+		if f, ok := v.Get("from"); ok && f.Kind() == jsonv.KindString {
+			named = append(named, v)
+		}
+	}
+	if len(named) == 0 {
+		return nil, nil
+	}
+	keep, err := jqrun.Run("map(.ts > ($marks[.from] // 0))", named, 0, map[string]jsonv.Value{"marks": held})
+	if err != nil {
+		return nil, err
+	}
+	var out []jsonv.Value
+	for i, k := range keep.Elems() {
+		if k.Truthy() {
+			out = append(out, named[i])
+		}
+	}
+	return out, nil
 }
 
 // member is jq's `.key == s`: an absent key indexes to null, and only a string

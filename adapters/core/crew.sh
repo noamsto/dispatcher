@@ -2140,13 +2140,15 @@ HELP
     ;;
   inbox)
     cat <<'HELP'
-usage: crew inbox <agent> [crew] [--since TS]
+usage: crew inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered]
 
 Print the messages addressed to <agent> — messages only, never status rows.
 
-  <agent>   worker:<branch>#s… (the session suffix is required), role:<branch>:<role>
-  [crew]    Crew id; defaults to this repo's crew
-  --since   One non-blocking pass over messages strictly newer than TS
+  <agent>        worker:<branch>#s… (the session suffix is required), role:<branch>:<role>
+  [crew]         Crew id; defaults to this repo's crew
+  --since        One non-blocking pass over messages strictly newer than TS
+  --from         Only messages from this sender (exact id)
+  --undelivered  Only messages past this session's delivered marks; marks what it prints
 
 Omitting --since returns everything, unchanged; a directive posted mid-stage is
 only visible at the next peek, so carry the cursor forward. A worker:<…> reader
