@@ -14,9 +14,7 @@ import (
 )
 
 // lockAcquire is the helper: mkdir is the ONLY gate (atomic on POSIX), the
-// pid file inside is for reclaim. It reports true when acquired or when the
-// holder is this same pid (idempotent re-run), false when a different live pid
-// holds it or the reclaim race was lost.
+// pid file inside is for reclaim. Re-acquiring as the same owner is a success.
 func lockAcquire(dir, owner string) bool {
 	if tryLockDir(dir, owner) {
 		return true

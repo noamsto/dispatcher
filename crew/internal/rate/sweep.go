@@ -70,10 +70,9 @@ type sweep struct {
 
 // clock is jqrun's `now`, read at the moment the fold runs. The arm ran every
 // fold in its own jq process, so `now` was re-read each time: records and plan
-// before the network, merge after it. One value frozen at sweep start would
-// date the merged row to the start, and every reader folds the append-only
-// store last-wins by max_by(.swept_at) — so an overlapping sweep that started
-// earlier but merged later would have its fresher row discarded as stale.
+// before the network, merge after it. A value frozen at sweep start would date
+// the merged row to the start while readers fold the store last-wins by
+// max_by(.swept_at), discarding an overlapping sweep's fresher row as stale.
 func (s *sweep) clock() float64 { return clockSeconds(s.o) }
 
 // runSweep is the arm, in the arm's order.
@@ -465,7 +464,7 @@ func appendBatch(store string, rows []jsonv.Value) error {
 // exact whole-line check, then a one-line append. The arm's redirect ran under
 // `set -e`, so a registry that cannot be opened aborted the sweep before any
 // store write: a repo that never enters the registry is invisible to every
-// later `--sweep-all`, which is not a failure the caller gets to miss.
+// later `--sweep-all`.
 func appendRegistry(registry, line string) error {
 	if data, err := os.ReadFile(registry); err == nil {
 		for _, have := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
@@ -474,10 +473,9 @@ func appendRegistry(registry, line string) error {
 			}
 		}
 	}
-	// A read error is not fatal: the arm's `grep -qxF … 2>/dev/null ||` reads a
-	// failure to read as "the line is not there" and appends, which is how a
-	// write-only registry still gets updated. Only the append itself failing is
-	// the sweep's failure.
+	// A read error is not fatal: `grep -qxF … 2>/dev/null ||` reads a failure to
+	// read as "the line is not there" and appends, which is how a write-only
+	// registry still gets updated.
 	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

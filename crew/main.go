@@ -142,9 +142,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return retro.Run(args, paths, stdout, stderr)
 	}
 
-	// rate is both of its modes (the bash arm parses flags and execs this for
-	// either): the sweep reads the bus, the checkout and the store, --report
-	// reads the store alone. Locate above keeps the outside-a-repo refusal the
+	// rate takes both of its modes from the bash arm, which parses the flags and
+	// execs this for either. Locate above keeps the outside-a-repo refusal the
 	// bash preamble's.
 	if sub == "rate" {
 		return rate.Run(args, paths, cwd, stdout, stderr, rate.Options{})

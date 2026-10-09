@@ -99,9 +99,7 @@ func (o Options) withDefaults() Options {
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 // Run is the arm's two modes: no flags runs the sweep, `--report` renders the
-// store, and anything else is the one-line usage. The report block resolves
-// the current repo (unless --pooled), reads and dedupes the store, then one
-// fold renders the table or the JSON aggregate; jq's exit status is mirrored
+// store, and anything else is the one-line usage. jq's exit status is mirrored
 // (0, or 5 when a fold fails on a row it cannot use), its error wording is not.
 func Run(args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
