@@ -288,6 +288,39 @@ events_log() {
   [ "$output" -ge 1 ]
 }
 
+@test "hold: bash and Go rows interleave into a log that is all JSON" {
+  local logf id
+  logf="$(events_log)"
+
+  # bash writers first — `status` and `msg` still build their rows in crew.sh,
+  # through the same _bus_append the Go port copies…
+  CREW_ID=c1 run_crew status worker:feat/x working "start"
+  CREW_ID=c1 run_crew msg dispatcher:c1 worker:feat/x "question"
+  # …then the Go writers on the same log.
+  id=$(add_valid_hold "parked after bash rows")
+  run_crew hold release "$id" --crew c1
+  # …and both again the other way round, so each writer has appended first.
+  CREW_ID=c1 run_crew status worker:feat/y blocked "later"
+  add_valid_hold "parked after its own release"
+
+  # Every line parses: no writer joined a fragment or split a record.
+  local n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    printf '%s' "$line" | jq -e . >/dev/null ||
+      {
+        echo "line $n is not JSON: $line"
+        false
+      }
+  done <"$logf"
+  [ "$n" -eq 6 ]
+
+  # And the fold still reads its own rows across the interleaving.
+  local listed
+  listed=$(run_crew hold list --json --crew c1)
+  printf '%s' "$listed" | jq -e 'length == 1 and .[0].task.title == "parked after its own release"'
+}
+
 @test "hold: a crew's holds are invisible to another crew" {
   seed_hold c1 h1 "$(($(date +%s) + 100))"
   run run_crew hold list --crew c2 --json

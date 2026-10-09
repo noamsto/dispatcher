@@ -1,7 +1,8 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `log`, `report`, `sessions`, `roster`, `crews` and `inbox`. Each
+Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox` and
+`hold`. Each
 slice must leave every bats file green; tests may be adapted only where the Go
 design changes what they can observe (the value-identity contract below), with
 each edit justified.
@@ -16,7 +17,11 @@ each edit justified.
   (number-literal text kept, NaN/Infinity extensions), encode (compact/pretty,
   `$JQ_COLORS`), and the two number-text accessors jqrun needs. The fold
   comparators are gone (#861): gojq owns ordering and grouping now.
-- `crew/internal/bus`: bus location, crew-id resolution, typed event reads.
+- `crew/internal/bus`: bus location, crew-id resolution, typed event reads, and
+  the writer `hold` appends through: `Append` is `_bus_append` (create the
+  directory, terminate a torn tail, `O_APPEND`), `FitLine`/`Shrink` are
+  `_fit_line`/`_shrink` at `LineMax`. `status`, `msg` and `reply` still call the
+  bash originals, so both copies are guarded from each side.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
 - `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`,
   `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
@@ -30,6 +35,14 @@ each edit justified.
   Its `.ts > $since` is a decimal-literal compare, because jq compares literals
   exactly and a double cannot tell `18446744073709551617` from
   `18446744073709551616`.
+- `crew/internal/hold`: the arm of #882, and the first port that **writes**.
+  Its four folds (`outstanding.jq`, `matured.jq`, `park.jq`, `render.jq`) are
+  the arm's programs, run over the bus through jqrun; its two row builders are
+  pure Go over jsonv, because a row's `body` is a _string_ — key order inside it
+  is part of the value, so `jq -S` cannot excuse gojq's sorted keys and the
+  write path has to be byte-exact. Arg parsing, validation order and the
+  `_clock_now`/`_clock_now_f` pair are Go; `$CREW_CLOCK` reaches it through
+  `Options.CrewClock`.
 - `crew/internal/marks`: the delivered-marks file of #290 — `_await_state`'s
   path, `_await_marks`' read and `_await_record`'s atomic merge, the two jq
   programs embedded verbatim. `await`, `nudge` and `stall-watch` still read and
@@ -44,7 +57,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox)
+crews | log | report | sessions | roster | inbox | hold)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -52,7 +65,9 @@ crews | log | report | sessions | roster | inbox)
 `flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
 `bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
 preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
-arm and delete its old arm.
+arm and delete its old arm. `crew hold`'s per-action `--help` text lives only in
+that preamble — it never reaches Go, and `help: crew hold <action> --help` pins
+it.
 
 ## Output-identity rules
 
@@ -76,10 +91,13 @@ arm and delete its old arm.
 - A bus on which jq fails exits 5 (corrupt) or 2 (unreadable; `sessions` still
   prints `[]`) with one `crew: <sub>: <log>: ...` stderr line and otherwise
   empty stdout. Sanctioned divergences: that wording differs from jq's; the
-  `JQ_COLORS` warning prints once, not once per jq process; and, unreachable
+  `JQ_COLORS` warning prints once, not once per jq process (and on neither side
+  where the arm started no jq at all: `list --json` and `due` on a missing log
+  print `[]` from the shell, and Go starts no fold); and, unreachable
   with real git branches, the shell rewrites the arm applies to bus-supplied
   branch strings (glob expansion of `$(...)` words, NUL bytes dropped by
-  `$(...)`, awk `-v` escape processing) are not mirrored. `crew crews` also
+  `$(...)`, `cut -c`'s width following `$LC_ALL` where Go counts runes, awk `-v`
+  escape processing) are not mirrored. `crew crews` also
   sorts its id union and `--mine` scan in byte order, not the caller's
   `sort -u`/glob locale collation — observable only for id sets whose C
   order differs from the run locale's, among no-stats rows or `last` ties;
@@ -113,6 +131,21 @@ arm and delete its old arm.
   helpers' own programs through jqrun.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
+- `crew hold` is the exception to value identity: the rows it appends are the
+  port's first **writes**, and a row's `body` is a string, so its key order is
+  part of the value a later reader compares and prints. `addRow` and the
+  release row are therefore built in Go over jsonv in the arm's construction
+  order (the body is `id`, then `wait`, then `task`, each with the arm's own
+  leaf order), and the
+  corpus diff is byte-for-byte on every row. Four sanctioned differences are
+  bash's own text, not the port's: an out-of-int64 `--resets-at` or `park`
+  default prints bash's `[: …: integer expression expected` before the arm's own
+  line; a directory `--spec` prints `cp`'s wording; a fold that fails on a row
+  it cannot use prints gojq's `expected an object` where jq said `Cannot index
+number with string ("released")` (status 5 either way); and a title so long
+  that `_fit_line` would reach `keep` 0 makes bash's `cut -c1-0` fail on stderr
+  — unreachable for a hold row, whose fixed part is ~420 bytes against a 4096
+  cap.
 
 ## Bash helpers that stay
 
@@ -131,6 +164,15 @@ the same file from `internal/marks`. Two of the three drift guards above apply �
 crew.bats compares the Go marks file with `_await_state`'s path and
 `_await_record`'s content on the same msgs, and `internal/marks` runs the
 helpers' own two programs through jqrun.
+
+`_hold_outstanding` stays for `roster-render`'s `_rr_model`, which reads the same
+bus `crew hold list` reads; `_hold_crew` and `_hold_render` lost their last
+caller with the arm and are gone. `_fit_line`, `_shrink` and `_bus_append` stay
+for `status`, `msg` and `reply`, and Go copies all three — so crew.bats replays
+the appended row through the extracted `_fit_line`/`_shrink`, compares
+`_hold_outstanding` with `crew hold list --json` on one fixture bus, and
+`internal/bus` parses `_LINE_MAX`/`_ELIDED` out of crew.sh against its own
+constants.
 
 ## Running the suite
 
