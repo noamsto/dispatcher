@@ -28,10 +28,11 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
+	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -64,7 +65,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro", "rate", "reply":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -119,6 +120,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Flush:           out.Flush,
 			JQColorsInvalid: !colorsOK,
 			Clock:           clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+		})
+		return flush(out, stderr, code)
+	}
+
+	// watch parks on the bus with its own clock and its own lock, and prints one
+	// batch value rather than lines, so it owns its run like await does. Its
+	// cursor file moves once that value is on the wire.
+	if sub == "watch" {
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		code := watch.Run(args, paths, out, stderr, watch.Options{
+			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
+			Flush:           out.Flush,
+			Now:             time.Now,
+			JQColorsInvalid: !colorsOK,
 		})
 		return flush(out, stderr, code)
 	}
