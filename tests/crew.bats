@@ -35,6 +35,7 @@ teardown() {
     pkill -KILL -P "$rr" 2>/dev/null || true
     kill -KILL "$rr" 2>/dev/null || true
   done
+  _rr_teardown_pids
   if [ -n "${HOLDER_PID:-}" ]; then
     kill -KILL "$HOLDER_PID" 2>/dev/null || true
   fi
@@ -12816,15 +12817,48 @@ _rr_segments_le80() {
 
 # The roster-render daemon (#806). _rr_daemon starts it in the background from
 # RR_CWD (default: here) with output off bats' fds, so a stuck daemon cannot
-# hang the run; teardown kills RR_PID/RR_PID2. RR_ENTRY overrides which crew it
-# starts as (a fake installed build, for the re-exec rows below).
+# hang the run; teardown kills RR_PID/RR_PID2 and every pid file the starts
+# left behind. RR_ENTRY overrides which build it starts as; each start prepends
+# its own bin dir whose only entry is a `crew` symlink to the installed entry
+# the daemon should resolve — the fakebin's when one is set, the worktree crew
+# otherwise — so no daemon row ever resolves the host's installed crew.
+# RR_ENTRY stays only the build the daemon starts as.
 _rr_daemon() {
-  local n=1 log
+  local n=1 log entry d
   [ -z "${RR_PID:-}" ] || n=2
   log="$BATS_TEST_TMPDIR/rr-daemon-$n.log"
-  (cd -- "${RR_CWD:-.}" && exec bash -euo pipefail "${RR_ENTRY:-$CREW}" roster-render \
+  entry="${RR_FAKEBIN:+$RR_FAKEBIN/crew}"
+  entry="${entry:-$CREW}"
+  d="$BATS_TEST_TMPDIR/rr-ownbin-$n"
+  mkdir -p "$d"
+  ln -sfn "$entry" "$d/crew"
+  (cd -- "${RR_CWD:-.}" && exec env PATH="$d:$PATH" bash -euo pipefail "${RR_ENTRY:-$CREW}" roster-render \
     --crew c1 --interval 1 "$@") >"$log" 2>&1 3>&- &
+  echo "$!" >"$BATS_TEST_TMPDIR/rr-daemon-$n.pid"
   if [ "$n" -eq 1 ]; then RR_PID=$!; else RR_PID2=$!; fi
+}
+
+# _rr_hermetic_path — prepend a bin dir whose only entry is a `crew` symlink to
+# $CREW, for rows that start the daemon without _rr_daemon (a --detach child
+# inherits this PATH). The installed entry then resolves to the build the
+# daemon execs, so the hop never reaches the host's installed crew.
+_rr_hermetic_path() {
+  local d="$BATS_TEST_TMPDIR/rr-ownbin"
+  mkdir -p "$d"
+  ln -sfn "$CREW" "$d/crew"
+  export PATH="$d:$PATH"
+}
+
+# _rr_teardown_pids — TERM every pid _rr_daemon started in this test, including
+# a hop lineage (exec preserves the pid) that outlived a failed assertion.
+_rr_teardown_pids() {
+  local f p
+  for f in "$BATS_TEST_TMPDIR"/rr-daemon-*.pid; do
+    [ -f "$f" ] || continue
+    p=$(cat "$f" 2>/dev/null)
+    [ -n "$p" ] && kill -TERM "$p" 2>/dev/null || true
+  done
+  return 0
 }
 
 # _rr_wait <cmd…> — poll until the command succeeds, at most 5s.
@@ -12969,6 +13003,7 @@ _rr_mini() {
 
 @test "roster-render: --detach records the pane and returns, leaving a daemon on the lock" {
   _rr_mini working 'execute: tests'
+  _rr_hermetic_path
   run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --pane %7 --interval 1 3>&-
   [ "$status" -eq 0 ]
   _rr_wait _rr_lock_taken
@@ -12979,13 +13014,19 @@ _rr_mini() {
 # The daemon upgrading itself into a newer installed build (#810). A build stand-in
 # is a copy of the crew under test, so `_rr_self` really is the build; its prologue
 # logs which build a pid runs and with what argv, at roster-render starts only — the
-# `crew roster` child `_rr_model` spawns would otherwise log once per pass.
+# `crew roster` child `_rr_model` spawns would otherwise log once per pass. The
+# `wbin` prepend simulates the writeShellApplication wrapper every real hop re-enters
+# (it prepends its runtimeInputs dirs to the inherited PATH); the probe row (opt-in
+# via RR_PATH_PROBE, so the always-on prologue stays two short printf lines) records
+# the pid and PATH of each roster-render start for the PATH-growth row.
 _rr_fake_build() { # <name> -> path of the build's crew
   local dir="$BATS_TEST_TMPDIR/rr-build-$1"
-  mkdir -p "$dir"
+  mkdir -p "$dir/wbin"
   {
     printf '#!/usr/bin/env bash\nset -euo pipefail\n'
+    printf 'export PATH="%s/wbin:$PATH"\n' "$dir"
     printf 'if [ "${1:-}" = roster-render ]; then printf "%%s %%s %%s\\n" "%s" "$$" "$*" >>"$RR_BUILDS_LOG"; fi\n' "$1"
+    printf 'if [ "${RR_PATH_PROBE:-}" = 1 ] && [ "${1:-}" = roster-render ]; then printf "%%s\\n%%s\\n" "$$" "$PATH" >>"$RR_PATHS_LOG"; fi\n'
     cat "$CREW"
   } >"$dir/crew"
   chmod +x "$dir/crew"
@@ -13000,8 +13041,10 @@ _rr_fakebin() {
   mkdir -p "$RR_FAKEBIN"
   RR_BUILDS_LOG="$BATS_TEST_TMPDIR/rr-builds.log"
   : >"$RR_BUILDS_LOG"
+  RR_PATHS_LOG="$BATS_TEST_TMPDIR/rr-paths.log"
+  : >"$RR_PATHS_LOG"
   ln -s "$(_rr_fake_build "$1")" "$RR_FAKEBIN/crew"
-  export RR_BUILDS_LOG PATH="$RR_FAKEBIN:$PATH" RR_ENTRY="$RR_FAKEBIN/crew"
+  export RR_BUILDS_LOG RR_PATHS_LOG PATH="$RR_FAKEBIN:$PATH" RR_ENTRY="$RR_FAKEBIN/crew"
 }
 
 # _rr_swap_build <name> — point the entry at a fresh build (a rebuild).
@@ -13054,36 +13097,72 @@ _rr_pid_gone() { ! kill -0 "$1" 2>/dev/null; }
   [ "$n" -eq 1 ]
 }
 
-# The daemon running one build while the entry names another: the baseline is what
-# stops its first pass from hopping into the installed build.
-@test "roster-render: a daemon started while another build is installed keeps its own" {
-  _rr_mini working 'execute: tests'
-  _rr_fakebin B
-  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
-  _rr_wait _rr_lockpid
-  local pid="$RR_PID"
-  _rr_wait _rr_build_ran A "$pid"
+# The daemon running one build while the entry names another: #810 turned the
+# old "keeps its own" baseline into "follow the entry" — such a daemon (started
+# by an old build after a switch) hops at its first sleep point instead of
+# waiting for the entry to move again. The no-hop control is the running build
+# equalling the entry, covered by `an unchanged installed crew…`.
 
-  sleep 3
-  run ! _rr_build_seen B
+# AC1: the daemon restores the PATH it started with on every hop, so N hops
+# carry one wrapper prefix, not N (red on main: each hop stacks another wbin).
+@test "roster-render: the daemon restores its start PATH on every hop" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin A
+  export RR_PATH_PROBE=1
+  _rr_daemon --quiet 30 --no-open
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID" start last
+  _rr_wait _rr_build_ran A "$pid"
+  # The start PATH is probed before any swap, so it is recorded with no hop
+  # pending: the first row is this daemon's own start.
+  _rr_wait test -s "$RR_PATHS_LOG"
+
+  _rr_swap_build B
+  _rr_wait _rr_build_ran B "$pid"
+  _rr_swap_build C
+  _rr_wait _rr_build_ran C "$pid"
+  _rr_swap_build D
+  _rr_wait _rr_build_ran D "$pid"
+
+  # The last probe row is the D hop of this very lineage…
+  [ "$(tail -2 "$RR_PATHS_LOG" | head -1)" = "$pid" ]
+  start=$(head -2 "$RR_PATHS_LOG" | tail -1)
+  last=$(tail -1 "$RR_PATHS_LOG")
+  # …and its PATH is the start PATH plus exactly one wrapper prefix.
+  [ "${last#*:}" = "$start" ]
+  [[ ${last%%:*} == */wbin ]]
   _rr_lock_is "$pid"
   kill -0 "$pid"
 }
 
-# And the entry moving back onto the build already running — a rollback — is no
-# upgrade either.
-@test "roster-render: an entry naming the running build does not re-exec" {
+# AC2: a daemon whose running build differs from the installed entry at start
+# hops at its first sleep point (red on main: the entry was its own baseline,
+# so it never moved and never hopped).
+@test "roster-render: a daemon started by an older build hops into the installed entry" {
   _rr_mini working 'execute: tests'
   _rr_fakebin B
-  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon --quiet 30 --no-open
   _rr_wait _rr_lockpid
-  local pid="$RR_PID" n
+  local pid="$RR_PID"
   _rr_wait _rr_build_ran A "$pid"
+  _rr_wait _rr_build_ran B "$pid"
+  _rr_lock_is "$pid"
+  kill -0 "$pid"
+}
+
+# Following the entry cuts both ways: a rollback is a hop too — but never into
+# the build already running (the A→B→A hops run on one pid).
+_rr_built_twice() { [ "$(_rr_build_count "$1" "$2")" -eq 2 ]; }
+@test "roster-render: an entry rolled back to an older build is followed" {
+  _rr_mini working 'execute: tests'
+  _rr_fakebin B
+  RR_ENTRY="$(_rr_fake_build A)" _rr_daemon --quiet 30 --no-open
+  _rr_wait _rr_lockpid
+  local pid="$RR_PID"
+  _rr_wait _rr_build_ran B "$pid"
 
   _rr_point_build A
-  sleep 3
-  n=$(_rr_build_count A "$pid")
-  [ "$n" -eq 1 ]
+  _rr_wait _rr_built_twice A "$pid"
   _rr_lock_is "$pid"
   kill -0 "$pid"
 }
