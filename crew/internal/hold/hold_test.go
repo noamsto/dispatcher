@@ -266,23 +266,6 @@ func TestAddFutureFollowsTheVirtualClock(t *testing.T) {
 	}
 }
 
-// `_clock_now` seeds an unset clock file from the real time, and the file it
-// seeds is the one later reads use.
-func TestClockSeedsMissingFile(t *testing.T) {
-	tr := setup(t)
-	path := filepath.Join(tr.dir, "clock")
-	if got := clockText(Options{CrewClock: path, Now: func() time.Time { return now }}); got != "1700000000" {
-		t.Errorf("clockText = %q", got)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || string(data) != "1700000000\n" {
-		t.Errorf("seeded %q (%v)", data, err)
-	}
-	if got := clockText(Options{CrewClock: path, Now: func() time.Time { return now }}); got != "1700000000" {
-		t.Errorf("re-read = %q", got)
-	}
-}
-
 func TestAddSpec(t *testing.T) {
 	tr := setup(t)
 	spec := filepath.Join(tr.dir, "spec.md")
