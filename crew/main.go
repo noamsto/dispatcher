@@ -23,12 +23,13 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/report"
+	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -61,7 +62,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -130,6 +131,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Now:             time.Now,
 			CrewClock:       os.Getenv("CREW_CLOCK"),
 		})
+	}
+
+	// retro reads its own two flags, folds the whole bus with no crew filter, and
+	// prints the TSV rows, the padded report or one JSON object, so it owns its
+	// run like hold does.
+	if sub == "retro" {
+		return retro.Run(args, paths, stdout, stderr)
 	}
 
 	// log and report print lines rather than one JSON value, and each reads the

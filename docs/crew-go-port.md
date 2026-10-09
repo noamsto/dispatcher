@@ -1,11 +1,10 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`
-and `await`. Each
-slice must leave every bats file green; tests may be adapted only where the Go
-design changes what they can observe (the value-identity contract below), with
-each edit justified.
+Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
+`await` and `retro`. Each slice must leave every bats file green; tests may be
+adapted only where the Go design changes what they can observe (the
+value-identity contract below), with each edit justified.
 
 ## Layout
 
@@ -57,6 +56,15 @@ each edit justified.
   fold is the arm's jq through jqrun (`await.jq`), over rows the caller decoded
   one per line — the arm's `-R` + `fromjson?` skip, with the repo's own decoder.
   The clock, the marks and the deadline are Go; a timeout is exit 0.
+- `crew/internal/retro`: the arm of #887, read-only like `report`. Its fold is
+  the arm's jq through jqrun (`retro.jq`), and it is the only port that renders
+  three shapes from one run: the bare `@tsv` rows, the `--report` table (whose
+  width math the program does itself, never `column -t`), and `--report --json`,
+  its one non-string output, printed pretty and plain — the palette is a
+  process quirk like the `$JQ_COLORS` warning, so neither is mirrored and the
+  object is compared with `jq -S`. The fold reads the whole bus with no crew
+  filter: a note is cross-run evidence, which is why a clean run prints nothing
+  at all.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -67,7 +75,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await)
+crews | log | report | sessions | roster | inbox | hold | await | retro)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -129,6 +137,12 @@ it.
   header only — exit 5 and the one stderr line match, as with `crews` above.
   The joined string is empty only when there are no rows at all, since a
   6-column `@tsv` row always carries its five tabs.
+- `crew retro`'s bare mode takes the same `join("\n")` patch, and inherits the
+  same divergence: a row whose `@tsv` cannot format a cell (an `engine` that is
+  an object, say) leaves the arm with the rows before it on stdout and Go with
+  its header, both at exit 5 with one line each. Its `--report` mode already
+  ended in a `join("\n")` and `--report --json` emits one object, so neither
+  needed the patch.
 - `crew inbox`'s delivered marks are the one file another component still reads
   while this port writes it, so the contract is the file, not stdout: same path
   (`_await_state`'s sanitized key plus its cksum), same value, and the same
