@@ -106,8 +106,9 @@ const virtualPollFloor = 10 * time.Millisecond
 // through a pid-suffixed tmp file and a rename — the helper's
 // `> "$CREW_CLOCK.$$"; mv -f`, so two polling callers cannot interleave a
 // half-written clock. A value bash would evaluate as an unset variable (`abc`)
-// advances 0, matching `$((now+abc))`; bash's arithmetic base prefixes (`0x10`,
-// `010`) are not mirrored, a duration flag is never a hex literal.
+// advances 0, matching `$((now+abc))`; bash's other arithmetic forms are not
+// mirrored — `010` advances 10 where bash adds 8, and a token Go cannot read
+// (`0x10`) advances 0, a duration flag never being a hex literal.
 func (c Clock) Sleep(interval string, stderr io.Writer) error {
 	if c.CrewClock == "" {
 		cmd := exec.Command("sleep", interval)
