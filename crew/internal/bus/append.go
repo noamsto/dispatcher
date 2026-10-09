@@ -102,14 +102,18 @@ func FitLine(build func(text string) string, full string) string {
 // all, is jq's exit 2 and 4 — the blob branch either way.
 func Shrink(text string, keep int) string {
 	if vs, err := jsonv.DecodeStream(strings.NewReader(text)); err == nil && len(vs) > 0 {
+		container := false
 		switch vs[len(vs)-1].Kind() {
 		case jsonv.KindObject, jsonv.KindArray:
+			container = true
+		case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString:
+		}
+		if container {
 			out := make([]string, len(vs))
 			for i, v := range vs {
 				out[i] = string(jsonv.Append(nil, shrinkLeaves(v, keep), jsonv.Options{}))
 			}
 			return strings.Join(out, "\n")
-		default:
 		}
 	}
 	r := []rune(text)
@@ -141,7 +145,7 @@ func shrinkLeaves(v jsonv.Value, keep int) jsonv.Value {
 		if len(r) > keep {
 			return jsonv.Str(string(r[:keep]) + elided)
 		}
-	default:
+	case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber:
 	}
 	return v
 }
