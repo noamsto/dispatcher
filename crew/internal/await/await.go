@@ -49,13 +49,10 @@ type Options struct {
 	JQColorsInvalid bool
 }
 
-// sessionRe is _is_session_id's `^s[0-9]+-[0-9]+$`, and timeoutRe the arm's
-// `^[0-9]{1,9}$` — up to nine digits, so the value always fits an int and the
-// arm's `$((10#$timeout))` never overflows.
-var (
-	sessionRe = regexp.MustCompile(`\As[0-9]+-[0-9]+\z`)
-	timeoutRe = regexp.MustCompile(`\A[0-9]{1,9}\z`)
-)
+// timeoutRe is the arm's `^[0-9]{1,9}$` — up to nine digits, so the value always
+// fits an int and the arm's `$((10#$timeout))` never overflows. (`_is_session_id`
+// has its Go twin in bus.IsSessionID.)
+var timeoutRe = regexp.MustCompile(`\A[0-9]{1,9}\z`)
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
@@ -151,7 +148,7 @@ func parse(argv []string) (call, string) {
 	}
 	// Only a worker id promises a session: a branch-only one matches no message
 	// the caller could be waiting for, and the marks are per session.
-	if strings.HasPrefix(c.me, "worker:") && !sessionRe.MatchString(c.me[strings.LastIndex(c.me, "#")+1:]) {
+	if strings.HasPrefix(c.me, "worker:") && !bus.IsSessionID(c.me) {
 		return c, fmt.Sprintf(
 			"crew: await: '%s' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", c.me)
 	}

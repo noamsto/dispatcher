@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -36,11 +35,6 @@ type Options struct {
 	CrewID          func() string
 	Flush           func() error
 }
-
-// sessionRe is _is_session_id's `^s[0-9]+-[0-9]+$`. \A..\z rather than ^..$:
-// Go's `$` is end-of-text, which is what bash's ERE means here too (no
-// REG_NEWLINE), and it keeps a trailing newline from looking like a session.
-var sessionRe = regexp.MustCompile(`\As[0-9]+-[0-9]+\z`)
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
@@ -143,7 +137,7 @@ func parse(args []string) (me, crew, since, msg string) {
 	}
 	// Only a worker id promises a session: a branch-only one matches no message
 	// the caller could be waiting for, and #290's marks are per session.
-	if strings.HasPrefix(me, "worker:") && !sessionRe.MatchString(me[strings.LastIndex(me, "#")+1:]) {
+	if strings.HasPrefix(me, "worker:") && !bus.IsSessionID(me) {
 		return "", "", "", fmt.Sprintf(
 			"crew: inbox: '%s' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", me)
 	}

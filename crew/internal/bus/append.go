@@ -1,9 +1,9 @@
 // The bus is append-only, and this is the only place that appends to it: the
 // `_bus_append` write plus the two helpers that keep a line short enough to
 // survive it (`_fit_line` and `_shrink`). They are ports of the crew.sh helpers
-// of the same name, which stay there while `status`, `msg` and `reply` call
-// them; `TestCrewShLineContract` here and the `hold:` drift guards in crew.bats
-// keep the two copies equal.
+// of the same name, which stay there while `status` and `msg` call them;
+// `TestCrewShLineContract` here and the `hold:` drift guards in crew.bats keep
+// the two copies equal.
 package bus
 
 import (
