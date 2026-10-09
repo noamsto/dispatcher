@@ -9037,6 +9037,102 @@ at_least_hold_due_lines() { [ "$(hold_due_lines)" -ge "$1" ]; }
 heartbeat_seen() { grep -q '"stream":"heartbeat"' "$STREAM_OUT" 2>/dev/null; }
 heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 
+# `crew hold` is Go now, but three of its bash helpers outlive it:
+# `_hold_outstanding` for `roster-render`'s `_rr_model`, and
+# `_fit_line`/`_shrink`/`_bus_append` for `status`/`msg`/`reply`. Drift guards in
+# the `_sessions`/`_await_state` idiom below: the same fixture through the bash
+# helper and the Go command, compared with `jq -S` because key order is
+# engine-internal.
+@test "hold: _hold_outstanding and the Go list agree on one bus" {
+  local log helpers
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  seed_hold c1 h1 9999999999
+  seed_hold c1 h2 9999999998
+  seed_hold c2 other 9999999999
+  run_crew hold release h1 --crew c1
+  # A body that is not JSON costs its own row and nothing else.
+  printf '%s\n' '{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}' >>"$log"
+
+  helpers="$(sed -n '/^_hold_outstanding() {/,/^}/p' "$CREW")"
+  eval "$helpers"
+  dir="$(dirname "$log")"
+  local want
+  want="$(_hold_outstanding c1)"
+
+  run run_crew hold list --json --crew c1
+  [ "$status" -eq 0 ]
+  [ "$(jq -S . <<<"$want")" = "$(jq -S . <<<"$output")" ]
+  [ "$(jq -r 'length' <<<"$output")" = "1" ]
+}
+
+# The write path's two copies: `hold.bats` pins that a long title shrinks, and
+# this pins the value it shrinks to — the appended row replayed through the
+# extracted `_fit_line`/`_shrink`, whose loop is re-derived here from the row's
+# own measurements (a row differs from the builder's line only in its one
+# escaped leaf, so the loop's byte lengths are computable without the builder).
+@test "hold: the Go row's title is _fit_line's own output on the same builder" {
+  local log helpers full row title
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  eval "$(grep -m1 '^_LINE_MAX=' "$CREW")"
+  eval "$(grep -m1 '^_ELIDED=' "$CREW")"
+  helpers="$(sed -n '/^_shrink() {/,/^}/p; /^_fit_line() {/,/^}/p' "$CREW")"
+  eval "$helpers"
+
+  # One long line, and the same bulk spread over 200 lines: `cut -c` caps each
+  # line on its own, so the two reach their `keep` by different routes.
+  local titles=()
+  titles+=("$(head -c 5000 /dev/zero | tr '\0' 'x')")
+  titles+=("$(awk 'BEGIN {
+    for (i = 0; i < 200; i++) printf "0123456789012345678901234567890123456789\n"
+  }')")
+
+  for full in "${titles[@]}"; do
+    run_crew hold add --crew c1 --engine claude --window 5h \
+      --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
+      --tier standard --model sonnet --effort medium "$full"
+    row="$(tail -n1 "$log")"
+    title="$(jq -r '.body | fromjson | .task.title' <<<"$row")"
+
+    # escaped(text) is the leaf's byte length inside the row; the rest of the row
+    # is fixed, so the builder's line for any text is overhead + escaped(text).
+    escaped() { jq -nc --arg t "$1" '$t' | wc -c | awk '{print $1 - 1}'; }
+    local overhead n0
+    overhead=$(($(printf '%s' "$row" | wc -c) - $(escaped "$title")))
+    n0=$((overhead + $(escaped "$full")))
+    [ "$n0" -gt "$_LINE_MAX" ]
+    [ $((overhead + $(escaped "$title"))) -le "$_LINE_MAX" ]
+
+    local text=$full keep=${#full} step
+    while :; do
+      n=$((overhead + $(escaped "$text")))
+      { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
+      step=$((keep * _LINE_MAX / n))
+      [ "$step" -lt "$((keep * 3 / 4))" ] || step=$((keep * 3 / 4))
+      keep=$step
+      text=$(_shrink "$full" "$keep")
+    done
+    [ "$text" = "$title" ]
+  done
+}
+
+# `_bus_append`'s torn-tail rule, now enforced by the Go writer: a log whose last
+# byte is not a newline gets one, so the fragment stays one record and the hold
+# the next.
+@test "hold: a Go append terminates a log that has no trailing newline" {
+  local log id
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  printf '%s' '{"crew_id":"c1","kind":"status","to":"worker:feat/x","body":{"state":"working"}' >"$log"
+
+  id=$(run_crew hold add --crew c1 --engine claude --window 5h \
+    --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
+    --tier standard --model sonnet --effort medium torn | tail -n1)
+
+  [ "$(wc -l <"$log")" -eq 2 ]
+  tail -n1 "$log" | jq -e --arg id "$id" \
+    '.kind == "msg" and .to == "hold:c1" and (.body | fromjson | .id) == $id'
+}
+
 @test "watch: --crew resolves that crew with CREW_ID unset and no WORKER_TASK.md" {
   CREW_ID=c1 run_crew status worker:feat/x done
 
