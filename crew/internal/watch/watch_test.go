@@ -2,11 +2,14 @@ package watch
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -563,6 +566,73 @@ func TestSincePastInt64ParksQuietly(t *testing.T) {
 	}
 	if stderr != "crew: watch park ended after 1s — no new events (cursor "+huge+")\n" {
 		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+// A timeout whose ms product overflows is bash's `$((start + timeout*1000))`
+// wrap, and Go's int64 wraps the same way: the deadline lands in the past and
+// the park expires with the caller's digits in the line, rather than parking
+// past the heat death of the bus.
+func TestOverflowingTimeoutExpires(t *testing.T) {
+	for _, timeout := range []string{"9223372036854775807", "4611686018427387904"} {
+		t.Run(timeout, func(t *testing.T) {
+			p := fixture(t)
+			stdout, stderr, code, _ := run(t, p, "--since", "0", "--timeout", timeout, "--interval", "1")
+			if code != 0 || stdout != "" {
+				t.Fatalf("code %d stdout %q", code, stdout)
+			}
+			if stderr != "crew: watch park ended after "+timeout+"s — no new events (cursor 0)\n" {
+				t.Errorf("stderr = %q", stderr)
+			}
+		})
+	}
+}
+
+// The status `stream`'s `wait` sees: the conventional 128+n, and 1 for the one
+// signal that has no number to report.
+func TestSignalStatus(t *testing.T) {
+	for _, tc := range []struct {
+		sig  syscall.Signal
+		want int
+	}{
+		{syscall.SIGTERM, 143},
+		{syscall.SIGINT, 130},
+		{syscall.SIGHUP, 129},
+	} {
+		if got := signalStatus(tc.sig); got != tc.want {
+			t.Errorf("signalStatus(%v) = %d, want %d", tc.sig, got, tc.want)
+		}
+	}
+	if got := signalStatus(osSignalStub{}); got != 1 {
+		t.Errorf("signalStatus(unnamed) = %d, want 1", got)
+	}
+}
+
+// osSignalStub is a signal with no syscall number to report.
+type osSignalStub struct{}
+
+func (osSignalStub) String() string { return "stub" }
+func (osSignalStub) Signal()        {}
+
+// `set -e` ended the arm with whatever `sleep` returned: the child's status for
+// an interval it rejects, and 128+n when a signal killed it mid-poll.
+func TestExitStatus(t *testing.T) {
+	if _, err := exec.Command("sh", "-c", "exit 3").Output(); err != nil {
+		if got := exitStatus(err); got != 3 {
+			t.Errorf("exitStatus(exit 3) = %d, want 3", got)
+		}
+	} else {
+		t.Fatal("`exit 3` succeeded")
+	}
+	if _, err := exec.Command("sh", "-c", "kill -TERM $$").Output(); err != nil {
+		if got := exitStatus(err); got != 143 {
+			t.Errorf("exitStatus(SIGTERM) = %d, want 143", got)
+		}
+	} else {
+		t.Skip("`kill -TERM $$` did not fail the child")
+	}
+	if got := exitStatus(errors.New("exec never started")); got != 1 {
+		t.Errorf("exitStatus(non-ExitError) = %d, want 1", got)
 	}
 }
 

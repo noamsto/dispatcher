@@ -22,10 +22,12 @@ package watch
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -141,21 +143,17 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 
 	start := nowMS()
-	var deadline int64 = math.MaxInt64
-	if c.timeout <= (math.MaxInt64-start)/1000 {
-		// The arm's `$((start + timeout * 1000))`, minus its overflow wrap: a
-		// timeout that overflows bash's arithmetic parks rather than expires.
-		deadline = start + c.timeout*1000
-	}
+	// The arm's `$((start + timeout * 1000))`, computed in bash's intmax_t. Go's
+	// int64 wraps the same two's-complement way, and that is the parity wanted:
+	// a timeout whose ms product overflows lands on the same wrapped deadline
+	// bash parked on, which is in the past — an expiry, not an unbounded park.
+	deadline := start + c.timeout*1000
 
 	for {
 		if s, ok := pending(sigs); ok {
 			// The conventional 128+n, which is what `stream`'s `wait` saw from
 			// the bash arm.
-			if sig, isSig := s.(syscall.Signal); isSig {
-				return 128 + int(sig)
-			}
-			return 1
+			return signalStatus(s)
 		}
 		if out, ok := fold(paths.Log, c); ok {
 			if err := jsonv.Encode(stdout, out, jsonv.Options{}); err != nil {
@@ -179,7 +177,15 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 			return 0
 		}
 		if err := o.Sleep(c.interval, stderr); err != nil {
-			return 1
+			// `set -e` ended the arm with whatever `sleep` returned, so the
+			// status is the child's: 1 for an interval it rejects, and 128+n
+			// when a group-directed signal (a terminal's Ctrl-C) killed it out
+			// from under the park. A signal aimed at this process too is already
+			// queued, and reports the same number either way.
+			if s, ok := pending(sigs); ok {
+				return signalStatus(s)
+			}
+			return exitStatus(err)
 		}
 	}
 }
@@ -363,6 +369,34 @@ func parseIntSaturate(text string) int64 {
 		return math.MaxInt64
 	}
 	return n
+}
+
+// exitStatus is what `set -e` would have exited the arm with: the child's own
+// status, or 128+n when it died of a signal. Anything Go could not read a
+// status from (the exec itself failed) is the shell's generic 1.
+func exitStatus(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok {
+			if ws.Signaled() {
+				return 128 + int(ws.Signal())
+			}
+			return ws.ExitStatus()
+		}
+		if code := ee.ExitCode(); code >= 0 {
+			return code
+		}
+	}
+	return 1
+}
+
+// signalStatus is the conventional 128+n a shell reports for a command that
+// died of that signal — the status `stream`'s `wait` saw from the bash arm.
+func signalStatus(s os.Signal) int {
+	if sig, isSig := s.(syscall.Signal); isSig {
+		return 128 + int(sig)
+	}
+	return 1
 }
 
 // pending is a non-blocking look at the signal channel: the park acts on a
