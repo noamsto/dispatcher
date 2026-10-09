@@ -11879,7 +11879,7 @@ _rw_scroll_case() {
   [ "$(_rw_unsubmitted)" -ge 1 ]
 }
 
-# A role pane squeezed to a sliver mid-run (#891) renders no recognisable frame.
+# A role pane squeezed to a sliver mid-run renders no recognisable frame.
 # The watcher restores its width via the main-vertical fallback and re-samples.
 @test "role-watch: a 1-cell role pane is re-guarded and the frame then recognised, no assignment_unsubmitted" {
   _spawn_role_fixture

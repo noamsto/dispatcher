@@ -2910,7 +2910,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       *)
         # A role pane squeezed to a sliver mid-run renders no frame the matchers
         # know; restore its width and re-sample before counting it against the
-        # assignment (#891).
+        # assignment.
         if _rw_reguard_width; then
           cooldown=1
         else
