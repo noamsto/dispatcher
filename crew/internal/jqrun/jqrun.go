@@ -20,20 +20,18 @@ import (
 )
 
 // Run executes prog like `jq -s -c prog`: input is the slurped event array,
-// vars become $name string/JSON variables, and the bare `now` builtin is
-// rewritten to $now = nowSec so folds are deterministic. The program must
+// vars become $name string/JSON variables, and the `now` builtin is frozen
+// to nowSec so folds are deterministic (see freezeNow). The program must
 // emit exactly one value; a gojq runtime error (jq's type error) is returned
 // as an error, which main maps to the jq-failure exit status.
 func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Value) (jsonv.Value, error) {
-	names := make([]string, 0, len(vars)+1)
-	values := make([]any, 0, len(vars)+1)
-	names = append(names, "$now")
-	values = append(values, now)
+	names := make([]string, 0, len(vars))
+	values := make([]any, 0, len(vars))
 	for name := range vars {
 		names = append(names, "$"+name)
 	}
-	sort.Strings(names[1:])
-	for _, name := range names[1:] {
+	sort.Strings(names)
+	for _, name := range names {
 		v, err := toGo(vars[name[1:]])
 		if err != nil {
 			return jsonv.Value{}, err
@@ -41,10 +39,11 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 		values = append(values, v)
 	}
 
-	q, err := gojq.Parse(injectNow(prog))
+	q, err := gojq.Parse(prog)
 	if err != nil {
 		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
 	}
+	freezeNow(q, now)
 	code, err := gojq.Compile(q, gojq.WithVariables(names))
 	if err != nil {
 		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
@@ -68,26 +67,17 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 	return fromGo(v)
 }
 
-// injectNow rewrites the bare `now` builtin to `$now`, on word boundaries so
-// words like "last-known" in program comments survive.
-func injectNow(prog string) string {
-	var b []byte
-	for i := 0; i < len(prog); {
-		if len(prog)-i >= 3 && prog[i:i+3] == "now" &&
-			(i == 0 || !isWordByte(prog[i-1])) &&
-			(i+3 == len(prog) || !isWordByte(prog[i+3])) {
-			b = append(b, "$now"...)
-			i += 3
-			continue
-		}
-		b = append(b, prog[i])
-		i++
-	}
-	return string(b)
-}
-
-func isWordByte(c byte) bool {
-	return c == '_' || ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')
+// freezeNow shadows gojq's builtin `now` by prepending `def now: <now>;` to
+// the parsed program. gojq resolves a bare call by taking the last matching
+// FuncDef, so this replaces the builtin but yields to any `def now:` the
+// program itself declares. Only the parsed AST changes, never the source
+// text, so string literals and comments keep their `now` verbatim.
+func freezeNow(q *gojq.Query, now float64) {
+	body := &gojq.Query{Term: &gojq.Term{
+		Type:   gojq.TermTypeNumber,
+		Number: strconv.FormatFloat(now, 'g', -1, 64),
+	}}
+	q.FuncDefs = append([]*gojq.FuncDef{{Name: "now", Body: body}}, q.FuncDefs...)
 }
 
 // toGo converts a jsonv value to gojq's representation. Number literals go
