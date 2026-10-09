@@ -47,9 +47,10 @@ var crcTable = func() (t [256]uint32) {
 	return t
 }()
 
-// cksum is POSIX cksum(1): CRC-32 (poly 0x04C11DB7, MSB first, init 0) over
-// the data then its length as minimal little-endian bytes, complemented.
-func cksum(data []byte) uint32 {
+// CKsum is POSIX cksum(1): CRC-32 (poly 0x04C11DB7, MSB first, init 0) over
+// the data then its length as minimal little-endian bytes, complemented — the
+// checksum crew.sh and the phase-status handlers put in their state-file names.
+func CKsum(data []byte) uint32 {
 	var crc uint32
 	step := func(b byte) { crc = crc<<8 ^ crcTable[byte(crc>>24)^b] }
 	for _, b := range data {
@@ -62,7 +63,7 @@ func cksum(data []byte) uint32 {
 }
 
 // Slot is the pool index a branch hashes to.
-func Slot(branch string) int { return int(cksum([]byte(branch)) % poolSize) }
+func Slot(branch string) int { return int(CKsum([]byte(branch)) % poolSize) }
 
 // At is the pool identity {name, color, tmux} at slot.
 func At(slot int) jsonv.Value {

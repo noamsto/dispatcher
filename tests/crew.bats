@@ -2279,6 +2279,94 @@ after_await_parks() {
   [[ "$output" == *"no session suffix"* ]]
 }
 
+# The arm printed with `printf` under `set -e`: a write that fails (a full
+# device, a reader that left the pipe) ended it before `_await_record`, so the
+# msgs stay undelivered and the next read hands them out again.
+@test "inbox: a print that fails records no marks" {
+  [ -w /dev/full ] || skip "/dev/full unavailable"
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  run bash -c "CREW_ID=c1 bash -euo pipefail '$CREW' inbox '$id' c1 >/dev/full"
+  [ "$status" -eq 1 ]
+  [ ! -e "$dir/await" ]
+}
+
+# `crew inbox` is Go now, but `await`, `nudge` and `stall-watch` are not, and
+# they read what it writes. Drift guard: the file it leaves must be
+# `_await_state`'s path and `_await_record`'s content for the same msgs (-S:
+# the Go fold returns objects as Go maps, so key order is engine-internal).
+@test "inbox: the marks file is _await_state's path and _await_record's content" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "go"
+  bus_tick
+  CREW_ID=c1 run_crew msg dispatcher:c1 "$id" "answer"
+  bus_tick
+  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+
+  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_await_record() {/,/^}/p' "$CREW")"
+  eval "$helpers"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  files=("$dir"/await/*)
+  [ "${#files[@]}" -eq 1 ]
+  [ "${files[0]}" = "$(_await_state c1 "$id")" ]
+  local go_marks
+  go_marks="$(jq -Sc . "${files[0]}")"
+  [ "$(jq -r 'keys | length' <<<"$go_marks")" = "2" ]
+
+  # The same two msgs through the bash helper, in a dir of its own.
+  dir="$BATS_TEST_TMPDIR/ref"
+  mkdir -p "$dir"
+  _await_record c1 "$id" "$output"
+  [ "$(jq -Sc . "$dir"/await/*)" = "$go_marks" ]
+}
+
+# The other direction: a mark `await` raised is a ceiling, not a value to
+# replace. --since ignores marks and prints older msgs again, and the merge must
+# leave that sender's mark where await left it while adding the new sender.
+@test "inbox: marks await wrote survive a Go merge instead of being replaced" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "Q1"
+  bus_tick
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
+  [[ "$output" == *'"body":"answer"'* ]]
+  log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  before="$(jq -Sc . "$log_dir"/await/*)"
+
+  bus_tick
+  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
+  after="$(jq -Sc . "$log_dir"/await/*)"
+  # Every sender `await` had recorded keeps its mark...
+  sender="$(jq -r 'keys[0]' <<<"$before")"
+  [ "$(jq -r --arg k "$sender" '.[$k]' <<<"$after")" = "$(jq -r --arg k "$sender" '.[$k]' <<<"$before")" ]
+  # ... and the reviewer it had not seen is now delivered too.
+  [ "$(jq -r 'keys | length' <<<"$after")" -eq 2 ]
+  [ "$(jq -r '."role:feat/x:reviewer" | type' <<<"$after")" = "number" ]
+}
+
+# The reader half, straight: stall-watch's D6 flag is `_unread_scan` over these
+# marks, and it is bash — keyed the way stall-watch keys it, `me` the branch and
+# `from_id` the session whose marks it reads. Undelivered before the Go inbox
+# reads the msg, gone after.
+@test "inbox: _unread_scan sees what the Go inbox handed out" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
+  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_unread_scan() {/,/^}/p' "$CREW")"
+  eval "$helpers"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  log="$dir/events.jsonl"
+  [ "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" != "" ]
+
+  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1
+  [[ "$output" == *'"body":"verdict"'* ]]
+  [ -z "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" ]
+}
+
 @test "roster: collapses sessions of one branch into a single row" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done

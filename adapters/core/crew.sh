@@ -861,9 +861,10 @@ _clock_now_f() {
 
 # Delivered marks (#290): {sender: ts of the last msg from that sender this
 # session has been handed}, one file per crew+session under $dir/await. `await`
-# and `inbox` both record into it, so a reply taken through the straggler fold is
-# not handed back by the next `await`. Not a bus row: it never reaches `roster`,
-# `watch` or another session's reads.
+# records here, and so does `crew inbox` — in Go, from crew/internal/marks, on
+# the same path and the same two programs — so a reply taken through the
+# straggler fold is not handed back by the next `await`. Not a bus row: it never
+# reaches `roster`, `watch` or another session's reads.
 _await_state() { # <crew> <agent> -> path
   local key="$1-$2"
   printf '%s/await/%s.%s' "$dir" "$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$key" | cksum | cut -d' ' -f1)"
@@ -4586,7 +4587,7 @@ stream)
     fi
   done
   ;;
-crews | log | report | sessions | roster)
+crews | log | report | sessions | roster | inbox)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
@@ -4765,56 +4766,6 @@ roster-render)
     fi
     sleep "$rr_interval"
   done
-  ;;
-inbox)
-  # messages only — `roster` owns status (every status is addressed to the
-  # dispatcher, so without this the inbox is status spam). `--since TS` is a
-  # non-blocking single pass (no loop, unlike watch/await): return only msgs
-  # strictly newer than TS. Omitting it returns all msgs to the agent, unchanged.
-  me="${1:-}"
-  case "$me" in worker:*) _is_session_id "$me" || {
-    echo "crew: $sub: '$me' has no session suffix — pass the session id (\$CREW_WORKER_ID); a branch-only worker id matches no message" >&2
-    exit 1
-  } ;; esac
-  shift || true
-  crew=""
-  since=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --since)
-      [ -n "${2:-}" ] || {
-        echo "crew: --since needs a value" >&2
-        exit 1
-      }
-      since="$2"
-      shift 2
-      ;;
-    *)
-      crew="$1"
-      shift
-      ;;
-    esac
-  done
-  crew="${crew:-$(_crew_id)}"
-  [ -f "$log" ] || exit 0
-  rc=0
-  if [ -n "$since" ]; then
-    case "$since" in '' | *[!0-9]*)
-      echo "crew: --since must be an integer ms timestamp" >&2
-      exit 1
-      ;;
-    esac
-    out=$(jq -c --arg crew "$crew" --arg me "$me" --argjson since "$since" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*") and .ts>$since)' "$log") || rc=$?
-  else
-    out=$(jq -c --arg crew "$crew" --arg me "$me" \
-      'select(.crew_id==$crew and .kind=="msg" and (.to==$me or .to=="*"))' "$log") || rc=$?
-  fi
-  [ -z "$out" ] || printf '%s\n' "$out"
-  # A session that reads its inbox has been handed these msgs, so a later await
-  # must not return them again (#290).
-  case "$me" in worker:*) [ -z "$out" ] || _await_record "$crew" "$me" "$out" ;; esac
-  exit "${rc:-0}"
   ;;
 rate)
   # Sweep this repo's bus into the global ratings store, or (--report) render

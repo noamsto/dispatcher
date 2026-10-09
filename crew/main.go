@@ -16,6 +16,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/report"
@@ -24,7 +25,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -57,7 +58,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report":
+	case "roster", "sessions", "crews", "log", "report", "inbox":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -83,6 +84,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Probes:          e.procs,
 			JQColorsInvalid: !colorsOK,
 			Now:             time.Now,
+		})
+		return flush(out, stderr, code)
+	}
+
+	// inbox prints lines too, but it reads its own arguments (the arm's crew and
+	// --since ordering) and raises the delivered marks of whatever it printed,
+	// so it owns its run rather than sharing log's fold call.
+	if sub == "inbox" {
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		code := inbox.Run(args, paths, out, stderr, inbox.Options{
+			JQColorsInvalid: !colorsOK,
+			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
+			Flush:           out.Flush,
 		})
 		return flush(out, stderr, code)
 	}
