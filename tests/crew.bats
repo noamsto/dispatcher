@@ -2293,9 +2293,9 @@ after_await_parks() {
 }
 
 # `crew inbox` is Go now, but `await`, `nudge` and `stall-watch` are not, and
-# they read what it writes. Drift guard in the `_sessions` idiom below: the file
-# must be `_await_state`'s path and `_await_record`'s content for the same msgs
-# (-S: the Go fold returns objects as Go maps, so key order is engine-internal).
+# they read what it writes. Drift guard: the file it leaves must be
+# `_await_state`'s path and `_await_record`'s content for the same msgs (-S:
+# the Go fold returns objects as Go maps, so key order is engine-internal).
 @test "inbox: the marks file is _await_state's path and _await_record's content" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "go"
@@ -2349,10 +2349,10 @@ after_await_parks() {
   [ "$(jq -r '."role:feat/x:reviewer" | type' <<<"$after")" = "number" ]
 }
 
-# AC2's reader half, straight: stall-watch's D6 flag is `_unread_scan` over
-# these marks, and it is bash — keyed the way stall-watch keys it, `me` the
-# branch and `from_id` the session whose marks it reads. Undelivered before the
-# Go inbox reads the msg, gone after.
+# The reader half, straight: stall-watch's D6 flag is `_unread_scan` over these
+# marks, and it is bash — keyed the way stall-watch keys it, `me` the branch and
+# `from_id` the session whose marks it reads. Undelivered before the Go inbox
+# reads the msg, gone after.
 @test "inbox: _unread_scan sees what the Go inbox handed out" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"

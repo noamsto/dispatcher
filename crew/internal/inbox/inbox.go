@@ -28,10 +28,9 @@ import (
 const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once at startup even though its stdout here is a pipe, so
-// it never colourises — the arm has no colour and neither does this), how to
-// resolve the crew the arm defaults to (`_crew_id`), and how to put the
-// buffered stdout on the wire before the marks are raised.
+// invalid (jq warns once at startup even with its stdout on a pipe, and the arm
+// had no colour to lose), how to resolve the crew the arm defaults to
+// (`_crew_id`), and how to put the buffered stdout on the wire.
 type Options struct {
 	JQColorsInvalid bool
 	CrewID          func() string
@@ -112,11 +111,10 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// await must not return them again (#290) — including the prefix of a bus
 	// whose tail then failed to parse, which is all the arm recorded too.
 	//
-	// The print comes first, and literally: the arm wrote with `printf` and
-	// `set -e`, so a write that fails (a full device, a reader that left the
-	// pipe) ended it before `_await_record`. Marking those msgs delivered would
-	// turn a lost write into a message no await will ever hand back. main.go's
-	// flush reports the failure once, as the arm's printf error line did.
+	// The rows have to be on the wire first: the arm's `printf` under `set -e`
+	// died before `_await_record` when the write failed, and a mark raised for
+	// rows nobody received makes an await skip them for good. main.go's flush
+	// reports the failure, as the arm's printf error line did.
 	if o.Flush != nil {
 		if err := o.Flush(); err != nil {
 			return 1
@@ -245,17 +243,15 @@ func parseSince(since string) float64 {
 }
 
 // decimalGreater reports whether the number literal a is greater than the
-// non-negative integer literal b, on the text rather than through a double:
-// jq compares literals exactly, so 18446744073709551617 beats
+// non-negative integer literal b, on the text rather than through a double: jq
+// compares literals exactly, so 18446744073709551617 beats
 // 18446744073709551616, a 40-digit fraction beats 1, and 1e999999999 beats 5.
-// It is one numeric comparison, not the total-order comparator #861 deleted,
-// and it never expands an exponent: the work is the length of the two texts.
+// It never expands an exponent: the work is the length of the two texts.
 func decimalGreater(a, b string) bool {
 	neg, digits, mag := decimal(a)
 	b = strings.TrimLeft(b, "0")
-	// Zero loses to every non-negative b, and so does a negative literal. A
-	// text decimal cannot read is treated as zero: jsonv only hands back
-	// literals it parsed itself, so nothing reaches here that is not one.
+	// Zero loses to every non-negative b, and so does a negative literal. A text
+	// decimal cannot read is zero: jsonv hands back only literals it parsed.
 	if neg || digits == "" {
 		return false
 	}

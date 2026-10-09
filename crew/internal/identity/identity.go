@@ -48,9 +48,8 @@ var crcTable = func() (t [256]uint32) {
 }()
 
 // CKsum is POSIX cksum(1): CRC-32 (poly 0x04C11DB7, MSB first, init 0) over
-// the data then its length as minimal little-endian bytes, complemented. It is
-// the checksum crew.sh's `_await_state` and phase-status handlers put in their
-// state-file names, so a Go port of either lands on the same path.
+// the data then its length as minimal little-endian bytes, complemented — the
+// checksum crew.sh and the phase-status handlers put in their state-file names.
 func CKsum(data []byte) uint32 {
 	var crc uint32
 	step := func(b byte) { crc = crc<<8 ^ crcTable[byte(crc>>24)^b] }
