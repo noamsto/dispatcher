@@ -17,7 +17,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// jq's own status for a fold it cannot read or run.
+// jq's status for a log whose last row it could not index, and for one it could
+// not parse: 5, the status jq gives a parse or type error.
 const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
@@ -65,8 +66,8 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		v := ev.Raw
 		switch v.Kind() {
 		case jsonv.KindObject:
-			// jq compares values, so a non-string crew_id matches no crew —
-			// including the empty crew of a caller with no id to default to.
+			// jq compares values: a non-string crew_id matches no crew, the empty
+			// crew of a caller with no id to default to included.
 			if id, ok := v.Get("crew_id"); ok {
 				if s, isStr := id.AsString(); isStr && s == crew {
 					_ = jsonv.Encode(stdout, v, opts)

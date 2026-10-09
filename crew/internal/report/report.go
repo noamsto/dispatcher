@@ -23,9 +23,8 @@ var program string
 // header is the arm's printf, matching the fold's column order.
 const header = "engine\tmodel\ttier\tshape\toutcome\tduration_s"
 
-// jq's status for a fold it cannot run: 5, the same one jq takes for a type
-// error. A bus it cannot read (2 unreadable, 5 corrupt) never reaches the fold;
-// bus.JQFailure names that side.
+// jq's status for a fold that fails on a row it cannot use. A bus it cannot
+// read maps through bus.JQFailure (2 unreadable, 5 corrupt) before the fold.
 const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
