@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate --report [--json] [--pooled] | reply <to> <body> [--crew ID]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -142,12 +142,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return retro.Run(args, paths, stdout, stderr)
 	}
 
-	// rate is report mode only (the bash arm parses flags and execs this for
-	// --report). It reads the global ratings store, never the bus, so it takes
-	// no paths; Locate above keeps the outside-a-repo refusal the bash
-	// preamble's.
+	// rate takes both of its modes from the bash arm, which parses the flags and
+	// execs this for either. Locate above keeps the outside-a-repo refusal the
+	// bash preamble's.
 	if sub == "rate" {
-		return rate.Run(args, cwd, stdout, stderr, rate.Options{})
+		return rate.Run(args, paths, cwd, stdout, stderr, rate.Options{})
 	}
 
 	// reply resolves its target against the bus, then appends one row itself, so

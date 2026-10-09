@@ -287,17 +287,19 @@ await_sweep() {
 }
 
 # Call-site guard, like the two bus-append guards in tests/adapters.bats
-# (#55, #61). No behavioural test can see this: a bare `>>"$store"` fails
-# identically to the `dd` form, so reverting it would leave the suite green.
-# Hence a grep on the call site's shape.
-@test "guard: the ratings store append goes through the atomic dd primitive" {
+# (#55, #61). No behavioural test can see this: a loop of per-row appends fails
+# identically to the single-write form, so reverting it would leave the suite
+# green. Hence a grep on the call site's shape — now the Go append (#895), with
+# the bash side asserted empty so the store cannot grow a second append site.
+@test "guard: the ratings store append goes through one atomic O_APPEND write" {
+  GO_SRC="$BATS_TEST_DIRNAME/../crew/internal/rate/sweep.go"
+  appends="$(grep -nE 'os\.OpenFile\(store, os\.O_APPEND\|os\.O_CREATE\|os\.O_WRONLY' "$GO_SRC" || true)"
+  [ "$(printf '%s\n' "$appends" | grep -c .)" -eq 1 ]
+  # one Write of the whole batch, not a per-row loop
+  [ "$(grep -cE '\bf\.Write\(batch\)' "$GO_SRC")" -eq 1 ]
   CREW_SRC="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  appends="$(grep -nE '>>[[:space:]]*"?\$\{?store\}?"?' "$CREW_SRC" |
-    grep -vE '^[0-9]+:[[:space:]]*#' || true)"
-  # If this trips, the store grew a second append site — extend the guard
-  # rather than deleting it.
-  [ "$(printf '%s\n' "$appends" | wc -l)" -eq 1 ]
-  [[ "$appends" == *"dd bs=1048576 iflag=fullblock status=none"* ]]
+  left="$(grep -nE '>>[[:space:]]*"?\$\{?store\}?"?' "$CREW_SRC" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  [ -z "$left" ]
 }
 
 @test "autosweep: an unrecognised value warns on stderr and still sweeps" {

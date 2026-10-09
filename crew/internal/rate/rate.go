@@ -1,16 +1,16 @@
-// Package rate is `crew rate --report`: the per-(engine, model, tier) rollup
-// of the global ratings store. The bash arm keeps flag parsing and every
-// refusal line and execs this binary only for report mode (the sweep path
-// stays bash for now), so Run enforces the report-only contract for direct
-// invocations and the store — never the local bus or the network — is its
-// only input.
+// Package rate is `crew rate`: the per-repo sweep that folds this repo's crew
+// bus into the global ratings store, and the `--report` rollup of that store.
+// The bash arm keeps flag parsing and every refusal line, and execs this
+// binary for both modes — no flags for the sweep, `--report` for the report —
+// so Run enforces the two-mode contract for direct invocations.
 //
 // The folds are the original jq programs from adapters/core/crew.sh
-// (dedupe.jq, report.jq), run through gojq, so they stay one shared source
-// with the arm they replace. The arm folds every store failure to `[]` in
-// silence (`jq -s` under `2>/dev/null || true`, then `rows="${rows:-[]}"`),
-// which is why a missing, empty or unparseable store renders the header
-// alone: "no data yet" stays visibly distinct from "command did nothing".
+// (records.jq, plan.jq, view.jq, actions.jq, threads.jq, dedupe.jq, merge.jq,
+// report.jq), run through gojq, so they stay one shared source with the arm
+// they replace. The store reads fold every failure to `[]` in silence (`jq -s`
+// under `2>/dev/null || true`, then `rows="${rows:-[]}"`), which is why a
+// missing, empty or unparseable store renders the header alone: "no data yet"
+// stays visibly distinct from "command did nothing".
 package rate
 
 import (
@@ -23,7 +23,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -35,14 +37,14 @@ var program string
 var dedupeProgram string
 
 const (
-	// usage is the report-only refusal; the bash arm parses flags before
-	// exec'ing, so only direct crew-go calls can trip it.
-	usage       = "crew-go: rate takes --report [--json] [--pooled]"
+	// usage is the two-mode refusal; the bash arm parses flags before exec'ing,
+	// so only direct crew-go calls can trip it.
+	usage       = "crew-go: rate takes no flags (the sweep) or --report [--json] [--pooled]"
 	exitType    = 5
 	exitFailure = 1
 )
 
-// Options is everything Run reads beyond the store file.
+// Options is everything rate reads beyond the bus, the store and the checkout.
 type Options struct {
 	// StorePath overrides the XDG ratings store location (tests).
 	StorePath string
@@ -51,17 +53,56 @@ type Options struct {
 	// || true)`, where a failed query is empty output, not an error. Tests
 	// replace it.
 	Git func(dir string, args ...string) string
+	// LookupEnv reads DISPATCH_CONFIG_BIN and the XDG variables (tests).
+	LookupEnv func(string) string
+	// Now is the sweep's clock; the folds freeze jq's `now` from it.
+	Now func() time.Time
+	// Run executes one external command given as argv, capturing stdout and
+	// dropping stderr — every arm call is `$(cmd 2>/dev/null …)`. The error is
+	// its exit status: gh's call sites also treat empty stdout as failure,
+	// while `git cat-file -e` succeeds by printing nothing.
+	Run func(args ...string) (string, error)
+}
+
+// withDefaults fills the seams a caller left nil.
+func (o Options) withDefaults() Options {
+	if o.Git == nil {
+		o.Git = func(dir string, args ...string) string {
+			cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+			cmd.Stderr = io.Discard
+			out, _ := cmd.Output()
+			return strings.TrimRight(string(out), "\n")
+		}
+	}
+	if o.LookupEnv == nil {
+		o.LookupEnv = os.Getenv
+	}
+	if o.Run == nil {
+		o.Run = func(args ...string) (string, error) {
+			if len(args) == 0 {
+				return "", fmt.Errorf("no command")
+			}
+			cmd := exec.Command(args[0], args[1:]...)
+			cmd.Stderr = io.Discard
+			out, err := cmd.Output()
+			// Every arm call site is `$(cmd 2>/dev/null)`: command substitution
+			// drops the trailing newlines, and `originSlug`/the URL prefix checks
+			// read that text as the value.
+			return strings.TrimRight(string(out), "\n"), err
+		}
+	}
+	return o
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm's report block: resolve the current repo (unless --pooled),
-// read and dedupe the store, then one fold renders the table or the JSON
-// aggregate. jq's exit status is mirrored (0, or 5 when the render fold fails
-// on a row it cannot use); its error wording is not.
-func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
+// Run is the arm's two modes: no flags runs the sweep, `--report` renders the
+// store, and anything else is the one-line usage. jq's exit status is mirrored
+// (0, or 5 when a fold fails on a row it cannot use), its error wording is not.
+func Run(args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
+	o = o.withDefaults()
 	report, jsonOut, pooled := false, false, false
 	for _, arg := range args {
 		switch arg {
@@ -77,11 +118,14 @@ func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 	if !report {
-		say(stderr, "%s\n", usage)
-		return exitFailure
+		if len(args) > 0 {
+			say(stderr, "%s\n", usage)
+			return exitFailure
+		}
+		return runSweep(paths, cwd, stderr, o)
 	}
 
-	store := storePath(o.StorePath)
+	store := storePath(o.StorePath, o.LookupEnv)
 	var rows []jsonv.Value
 	if data, err := os.ReadFile(store); err == nil {
 		if vals, err := jsonv.DecodeStream(bytes.NewReader(data)); err == nil {
@@ -127,13 +171,16 @@ func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 
 // storePath is the arm's `${XDG_DATA_HOME:-$HOME/.local/share}/crew/
 // ratings.jsonl` — the global store the sweep appends to and reap reads.
-func storePath(override string) string {
+func storePath(override string, lookupEnv func(string) string) string {
 	if override != "" {
 		return override
 	}
-	base := os.Getenv("XDG_DATA_HOME")
+	if lookupEnv == nil {
+		lookupEnv = os.Getenv
+	}
+	base := lookupEnv("XDG_DATA_HOME")
 	if base == "" {
-		base = os.Getenv("HOME") + "/.local/share"
+		base = lookupEnv("HOME") + "/.local/share"
 	}
 	return filepath.Join(base, "crew", "ratings.jsonl")
 }
@@ -173,13 +220,5 @@ func originSlug(out string) string {
 }
 
 func (o Options) git() func(dir string, args ...string) string {
-	if o.Git != nil {
-		return o.Git
-	}
-	return func(dir string, args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Stderr = io.Discard
-		out, _ := cmd.Output()
-		return strings.TrimRight(string(out), "\n")
-	}
+	return o.Git
 }
