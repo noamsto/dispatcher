@@ -18,12 +18,14 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/log"
+	"github.com/noamsto/dispatcher/crew/internal/report"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2
@@ -52,11 +54,17 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
-	if len(args) == 0 || (args[0] != "roster" && args[0] != "sessions" && args[0] != "crews") {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "roster", "sessions", "crews", "log", "report":
+	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
 	}
-	sub, args := args[0], args[1:]
+	args = args[1:]
 	cwd, err := e.getwd()
 	if err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -81,6 +89,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return flush(out, stderr, code)
 	}
 
+	// log and report print lines rather than one JSON value, and each reads the
+	// bus with its arm's tolerance (log keeps jq -c's torn-tail prefix, report
+	// has none), so they own their read too.
+	if sub == "log" || sub == "report" {
+		crew := crewArg(args, ctx, cwd)
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		palette, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		var code int
+		if sub == "log" {
+			opts := log.Options{JQColorsInvalid: !colorsOK}
+			if e.color {
+				opts.Colors = &palette
+			}
+			code = log.Run(crew, paths, out, stderr, opts)
+		} else {
+			code = report.Run(crew, paths, out, stderr, report.Options{
+				JQColorsInvalid: !colorsOK,
+				Now:             time.Now,
+			})
+		}
+		return flush(out, stderr, code)
+	}
+
 	var (
 		branch, crew string
 		pretty       bool
@@ -93,12 +124,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 	} else {
 		pretty = true
-		if len(args) > 0 {
-			crew = args[0]
-		}
-		if crew == "" {
-			crew = bus.CrewID(ctx, cwd)
-		}
+		crew = crewArg(args, ctx, cwd)
 	}
 
 	out := bufio.NewWriterSize(stdout, 64<<10)
@@ -158,6 +184,19 @@ func flush(out *bufio.Writer, stderr io.Writer, code int) int {
 		return exitFailure
 	}
 	return code
+}
+
+// crewArg is an arm's `"${1:-$(_crew_id)}"`: the first argument, falling back
+// to this repo's crew when it is absent or empty.
+func crewArg(args []string, ctx context.Context, cwd string) string {
+	crew := ""
+	if len(args) > 0 {
+		crew = args[0]
+	}
+	if crew == "" {
+		crew = bus.CrewID(ctx, cwd)
+	}
+	return crew
 }
 
 // parseSessions mirrors the bash arm: branch is the first argument, the rest

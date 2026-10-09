@@ -246,3 +246,104 @@ func TestRunCrews(t *testing.T) {
 		}
 	})
 }
+
+// The bus rows the two new arms read; the expectations are the bash arms'.
+const (
+	logRowC1 = `{"ts":1000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`
+	logRowC2 = `{"ts":1100,"crew_id":"c2","kind":"msg","from":"dispatcher:c2","to":"worker:feat/y#s2-1"}`
+	dispatch = `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine":"claude","model":"sonnet","tier":"standard"}`
+)
+
+func TestRunLogAndReport(t *testing.T) {
+	const reportHeader = "engine\tmodel\ttier\tshape\toutcome\tduration_s\n"
+
+	t.Run("log filters the crew and report folds its dispatch", func(t *testing.T) {
+		log := logRowC1 + "\n" + logRowC2 + "\n" + dispatch + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"log", "c1"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if want := logRowC1 + "\n" + dispatch + "\n"; stdout.String() != want || stderr.Len() != 0 {
+			t.Fatalf("log: stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+
+		stdout, stderr = bytes.Buffer{}, bytes.Buffer{}
+		if code := run(context.Background(), []string{"report", "c1"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		// The status row above is the dispatched session's, so the fold resolves
+		// its outcome against it.
+		want := reportHeader + "claude\tsonnet\tstandard\t\u2014\tworking\t0\n"
+		if stdout.String() != want || stderr.Len() != 0 {
+			t.Fatalf("report: stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("the crew defaults to this repo's", func(t *testing.T) {
+		log := logRowC2 + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		t.Setenv("CREW_ID", "c2")
+		e := env{getwd: func() (string, error) { return repo, nil }}
+
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"log"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if want := logRowC2 + "\n"; stdout.String() != want || stderr.Len() != 0 {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
+
+	// Both arms print nothing before the `[ -f "$log" ]` guard, and report keeps
+	// its header through a fold failure because it prints it before jq starts.
+	t.Run("an absent bus is silent for both", func(t *testing.T) {
+		repo, _ := repoWithLog(t, nil, 0)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		for _, sub := range []string{"log", "report"} {
+			var stdout, stderr bytes.Buffer
+			if code := run(context.Background(), []string{sub, "c1"}, &stdout, &stderr, e); code != 0 {
+				t.Fatalf("%s: code %d", sub, code)
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("%s: stdout %q stderr %q", sub, stdout.String(), stderr.String())
+			}
+		}
+	})
+
+	t.Run("a torn log costs report every row but keeps log's prefix", func(t *testing.T) {
+		log := logRowC1 + "\n" + dispatch + "\n" + `{"crew_id":"c1","ts":3` + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"log", "c1"}, &stdout, &stderr, e); code != 5 {
+			t.Fatalf("log: code %d, want 5", code)
+		}
+		if want := logRowC1 + "\n" + dispatch + "\n"; stdout.String() != want {
+			t.Fatalf("log: stdout %q, want %q", stdout.String(), want)
+		}
+
+		stdout, stderr = bytes.Buffer{}, bytes.Buffer{}
+		if code := run(context.Background(), []string{"report", "c1"}, &stdout, &stderr, e); code != 5 {
+			t.Fatalf("report: code %d, want 5", code)
+		}
+		if stdout.String() != reportHeader {
+			t.Fatalf("report: stdout %q, want just the header", stdout.String())
+		}
+	})
+
+	t.Run("an unknown subcommand is still the usage exit", func(t *testing.T) {
+		repo, _ := repoWithLog(t, nil, 0)
+		var stdout, stderr bytes.Buffer
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		if code := run(context.Background(), []string{"logs"}, &stdout, &stderr, e); code != exitUsage {
+			t.Fatalf("code %d, want %d", code, exitUsage)
+		}
+		if stdout.Len() != 0 || !strings.Contains(stderr.String(), "crew-go: usage") {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
+}
