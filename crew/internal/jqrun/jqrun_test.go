@@ -19,14 +19,24 @@ func decode(t *testing.T, s string) []jsonv.Value {
 
 func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
 
-func TestRunPassesVarsAndNow(t *testing.T) {
-	out, err := Run(`{got: .[0].a, b: $b, m: $m.x, age: (now - 10)} `,
+func TestRunOverridesNow(t *testing.T) {
+	out, err := Run(`{got: .[0].a, b: $b, m: $m.x, age: (now - 10)}`,
 		decode(t, `{"a": 1}`), 42,
 		map[string]jsonv.Value{"b": jsonv.Str("br"), "m": jsonv.Object(jsonv.Member{Key: "x", Val: jsonv.Str("y")})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := compact(out); got != `{"age":32,"b":"br","got":1,"m":"y"}` {
+		t.Errorf("got %s", got)
+	}
+}
+
+func TestRunNowKeepsStringLiterals(t *testing.T) {
+	out, err := Run(`{msg: "right now", n: now}`, decode(t, `{}`), 42, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := compact(out); got != `{"msg":"right now","n":42}` {
 		t.Errorf("got %s", got)
 	}
 }
@@ -38,20 +48,15 @@ func TestRunReturnsRuntimeError(t *testing.T) {
 	}
 }
 
-func TestInjectNowKeepsWordsAndComments(t *testing.T) {
-	got := injectNow("# last-known now\n| (now*1000) - .ts # known\n")
-	if !strings.Contains(got, "($now*1000)") {
-		t.Errorf("bare now not rewritten: %q", got)
+func TestRunKeepsWordsAndComments(t *testing.T) {
+	// The freeze touches only the parsed AST: `last-known` in a comment and
+	// `now` in a string literal survive verbatim, the bare call is frozen.
+	out, err := Run("# last-known now\n.[0] | {age: ((now*1000) - .ts), known: \"known\", msg: \"right now\"}\n", decode(t, `{"ts":1}`), 42, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, keep := range []string{"last-known", "known"} {
-		if !strings.Contains(got, keep) {
-			t.Errorf("%q was rewritten: %q", keep, got)
-		}
-	}
-	// the comment's standalone now is rewritten too; comments are inert, so
-	// that is harmless — what matters is that no identifier is split.
-	if strings.Contains(got, "$nown") || strings.Contains(got, "k$now") {
-		t.Errorf("identifier split: %q", got)
+	if got := compact(out); got != `{"age":41999,"known":"known","msg":"right now"}` {
+		t.Errorf("got %s", got)
 	}
 }
 
