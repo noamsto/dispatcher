@@ -156,6 +156,17 @@ if [[ -n "${SHIM_CODEX_LEGACY:-}" ]]; then
   printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":1785800000},"secondary":{"usedPercent":61,"windowDurationMins":10080,"resetsAt":1786200000},"credits":{"hasCredits":true}}}}'
 elif [[ -n "${SHIM_CODEX_GENERIC:-}" ]]; then
   printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":1440},"credits":{"hasCredits":true},"planType":"team"}}}'
+elif [[ -n "${SHIM_CODEX_MONTHLY:-}" ]]; then
+  # 7d window resetting in SHIM_CODEX_WEEKLY_RESETS_IN seconds at 90% used;
+  # individualLimit.resetsAt (the monthly reset) in SHIM_CODEX_INDIVIDUAL_RESETS_IN
+  # seconds, or absent when unset.
+  now=$(date +%s)
+  limit_field=""
+  if [[ -n "${SHIM_CODEX_INDIVIDUAL_RESETS_IN:-}" ]]; then
+    limit_field=",\"individualLimit\":{\"remainingPercent\":40,\"resetsAt\":$((now + SHIM_CODEX_INDIVIDUAL_RESETS_IN))}"
+  fi
+  printf '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":10080,"resetsAt":%s},"credits":{"hasCredits":true},"planType":"team"%s}}}\n' \
+    "$((now + SHIM_CODEX_WEEKLY_RESETS_IN))" "$limit_field"
 elif [[ -n "${SHIM_CODEX_CUSTOM:-}" ]]; then
   resets_field=""
   if [[ -n "${SHIM_CODEX_RESETS_IN:-}" ]]; then
@@ -2074,4 +2085,51 @@ write_pi_auth() {
     run jq -e '.engines.pi.limit_reached.reason != null' "$XDG_DATA_HOME/crew/engine-budget.json"
     [ "$status" -eq 0 ]
   done
+}
+
+# codex_weekly_cap <weekly_in_s> [individual_in_s] — run with a 7d window and
+# an optional monthly (individualLimit) reset; leaves the cache in $cache.
+codex_weekly_cap() {
+  cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  SHIM_CODEX_MONTHLY=1 SHIM_CODEX_WEEKLY_RESETS_IN="$1" SHIM_CODEX_INDIVIDUAL_RESETS_IN="${2:-}" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+}
+
+@test "a weekly resets_at later than the monthly reset is capped at it" {
+  codex_weekly_cap 432000 172800
+  run jq -e '.fetched_epoch as $f | .engines.codex.windows["7d"]
+    | (.resets_at - $f) as $d | $d >= 172790 and $d <= 172810 and .reset_source == "month" and .starts_at == null' "$cache"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"true"* ]]
+}
+
+@test "the capped window shows in the summary and lever lines" {
+  codex_weekly_cap 432000 172800
+  [[ "$output" == *"7d 90% used (resets "*"capped at monthly reset)"* ]]
+  [[ "$output" == *"budget lever: codex 7d at 90% (resets in 1d"*"capped at monthly reset"* ]]
+}
+
+@test "the lever's pace figure reads the capped resets_at" {
+  # 2d left of 7d -> ~71% elapsed -> ~19 points ahead; uncapped (5d left) -> ~61.
+  codex_weekly_cap 432000 172800
+  [[ "$output" == *"19 points ahead of pace"* ]]
+  codex_weekly_cap 432000 ""
+  [[ "$output" == *"61 points ahead of pace"* ]]
+}
+
+@test "a weekly resets_at is unchanged when the monthly reset is absent, past or later" {
+  for monthly in "" -3600 864000; do
+    codex_weekly_cap 432000 "$monthly"
+    run jq -e '.fetched_epoch as $f | .engines.codex.windows["7d"]
+      | (.resets_at - $f) as $d | $d >= 432000 - 10 and $d <= 432000 + 10 and has("reset_source") == false' "$cache"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "--report --json carries reset_source for a capped window" {
+  codex_weekly_cap 432000 172800
+  run bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  run jq -r '.engines.codex.windows[0].reset_source' <<<"$output"
+  [ "$output" = "month" ]
 }
