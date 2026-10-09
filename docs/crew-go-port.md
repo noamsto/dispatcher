@@ -1,10 +1,10 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `log`, `report`, `sessions`, `roster` and `crews`. Each slice
-must leave every bats file green; tests may be adapted only where the Go design
-changes what they can observe (the value-identity contract below), with each
-edit justified.
+Ported so far: `log`, `report`, `sessions`, `roster`, `crews` and `inbox`. Each
+slice must leave every bats file green; tests may be adapted only where the Go
+design changes what they can observe (the value-identity contract below), with
+each edit justified.
 
 ## Layout
 
@@ -25,6 +25,15 @@ edit justified.
 - `crew/internal/log`: the arm that runs no jq — `select(.crew_id==$crew)` is a
   member test, so it filters and re-encodes through jsonv, keeping `jq -c`'s
   torn-tail prefix via `bus.ReadEventsTolerant`.
+- `crew/internal/inbox`: same shape as `log` (member tests plus one numeric
+  compare, no jq), and the only writer of the delivered marks on the Go side.
+  Its `.ts > $since` is a decimal-literal compare, because jq compares literals
+  exactly and a double cannot tell `18446744073709551617` from
+  `18446744073709551616`.
+- `crew/internal/marks`: the delivered-marks file of #290 — `_await_state`'s
+  path, `_await_marks`' read and `_await_record`'s atomic merge, the two jq
+  programs embedded verbatim. `await`, `nudge` and `stall-watch` still read and
+  write the same file from bash, so the name and the content are the contract.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -35,7 +44,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster)
+crews | log | report | sessions | roster | inbox)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -92,6 +101,16 @@ arm and delete its old arm.
   header only — exit 5 and the one stderr line match, as with `crews` above.
   The joined string is empty only when there are no rows at all, since a
   6-column `@tsv` row always carries its five tabs.
+- `crew inbox`'s delivered marks are the one file another component still reads
+  while this port writes it, so the contract is the file, not stdout: same path
+  (`_await_state`'s sanitized key plus its cksum), same value, and the same
+  "any failure means redeliver" rule. Two byte-level differences are sanctioned
+  because every reader parses it with jq: gojq returns object keys sorted where
+  the arm's reduce keeps insertion order, and a msg whose ts is the literal
+  Infinity lands as 1.7976931348623157e+308 where jq writes the same value with
+  an uppercase exponent. Value-identical either way, pinned by a crew.bats row
+  against `_await_state`/`_await_record` and by `internal/marks` running the
+  helpers' own programs through jqrun.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
 
@@ -105,6 +124,13 @@ caller. While two copies exist, guard drift:
   a shared fixture bus (value compare, `jq -S`: key order is engine-internal);
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
+
+`_await_state`, `_await_marks` and `_await_record` stay for `await`, `nudge` and
+`stall-watch --unread` even though `crew inbox` no longer calls them: it writes
+the same file from `internal/marks`. Two of the three drift guards above apply —
+crew.bats compares the Go marks file with `_await_state`'s path and
+`_await_record`'s content on the same msgs, and `internal/marks` runs the
+helpers' own two programs through jqrun.
 
 ## Running the suite
 

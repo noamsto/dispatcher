@@ -347,3 +347,88 @@ func TestRunLogAndReport(t *testing.T) {
 		}
 	})
 }
+
+// The arm has two halves: the msgs it prints, and the delivered-marks file it
+// leaves for the bash `await` to read. Both are wired through bus.Paths, so the
+// marks land under the repo's crew dir next to the bus.
+func TestRunInbox(t *testing.T) {
+	const (
+		me   = "worker:feat/x#s1-1"
+		msg  = `{"ts":1000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"worker:feat/x#s1-1","body":{"text":"go"}}`
+		name = ".git/crew/await"
+	)
+
+	// marksFile is the one file the run left in the await dir.
+	marksFile := func(t *testing.T, repo string) string {
+		t.Helper()
+		files, err := filepath.Glob(filepath.Join(repo, name, "*"))
+		if err != nil || len(files) != 1 {
+			t.Fatalf("await dir holds %v (%v)", files, err)
+		}
+		b, err := os.ReadFile(files[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	t.Run("prints the agent's msgs and records its marks", func(t *testing.T) {
+		log := msg + "\n" + logRowC2 + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"inbox", me, "c1"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d stderr %q", code, stderr.String())
+		}
+		if stdout.String() != msg+"\n" || stderr.Len() != 0 {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+		if got := marksFile(t, repo); got != "{\"dispatcher:c1\":1000}\n" {
+			t.Fatalf("marks %q", got)
+		}
+	})
+
+	t.Run("the crew defaults to this repo's", func(t *testing.T) {
+		log := msg + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		t.Setenv("CREW_ID", "c1")
+		e := env{getwd: func() (string, error) { return repo, nil }}
+
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"inbox", me}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d stderr %q", code, stderr.String())
+		}
+		if stdout.String() != msg+"\n" {
+			t.Fatalf("stdout %q", stdout.String())
+		}
+	})
+
+	t.Run("an absent bus is silent", func(t *testing.T) {
+		repo, _ := repoWithLog(t, nil, 0)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"inbox", me, "c1"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+		if files, _ := filepath.Glob(filepath.Join(repo, name, "*")); len(files) != 0 {
+			t.Fatalf("await dir holds %v", files)
+		}
+	})
+
+	t.Run("a branch-only worker id is the arm's error", func(t *testing.T) {
+		log := msg + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"inbox", "worker:feat/x", "c1"}, &stdout, &stderr, e); code != exitFailure {
+			t.Fatalf("code %d, want %d", code, exitFailure)
+		}
+		if !strings.Contains(stderr.String(), "has no session suffix") {
+			t.Fatalf("stderr %q", stderr.String())
+		}
+	})
+}

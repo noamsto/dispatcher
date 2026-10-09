@@ -35,7 +35,7 @@ var slotCases = []struct {
 
 func TestCksumAndSlot(t *testing.T) {
 	for _, c := range slotCases {
-		if got := cksum([]byte(c.branch)); got != c.cksum {
+		if got := CKsum([]byte(c.branch)); got != c.cksum {
 			t.Errorf("cksum(%.12q) = %d, want %d", c.branch, got, c.cksum)
 		}
 		if got := Slot(c.branch); got != c.slot {
@@ -68,7 +68,7 @@ func TestSlotMatchesCksumBinary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := cksum([]byte(branch)); uint64(got) != n {
+		if got := CKsum([]byte(branch)); uint64(got) != n {
 			t.Fatalf("cksum(%q) = %d, cksum binary says %d", branch, got, n)
 		}
 	}
