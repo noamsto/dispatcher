@@ -10,6 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: lazytmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
       - name: go vet + golangci-lint (crew)
@@ -33,6 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: lazytmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (module.bats, serial)
         run: nix develop -c bats tests/module.bats
 
@@ -45,6 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: lazytmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (shard ${{ matrix.shard }})
         shell: bash
         env:
@@ -115,6 +127,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: lazytmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (secret-read-guard timing, serial)
         run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
 
@@ -123,8 +139,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: lazytmux
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: flake check
         run: nix flake check
+      - name: build packages for the cache
+        run: nix build .#default --no-link
 
   check:
     if: always()
