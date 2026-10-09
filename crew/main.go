@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"time"
@@ -28,8 +27,7 @@ const (
 	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
-	exitOpen      = 2
-	exitType      = 5
+	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
 	exitUsage     = 64
 )
 
@@ -235,35 +233,17 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 	if err == nil {
 		return v, 0
 	}
-	var (
-		open   *bus.OpenError
-		decode *bus.DecodeError
-		exit   *roster.ExitError
-	)
-	switch {
-	case errors.As(err, &exit):
+	var exit *roster.ExitError
+	if errors.As(err, &exit) {
 		say(stderr, "%s", exit.Stderr)
 		return v, exit.Code
-	case errors.As(err, &open):
-		say(stderr, "crew: %s: %s: %v\n", sub, log, withoutPath(open.Err))
-		return v, exitOpen
-	case errors.As(err, &decode):
-		say(stderr, "crew: %s: %s: %v\n", sub, log, decode.Err)
-		return v, exitType
-	default:
-		say(stderr, "crew: %s: %s: %v\n", sub, log, err)
-		return v, exitType
 	}
-}
-
-// withoutPath is err minus the "op path:" prefix of an *fs.PathError, since the
-// caller prints the path itself.
-func withoutPath(err error) error {
-	var pe *fs.PathError
-	if errors.As(err, &pe) {
-		return pe.Err
-	}
-	return err
+	// Every other outcome is a bus-read failure: bus.JQFailure is jq's message
+	// and status for the same file (2 unreadable, 5 corrupt), shared with the
+	// log and report arms.
+	msg, code := bus.JQFailure(err)
+	say(stderr, "crew: %s: %s: %v\n", sub, log, msg)
+	return v, code
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

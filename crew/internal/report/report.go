@@ -24,11 +24,9 @@ var program string
 const header = "engine\tmodel\ttier\tshape\toutcome\tduration_s"
 
 // jq's own status for a fold it cannot run: a bus it cannot read (2) or a row
-// whose fields the program cannot index or subtract (5).
-const (
-	exitOpen = 2
-	exitType = 5
-)
+// whose fields the program cannot index or subtract (5) come from bus.JQFailure;
+// a gojq type error is jq's 5.
+const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
 // invalid (jq warns once, at startup, even for the raw-output fold), and the

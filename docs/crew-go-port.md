@@ -87,9 +87,11 @@ arm and delete its old arm.
   is the sanctioned difference. A torn tail prints the prefix, then the parse
   error, then 5, exactly like `jq -c`.
 - `crew report`'s fold yields one joined string (the `join("\n")` patch for
-  jqrun's one-value rule), so a fold that produced a single all-empty `@tsv`
-  row would print nothing where the arm printed a blank line — unreachable,
-  since the outcome and duration columns are never both empty.
+  jqrun's one-value rule), so when a _later_ dispatch row makes the fold fail,
+  the arm's `jq -r` had already streamed the rows before it while Go prints the
+  header only — exit 5 and the one stderr line match, as with `crews` above.
+  The joined string is empty only when there are no rows at all, since a
+  6-column `@tsv` row always carries its five tabs.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
 

@@ -277,3 +277,23 @@ func TestJQColorsWarnsAfterTheHeader(t *testing.T) {
 		t.Errorf("stderr %q, want one warning", stderr)
 	}
 }
+
+// A fold that fails on a later dispatch row costs every row: the arm's `jq -r`
+// had already streamed the rows before the failing one, so Go printing the
+// header only is the documented divergence (docs/crew-go-port.md), with the
+// same exit 5 and stderr line.
+func TestLaterFoldFailurePrintsNoEarlierRow(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"first","model":"m","tier":"t"}
+{"ts":1100,"crew_id":"c1","kind":"dispatch","branch":"feat/b","engine":"second","model":"m","tier":"t"}
+{"ts":2000,"crew_id":"c1","kind":"status","from":"worker:feat/b","body":5}
+`)
+
+	stdout, stderr, code := run(t, p, "c1", Options{})
+	if code != 5 {
+		t.Fatalf("code %d, want 5 (stderr %q)", code, stderr)
+	}
+	if stdout != wantHeader {
+		t.Errorf("stdout got %q, want just the header", stdout)
+	}
+}

@@ -17,11 +17,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// jq's own statuses, matching bus.JQFailure.
-const (
-	exitOpen = 2
-	exitType = 5
-)
+// jq's own status for a fold it cannot read or run.
+const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
 // invalid (jq warns once, at startup, even when stdout is not a terminal), and
@@ -68,8 +65,10 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		v := ev.Raw
 		switch v.Kind() {
 		case jsonv.KindObject:
+			// jq compares values, so a non-string crew_id matches no crew —
+			// including the empty crew of a caller with no id to default to.
 			if id, ok := v.Get("crew_id"); ok {
-				if s, _ := id.AsString(); s == crew {
+				if s, isStr := id.AsString(); isStr && s == crew {
 					_ = jsonv.Encode(stdout, v, opts)
 					say(stdout, "\n")
 				}

@@ -4,8 +4,7 @@
 # patch, no others: `jq -r` printed one @tsv row per line; jqrun wants exactly
 # one value, so the rows are collected and joined. The Go caller adds the one
 # trailing newline, byte-identically, and prints nothing for the empty string,
-# which only happens when there are no rows at all (the outcome and duration
-# columns are never both empty).
+# which is only ever zero rows: a @tsv row always carries its five tabs.
     [ map(select(.crew_id == $crew)) as $all
     | ($all | map(select(.kind == "dispatch")))[]
     | .branch as $b

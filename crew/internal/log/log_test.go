@@ -197,6 +197,23 @@ func TestNonStringCrewIDNeverMatches(t *testing.T) {
 	}
 }
 
+// `crew log` with no argument and no crew to default to asks jq for
+// `.crew_id == ""`, which only the empty *string* satisfies: a null, number or
+// object crew_id is a different value, not an empty one.
+func TestEmptyCrewMatchesOnlyTheEmptyString(t *testing.T) {
+	p := fixture(t)
+	const empty = `{"crew_id":"","kind":"msg"}`
+	writeLog(t, p, `{"crew_id":null,"x":1}`+"\n"+`{"crew_id":5}`+"\n"+`{"crew_id":[]}`+"\n"+`{"kind":"msg"}`+"\n"+empty+"\n")
+
+	stdout, stderr, code := run(t, p, "", Options{})
+	if stderr != "" || code != 0 {
+		t.Fatalf("stderr %q code %d", stderr, code)
+	}
+	if want := empty + "\n"; stdout != want {
+		t.Errorf("stdout got %q, want %q", stdout, want)
+	}
+}
+
 func TestUnreadableLogIsJqsExitTwo(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, c1Row+"\n")
