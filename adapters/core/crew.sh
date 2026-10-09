@@ -3421,11 +3421,8 @@ status | msg)
     esac
     # tmux reads a control byte (newline, tab, escape, …) as terminal input, so
     # the role-watch types an assignment only when its body is one line. Refuse
-    # it at send time, for every role: recipient, so the sender learns the cause
-    # and its fix immediately instead of queuing an assignment that can never be
-    # typed. A lead does not know its role's delivery mode and GRID_PROTOCOL.md
-    # treats assignments as one-line turns, so pull delivery does not exempt it.
-    # Other recipients are unchanged.
+    # it at send time for every role: recipient — a lead does not know its role's
+    # delivery mode, and GRID_PROTOCOL.md treats assignments as one-line turns.
     case "$to" in
     role:*)
       if _has_c0 "${3:-}"; then

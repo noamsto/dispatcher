@@ -503,9 +503,7 @@ ROWS
 }
 
 # #845: a role assignment is typed into a pane, so a control byte in its body
-# can never be delivered. Refuse it at send time for a role: recipient and
-# leave the bus untouched; a safe role: body and any other recipient are
-# unchanged.
+# can never be delivered. Refuse it at send time for a role: recipient.
 @test "msg: refuses a control-bearing body to a role recipient and logs nothing" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   CREW_ID=c1 run run_crew msg worker 'role:feat/x:reviewer' $'{"seam":"review"}\n{"x":1}'

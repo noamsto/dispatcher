@@ -2819,11 +2819,9 @@ if [ "${1:-}" = "--role-watch" ]; then
             esac
           elif [[ $to != dispatcher:* ]] &&
             [ -z "$(printf '%s' "$ev" | jq -r '.body | fromjson? | .event // ""')" ]; then
-            # A verdict from the role: it owes nothing more for what it answered.
-            # Idle only when nothing else is queued. The watcher's own posts
-            # carry an `event` field and are never a verdict — idling on the
-            # rejection of an unsafe head would misreport a role still working
-            # on an earlier unanswered assignment.
+            # A verdict from the role (the watcher's own posts carry an `event`
+            # field and are never one): it owes nothing more for what it
+            # answered. Idle only when nothing else is queued.
             awaiting=0
             [ "${#pending[@]}" -gt 0 ] || watch_set_state idle
           fi
@@ -2909,10 +2907,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
       frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
       if ! _role_assignment_safe "${pending[0]}"; then
-        # The head body carries a C0 byte, so tmux would read it as terminal
-        # input. It can never be typed: drop it (never deferred, never
-        # retried) and name the cause, so the sender learns why and the queue
-        # behind it proceeds instead of blocking forever.
+        # Unsafe head: drop it and let the queue behind it proceed.
         _rw_reject "${pending_from[0]}"
         pending=("${pending[@]:1}")
         pending_from=("${pending_from[@]:1}")
