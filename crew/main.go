@@ -238,9 +238,9 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 		say(stderr, "%s", exit.Stderr)
 		return v, exit.Code
 	}
-	// Every other outcome is a bus-read failure: bus.JQFailure is jq's message
-	// and status for the same file (2 unreadable, 5 corrupt), shared with the
-	// log and report arms.
+	// Every other outcome — a bus it cannot read, or a fold that failed on a row
+	// it cannot use — maps through bus.JQFailure to jq's message and status for
+	// the same file (2 unreadable, 5 corrupt or type error).
 	msg, code := bus.JQFailure(err)
 	say(stderr, "crew: %s: %s: %v\n", sub, log, msg)
 	return v, code
