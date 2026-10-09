@@ -9190,10 +9190,9 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ ! -d "$cdir/watch.lock.d" ]
   [ ! -e "$cdir/cursor" ]
 
-  # The group-shaped signal: a terminal's Ctrl-C reaches the park AND its
-  # in-flight `sleep` child, and the arm reported the signal's status rather
-  # than the child's — `set -e` exited on the killed `sleep`. Killing the child
-  # is that shape without needing a process group of one's own.
+  # The group-shaped signal: a terminal's Ctrl-C reaches the park and its
+  # in-flight `sleep` child, and `set -e` exited on the killed child, so the
+  # status is the signal's. Killing the child alone is the same shape.
   bash -euo pipefail "$CREW" watch --crew c1 --timeout 60 --interval 5 >/dev/null 2>&1 &
   local pid2=$!
   poll_for 100 test -f "$cdir/watch.lock.d/pid"
@@ -9205,7 +9204,7 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$rc2" -eq 143 ]
   [ ! -d "$cdir/watch.lock.d" ]
 
-  # The assertion that matters: the next watch starts, rather than refusing.
+  # The next watch starts rather than refusing.
   CREW_ID=c1 run_crew status worker:feat/x done
   run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
   [ "$status" -eq 0 ]

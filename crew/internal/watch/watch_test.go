@@ -570,9 +570,8 @@ func TestSincePastInt64ParksQuietly(t *testing.T) {
 }
 
 // A timeout whose ms product overflows is bash's `$((start + timeout*1000))`
-// wrap, and Go's int64 wraps the same way: the deadline lands in the past and
-// the park expires with the caller's digits in the line, rather than parking
-// past the heat death of the bus.
+// wrap: the deadline lands in the past and the park expires with the caller's
+// digits in the line.
 func TestOverflowingTimeoutExpires(t *testing.T) {
 	for _, timeout := range []string{"9223372036854775807", "4611686018427387904"} {
 		t.Run(timeout, func(t *testing.T) {

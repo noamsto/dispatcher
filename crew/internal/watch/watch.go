@@ -5,18 +5,16 @@
 // backgrounded park is not a failed command) and one line on stderr.
 //
 // The fold is the arm's own jq, embedded and handed to jqrun (see watch.jq).
-// The park is the arm of #901 and the second poller after `await`, with two
-// differences that are the whole design:
+// Two contracts with bash `stream`, which re-enters this command as its child,
+// shape the rest of the file:
 //
 //   - The clock is the wall clock. The arm stamped `start` and every deadline
 //     check with jq's `now*1000|floor` and slept with the real `sleep`, so
-//     unlike `await` and `hold` it never reads $CREW_CLOCK; Options.Now/Sleep
-//     below are the real pair and nothing else.
-//   - It holds `watch.lock.d` for the whole park, through the `_lock_acquire`
-//     protocol shared with bash `stream` (which re-enters this arm as its
-//     child), so the lock is released on every exit path — including the
-//     SIGTERM/SIGINT/SIGHUP `stream` sends it. A leaked lock dir would block
-//     every later watch of the crew until its pid is reaped.
+//     unlike `await` and `hold` this park never reads $CREW_CLOCK.
+//   - `watch.lock.d` is held for the whole park, through the `_lock_acquire`
+//     protocol `stream` also takes. It stops and retries by sending TERM, and
+//     bash released the lock from its EXIT trap; a leaked lock dir blocks every
+//     later watch of the crew until the dead pid is reaped.
 package watch
 
 import (
@@ -60,9 +58,8 @@ const (
 type Options struct {
 	CrewID func() string
 	Flush  func() error
-	// Now is the real clock. watch is the one park that never reads
-	// $CREW_CLOCK: a virtual one would move a deadline the arm left on the
-	// wall clock, and the suite exports CREW_CLOCK for `await`'s sake.
+	// Now is the real clock: the arm timed its deadline with jq's `now` and
+	// never read $CREW_CLOCK, which the suite exports for `await`'s sake.
 	Now func() time.Time
 	// Sleep waits one interval. nil is clock.Clock.Sleep with no CREW_CLOCK —
 	// the real `sleep` with the same argv, so an interval coreutils rejects
@@ -143,16 +140,13 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 
 	start := nowMS()
-	// The arm's `$((start + timeout * 1000))`, computed in bash's intmax_t. Go's
-	// int64 wraps the same two's-complement way, and that is the parity wanted:
-	// a timeout whose ms product overflows lands on the same wrapped deadline
-	// bash parked on, which is in the past — an expiry, not an unbounded park.
+	// The arm's `$((start + timeout * 1000))` in bash's intmax_t. Go's int64
+	// wraps the same way, and a product that overflows lands in the past: an
+	// expiry, never the unbounded park the flag exists to prevent.
 	deadline := start + c.timeout*1000
 
 	for {
 		if s, ok := pending(sigs); ok {
-			// The conventional 128+n, which is what `stream`'s `wait` saw from
-			// the bash arm.
 			return signalStatus(s)
 		}
 		if out, ok := fold(paths.Log, c); ok {
@@ -229,15 +223,14 @@ func parse(argv []string, o Options) (call, string) {
 		return c, "crew: --timeout must be a positive integer number of seconds"
 	}
 	// The arm's `[ "$timeout" -gt 0 ]`, on the same digits. bash's `test` errors
-	// on a value past its signed long, and `set -e` turned that into this same
-	// refusal with exit 1, so out-of-range is refused rather than parked on —
-	// an unbounded park is exactly what the flag rules out. (bash's own `[: …
-	// integer expected` diagnostic is a shell message and is not mirrored.)
-	if n, err := strconv.ParseInt(c.timeoutText, 10, 64); err != nil || n == 0 {
+	// past its signed long and `set -e` turned that into this same refusal, so
+	// out-of-range is refused rather than parked on. (bash's own `[: … integer
+	// expected` diagnostic is a shell message and is not mirrored.)
+	timeout, err := strconv.ParseInt(c.timeoutText, 10, 64)
+	if err != nil || timeout == 0 {
 		return c, "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"
-	} else {
-		c.timeout = n
 	}
+	c.timeout = timeout
 	c.states = splitStates(c.statesText)
 	if len(c.states) == 0 {
 		return c, "crew: --states must be non-empty"

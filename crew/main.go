@@ -124,11 +124,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return flush(out, stderr, code)
 	}
 
-	// watch parks too, but on the wall clock: the arm stamped its deadline with
-	// jq's `now` and slept with the real `sleep`, so CREW_CLOCK never reaches it.
-	// It prints one batch value rather than lines, holds the crew's watch lock
-	// for the park, and moves the cursor file once the batch is on the wire, so
-	// it owns its run like await does.
+	// watch parks on the bus with its own clock and its own lock, and prints one
+	// batch value rather than lines, so it owns its run like await does. Its
+	// cursor file moves once that value is on the wire.
 	if sub == "watch" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
