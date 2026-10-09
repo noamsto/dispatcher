@@ -94,6 +94,12 @@ The lead assigns work with a `crew msg` to `$id` naming:
 - the **seam** (`spec`, `plan`, `execute`, `review`, `refute`, `assess`),
 - for `seam: review`, either the **roster** — the absolute path of the resolved roster JSON — or **roster_skipped** — the lead's `repo-local discovery skipped: <reason>`; with neither, discovery is skipped.
 
+An assignment body must be **one line**: the watcher types it into the pane,
+and tmux reads a control byte (newline, tab, …) as terminal input. `crew msg`
+refuses a control-bearing body to a `role:` recipient, and the watcher drops
+such an assignment with an `assignment_rejected` msg instead of typing it. Build
+the JSON compactly (`jq -c`, `jq -nc`) rather than pretty-printed.
+
 On wake, read the artifact and do your role's job. **Do not edit implementation
 files** — you are a critic/reviewer. Run tests read-only if a verdict needs them;
 otherwise reason from the artifact and the diff. Tool-level read-only is not
