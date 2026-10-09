@@ -25,14 +25,17 @@
 # lock, so two parallel tool calls deliver once and watchdog D6 and `crew nudge`
 # see the directive as read.
 #
-# Cost: this runs after EVERY tool call, so the common case reads no row. A
-# per-session cursor holds the bus byte size at the last completed check; equal
-# size exits before stdin is read, and new bytes are prefiltered with grep for a
-# `"msg"` row naming the dispatcher before the Go `crew inbox` is spawned. The
-# prefilter is a superset test, so a false positive costs one slow-path call.
-# Every cursor write is the size read at the START of the call: a row appended
-# meanwhile is rechecked next call. A last byte that is not a newline is a row
-# its writer has not finished, so the cursor stays put and that chunk is rescanned.
+# Cost: this runs after EVERY tool call, so the common case reads no row and
+# forks nothing but `wc -c` (each fork is milliseconds on a loaded host; bash has
+# no stat builtin): the bus dir comes from the task doc header, the cursor key is
+# parameter expansion. A per-session cursor holds the bus byte size at the last
+# completed check; equal size exits before stdin is read, and new bytes are
+# prefiltered with grep for a `"msg"` row naming the dispatcher before the Go
+# `crew inbox` is spawned. The prefilter is a superset test, so a false positive
+# costs one slow-path call. Every cursor write is the size read at the START of
+# the call: a row appended meanwhile is rechecked next call. A last byte that is
+# not a newline is a row its writer has not finished, so the cursor stays put and
+# that chunk is rescanned.
 #
 # The msg body is data. It travels only as jq input: never eval'd, never a printf
 # format. Delimiter neutralisation turns any `[` that opens `end directive` or
@@ -54,38 +57,54 @@ set -u
 command -v jq >/dev/null || exit 0
 command -v crew >/dev/null || exit 0
 
-common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
-[[ -n $common ]] || exit 0
-log=$common/crew/events.jsonl
-[[ -f $log ]] || exit 0
-
-# The crew id, resolved the way crew.sh's _crew_id resolves it: the task doc
-# header (up to the first blank line) first, then the environment.
+# The task doc header (up to the first blank line) carries the crew id, resolved
+# the way crew.sh's _crew_id resolves it (header, then the environment), and the
+# bus dir. Reading the dir here spares the `git rev-parse` fork.
 crew=''
+crew_dir=''
 if [[ -f $PWD/WORKER_TASK.md ]]; then
   while IFS= read -r line; do
     [[ -n $line ]] || break
-    if [[ $line == crew_id:* ]]; then
+    if [[ -z $crew && $line == crew_id:* ]]; then
       crew=${line#crew_id:}
       crew=${crew#"${crew%%[![:space:]]*}"}
       crew=${crew%"${crew##*[![:space:]]}"}
-      break
+    elif [[ -z $crew_dir && $line == crew_dir:* ]]; then
+      crew_dir=${line#crew_dir:}
+      crew_dir=${crew_dir#"${crew_dir%%[![:space:]]*}"}
+      crew_dir=${crew_dir%"${crew_dir##*[![:space:]]}"}
+    else
+      continue
     fi
+    [[ -z $crew || -z $crew_dir ]] || break
   done <"$PWD/WORKER_TASK.md"
 fi
 [[ -n $crew ]] || crew=${CREW_ID:-}
 [[ -n $crew ]] || exit 0
 
-# Cursor key: a sanitized id plus a cksum so two ids that sanitize alike cannot
-# collide (phase-status.sh's idiom).
-key=$(printf '%s' "$CREW_WORKER_ID" | tr -c 'A-Za-z0-9._-' '_')
-key="${key}.$(printf '%s' "$CREW_WORKER_ID" | cksum | cut -d' ' -f1)"
-curdir=$common/crew/directive-delivery
+if [[ -z $crew_dir || ! -d $crew_dir ]]; then
+  common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+  [[ -n $common ]] || exit 0
+  crew_dir=$common/crew
+fi
+log=$crew_dir/events.jsonl
+[[ -f $log ]] || exit 0
+
+# Cursor key: the id with every character outside the filename-safe set replaced,
+# no fork. Two ids that sanitize alike share a file, so line 2 holds the full id
+# and a cursor naming another id is read as 0 (a full prefilter rescan: slower,
+# still correct).
+key=${CREW_WORKER_ID//[!A-Za-z0-9._-]/_}
+curdir=$crew_dir/directive-delivery
 cursor_file=$curdir/$key
 
 cursor=0
 if [[ -f $cursor_file ]]; then
-  read -r cursor <"$cursor_file" 2>/dev/null
+  {
+    read -r cursor
+    read -r owner
+  } <"$cursor_file" 2>/dev/null
+  [[ ${owner:-} == "$CREW_WORKER_ID" ]] || cursor=0
 fi
 cursor=${cursor//[!0-9]/}
 cursor=${cursor:-0}
@@ -103,7 +122,7 @@ save_cursor() { # <offset>
   local tmp
   mkdir -p "$curdir" 2>/dev/null || return 0
   tmp=$(mktemp "$curdir/.cur.XXXXXX" 2>/dev/null) || return 0
-  if printf '%s\n' "$1" >"$tmp" 2>/dev/null; then
+  if printf '%s\n%s\n' "$1" "$CREW_WORKER_ID" >"$tmp" 2>/dev/null; then
     mv "$tmp" "$cursor_file" 2>/dev/null || rm -f "$tmp"
   else
     rm -f "$tmp"

@@ -230,7 +230,7 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   deliver
   [ -z "$output" ]
   [ "$(wc -l <"$CALLS")" -eq 1 ]
-  [ "$(cat "$(cursor_file)")" -eq "$(wc -c <"$LOG")" ]
+  [ "$(head -n 1 "$(cursor_file)")" -eq "$(wc -c <"$LOG")" ]
 
   # (c) a dispatcher msg to someone else is a candidate, but not for this session
   crew msg dispatcher:c1 worker:feat/other#s2-2 'not yours'
@@ -238,7 +238,7 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   deliver
   [ -z "$output" ]
   [ "$(wc -l <"$CALLS")" -eq 1 ]
-  [ "$(cat "$(cursor_file)")" -eq "$(wc -c <"$LOG")" ]
+  [ "$(head -n 1 "$(cursor_file)")" -eq "$(wc -c <"$LOG")" ]
 }
 
 @test "delivery: a flood of large directives stays under the cap and is all marked delivered" {
@@ -289,4 +289,44 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   deliver
   [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
   [ -z "$(_unread_scan c1 feat/840-x worker:feat/840-x "$ID" 0 dispatcher)" ]
+}
+
+@test "delivery: a cursor that names another id is ignored and the log is rescanned" {
+  crew msg dispatcher:c1 "$ID" 'stop now'
+  mkdir -p "$CURDIR"
+  key=${ID//[!A-Za-z0-9._-]/_}
+  # An up-to-date offset would exit silent; the foreign owner forces a rescan.
+  printf '%s\n%s\n' "$(wc -c <"$LOG")" 'worker:feat/840_x#s1-1' >"$CURDIR/$key"
+  deliver
+  [ "$status" -eq 0 ]
+  [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
+  [ "$(sed -n 2p "$CURDIR/$key")" = "$ID" ]
+}
+
+@test "delivery: the bus dir comes from crew_dir without a git fork, and falls back to git without it" {
+  REALGIT=$(command -v git)
+  CALLS="$BATS_TEST_TMPDIR/gitcalls"
+  : >"$CALLS"
+  mkdir -p "$BATS_TEST_TMPDIR/gitbin"
+  printf '#!/usr/bin/env bash\necho "$*" >>"%s"\nexec "%s" "$@"\n' "$CALLS" "$REALGIT" \
+    >"$BATS_TEST_TMPDIR/gitbin/git"
+  chmod +x "$BATS_TEST_TMPDIR/gitbin/git"
+  export PATH="$BATS_TEST_TMPDIR/gitbin:$PATH"
+
+  # No pending directive: the handler stays on its fast path.
+  crew msg worker:feat/other#s2-2 "$ID" 'peer note'
+  : >"$CALLS"
+  printf 'crew_id: c1\ncrew_dir: %s\n\nbody\n' "$COMMON/crew" >WORKER_TASK.md
+  deliver
+  [ -z "$output" ]
+  [ ! -s "$CALLS" ]
+  [ -f "$CURDIR/${ID//[!A-Za-z0-9._-]/_}" ]
+
+  # A crew_dir that is not a directory is ignored: git finds the bus.
+  crew msg dispatcher:c1 "$ID" 'stop now'
+  printf 'crew_id: c1\ncrew_dir: %s\n' "$BATS_TEST_TMPDIR/missing" >WORKER_TASK.md
+  : >"$CALLS"
+  deliver
+  [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
+  grep -qF -- '--git-common-dir' "$CALLS"
 }
