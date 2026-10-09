@@ -10,8 +10,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
+
+// crewsProbes fakes the pid probes crews reads: liveness is the live set and
+// the ancestor walk follows the parents map.
+func crewsProbes(live map[int]bool, parents map[int]int) crews.Probes {
+	return crews.Probes{
+		Alive:   func(pid int) bool { return live[pid] },
+		Elapsed: func(int) (int64, bool) { return 0, false },
+		Mtime:   func(string) (int64, bool) { return 0, false },
+		Parent:  func(pid int) (int, bool) { n, ok := parents[pid]; return n, ok },
+	}
+}
 
 func TestParseSessions(t *testing.T) {
 	const (
@@ -163,4 +175,74 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunCrews(t *testing.T) {
+	const crewsHeader = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n"
+
+	t.Run("absent bus prints just the header", func(t *testing.T) {
+		repo, _ := repoWithLog(t, nil, 0)
+		var stdout, stderr bytes.Buffer
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		if code := run(context.Background(), []string{"crews"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if stdout.String() != crewsHeader || stderr.Len() != 0 {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("unknown arg is the arm's usage exit", func(t *testing.T) {
+		repo, _ := repoWithLog(t, nil, 0)
+		var stdout, stderr bytes.Buffer
+		e := env{getwd: func() (string, error) { return repo, nil }}
+		code := run(context.Background(), []string{"crews", "--mine=yes"}, &stdout, &stderr, e)
+		if code != 64 || stdout.Len() != 0 || stderr.String() != "crew: crews: unknown arg '--mine=yes'\n" {
+			t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("bad JQ_COLORS warns once when the table runs", func(t *testing.T) {
+		log := `{"ts":1785951264000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1"}` + "\n"
+		repo, _ := repoWithLog(t, &log, 0o644)
+		var stdout, stderr bytes.Buffer
+		e := env{getwd: func() (string, error) { return repo, nil }, jqColors: "bad"}
+		if code := run(context.Background(), []string{"crews"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if stderr.String() != "Failed to set $JQ_COLORS\n" {
+			t.Fatalf("stderr %q", stderr.String())
+		}
+		if !strings.HasPrefix(stdout.String(), crewsHeader+"c1\t") || strings.Count(stdout.String(), "\n") != 2 {
+			t.Fatalf("stdout %q", stdout.String())
+		}
+	})
+
+	t.Run("--mine lists the live ancestor through the probes", func(t *testing.T) {
+		repo, logPath := repoWithLog(t, nil, 0)
+		crewDir := filepath.Join(filepath.Dir(logPath), "crews")
+		for _, id := range []string{"c-anc", "c-str"} {
+			if err := os.MkdirAll(filepath.Join(crewDir, id), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write := func(id, pid string) {
+			if err := os.WriteFile(filepath.Join(crewDir, id, "pid"), []byte(pid+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		write("c-anc", "4242")
+		write("c-str", "9999")
+		var stdout, stderr bytes.Buffer
+		e := env{
+			getwd: func() (string, error) { return repo, nil },
+			procs: crewsProbes(map[int]bool{4242: true, 9999: true}, map[int]int{os.Getpid(): 4242}),
+		}
+		if code := run(context.Background(), []string{"crews", "--mine"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d", code)
+		}
+		if stdout.String() != "c-anc\n" || stderr.Len() != 0 {
+			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
 }

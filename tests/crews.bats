@@ -182,6 +182,24 @@ EOF
   [ "$output" = "$expected" ]
 }
 
+@test "crews: 2500 event-carrying crews survive the old --argjson stats argv cliff (#838)" {
+  # The deleted bash arm passed the per-crew stats map to jq with
+  # `--argjson stats`; at the issue's measured ~78 B per crew, 2500 crews is
+  # ~195 KB — well past MAX_ARG_STRLEN's 131072 B, where the old arm died
+  # with "Argument list too long". The Go port hands stats to gojq as a
+  # variable, so bus size is no longer a barrier.
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  seq 1 2500 | jq -c '{ts:1785951264000,kind:"status",crew_id:("c"+tostring),from:"worker:feat/x#s1",state:"working"}' >>"$log"
+  run run_crew crews
+  [ "$status" -eq 0 ]
+  [ "$(wc -l <<<"$output")" -eq 2501 ] # header + one row per crew
+  row="$(_crews_row c1234)"
+  [ -n "$row" ]
+  [ "$(cut -f4 <<<"$row")" = "1" ] # workers
+  [ "$(cut -f5 <<<"$row")" = "—" ] # no pid file
+}
+
 # ---- crews --mine -----------------------------------------------------
 #
 # The crews whose recorded dispatcher pid is a live ancestor of the caller: the

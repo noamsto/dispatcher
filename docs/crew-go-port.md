@@ -1,9 +1,10 @@
 # Porting crew to Go
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
-Ported so far: `sessions` and `roster`. Each slice must leave every bats file
-green; tests may be adapted only where the Go design changes what they can
-observe (the value-identity contract below), with each edit justified.
+Ported so far: `sessions`, `roster` and `crews`. Each slice must leave every
+bats file green; tests may be adapted only where the Go design changes what
+they can observe (the value-identity contract below), with each edit
+justified.
 
 ## Layout
 
@@ -17,9 +18,10 @@ observe (the value-identity contract below), with each edit justified.
   comparators are gone (#861): gojq owns ordering and grouping now.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
-- `crew/internal/roster`, `crew/internal/sessions`: each embeds its jq
-  program (`*.jq`, kept verbatim from crew.sh apart from documented patches)
-  plus the Go glue: tmux/worktree probes, identity attachment.
+- `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`:
+  each embeds its jq program (`*.jq`, kept verbatim from crew.sh apart from
+  documented patches) plus the Go glue: tmux/worktree probes, identity
+  attachment, the crews pid-liveness and ancestor probes.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -30,7 +32,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-sessions | roster)
+crews | sessions | roster)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -65,7 +67,15 @@ arm and delete its old arm.
   `JQ_COLORS` warning prints once, not once per jq process; and, unreachable
   with real git branches, the shell rewrites the arm applies to bus-supplied
   branch strings (glob expansion of `$(...)` words, NUL bytes dropped by
-  `$(...)`, awk `-v` escape processing) are not mirrored.
+  `$(...)`, awk `-v` escape processing) are not mirrored. `crew crews` also
+  sorts its id union and `--mine` scan in byte order, not the caller's
+  `sort -u`/glob locale collation — observable only for id sets whose C
+  order differs from the run locale's, among no-stats rows or `last` ties;
+  a non-string `crew_id` contributes no id (the arm's `jq -r` printed
+  numbers and JSON fragments as id lines, an object spanning several); and
+  when the final pass fails (a stats row with a null `ts`), Go prints no
+  rows where the arm's `jq -r` had already streamed the rows before the
+  failing one — exit 5 and the one stderr line match.
 - Before deleting a bash arm, diff it against Go over a generated bus corpus
   (mask `age_s`) and keep the evidence.
 

@@ -122,6 +122,19 @@ func stringField(obj jsonv.Value, key string) string {
 // ReadEvents reads the whole log as `jq -s` does. A missing log, or one that is
 // not a regular file (stat follows symlinks, like `[ -f ]`), is ErrNoLog.
 func ReadEvents(path string) ([]Event, error) {
+	evs, err := ReadEventsTolerant(path)
+	if err != nil {
+		return nil, err
+	}
+	return evs, nil
+}
+
+// ReadEventsTolerant is ReadEvents with `jq -r`'s tolerance for a torn tail:
+// on a decode error it still returns the events parsed before the break,
+// alongside the *DecodeError, so a best-effort reader (the crews arm's id
+// scan) keeps the well-formed prefix the way `jq ... 2>/dev/null || true`
+// did. Every other outcome is identical.
+func ReadEventsTolerant(path string) ([]Event, error) {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, ErrNoLog
@@ -131,17 +144,17 @@ func ReadEvents(path string) ([]Event, error) {
 		return nil, &OpenError{Path: path, Err: err}
 	}
 	defer func() { _ = f.Close() }()
-	vs, err := jsonv.DecodeStream(f)
-	if err != nil {
-		var syn *jsonv.SyntaxError
-		if errors.As(err, &syn) {
-			return nil, &DecodeError{Path: path, Err: err}
-		}
-		return nil, &OpenError{Path: path, Err: err}
-	}
+	vs, decErr := jsonv.DecodeStreamPrefix(f)
 	evs := make([]Event, len(vs))
 	for i, v := range vs {
 		evs[i] = newEvent(v)
+	}
+	if decErr != nil {
+		var syn *jsonv.SyntaxError
+		if errors.As(decErr, &syn) {
+			return evs, &DecodeError{Path: path, Err: decErr}
+		}
+		return nil, &OpenError{Path: path, Err: decErr}
 	}
 	return evs, nil
 }

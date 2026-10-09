@@ -202,3 +202,29 @@ func TestDecodeStreamDuplicateKeysKeepFirstPositionLastValue(t *testing.T) {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }
+
+func TestDecodeStreamPrefix(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		count   int // values returned
+		wantErr bool
+	}{
+		{"clean", `{"a":1} {"a":2}`, 2, false},
+		{"empty", ``, 0, false},
+		{"torn tail keeps the prefix", "{\"a\":1}\n{\"a\":2}\n{\"ts\":17", 2, true},
+		{"break on garbage mid-stream", `1 2 garbage 3`, 2, true},
+		{"first value broken", `garbage`, 0, true},
+	}
+	for _, tc := range tests {
+		vs, err := jsonv.DecodeStreamPrefix(strings.NewReader(tc.in))
+		if len(vs) != tc.count || (err != nil) != tc.wantErr {
+			t.Errorf("%s: got %d values, err %v; want %d, err %v", tc.name, len(vs), err, tc.count, tc.wantErr)
+		}
+		if !tc.wantErr {
+			if vs2, err2 := jsonv.DecodeStream(strings.NewReader(tc.in)); err2 != nil || len(vs2) != len(vs) {
+				t.Errorf("%s: DecodeStream disagrees: %v", tc.name, err2)
+			}
+		}
+	}
+}

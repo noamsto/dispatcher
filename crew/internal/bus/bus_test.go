@@ -590,3 +590,35 @@ func TestIsTerminalFalseForNonTTY(t *testing.T) {
 		t.Fatal("an invalid fd is not a terminal")
 	}
 }
+
+func TestReadEventsTolerant(t *testing.T) {
+	t.Run("torn tail keeps the prefix with the error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		writeFile(t, path, `{"kind":"msg","crew_id":"a"}`+"\n"+`{"kind":"status","bo`)
+		evs, err := ReadEventsTolerant(path)
+		var de *DecodeError
+		if !errors.As(err, &de) {
+			t.Fatalf("err = %v, want *DecodeError", err)
+		}
+		if len(evs) != 1 || evs[0].CrewID != "a" {
+			t.Fatalf("prefix lost: %v", evs)
+		}
+		if strict, err2 := ReadEvents(path); strict != nil || err2 == nil {
+			t.Fatalf("ReadEvents must keep returning no events on a decode error: %v %v", strict, err2)
+		}
+	})
+	t.Run("clean read agrees with ReadEvents", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		writeFile(t, path, `{"kind":"msg"}`+"\n")
+		evs, err := ReadEventsTolerant(path)
+		if err != nil || len(evs) != 1 || evs[0].Kind != KindMsg {
+			t.Fatalf("evs=%v err=%v", evs, err)
+		}
+	})
+	t.Run("missing log is ErrNoLog with no events", func(t *testing.T) {
+		evs, err := ReadEventsTolerant(filepath.Join(t.TempDir(), "events.jsonl"))
+		if !errors.Is(err, ErrNoLog) || evs != nil {
+			t.Fatalf("evs=%v err=%v", evs, err)
+		}
+	})
+}
