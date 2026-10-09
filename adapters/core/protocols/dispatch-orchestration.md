@@ -286,6 +286,23 @@ model that is also a new tier's row additionally needs `--ignore-map` until
 its row in `adapters/core/defaults.json` is updated and rebuilt
 (`scripts/gen-adapters.sh` regenerates the tables).
 
+**Machine-readable view.** `dispatch --models [--json]` prints the tier map
+the gate enforces, read from the resolved settings (`defaults.json` plus
+overrides, and pi `localModels`), so tools such as a web dashboard need no hand-kept copy. It is
+read-only and fast: no lock, budget probe or crew write. It covers the engines
+`dispatch --engines` lists. Without `--json` it prints a table. The JSON shape:
+
+```json
+{"engines": {"<engine>": {"tiers": {"trivial": {"default": "<model>", "models": ["..."], "regex": ["..."]}, "standard": {...}, "deep": {...}}, "models": ["<union, map order>"]}}}
+```
+
+`default` is the model the protocol leads with for that tier (`null` if the
+row has none). `models` is everything the gate accepts on that row, escalation
+rungs (`outOfRow`) included, plus, for pi, each `localModels` id whose `tiers`
+admit it; entries can be bash globs (`claude-opus-*`), not only literal ids.
+`regex` lists the EREs the gate also accepts (`[]` when none). The engine-level
+`models` is the order-preserving union of its tiers.
+
 ### Local models
 
 A pi lane for a self-hosted OpenAI-compatible endpoint (Lemonade, llama.cpp,

@@ -18,6 +18,7 @@ _dispatch_help() {
 usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
        dispatch resume [<target>] [flags]
        dispatch --engines [--in-budget]
+       dispatch --models [--json]
 
 Scaffold a worker session: claim or mint its issue, create the branch, the
 worktree and WORKER_TASK.md, then launch the engine in a tmux window. Flags
@@ -65,6 +66,7 @@ Overrides
 Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
+  dispatch --models       The tier map per engine: default and accepted models (--json: machine-readable)
 
 Internal (called by workers and the harness, not by hand)
   --spawn-role ROLE       Start one lazy grid role pane in the worker's window
@@ -3328,6 +3330,54 @@ if [ "${1:-}" = "--engines" ]; then
     fi
     echo "$e"
   done
+  exit 0
+fi
+
+# `dispatch --models [--json]` — the tier map the gate enforces, read-only:
+# settings only, no lock, no budget probe, no crew writes. Per tier: the row's
+# default, its `models` globs plus escalation `outOfRow` rungs (and, for pi,
+# the localModels ids whose tiers admit it), and the row's `regex` EREs.
+if [ "${1:-}" = --models ]; then
+  as_json=
+  [ "${2:-}" != --json ] || as_json=1
+  { [ $# -le 1 ] || { [ $# -eq 2 ] && [ -n "$as_json" ]; }; } || {
+    usage
+    exit 1
+  }
+  _settings_load
+  roster=()
+  # shellcheck disable=SC2086 # intentional split of the fixed space-separated roster
+  for e in $ENGINES_ALL; do
+    engine_enabled "$e" || continue
+    command -v "$(engine_cli "$e")" >/dev/null 2>&1 || continue
+    roster+=("$e")
+  done
+  # A localModels id is admitted by its entry alone (the gate checks it before
+  # modelMap), whose tiers default as in local-models.sh's _local_entry.
+  map="$(jq --args '
+    def uniq: reduce .[] as $m ([]; if index([$m]) then . else . + [$m] end);
+    . as $s
+    | ($s.localModels // {} | map_values((.tiers // ["trivial", "standard"]))) as $local
+    | {engines: ($ARGS.positional | map(. as $e | {key: $e, value: (
+      (["trivial", "standard", "deep"] | map(. as $t | {key: $t, value: (
+        ($s.modelMap[$e][$t] // {}) as $row
+        | {default: ($row.default // null),
+           models: ((($row.models // [])
+             + [($s.escalation[$e][$t] // [])[] | (.outOfRow // [])[]]
+             | map(select($e != "pi" or ($local[.] == null)))
+             ) + (if $e == "pi" then [$local | to_entries[] | select(.value | index($t)) | .key] else [] end)
+             | uniq),
+           regex: ($row.regex // [])})}) | from_entries) as $tiers
+      | {tiers: $tiers, models: ([$tiers[].models] | add | uniq)})}) | from_entries)}
+  ' "${roster[@]}" <<<"$settings")"
+  if [ -n "$as_json" ]; then
+    printf '%s\n' "$map"
+  else
+    jq -r '.engines | to_entries[] | .key as $e | .value.tiers | to_entries[]
+      | [$e, .key, (.value.default // "-"), (.value.models | join(" ")), (.value.regex | join(" "))] | @tsv' <<<"$map" |
+      awk -F'\t' 'BEGIN { printf "%-8s %-9s %-40s %s\n", "ENGINE", "TIER", "DEFAULT", "MODELS [/ REGEX]" }
+        { printf "%-8s %-9s %-40s %s%s\n", $1, $2, $3, $4, ($5 == "" ? "" : "  / " $5) }'
+  fi
   exit 0
 fi
 

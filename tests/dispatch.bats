@@ -699,6 +699,83 @@ EOF
   [[ "$output" != *"no crew id"* ]]
 }
 
+@test "--models --json lists exactly the --engines roster" {
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  want="$output"
+  DISPATCH_ENGINES="claude codex pi" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.engines | keys_unsorted | join("\n")' <<<"$output")" = "$want" ]
+}
+
+@test "--models --json omits an engine whose CLI is missing" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines | has("codex") | not' <<<"$output"
+}
+
+@test "--models --json: every default is in its tier's models, and the engine models are the union" {
+  DISPATCH_ENGINES="claude codex cursor pi" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '[.engines[] | .tiers[] | select(. as $t | .default != null and ($t.models | index([$t.default]) | not))] | length == 0' <<<"$output"
+  jq -e '[.engines[] | (.models | sort) == ([.tiers[].models[]] | unique)] | all' <<<"$output"
+}
+
+@test "--models --json drops a model the gate refuses for the tier" {
+  DISPATCH_ENGINES="claude codex" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.claude.tiers.standard.models | index("haiku") == null' <<<"$output"
+  jq -e '.engines.claude.tiers.trivial.models | index("haiku") != null' <<<"$output"
+  jq -e '.engines.codex.tiers.trivial.models | index("gpt-5.6-sol") == null' <<<"$output"
+  # The same pair is refused by the gate itself.
+  run run_dispatch standard haiku --agent claude --effort medium --crew-id c1 42 "haiku refused at standard"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is not standard's row"* ]]
+}
+
+@test "--models --json includes escalation rungs outside the row" {
+  DISPATCH_ENGINES="codex" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.codex.tiers.standard.models | index("gpt-5.6-sol") != null' <<<"$output"
+}
+
+@test "--models --json adds a localModels id to the pi tiers it admits" {
+  local_lane_fixture
+  DISPATCH_ENGINES="pi" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e --arg id "$LOCAL_ID" '.engines.pi.tiers | (.trivial.models | index($id) != null) and (.standard.models | index($id) != null) and (.deep.models | index($id) == null)' <<<"$output"
+}
+
+@test "--models without --json prints a table" {
+  DISPATCH_ENGINES="claude" run run_dispatch --models
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == ENGINE*TIER*DEFAULT*MODELS* ]]
+  [[ "$output" == *"claude"*"standard"*"sonnet"* ]]
+}
+
+@test "--models rejects an unknown or extra argument" {
+  run run_dispatch --models --bogus
+  [ "$status" -eq 1 ]
+  run run_dispatch --models --json junk
+  [ "$status" -eq 1 ]
+}
+
+@test "--models --json leaves a pi localModels id out of a tier its entry does not list" {
+  local_lane_fixture ',"tiers":["trivial"]'
+  DISPATCH_ENGINES="pi" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e --arg id "$LOCAL_ID" '.engines.pi.tiers | (.trivial.models | index($id) != null) and (.standard.models | index($id) == null)' <<<"$output"
+}
+
+@test "--models --json carries a row's regex and writes nothing under .git/crew" {
+  DISPATCH_ENGINES="cursor" run run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.cursor.tiers.deep.regex | length > 0' <<<"$output"
+  jq -e '.engines.cursor.tiers.standard.regex == []' <<<"$output"
+  [ ! -e "$TEST_REPO/.git/crew" ]
+}
+
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
   # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
   # what gives the role-pane assertions below real launches to check.
