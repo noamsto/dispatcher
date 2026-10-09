@@ -16,6 +16,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
@@ -25,7 +26,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -58,7 +59,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -100,6 +101,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Flush:           out.Flush,
 		})
 		return flush(out, stderr, code)
+	}
+
+	// hold reads its own action and flags, prints either TSV or one JSON value,
+	// and appends to the bus itself, so it owns its run like inbox does.
+	if sub == "hold" {
+		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		return hold.Run(args, paths, stdout, stderr, hold.Options{
+			JQColorsInvalid: !colorsOK,
+			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
+			Now:             time.Now,
+			CrewClock:       os.Getenv("CREW_CLOCK"),
+		})
 	}
 
 	// log and report print lines rather than one JSON value, and each reads the
