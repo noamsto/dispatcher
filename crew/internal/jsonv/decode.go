@@ -25,6 +25,18 @@ func (e *SyntaxError) Error() string { return fmt.Sprintf("%s at offset %d", e.M
 // DecodeStream parses every JSON value in r, as `jq -s` reads a file:
 // values may be concatenated or span lines, and input with no values yields none.
 func DecodeStream(r io.Reader) ([]Value, error) {
+	vs, err := DecodeStreamPrefix(r)
+	if err != nil {
+		return nil, err
+	}
+	return vs, nil
+}
+
+// DecodeStreamPrefix parses values until the first syntax error and returns
+// what it parsed before it along with that error, as `jq -r` prints the
+// well-formed prefix before failing on a torn trailing line. A clean read
+// returns (vs, nil); an io error returns (nil, err).
+func DecodeStreamPrefix(r io.Reader) ([]Value, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -38,7 +50,7 @@ func DecodeStream(r io.Reader) ([]Value, error) {
 		}
 		v, err := p.value(0)
 		if err != nil {
-			return nil, err
+			return vs, err
 		}
 		vs = append(vs, v)
 	}

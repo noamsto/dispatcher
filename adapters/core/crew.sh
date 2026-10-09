@@ -3730,107 +3730,6 @@ register | deregister)
     rm -rf "$cdir"
   fi
   ;;
-crews)
-  # --mine: the crews whose recorded dispatcher pid is a live ancestor of this
-  # process. `register` and `adopt` both write that pid file, so a crew adopted
-  # after a restart belongs to the adopting session exactly as its own does.
-  #
-  # Only pid files count — an id with no pid file (a crew dir `watch` created,
-  # or an id seen only in events.jsonl) records no dispatcher, so it can never
-  # be ours. Skipping the log keeps --mine a directory scan plus a bounded `ps`
-  # walk per live pid.
-  case "${1:-}" in
-  --mine)
-    [ -d "$dir/crews" ] || exit 0
-    for d in "$dir"/crews/*/; do
-      [ -d "$d" ] || continue
-      mpid=$(cat "$d/pid" 2>/dev/null || true)
-      # The same positive-integer guard as the table below: `kill -0 0` signals
-      # our own process group, so a junk pid is never a liveness probe.
-      case "$mpid" in '' | *[!0-9]* | 0) continue ;; esac
-      _recorded_pid_live "$mpid" "$d/pid" || continue
-      _is_ancestor_pid "$mpid" || continue
-      printf '%s\n' "$(basename "$d")"
-    done
-    exit 0
-    ;;
-  '') ;;
-  *)
-    echo "crew: crews: unknown arg '$1'" >&2
-    exit 64
-    ;;
-  esac
-  # Discovery primitive (#29): union crews/*/ (a crew dir — not necessarily
-  # registered, since `watch` also mkdir -p's one) with distinct crew_id in
-  # events.jsonl (a crew that posted, possibly via --crew-id alone and never
-  # registered). Neither source alone is complete.
-  printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n'
-  ids=""
-  if [ -d "$dir/crews" ]; then
-    for d in "$dir"/crews/*/; do
-      [ -d "$d" ] || continue
-      ids="$ids
-$(basename "$d")"
-    done
-  fi
-  if [ -f "$log" ]; then
-    # Best-effort, like every other read of this log: a hard kill mid-append
-    # leaves a torn trailing line, and that is exactly the crash this command
-    # exists to recover from — a jq parse error must not cost the well-formed
-    # crews above it.
-    ids="$ids
-$(jq -r 'select(.crew_id != null and .crew_id != "") | .crew_id' "$log" 2>/dev/null || true)"
-  fi
-  ids=$(printf '%s\n' "$ids" | sed '/^$/d' | sort -u)
-  [ -n "$ids" ] || exit 0
-  # Per-id metadata (pid + liveness) needs `kill -0`, which jq cannot do, so
-  # it is gathered in bash and merged with the log-derived stats in one
-  # final jq pass — that pass also owns the newest-first sort.
-  meta='[]'
-  while IFS= read -r cid; do
-    pid=$(cat "$dir/crews/$cid/pid" 2>/dev/null || true)
-    alive=null
-    if [ -n "$pid" ]; then
-      alive=false
-      # `kill -0 0` signals the caller's own process group and `kill -0 -1`
-      # broadcasts, so both all but always succeed — a non-positive pid would
-      # report a dead crew as alive. Only a positive integer is a liveness probe.
-      case "$pid" in
-      *[!0-9]* | 0) ;;
-      *) if _recorded_pid_live "$pid" "$dir/crews/$cid/pid"; then alive=true; fi ;;
-      esac
-    fi
-    meta=$(printf '%s' "$meta" | jq -c --arg id "$cid" --arg pid "$pid" --argjson alive "$alive" \
-      '. + [{id:$id, pid:(if $pid=="" then null else $pid end), alive:$alive}]')
-  done <<<"$ids"
-  stats='{}'
-  if [ -f "$log" ]; then
-    # Same torn-line tolerance as the id scan: lose the age/worker columns
-    # rather than the table.
-    stats=$(jq -c '
-        def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-        map(select(.crew_id != null and .crew_id != ""))
-        | group_by(.crew_id)
-        | map({key: .[0].crew_id,
-               value: {last: (map(.ts) | max), first: (map(.ts) | min),
-                       workers: (map(select(.kind=="status" and ((.from // "") | startswith("worker:"))))
-                                 | map(.from | wid_branch) | unique | length)}})
-        | from_entries' -s "$log" 2>/dev/null || echo '{}')
-  fi
-  printf '%s' "$meta" | jq -r --argjson stats "$stats" '
-    (now*1000) as $now
-    | (map(select($stats[.id] != null)) | sort_by(-$stats[.id].last)) as $with
-    | (map(select($stats[.id] == null))) as $without
-    | ($with + $without)[]
-    | ($stats[.id]) as $s
-    | [ .id,
-        (if $s == null then "—" else (($now - $s.last)/1000 | floor | tostring) end),
-        (if $s == null then "—" else (($now - $s.first)/1000 | floor | tostring) end),
-        ($s.workers // 0 | tostring),
-        (.pid // "—"),
-        (if .alive == null then "—" elif .alive then "yes" else "no" end)
-      ] | @tsv'
-  ;;
 adopt)
   # adopt [--force] <id> [pid] — re-attach to an on-disk crew after a
   # restart lost CREW_ID (#29). --force is stripped from anywhere in the args
@@ -4687,7 +4586,7 @@ stream)
     fi
   done
   ;;
-sessions | roster)
+crews | sessions | roster)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"

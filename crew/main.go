@@ -16,13 +16,14 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2
@@ -36,6 +37,7 @@ type env struct {
 	jqColors string // $JQ_COLORS
 	color    bool   // stdout is a terminal and $NO_COLOR is unset
 	probes   func(ctx context.Context, cwd string) roster.Probes
+	procs    crews.Probes // the pid probes crews reads
 }
 
 func main() {
@@ -44,12 +46,13 @@ func main() {
 		jqColors: os.Getenv("JQ_COLORS"),
 		color:    bus.IsTerminal(1) && os.Getenv("NO_COLOR") == "",
 		probes:   probes,
+		procs:    crews.DefaultProbes(),
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
-	if len(args) == 0 || (args[0] != "roster" && args[0] != "sessions") {
+	if len(args) == 0 || (args[0] != "roster" && args[0] != "sessions" && args[0] != "crews") {
 		say(stderr, "%s\n", usage)
 		return exitUsage
 	}
@@ -63,6 +66,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if err != nil {
 		say(stderr, "crew: not in a git repo\n")
 		return exitFailure
+	}
+
+	// crews emits TSV, reads the log with its own torn-line tolerance, and
+	// --mine never reads it at all, so it stays off the shared fold path.
+	if sub == "crews" {
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		code := crews.Run(args, paths, out, stderr, crews.Options{
+			Probes:          e.procs,
+			JQColorsInvalid: !colorsOK,
+			Now:             time.Now,
+		})
+		return flush(out, stderr, code)
 	}
 
 	var (
