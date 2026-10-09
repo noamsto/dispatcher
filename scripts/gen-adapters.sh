@@ -126,6 +126,8 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
   chmod +x "$d/scripts/test-scope-guard.sh"
   cp "$root/adapters/core/phase-status.sh" "$d/scripts/phase-status.sh"
   chmod +x "$d/scripts/phase-status.sh"
+  cp "$root/adapters/core/directive-delivery.sh" "$d/scripts/directive-delivery.sh"
+  chmod +x "$d/scripts/directive-delivery.sh"
   rm -rf "$d/protocols" "$d/reviewers"
   cp -r "$protocols" "$d/protocols"
   cp -r "$reviewers" "$d/reviewers"
@@ -158,6 +160,8 @@ cp "$root/adapters/core/test-scope-guard.sh" "$root/adapters/cursor/scripts/test
 chmod +x "$root/adapters/cursor/scripts/test-scope-guard.sh"
 cp "$root/adapters/core/phase-status.sh" "$root/adapters/cursor/scripts/phase-status.sh"
 chmod +x "$root/adapters/cursor/scripts/phase-status.sh"
+cp "$root/adapters/core/directive-delivery.sh" "$root/adapters/cursor/scripts/directive-delivery.sh"
+chmod +x "$root/adapters/cursor/scripts/directive-delivery.sh"
 
 # Both rosters and the protocols ship loose for cursor: a cursor worker
 # resolves these references by path, and without these copies the only
