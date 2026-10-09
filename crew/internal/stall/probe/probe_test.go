@@ -347,22 +347,28 @@ func TestSetPaneOption(t *testing.T) {
 	})
 }
 
+// shScript prints its argv, its shell options and its cwd, warns on stderr and
+// exits 3.
+const shScript = `printf '%s\n' "$*"; printf 'opts=%s\n' "$SHELLOPTS"; pwd; printf '\n'; echo warn >&2; exit 3`
+
+// A raw crew.sh source is not executable: it runs under bash with crew.sh's
+// writeShellApplication options, from the repo's git common dir.
 func TestSh(t *testing.T) {
 	crewSH := filepath.Join(t.TempDir(), "crew.sh")
-	script := `printf '%s\n' "$*"; printf 'opts=%s\n\n' "$SHELLOPTS"; echo warn >&2; exit 3`
-	if err := os.WriteFile(crewSH, []byte(script), 0o644); err != nil {
+	if err := os.WriteFile(crewSH, []byte(shScript), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
 	e := envOf(nil, &stderr)
 	e.CrewSH = crewSH
+	e.Dir = t.TempDir()
 	out, rc := Default(e).Sh(context.Background(), "nudge", "%7", "claude", "")
 	if rc != 3 {
 		t.Errorf("rc = %d, want 3", rc)
 	}
 	lines := strings.Split(out, "\n")
-	if len(lines) != 2 || lines[0] != "stall-watch --sh nudge %7 claude " {
-		t.Fatalf("out = %q, want the argv line then the opts line, trailing newlines stripped", out)
+	if len(lines) != 3 || lines[0] != "stall-watch --sh nudge %7 claude " || lines[2] != e.Dir {
+		t.Fatalf("out = %q, want the argv, opts and cwd lines, trailing newlines stripped", out)
 	}
 	for _, opt := range []string{"errexit", "nounset", "pipefail"} {
 		if !strings.Contains(lines[1], opt) {
@@ -371,6 +377,27 @@ func TestSh(t *testing.T) {
 	}
 	if stderr.String() != "warn\n" {
 		t.Errorf("stderr = %q, want warn", stderr.String())
+	}
+}
+
+// The Nix-built crew is executable and carries its own pinned interpreter and
+// options, so it runs as is: no bash wrapper adds errexit here.
+func TestShExecutable(t *testing.T) {
+	crewSH := filepath.Join(t.TempDir(), "crew")
+	if err := os.WriteFile(crewSH, []byte(shebang(t)+shScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := envOf(nil, nil)
+	e.CrewSH = crewSH
+	e.Dir = t.TempDir()
+	t.Setenv("PATH", t.TempDir())
+	out, rc := Default(e).Sh(context.Background(), "release", "feat/x")
+	lines := strings.Split(out, "\n")
+	if rc != 3 || len(lines) != 3 || lines[0] != "stall-watch --sh release feat/x" || lines[2] != e.Dir {
+		t.Fatalf("Sh = %q, %d; want the argv and cwd lines, 3", out, rc)
+	}
+	if strings.Contains(lines[1], "errexit") {
+		t.Errorf("options %q: ran under a bash -e wrapper", lines[1])
 	}
 }
 

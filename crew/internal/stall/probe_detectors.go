@@ -1,11 +1,14 @@
 package stall
 
 import (
+	"context"
 	_ "embed"
+	"errors"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -39,15 +42,48 @@ func (w *watch) probePre() error {
 	return nil
 }
 
-// shCall is Sh under the arm's signal semantics: a signal killed the arm in
-// the middle of a call-out, so a call that returns into a cancelled context
-// ends the watch instead of reading the cut-short answer as a verdict.
-func (w *watch) shCall(op string, args ...string) (string, int, error) {
-	out, rc := w.p.Sh(w.ctx, op, args...)
-	if w.ctx.Err() != nil {
-		return "", 0, exitCode(exitCodeFor(w.ctx))
+// shOffset is what the arm's `--sh` branch adds to every op's verdict, so the
+// child's own failures — crew.sh's preamble or usage refusal (1), a missing
+// file (127), a signal — can never read as one.
+const shOffset = 10
+
+// shWriteTimeout bounds an op that runs on through a signal.
+const shWriteTimeout = 2 * time.Minute
+
+// shVerdict decodes an `--sh` exit status: ok=false means the helper failed to
+// run, so neither its status nor its output is the op's. 126 and up are the
+// shell's own not-executable, not-found and 128+signo statuses.
+func shVerdict(rc int) (int, bool) {
+	if rc < shOffset || rc >= 126 {
+		return 0, false
 	}
-	return out, rc, nil
+	return rc - shOffset, true
+}
+
+// shCall is an `--sh` call-out under the arm's signal semantics: a signal
+// killed the arm in the middle of a call-out, so a call that returns into a
+// cancelled context ends the watch instead of reading the cut-short answer.
+func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok bool, err error) {
+	return w.shOn(w.ctx, op, args...)
+}
+
+// shWrite is shCall for an op that writes (nudge, release). The arm's `$(…)`
+// child outlived the arm's death and finished its write, so a signal must not
+// tear one between the keystroke or kill and its bus row; the watch still
+// ends with 128+signo once the op returns.
+func (w *watch) shWrite(op string, args ...string) (string, int, bool, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
+	defer cancel()
+	return w.shOn(ctx, op, args...)
+}
+
+func (w *watch) shOn(ctx context.Context, op string, args ...string) (string, int, bool, error) {
+	out, rc := w.p.Sh(ctx, op, args...)
+	if err := w.cancelled(); err != nil {
+		return "", 0, false, err
+	}
+	verdict, ok := shVerdict(rc)
+	return out, verdict, ok, nil
 }
 
 // d4 is host load. Engine-independent: it reads the host, not the pane.
@@ -59,6 +95,9 @@ func (w *watch) d4() error {
 		return nil
 	}
 	line := w.p.Load(w.ctx)
+	if err := w.cancelled(); err != nil {
+		return err
+	}
 	if !loadRe.MatchString(line) {
 		return nil
 	}
@@ -83,7 +122,11 @@ func (w *watch) d4() error {
 		return nil
 	}
 	detail := "load: 1m load " + l1 + " on " + cores + " cores for " + strconv.FormatInt(w.now-pd.d4Since, 10) + "s"
-	if top := w.p.Top(w.ctx); top != "" {
+	top := w.p.Top(w.ctx)
+	if err := w.cancelled(); err != nil {
+		return err
+	}
+	if top != "" {
 		lines := strings.SplitN(top, "\n", 3)
 		detail += " (top: " + strings.Join(lines[:min(len(lines), 2)], " | ") + ")"
 	}
@@ -164,6 +207,9 @@ func (w *watch) d5() error {
 		return nil
 	}
 	pcmd := w.p.PaneCmd(w.ctx)
+	if err := w.cancelled(); err != nil {
+		return err
+	}
 	if pcmd != "" && roster.IsEngineCmd(pcmd) {
 		w.engineSeen = true
 		if w.pd.d5At != 0 {
@@ -200,6 +246,9 @@ func (w *watch) roleEOL() error {
 		return nil
 	}
 	pcmd := w.p.PaneCmd(w.ctx)
+	if err := w.cancelled(); err != nil {
+		return err
+	}
 	if pcmd != "" && roster.IsEngineCmd(pcmd) {
 		w.engineSeen = true
 	} else if w.engineSeen && isShellCmd(pcmd) {
@@ -256,7 +305,7 @@ func (w *watch) d6() error {
 		}
 		oldest, src, ok, err := w.unreadOldest()
 		if err != nil {
-			return err
+			return skipNoScan(err)
 		}
 		if ok && w.now*1000-oldest >= w.cfg.unread*1000 {
 			age := strconv.FormatInt((w.now*1000-oldest)/1000, 10)
@@ -287,7 +336,7 @@ func (w *watch) d6() error {
 		}
 		oldest, src, ok, err := w.unreadOldest()
 		if err != nil {
-			return err
+			return skipNoScan(err)
 		}
 		if !ok || w.now*1000-oldest < w.cfg.unread*1000 || src != pd.d6Src {
 			if err := w.postClear("unread:"); err != nil {
@@ -299,6 +348,17 @@ func (w *watch) d6() error {
 	return nil
 }
 
+// errNoScan is an unread scan whose helper failed to run. Its silence is not
+// "delivered", so D6 skips the tick's verdict: no post, no clear.
+var errNoScan = errors.New("unread scan failed")
+
+func skipNoScan(err error) error {
+	if errors.Is(err, errNoScan) {
+		return nil
+	}
+	return err
+}
+
 // unreadOldest is `_unread_oldest`. A branch-keyed watch cannot name the
 // lead's session, so `_unread_scan` stays silent for it; that check is made
 // here too, so such a watch spawns nothing every fourth tick.
@@ -306,9 +366,12 @@ func (w *watch) unreadOldest() (int64, string, bool, error) {
 	if w.cfg.fromID == w.cfg.me {
 		return 0, "", false, nil
 	}
-	out, _, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "oldest")
+	out, _, ran, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "oldest")
 	if err != nil {
 		return 0, "", false, err
+	}
+	if !ran {
+		return 0, "", false, errNoScan
 	}
 	a, src := readWords(out)
 	oldest, ok := msTS(a)
@@ -329,8 +392,8 @@ func (w *watch) autoNudge() (bool, error) {
 		(w.cfg.engine != "claude" && w.cfg.engine != "pi") {
 		return false, nil
 	}
-	out, _, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "dispatcher")
-	if err != nil {
+	out, _, ran, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "dispatcher")
+	if err != nil || !ran {
 		return false, err
 	}
 	a, b := readWords(out)
@@ -345,8 +408,10 @@ func (w *watch) autoNudge() (bool, error) {
 		pd.nudgedTS = dNew
 		return false, nil
 	}
-	out, rc, err := w.shCall("nudge", w.cfg.pane, w.cfg.engine, w.cfg.fromID, w.cfg.crew, b)
-	if err != nil {
+	out, rc, ran, err := w.shWrite("nudge", w.cfg.pane, w.cfg.engine, w.cfg.fromID, w.cfg.crew, b)
+	// A helper that failed to run is a refusal whose output is not the op's,
+	// so it never latches the anchor stop.
+	if err != nil || !ran {
 		return false, err
 	}
 	switch rc {

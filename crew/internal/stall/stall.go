@@ -106,8 +106,9 @@ func decideBudget(ctx context.Context, cfg config, p probe.Probes) bool {
 		if model == "" {
 			return true
 		}
-		out, _ := p.Sh(ctx, "local-model", model)
-		return out == ""
+		out, rc := p.Sh(ctx, "local-model", model)
+		_, ok := shVerdict(rc)
+		return !ok || out == ""
 	}
 	return false
 }
@@ -150,6 +151,9 @@ func (w *watch) run() error {
 		}
 
 		text, alive := w.p.Sample(w.ctx)
+		if err := w.cancelled(); err != nil {
+			return err
+		}
 		if !alive {
 			// A quorum, not a single failure: one tmux hiccup must not disarm
 			// a 12h watch, and the `exited` backstop owns the real case.
@@ -206,10 +210,22 @@ func (w *watch) run() error {
 // ends it with the shell's 128+signo.
 func (w *watch) sleep(interval string) error {
 	if err := w.o.Clock.SleepCtx(w.ctx, interval, w.stderr); err != nil {
-		if w.ctx.Err() != nil {
-			return exitCode(exitCodeFor(w.ctx))
+		if err := w.cancelled(); err != nil {
+			return err
 		}
 		return exitCode(1)
+	}
+	return nil
+}
+
+// cancelled is the arm dying on the signal. A probe that returns into a
+// cancelled context was cut short, and its failure value ("", not alive) is
+// no evidence: acting on it would post for a live worker or end the watch
+// with 0. Every probe whose answer decides what happens next is followed by
+// this check.
+func (w *watch) cancelled() error {
+	if w.ctx.Err() != nil {
+		return exitCode(exitCodeFor(w.ctx))
 	}
 	return nil
 }

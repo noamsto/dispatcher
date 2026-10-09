@@ -194,6 +194,39 @@ func TestPostBlockedAbortsOnTerminal(t *testing.T) {
 	}
 }
 
+// The arm called `_post_blocked` only in `if` context, so a failed append
+// there is "not posted", retried next tick; a bare `_post` died under set -e.
+func TestPostAppendFailure(t *testing.T) {
+	h := newHarness(t, newFake())
+	if err := os.MkdirAll(h.paths.Log, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := h.watch("feat/x", "--pane", "%1")
+	posted, err := w.postBlocked("quiet:", "quiet: x")
+	if posted || err != nil {
+		t.Errorf("postBlocked = %v, %v; want false, nil", posted, err)
+	}
+	if len(h.f.opts) != 0 {
+		t.Errorf("pane options set for a row never written: %q", h.f.opts)
+	}
+	if code, ok := codeOf(w.post("failed", "dead: x")); !ok || code != 1 {
+		t.Errorf("post = (%d, %v), want exit 1", code, ok)
+	}
+}
+
+// A detector whose post failed keeps its episode unopened and the watch runs.
+func TestDetectorPostFailureRetried(t *testing.T) {
+	r := newFDRig(t, "", "", "--stall", "30")
+	if err := os.MkdirAll(r.h.paths.Log, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := r.w
+	w.now, w.quietFor = w.start+30, 30
+	if err := w.d0(); err != nil || w.fd.d0At != 0 {
+		t.Errorf("d0: err=%v d0At=%d, want nil and unopened", err, w.fd.d0At)
+	}
+}
+
 func TestPostClear(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -244,8 +277,8 @@ func TestEngineAlive(t *testing.T) {
 		f := newFake()
 		f.paneCmd = cmd
 		w := newHarness(t, f).watch("feat/x", "--pane", "%1")
-		if got := w.engineAlive(); got != want {
-			t.Errorf("engineAlive(%q) = %v, want %v", cmd, got, want)
+		if got, err := w.engineAlive(); err != nil || got != want {
+			t.Errorf("engineAlive(%q) = %v, %v; want %v", cmd, got, err, want)
 		}
 	}
 }

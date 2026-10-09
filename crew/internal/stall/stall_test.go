@@ -25,6 +25,7 @@ type fake struct {
 	sample                       func(n int) (string, bool) // n is the 0-based sample index
 	paneModel, paneCmd           string
 	sh                           func(op string, args ...string) (string, int)
+	shc                          func(ctx context.Context, op string, args ...string) (string, int) // wins over sh
 	shCalls                      []string
 	opts                         [][]string // tmux set-option argv, as the bash stub logs it
 }
@@ -50,10 +51,13 @@ func (f *fake) probes() probe.Probes {
 		SetPaneOption: func(_ context.Context, name, value string) {
 			f.opts = append(f.opts, []string{"set-option", "-p", "-t", f.pane, name, value})
 		},
-		Sh: func(_ context.Context, op string, args ...string) (string, int) {
+		Sh: func(ctx context.Context, op string, args ...string) (string, int) {
 			f.shCalls = append(f.shCalls, strings.Join(append([]string{op}, args...), " "))
-			if f.sh == nil {
-				return "", 0
+			switch {
+			case f.shc != nil:
+				return f.shc(ctx, op, args...)
+			case f.sh == nil:
+				return "", shOffset
 			}
 			return f.sh(op, args...)
 		},

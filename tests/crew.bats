@@ -8804,12 +8804,12 @@ EOS
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.1
   done
-  ! kill -0 "$pid" 2>/dev/null
+  proc_gone "$pid"
   rc=0
   wait "$pid" || rc=$?
   [ "$rc" -eq 143 ]
   [ ! -e "$lock" ]
-  ! kill -0 "$(cat "$BATS_TEST_TMPDIR/refresh.pid")" 2>/dev/null
+  proc_gone "$(cat "$BATS_TEST_TMPDIR/refresh.pid")"
   if [ -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ]; then
     bus | jq -e . >/dev/null
   fi

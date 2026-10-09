@@ -4365,6 +4365,8 @@ stall-watch)
   # above document the behaviour it implements. `--sh <op>` is the Go side's
   # call-out into the bash helpers that stay here: release, nudge, unread,
   # budget (windows|limit) and local-model.
+  # Every op exits its status + 10, so a failure before or around it — the
+  # preamble's exit 1, a usage refusal, 127, a signal — never reads as a verdict.
   if [ "${1:-}" = --sh ]; then
     op="${2:-}"
     shift 2 || true
@@ -4410,7 +4412,7 @@ stall-watch)
       exit 1
       ;;
     esac
-    exit "$rc"
+    exit $((rc + 10))
   fi
   CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
   ;;

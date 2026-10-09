@@ -539,22 +539,30 @@ func TestRoleEndOfLife(t *testing.T) {
 // ---- D6 ----
 
 // d6Script answers `--sh unread` and `--sh nudge`.
+// nudgeRC is the verdict; a non-zero failUnread or failNudge is instead the
+// raw status of a helper that failed to run.
 type d6Script struct {
-	dispatcher, oldest, nudgeOut string
-	nudgeRC                      int
+	dispatcher, oldest, nudgeOut   string
+	nudgeRC, failUnread, failNudge int
 }
 
 func (s *d6Script) sh(op string, args ...string) (string, int) {
 	switch op {
 	case "unread":
-		if args[len(args)-1] == "dispatcher" {
-			return s.dispatcher, 0
+		if s.failUnread != 0 {
+			return "", s.failUnread
 		}
-		return s.oldest, 0
+		if args[len(args)-1] == "dispatcher" {
+			return s.dispatcher, shOffset
+		}
+		return s.oldest, shOffset
 	case "nudge":
-		return s.nudgeOut, s.nudgeRC
+		if s.failNudge != 0 {
+			return s.nudgeOut, s.failNudge
+		}
+		return s.nudgeOut, s.nudgeRC + shOffset
 	}
-	return "", 0
+	return "", shOffset
 }
 
 const d6ID = "worker:feat/x#s100-1"

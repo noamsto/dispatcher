@@ -136,9 +136,9 @@ func TestReleaseRC3KeepsLooping(t *testing.T) {
 			f.sample = sampling(frameText(t, tc.frame))
 			f.sh = func(string, ...string) (string, int) {
 				if len(f.shCalls) == 1 {
-					return "", 3
+					return "", 3 + shOffset
 				}
-				return "", 0
+				return "", shOffset
 			}
 			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", tc.engine, "--release", tc.release)
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
@@ -152,11 +152,11 @@ func TestReleaseRC3KeepsLooping(t *testing.T) {
 }
 
 func TestReleaseOtherStatusExits(t *testing.T) {
-	for _, rc := range []int{0, 1, 2, 4, -1} {
+	for _, rc := range []int{0, 1, 2, 4} {
 		t.Run(strconv.Itoa(rc), func(t *testing.T) {
 			f := newFake()
 			f.sample = sampling(frameText(t, "done_idle.txt"))
-			f.sh = func(string, ...string) (string, int) { return "", rc }
+			f.sh = func(string, ...string) (string, int) { return "", rc + shOffset }
 			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)

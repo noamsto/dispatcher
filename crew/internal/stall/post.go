@@ -1,6 +1,7 @@
 package stall
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,27 @@ import (
 // Exempt from the 4-tick read cadence on purpose: appends are rare, and a
 // stale view here would be a lie on the bus.
 func (w *watch) post(state, detail string) error {
+	err := w.postRow(state, detail)
+	var we writeError
+	if errors.As(err, &we) {
+		return w.fail(we.err)
+	}
+	return err
+}
+
+// writeError is a bus write that failed. A bare `_post` died on it under the
+// arm's `set -e`; `_post_blocked` ran only in `if` context, where it meant not
+// posted.
+type writeError struct{ err error }
+
+func (e writeError) Error() string { return e.err.Error() }
+
+// postRow is post with a failed write returned as a writeError. A signal ends
+// the watch before anything is written: the arm died on it posting nothing.
+func (w *watch) postRow(state, detail string) error {
+	if err := w.cancelled(); err != nil {
+		return err
+	}
 	if err := w.refresh(); err != nil {
 		return err
 	}
@@ -24,7 +46,7 @@ func (w *watch) post(state, detail string) error {
 		return exitCode(0)
 	}
 	if err := os.MkdirAll(w.paths.Dir, 0o755); err != nil {
-		return w.fail(err)
+		return writeError{err}
 	}
 	row := jsonv.Object(
 		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(w.o.Clock.RealMS()))},
@@ -39,7 +61,7 @@ func (w *watch) post(state, detail string) error {
 		)},
 	)
 	if err := bus.Append(w.paths.Log, string(jsonv.Append(nil, row, jsonv.Options{}))); err != nil {
-		return w.fail(err)
+		return writeError{err}
 	}
 	// --role-watch owns @crew_state for a role pane. Only `blocked` carries
 	// the watchdog marker, so a clearance never renders `working (watchdog)`.
@@ -65,7 +87,8 @@ func (w *watch) fail(err error) error {
 // an open `stalled:` (which never escalates). An open `prompt:` or `quota:` is
 // sticky against every prefix: a frozen prompt satisfies `quiet:` by
 // construction, and overwriting either would give it the escalation path it is
-// denied. false means suppressed.
+// denied. false means suppressed or not written; either way the detector's
+// episode stays unopened and the next tick tries again.
 func (w *watch) postBlocked(prefix, detail string) (bool, error) {
 	if err := w.refresh(); err != nil {
 		return false, err
@@ -76,7 +99,13 @@ func (w *watch) postBlocked(prefix, detail string) (bool, error) {
 			return false, nil
 		}
 	}
-	if err := w.post("blocked", detail); err != nil {
+	err := w.postRow("blocked", detail)
+	var we writeError
+	if errors.As(err, &we) {
+		_, _ = fmt.Fprintf(w.stderr, "crew: stall-watch: %v\n", we.err)
+		return false, nil
+	}
+	if err != nil {
 		return false, err
 	}
 	return true, nil
@@ -113,7 +142,10 @@ func (w *watch) publishPaneState(state, detail, source string) {
 // engineAlive is `_pane_engine_alive`, quiet:'s corroborating evidence for
 // dead:. A turn that hangs with its engine still resident never reaches dead:
 // through quiet: — only a vanished process does.
-func (w *watch) engineAlive() bool {
+func (w *watch) engineAlive() (bool, error) {
 	cmd := w.p.PaneCmd(w.ctx)
-	return cmd != "" && roster.IsEngineCmd(cmd)
+	if err := w.cancelled(); err != nil {
+		return false, err
+	}
+	return cmd != "" && roster.IsEngineCmd(cmd), nil
 }

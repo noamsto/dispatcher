@@ -207,12 +207,18 @@ func TestBudgetOn(t *testing.T) {
 		{"pi no model", []string{"--engine", "pi"}, "", "x", true, ""},
 		{"pi remote model", []string{"--engine", "pi"}, "openrouter/x", "", true, "local-model openrouter/x"},
 		{"pi local model", []string{"--engine", "pi"}, "qwen", "{\"id\":\"qwen\"}", false, "local-model qwen"},
+		{"pi local model helper failed", []string{"--engine", "pi"}, "qwen", "{\"id\":\"qwen\"}", true, "local-model qwen"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			f.paneModel = tc.model
-			f.sh = func(op string, args ...string) (string, int) { return tc.local, 1 }
+			f.sh = func(op string, args ...string) (string, int) {
+				if strings.HasSuffix(tc.name, "helper failed") {
+					return tc.local, 1
+				}
+				return tc.local, shOffset
+			}
 			c, err := parseArgs(append([]string{"feat/x", "--pane", "%1"}, tc.args...), func() string { return "c1" })
 			if err != nil {
 				t.Fatal(err)
@@ -244,7 +250,7 @@ func TestNonClaudeRoleNoBudgetExitsEarly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			f.paneModel = tc.model
-			f.sh = func(string, ...string) (string, int) { return tc.local, 0 }
+			f.sh = func(string, ...string) (string, int) { return tc.local, shOffset }
 			h := newHarness(t, f)
 			before := h.clockText()
 			code, stderr := h.run(append([]string{"role:feat/x:rev", "--pane", "%1"}, tc.args...)...)

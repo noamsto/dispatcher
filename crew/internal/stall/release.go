@@ -22,16 +22,20 @@ func (w *watch) finishedRelease() error {
 	prevText, haveText := "", false
 	idleTicks := 0
 
-	// tryRelease reports whether the watch ends: any status but rc 3 does.
-	tryRelease := func() bool {
-		_, rc := w.p.Sh(w.ctx, "release", w.cfg.branch, relSession, w.bus.state,
+	// release ends the watch on any verdict but 3. A helper that failed to run
+	// released nothing, so it is retried like 3: nil keeps watching.
+	release := func() error {
+		_, rc, ran, err := w.shWrite("release", w.cfg.branch, relSession, w.bus.state,
 			strconv.FormatInt(w.bus.ts, 10), strconv.FormatInt(w.cfg.release, 10))
-		if rc != 3 {
-			return true
+		if err != nil {
+			return err
+		}
+		if ran && rc != 3 {
+			return exitCode(0)
 		}
 		idleTicks = 0
 		prevChange = w.o.Clock.Seconds()
-		return false
+		return nil
 	}
 
 	for {
@@ -57,6 +61,9 @@ func (w *watch) finishedRelease() error {
 			return exitCode(0)
 		}
 		plain, alive := w.p.Sample(w.ctx)
+		if err := w.cancelled(); err != nil {
+			return err
+		}
 		if !alive {
 			return exitCode(0)
 		}
@@ -67,21 +74,28 @@ func (w *watch) finishedRelease() error {
 		if t-w.bus.ts/1000 >= w.cfg.release {
 			if w.cfg.engine == "claude" {
 				colored := w.p.SampleColored(w.ctx)
+				if err := w.cancelled(); err != nil {
+					return err
+				}
 				if _, idle := frame.PaneIdleReason(plain, colored, false); idle {
 					idleTicks++
 				} else {
 					idleTicks = 0
 				}
-				if idleTicks >= 2 && tryRelease() {
-					return exitCode(0)
+				if idleTicks >= 2 {
+					if err := release(); err != nil {
+						return err
+					}
 				}
 			} else {
 				quietS := t - prevChange
 				if frame.IsPrompt(w.cfg.engine, plain) || frame.IsPermissionPrompt(w.cfg.engine, plain) {
 					quietS = 0
 				}
-				if quietS >= w.cfg.release && tryRelease() {
-					return exitCode(0)
+				if quietS >= w.cfg.release {
+					if err := release(); err != nil {
+						return err
+					}
 				}
 			}
 		}

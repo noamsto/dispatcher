@@ -439,12 +439,17 @@ func (w *watch) escalate() error {
 		if err := w.refresh(); err != nil {
 			return err
 		}
-		if !holdsEpisode(w.bus.detail) && !w.engineAlive() {
-			if err := w.post("failed", "dead: quiet: unchanged for "+strconv.FormatInt(w.now-fd.d3At, 10)+"s"); err != nil {
-				return err
-			}
-			return exitCode(0)
+		if holdsEpisode(w.bus.detail) {
+			return nil
 		}
+		alive, err := w.engineAlive()
+		if err != nil || alive {
+			return err
+		}
+		if err := w.post("failed", "dead: quiet: unchanged for "+strconv.FormatInt(w.now-fd.d3At, 10)+"s"); err != nil {
+			return err
+		}
+		return exitCode(0)
 	}
 	return nil
 }

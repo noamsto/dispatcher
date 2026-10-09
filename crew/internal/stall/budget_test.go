@@ -8,16 +8,17 @@ import (
 	"testing"
 )
 
-// budgetSh answers the two `--sh budget` predicates; every other op is silent.
+// budgetSh answers the two `--sh budget` predicates with these verdicts, offset
+// as the arm exits them; every other op is silent.
 func budgetSh(win string, wrc int, lim string, lrc int) func(string, ...string) (string, int) {
 	return func(op string, args ...string) (string, int) {
 		if op != "budget" {
-			return "", 0
+			return "", shOffset
 		}
 		if args[0] == "windows" {
-			return win, wrc
+			return win, wrc + shOffset
 		}
-		return lim, lrc
+		return lim, lrc + shOffset
 	}
 }
 
@@ -109,7 +110,7 @@ func TestBudgetDetail(t *testing.T) {
 		{"windows can't tell", "", 2, "", 1, "claude", 2, "", 0},
 		{"limit can't tell", "", 1, "", 2, "claude", 2, "", 0},
 		{"clear", "", 1, "", 1, "claude", 1, "", 0},
-		{"rc -1 is clear", "", -1, "", -1, "claude", 1, "", 0},
+		{"any other verdict is clear", "", 3, "", 3, "claude", 1, "", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -366,5 +367,44 @@ func TestBudgetRefreshLockStaleReclaimed(t *testing.T) {
 	writeFile(t, w.o.BudgetFile+".refresh.d/pid", "\n")
 	if ran, err := w.refreshMaybe(); err != nil || !ran || *calls != 1 {
 		t.Errorf("ran %v calls %d err %v, want a refresh", ran, *calls, err)
+	}
+}
+
+// The arm ran `_budget_refresh_maybe` in `if` context, so a failed mkdir fell
+// through to the lock (which then fails) instead of ending the watch.
+func TestBudgetRefreshUnwritableDir(t *testing.T) {
+	f := newFake()
+	f.sh = budgetSh("", 1, "", 1)
+	f.sample = sampling("static")
+	h := newHarness(t, f)
+	blocker := h.paths.Common + "/not-a-dir"
+	writeFile(t, blocker, "")
+	o := h.options()
+	o.BudgetFile = blocker + "/crew/engine-budget.json"
+	code := Run(h.ctx, []string{"feat/x", "--pane", "%1", "--engine", "claude", "--grace", "0",
+		"--stall", "30", "--budget-refresh", "60", "--max-life", "120"}, h.paths, &h.stderr, o)
+	if code != 0 {
+		t.Fatalf("exit %d stderr %q, want the watch to run to --max-life", code, h.stderr.String())
+	}
+	wantRows(t, h, "blocked|stalled: no output for 30s")
+}
+
+// A stamp that cannot be written or moved into place still lets the refresh
+// run, as the arm's unchecked printf and mv did.
+func TestBudgetRefreshStampFailureStillRefreshes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(w *watch) string // made a non-empty directory
+	}{
+		{"tmp", func(w *watch) string { return w.o.BudgetFile + ".refresh-at." + strconv.Itoa(w.o.PID) }},
+		{"rename", func(w *watch) string { return w.o.BudgetFile + ".refresh-at" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, w, calls := refreshWatch(t, "--budget-refresh", "900")
+			writeFile(t, tc.path(w)+"/x", "")
+			if ran, err := w.refreshMaybe(); err != nil || !ran || *calls != 1 {
+				t.Errorf("ran %v calls %d err %v, want a refresh", ran, *calls, err)
+			}
+		})
 	}
 }

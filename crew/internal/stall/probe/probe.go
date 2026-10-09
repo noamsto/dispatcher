@@ -50,6 +50,7 @@ type Env struct {
 	Getenv func(string) string
 	Pane   string
 	CrewSH string // $CREW_SH
+	Dir    string // the `--sh` children's cwd: the repo's git common dir
 	Stderr io.Writer
 }
 
@@ -57,7 +58,13 @@ type Env struct {
 // its trailing newlines stripped and the exit status (-1 when the child was
 // signalled or never started). stderr nil means /dev/null.
 func run(ctx context.Context, stderr io.Writer, name string, args ...string) (string, int) {
+	return runIn(ctx, "", stderr, name, args...)
+}
+
+// runIn is run from dir; "" is this process's cwd.
+func runIn(ctx context.Context, dir string, stderr io.Writer, name string, args ...string) (string, int) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -193,12 +200,25 @@ func Default(e Env) Probes {
 		SetPaneOption: func(ctx context.Context, name, value string) {
 			tmux(ctx, "set-option", "-p", "-t", e.Pane, name, value)
 		},
+		// The common dir, not this process's cwd: the worktree it started in
+		// may be reaped while the watchdog lives, and crew.sh's preamble then
+		// refuses with exit 1.
 		Sh: func(ctx context.Context, op string, args ...string) (string, int) {
-			argv := append([]string{"-euo", "pipefail", e.CrewSH, "stall-watch", "--sh", op}, args...)
-			return run(ctx, e.Stderr, "bash", argv...)
+			argv := append([]string{"stall-watch", "--sh", op}, args...)
+			if isExecutable(e.CrewSH) {
+				return runIn(ctx, e.Dir, e.Stderr, e.CrewSH, argv...)
+			}
+			return runIn(ctx, e.Dir, e.Stderr, "bash", append([]string{"-euo", "pipefail", e.CrewSH}, argv...)...)
 		},
 		BusRows: busRows,
 	}
+}
+
+// isExecutable tells the Nix-built crew, which carries its pinned bash and
+// `set -euo pipefail`, from a raw crew.sh source that needs both supplied.
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 // cwdTail is `_top_consumers`' sed -E 's#.*/([^/]+/[^/]+) #\1 #'. sed picks the

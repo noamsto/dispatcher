@@ -79,9 +79,9 @@ func (w *watch) refreshMaybe() (bool, error) {
 		return false, nil
 	}
 	file := w.o.BudgetFile
-	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-		return false, w.fail(err)
-	}
+	// The arm ran this in `if` context, errexit off: a failed mkdir only fails
+	// the lock below, and a stamp that is not written still lets the probe run.
+	_ = os.MkdirAll(filepath.Dir(file), 0o755)
 	dir := file + ".refresh.d"
 	if !lock.Acquire(dir, strconv.Itoa(w.o.PID)) {
 		return false, nil
@@ -92,15 +92,11 @@ func (w *watch) refreshMaybe() (bool, error) {
 	}
 	stamp := file + ".refresh-at"
 	tmp := stamp + "." + strconv.Itoa(w.o.PID)
-	if err := os.WriteFile(tmp, []byte(strconv.FormatInt(w.now, 10)+"\n"), 0o644); err != nil {
-		return false, w.fail(err)
-	}
-	if err := os.Rename(tmp, stamp); err != nil {
-		return false, w.fail(err)
-	}
+	_ = os.WriteFile(tmp, []byte(strconv.FormatInt(w.now, 10)+"\n"), 0o644)
+	_ = os.Rename(tmp, stamp)
 	w.p.RefreshBudget(w.ctx)
-	if w.ctx.Err() != nil {
-		return false, exitCode(exitCodeFor(w.ctx))
+	if err := w.cancelled(); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -148,13 +144,21 @@ func readTab(line string, n int) []string {
 // window, else the limit. rc 0 exhausted, 1 clear, 2 can't tell.
 func (w *watch) budgetDetail() (string, int, error) {
 	now := strconv.FormatInt(w.now, 10)
-	win, wrc, err := w.shCall("budget", "windows", w.o.BudgetFile, w.cfg.engine, now)
+	win, wrc, wran, err := w.shCall("budget", "windows", w.o.BudgetFile, w.cfg.engine, now)
 	if err != nil {
 		return "", 0, err
 	}
-	lim, lrc, err := w.shCall("budget", "limit", w.o.BudgetFile, w.cfg.engine, now)
+	lim, lrc, lran, err := w.shCall("budget", "limit", w.o.BudgetFile, w.cfg.engine, now)
 	if err != nil {
 		return "", 0, err
+	}
+	// A predicate that failed to run can't tell: it holds the episode, where
+	// reading its status as clear would close it falsely.
+	if !wran {
+		wrc = 2
+	}
+	if !lran {
+		lrc = 2
 	}
 	var detail string
 	switch {

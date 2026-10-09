@@ -175,8 +175,9 @@ contract below), with each edit justified.
   the 4-tick bus-read cadence and `--max-life` checked every tick. A `done` or
   `failed` bus state hands over to the release loop: claude must show
   `frame.PaneIdleReason` idle on two consecutive ticks, other engines an
-  unchanged frame for `--release` with no prompt, and `--sh release` rc 3 keeps
-  watching while any other status exits 0. Every bus write is
+  unchanged frame for `--release` with no prompt, and `--sh release` verdict 3,
+  or a helper that failed to run, keeps watching while any other verdict
+  exits 0. Every bus write is
   `post`/`postBlocked`/`postClear` (INV-W1 pre-write refresh and terminal-state
   abort, INV-W3 same-prefix suppression with sticky `prompt:`/`quota:`, INV-W2
   own-prefix clearance); a row is one `bus.Append` of the arm's
@@ -189,14 +190,26 @@ contract below), with each edit justified.
   takes the decoded rows as `.` in place of `inputs | fromjson?`; `refresh.jq`
   runs each row under `try`, so a malformed row drops out alone as jq skips it;
   rows are arrays, not `@tsv` text, so Go reads fields by position; and the
-  `capture` anchor is `\n?\z`, as in `sessions`. Signals: SIGTERM and SIGINT
-  cancel the context with a cause and the process exits 128+signo, as a shell
-  reports the killed bash arm; sleeps and children are context-aware, and the
-  budget-refresh lock is released on every exit path while held. SIGHUP is left
-  untouched — the watchdog is `nohup`-launched, and `signal.Notify(SIGHUP)`
-  would undo the ignore it inherits. Every append is one `O_APPEND` write, so a
-  kill cannot leave a torn row; the `refresh-at` stamp and the clock file keep
-  tmp+rename.
+  `capture` anchor is `\n?\z`, as in `sessions`. Signals: SIGTERM (exit 143)
+  and SIGINT (exit 130) cancel the context with a cause and the process exits
+  128+signo, as a shell reports the killed bash arm; sleeps and children are
+  context-aware, and the budget-refresh lock is released on every exit path
+  while held. SIGINT is handled only when not inherited ignored: dispatch starts
+  the watchdog as a non-interactive bash `&` job, which ignores it, so a Ctrl-C
+  to dispatch's group never reached the arm. SIGHUP is never handled — the
+  watchdog is `nohup`-launched, and `signal.Notify(SIGHUP)` would undo the
+  ignore it inherits. A probe that returns into a cancelled context was cut
+  short, and its failure value (empty text, a dead pane) is no evidence: the
+  watch exits 128+signo without posting, as the arm died on the signal. The
+  `--sh nudge` and `--sh release` ops alone run on through a signal (for at
+  most 2 minutes), as the arm's `$(…)` child outlived it, so a typed nudge or
+  killed window still gets its bus row. Every append is one `O_APPEND` write,
+  so a kill cannot leave a torn row; the `refresh-at` stamp and the clock file
+  keep tmp+rename. A failed bus write exits 1 where the arm's `set -e` did (a
+  `failed` or clearance post); `_post_blocked` ran only in `if` context, so
+  there it means not posted and the detector retries next tick. The budget
+  refresh's `mkdir` and stamp writes are unchecked, as in the arm: a failed
+  `mkdir` only fails the lock.
 - `crew/internal/stall/probe`: the side effects as a struct of seams
   (`Probes`), so the loop is testable without tmux. The `CREW_STALL_SAMPLE_CMD`,
   `_COLOR_CMD`, `_PROC_CMD`, `_LOAD_CMD`, `_TOP_CMD` and `CREW_BUDGET_REFRESH_CMD`
@@ -237,28 +250,35 @@ execs Go, and that branch stays in bash.
 
 ```bash
 stall-watch)
-  if [ "${1:-}" = --sh ]; then …; exit "$rc"; fi
+  if [ "${1:-}" = --sh ]; then …; exit $((rc + 10)); fi
   CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
   ;;
 ```
 
 The helpers the loop needs (`_release_windows`, `_nudge_pane`, `_unread_scan`,
 budget-gate.sh, local-models.sh) have other bash callers, so Go calls back
-instead of copying them: `bash -euo pipefail "$CREW_SH" stall-watch --sh <op> …`,
-the self-re-exec form crew.sh already uses (`bash -euo pipefail "$0" reap …`),
-which runs the helpers under the arm's own preamble. Each op is the arm's old
-call site, errexit-suppressed as the arm suppressed it, then `exit "$rc"`. The
-environment is inherited; Go strips trailing newlines from stdout and reads the
-status (-1 if the child was killed). An unknown op or budget predicate is one
-`crew: stall-watch: unknown --sh …` line, exit 1.
+instead of copying them: `CREW_SH stall-watch --sh <op> …` run directly when
+`$CREW_SH` is executable (the Nix-built `crew`, which carries its pinned bash
+and `set -euo pipefail`), otherwise `bash -euo pipefail "$CREW_SH" stall-watch
+--sh <op> …` (a raw-source run) — the self-re-exec form crew.sh already uses
+(`bash -euo pipefail "$0" reap …`), which runs the helpers under the arm's own
+preamble. The child's cwd is the repo's git common dir, as the roster renderer
+`cd`s there: the worktree the watchdog started in may be reaped while it lives,
+and the preamble would then refuse. Each op is the arm's old call site,
+errexit-suppressed as the arm suppressed it, then exits its verdict + 10, so
+the child's own failures — the preamble's exit 1, 127, a signal (-1 to Go) —
+never read as a verdict: Go decodes 10–125 as verdict rc−10 and anything else
+as a helper that failed to run. The environment is inherited; Go strips
+trailing newlines from stdout. An unknown op or budget predicate is one `crew:
+stall-watch: unknown --sh …` line, exit 1.
 
-| op            | argv after `--sh <op>`                                        | stdout                                            | rc to Go                                                             |
-| ------------- | ------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
-| `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>`               | none                                              | 3 keep watching; else exit 0                                         |
-| `nudge`       | `<pane> <engine> <sid> <crew> <msg_ts>`                       | one line                                          | 0 ok; 2 refused (`anchor:` turns nudging off); 3 typed, not accepted |
-| `unread`      | `<crew> <branch> <me> <from_id> <t0_ms> <oldest\|dispatcher>` | `<ts> <dispatcher\|role>`, `<min> <max>` or empty | always 0                                                             |
-| `budget`      | `<windows\|limit> <cache> <engine> <now>`                     | `_budget_*`'s TSV                                 | 0 hit, 1 clear, 2 can't tell                                         |
-| `local-model` | `<model>`                                                     | non-empty iff the model is local                  | ignored; a failure keeps D8 on                                       |
+| op            | argv after `--sh <op>`                                        | stdout                                            | verdict (exit − 10)                                                  | helper failed                      |
+| ------------- | ------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
+| `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>`               | none                                              | 3 keep watching; else exit 0                                         | keep watching, as 3                |
+| `nudge`       | `<pane> <engine> <sid> <crew> <msg_ts>`                       | one line                                          | 0 ok; 2 refused (`anchor:` turns nudging off); 3 typed, not accepted | a refusal; never latches `anchor:` |
+| `unread`      | `<crew> <branch> <me> <from_id> <t0_ms> <oldest\|dispatcher>` | `<ts> <dispatcher\|role>`, `<min> <max>` or empty | 0                                                                    | D6 skips the tick's verdict        |
+| `budget`      | `<windows\|limit> <cache> <engine> <now>`                     | `_budget_*`'s TSV                                 | 0 hit, 1 clear, 2 can't tell                                         | can't tell (2)                     |
+| `local-model` | `<model>`                                                     | non-empty iff the model is local                  | 0                                                                    | D8 stays on                        |
 
 The op supplies what the arm supplied itself: `release` appends the empty
 dry-run argument to `_release_windows` (after no-op `say`/`note`), and `nudge`

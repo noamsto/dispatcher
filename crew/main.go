@@ -201,7 +201,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			NewProbes: func(pane string) probe.Probes {
-				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: os.Getenv("CREW_SH"), Stderr: stderr})
+				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: os.Getenv("CREW_SH"), Dir: paths.Common, Stderr: stderr})
 			},
 			BudgetFile: budgetFile(),
 			PID:        os.Getpid(),

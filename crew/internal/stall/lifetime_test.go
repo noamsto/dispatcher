@@ -90,3 +90,39 @@ func TestHelperHup(t *testing.T) {
 		t.Fatal("NotifySignals un-ignored SIGHUP")
 	}
 }
+
+// dispatch starts the watchdog as a non-interactive bash `&` job, which
+// inherits SIGINT ignored; a Ctrl-C to dispatch's group must not reach it.
+func TestNotifySignalsKeepsInheritedSigintIgnored(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+	cmd := exec.Command(bash, "-c", `trap '' INT; exec "$0" -test.run='^TestHelperInt$'`, os.Args[0])
+	cmd.Env = append(os.Environ(), "STALL_HELPER_INT=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+}
+
+func TestHelperInt(t *testing.T) {
+	if os.Getenv("STALL_HELPER_INT") != "1" {
+		t.Skip("child-process helper")
+	}
+	if !signal.Ignored(syscall.SIGINT) {
+		t.Fatal("helper did not inherit SIGINT ignored")
+	}
+	ctx, stop := NotifySignals(context.Background())
+	defer stop()
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatalf("an inherited-ignored SIGINT cancelled the watch: %v", context.Cause(ctx))
+	case <-time.After(200 * time.Millisecond):
+	}
+	if !signal.Ignored(syscall.SIGINT) {
+		t.Fatal("NotifySignals un-ignored SIGINT")
+	}
+}
