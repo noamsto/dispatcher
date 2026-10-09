@@ -4745,11 +4745,9 @@ EOF_REPOS
   fi
 
   if [ "$report" = true ]; then
-    # Ported to Go (crew/internal/rate, docs/crew-go-port.md): the rollup
-    # reads only the global store — still zero network calls (spec §crew
-    # rate --report) — and the last-row-wins fold, the padded table and the
-    # --json aggregate live in the jq programs embedded there. Flag parsing
-    # and every refusal line stayed above; --json/--pooled reach Go as parsed.
+    # Ported to Go (crew/internal/rate, docs/crew-go-port.md): reads only the
+    # global store — still zero network calls (spec §crew rate --report).
+    # Flag parsing and the refusals stayed above; the flags pass through.
     go_args=(rate --report)
     if [ "$json" = true ]; then
       go_args+=(--json)

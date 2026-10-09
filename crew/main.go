@@ -141,11 +141,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return retro.Run(args, paths, stdout, stderr)
 	}
 
-	// rate is report mode only: the bash arm parses the flags, keeps every
-	// refusal line, and execs this for --report. It reads the global ratings
-	// store, never the bus, so it takes no paths — and it runs after Locate
-	// above, which keeps the outside-a-repo refusal the bash preamble's (that
-	// preamble exempts only `rate --sweep-all`, which never reaches Go).
+	// rate is report mode only (the bash arm parses flags and execs this for
+	// --report). It reads the global ratings store, never the bus, so it takes
+	// no paths; Locate above keeps the outside-a-repo refusal the bash
+	// preamble's.
 	if sub == "rate" {
 		return rate.Run(args, cwd, stdout, stderr, rate.Options{})
 	}

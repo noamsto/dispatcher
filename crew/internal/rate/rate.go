@@ -7,11 +7,10 @@
 //
 // The folds are the original jq programs from adapters/core/crew.sh
 // (dedupe.jq, report.jq), run through gojq, so they stay one shared source
-// with the arm they replace. The arm reads the store with `jq -s` twice and
-// folds every failure to `[]` in silence (`2>/dev/null || true` plus
-// `rows="${rows:-[]}"`), which is why a missing, empty or unparseable store
-// renders the header alone instead of failing: "no data yet" stays visibly
-// distinct from "command did nothing".
+// with the arm they replace. The arm folds every store failure to `[]` in
+// silence (`jq -s` under `2>/dev/null || true`, then `rows="${rows:-[]}"`),
+// which is why a missing, empty or unparseable store renders the header
+// alone: "no data yet" stays visibly distinct from "command did nothing".
 package rate
 
 import (
@@ -36,9 +35,8 @@ var program string
 var dedupeProgram string
 
 const (
-	// usage is the report-only refusal for direct crew-go calls; the bash
-	// arm parses flags before exec'ing, so nothing reaching it through
-	// crew.sh can trip it.
+	// usage is the report-only refusal; the bash arm parses flags before
+	// exec'ing, so only direct crew-go calls can trip it.
 	usage       = "crew-go: rate takes --report [--json] [--pooled]"
 	exitType    = 5
 	exitFailure = 1
@@ -62,7 +60,7 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 // Run is the arm's report block: resolve the current repo (unless --pooled),
 // read and dedupe the store, then one fold renders the table or the JSON
 // aggregate. jq's exit status is mirrored (0, or 5 when the render fold fails
-// on a row it cannot use); its error wording is not mirrored.
+// on a row it cannot use); its error wording is not.
 func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 	report, jsonOut, pooled := false, false, false
 	for _, arg := range args {
@@ -83,8 +81,9 @@ func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 
+	store := storePath(o.StorePath)
 	var rows []jsonv.Value
-	if data, err := os.ReadFile(storePath(o.StorePath)); err == nil {
+	if data, err := os.ReadFile(store); err == nil {
 		if vals, err := jsonv.DecodeStream(bytes.NewReader(data)); err == nil {
 			rows = vals
 		}
@@ -106,15 +105,13 @@ func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 		"pooled":       jsonv.Bool(pooled),
 	})
 	if err != nil {
-		say(stderr, "crew: rate: %s: %v\n", storePath(o.StorePath), err)
+		say(stderr, "crew: rate: %s: %v\n", store, err)
 		return exitType
 	}
 
 	// --json is the mode's only non-string output, so the only shape jq
-	// pretty-printed (its terminal colour is a process quirk, not mirrored).
-	// The table is a string the fold already joined; `jq -r` printed it plus
-	// one newline, and it is never the empty string — every branch of the
-	// fold, down to the no-runs lines, produces text.
+	// pretty-printed; the table is one string the fold already joined, which
+	// `jq -r` printed plus one newline. Terminal colour is a process quirk.
 	if jsonOut {
 		if err := jsonv.Encode(stdout, out, jsonv.Options{Indent: true}); err != nil {
 			say(stderr, "crew: rate: %v\n", err)
@@ -123,9 +120,8 @@ func Run(args []string, cwd string, stdout, stderr io.Writer, o Options) int {
 		say(stdout, "\n")
 		return 0
 	}
-	if s, _ := out.AsString(); s != "" {
-		say(stdout, "%s\n", s)
-	}
+	s, _ := out.AsString()
+	say(stdout, "%s\n", s)
 	return 0
 }
 
