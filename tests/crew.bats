@@ -2175,6 +2175,37 @@ after_await_parks() {
   [ -z "$output" ]
 }
 
+# The same reader against this port's writer: the marks a Go `crew await` raised
+# are the ones `_unread_scan` must stop seeing — undelivered before the await
+# hands the msg out, gone after.
+@test "await: the marks a Go await raised clear bash _unread_scan" {
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
+  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_unread_scan() {/,/^}/p' "$CREW")"
+  eval "$helpers"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  log="$dir/events.jsonl"
+  [ "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" != "" ]
+
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
+  [[ "$output" == *'"body":"verdict"'* ]]
+  [ -z "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" ]
+}
+
+# And the other direction, mid-wait: the writer that stayed in bash appends the
+# row while the Go await is parked, and the pass after it delivers — which is
+# why the log is re-read every pass rather than once.
+@test "await: a reply a bash crew msg appends mid-wait is delivered" {
+  id="worker:feat/x#s1-1"
+  (
+    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" msg dispatcher:c1 "$id" "mid-wait"
+  ) >/dev/null 2>&1 &
+  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 300 --interval 1
+  wait
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"body":"mid-wait"'* ]]
+}
+
 # #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the
@@ -12009,6 +12040,18 @@ EOF
   # Nor is a directive the lead already read.
   _nudge_directive
   CREW_ID=c1 run run_crew inbox 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run run_crew nudge nova
+  _nudge_refused "no unread msg from dispatcher:c1"
+}
+
+# The same ceiling read from the marks a Go `await` raised rather than the ones
+# `crew inbox` raised: delivery is delivery, whichever reader took the msg.
+@test "nudge: refuses a directive a crew await delivered" {
+  _nudge_setup
+  nudge_frames "$(fx_done_idle)"
+  _nudge_directive
+  CREW_ID=c1 run --separate-stderr run_crew await 'worker:feat/x#s1-1' --timeout 5 --interval 1
   [ "$status" -eq 0 ]
   CREW_ID=c1 run run_crew nudge nova
   _nudge_refused "no unread msg from dispatcher:c1"

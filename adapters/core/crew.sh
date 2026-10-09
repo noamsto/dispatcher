@@ -860,11 +860,13 @@ _clock_now_f() {
 }
 
 # Delivered marks (#290): {sender: ts of the last msg from that sender this
-# session has been handed}, one file per crew+session under $dir/await. `await`
-# records here, and so does `crew inbox` — in Go, from crew/internal/marks, on
-# the same path and the same two programs — so a reply taken through the
-# straggler fold is not handed back by the next `await`. Not a bus row: it never
-# reaches `roster`, `watch` or another session's reads.
+# session has been handed}, one file per crew+session under $dir/await. `crew
+# await` and `crew inbox` both raise it from Go (crew/internal/marks, the same
+# path and the same two programs), so a reply taken through the straggler fold is
+# not handed back by the next `await`. These three stay for `_unread_scan` (and
+# through it `nudge` and `stall-watch --unread`), which read the same file, and
+# for the crew.bats guards that replay Go's writes through them. Not a bus row:
+# it never reaches `roster`, `watch` or another session's reads.
 _await_state() { # <crew> <agent> -> path
   local key="$1-$2"
   printf '%s/await/%s.%s' "$dir" "$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$key" | cksum | cut -d' ' -f1)"
@@ -3533,122 +3535,6 @@ reply)
   line=$(_fit_line _build_reply "${2:-}")
   _bus_append "$log" "$line"
   ;;
-await)
-  # await <agent> [--from SENDER] [--timeout S] [--interval S] — block until a msg
-  # addressed to <agent> answers its outstanding question, print it, exit 0.
-  # Every due msg from the sender of the newest due one prints, oldest first, one
-  # compact JSON object per line, so a backlog is drained instead of hidden: the
-  # per-sender delivered mark can never rise past an undelivered sibling (#466).
-  # --from restricts that to one exact sender id (a lead waiting on one role's
-  # verdict); other senders' msgs are neither returned nor marked delivered.
-  # A msg qualifies when this session has not been handed it yet: strictly newer
-  # than the newest msg from that sender already handed to this session (the
-  # per-sender delivered mark, written by await and inbox, #290). No outbound
-  # question filter is applied: a reply that crossed the worker's own question
-  # in flight is unread and must still be delivered (#385).
-  # A timeout also exits 0: empty stdout, not the exit code, is the marker.
-  # No LLM tokens burned: this is a held bash call, not a
-  # spin loop. A late reply is never lost — it stays in the durable log for the
-  # worker's next inbox check.
-  crew=$(_crew_id)
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
-    exit 1
-  }
-  me="${1:-}"
-  [ -n "$me" ] || {
-    echo "crew: await <agent> [--from SENDER] [--timeout S] [--interval S]" >&2
-    exit 1
-  }
-  case "$me" in worker:*) _is_session_id "$me" || {
-    echo "crew: $sub: '$me' has no session suffix — pass the session id (\$CREW_WORKER_ID); a branch-only worker id matches no message" >&2
-    exit 1
-  } ;; esac
-  shift || true
-  timeout=300
-  interval=2
-  from=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --timeout)
-      [ -n "${2:-}" ] || {
-        echo "crew: --timeout needs a value" >&2
-        exit 1
-      }
-      timeout="$2"
-      shift 2
-      ;;
-    --interval)
-      [ -n "${2:-}" ] || {
-        echo "crew: --interval needs a value" >&2
-        exit 1
-      }
-      interval="$2"
-      shift 2
-      ;;
-    --from)
-      [ -n "${2:-}" ] || {
-        echo "crew: --from needs a value" >&2
-        exit 1
-      }
-      from="$2"
-      shift 2
-      ;;
-    *)
-      echo "crew: await: unknown arg '$1'" >&2
-      exit 1
-      ;;
-    esac
-  done
-  [[ "$timeout" =~ ^[0-9]{1,9}$ ]] || {
-    echo "crew: --timeout needs a non-negative integer (seconds)" >&2
-    exit 1
-  }
-  timeout=$((10#$timeout))
-  # A held await past the 600s tool ceiling is killed by the harness mid-wait.
-  if [ "$timeout" -gt 600 ]; then
-    echo "crew: await --timeout $timeout clamped to 600 (the 600s tool ceiling)" >&2
-    timeout=600
-  fi
-  start=$(_clock_now_ms)
-  deadline=$((start + timeout * 1000))
-  delivered=$(_await_marks "$crew" "$me")
-  while :; do
-    if [ -f "$log" ]; then
-      # A msg from X is due when it is newer than the last msg from X this
-      # session was handed (the delivered mark). The last due msg picks its
-      # sender, whose whole due backlog then prints — so the mark, raised to
-      # the batch's newest ts, never skips a sibling. `-R` + `fromjson?` skips
-      # a torn trailing line (the hard-kill crash mode) instead of aborting
-      # the read.
-      ans=$(jq -Rnc --arg crew "$crew" --arg me "$me" --arg from "$from" --argjson got "$delivered" '
-        reduce (inputs | fromjson?) as $e (
-          {cands: []};
-          if ($e.crew_id == $crew and $e.kind == "msg" and $e.to == $me and ($from == "" or $e.from == $from))
-          then .cands += [$e]
-          else . end
-        )
-        | .cands
-        | map(select(.ts > ($got[.from] // 0)))
-        | if length == 0 then empty
-          else (.[-1].from) as $s
-          | map(select(.from == $s)) | sort_by(.ts)[]
-          end
-      ' "$log" 2>/dev/null || true)
-      [ -n "$ans" ] && {
-        _await_record "$crew" "$me" "$ans"
-        printf '%s\n' "$ans"
-        exit 0
-      }
-    fi
-    now=$(_clock_now_ms)
-    [ "$now" -ge "$deadline" ] && {
-      echo "crew: await ended after $(((now - start) / 1000))s — no reply to $me${from:+ from $from} yet" >&2
-      exit 0
-    }
-    _clock_sleep "$interval"
-  done
-  ;;
 register | deregister)
   # Per-crew registration (was an exclusive per-repo role lock). N crews may
   # share a repo: each is identified by its crew_id, so there is no
@@ -4560,7 +4446,7 @@ stream)
     fi
   done
   ;;
-crews | log | report | sessions | roster | inbox | hold)
+crews | log | report | sessions | roster | inbox | hold | await)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"

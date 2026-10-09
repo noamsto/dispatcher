@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -210,7 +210,7 @@ func due(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 	// `--argjson now "$(_clock_now_f)"`: seconds, fractional unless the virtual
 	// clock is set. The compare is jq's, so a hold maturing this second is due.
-	matured, code := f.call(maturedProg, elems(holds), map[string]jsonv.Value{"now": o.clockNowF()})
+	matured, code := f.call(maturedProg, elems(holds), map[string]jsonv.Value{"now": o.clock().NowF()})
 	if code != 0 {
 		return code
 	}
@@ -262,7 +262,7 @@ func park(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) i
 	}
 	out, code := f.call(parkProg, elems(holds), map[string]jsonv.Value{
 		"default": jsonv.Num(float64(def)),
-		"now":     o.clockNowF(),
+		"now":     o.clock().NowF(),
 	})
 	if code != 0 {
 		return code
@@ -371,7 +371,7 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
 	}
-	if resets <= clockSeconds(o) {
+	if resets <= o.clock().Seconds() {
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
 	}
@@ -400,7 +400,7 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// against the ms `ts` fields dispatch writes, so copying `crew new` breaks
 	// that comparison by 1000x. Real time even under CREW_CLOCK, because the arm
 	// minted these with `jq -nc 'now*1000|floor'`.
-	ts := strconv.FormatInt(int64(math.Floor(milliSeconds(o))), 10)
+	ts := strconv.FormatInt(o.clock().RealMS(), 10)
 	id := ts + "-" + strconv.Itoa(os.Getpid())
 
 	specpath := ""
@@ -502,7 +502,7 @@ func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options
 	))
 	line := bus.FitLine(func(b string) string {
 		return compact(jsonv.Object(
-			jsonv.Member{Key: "ts", Val: tsValue(strconv.FormatInt(int64(math.Floor(milliSeconds(o))), 10))},
+			jsonv.Member{Key: "ts", Val: tsValue(strconv.FormatInt(o.clock().RealMS(), 10))},
 			jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
 			jsonv.Member{Key: "from", Val: jsonv.Str("dispatcher:" + crew)},
 			jsonv.Member{Key: "to", Val: jsonv.Str("hold:" + crew)},
@@ -535,46 +535,10 @@ func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
 	return crew, true
 }
 
-// clockNowF is `_clock_now_f`: the virtual clock's seconds when it is set, jq's
-// `now` otherwise. The arm handed either to `--argjson`, so a computed double is
-// what jq compared against either way.
-func (o Options) clockNowF() jsonv.Value {
-	if o.CrewClock == "" {
-		return jsonv.Num(milliSeconds(o) / 1000)
-	}
-	n, _ := strconv.ParseFloat(clockText(o), 64)
-	return jsonv.Num(n)
-}
-
-// clockSeconds is the whole seconds `_clock_now` prints, the arm's `date +%s`
-// under no virtual clock. A clock file holding anything but a number fails
-// bash's `test` too, and both land in "must be in the future".
-func clockSeconds(o Options) int64 {
-	n, _ := strconv.ParseInt(clockText(o), 10, 64)
-	return n
-}
-
-// clockText is `_clock_now`: with CREW_CLOCK set, the seconds in that file,
-// seeded from the real clock when it is missing or empty; without it, the real
-// clock at whole-second precision.
-func clockText(o Options) string {
-	real := strconv.FormatInt(o.Now().Unix(), 10)
-	if o.CrewClock == "" {
-		return real
-	}
-	data, err := os.ReadFile(o.CrewClock)
-	if err != nil || len(data) == 0 {
-		_ = os.WriteFile(o.CrewClock, []byte(real+"\n"), 0o644)
-		return real
-	}
-	return strings.TrimRight(string(data), "\n")
-}
-
-// milliSeconds is jq's `now` in ms: the same microsecond-precision double the
-// arm's `jq -nc 'now*1000|floor'` computed from.
-func milliSeconds(o Options) float64 {
-	now := o.Now()
-	return float64(now.Unix())*1000 + float64(now.Nanosecond()/1000)/1000
+// clock is this call's view of the $CREW_CLOCK pair, shared with `crew await`
+// through internal/clock.
+func (o Options) clock() clock.Clock {
+	return clock.Clock{Now: o.Now, CrewClock: o.CrewClock}
 }
 
 // tsValue is the row's `ts`: a number literal, so the digits print as written.

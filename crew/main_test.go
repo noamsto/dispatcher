@@ -349,8 +349,8 @@ func TestRunLogAndReport(t *testing.T) {
 }
 
 // The arm has two halves: the msgs it prints, and the delivered-marks file it
-// leaves for the bash `await` to read. Both are wired through bus.Paths, so the
-// marks land under the repo's crew dir next to the bus.
+// leaves for `crew await` and the bash `_unread_scan` to read. Both are wired
+// through bus.Paths, so the marks land under the repo's crew dir next to the bus.
 func TestRunInbox(t *testing.T) {
 	const (
 		me   = "worker:feat/x#s1-1"
