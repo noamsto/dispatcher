@@ -225,6 +225,17 @@ func TestRefusals(t *testing.T) {
 			line: "crew: newest session on feat/x is failed — a stopped session never reads its inbox; re-dispatch with the context baked in",
 		},
 		{
+			// `.state` is read straight off the bus, and `jq -r` prints a non-string
+			// value rather than bare: a hand-written row carrying an array prints
+			// the array, in jq's pretty form, not a misleading `null`.
+			name:   "state is not a string",
+			branch: "feat/x",
+			rows: []string{
+				`{"ts":1785951000000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":["done"]}}`,
+			},
+			line: "crew: newest session on feat/x is [\n  \"done\"\n] — a stopped session never reads its inbox; re-dispatch with the context baked in",
+		},
+		{
 			name:   "no log at all",
 			branch: "feat/x",
 			rows:   nil,

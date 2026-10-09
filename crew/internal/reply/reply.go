@@ -278,9 +278,11 @@ func refuse(newest jsonv.Value, branch string, stderr io.Writer) (bool, int) {
 }
 
 // text is `jq -r .<key>` on the row: a string verbatim, a number as jq prints it,
-// a boolean as `true`/`false` (which is how the arm compares `.terminal`), and
-// null or a missing key as the four letters the arm compared. (An array or object
-// here would have cost jq a type error; the fold only ever puts the first three.)
+// a boolean as `true`/`false` (which is how the arm compares `.terminal`), null
+// or a missing key as the four letters the arm compared, and an array or object
+// in jq's pretty form — `-r` only passes strings through bare, and `.state` is
+// read straight off the bus, so a hand-written row carrying anything else still
+// prints what jq printed rather than a misleading `null`.
 func text(v jsonv.Value, key string) string {
 	x, _ := v.Get(key)
 	switch x.Kind() {
@@ -293,7 +295,9 @@ func text(v jsonv.Value, key string) string {
 		return "true"
 	case jsonv.KindFalse:
 		return "false"
-	case jsonv.KindNull, jsonv.KindArray, jsonv.KindObject:
+	case jsonv.KindArray, jsonv.KindObject:
+		return string(jsonv.Append(nil, x, jsonv.Options{Indent: true}))
+	case jsonv.KindNull:
 	}
 	return "null"
 }

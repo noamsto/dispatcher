@@ -20,7 +20,7 @@ output contract below), with each edit justified.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads, and
   the writer `hold` appends through: `Append` is `_bus_append` (create the
   directory, terminate a torn tail, `O_APPEND`), `FitLine`/`Shrink` are
-  `_fit_line`/`_shrink` at `LineMax`. `status`, `msg` and `reply` still call the
+  `_fit_line`/`_shrink` at `LineMax`. `status` and `msg` still call the
   bash originals, so both copies are guarded from each side.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
 - `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`,
