@@ -2,8 +2,8 @@
 
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
-`await`, `retro` and `rate --report` (report mode only; the sweep path stays in
-bash). Each slice must leave every bats file green; tests may be
+`await`, `retro`, `rate --report` (report mode only; the sweep path stays in
+bash) and `reply`. Each slice must leave every bats file green; tests may be
 adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -72,6 +72,14 @@ output contract below), with each edit justified.
   read the global ratings store, not the bus, and every store failure folds to
   `[]` in silence — the arm's `2>/dev/null || true` — so an empty, missing or
   unparseable store renders the header alone.
+- `crew/internal/reply`: the arm of #893, a writer like `hold` but with no fold
+  of its own — it resolves a branch-only `worker:<branch>` target through
+  `sessions.Fold`, and with no crew named through every crew the bus carries,
+  dropping the ones whose registered pid is known-dead by the same three-state
+  read `crews` prints (`crews.PidAlive`). Its row is the arm's six keys in order,
+  and it needs no byte-exact body: `body` is the caller's text, so `jq -S` does
+  excuse the key order. `bus.IsSessionID` is `_is_session_id`'s Go twin, the one
+  `inbox` and `await` now share.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -82,7 +90,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | retro)
+crews | log | report | sessions | roster | inbox | hold | await | retro | reply)
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
@@ -132,8 +140,8 @@ Rules that still bind a porter:
 ## Bash helpers that stay
 
 `_sessions`, `_identity*`, `_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at`
-keep other callers (`reply`, `nudge`, `reap`). Delete each only with its last
-caller. While two copies exist, guard drift:
+keep other callers (`nudge`, `reap`). Delete each only with its last caller.
+While two copies exist, guard drift:
 
 - a crew.bats test compares the bash `_sessions` helper with `crew sessions` on
   a shared fixture bus (value compare, `jq -S`: key order is engine-internal);
@@ -159,8 +167,8 @@ time` pins the no-`CREW_CLOCK` branch.
 `_hold_outstanding` stays for `roster-render`'s `_rr_model`, which reads the same
 bus `crew hold list` reads; `_hold_crew` and `_hold_render` lost their last
 caller with the arm and are gone. `_fit_line`, `_shrink` and `_bus_append` stay
-for `status`, `msg` and `reply`, and Go copies all three — so crew.bats replays
-the appended row through the extracted `_fit_line`/`_shrink`, compares
+for `status` and `msg`, and Go copies all three — so crew.bats replays the
+appended row through the extracted `_fit_line`/`_shrink`, compares
 `_hold_outstanding` with `crew hold list --json` on one fixture bus, and
 `internal/bus` parses `_LINE_MAX`/`_ELIDED` out of crew.sh against its own
 constants.

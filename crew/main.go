@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
+	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -30,7 +31,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate --report [--json] [--pooled]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | retro [--report [--json]] | rate --report [--json] [--pooled] | reply <to> <body> [--crew ID]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -63,7 +64,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro", "rate":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "retro", "rate", "reply":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -147,6 +148,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// preamble's.
 	if sub == "rate" {
 		return rate.Run(args, cwd, stdout, stderr, rate.Options{})
+	}
+
+	// reply resolves its target against the bus, then appends one row itself, so
+	// it owns its run like hold does — and it prints nothing on success.
+	if sub == "reply" {
+		return reply.Run(args, paths, stderr, reply.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Probes: e.procs,
+		})
 	}
 
 	// log and report print lines rather than one JSON value, and each reads the

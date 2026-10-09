@@ -3425,116 +3425,6 @@ status | msg)
     _publish_pane_state "$TMUX_PANE" "$state" "${3:-}"
   fi
   ;;
-reply)
-  # reply <to> <body> [--crew ID] — sugar over `msg`; from is dispatcher:<crew>
-  # so the dispatcher needn't reconstruct its own id.
-  rcrew=""
-  rargs=()
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --crew)
-      [ -n "${2:-}" ] || {
-        echo "crew: --crew needs a value" >&2
-        exit 1
-      }
-      rcrew="$2"
-      shift 2
-      ;;
-    *)
-      rargs+=("$1")
-      shift
-      ;;
-    esac
-  done
-  set -- "${rargs[@]+"${rargs[@]}"}"
-  crew="${rcrew:-$(_crew_id)}"
-  mkdir -p "$dir"
-  # A branch-only worker target resolves to the newest session on that branch, so
-  # the dispatcher keeps writing `worker:<branch>` while the message lands on a
-  # session that exists NOW. Resolving at send time is what makes inheritance
-  # impossible: a stopped session's successor has a different id, so a directive
-  # written for the former is never addressed to the latter (#17).
-  to="${1:-}"
-  case "$to" in
-  worker:*)
-    if _is_session_id "$to"; then
-      : # explicit worker:<branch>#s<epoch>-<pid>, honour verbatim
-    else
-      br="${to#worker:}"
-      if [ -n "$crew" ]; then
-        newest=$(_sessions "$br" "$crew" | jq -c 'last')
-      else
-        # No crew named: a dispatcher whose shell never exported CREW_ID. Look
-        # across crews and take the single one with a live session on the branch.
-        # "Live" is the crew's registered pid (see `crews`): a crew that crashed
-        # before posting a terminal status leaves a non-terminal session that is
-        # not listening, and must not force --crew while a real crew is live
-        # (#327).
-        live=""
-        crews=""
-        [ ! -f "$log" ] || crews=$(jq -r 'select(.crew_id != null) | .crew_id' "$log" | sort -u)
-        while IFS= read -r c; do
-          [ -n "$c" ] || continue
-          n=$(_sessions "$br" "$c" | jq -c --arg c "$c" 'last // empty | select(.terminal | not) | . + {crew:$c}')
-          [ -z "$n" ] || {
-            # A present pid that is dead (or `0`/non-numeric, which `crews` also
-            # reads as not alive) is a crashed crew. No pid at all is unknown,
-            # not dead: an unregistered crew or a `--crew-id`-only caller stays
-            # live, so this never narrows the pre-#327 resolver.
-            cpid=$(cat "$dir/crews/$c/pid" 2>/dev/null || true)
-            case "$cpid" in
-            '') calive=null ;;
-            *[!0-9]* | 0) calive=false ;;
-            *) if _recorded_pid_live "$cpid" "$dir/crews/$c/pid"; then calive=true; else calive=false; fi ;;
-            esac
-            live+=$(printf '%s' "$n" | jq -c --argjson a "$calive" '. + {crew_alive:$a}')$'\n'
-          }
-        done <<<"$crews"
-        # Drop known-dead crews only while a not-known-dead candidate remains. If
-        # every candidate's crew is dead, keep them all — one still delivers,
-        # several still refuse naming both, exactly as before this change.
-        if printf '%s' "$live" | jq -e -s 'any(.[]; .crew_alive != false)' >/dev/null 2>&1; then
-          live=$(printf '%s' "$live" | jq -c -s '.[] | select(.crew_alive != false)')
-        fi
-        nlive=$(printf '%s' "$live" | grep -c . || true)
-        if [ "$nlive" -gt 1 ]; then
-          echo "crew: CREW_ID not set and $br has live sessions in crews: $(printf '%s' "$live" | jq -r .crew | paste -sd, - | sed 's/,/, /g') — pass --crew <id>" >&2
-          exit 1
-        elif [ "$nlive" -eq 1 ]; then
-          newest=$(printf '%s' "$live" | jq -c .)
-          crew=$(printf '%s' "$newest" | jq -r .crew)
-        else
-          echo "crew: CREW_ID not set and no live session on $br in any crew — pass --crew <id> (or dispatch a worker before replying to one)" >&2
-          exit 1
-        fi
-      fi
-      [ -n "$newest" ] && [ "$newest" != null ] || {
-        echo "crew: no session on $br — dispatch a worker before replying to one" >&2
-        exit 1
-      }
-      if [ "$(printf '%s' "$newest" | jq -r .terminal)" = true ]; then
-        echo "crew: newest session on $br is $(printf '%s' "$newest" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in" >&2
-        exit 1
-      fi
-      if [ "$(printf '%s' "$newest" | jq -r .session)" = null ]; then
-        echo "crew: $br has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch" >&2
-        exit 1
-      fi
-      to=$(printf '%s' "$newest" | jq -r .worker_id)
-    fi
-    ;;
-  esac
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>" >&2
-    exit 1
-  }
-  _build_reply() {
-    jq -nc --arg crew "$crew" --arg to "$to" --arg body "$1" \
-      '{ts:(now*1000|floor), crew_id:$crew, from:("dispatcher:"+$crew), to:$to, kind:"msg", body:$body}'
-  }
-  line=$(_fit_line _build_reply "${2:-}")
-  _bus_append "$log" "$line"
-  ;;
 register | deregister)
   # Per-crew registration (was an exclusive per-repo role lock). N crews may
   # share a repo: each is identified by its crew_id, so there is no
@@ -4446,7 +4336,7 @@ stream)
     fi
   done
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | retro)
+crews | log | report | sessions | roster | inbox | hold | await | retro | reply)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@.
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"

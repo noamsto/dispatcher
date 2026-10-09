@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -240,6 +241,18 @@ func ValidCrewID(id string) bool {
 		}
 	}
 	return true
+}
+
+// sessionRe is crew.sh's `_is_session_id` pattern, `^s[0-9]+-[0-9]+$`. \A..\z
+// rather than ^..$: Go's `$` is end-of-text, which is what bash's ERE means here
+// too (no REG_NEWLINE), and it keeps a trailing newline from looking like a session.
+var sessionRe = regexp.MustCompile(`\As[0-9]+-[0-9]+\z`)
+
+// IsSessionID is crew.sh's `_is_session_id`: the text after the LAST '#' has the
+// sid shape. A '#' inside a branch name (legal in git) does not match, so
+// `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
+func IsSessionID(id string) bool {
+	return sessionRe.MatchString(id[strings.LastIndex(id, "#")+1:])
 }
 
 // CrewID is crew.sh's `_crew_id`: the first `^crew_id:` line of the checkout's

@@ -74,7 +74,7 @@ func mine(paths bus.Paths, stdout io.Writer, o Options) {
 	now := o.Now()
 	for _, id := range crewDirs(paths) {
 		pidfile := paths.Dir + "/crews/" + id + "/pid"
-		pid, ok := pidFileText(pidfile)
+		pid, ok := PidFileText(pidfile)
 		if !ok {
 			continue // no readable file reads as the empty pid
 		}
@@ -124,7 +124,7 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	meta := make([]jsonv.Value, 0, len(ids))
 	for _, id := range ids {
 		pidfile := paths.Dir + "/crews/" + id + "/pid"
-		pid, hasFile := pidFileText(pidfile)
+		pid, hasFile := PidFileText(pidfile)
 		if !hasFile {
 			pid = ""
 		}
@@ -134,9 +134,8 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		pidV, alive := jsonv.Null(), jsonv.Null()
 		if pid != "" {
 			pidV = jsonv.Str(pid)
-			alive = jsonv.Bool(false)
-			if n, ok := validPid(pid); ok && o.Probes.RecordedLive(now, n, pidfile) {
-				alive = jsonv.Bool(true)
+			if a := PidAlive(o.Probes, now, pidfile, pid); a != nil {
+				alive = jsonv.Bool(*a)
 			}
 		}
 		meta = append(meta, jsonv.Object(
@@ -201,9 +200,27 @@ func crewDirs(paths bus.Paths) []string {
 	return out
 }
 
-// pidFileText is `$(cat <pidfile> 2>/dev/null || true)`: the file's text
+// PidAlive is the three-state liveness of the pid a crew's pidfile records,
+// read off the text `t` that file holds: nil for the empty text — no file, or an
+// empty one, which is *unknown* rather than dead, so an unregistered crew is
+// never dropped for it — false for `0` or any non-digit, and the probe's answer
+// for a positive integer. `crews` prints it and `reply` filters candidates on it.
+func PidAlive(p Probes, now time.Time, pidfile, t string) *bool {
+	if t == "" {
+		return nil
+	}
+	n, ok := validPid(t)
+	if !ok {
+		return boolPtr(false)
+	}
+	return boolPtr(p.RecordedLive(now, n, pidfile))
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// PidFileText is `$(cat <pidfile> 2>/dev/null || true)`: the file's text
 // without its trailing newlines, "" when it cannot be read.
-func pidFileText(path string) (string, bool) {
+func PidFileText(path string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
