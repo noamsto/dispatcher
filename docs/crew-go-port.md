@@ -374,7 +374,8 @@ pair: its park runs on `internal/clock`'s real half only, because the arm's
 
 `_lock_acquire` and `_lock_release` stay for `stream`, `nudge` and `roster-render`,
 and `internal/lock` is their Go copy for `rate`, `watch` and `stall-watch`'s
-budget refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one protocol, two languages, one lock dir:
+budget refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one
+protocol, two languages, one lock dir:
 bash `stream` writes `watch.lock.d/pid` with `$$` through the `crew watch` it
 re-enters, and an older installed `crew` holds `ratings.lock.d`. The drift test
 is `internal/lock`'s own table (live, dead, empty and non-numeric owners, a `0`

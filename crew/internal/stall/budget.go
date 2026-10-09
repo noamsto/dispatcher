@@ -70,9 +70,8 @@ func (w *watch) lastTry() int64 {
 // inside every detector threshold. true means the probe ran, and the caller
 // re-reads the bus.
 //
-// The lock is released on every path once held — a signal cancels ctx, the
-// probe's process group is killed, and the deferred release still runs; the
-// arm leaked the directory when it was killed mid-probe.
+// A signal kills the probe's process group and the deferred release still
+// runs; the arm leaked the lock directory when killed mid-probe.
 func (w *watch) refreshMaybe() (bool, error) {
 	every := w.cfg.budgetRefresh
 	if every == 0 || w.now-w.lastTry() < every {

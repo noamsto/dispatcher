@@ -221,8 +221,7 @@ func (w *watch) sleep(interval string) error {
 // cancelled is the arm dying on the signal. A probe that returns into a
 // cancelled context was cut short, and its failure value ("", not alive) is
 // no evidence: acting on it would post for a live worker or end the watch
-// with 0. Every probe whose answer decides what happens next is followed by
-// this check.
+// with 0.
 func (w *watch) cancelled() error {
 	if w.ctx.Err() != nil {
 		return exitCode(exitCodeFor(w.ctx))

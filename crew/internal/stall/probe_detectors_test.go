@@ -358,8 +358,7 @@ func TestD8BusStaleRereads(t *testing.T) {
 	}
 }
 
-// busReadsRun runs a whole watch like the bats budget_watch and returns how
-// many times it read the bus.
+// busReadsRun runs a whole watch and returns how many times it read the bus.
 func busReadsRun(t *testing.T, cache string, refreshes *int, extra ...string) int {
 	t.Helper()
 	f := newFake()
@@ -383,8 +382,8 @@ func busReadsRun(t *testing.T, cache string, refreshes *int, extra ...string) in
 	return f.busReads
 }
 
-// The bats row "D8 budget: a skipped refresh re-reads the bus, a real one once
-// more", counted on BusRows instead of a `bash -x` trace.
+// A skipped D8 refresh re-reads the bus no more than D8 off; a real one reads
+// once more.
 func TestBusReadsD8(t *testing.T) {
 	refreshes := 0
 	off := busReadsRun(t, `{"fetched_epoch":%d}`, &refreshes, "--no-budget")
@@ -399,8 +398,8 @@ func TestBusReadsD8(t *testing.T) {
 	}
 }
 
-// AC3: a SIGTERM while the refresh command runs ends the watch with 143 and
-// leaves no refresh lock behind.
+// A SIGTERM while the refresh command runs ends the watch with 143 and leaves
+// no refresh lock behind.
 func TestSigtermLockReleasedDuringRefresh(t *testing.T) {
 	f := newFake()
 	f.sh = budgetSh("", 1, "", 1)
