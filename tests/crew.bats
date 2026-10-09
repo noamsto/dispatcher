@@ -2279,6 +2279,19 @@ after_await_parks() {
   [[ "$output" == *"no session suffix"* ]]
 }
 
+# The arm printed with `printf` under `set -e`: a write that fails (a full
+# device, a reader that left the pipe) ended it before `_await_record`, so the
+# msgs stay undelivered and the next read hands them out again.
+@test "inbox: a print that fails records no marks" {
+  [ -w /dev/full ] || skip "/dev/full unavailable"
+  id="worker:feat/x#s1-1"
+  CREW_ID=c1 run_crew reply "$id" "answer"
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  run bash -c "CREW_ID=c1 bash -euo pipefail '$CREW' inbox '$id' c1 >/dev/full"
+  [ "$status" -eq 1 ]
+  [ ! -e "$dir/await" ]
+}
+
 # `crew inbox` is Go now, but `await`, `nudge` and `stall-watch` are not, and
 # they read what it writes. Drift guard in the `_sessions` idiom below: the file
 # must be `_await_state`'s path and `_await_record`'s content for the same msgs

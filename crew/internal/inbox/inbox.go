@@ -29,11 +29,13 @@ const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
 // invalid (jq warns once at startup even though its stdout here is a pipe, so
-// it never colourises — the arm has no colour and neither does this), and how
-// to resolve the crew the arm defaults to (`_crew_id`).
+// it never colourises — the arm has no colour and neither does this), how to
+// resolve the crew the arm defaults to (`_crew_id`), and how to put the
+// buffered stdout on the wire before the marks are raised.
 type Options struct {
 	JQColorsInvalid bool
 	CrewID          func() string
+	Flush           func() error
 }
 
 // sessionRe is _is_session_id's `^s[0-9]+-[0-9]+$`. \A..\z rather than ^..$:
@@ -109,6 +111,17 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// A session that has read its inbox has been handed these msgs, so a later
 	// await must not return them again (#290) — including the prefix of a bus
 	// whose tail then failed to parse, which is all the arm recorded too.
+	//
+	// The print comes first, and literally: the arm wrote with `printf` and
+	// `set -e`, so a write that fails (a full device, a reader that left the
+	// pipe) ended it before `_await_record`. Marking those msgs delivered would
+	// turn a lost write into a message no await will ever hand back. main.go's
+	// flush reports the failure once, as the arm's printf error line did.
+	if o.Flush != nil {
+		if err := o.Flush(); err != nil {
+			return 1
+		}
+	}
 	if strings.HasPrefix(me, "worker:") && len(printed) > 0 {
 		marks.Record(paths.Dir, crew, me, printed)
 	}

@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -475,6 +476,75 @@ func TestJQColorsWarning(t *testing.T) {
 		strings.Contains(err2.String(), "JQ_COLORS") {
 		t.Errorf("code %d stderr %q", code, err2.String())
 	}
+}
+
+// The arm printed with `printf` under `set -e`, so a write that fails ends it
+// before the marks are raised: msgs the caller never received must stay
+// undelivered, or the next await skips them for good.
+func TestAFailedPrintRecordsNoMarks(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, msgRow+"\n")
+
+	var out, errB bytes.Buffer
+	code := Run([]string{me, "c1"}, p, &out, &errB, Options{
+		CrewID: func() string { return "c1" },
+		Flush:  func() error { return errors.New("no space left on device") },
+	})
+	if code != 1 {
+		t.Fatalf("code %d, want 1", code)
+	}
+	if got := readMarks(t, p, "c1", me); got != "" {
+		t.Errorf("marks = %q, want none", got)
+	}
+	if left, _ := filepath.Glob(p.Dir + "/await/*"); len(left) != 0 {
+		t.Errorf("await dir holds %v", left)
+	}
+}
+
+// The other half of the ordering: the rows are on the wire before the marks
+// exist, so a reader that never got them can still get them from the next read.
+func TestPrintComesBeforeTheMarks(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, msgRow+"\n")
+
+	var out, errB bytes.Buffer
+	w := &flushProbe{buf: &out, marksSeen: func() bool { return readMarks(t, p, "c1", me) != "" }}
+	code := Run([]string{me, "c1"}, p, w, &errB, Options{
+		CrewID: func() string { return "c1" },
+		Flush:  w.flush,
+	})
+	if code != 0 || errB.Len() != 0 {
+		t.Fatalf("code %d stderr %q", code, errB.String())
+	}
+	if !w.flushed {
+		t.Fatal("Run never flushed")
+	}
+	if w.marksAtFlush == nil || *w.marksAtFlush {
+		t.Error("marks were raised before the rows were on the wire")
+	}
+	if got := readMarks(t, p, "c1", me); got == "" {
+		t.Error("marks never raised")
+	}
+	if out.String() != msgRow+"\n" {
+		t.Errorf("stdout = %q", out.String())
+	}
+}
+
+// flushProbe records whether the marks file existed when the flush ran.
+type flushProbe struct {
+	buf          *bytes.Buffer
+	flushed      bool
+	marksAtFlush *bool
+	marksSeen    func() bool
+}
+
+func (f *flushProbe) Write(p []byte) (int, error) { return f.buf.Write(p) }
+
+func (f *flushProbe) flush() error {
+	onWire := f.marksSeen()
+	f.marksAtFlush = &onWire
+	f.flushed = true
+	return nil
 }
 
 // TestDecimalGreater pins the literal compare against `jq -nc --argjson a <a>

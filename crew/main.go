@@ -97,6 +97,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		code := inbox.Run(args, paths, out, stderr, inbox.Options{
 			JQColorsInvalid: !colorsOK,
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
+			Flush:           out.Flush,
 		})
 		return flush(out, stderr, code)
 	}
