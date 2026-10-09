@@ -473,9 +473,11 @@ func appendRegistry(registry, line string) error {
 				return nil
 			}
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
+	// A read error is not fatal: the arm's `grep -qxF … 2>/dev/null ||` reads a
+	// failure to read as "the line is not there" and appends, which is how a
+	// write-only registry still gets updated. Only the append itself failing is
+	// the sweep's failure.
 	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

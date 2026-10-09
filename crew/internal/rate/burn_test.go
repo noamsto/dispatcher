@@ -14,7 +14,7 @@ import (
 // that moved without a price moving here is what this test is for.
 func defaultRules(t *testing.T) []burnRule {
 	t.Helper()
-	path := filepath.Join("..", "..", "adapters", "core", "defaults.json")
+	path := filepath.Join("..", "..", "..", "adapters", "core", "defaults.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Skip("defaults.json is not in this tree")

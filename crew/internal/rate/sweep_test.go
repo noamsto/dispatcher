@@ -475,6 +475,33 @@ func TestSweepRegistryUnwritable(t *testing.T) {
 	}
 }
 
+// TestSweepWriteOnlyRegistry is the arm's `grep -qxF … 2>/dev/null ||`: a
+// registry that cannot be read still gets the line appended, and the sweep
+// completes. Only the append failing is the sweep's failure.
+func TestSweepWriteOnlyRegistry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the write-only mode")
+	}
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	registry := filepath.Join(filepath.Dir(f.store), "repos")
+	if err := os.MkdirAll(filepath.Dir(f.store), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(registry, os.O_CREATE|os.O_WRONLY, 0o200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d, want 0 with a write-only registry", code)
+	}
+	if rows := f.rows(); len(rows) == 0 {
+		t.Error("the sweep stopped before the store write")
+	}
+}
+
 // TestSweepSweptAtIsMergeTimeClock pins the per-fold clock: the arm re-read
 // `now` in every jq process, so the merged row is dated when the merge fold
 // ran — after the network — not when the sweep started. Readers fold the store
