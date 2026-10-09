@@ -26,13 +26,25 @@ func envOf(m map[string]string, stderr *bytes.Buffer) Env {
 	return e
 }
 
+// shebang is the stub scripts' interpreter line: bash by absolute path, since
+// the Nix build sandbox has no /usr/bin/env.
+func shebang(t *testing.T) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+	return "#!" + bash + "\n"
+}
+
 // stubBin puts executable stubs first on PATH. Each stub logs its argv, one
 // bracketed word per argument, to <name>.log and then runs its body.
 func stubBin(t *testing.T, stubs map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
+	sb := shebang(t)
 	for name, body := range stubs {
-		script := "#!/usr/bin/env bash\n" +
+		script := sb +
 			"{ for a in \"$@\"; do printf '[%s]' \"$a\"; done; echo; } >>\"" + filepath.Join(dir, name+".log") + "\"\n" + body + "\n"
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
 			t.Fatal(err)

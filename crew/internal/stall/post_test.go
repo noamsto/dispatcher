@@ -250,6 +250,17 @@ func TestEngineAlive(t *testing.T) {
 	}
 }
 
+// shebang is the stub scripts' interpreter line: bash by absolute path, since
+// the Nix build sandbox has no /usr/bin/env.
+func shebang(t *testing.T) string {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not on PATH")
+	}
+	return "#!" + bash + "\n"
+}
+
 // publishPaneState must issue exactly the tmux argv `_publish_pane_state`
 // does, the 40-character cut included, until the bash copy goes.
 func TestPublishPaneStateMatchesCrewSh(t *testing.T) {
@@ -262,7 +273,7 @@ func TestPublishPaneStateMatchesCrewSh(t *testing.T) {
 		t.Fatal("crew.sh no longer defines _publish_pane_state")
 	}
 	bin := t.TempDir()
-	stub := "#!/usr/bin/env bash\nfor a in \"$@\"; do printf '%s\\x1f' \"$a\"; done >>\"$TMUX_LOG\"\necho >>\"$TMUX_LOG\"\n"
+	stub := shebang(t) + "for a in \"$@\"; do printf '%s\\x1f' \"$a\"; done >>\"$TMUX_LOG\"\necho >>\"$TMUX_LOG\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
