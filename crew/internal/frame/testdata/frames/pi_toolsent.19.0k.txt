@@ -1,0 +1,7 @@
+Tool output: read adapters/core/crew.sh
+  re_sentinel='<｜[^｜>]{1,40}｜>' and <|im_end|> appear in the fixture
+
+Now I will update the detector.
+─────────────────────────────────────────────────────────────────────
+⠇ Working
+↑50k ↓19.0k R1.6M CH99.2% $0.027 8.7%/1.0M (auto)

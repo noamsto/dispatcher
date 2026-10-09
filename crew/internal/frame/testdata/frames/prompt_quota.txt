@@ -1,0 +1,5 @@
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+  3. Upgrade to Team plan
+Enter to select · Esc to cancel

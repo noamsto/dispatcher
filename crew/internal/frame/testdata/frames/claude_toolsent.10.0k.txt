@@ -1,0 +1,6 @@
+⏺ Read(adapters/core/crew.sh)
+  ⎿  re_sentinel='<｜[^｜>]{1,40}｜>|<|im_end|>'
+     <｜end▁of▁thinking｜> appears in this fixture
+     <|endoftext|>
+⏺ Now I will update the detector.
+✳ Perusing… (1m 2s · ↓ 10.0k tokens · thinking)

@@ -1,0 +1,8 @@
+  2. Gate everything on 3.8
+     Detect tmux version once in tmux-remux.tmux; emit the 3.8 hook set.
+  3. Require 3.8, drop legacy
+  4. Type something.
+──────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

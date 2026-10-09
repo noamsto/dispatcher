@@ -1,0 +1,4 @@
+I'll read the config first, then adjust the watchdog flags and run the suite.
+─────────────────────────────────────────────────────────────────────
+⠇ Working
+↑50k ↓37.0k R1.6M CH99.2% $0.027 8.7%/1.0M (auto)

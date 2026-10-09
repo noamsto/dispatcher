@@ -1,0 +1,6 @@
+ pi v0.87.1
+──────────────────────────────
+crew inbox "$CREW_WORKER_ID"
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

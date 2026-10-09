@@ -1,0 +1,10 @@
+ pi v1.0.0
+ say hi in one word
+
+ ⠸ Working
+
+────────────────────
+
+────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

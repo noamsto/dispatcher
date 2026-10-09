@@ -1,0 +1,6 @@
+  Parking now — idle until the first assignment.
+  → Add a follow-up
+  Kimi K3 High · 9.6%     Run Everything -- INSERT --
+  ~/git/.worktrees/noamsto/dispatcher/feat-832-crew-go
+  -port-stall-watch ·
+  feat/832-crew-go-port-stall-watch

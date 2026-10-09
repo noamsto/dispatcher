@@ -29,12 +29,14 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
+	"github.com/noamsto/dispatcher/crew/internal/stall"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -67,7 +69,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where", "stall-watch":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -189,6 +191,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
+	// stall-watch is a long-lived watch with its own flags: it reads the bus and
+	// the pane itself, and SIGTERM/SIGINT end it through ctx so the budget
+	// refresh lock is released.
+	if sub == "stall-watch" {
+		ctx, stop := stall.NotifySignals(ctx)
+		defer stop()
+		return stall.Run(ctx, args, paths, stderr, stall.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			NewProbes: func(pane string) probe.Probes {
+				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: os.Getenv("CREW_SH"), Stderr: stderr})
+			},
+			BudgetFile: budgetFile(),
+			PID:        os.Getpid(),
+		})
+	}
+
 	// log and report print lines rather than one JSON value, and each reads the
 	// bus with its arm's tolerance (log keeps jq -c's torn-tail prefix, report
 	// has none), so they own their read too.
@@ -271,6 +290,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		say(out, "\n") // the arm's `printf '\n'` after jq -c
 	}
 	return flush(out, stderr, code)
+}
+
+// budgetFile is `${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json`.
+func budgetFile() string {
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		data = os.Getenv("HOME") + "/.local/share"
+	}
+	return data + "/crew/engine-budget.json"
 }
 
 // say writes to a stream whose failure is reported elsewhere (out, through

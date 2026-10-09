@@ -1,0 +1,19 @@
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+ ⠘⠆ Thinking  112 tokens
+    Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+
+  → Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main

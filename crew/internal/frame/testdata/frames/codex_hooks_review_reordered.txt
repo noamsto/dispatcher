@@ -1,0 +1,4 @@
+Hooks need review
+  Hooks can run outside the sandbox after you trust them.
+  1 hook is new or changed.
+› 1. Review hooks  2. Trust all and continue  3. Continue without trusting

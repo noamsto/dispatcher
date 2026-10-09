@@ -1,0 +1,20 @@
+✻ Churned for 36s · done 11:20 AM
+────────────────────
+❯
+row 1
+row 2
+row 3
+row 4
+row 5
+row 6
+row 7
+row 8
+row 9
+row 10
+row 11
+────────────────────
+status 1
+status 2
+status 3
+status 4
+status 5

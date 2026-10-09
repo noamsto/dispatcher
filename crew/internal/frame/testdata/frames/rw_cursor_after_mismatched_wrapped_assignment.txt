@@ -1,0 +1,16 @@
+
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+
+
+  → Assignment: {"role":"reviewer","question":"Check the different long assignment that wraps across terminal 
+rows without an editor newline"}
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main

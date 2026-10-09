@@ -1,0 +1,5 @@
+⏺ Here is the full analysis. The watchdog samples the pane every fifteen seconds, and
+  each detector keeps its own episode state; when the evidence goes away, it posts a
+  clearance. First, the prompt detector requires a verified geometry. Second, the
+  quiet detector requires byte identity. Third, the load detector reads the host.
+✳ Composing… (2m 1s · ↓ 10.0k tokens · thinking)

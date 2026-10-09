@@ -1,0 +1,5 @@
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ hello draft text
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

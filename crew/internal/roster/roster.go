@@ -160,10 +160,12 @@ func paneIsEngineAt(pane, worktree string) bool {
 	if !found {
 		path = pane
 	}
-	return path == worktree && isEngineCmd(cmd)
+	return path == worktree && IsEngineCmd(cmd)
 }
 
-func isEngineCmd(cmd string) bool {
+// IsEngineCmd is `_is_engine_cmd`: an engine command, with the nix wrapper's
+// leading dot and `-wrapped` suffix stripped.
+func IsEngineCmd(cmd string) bool {
 	c := strings.TrimPrefix(cmd, ".")
 	c = strings.TrimSuffix(c, "-wrapped")
 	return slices.Contains(EngineCommands, c)

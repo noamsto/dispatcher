@@ -1,0 +1,5 @@
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)

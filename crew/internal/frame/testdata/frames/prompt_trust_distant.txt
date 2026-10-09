@@ -1,0 +1,16 @@
+Reviewing DISPATCHER_PROTOCOL.md: `quota:` fires on Stop and wait for limit to reset.
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm
