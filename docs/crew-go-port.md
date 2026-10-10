@@ -485,9 +485,10 @@ acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
     as U+FFFD runes, and awk's warning about an unknown escape is not printed;
   - `[:alnum:]` follows each engine's Unicode tables (bash's `=~` on glibc 2.42 is
     Unicode 16, Go is 15, gawk's regex lags both): the CI test and the
-    run-evidence boundary take the side that refuses more, but the id lookup's
-    next-character test calls some Unicode 15 letters and marks alnum that gawk
-    does not, so such an id falls back to its number or position.
+    run-evidence boundary take the side that refuses more, and the id lookup
+    reads an id followed by a character gawk may not call alnum both ways (the
+    item is CI if the entry or its number or position fallback names CI), so it
+    refuses at least as often as the arm.
 
   gojq-vs-jq `fromjson` differences in the seam folds are not on this list: the
   jq-compatible `_jqfromjson` patch closes them and the differential test in

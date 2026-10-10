@@ -16,10 +16,10 @@
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
 //     unassigned code point as alnum, so both refuse more (TestAlnumAgainstGlibc).
-//     The id lookup's next-character test uses Go's class, which takes some
-//     Unicode 15 letters and marks that gawk does not, so an id followed by one
-//     falls back to its number or position where the arm matched it by id
-//     (refusing more or less, depending on which entry names CI).
+//     The id lookup's next-character test cannot know gawk's class, so an id
+//     followed by a character outside the plain letters and digits both engines
+//     share is read both ways: the item is CI if the entry or the number or
+//     position fallback names CI, so the lookup refuses at least as often.
 package ledger
 
 import (
@@ -75,7 +75,7 @@ func Check(in Input) string {
 		iid = strings.TrimSuffix(iid, ":")
 		idx++
 		if ikind == "pass" {
-			isCI := ciRe.MatchString(iev) || ciRe.MatchString(entry(entries, iid, idx))
+			isCI := ciRe.MatchString(iev) || slices.ContainsFunc(entriesFor(entries, iid, idx), ciRe.MatchString)
 			if isCI && !runRe.MatchString(iev) {
 				return refuse("acceptance item '" + orDefault(iid, "?") + "' is a CI item, so its pass(...) must carry a CI run id or an actions/runs/<id> URL (for the PR's current head); a local gate (pre-push, bats-affected, shellcheck, nix flake check) is never CI evidence. If CI has not finished, wait for it, or block and ask the dispatcher to waive the item.")
 			}
@@ -269,35 +269,41 @@ func acceptItems(doc string) []string {
 	return out
 }
 
-// entry is the task-doc entry for a pass item: by id, else by the id's number,
-// else by ledger position — the number and position lookups only for an empty
-// id or one shaped like `AC-02`.
-func entry(entries []string, iid string, idx int) string {
+// entriesFor is the task-doc entries a pass item may name: by id, else by the
+// id's number, else by ledger position — the number and position lookups only
+// for an empty id or one shaped like `AC-02`.
+func entriesFor(entries []string, iid string, idx int) []string {
+	var cands []string
 	if iid != "" {
-		if e := entryByID(entries, awkUnescape(iid)); e != "" {
-			return e
+		var found bool
+		if cands, found = entryByID(entries, awkUnescape(iid)); found {
+			return cands
 		}
 	}
 	n := idx
 	if iid != "" {
 		m := numRe.FindStringSubmatch(iid)
 		if m == nil {
-			return ""
+			return cands
 		}
 		var err error
 		if n, err = strconv.Atoi(m[2]); err != nil {
-			return ""
+			return cands
 		}
 	}
 	if n < 1 || n > len(entries) {
-		return ""
+		return cands
 	}
-	return entries[n-1]
+	return append(cands, entries[n-1])
 }
 
 // entryByID is the lookup awk: the first entry whose text, less leading `*`/`_`,
 // starts with the id case-insensitively and is not followed by [[:alnum:]_.].
-func entryByID(entries []string, id string) string {
+// gawk's [:alnum:] lags Go's tables, so an entry whose next character is alnum
+// to Go but not surely to gawk may be awk's match or be skipped: each such entry
+// is a candidate along with the search past it, found reporting whether that
+// search ended on an entry.
+func entryByID(entries []string, id string) (cands []string, found bool) {
 	idr := lowerRunes(id)
 	for _, e := range entries {
 		t := []rune(strings.TrimLeft(e, "*_"))
@@ -305,13 +311,25 @@ func entryByID(entries []string, id string) string {
 			continue
 		}
 		if len(t) == len(idr) {
-			return e
+			return append(cands, e), true
 		}
-		if next := t[len(idr)]; next != '_' && next != '.' && !glibcAlnum(next) {
-			return e
+		next := t[len(idr)]
+		switch {
+		case next == '_' || next == '.' || gawkAlnum(next):
+		case glibcAlnum(next):
+			cands = append(cands, e)
+		default:
+			return append(cands, e), true
 		}
 	}
-	return ""
+	return cands, false
+}
+
+// gawkAlnum is the part of glibcAlnum that gawk's [:alnum:] surely takes: the
+// Basic Multilingual Plane's letters and digits. The marks Other_Alphabetic adds
+// and the supplementary planes are where gawk's older tables leave gaps.
+func gawkAlnum(r rune) bool {
+	return r <= 0xFFFF && unicode.In(r, unicode.L, unicode.Nd, unicode.Nl)
 }
 
 func lowerRunes(s string) []rune {

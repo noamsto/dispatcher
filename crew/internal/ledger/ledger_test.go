@@ -126,6 +126,14 @@ var checkCases = []checkCase{
 	{name: "Other_Alphabetic mark after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u093e local\n", want: ciLine("AC1")},
 	{name: "Other_Alphabetic mark U+0345 after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u0345 local\n", want: ciLine("AC1")},
 	{name: "letter after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u00e9 local\n", want: ciLine("AC1")},
+	// gawk's [:alnum:] lags Go's tables (U+0C04, U+11F04, U+0F82 are alnum only
+	// to Go), so an entry with such a character after the id may be the arm's
+	// match or not: it is CI if either reading's entry names CI.
+	{name: "U+0C04 after the id may be the arm's match", detail: "AC1 pass(bats ok); lint pass(ok)", doc: "## Acceptance\n- unit tests pass\n- lint\u0c04 CI green\n", want: ciLine("lint")},
+	{name: "U+11F04 after the id may be the arm's match", detail: "AC1 pass(bats ok); lint pass(ok)", doc: "## Acceptance\n- unit tests pass\n- lint\U00011f04 CI green\n", want: ciLine("lint")},
+	{name: "U+0F82 after the id may be the arm's match", detail: "AC1 pass(bats ok); lint pass(ok)", doc: "## Acceptance\n- unit tests pass\n- lint\u0f82 CI green\n", want: ciLine("lint")},
+	{name: "an ambiguous entry does not hide the fallback's CI", detail: "AC2 pass(local)", doc: "## Acceptance\n- AC1 docs\n- CI gate green\n- AC2\u0c04 local\n", want: ciLine("AC2")},
+	{name: "an ambiguous entry and its fallback both without CI", detail: "AC2 pass(local)", doc: "## Acceptance\n- AC1 CI green\n- docs\n- AC2\u0c04 local\n"},
 	{name: "first failing item wins", detail: "AC2 pass(local); AC3 waived(dispatcher)", doc: docList, want: ciLine("AC2")},
 
 	// waivers
@@ -225,7 +233,8 @@ func TestLongDetail(t *testing.T) {
 // code points (every mark and Other_Alphabetic one, every 61st of the rest).
 // Go's tables may lag glibc's, so the regexes are pinned one way: Go finds CI
 // whenever bash does and run evidence only where bash does. gawk's own tables
-// lag both, so the id test is pinned on the plain cases and checked one way.
+// lag both, so the id test is pinned on the plain cases and checked one way,
+// and gawkAlnum, the part Go reads as surely alnum to gawk, the other.
 func TestAlnumAgainstGlibc(t *testing.T) {
 	bash, errB := exec.LookPath("bash")
 	gawk, errG := exec.LookPath("gawk")
@@ -283,6 +292,9 @@ done`)
 		}
 		if gawkBoundary := idNext[i] == "1"; !gawkBoundary && !glibcAlnum(r) && r != '_' && r != '.' {
 			t.Errorf("%U after an id: gawk calls it alnum, Go does not", r)
+		}
+		if gawkBoundary := idNext[i] == "1"; gawkBoundary && gawkAlnum(r) {
+			t.Errorf("%U after an id: Go is sure gawk calls it alnum, gawk does not", r)
 		}
 	}
 	for _, r := range pinned {
