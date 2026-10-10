@@ -20,6 +20,25 @@ import (
 
 const event = `{"pr":42,"changed":["head_sha"],"state":"open"}`
 
+// The child side of TestStopSignal: this binary, re-execed under the name
+// `pr-watch`, announces itself, prints the event and parks forever — so the only
+// way the test's Run returns is the signal it forwards.
+const (
+	childEnv  = "PRWATCH_CHILD"
+	markerEnv = "PRWATCH_CHILD_MARKER"
+)
+
+func TestMain(m *testing.M) {
+	if os.Getenv(childEnv) == "1" {
+		_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
+		fmt.Println(event)
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	os.Exit(m.Run())
+}
+
 // tree is the bus the arm writes to; paths is what main.go would hand Run.
 type tree struct {
 	t     *testing.T
@@ -266,24 +285,19 @@ func TestStopSignalForwardsAndPostsNothing(t *testing.T) {
 }
 
 // TestStopSignal is the same contract end to end: a real child, the process's own
-// SIGTERM, and no orphan left polling GitHub.
+// SIGTERM, and no orphan left polling GitHub. The child is this test binary
+// re-execed under a name the PATH lookup finds, so the case needs no shell and
+// runs in the Nix sandbox.
 func TestStopSignal(t *testing.T) {
 	tr := newTree(t)
 	dir := t.TempDir()
-	marker := filepath.Join(dir, "started")
 	bin := filepath.Join(dir, "pr-watch")
-	// The child announces itself, then parks until the forwarded TERM lands. The
-	// park's sleep keeps stdout closed on its way out, so the wait is the child
-	// and not an inherited pipe, and the trap reaps it.
-	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf x > %s\n"+
-		"printf '%%s\\n' %s\n"+
-		"sleep 300 >/dev/null 2>&1 &\np=$!\n"+
-		"trap 'kill \"$p\" 2>/dev/null; exit 143' TERM\nwait \"$p\"\n",
-		quote(marker), quote(event))
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := os.Symlink(os.Args[0], bin); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("PATH", dir)
+	t.Setenv(childEnv, "1")
+	t.Setenv(markerEnv, filepath.Join(dir, "started"))
 
 	done := make(chan int, 1)
 	var out strings.Builder
@@ -292,7 +306,7 @@ func TestStopSignal(t *testing.T) {
 			Options{CrewID: func() string { return "c1" }, Clock: fixedClock()})
 	}()
 
-	waitFor(t, marker, "the child never started")
+	waitFor(t, os.Getenv(markerEnv), "the child never started")
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +316,8 @@ func TestStopSignal(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the park did not stop on TERM — the child was left orphaned")
 	}
+	// The forwarded TERM is what ended the child: 128+15, the status the arm would
+	// have reported for a park killed by the same signal.
 	if code != 143 {
 		t.Errorf("exit = %d, want the child's 143", code)
 	}
@@ -345,9 +361,6 @@ func TestStartFailure(t *testing.T) {
 		t.Error("a park that never started posted")
 	}
 }
-
-// quote is a value handed to the stub script as a single shell word.
-func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // field is one string field of a bus row.
 func field(t *testing.T, row, key string) string {
