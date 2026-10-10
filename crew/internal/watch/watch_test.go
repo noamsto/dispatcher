@@ -899,8 +899,7 @@ func benchFoldPrograms(b *testing.B, prog string, rows []jsonv.Value) {
 		"since":  jsonv.Num(0),
 		"states": jsonv.Array(sv...),
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := jqrun.Run(prog, rows, 0, vars); err != nil {
 			b.Fatal(err)
 		}

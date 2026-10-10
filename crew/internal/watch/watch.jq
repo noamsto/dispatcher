@@ -7,10 +7,10 @@
 #     trailing newline, so the embedded copy spells the position out (the
 #     sessions `capture` anchor is the same patch).
 #   sort_by(.ts)       →  sort_by(.ts, .i)
-#     gojq's sort is not stable (jq's is), so the arm's `sort_by(.ts) | last`
-#     broke millisecond ties by accident of its filtered array. The fold
-#     stamps each row with its log index and breaks the tie by it — the row
-#     the arm returned on its own log, made deterministic.
+#     The arm's `sort_by(.ts) | last` broke millisecond ties on sort
+#     stability: gojq v0.12.19 sorts stably, but that is not contractual, so
+#     the fold stamps each row with its log index and breaks the tie by it —
+#     the row the arm returned on its own log, made deterministic.
 #
 # $crew and $me arrive as the arm's `--arg`s, $since and $states as its
 # `--argjson`. The arm's `. as $all | map(...)` rescanned the slurped array
