@@ -83,6 +83,13 @@ func parse(args []string) (call, string, int) {
 	if interval, ok = positive(intervalText); !ok || interval <= 0 {
 		return c, errInterval, exitUsage
 	}
+	// All the arm did with the interval is `sleep "$rr_interval"`, which waits out
+	// any value. Here it becomes a time.Duration, and past maxSleepInterval that
+	// product wraps negative, turning a bad flag into a loop that hammers tmux with
+	// no pause at all. Refusing is the nearest honest answer.
+	if interval > maxSleepInterval {
+		return c, errInterval, exitUsage
+	}
 	if quiet, ok = positive(quietText); !ok {
 		return c, errQuiet, exitUsage
 	}

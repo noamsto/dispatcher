@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"context"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,10 @@ import (
 // whose every part is idle, gets one redraw a minute, so a diagram cannot sit
 // stale on a quiet host.
 const rebuildBackstop = 60
+
+// maxSleepInterval is the longest --interval, in seconds, that survives the trip
+// to a time.Duration: past it, seconds times a billion wraps past MaxInt64.
+const maxSleepInterval = int64(math.MaxInt64 / int64(time.Second))
 
 // daemon is the arm's loop: one renderer per crew by lock, one redraw per change
 // of a signature the bus cannot hide, a crew with nothing live retired after its

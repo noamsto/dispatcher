@@ -135,6 +135,10 @@ func TestParseIsTheArmInItsOrder(t *testing.T) {
 		// never wakes.
 		{name: "interval overflows", args: []string{"--crew", "c1", "--interval", "99999999999999999999"},
 			msg: errInterval, code: exitUsage},
+		// Fits an int64, but seconds times a billion does not: the product would wrap
+		// negative and the poll would spin instead of waiting.
+		{name: "interval past a duration", args: []string{"--crew", "c1", "--interval", "10000000000"},
+			msg: errInterval, code: exitUsage},
 		{name: "quiet overflows", args: []string{"--crew", "c1", "--quiet", "99999999999999999999"},
 			msg: errQuiet, code: exitUsage},
 		{name: "quiet negative", args: []string{"--crew", "c1", "--quiet", "-1"}, msg: errQuiet, code: exitUsage},

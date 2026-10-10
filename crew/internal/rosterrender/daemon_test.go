@@ -142,6 +142,12 @@ func (l *loop) sleep(ctx context.Context, _ time.Duration) error {
 // under test or the ceiling.
 func (l *loop) run(args ...string) int {
 	l.t.Helper()
+	return l.runCtx(context.Background(), args...)
+}
+
+// runCtx is run with the caller's context, for the tests that drive a signal.
+func (l *loop) runCtx(ctx context.Context, args ...string) int {
+	l.t.Helper()
 	c, msg, code := parse(append([]string{"--crew", "c1"}, args...))
 	if msg != "" {
 		l.t.Fatalf("parse: %s (%d)", msg, code)
@@ -151,7 +157,7 @@ func (l *loop) run(args ...string) int {
 		l.t.Fatal(err)
 	}
 	daemon := []string{"--crew", "c1", "--interval", c.intervalText, "--quiet", c.quietText}
-	return l.opts.daemon(context.Background(), l.paths, cdir, c, daemon)
+	return l.opts.daemon(ctx, l.paths, cdir, c, daemon)
 }
 
 func (l *loop) hitCeiling() bool {
@@ -161,6 +167,8 @@ func (l *loop) hitCeiling() bool {
 }
 
 func (l *loop) cdir() string { return l.paths.CrewDir("c1") }
+
+func (l *loop) lockOwner() string { return record(l.cdir(), "roster-render.lock.d/pid") }
 
 // TestDaemonFollowsTheInstalledEntryNotItsOwnStart is the floating-identity bug:
 // CREW_SELF names the entry, and the entry is the symlink a switch repoints, so
@@ -306,9 +314,9 @@ func TestDaemonKeepsTheLastLiveCountWhenAPassFails(t *testing.T) {
 	if !l.hitCeiling() {
 		t.Errorf("a malformed bus retired the renderer after %d ticks", l.slept)
 	}
-	// The pass failed on jq's read of the bus; the arm let that stderr through, and
-	// a renderer that redraws nothing in silence is indistinguishable from a healthy
-	// one drawing a stale diagram.
+	// The arm let jq's read error reach the terminal; a renderer that redraws
+	// nothing in silence is indistinguishable from a healthy one drawing a stale
+	// diagram.
 	if errOut := l.opts.Stderr.(*bytes.Buffer).String(); !strings.Contains(errOut, "events.jsonl") {
 		t.Errorf("a failed pass was swallowed; stderr was %q", errOut)
 	}
@@ -323,22 +331,123 @@ func TestASignalAtTheHopBoundaryExits(t *testing.T) {
 	l.panes = "|role:br:reviewer|idle"
 	l.opts.Probes.InstalledCrew = func(string) string { return "/nix/store/zzzznew-crew/bin/crew" }
 
-	c, msg, code := parse([]string{"--crew", "c1"})
-	if msg != "" {
-		t.Fatalf("parse: %s (%d)", msg, code)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// The lock is taken before the signal handler is armed, so a cancelled context
+	// still runs its first pass and then stops at the hop rather than execing past it.
+	if code := l.runCtx(ctx, "--quiet", "5"); code != exitOK {
+		t.Errorf("exit code = %d, want %d", code, exitOK)
 	}
+	if got := l.hops; len(got) != 0 {
+		t.Errorf("a cancelled daemon re-execed anyway: %+v", got)
+	}
+}
+
+// TestDaemonRefusesASecondCopySilently: the incumbent keeps the lock, and the
+// newcomer's pane record above it already retargeted the running renderer.
+func TestDaemonRefusesASecondCopySilently(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	cdir := l.cdir()
+	if err := os.MkdirAll(filepath.Join(cdir, "roster-render.lock.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A live pid: a dead one is a stale lock, which the helper reclaims.
+	incumbent := strconv.Itoa(os.Getppid())
+	if err := os.WriteFile(filepath.Join(cdir, "roster-render.lock.d/pid"), []byte(incumbent+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	l.opts.Stderr = &stderr
+	if code := l.run(); code != exitOK {
+		t.Errorf("code = %d", code)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("a refused start was noisy: %q", stderr.String())
+	}
+	if l.lockOwner() != incumbent {
+		t.Errorf("the newcomer took the incumbent's lock: %q", l.lockOwner())
+	}
+}
+
+// TestDaemonExitsWhenItLosesTheLock: `crew deregister` removes the crew dir under
+// a running renderer, and the loop notices at the top of its next pass.
+func TestDaemonExitsWhenItLosesTheLock(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	first := l.sleep
+	l.opts.Probes.Sleep = func(ctx context.Context, d time.Duration) error {
+		if l.slept == 2 {
+			if err := os.RemoveAll(filepath.Join(l.cdir(), "roster-render.lock.d")); err != nil {
+				t.Error(err)
+			}
+		}
+		return first(ctx, d)
+	}
+	if code := l.run("--quiet", "600"); code != exitOK {
+		t.Errorf("code = %d", code)
+	}
+	if l.slept > 3 {
+		t.Errorf("kept running after losing the lock: %d ticks", l.slept)
+	}
+}
+
+// TestDaemonReleasesOnlyItsOwnLock: `_lock_release` is an unconditional rm -rf, so
+// a renderer whose lock was reclaimed must not delete the new owner's.
+func TestDaemonReleasesOnlyItsOwnLock(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	first := l.sleep
+	l.opts.Probes.Sleep = func(ctx context.Context, d time.Duration) error {
+		if l.slept == 1 {
+			if err := os.WriteFile(filepath.Join(l.cdir(), "roster-render.lock.d/pid"), []byte("4242\n"), 0o644); err != nil {
+				t.Error(err)
+			}
+		}
+		return first(ctx, d)
+	}
+	if code := l.run("--quiet", "600"); code != exitOK {
+		t.Errorf("code = %d", code)
+	}
+	if got := l.lockOwner(); got != "4242" {
+		t.Errorf("the new owner's lock was removed: %q", got)
+	}
+}
+
+// TestPassWritesOnlyWhenTheDiagramChanges is the arm's `cmp -s` gate, which is what
+// keeps the aeye carousel from re-rendering an identical frame every interval.
+func TestPassWritesOnlyWhenTheDiagramChanges(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
 	cdir := l.cdir()
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	// The lock is taken before the signal handler is armed, so a cancelled context
-	// still runs one pass and then stops at the hop rather than execing through it.
-	if got := l.opts.daemon(ctx, l.paths, cdir, c, []string{"--crew", "c1"}); got != exitOK {
-		t.Errorf("exit code = %d, want %d", got, exitOK)
+	file := func() string {
+		return target(l.paths.Common, "c1", l.opts.RosterDir, l.opts.Clock.Now)
 	}
-	if got := l.hops; len(got) != 0 {
-		t.Errorf("a cancelled daemon re-execed anyway: %+v", got)
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(file())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp, err := os.Stat(file())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.Stat(file())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stamp.ModTime().Equal(again.ModTime()) {
+		t.Errorf("an unchanged bus rewrote the diagram")
+	}
+	if got, _ := os.ReadFile(file()); string(got) != string(first) {
+		t.Errorf("the diagram changed under an unchanged bus")
 	}
 }
