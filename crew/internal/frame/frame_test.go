@@ -590,6 +590,8 @@ func lookup(r []kv, key string) (string, bool) {
 func TestPiStopped(t *testing.T) {
 	want := map[string]string{
 		"pi_truncated_idle":              "truncated",
+		"pi_truncated_padded_idle":       "truncated",
+		"pi_truncated_select":            "",
 		"pi_provider_error_idle":         "provider-error",
 		"pi_provider_error_hint_idle":    "provider-error",
 		"pi_provider_error_wrapped_idle": "provider-error",

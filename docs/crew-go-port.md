@@ -229,9 +229,9 @@ output contract below), with each edit justified.
   ignore it inherits. A probe that returns into a cancelled context was cut
   short, and its failure value (empty text, a dead pane) is no evidence: the
   watch exits 128+signo without posting, as the arm died on the signal. The
-  `--sh nudge` and `--sh release` ops alone run on through a signal (for at
+  `--sh nudge`, `--sh continue` and `--sh release` ops alone run on through a signal (for at
   most 2 minutes), as the arm's `$(…)` child outlived it, so a typed nudge or
-  killed window still gets its bus row. Every append is one `O_APPEND` write,
+  continue line or killed window still gets its bus row. Every append is one `O_APPEND` write,
   so a kill cannot leave a torn row; the `refresh-at` stamp and the clock file
   keep tmp+rename. A failed bus write exits 1 where the arm's `set -e` did (a
   `failed` or clearance post); `_post_blocked` ran only in `if` context, so

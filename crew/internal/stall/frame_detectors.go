@@ -30,7 +30,13 @@ type frameDet struct {
 	d9Hits, d9TypedHit int64
 	d9At               int64
 	d9Typed            bool
+	d9Outcome          string // "typed" once a continue line went in this episode
+	d9Count            int64  // helper calls this watch, across episodes
 }
+
+// d9Limit caps continue lines per watch: a lead that keeps stopping, or pane
+// text crafted to look stopped, must surface instead of being fed forever.
+const d9Limit = 3
 
 // space is glibc's [[:space:]] in a UTF-8 locale, which RE2's own class is not.
 const space = `\t\n\v\f\r \x{1680}\x{2000}-\x{2006}\x{2008}-\x{200A}\x{2028}\x{2029}\x{205F}\x{3000}`
@@ -448,7 +454,7 @@ func (w *watch) d9() error {
 		fd.d9Typed, fd.d9TypedHit = true, fd.d9Hits
 		return w.d9Continue()
 	}
-	if fd.d9Typed && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
+	if fd.d9Outcome == "typed" && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
 		return w.d9Blocked(w.d9What() + " in pane " + w.cfg.pane + " — auto-continued but not resumed; check the pane (crew where)")
 	}
 	return nil
@@ -484,11 +490,29 @@ func (w *watch) d9Close() error {
 			return err
 		}
 	}
-	fd.d9Kind, fd.d9Hits, fd.d9TypedHit, fd.d9At, fd.d9Typed = "", 0, 0, 0, false
+	fd.d9Kind, fd.d9Hits, fd.d9TypedHit, fd.d9At, fd.d9Typed, fd.d9Outcome = "", 0, 0, 0, false, ""
 	return nil
 }
 
+// d9Continue re-reads the bus first: d9 runs every tick but the loop reads
+// the bus every 4th, and the lead may have just finished or blocked itself.
 func (w *watch) d9Continue() error {
+	fd := &w.fd
+	if err := w.refresh(); err != nil {
+		return err
+	}
+	switch {
+	case w.bus.state == "done" || w.bus.state == "failed" || w.bus.state == "exited":
+		return nil
+	case w.bus.state == "blocked" && w.bus.source != "watchdog":
+		fd.d9Typed = false
+		return nil
+	case fd.d9Count == 0 && w.bus.source == "watchdog" && strings.HasPrefix(w.bus.detail, w.d9Prefix()+" auto-continued"):
+		// A previous watchdog typed for this episode and the lead has posted
+		// nothing since; this watch has typed nothing, so the row is not its own.
+		fd.d9Outcome = "typed"
+		return nil
+	}
 	cfg := w.cfg
 	notResumed := w.d9What() + " in pane " + cfg.pane + " — not resumed"
 	why := ""
@@ -503,6 +527,10 @@ func (w *watch) d9Continue() error {
 	if why != "" {
 		return w.d9Blocked(notResumed + " (auto-continue " + why + ")")
 	}
+	if fd.d9Count >= d9Limit {
+		return w.d9Blocked(notResumed + " (auto-continue limit reached: " + strconv.FormatInt(d9Limit, 10) + " this watch)")
+	}
+	fd.d9Count++
 	out, rc, ran, err := w.shWrite("continue", cfg.pane, cfg.engine, cfg.fromID, cfg.crew)
 	if err != nil {
 		return err
@@ -511,6 +539,7 @@ func (w *watch) d9Continue() error {
 	case !ran:
 		return w.d9Blocked(notResumed + " (auto-continue helper failed)")
 	case rc == 0:
+		fd.d9Outcome = "typed"
 		return w.post("working", w.d9Prefix()+" auto-continued — pane "+cfg.pane)
 	case rc == 3:
 		reason, _, _ := strings.Cut(out, " — ")

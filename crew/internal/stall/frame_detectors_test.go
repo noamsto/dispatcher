@@ -1182,6 +1182,7 @@ func TestD9Refusals(t *testing.T) {
 		{name: "live", frame: "pi_truncated_live.txt"},
 		{name: "draft", frame: "pi_truncated_draft.txt"},
 		{name: "dialog", frame: "pi_truncated_dialog.txt"},
+		{name: "pi-select", frame: "pi_truncated_select.txt"},
 		{name: "claude", engine: "claude", frame: "pi_truncated_idle.txt"},
 		{name: "codex", engine: "codex", frame: "pi_truncated_idle.txt"},
 		{name: "cursor", engine: "cursor", frame: "pi_truncated_idle.txt"},
@@ -1252,6 +1253,87 @@ func TestD9CallFailures(t *testing.T) {
 			t.Errorf("%d calls, want no retry", r.continues)
 		}
 	})
+}
+
+// TestD9FreshBusBeforeTyping has the lead post between the loop's 4-tick bus
+// reads: the second stopped tick runs on the stale view, as the loop would.
+func TestD9FreshBusBeforeTyping(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"pr_open", `{"state":"pr_open","detail":"x"}`},
+		{"done", `{"state":"done","detail":"x"}`},
+		{"worker-blocked", workerBlock},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newD9Rig(t, d9ID, "pi")
+			var at int64
+			r.tick(&at, "pi_truncated_idle.txt")
+			r.write(16, tc.body)
+			r.w.now = r.h.seed + 30
+			r.w.text = frameText(t, "pi_truncated_idle.txt")
+			if err := r.w.d9(); err != nil {
+				if code, ok := codeOf(err); !ok || code != 0 {
+					t.Fatal(err)
+				}
+			}
+			if r.continues != 0 {
+				t.Errorf("%d continue calls, want none", r.continues)
+			}
+		})
+	}
+}
+
+func TestD9RestartedWatchDoesNotRetype(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	r.write(1, `{"state":"working","detail":"truncated: auto-continued — pane %9","source":"watchdog"}`)
+	var at int64
+	var all []string
+	for range 4 {
+		all = append(all, r.tick(&at, "pi_truncated_idle.txt")...)
+	}
+	if r.continues != 0 {
+		t.Errorf("%d continue calls, want none", r.continues)
+	}
+	if len(all) != 1 || !strings.HasPrefix(all[0], "blocked|truncated: ") || !strings.Contains(all[0], "auto-continued but not resumed") {
+		t.Errorf("rows %q, want one blocked auto-continued but not resumed", all)
+	}
+}
+
+func TestD9SuppressedRefusalTellsNoContinueStory(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	r.rc, r.out = 2, "anchor: %9 is not the lead pane of @1"
+	r.write(1, wd("prompt: x"))
+	var at int64
+	var all []string
+	all = append(all, r.tick(&at, "pi_truncated_idle.txt")...)
+	all = append(all, r.tick(&at, "pi_truncated_idle.txt")...)
+	r.write(31, workerLife)
+	for range 4 {
+		all = append(all, r.tick(&at, "pi_truncated_idle.txt")...)
+	}
+	for _, row := range all {
+		if strings.Contains(row, "auto-continued") {
+			t.Errorf("row %q after a refusal that typed nothing", row)
+		}
+	}
+}
+
+func TestD9ContinueLimitPerWatch(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	var at int64
+	for range 3 {
+		r.tick(&at, "pi_truncated_idle.txt")
+		r.tick(&at, "pi_truncated_idle.txt")
+		r.tick(&at, "pi_truncated_live.txt")
+	}
+	if r.continues != 3 {
+		t.Fatalf("%d calls after three episodes, want 3", r.continues)
+	}
+	r.tick(&at, "pi_truncated_idle.txt")
+	rows := r.tick(&at, "pi_truncated_idle.txt")
+	want := "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue limit reached: 3 this watch)"
+	if r.continues != 3 || len(rows) != 1 || rows[0] != want {
+		t.Errorf("fourth episode: rows %q, %d calls, want [%q] and 3", rows, r.continues, want)
+	}
 }
 
 func TestHoldsEpisodeStoppedPrefixes(t *testing.T) {

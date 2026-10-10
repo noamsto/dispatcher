@@ -7624,11 +7624,13 @@ d6_rows() { bus | jq -r 'select(.kind=="status" and .body.source=="watchdog") | 
   nudge_frames "$(fx_nudge_pi_live)"
   CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
   [ "$status" -eq 12 ]
+  [[ "$output" == *"live turn or no idle input box"* ]]
   [ -z "$(nudge_keys)" ]
   [ -z "$(nudge_rows)" ]
   nudge_frames "$(fx_nudge_pi draft 'hello draft')"
   CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
   [ "$status" -eq 12 ]
+  [[ "$output" == *"unsent input in the input box"* ]]
   [ -z "$(nudge_keys)" ]
   [ -z "$(nudge_rows)" ]
 }
@@ -7638,7 +7640,9 @@ d6_rows() { bus | jq -r 'select(.kind=="status" and .body.source=="watchdog") | 
   nudge_frames "$(fx_nudge_pi idle '')"
   CREW_ID=c1 run run_crew stall-watch --sh continue %9 codex 'worker:feat/x#s1-1' c1
   [ "$status" -eq 12 ]
+  [[ "$output" == *"no verified idle lead frame for codex"* ]]
   [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
 }
 
 @test "stall-watch: D6 stops auto-nudging after an anchor refusal" {

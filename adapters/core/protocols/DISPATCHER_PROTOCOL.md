@@ -1319,8 +1319,10 @@ it at relay time.
   pane, or a codex/cursor pane; once per episode) and recorded as a `kind:"nudge"` row with
   `msg_ts` 0, and posts `working "<prefix> auto-continued — pane %N"`. `blocked "<prefix> …
   not resumed"` means the frame persisted after the line, the typed line was not accepted,
-  or auto-continue was refused or off (`--no-nudge`): verify with `crew where`, then type
-  `continue` in the pane yourself or re-dispatch. Never escalates to `dead:`; clears itself
+  or auto-continue was refused or off (`--no-nudge`): verify with `crew where`, then have
+  the human type `continue` in that pane (capture before and after, per the pane-injection
+  rule below) or re-dispatch. The watchdog stops auto-continuing after 3 lines per watch
+  (`not resumed (auto-continue limit reached …)`). Never escalates to `dead:`; clears itself
   when the pane moves on.
 - `budget:` — the worker's engine (a role pane: the role's own engine, posted under
   `role:<branch>:<role>`) crossed ≥95% on a quota window whose `resets_at` is null or still
@@ -1432,9 +1434,11 @@ Two reads remain for detail:
   human. This bullet is about everything
   else: delivering a message, or typing into a stopped
   or re-dispatched session. Apart from the nudge, no component types into an engine pane for that.
-  The single exception is the constant line `crew inbox "$CREW_WORKER_ID"`, typed into a
+  There are two exceptions. One is the constant line `crew inbox "$CREW_WORKER_ID"`, typed into a
   claude/pi lead's pane by `crew nudge` or the watchdog; the lead's shell expands it
-  to its own session id. Use it when an idle lead has
+  to its own session id. The other is the constant line `continue from where you stopped; if a
+  command's result is missing, re-run it`, typed only by the watchdog into an idle pi lead
+  after a `truncated:`/`provider-error:` frame. Use the inbox line when an idle lead has
   an unread directive, monitors expired after a stopped job, or a resume follows a
   recovered host. Post the directive first (`crew reply worker:<branch> "<directive>"`),
   then `crew nudge <codename|branch> --wait`, backgrounded (the 30-minute default
