@@ -368,6 +368,12 @@ Rules that still bind a porter:
   - `--release 00`: bash tests `[ "$release" = 0 ]` as a string, so `00` kept the
     release loop on with a zero grace; Go parses the integer, so `00` is off like
     `0`.
+- Specific to `adopt`, and not mirrored: `_occupants`' third read,
+  `tmux list-panes -a -F '#{window_id}\t#{pane_id}\t#{pane_current_command}'`. Its rows
+  fill only the advisory `engine`/`panes` fields of the JSON the helper prints, and
+  `adopt` asks only whether that array is empty — which the window list alone
+  answers — so the read would run for nothing. The two reads that decide it keep
+  their argv, count and order.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
