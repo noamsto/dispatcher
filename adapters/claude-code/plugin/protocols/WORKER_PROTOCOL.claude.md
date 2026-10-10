@@ -443,7 +443,7 @@ Right before every stopping path (done; terminal failure of spec, plan, consult 
    A value surfaces → stop, post `blocked` disclosing it, recommend rotating it; never repeat the value (message, file, commit, PR) or scrub your transcript (rotation fixes it).
    Guard `adapters/core/secret-read-guard.sh`; claude: dispatcher plugin `PreToolUse` hooks on `Bash`/`Read`/`Grep`.
    Backstop only: where absent or unparsed, this rule enforces.
-8. **Clean up every background process you start.** Up front, register a time-bounded `trap '<reap the pids>' EXIT INT TERM` so every exit path (`done`, `failed`, kill, timeout, early exit) stops them; confirm gone (`pgrep -f <pattern>` empty) before the next stage. Load generators (`yes`, `stress`, `lookbusy`, `md5sum </dev/urandom`, …) are never exempt (no hogs reparented to init).
+8. **Clean up every background process you start.** Up front, register a time-bounded `trap '<reap the pids>' EXIT INT TERM` so every exit path (`done`, `failed`, kill, timeout, early exit) stops them; confirm each pid you recorded is gone (`kill -0 <pid>` fails, or `wait <pid>` returned), never by matching process lists by pattern (`pgrep -f`/`pkill -f`), before the next stage. Load generators (`yes`, `stress`, `lookbusy`, `md5sum </dev/urandom`, …) are never exempt (no hogs reparented to init).
 
 ### Deliberate load (timing repros)
 
