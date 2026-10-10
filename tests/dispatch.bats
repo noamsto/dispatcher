@@ -725,7 +725,6 @@ EOF
 @test "--models --json drops a model the gate refuses for the tier" {
   DISPATCH_ENGINES="claude codex" run run_dispatch --models --json
   [ "$status" -eq 0 ]
-  # claude standard admits haiku as of #943; codex trivial still refuses sol.
   jq -e '.engines.claude.tiers.standard.models | index("haiku") != null' <<<"$output"
   jq -e '.engines.claude.tiers.trivial.models | index("haiku") != null' <<<"$output"
   jq -e '.engines.codex.tiers.trivial.models | index("gpt-5.6-sol") == null' <<<"$output"
