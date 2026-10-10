@@ -234,6 +234,71 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
   ((${#pairs[@]})) || return 0
   printf '%s\0' "${pairs[@]}" | LC_ALL=C sort -z -u
 }
+# Legacy remotes/ and branches/ files are read by git outside the config API.
+# Keep their records distinct from key/value records: config keys cannot begin
+# with #, and the fixed fields make the namespace/kind/name/hash boundary
+# unambiguous. Names are restricted to ordinary path components; anything
+# else is represented as unsafe metadata and is never opened.
+_wt_cfg_legacy_mark=$'#covers\nlegacy'
+_wt_cfg_legacy_prefix=$'#legacy\n'
+_wt_cfg_legacy_name_safe() {
+  [[ -n $1 && $1 != . && $1 != .. && $1 != */* && $1 != *$'\n'* && $1 != *$'\r'* && $1 != *$'\t'* && $1 != *[[:cntrl:][:space:]]* ]]
+}
+_wt_cfg_legacy_records() { # <common> -> NUL records for direct legacy entries
+  local common="$1" ns dir entry name hash shown
+  local -a entries
+  for ns in remotes branches; do
+    dir="$common/$ns"
+    if [ -L "$dir" ]; then
+      printf '%s%s\nsymlink\n.\0' "$_wt_cfg_legacy_prefix" "$ns"
+      continue
+    fi
+    [ -d "$dir" ] || continue
+    entries=()
+    shopt -s nullglob dotglob
+    entries=("$dir"/*)
+    shopt -u nullglob dotglob
+    for entry in "${entries[@]}"; do
+      name="${entry##*/}"
+      if ! _wt_cfg_legacy_name_safe "$name"; then
+        printf -v shown %q "$name"
+        printf '%s%s\nunsafe-name\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$shown"
+      elif [ -L "$entry" ]; then
+        printf '%s%s\nsymlink\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      elif [ -f "$entry" ]; then
+        if [ ! -r "$entry" ] || ! hash="$(sha256sum -- "$entry")"; then
+          printf '%s%s\nunreadable\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        else
+          hash="${hash%% *}"
+          printf '%s%s\nfile\n%s\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name" "$hash"
+        fi
+      elif [ -d "$entry" ]; then
+        printf '%s%s\ndirectory\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      elif [ -p "$entry" ]; then
+        printf '%s%s\nfifo\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      elif [ -S "$entry" ]; then
+        printf '%s%s\nsocket\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      elif [ -b "$entry" ] || [ -c "$entry" ]; then
+        printf '%s%s\ndevice\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      else
+        printf '%s%s\nother\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+      fi
+    done
+  done
+}
+_wt_cfg_legacy_fields() { # <record> <namespace-var> <kind-var> <name-var> [hash-var]
+  local payload="$1" rest
+  payload="${payload#"$_wt_cfg_legacy_prefix"}"
+  printf -v "$2" '%s' "${payload%%$'\n'*}"
+  rest="${payload#*$'\n'}"
+  printf -v "$3" '%s' "${rest%%$'\n'*}"
+  rest="${rest#*$'\n'}"
+  printf -v "$4" '%s' "${rest%%$'\n'*}"
+  if [ $# -ge 5 ]; then
+    rest="${rest#*$'\n'}"
+    printf -v "$5" '%s' "$rest"
+  fi
+}
 _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
   local what="$1" rec keys='' raw='' disp
   shift
@@ -249,9 +314,9 @@ _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their
   [ -n "$keys" ] || return 0
   echo "git-config baseline: recorded $what: $keys" >&2
 }
-_wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite, only add the redirect class (#678)
-  local common="$1" file tmp rec key value
-  local -a recs union add=()
+_wt_cfg_baseline_init() { # <common> — record the baseline once; never overwrite, only add coverage classes
+  local common="$1" file tmp rec key value kind ns name hash redirect_covered=0 legacy_covered=0
+  local -a recs union add=() legacy legacy_add=()
   file="$common/crew/git-config-baseline"
   if [ -L "$file" ]; then
     return 0
@@ -260,8 +325,10 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
     [ -f "$file" ] || return 0
     mapfile -d '' recs <"$file" || return 1
     for rec in "${recs[@]}"; do
-      [ "$rec" != "$_wt_cfg_redirect_mark" ] || return 0
+      [ "$rec" = "$_wt_cfg_redirect_mark" ] && redirect_covered=1
+      [ "$rec" = "$_wt_cfg_legacy_mark" ] && legacy_covered=1
     done
+    [ "$redirect_covered" -eq 1 ] && [ "$legacy_covered" -eq 1 ] && return 0
     # TOFU, as at creation — but never exec-class pairs, which would launder drift.
     mapfile -d '' union < <(_wt_cfg_union "$common")
     wait $! || return 1
@@ -271,8 +338,15 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
       value="${value#$'\n'}"
       if _wt_cfg_match _wt_redirect_keys "$key" "$value"; then add+=("$rec"); fi
     done
+    mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
+    wait $! || return 1
+    for rec in "${legacy[@]}"; do
+      [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
+      _wt_cfg_legacy_fields "$rec" ns kind name hash
+      [ "$kind" = file ] && legacy_add+=("$rec")
+    done
     tmp="$(mktemp "$file.XXXXXX")" || return 1
-    if ! printf '%s\0' "${recs[@]}" "${add[@]}" "$_wt_cfg_redirect_mark" | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
+    if ! printf '%s\0' "${recs[@]}" "${add[@]}" "${legacy_add[@]}" "$_wt_cfg_redirect_mark" "$_wt_cfg_legacy_mark" | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
       rm -f -- "$tmp"
       return 1
     fi
@@ -281,16 +355,25 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   fi
   mkdir -p -- "$common/crew" || return 1
   tmp="$(mktemp "$file.XXXXXX")" || return 1
-  if ! { _wt_cfg_union "$common" && printf '%s\0' "$_wt_cfg_redirect_mark"; } | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
+  mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
+  wait $! || return 1
+  for rec in "${legacy[@]}"; do
+    [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
+    _wt_cfg_legacy_fields "$rec" ns kind name hash
+    [ "$kind" = file ] && legacy_add+=("$rec")
+  done
+  if ! { _wt_cfg_union "$common" && printf '%s\0' "${legacy_add[@]}" "$_wt_cfg_redirect_mark" "$_wt_cfg_legacy_mark"; } | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
     rm -f -- "$tmp"
     return 1
   fi
   mapfile -d '' recs <"$file"
   _wt_cfg_note_keys "$file" "${recs[@]}"
 }
-_wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift from the baseline
-  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon kd plain redirect=
-  local -a pairs listing drift=()
+_wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and legacy-file drift
+  local common="$1" gitdir="$1" file rec key value origin found i R canon kd plain redirect=
+  [ "$#" -ge 2 ] && gitdir="$2"
+  local legacy_mark=0 legacy_kind legacy_ns legacy_name
+  local -a pairs listing drift=() legacy_pairs=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
   if [ ! -f "$file" ]; then
@@ -301,7 +384,8 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
   mapfile -d '' pairs <"$file" || return 1
   for rec in "${pairs[@]}"; do
     [ -n "$rec" ] || continue
-    [ "$rec" != "$_wt_cfg_redirect_mark" ] || redirect=1
+    [ "$rec" = "$_wt_cfg_redirect_mark" ] && redirect=1
+    [ "$rec" = "$_wt_cfg_legacy_mark" ] && legacy_mark=1
     _wt_cfg_canon "$R" "$rec" canon
     base["$canon"]=1
   done
@@ -310,6 +394,26 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config drift fr
     echo "refusing git: cannot list the git config of $gitdir" >&2
     return 1
   fi
+  mapfile -d '' legacy_pairs < <(_wt_cfg_legacy_records "$common")
+  wait $! || return 1
+  local legacy_bad=0
+  for rec in "${legacy_pairs[@]}"; do
+    [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
+    _wt_cfg_legacy_fields "$rec" legacy_ns legacy_kind legacy_name
+    if [ "$legacy_kind" != file ]; then
+      printf 'refusing git: unsafe legacy entry %q (%s/%s) in %q\n' \
+        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_kind" "$common" >&2
+      legacy_bad=1
+      continue
+    fi
+    [ "$legacy_mark" -eq 1 ] || continue
+    if ! [[ -v "base[$rec]" ]]; then
+      printf 'refusing git: legacy entry %q (%s/%s) is new or changed from the git-config baseline %q\n' \
+        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_name" "$file" >&2
+      legacy_bad=1
+    fi
+  done
+  [ "$legacy_bad" -eq 0 ] || return 1
   for rec in "${pairs[@]}"; do
     _wt_cfg_canon "$R" "$rec" canon
     [ -z "${base["$canon"]+x}" ] || continue
