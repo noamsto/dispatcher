@@ -1183,7 +1183,10 @@ if [ -z "$pane" ]; then
   # PATH is still in effect. When nothing was dropped — a raw run, or a caller
   # whose PATH never carried the pinned dirs — the window opens as before.
   engine_env_path="$(engine_path)"
-  tmux_bin="$(command -v tmux)"
+  # `|| true`: a bare `command -v` would end the script under errexit when tmux
+  # is missing; falling back to plain tmux keeps the "could not resolve a tmux
+  # pane" message below, which is what it said before this block existed.
+  tmux_bin="$(command -v tmux || true)"
   pane_client=(tmux)
   if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
     pane_client=(env PATH="$engine_env_path" "$tmux_bin")
