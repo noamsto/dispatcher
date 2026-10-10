@@ -17,7 +17,8 @@ flowchart TD
     ENG -->|"DeepSeek / independent model family"| PI["pi"]
 
     CLAUDE --> OPUS["opus — deep; escalation rung for standard/trivial"]
-    CLAUDE --> SONNET["sonnet — standard/trivial lead"]
+    CLAUDE --> HAIKU["haiku — trivial lead; fully specified standard"]
+    CLAUDE --> SONNET["sonnet — standard lead; escalation rung for haiku"]
     CODEX --> GH["codex · deep → model map"]
     CODEX --> GM["codex · standard → model map"]
     CODEX --> GL["codex · trivial → model map"]
@@ -25,6 +26,7 @@ flowchart TD
     PI --> PM["pi · tier → model map"]
 
     OPUS --> D[["dispatch &lt;tier&gt; &lt;model&gt; [--agent claude|codex|cursor|pi] [id] &lt;title&gt;"]]
+    HAIKU --> D
     SONNET --> D
     GH --> D
     GM --> D
@@ -70,14 +72,14 @@ review depth.
 
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** (mechanical plan steps may run on **haiku**, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** @**medium** → **sonnet** (mechanical plan steps may run on **haiku**, never the lead) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled) | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
-| `trivial`  | **sonnet** @**low** → escalated **opus** @**low**; **haiku** @**low** (`claude-haiku-5-5`) may lead when the edit is fully specified (rule below), escalating **haiku → sonnet** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
+| `deep`     | **opus** → **sonnet** / **haiku** (named-edit plan steps, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
+| `standard` | **sonnet** @**medium** / **haiku** @**medium** (fully specified, `--plan provided`) → **sonnet** / **haiku** (named-edit plan steps) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled) | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
+| `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; a `trivial` task whose edit still needs reading to decide stays on **sonnet** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
 | local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
-On claude `standard`/`trivial`, sonnet leads at the tier-typical effort (`medium` / `low`), and an opus escalation runs at that same effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
+On claude, haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
 
-**When haiku replaces sonnet.** Haiku 5.5 (`claude-haiku-5-5`, alias `haiku`; verified: the alias resolves to it and it accepts `low` through `max` effort, default `medium`) stands in for sonnet only when the work is mechanical and bounded, not security-adjacent, not UI, and fully specified: the exact file and exact edit are named (a lockfile regen, a literal typo, a mechanical rename) and no choice is left. A `trivial` task that still needs reading code to decide the edit stays on sonnet. Sonnet stays the typical launch on `trivial` and `standard`. Haiku never leads `standard`/`deep` (the gate does not admit it there); on those tiers it is only an execute-subagent model (Agent `model: haiku`) for plan steps that are purely mechanical, and any step with judgment stays on sonnet. Any doubt, or a failed haiku run, goes to sonnet (`haiku → sonnet` escalation). Haiku has no effort ceiling to enforce: it accepts every level, so the gate refuses none; launch it at `low` and do not raise effort to compensate for a task that needs judgment, escalate the model instead.
+**Haiku on claude.** Haiku 5.5 (`claude-haiku-5-5`, alias `haiku`; verified: the alias resolves to it and it accepts `low` through `max` effort, default `medium`) leads the `trivial` tier by default at `low`: `trivial` runs no critics and a failed haiku run costs one rerun, so the cheap rung is the default; a `trivial` task whose edit still needs reading code to decide leads on sonnet instead. It may also lead claude `standard` at `medium` when the work is bounded and fully specified — dispatched `--plan provided` with root cause or mechanism, an explicit file list, a named approach, and acceptance criteria all present — and not security-adjacent, UI, or genuinely underspecified. Otherwise sonnet leads `standard` at `medium`. A failed haiku run escalates to sonnet in-row (`haiku → sonnet`) on both rows, then to opus. Haiku never leads `deep`. On claude `standard`/`deep`, an execute subagent runs `model: haiku` for a plan step whose files and edit are named (Agent `model: haiku`), and `model: sonnet` for a step that needs judgment; security or UI steps never use haiku. Haiku has no effort ceiling to enforce — it accepts every level, so the gate refuses none — so do not raise effort to compensate for a task that needs judgment; escalate the model instead.
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
 
@@ -449,8 +451,8 @@ everything the gate admits at that row.
 | engine | tier | typical launch model | the gate admits |
 | --- | --- | --- | --- |
 | claude | `deep` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `fable`, `claude-fable-*` |
-| claude | `standard` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*` |
-| claude | `trivial` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
+| claude | `standard` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
+| claude | `trivial` | `haiku` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
 | codex | `deep` | `gpt-5.6-sol` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
 | codex | `standard` | `gpt-5.6-terra` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
 | codex | `trivial` | `gpt-5.6-luna` | `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
@@ -528,7 +530,8 @@ accepted-and-ignored — so its effort is never refused, only the model rung.
 
 The table is the configured model→downgrade mapping; opus's effort-aware
 exception lives in `pace_rule_target`, not in the mapping. Claude `standard`
-and `trivial` lead on `sonnet`, so the ≥70% pace gate only touches those rows
+leads on `sonnet` (or a fully specified `haiku`), and `trivial` on `haiku`, so
+the ≥70% pace gate only touches those rows
 when `opus` is used as the escalation, and refuses it only at `high`+ — the
 tier-typical `low`/`medium` opus burns at the standard class and is admitted
 (Burn classes, above). Where it does refuse, the downgrade target is the same:

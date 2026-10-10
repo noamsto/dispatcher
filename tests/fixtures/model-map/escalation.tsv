@@ -1,4 +1,4 @@
-# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — do not edit
+# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — claude-standard rows updated by the #943 policy change — do not edit
 claude	deep	opus	opus	record	-	none	-
 claude	deep	opus	sonnet	record	-	none	-
 claude	deep	opus	haiku	refuse	-	none	-
@@ -226,11 +226,11 @@ claude	deep	claude-opus-5-high[context=1m,]	claude-opus-5-high[Context=1m]	recor
 claude	deep	claude-opus-5-high[context=1m,]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	opus	opus	record	-	none	-
 claude	standard	opus	sonnet	record	-	none	-
-claude	standard	opus	haiku	refuse	-	none	-
+claude	standard	opus	haiku	record	-	none	-
 claude	standard	opus	fable	refuse	-	none	-
 claude	standard	opus	claude-opus-5	record	-	none	-
 claude	standard	opus	claude-sonnet-5	record	-	none	-
-claude	standard	opus	claude-haiku-4-5	refuse	-	none	-
+claude	standard	opus	claude-haiku-4-5	record	-	none	-
 claude	standard	opus	claude-fable-5-1	refuse	-	none	-
 claude	standard	opus	claude-thigh	refuse	-	none	-
 claude	standard	opus	claude-opus-5[context=1m]	record	-	none	-
@@ -241,11 +241,11 @@ claude	standard	opus	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	opus	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	sonnet	opus	record	sonnet (record only)	none	-
 claude	standard	sonnet	sonnet	record	-	none	-
-claude	standard	sonnet	haiku	refuse	-	none	-
+claude	standard	sonnet	haiku	record	-	none	-
 claude	standard	sonnet	fable	refuse	-	none	-
 claude	standard	sonnet	claude-opus-5	record	sonnet (record only)	none	-
 claude	standard	sonnet	claude-sonnet-5	record	-	none	-
-claude	standard	sonnet	claude-haiku-4-5	refuse	-	none	-
+claude	standard	sonnet	claude-haiku-4-5	record	-	none	-
 claude	standard	sonnet	claude-fable-5-1	refuse	-	none	-
 claude	standard	sonnet	claude-thigh	refuse	-	none	-
 claude	standard	sonnet	claude-opus-5[context=1m]	record	sonnet (record only)	none	-
@@ -255,12 +255,12 @@ claude	standard	sonnet	claude-opus-5-high[]	record	sonnet (record only)	none	-
 claude	standard	sonnet	claude-opus-5-high[Context=1m]	record	sonnet (record only)	none	-
 claude	standard	sonnet	claude-opus-5-high[context=1m,]	record	sonnet (record only)	none	-
 claude	standard	haiku	opus	record	-	none	-
-claude	standard	haiku	sonnet	record	-	none	-
-claude	standard	haiku	haiku	refuse	-	none	-
+claude	standard	haiku	sonnet	record	haiku (record only)	none	-
+claude	standard	haiku	haiku	record	-	none	-
 claude	standard	haiku	fable	refuse	-	none	-
 claude	standard	haiku	claude-opus-5	record	-	none	-
-claude	standard	haiku	claude-sonnet-5	record	-	none	-
-claude	standard	haiku	claude-haiku-4-5	refuse	-	none	-
+claude	standard	haiku	claude-sonnet-5	record	haiku (record only)	none	-
+claude	standard	haiku	claude-haiku-4-5	record	-	none	-
 claude	standard	haiku	claude-fable-5-1	refuse	-	none	-
 claude	standard	haiku	claude-thigh	refuse	-	none	-
 claude	standard	haiku	claude-opus-5[context=1m]	record	-	none	-
@@ -271,11 +271,11 @@ claude	standard	haiku	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	haiku	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	fable	opus	record	-	none	-
 claude	standard	fable	sonnet	record	-	none	-
-claude	standard	fable	haiku	refuse	-	none	-
+claude	standard	fable	haiku	record	-	none	-
 claude	standard	fable	fable	refuse	-	none	-
 claude	standard	fable	claude-opus-5	record	-	none	-
 claude	standard	fable	claude-sonnet-5	record	-	none	-
-claude	standard	fable	claude-haiku-4-5	refuse	-	none	-
+claude	standard	fable	claude-haiku-4-5	record	-	none	-
 claude	standard	fable	claude-fable-5-1	refuse	-	none	-
 claude	standard	fable	claude-thigh	refuse	-	none	-
 claude	standard	fable	claude-opus-5[context=1m]	record	-	none	-
@@ -286,11 +286,11 @@ claude	standard	fable	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	fable	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5	opus	record	-	none	-
 claude	standard	claude-opus-5	sonnet	record	-	none	-
-claude	standard	claude-opus-5	haiku	refuse	-	none	-
+claude	standard	claude-opus-5	haiku	record	-	none	-
 claude	standard	claude-opus-5	fable	refuse	-	none	-
 claude	standard	claude-opus-5	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5	claude-opus-5[context=1m]	record	-	none	-
@@ -301,11 +301,11 @@ claude	standard	claude-opus-5	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	claude-opus-5	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-sonnet-5	opus	record	sonnet (record only)	none	-
 claude	standard	claude-sonnet-5	sonnet	record	-	none	-
-claude	standard	claude-sonnet-5	haiku	refuse	-	none	-
+claude	standard	claude-sonnet-5	haiku	record	-	none	-
 claude	standard	claude-sonnet-5	fable	refuse	-	none	-
 claude	standard	claude-sonnet-5	claude-opus-5	record	sonnet (record only)	none	-
 claude	standard	claude-sonnet-5	claude-sonnet-5	record	-	none	-
-claude	standard	claude-sonnet-5	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-sonnet-5	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-sonnet-5	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-sonnet-5	claude-thigh	refuse	-	none	-
 claude	standard	claude-sonnet-5	claude-opus-5[context=1m]	record	sonnet (record only)	none	-
@@ -315,12 +315,12 @@ claude	standard	claude-sonnet-5	claude-opus-5-high[]	record	sonnet (record only)
 claude	standard	claude-sonnet-5	claude-opus-5-high[Context=1m]	record	sonnet (record only)	none	-
 claude	standard	claude-sonnet-5	claude-opus-5-high[context=1m,]	record	sonnet (record only)	none	-
 claude	standard	claude-haiku-4-5	opus	record	-	none	-
-claude	standard	claude-haiku-4-5	sonnet	record	-	none	-
-claude	standard	claude-haiku-4-5	haiku	refuse	-	none	-
+claude	standard	claude-haiku-4-5	sonnet	record	haiku (record only)	none	-
+claude	standard	claude-haiku-4-5	haiku	record	-	none	-
 claude	standard	claude-haiku-4-5	fable	refuse	-	none	-
 claude	standard	claude-haiku-4-5	claude-opus-5	record	-	none	-
-claude	standard	claude-haiku-4-5	claude-sonnet-5	record	-	none	-
-claude	standard	claude-haiku-4-5	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-haiku-4-5	claude-sonnet-5	record	haiku (record only)	none	-
+claude	standard	claude-haiku-4-5	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-haiku-4-5	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-haiku-4-5	claude-thigh	refuse	-	none	-
 claude	standard	claude-haiku-4-5	claude-opus-5[context=1m]	record	-	none	-
@@ -331,11 +331,11 @@ claude	standard	claude-haiku-4-5	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	claude-haiku-4-5	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-fable-5-1	opus	record	-	none	-
 claude	standard	claude-fable-5-1	sonnet	record	-	none	-
-claude	standard	claude-fable-5-1	haiku	refuse	-	none	-
+claude	standard	claude-fable-5-1	haiku	record	-	none	-
 claude	standard	claude-fable-5-1	fable	refuse	-	none	-
 claude	standard	claude-fable-5-1	claude-opus-5	record	-	none	-
 claude	standard	claude-fable-5-1	claude-sonnet-5	record	-	none	-
-claude	standard	claude-fable-5-1	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-fable-5-1	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-fable-5-1	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-fable-5-1	claude-thigh	refuse	-	none	-
 claude	standard	claude-fable-5-1	claude-opus-5[context=1m]	record	-	none	-
@@ -346,11 +346,11 @@ claude	standard	claude-fable-5-1	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	claude-fable-5-1	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-thigh	opus	record	-	none	-
 claude	standard	claude-thigh	sonnet	record	-	none	-
-claude	standard	claude-thigh	haiku	refuse	-	none	-
+claude	standard	claude-thigh	haiku	record	-	none	-
 claude	standard	claude-thigh	fable	refuse	-	none	-
 claude	standard	claude-thigh	claude-opus-5	record	-	none	-
 claude	standard	claude-thigh	claude-sonnet-5	record	-	none	-
-claude	standard	claude-thigh	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-thigh	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-thigh	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-thigh	claude-thigh	refuse	-	none	-
 claude	standard	claude-thigh	claude-opus-5[context=1m]	record	-	none	-
@@ -361,11 +361,11 @@ claude	standard	claude-thigh	claude-opus-5-high[Context=1m]	record	-	none	-
 claude	standard	claude-thigh	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5[context=1m]	opus	record	-	none	-
 claude	standard	claude-opus-5[context=1m]	sonnet	record	-	none	-
-claude	standard	claude-opus-5[context=1m]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5[context=1m]	haiku	record	-	none	-
 claude	standard	claude-opus-5[context=1m]	fable	refuse	-	none	-
 claude	standard	claude-opus-5[context=1m]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5[context=1m]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5[context=1m]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5[context=1m]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5[context=1m]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5[context=1m]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5[context=1m]	claude-opus-5[context=1m]	record	-	none	-
@@ -376,11 +376,11 @@ claude	standard	claude-opus-5[context=1m]	claude-opus-5-high[Context=1m]	record	
 claude	standard	claude-opus-5[context=1m]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	opus	record	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	sonnet	record	-	none	-
-claude	standard	claude-opus-5[xeffort=high]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5[xeffort=high]	haiku	record	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	fable	refuse	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5[xeffort=high]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5[xeffort=high]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5[xeffort=high]	claude-opus-5[context=1m]	record	-	none	-
@@ -391,11 +391,11 @@ claude	standard	claude-opus-5[xeffort=high]	claude-opus-5-high[Context=1m]	recor
 claude	standard	claude-opus-5[xeffort=high]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5-high[effort=]	opus	record	-	none	-
 claude	standard	claude-opus-5-high[effort=]	sonnet	record	-	none	-
-claude	standard	claude-opus-5-high[effort=]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5-high[effort=]	haiku	record	-	none	-
 claude	standard	claude-opus-5-high[effort=]	fable	refuse	-	none	-
 claude	standard	claude-opus-5-high[effort=]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5-high[effort=]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5-high[effort=]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5-high[effort=]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5-high[effort=]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5-high[effort=]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5-high[effort=]	claude-opus-5[context=1m]	record	-	none	-
@@ -406,11 +406,11 @@ claude	standard	claude-opus-5-high[effort=]	claude-opus-5-high[Context=1m]	recor
 claude	standard	claude-opus-5-high[effort=]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5-high[]	opus	record	-	none	-
 claude	standard	claude-opus-5-high[]	sonnet	record	-	none	-
-claude	standard	claude-opus-5-high[]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5-high[]	haiku	record	-	none	-
 claude	standard	claude-opus-5-high[]	fable	refuse	-	none	-
 claude	standard	claude-opus-5-high[]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5-high[]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5-high[]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5-high[]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5-high[]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5-high[]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5-high[]	claude-opus-5[context=1m]	record	-	none	-
@@ -421,11 +421,11 @@ claude	standard	claude-opus-5-high[]	claude-opus-5-high[Context=1m]	record	-	non
 claude	standard	claude-opus-5-high[]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	opus	record	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	sonnet	record	-	none	-
-claude	standard	claude-opus-5-high[Context=1m]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5-high[Context=1m]	haiku	record	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	fable	refuse	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5-high[Context=1m]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5-high[Context=1m]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5-high[Context=1m]	claude-opus-5[context=1m]	record	-	none	-
@@ -436,11 +436,11 @@ claude	standard	claude-opus-5-high[Context=1m]	claude-opus-5-high[Context=1m]	re
 claude	standard	claude-opus-5-high[Context=1m]	claude-opus-5-high[context=1m,]	record	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	opus	record	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	sonnet	record	-	none	-
-claude	standard	claude-opus-5-high[context=1m,]	haiku	refuse	-	none	-
+claude	standard	claude-opus-5-high[context=1m,]	haiku	record	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	fable	refuse	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	claude-opus-5	record	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	claude-sonnet-5	record	-	none	-
-claude	standard	claude-opus-5-high[context=1m,]	claude-haiku-4-5	refuse	-	none	-
+claude	standard	claude-opus-5-high[context=1m,]	claude-haiku-4-5	record	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	claude-fable-5-1	refuse	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	claude-thigh	refuse	-	none	-
 claude	standard	claude-opus-5-high[context=1m,]	claude-opus-5[context=1m]	record	-	none	-
