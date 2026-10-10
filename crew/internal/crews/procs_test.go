@@ -1,6 +1,9 @@
 package crews
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // OwnerPID is `_owner_pid`: the caller's parent is the shell crew.sh ran under,
 // so the walk climbs past the shells to the first ancestor that is not one, and
@@ -32,6 +35,7 @@ func TestOwnerPID(t *testing.T) {
 			want:   4239,
 		},
 		{
+			// The arm's `[ -n "$c" ] || break`: a pid ps cannot name ends the walk.
 			name:   "an unanswerable ps falls back",
 			parent: map[int]int{ppid: 4240},
 			comm:   map[int]string{ppid: "sh"},
@@ -54,6 +58,33 @@ func TestOwnerPID(t *testing.T) {
 				t.Errorf("OwnerPID(%d) = %d, want %d", ppid, got, tc.want)
 			}
 		})
+	}
+}
+
+// The arm bounds the walk (`while [ "$depth" -lt 32 ]`), so a parent chain that
+// never resolves — a ps that keeps answering with the same pid — cannot spin it.
+func TestOwnerPIDWalkIsBounded(t *testing.T) {
+	calls := 0
+	p := Probes{
+		Comm:   func(int) (string, bool) { calls++; return "bash", true },
+		Parent: func(pid int) (int, bool) { calls++; return pid, true },
+	}
+	if got := p.OwnerPID(4241); got != 4241 {
+		t.Errorf("OwnerPID = %d, want the fallback parent", got)
+	}
+	if calls > 2*ownerDepth {
+		t.Errorf("the walk made %d probes, want at most %d", calls, 2*ownerDepth)
+	}
+}
+
+// `ps -o comm=` for a pid nobody holds says nothing, and the arm breaks its walk
+// there rather than recording the unreadable pid.
+func TestPsCommNamesNothing(t *testing.T) {
+	if _, ok := psComm(4294967295); ok {
+		t.Error("psComm named a pid no process holds")
+	}
+	if name, ok := psComm(os.Getpid()); !ok || name == "" {
+		t.Errorf("psComm(self) = %q, %v, want a name", name, ok)
 	}
 }
 

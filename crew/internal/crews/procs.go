@@ -25,7 +25,7 @@ type Probes struct {
 	// or names none (the walk's `'' | *[!0-9]* | 0` guard).
 	Parent func(pid int) (int, bool)
 	// Comm is `ps -o comm= -p`: the pid's command name, false when ps cannot say
-	// it or names none.
+	// it or names none (the owner walk's `[ -n "$c" ] || break`).
 	Comm func(pid int) (string, bool)
 }
 
@@ -178,14 +178,18 @@ func psParent(pid int) (int, bool) {
 }
 
 // psComm is `ps -o comm= -p <pid>`, the command name the owner walk matches
-// against the shell list. The text keeps the whitespace `tr -d '[:space:]'`
-// would have removed, because shellName strips it there.
+// against the shell list. A ps that says nothing is "no name", which is what
+// makes the arm break its walk and record $PPID.
 func psComm(pid int) (string, bool) {
 	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return "", false
 	}
-	return string(out), true
+	name := strings.TrimSpace(string(out))
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 // shells are the command names _owner_pid climbs past. `dispatch` execs `crew
@@ -193,13 +197,17 @@ func psComm(pid int) (string, bool) {
 // than the owner itself.
 var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "fish": true, "dash": true, "ksh": true}
 
+// ownerDepth is the arm's `while [ "$depth" -lt 32 ]`: a parent chain that
+// cycles must not spin the walk.
+const ownerDepth = 32
+
 // OwnerPID is _owner_pid: the pid to record when the caller does not name one.
 // The caller's parent is that shell, so the walk climbs past the shells to the
 // first ancestor that is not one — the process that actually wants to own the
-// crew. Any process ps cannot name, or a parent of 0 or 1, ends the walk, and
-// the direct parent is the answer it falls back to.
+// crew. A pid ps cannot name, a parent of 0 or 1, or 32 steps ends the walk,
+// and the direct parent is the answer it falls back to.
 func (p Probes) OwnerPID(ppid int) int {
-	for pid := ppid; pid > 1; {
+	for depth, pid := 0, ppid; depth < ownerDepth && pid > 1; depth++ {
 		comm, ok := p.Comm(pid)
 		if !ok {
 			break
@@ -207,9 +215,11 @@ func (p Probes) OwnerPID(ppid int) int {
 		if name := shellName(comm); !shells[name] {
 			return pid
 		}
-		if pid, ok = p.Parent(pid); !ok {
+		next, ok := p.Parent(pid)
+		if !ok {
 			break
 		}
+		pid = next
 	}
 	return ppid
 }
