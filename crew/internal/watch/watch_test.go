@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -654,7 +655,7 @@ func TestRunCreatesBusDir(t *testing.T) {
 // unread, and only the age changes. norm strips the `undelivered for <N>s`
 // age the way it strips the cycle and awaited noise, so the re-post is the
 // suppressed repeated-blocked case; a changed reason is a different detail
-// and wakes. Both unread: variants are covered.
+// and wakes.
 func TestUnreadRestampSuppressed(t *testing.T) {
 	const (
 		directive = "unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)"
@@ -841,11 +842,105 @@ func parseRows(t testing.TB, rows []string) []jsonv.Value {
 	return vs
 }
 
-// TestFoldEquivalentToLegacyProgram is the #910 equivalence gate: over a
-// generated bus of thousands of rows the single-pass fold must hand the
-// dispatcher byte-identical batches to the frozen legacy program, for every
-// since/states binding — including the empty ones, which are "poll again"
-// in both.
+type genRow struct {
+	Ts   int64           `json:"ts"`
+	Crew string          `json:"crew_id"`
+	From string          `json:"from"`
+	To   string          `json:"to"`
+	Kind string          `json:"kind"`
+	Body json.RawMessage `json:"body"`
+}
+
+// assertSuppressionCases fails the equivalence run when the generated bus
+// never reached one of the selection rules it is meant to cover — the fold
+// agreeing on cases it never saw would prove nothing.
+func assertSuppressionCases(t *testing.T, rows []string) {
+	t.Helper()
+	hit := map[string]bool{}
+	type hist struct {
+		states  [2]string // [previous, last]
+		details [2]string
+	}
+	sess := map[string]*hist{}
+	var lastTS int64
+	for _, r := range rows {
+		var g genRow
+		if err := json.Unmarshal([]byte(r), &g); err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			State  string          `json:"state"`
+			Detail json.RawMessage `json:"detail"`
+			Source string          `json:"source"`
+		}
+		if g.Kind == "status" {
+			if err := json.Unmarshal(g.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		detail := string(body.Detail)
+		state := body.State
+		if g.Kind == "status" && state == "blocked" && body.Detail == nil {
+			// A blocked with no detail field is its own coverage case.
+			hit["blocked with no detail"] = true
+		}
+		switch {
+		case g.Kind == "msg" && g.To == "dispatcher:c1":
+			hit["msg to dispatcher"] = true
+		case g.Kind == "msg" && g.To == "*":
+			hit["msg to *"] = true
+		case g.Kind == "start":
+			hit["row of another kind"] = true
+		case g.Kind == "status" && state == "blocked" && len(body.Detail) > 0 && body.Detail[0] == '{':
+			hit["object blocked detail"] = true
+		case g.Kind == "status" && state == "blocked" && body.Source == "watchdog":
+			hit["watchdog blocked"] = true
+		case g.Kind == "status" && state == "working" && body.Source == "watchdog" &&
+			(strings.HasSuffix(detail, `cleared"`) || strings.HasSuffix(detail, `cleared\n"`)):
+			hit["watchdog cleared working"] = true
+		}
+		if g.Ts == lastTS {
+			hit["millisecond ts tie"] = true
+		}
+		if g.Ts < lastTS {
+			hit["backwards clock step"] = true
+		}
+		lastTS = g.Ts
+		if g.Kind != "status" {
+			continue
+		}
+		key := g.Crew + "|" + g.From
+		h := sess[key]
+		if h == nil {
+			h = &hist{}
+			sess[key] = h
+		}
+		switch {
+		case h.states[1] == "blocked" && state == "blocked" && h.details[1] == detail && detail != "":
+			hit["repeated blocked, same detail"] = true
+		case h.states[1] == "working" && h.states[0] == "blocked" && h.details[0] == detail:
+			hit["blocked after working, same detail"] = true
+		case h.states[1] == "working" && state == "exited":
+			hit["exited after working"] = true
+		case (h.states[1] == "done" || h.states[1] == "failed") && state == "exited":
+			hit["exited after terminal"] = true
+		}
+		h.states[0], h.states[1] = h.states[1], state
+		h.details[0], h.details[1] = h.details[1], detail
+	}
+	for _, w := range []string{
+		"msg to dispatcher", "msg to *", "row of another kind",
+		"object blocked detail", "watchdog blocked", "watchdog cleared working",
+		"repeated blocked, same detail", "blocked after working, same detail",
+		"exited after working", "exited after terminal", "blocked with no detail",
+		"millisecond ts tie", "backwards clock step",
+	} {
+		if !hit[w] {
+			t.Errorf("generated bus never produced: %s", w)
+		}
+	}
+}
+
 func TestFoldEquivalentToLegacyProgram(t *testing.T) {
 	rows := genBus(910, 6000)
 	if len(rows) < 5000 {
@@ -857,6 +952,7 @@ func TestFoldEquivalentToLegacyProgram(t *testing.T) {
 		}
 	}
 	vs := parseRows(t, rows)
+	assertSuppressionCases(t, rows)
 	legacy := legacyProgram(t)
 	def := []string{"blocked", "pr_open", "done", "failed", "exited"}
 	for _, bind := range []struct {
