@@ -740,11 +740,13 @@ EOF
 
 # ---- dispatcher.sh: mint + discovery notice ------------------------------
 
-@test "dispatcher: minting with other crews on disk prints the discovery notice" {
+# #929 moved the default off minting, so the notice is a --new confirmation:
+# this row's one dead crew is what the launcher would have adopted instead.
+@test "dispatcher: --new with other crews on disk prints the discovery notice" {
   _stub_launcher_agents
   stub_crew_launcher "$(printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc-other\t5\t5\t1\t111\tno\n')"
   unset CREW_ID
-  run bash -euo pipefail "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
+  run bash -euo pipefail "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh" --new
   [ "$status" -eq 0 ]
   [[ "$output" == *"minted a NEW crew"* ]]
   [[ "$output" == *"CREW_ID=<id> dispatcher"* ]]
