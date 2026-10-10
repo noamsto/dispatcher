@@ -1052,3 +1052,217 @@ func TestOutTokensMatchesBash(t *testing.T) {
 		}
 	}
 }
+
+// ---- D9 ----
+
+const d9ID = "worker:feat/x#s1-1"
+
+// d9Rig is a pi lead on %9 whose `continue` call-outs are counted and answer
+// out and rc; rcRaw, when set, is a raw helper status instead.
+type d9Rig struct {
+	*fdRig
+	out        string
+	rc, rcRaw  int
+	continues  int
+	continueAt []string
+}
+
+func newD9Rig(t *testing.T, id, engine string, argv ...string) *d9Rig {
+	t.Helper()
+	r := &d9Rig{fdRig: newFDRig(t, id, engine, append([]string{"--pane", "%9"}, argv...)...)}
+	r.h.f.sh = func(op string, args ...string) (string, int) {
+		if op != "continue" {
+			return "", shOffset
+		}
+		r.continues++
+		r.continueAt = append(r.continueAt, strings.Join(args, " "))
+		if r.rcRaw != 0 {
+			return "", r.rcRaw
+		}
+		return r.out, r.rc + shOffset
+	}
+	return r
+}
+
+func (r *d9Rig) tick(at *int64, frameName string) []string {
+	r.t.Helper()
+	*at += 15
+	rows, err := r.step(*at, frameText(r.t, frameName))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	return rows
+}
+
+var d9Kinds = []struct{ name, stopped, live, prefix string }{
+	{"truncated", "pi_truncated_idle.txt", "pi_truncated_live.txt", "truncated:"},
+	{"provider-error", "pi_provider_error_idle.txt", "pi_provider_error_live.txt", "provider-error:"},
+}
+
+func TestD9TypesOncePerEpisode(t *testing.T) {
+	for _, k := range d9Kinds {
+		t.Run(k.name, func(t *testing.T) {
+			r := newD9Rig(t, d9ID, "pi")
+			var at int64
+			if rows := r.tick(&at, k.stopped); rows != nil || r.continues != 0 {
+				t.Fatalf("tick 1: rows %q, %d calls, want none", rows, r.continues)
+			}
+			rows := r.tick(&at, k.stopped)
+			want := "working|" + k.prefix + " auto-continued — pane %9"
+			if len(rows) != 1 || rows[0] != want || r.continues != 1 {
+				t.Fatalf("tick 2: rows %q, %d calls, want [%q] and 1", rows, r.continues, want)
+			}
+			if wantArgs := "%9 pi " + d9ID + " " + r.w.cfg.crew; r.continueAt[0] != wantArgs {
+				t.Errorf("args %q, want %q", r.continueAt[0], wantArgs)
+			}
+			if rows := r.tick(&at, k.stopped); rows != nil {
+				t.Fatalf("tick 3: rows %q, want none", rows)
+			}
+			rows = r.tick(&at, k.stopped)
+			if len(rows) != 1 || !strings.HasPrefix(rows[0], "blocked|"+k.prefix+" ") || !strings.Contains(rows[0], "not resumed") {
+				t.Fatalf("tick 4: rows %q, want one blocked not resumed", rows)
+			}
+			if rows := r.tick(&at, "nudge_pi_idle.txt"); len(rows) != 1 || rows[0] != "working|"+k.prefix+" cleared" {
+				t.Fatalf("clear: rows %q", rows)
+			}
+			r.tick(&at, k.stopped)
+			r.tick(&at, k.stopped)
+			if r.continues != 2 {
+				t.Errorf("%d calls after a second episode, want 2", r.continues)
+			}
+		})
+	}
+}
+
+func TestD9HeldLineHoldsEpisode(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	r.rc, r.out = 3, "nudge held: %9 worker:feat/x — prompt still holds the text"
+	var at int64
+	r.tick(&at, "pi_truncated_idle.txt")
+	rows := r.tick(&at, "pi_truncated_idle.txt")
+	if len(rows) != 1 || !strings.HasPrefix(rows[0], "blocked|truncated: ") || !strings.Contains(rows[0], "typed but not accepted") {
+		t.Fatalf("rows %q, want blocked typed but not accepted", rows)
+	}
+	for range 4 {
+		if rows := r.tick(&at, "pi_truncated_draft.txt"); rows != nil {
+			t.Fatalf("draft tick posted %q", rows)
+		}
+	}
+	if r.continues != 1 {
+		t.Errorf("%d calls, want 1", r.continues)
+	}
+	if rows := r.tick(&at, "pi_truncated_live.txt"); len(rows) != 1 || rows[0] != "working|truncated: cleared" {
+		t.Errorf("live: rows %q, want cleared", rows)
+	}
+}
+
+func TestD9EpisodeClearsOnChange(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	var at int64
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_live.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	if r.continues != 1 {
+		t.Fatalf("%d calls after one stopped tick, want 1", r.continues)
+	}
+	r.tick(&at, "pi_truncated_idle.txt")
+	if r.continues != 2 {
+		t.Errorf("%d calls after a second stopped tick, want 2", r.continues)
+	}
+}
+
+func TestD9Refusals(t *testing.T) {
+	cases := []struct {
+		name, id, engine, frame string
+		argv                    []string
+		body                    string // a worker status row written first
+		want                    string // the one row expected after two ticks, "" for none
+	}{
+		{name: "live", frame: "pi_truncated_live.txt"},
+		{name: "draft", frame: "pi_truncated_draft.txt"},
+		{name: "dialog", frame: "pi_truncated_dialog.txt"},
+		{name: "claude", engine: "claude", frame: "pi_truncated_idle.txt"},
+		{name: "codex", engine: "codex", frame: "pi_truncated_idle.txt"},
+		{name: "cursor", engine: "cursor", frame: "pi_truncated_idle.txt"},
+		{name: "role", id: "role:feat/x:reviewer", frame: "pi_truncated_idle.txt"},
+		{name: "branch-keyed", id: "feat/x", frame: "pi_truncated_idle.txt",
+			want: "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue unavailable: no session id)"},
+		{name: "no-nudge", argv: []string{"--no-nudge"}, frame: "pi_truncated_idle.txt",
+			want: "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue off)"},
+		{name: "worker-blocked", frame: "pi_truncated_idle.txt", body: `{"state":"blocked","detail":"waiting"}`},
+		{name: "pr_open", frame: "pi_truncated_idle.txt", body: `{"state":"pr_open","detail":"x"}`,
+			want: "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue held: worker is pr_open)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, engine := tc.id, tc.engine
+			if id == "" {
+				id = d9ID
+			}
+			if engine == "" {
+				engine = "pi"
+			}
+			r := newD9Rig(t, id, engine, tc.argv...)
+			if tc.body != "" {
+				r.write(1, tc.body)
+			}
+			var all []string
+			var at int64
+			all = append(all, r.tick(&at, tc.frame)...)
+			all = append(all, r.tick(&at, tc.frame)...)
+			if r.continues != 0 {
+				t.Errorf("%d continue calls, want none", r.continues)
+			}
+			var want []string
+			if tc.want != "" {
+				want = []string{tc.want}
+			}
+			if !slices.Equal(all, want) {
+				t.Errorf("rows %q, want %q", all, want)
+			}
+		})
+	}
+}
+
+func TestD9CallFailures(t *testing.T) {
+	t.Run("refused", func(t *testing.T) {
+		r := newD9Rig(t, d9ID, "pi")
+		r.rc, r.out = 2, "anchor: %9 is not the lead pane of @1\nmore"
+		var at int64
+		r.tick(&at, "pi_truncated_idle.txt")
+		rows := r.tick(&at, "pi_truncated_idle.txt")
+		if len(rows) != 1 || !strings.HasPrefix(rows[0], "blocked|truncated: ") || !strings.Contains(rows[0], "auto-continue refused: anchor: %9 is not the lead pane of @1)") {
+			t.Errorf("rows %q", rows)
+		}
+	})
+	t.Run("helper-failed", func(t *testing.T) {
+		r := newD9Rig(t, d9ID, "pi")
+		r.rcRaw = 1
+		var at int64
+		r.tick(&at, "pi_truncated_idle.txt")
+		rows := r.tick(&at, "pi_truncated_idle.txt")
+		if len(rows) != 1 || !strings.Contains(rows[0], "(auto-continue helper failed)") {
+			t.Fatalf("rows %q", rows)
+		}
+		for range 3 {
+			r.tick(&at, "pi_truncated_idle.txt")
+		}
+		if r.continues != 1 {
+			t.Errorf("%d calls, want no retry", r.continues)
+		}
+	})
+}
+
+func TestHoldsEpisodeStoppedPrefixes(t *testing.T) {
+	for _, d := range []string{"truncated: auto-continued — pane %9", "provider-error: cleared", "prompt: x", "quota: x", "runaway: x"} {
+		if !holdsEpisode(d) {
+			t.Errorf("holdsEpisode(%q) = false", d)
+		}
+	}
+	for _, d := range []string{"", "quiet: x", "turn-stall: x"} {
+		if holdsEpisode(d) {
+			t.Errorf("holdsEpisode(%q) = true", d)
+		}
+	}
+}

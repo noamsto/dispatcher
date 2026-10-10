@@ -1,0 +1,11 @@
+ pi v1.1.0
+ Here is the plan for the change.
+ I will edit the file next.
+
+ Error: Request was aborted
+
+──────────────────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

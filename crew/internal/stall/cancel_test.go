@@ -170,7 +170,7 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 }
 
 func TestShWriteNotStartedAfterCancel(t *testing.T) {
-	for _, op := range []string{"nudge", "release"} {
+	for _, op := range []string{"nudge", "continue", "release"} {
 		t.Run(op, func(t *testing.T) {
 			f := newFake()
 			_, w := pdWatch(t, f, "feat/x", "--pane", "%1")

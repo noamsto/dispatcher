@@ -49,6 +49,11 @@ var (
 	// is ASCII.
 	rePiWorkingRow  = regexp.MustCompile(`^[\t\n\v\f\r ]*[\x{2800}-\x{28FF}].*Working`)
 	rePiWorkingRule = regexp.MustCompile(`^─.*(Working|[\x{2800}-\x{28FF}])`)
+
+	rePiTruncated = regexp.MustCompile(`^ ?Response was truncated before completion\.`)
+	rePiError     = regexp.MustCompile(`^ ?Error: `)
+	rePiBugHint   = regexp.MustCompile(`^ ?If this looks like a `)
+	reAborted     = regexp.MustCompile(`(?i)\b(abort(ed)?|cancel(l?ed)?)\b`)
 )
 
 const (
@@ -282,6 +287,106 @@ func PiIdleBox(text string) bool {
 	}
 	row, above, ok := BoxRows(text, FirstRowAny)
 	return ok && !reOption.MatchString(row) && !anyMatch(above, rePiWorkingRow)
+}
+
+// piBox locates the editor box in the CSI-stripped rows of text, blank rows
+// kept, with BoxRows' bounds: a and b index the upper and lower rules.
+func piBox(text string) (lines []string, a, b int, ok bool) {
+	var nonBlank []int
+	for i, l := range strings.Split(text, "\n") {
+		s := reCSI.ReplaceAllLiteralString(l, "")
+		lines = append(lines, s)
+		if !reBlank.MatchString(s) {
+			nonBlank = append(nonBlank, i)
+		}
+	}
+	n := len(nonBlank)
+	off := max(n-30, 0)
+	ai, bi := -1, -1
+	for i := n - 1; i >= off; i-- {
+		if !strings.HasPrefix(lines[nonBlank[i]], "─") {
+			continue
+		}
+		if bi < 0 {
+			bi = i
+			continue
+		}
+		ai = i
+		break
+	}
+	if ai < 0 || bi-ai-1 > 12 || n-1-bi < 1 || n-1-bi > 5 {
+		return nil, 0, 0, false
+	}
+	return lines, nonBlank[ai], nonBlank[bi], true
+}
+
+// PiBoxOccupied reports an idle pi box that holds text: a held continue line
+// or a human draft.
+func PiBoxOccupied(text string) bool {
+	if !PiIdleBox(text) {
+		return false
+	}
+	lines, a, b, ok := piBox(text)
+	return ok && b-a > 1 && anyNonBlank(lines[a+1:b])
+}
+
+func anyNonBlank(lines []string) bool {
+	for _, l := range lines {
+		if !reBlank.MatchString(l) {
+			return true
+		}
+	}
+	return false
+}
+
+// PiStopped classifies why an idle pi turn ended without finishing: pi paints
+// "Response was truncated before completion." (stopReason length) or
+// "Error: <provider message>" (stopReason error) just above an empty editor
+// box. It returns "truncated", "provider-error" or "".
+func PiStopped(text string) string {
+	if IsPrompt("pi", text) || !PiIdleBox(text) {
+		return ""
+	}
+	lines, a, b, ok := piBox(text)
+	if !ok || anyNonBlank(lines[a+1:b]) {
+		return ""
+	}
+	end := a
+	for end > 0 && reBlank.MatchString(lines[end-1]) {
+		end--
+	}
+	block := piBlock(lines, end)
+	if len(block) > 0 && rePiBugHint.MatchString(block[0]) {
+		end -= len(block)
+		for end > 0 && reBlank.MatchString(lines[end-1]) {
+			end--
+		}
+		block = piBlock(lines, end)
+	}
+	for i, l := range block {
+		if rePiBugHint.MatchString(l) {
+			block = block[:i]
+			break
+		}
+	}
+	switch {
+	case len(block) == 1 && rePiTruncated.MatchString(block[0]):
+		return "truncated"
+	case len(block) > 0 && len(block) <= 4 && rePiError.MatchString(block[0]) &&
+		!reAborted.MatchString(strings.Join(block, "\n")):
+		return "provider-error"
+	}
+	return ""
+}
+
+// piBlock is the contiguous non-blank run of at most 8 rows ending before
+// index end.
+func piBlock(lines []string, end int) []string {
+	start := end
+	for start > 0 && end-start < 8 && !reBlank.MatchString(lines[start-1]) {
+		start--
+	}
+	return lines[start:end]
 }
 
 // PaneIdleReason is _pane_idle_reason with engine fixed to claude: idle, or
