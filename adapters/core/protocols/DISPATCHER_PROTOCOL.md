@@ -265,6 +265,9 @@ warns which step) — is unknown, not free.
   "about to reset" exemption, and a property of the inequality rather than a
   second branch to keep in sync. When `resets_at` is null, pace isn't
   computable and the gate falls back to the flat `>=70` rule it's always had.
+  A weekly window's `resets_at` is already capped at the engine's monthly
+  reset (`reset_source: "month"` in the cache), so the formula needs no
+  second branch.
   Either way it names the lower model or effort alternative. `xhigh` and
   `max` are premium effort (both to `high`); `high` is not. The check covers
   every lead, eager role, and final lazy-role override. See

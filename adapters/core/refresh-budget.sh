@@ -631,7 +631,7 @@ report() {
     (
       window_rows | select(.w.used_pct >= 85) |
       (if .rem == null then ""
-       else " (resets in \(.rem | reltime)" + (if .ahead != null then ", \(.ahead) points ahead of pace" else "" end) + ")"
+       else " (resets in \(.rem | reltime)" + (if .w.reset_source == "month" then ", capped at monthly reset" else "" end) + (if .ahead != null then ", \(.ahead) points ahead of pace" else "" end) + ")"
        end) as $paren |
       "\(.e) \(.k) at \(.w.used_pct)%\($paren) — \(.advice)"
     ),
@@ -668,6 +668,7 @@ report() {
         (if .value.resets_at then
            " (resets \(.value.resets_at | todateiso8601)" +
            (if .value.resets_at > $now then ", in \((.value.resets_at - $now) | reltime)" else "" end) +
+           (if .value.reset_source == "month" then ", capped at monthly reset" else "" end) +
            ")"
          else "" end)
       ] | join(", ")) end) + (if .value.credits_cover then " [credits cover]" else "" end) +
@@ -704,7 +705,8 @@ report_json() {
               projected_month_end_usd: ($v.projected_month_end_usd // null),
               windows: [$rows[] | select(.e == $e) | {
                 key: .k, used_pct: .w.used_pct, resets_at: .w.resets_at,
-                resets_in_s: .rem, ahead_pts: .ahead, verdict: .advice
+                resets_in_s: .rem, ahead_pts: .ahead, verdict: .advice,
+                reset_source: (.w.reset_source // null)
               }],
               target_source: ($v.target_source // null),
               limit_reset: ($v.limit_reset // null),
@@ -772,10 +774,22 @@ main() {
     --argjson codex "$codex" \
     --argjson cursor "$cursor" \
     --argjson pi "$pi" \
-    '{
+    '# A billing-month rollover also clears the weekly windows, so a weekly
+     # resets_at later than the engine'"'"'s own monthly reset is capped at it.
+     # starts_at is left alone: the pace length stays 604800.
+     def cap_weekly($now):
+       (.windows.month.resets_at // (.limit_reached | objects | .individual_resets_at) // null) as $m
+       | if ($m | type) != "number" or $m <= $now then .
+         else .windows |= with_entries(
+           if (.key == "7d" or .key == "7d_opus" or .key == "7d_sonnet")
+              and (.value.resets_at | type) == "number" and .value.resets_at > $m
+           then .value.resets_at = $m | .value.reset_source = "month" else . end)
+         end;
+     def capped($now): if . == null or (.windows | type) != "object" then . else cap_weekly($now) end;
+     {
        fetched_at: $fetched_at,
        fetched_epoch: $fetched_epoch,
-       engines: {claude: $claude, codex: $codex, cursor: $cursor, pi: $pi}
+       engines: ({claude: $claude, codex: $codex, cursor: $cursor, pi: $pi} | map_values(capped($fetched_epoch)))
      }' >"$tmp"
   mv "$tmp" "$OUT"
 

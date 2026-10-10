@@ -478,7 +478,9 @@ L, 0, 100)` where `L` is `604800` for `7d`, or `resets_at - starts_at` (the
 month's own length) for either `month`. Because `used_pct` tops out
 at 100 the inequality can't fire once elapsed reaches 85%, so a window
 inside its own last 15% (~25h on `7d`) stops refusing on its own — that's the
-near-reset exemption, not a second rule to keep in sync. A null `resets_at`
+near-reset exemption, not a second rule to keep in sync. A weekly window's
+`resets_at` is already capped at the engine's monthly reset
+(`reset_source: "month"` in the cache). A null `resets_at`
 means pace isn't computable and the gate falls back to the flat ≥70 rule it
 always had. Either way it names the downgrade target below — before the
 engine goes fully dark at the existing ≥95% gate (`DISPATCHER_PROTOCOL.md` →
