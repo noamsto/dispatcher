@@ -86,7 +86,7 @@ func mine(paths bus.Paths, stdout io.Writer, o Options) {
 		if !ok {
 			continue
 		}
-		if !o.Probes.RecordedLive(now, n, pidfile) || !o.Probes.isAncestor(n) {
+		if !o.Probes.RecordedLive(now, n, pidfile) || !o.Probes.IsAncestor(n) {
 			continue
 		}
 		say(stdout, "%s\n", id)
