@@ -66,6 +66,7 @@ func TestDecodeStream(t *testing.T) {
 		{"leading zeros", "01 00.5", "1 0.5"},
 		{"plus sign and bare dot", "+1 .5 1.", "1 0.5 1"},
 		{"nan is null", "nan NaN -nan", "null null null"},
+		{"nan with an all-zero payload is null", "nan0 NaN00 snan0 -nan000", "null null null null"},
 		{"infinity is the largest double", "Infinity -Infinity", "1.7976931348623157e+308 -1.7976931348623157e+308"},
 		{"huge exponent literal survives", "1e1000", "1E+1000"},
 		{"exponent past decNumber's limit is infinite", "1e1000000000 -12e999999999 1e99999999999999999999", "1.7976931348623157e+308 -1.7976931348623157e+308 1.7976931348623157e+308"},
@@ -110,6 +111,10 @@ func TestDecodeStreamErrors(t *testing.T) {
 		{"bare minus", `-`},
 		{"dangling exponent", `1e`},
 		{"hex", `0x10`},
+		{"nan with a nonzero payload", `nan1`},
+		{"nan with a leading-zero payload", `NaN01`},
+		{"signalling nan with a payload", `snan1`},
+		{"negative nan with a payload", `-nan10`},
 		{"double dot", `1.5.5`},
 		{"subtraction", `1-1`},
 		{"raw tab in string", "\"a\tb\""},
@@ -135,6 +140,39 @@ func TestDecodeStreamErrors(t *testing.T) {
 				t.Errorf("want *SyntaxError, got %T: %v", err, err)
 			}
 		})
+	}
+}
+
+// TestParseOne pins jq 1.8.2's fromjson: the stream decoder's grammar, but
+// exactly one value with optional surrounding whitespace.
+func TestParseOne(t *testing.T) {
+	ok := []struct{ in, want string }{
+		{`{"a":1}`, `{"a":1}`},
+		{" \t\r\n{} \n", `{}`},
+		{"\xef\xbb\xbf{}", `{}`},
+		{`nan`, `null`},
+		{`-NaN`, `null`},
+		{`Infinity`, `1.7976931348623157e+308`},
+		{`1e1000`, `1E+1000`},
+		{`100000000000000000000000001`, `100000000000000000000000001`},
+		{`"\udc00"`, "\"\uFFFD\""},
+		{`"\ud83d\ude00"`, `"😀"`},
+		{"\"a\xffb\"", "\"a\uFFFDb\""},
+	}
+	for _, tc := range ok {
+		v, err := jsonv.ParseOne(tc.in)
+		if err != nil {
+			t.Errorf("%q: %v", tc.in, err)
+			continue
+		}
+		if got := compact([]jsonv.Value{v}); got != tc.want {
+			t.Errorf("%q: got %s, want %s", tc.in, got, tc.want)
+		}
+	}
+	for _, in := range []string{"", "   ", `1 2`, `{} x`, `{}{}`, `true false`, `nan1`, `"\ud83d"`, `"\ud83dx"`, `"\ud83d\u0041"`, `"\udc00\ud83d"`, `[1,]`} {
+		if v, err := jsonv.ParseOne(in); err == nil {
+			t.Errorf("%q: want error, got %s", in, compact([]jsonv.Value{v}))
+		}
 	}
 }
 

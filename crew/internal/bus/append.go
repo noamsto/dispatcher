@@ -1,9 +1,8 @@
 // The bus is append-only, and this is the only place that appends to it: the
 // `_bus_append` write plus the two helpers that keep a line short enough to
-// survive it (`_fit_line` and `_shrink`). They are ports of the crew.sh helpers
-// of the same name, which stay there while `status` and `msg` call them;
-// `TestCrewShLineContract` here and the `hold:` drift guards in crew.bats keep
-// the two copies equal.
+// survive it (`_fit_line` and `_shrink`). Append, FitLine and Shrink are the one
+// implementation for every Go writer; `_bus_append` stays in crew.sh for the
+// bash arms that still append.
 package bus
 
 import (

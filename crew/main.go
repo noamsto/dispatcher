@@ -25,6 +25,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
+	"github.com/noamsto/dispatcher/crew/internal/register"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
@@ -34,13 +35,14 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/status"
 	"github.com/noamsto/dispatcher/crew/internal/stream"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -73,7 +75,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "stall-watch":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "stall-watch", "status", "msg", "register", "deregister":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -242,6 +244,38 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			PID:    os.Getpid(),
 			PPID:   os.Getppid(),
 			Pwd:    cwd,
+		})
+	}
+
+	// status and msg append one row each as the caller; the stamp is real time,
+	// never CREW_CLOCK, as jq's `now` was.
+	if sub == "status" || sub == "msg" {
+		o := status.Options{
+			CrewID:   func() string { return bus.CrewID(ctx, cwd) },
+			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
+			NowMS:    clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
+			Getenv:   os.Getenv,
+		}
+		if _, err := exec.LookPath("tmux"); err == nil {
+			o.Tmux = func(args ...string) (string, error) { return tmuxOutput(ctx, args...) }
+		}
+		if sub == "status" {
+			return status.RunStatus(args, paths, stderr, o)
+		}
+		return status.RunMsg(args, paths, stderr, o)
+	}
+
+	// register and deregister record the caller's own identity like adopt does.
+	if sub == "register" || sub == "deregister" {
+		return register.Run(sub, args, paths, stderr, register.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Probes: e.procs,
+			Now:    time.Now,
+			PID:    os.Getpid(),
+			PPID:   os.Getppid(),
+			Pwd:    cwd,
+			Args:   adopt.PsArgs,
+			Getenv: os.Getenv,
 		})
 	}
 

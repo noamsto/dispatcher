@@ -308,3 +308,12 @@ func TestPidAliveRejectsOverRangePid(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstRunes(t *testing.T) {
+	if got := firstRunes("héllo wörld", 5); got != "héllo" {
+		t.Errorf("firstRunes = %q", got)
+	}
+	if got := firstRunes("héllo", 10); got != "héllo" {
+		t.Errorf("firstRunes = %q", got)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 
@@ -245,4 +246,39 @@ func validPid(s string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// Caller is the process identity a pidfile.log line records: who ran the
+// mutation, so a crew dir that vanishes or changes owner can be traced (#432).
+// By is the parent's `ps -o args=`.
+type Caller struct {
+	Now       time.Time
+	PID, PPID int
+	Pwd, By   string
+}
+
+// PidfileLog is `_pidfile_log`: one line per crew pid file mutation (or
+// refusal) in `$dir/pidfile.log`. It is diagnostic rather than state, so a
+// failed write is dropped as the arm drops it.
+func PidfileLog(paths bus.Paths, c Caller, action, outcome, crew, oldPID, newPID string) {
+	line := fmt.Sprintf("%s %s %s crew=%s old=%s new=%s pid=%d ppid=%d cwd=%s by=%s",
+		c.Now.UTC().Format("2006-01-02T15:04:05Z"), action, outcome, crew,
+		orDash(oldPID), orDash(newPID), c.PID, c.PPID, c.Pwd, firstRunes(c.By, 120))
+	_ = os.MkdirAll(paths.Dir, 0o755)
+	_ = bus.Append(paths.Dir+"/pidfile.log", line)
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// firstRunes is bash's `${by:0:120}`: counts are characters, not bytes.
+func firstRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }

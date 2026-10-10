@@ -226,6 +226,11 @@ func gitOutput(ctx context.Context, cwd string, args ...string) string {
 	return strings.TrimRight(string(out), "\n")
 }
 
+// Toplevel is `git rev-parse --show-toplevel` from cwd, "" outside a checkout.
+func Toplevel(ctx context.Context, cwd string) string {
+	return gitOutput(ctx, cwd, "rev-parse", "--show-toplevel")
+}
+
 // ValidCrewID mirrors crew.sh's `*[!A-Za-z0-9._-]* | -* | . | ..` rejection. It
 // also rejects "", which crew.sh checks for separately before that case.
 func ValidCrewID(id string) bool {
@@ -260,7 +265,7 @@ func IsSessionID(id string) bool {
 // `cut -d' ' -f2`: a line with no space is returned whole, "crew_id:  x" gives
 // an empty field, and a CR from CRLF is kept.
 func CrewID(ctx context.Context, cwd string) string {
-	if top := gitOutput(ctx, cwd, "rev-parse", "--show-toplevel"); top != "" {
+	if top := Toplevel(ctx, cwd); top != "" {
 		if id := taskCrewID(top + "/WORKER_TASK.md"); id != "" {
 			return id
 		}

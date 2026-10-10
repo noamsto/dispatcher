@@ -578,7 +578,7 @@ ROWS
   # doesn't need a live session to target as long as `to` isn't `worker:*`
   # (that prefix triggers session resolution this test isn't exercising).
   # 4002 x's lands the finished line (with trailing newline) at 4097 bytes —
-  # one byte over `_LINE_MAX`, too small for `_fit_line`'s shrink loop to ever
+  # one byte over the 4096 shrink cap, too small for the fit loop to ever
   # engage (it measures the line *without* the newline `_bus_append` adds, so
   # it sees 4096 and calls that done) but enough to force bash's `printf`
   # builtin to split the write into two syscalls (4096 + 1) instead of one —
@@ -9069,56 +9069,6 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$(jq -r '.[0].id' <<<"$output")" = "other" ]
 }
 
-# The write path's two copies: `hold.bats` pins that a long title shrinks, and
-# this pins the value it shrinks to — the appended row replayed through the
-# extracted `_fit_line`/`_shrink`, whose loop is re-derived here from the row's
-# own measurements (a row differs from the builder's line only in its one
-# escaped leaf, so the loop's byte lengths are computable without the builder).
-@test "hold: the Go row's title is _fit_line's own output on the same builder" {
-  local log helpers full row title
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  eval "$(grep -m1 '^_LINE_MAX=' "$CREW")"
-  eval "$(grep -m1 '^_ELIDED=' "$CREW")"
-  helpers="$(sed -n '/^_shrink() {/,/^}/p; /^_fit_line() {/,/^}/p' "$CREW")"
-  eval "$helpers"
-
-  # One long line, and the same bulk spread over 200 lines: `cut -c` caps each
-  # line on its own, so the two reach their `keep` by different routes.
-  local titles=()
-  titles+=("$(head -c 5000 /dev/zero | tr '\0' 'x')")
-  titles+=("$(awk 'BEGIN {
-    for (i = 0; i < 200; i++) printf "0123456789012345678901234567890123456789\n"
-  }')")
-
-  for full in "${titles[@]}"; do
-    run_crew hold add --crew c1 --engine claude --window 5h \
-      --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
-      --tier standard --model sonnet --effort medium "$full"
-    row="$(tail -n1 "$log")"
-    title="$(jq -r '.body | fromjson | .task.title' <<<"$row")"
-
-    # escaped(text) is the leaf's byte length inside the row; the rest of the row
-    # is fixed, so the builder's line for any text is overhead + escaped(text).
-    escaped() { jq -nc --arg t "$1" '$t' | wc -c | awk '{print $1 - 1}'; }
-    local overhead n0
-    overhead=$(($(printf '%s' "$row" | wc -c) - $(escaped "$title")))
-    n0=$((overhead + $(escaped "$full")))
-    [ "$n0" -gt "$_LINE_MAX" ]
-    [ $((overhead + $(escaped "$title"))) -le "$_LINE_MAX" ]
-
-    local text=$full keep=${#full} step
-    while :; do
-      n=$((overhead + $(escaped "$text")))
-      { [ "$n" -le "$_LINE_MAX" ] || [ "$keep" -eq 0 ]; } && break
-      step=$((keep * _LINE_MAX / n))
-      [ "$step" -lt "$((keep * 3 / 4))" ] || step=$((keep * 3 / 4))
-      keep=$step
-      text=$(_shrink "$full" "$keep")
-    done
-    [ "$text" = "$title" ]
-  done
-}
-
 # `_bus_append`'s torn-tail rule, now enforced by the Go writer: a log whose last
 # byte is not a newline gets one, so the fragment stays one record and the hold
 # the next.
@@ -11600,35 +11550,6 @@ ROWS
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
   [ "$(_status_rows)" -eq 1 ]
-}
-
-@test "pr_open: a jq failure on the ledger check refuses (fail closed)" {
-  _task_doc trivial
-  mkdir -p "$BATS_TEST_TMPDIR/jqstub"
-  export REAL_JQ
-  REAL_JQ=$(command -v jq)
-  cat >"$BATS_TEST_TMPDIR/jqstub/jq" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in *'?<b>'*) exit 3 ;; esac; exec "$REAL_JQ" "$@"
-EOF
-  chmod +x "$BATS_TEST_TMPDIR/jqstub/jq"
-  PATH="$BATS_TEST_TMPDIR/jqstub:$PATH" run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "AC1 pass(bats)" https://example.com/pr/1
-  _refused "could not check the acceptance ledger (jq exit 3)"
-}
-
-@test "pr_open: a jq failure on the deslop seam check refuses (fail closed)" {
-  _task_doc standard
-  _lead_seam
-  mkdir -p "$BATS_TEST_TMPDIR/jqstub"
-  export REAL_JQ
-  REAL_JQ=$(command -v jq)
-  cat >"$BATS_TEST_TMPDIR/jqstub/jq" <<'EOF'
-#!/usr/bin/env bash
-case "$*" in *'"deslop" and (has("tag")'*) exit 3 ;; esac; exec "$REAL_JQ" "$@"
-EOF
-  chmod +x "$BATS_TEST_TMPDIR/jqstub/jq"
-  PATH="$BATS_TEST_TMPDIR/jqstub:$PATH" run --separate-stderr run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  _refused "could not read the crew log for the deslop seam (jq exit 3)"
 }
 
 @test "pr_open: the ledger is checked before the review seam" {

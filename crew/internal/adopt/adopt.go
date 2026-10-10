@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
@@ -300,16 +299,11 @@ func claimRows(paths bus.Paths, id string) []claim {
 	return adopted
 }
 
-// pidfileLog is `_pidfile_log`: one line per crew pid file mutation in
-// `$dir/pidfile.log`, naming the caller so a crew dir that changes owner can be
-// traced (#432). It is diagnostic rather than state, so a failed write is
-// dropped as the arm drops it.
+// pidfileLog is `_pidfile_log` for this run's caller identity.
 func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newPID string) {
-	line := fmt.Sprintf("%s %s %s crew=%s old=%s new=%s pid=%d ppid=%d cwd=%s by=%s",
-		o.Now().UTC().Format("2006-01-02T15:04:05Z"), action, outcome, crew,
-		orDash(oldPID), orDash(newPID), o.PID, o.PPID, o.Pwd, firstRunes(o.Args(o.PPID), 120))
-	_ = os.MkdirAll(paths.Dir, 0o755)
-	_ = bus.Append(paths.Dir+"/pidfile.log", line)
+	crews.PidfileLog(paths, crews.Caller{
+		Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Args(o.PPID),
+	}, action, outcome, crew, oldPID, newPID)
 }
 
 func (o Options) withDefaults() Options {
@@ -332,7 +326,7 @@ func (o Options) withDefaults() Options {
 		o.SelfWindow = selfWindow
 	}
 	if o.Args == nil {
-		o.Args = psArgs
+		o.Args = PsArgs
 	}
 	if o.LookupEnv == nil {
 		o.LookupEnv = os.Getenv
@@ -415,21 +409,6 @@ func fieldText(v jsonv.Value) string {
 	case jsonv.KindNull:
 	}
 	return "null"
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
-
-// firstRunes is bash's `${by:0:120}`: counts are characters, not bytes.
-func firstRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n])
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
