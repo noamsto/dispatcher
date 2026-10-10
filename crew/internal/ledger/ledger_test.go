@@ -236,7 +236,8 @@ func TestAlnumAgainstGlibc(t *testing.T) {
 	if err := (&exec.Cmd{Path: bash, Args: []string{"bash", "-c", `[[ é =~ ^[[:alnum:]]$ ]]`}, Env: env}).Run(); err != nil {
 		t.Skip("no C.UTF-8 locale")
 	}
-	var sample []rune
+	pinned := []rune{'A', 'z', '7', 'é', 0x093e, 0x0345, '-', ' ', '!'}
+	sample := slices.Clone(pinned)
 	for r := rune(1); r <= unicode.MaxRune; r++ {
 		if r == '\n' || r >= 0xd800 && r <= 0xdfff {
 			continue
@@ -245,6 +246,8 @@ func TestAlnumAgainstGlibc(t *testing.T) {
 			sample = append(sample, r)
 		}
 	}
+	slices.Sort(sample)
+	sample = slices.Compact(sample)
 	var in strings.Builder
 	for _, r := range sample {
 		in.WriteString(string(r) + "\n")
@@ -282,8 +285,11 @@ done`)
 			t.Errorf("%U after an id: gawk calls it alnum, Go does not", r)
 		}
 	}
-	for _, r := range []rune{'A', 'z', '7', 'é', 0x093e, 0x0345, '-', ' ', '!'} {
-		i, _ := slices.BinarySearch(sample, r)
+	for _, r := range pinned {
+		i, ok := slices.BinarySearch(sample, r)
+		if !ok {
+			t.Fatalf("%U not sampled", r)
+		}
 		if gawkBoundary := idNext[i] == "1"; gawkBoundary == (glibcAlnum(r) || r == '_' || r == '.') {
 			t.Errorf("%U after an id: gawk boundary %v, Go disagrees", r, gawkBoundary)
 		}
