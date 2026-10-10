@@ -107,6 +107,14 @@
               (builtins.readFile ./adapters/core/dispatch-config.sh);
           };
           withConfig = builtins.replaceStrings ["@dispatchConfig@"] ["${dispatchConfig}/bin/dispatch-config"];
+          # @launcherRuntimePath@ (#936) is a launcher's own pinned tool PATH:
+          # exactly the dirs writeShellApplication's preamble prepends, i.e.
+          # `lib.makeBinPath` of the very list passed as its runtimeInputs, so the
+          # dirs a launcher strips cannot drift from the dirs it was given. Its
+          # script removes them from PATH for the engine it launches; a raw run
+          # from a checkout never gets the substitution and leaves PATH alone.
+          launcherPath = runtimeInputs:
+            builtins.replaceStrings ["@launcherRuntimePath@"] [(pkgs.lib.makeBinPath runtimeInputs)];
         in rec {
           dispatch-config = dispatchConfig;
 
@@ -195,17 +203,24 @@
           # eval-time cycle. dispatch-resume resolves `dispatch` from the
           # ambient PATH instead — the same ambient-tool pattern dispatch
           # itself uses for `wt`.
-          dispatch-resume = pkgs.writeShellApplication {
-            name = "dispatch-resume";
-            runtimeInputs = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
-            text = withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh));
-          };
+          dispatch-resume = let
+            # One list, read twice: the preamble's runtimeInputs and the bake.
+            rt = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
+          in
+            pkgs.writeShellApplication {
+              name = "dispatch-resume";
+              runtimeInputs = rt;
+              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh)));
+            };
 
-          dispatcher = pkgs.writeShellApplication {
-            name = "dispatcher";
-            runtimeInputs = (with pkgs; [git jq coreutils diffutils tmux]) ++ [crew];
-            text = withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh));
-          };
+          dispatcher = let
+            rt = (with pkgs; [git jq coreutils diffutils tmux]) ++ [crew];
+          in
+            pkgs.writeShellApplication {
+              name = "dispatcher";
+              runtimeInputs = rt;
+              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh)));
+            };
 
           refresh-scores = pkgs.writeShellApplication {
             name = "refresh-scores";

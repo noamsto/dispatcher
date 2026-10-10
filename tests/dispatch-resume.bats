@@ -580,6 +580,54 @@ _store_protocols() { # <dir> <content>
   [ "$status" -ne 0 ]
 }
 
+# #936: tmux takes a new window's PATH from the client that opens it, so the rows
+# pin the PATH that client runs with — what the pane inherits — and not the argv
+# of a stub that never interprets it.
+_stub_tmux_with_path_log() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+printf 'tmux PATH=%s\n' "$PATH" >>"$STUB_LOG"
+case "$1" in
+list-panes) : ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "resume opens the engine window under a PATH without the launcher's pinned dirs (#936)" {
+  setup_worker_wt
+  _stub_tmux_with_path_log
+  local pinned="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$pinned"
+  sed "s|@launcherRuntimePath@|$pinned|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-pinned.sh"
+  cd "$WT"
+  PATH="$pinned:$PATH" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-pinned.sh"
+  [ "$status" -eq 0 ]
+  # grep -A1 pairs the client's PATH with the new-window call itself: every other
+  # tmux call keeps running with the launcher's pinned PATH. The pinned dir must
+  # be gone from this one.
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH="* ]]
+  [[ "$output" != *"$pinned"* ]]
+}
+
+@test "a raw resume opens the window under the caller's PATH unchanged (#936)" {
+  setup_worker_wt
+  _stub_tmux_with_path_log
+  local pinned="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$pinned"
+  cd "$WT"
+  PATH="$pinned:$PATH" run run_resume
+  [ "$status" -eq 0 ]
+  # A raw run has no store dirs to remove: even a pinned-looking dir survives.
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH=$pinned:"* ]]
+}
+
 @test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

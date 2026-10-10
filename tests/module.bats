@@ -458,6 +458,23 @@ placeholder_three_row() { # token bin bin bin
   done
 }
 
+# #936: the dirs a launcher strips must be exactly the dirs its preamble
+# prepends — anything else leaves a pinned `crew` behind or strips a tool the
+# launcher still needs. Comparing against each built launcher's own preamble line
+# is what makes adding a runtimeInput without baking it (or the reverse) go red.
+@test "the launcher-runtime placeholder is substituted and matches each preamble" {
+  local out preamble baked
+  for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume"; do
+    run grep -c '@launcherRuntimePath@' "$out"
+    [ "$output" = "0" ]
+    preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$out")"
+    baked="$(sed -n "s|^_launcher_runtime_path='\(.*\)'$|\1|p" "$out")"
+    [ -n "$preamble" ]
+    [ -n "$baked" ]
+    [ "$baked" = "$preamble" ]
+  done
+}
+
 # The default `local` notes ship as a repo file, baked into dispatch as a store
 # directory (#842) — an unsubstituted token is not a readable path, and a store
 # path without the file would silently drop the lane's notes.

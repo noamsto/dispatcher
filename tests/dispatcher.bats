@@ -504,3 +504,66 @@ _store_launcher_dirs() {
   DISPATCH_ENGINES="claude codex pi" CREW_ID=c1 run run_launcher --agent codex
   [ "$status" -eq 0 ]
 }
+
+# #936: a fake store dir stands in for the launcher's pinned runtimeInputs bin —
+# the dirs flake.nix bakes into @launcherRuntimePath@ and that writeShellApplication
+# prepends to PATH. $PINNED_BIN goes first on PATH, so the launcher resolves
+# `crew` there; $PROFILE_BIN is the later entry the launched engine must resolve
+# instead.
+_pinned_launcher() {
+  PINNED_BIN="$TEST_REPO/store/h-pinned/bin"
+  PROFILE_BIN="$TEST_REPO/profile/bin"
+  mkdir -p "$PINNED_BIN" "$PROFILE_BIN"
+  cat >"$PINNED_BIN/crew" <<'EOF'
+#!/usr/bin/env bash
+printf 'pinned crew %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  cat >"$PROFILE_BIN/crew" <<'EOF'
+#!/usr/bin/env bash
+printf 'profile crew %s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOF
+  # The engine reports the crew IT resolves.
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'engine crew=%s\n' "$(command -v crew)" >>"$STUB_LOG"
+printf 'engine PATH=%s\n' "$PATH" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$PINNED_BIN/crew" "$PROFILE_BIN/crew" "$STUB_DIR/claude"
+  # setup()'s crew stub sits between the two dirs; dropped so the launcher's own
+  # crew calls land on the pinned one and the engine's on the profile one.
+  rm -f "$STUB_DIR/crew"
+  export PATH="$PINNED_BIN:$STUB_DIR:$PROFILE_BIN:$PATH"
+}
+
+@test "the launched engine resolves crew through the profile, not the launcher's pinned store dir" {
+  _pinned_launcher
+  sed "s|@launcherRuntimePath@|$PINNED_BIN|" "$LAUNCHER" >"$BATS_TEST_TMPDIR/launcher-pinned.sh"
+  CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-pinned.sh"
+  [ "$status" -eq 0 ]
+  grep -qx "engine crew=$PROFILE_BIN/crew" "$STUB_LOG"
+  # register is the launcher's own call: it must still land on the pinned crew.
+  grep -q '^pinned crew register' "$STUB_LOG"
+}
+
+@test "only the launcher's own dirs drop from the engine's PATH, and the rest keep their order" {
+  _pinned_launcher
+  local other="$TEST_REPO/store/h-other/bin" keep="$TEST_REPO/keep-me"
+  mkdir -p "$other" "$keep"
+  sed "s|@launcherRuntimePath@|$PINNED_BIN:$other|" "$LAUNCHER" >"$BATS_TEST_TMPDIR/launcher-two.sh"
+  PATH="$PINNED_BIN:$keep:$other:$PINNED_BIN/extra:$STUB_DIR:$PROFILE_BIN:$PATH" \
+    CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-two.sh"
+  [ "$status" -eq 0 ]
+  # $PINNED_BIN/extra shares a prefix but is not an entry: it stays, in place.
+  grep -qF "engine PATH=$keep:$PINNED_BIN/extra:$STUB_DIR:$PROFILE_BIN:" "$STUB_LOG"
+}
+
+@test "an unsubstituted placeholder leaves the engine's PATH untouched" {
+  _pinned_launcher
+  CREW_ID=c1 run bash -euo pipefail "$LAUNCHER"
+  [ "$status" -eq 0 ]
+  grep -qF "engine PATH=$PINNED_BIN:$STUB_DIR:$PROFILE_BIN:" "$STUB_LOG"
+  grep -qx "engine crew=$PINNED_BIN/crew" "$STUB_LOG"
+}

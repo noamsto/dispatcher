@@ -149,6 +149,43 @@ shell_quote() {
   _out="'$_res'"
 }
 
+# #936, duplicated from dispatcher.sh (adapters/core has no shared library; each
+# launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
+# launcherPath, is this script's own pinned tool PATH — the store dirs its
+# preamble prepends. engine_path prints the caller's PATH with exactly those dirs
+# dropped, every other entry in order; the window creation below runs the tmux
+# client under it, because tmux builds a new window's PATH from the client that
+# opens it. A raw run from a checkout leaves the placeholder literal and leaves
+# PATH untouched.
+_launcher_runtime_path='@launcherRuntimePath@'
+engine_path() {
+  local pinned="$_launcher_runtime_path" entry dir keep
+  local -a parts=() pinned_parts=() kept=()
+  # A substituted value is a colon-joined list of store dirs, so it starts with
+  # `/`; anything else is the raw script, where there is nothing to remove. Same
+  # "not absolute means unsubstituted" test _resolve_dir uses.
+  if [ "${pinned:0:1}" != '/' ]; then
+    printf '%s' "${PATH-}"
+    return 0
+  fi
+  IFS=: read -ra parts <<<"${PATH-}" || true
+  IFS=: read -ra pinned_parts <<<"$pinned" || true
+  for entry in "${parts[@]}"; do
+    keep=1
+    for dir in "${pinned_parts[@]}"; do
+      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
+        keep=0
+        break
+      fi
+    done
+    if [ "$keep" = 1 ]; then
+      kept+=("$entry")
+    fi
+  done
+  local IFS=:
+  printf '%s' "${kept[*]}"
+}
+
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -1136,7 +1173,17 @@ if [ -z "$pane" ]; then
       client_height=""
     fi
   fi
-  read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+  # tmux takes the window's PATH from the client that opens it, so the client
+  # runs under the cleaned PATH; tmux itself is resolved first, while the pinned
+  # PATH still holds. The `|| true` keeps a box without tmux reaching the "could
+  # not resolve a tmux pane" message below instead of dying under errexit.
+  engine_env_path="$(engine_path)"
+  tmux_bin="$(command -v tmux || true)"
+  pane_client=(tmux)
+  if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
+    pane_client=(env PATH="$engine_env_path" "$tmux_bin")
+  fi
+  read -r win pane < <("${pane_client[@]}" new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   fi
