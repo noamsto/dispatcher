@@ -765,7 +765,7 @@ func TestPlanSeamAccepted(t *testing.T) {
 func TestPlanSeamAfterDispatch(t *testing.T) {
 	f := newFixture(t)
 	f.doc(planDoc)
-	f.log(reviewSeam, deslopSeam, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`, msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`))
+	f.log(reviewSeam, deslopSeam, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`, planSeam)
 	if code, stderr := f.status(worker, "pr_open"); code != 0 {
 		t.Fatalf("%d %q", code, stderr)
 	}

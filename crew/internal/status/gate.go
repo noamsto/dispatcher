@@ -28,8 +28,8 @@ type taskDoc struct {
 
 // check returns the refusal line, or "" when the row may be posted. The review,
 // deslop and (for `plan: required`) plan seams are checked in that order. Seams
-// from any earlier session on this branch in this crew count (the resume case), and
-// a worker that cannot review stops on an ungated state (blocked/failed), so
+// from any earlier session on this branch in this crew count (the resume case;
+// the plan seam only since the branch's latest dispatch), and a worker that cannot review stops on an ungated state (blocked/failed), so
 // refusing here never strands one.
 func (g gate) check() string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
