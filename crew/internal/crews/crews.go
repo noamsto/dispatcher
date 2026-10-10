@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/lock"
+
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -231,13 +233,15 @@ func PidFileText(path string) (string, bool) {
 // validPid is the arm's `case "$pid" in *[!0-9]* | 0)` guard: all digits and
 // not the single "0". "00" passes and so does bash's `kill -0 00` (it signals
 // our own process group, signal 0), which Kill(0, 0) mirrors. A digit string
-// beyond int fails here exactly where bash's kill and ps both fail on it.
+// beyond int, or past the kernel's pid ceiling (kill(2) would truncate it to a
+// pid_t, e.g. 4294967295 to -1), fails here exactly where bash's kill and ps
+// both fail on it.
 func validPid(s string) (int, bool) {
 	if s == "" || s == "0" || !isDigits(s) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(s)
-	if err != nil {
+	if err != nil || n > lock.MaxPID {
 		return 0, false
 	}
 	return n, true
