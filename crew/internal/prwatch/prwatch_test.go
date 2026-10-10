@@ -21,9 +21,9 @@ import (
 
 const event = `{"pr":42,"changed":["head_sha"],"state":"open"}`
 
-// The child side of TestStopSignal: this binary, re-execed under the name
-// `pr-watch`, announces itself, prints the event and parks forever — so the only
-// way the test's Run returns is the signal it forwards.
+// The env the re-execed child side of the signal tests reads: this binary, run
+// under the name `pr-watch` or as a parked `crew pr-watch`, announces itself and
+// waits, so the only way its test's Run returns is the signal it forwards.
 const (
 	childEnv     = "PRWATCH_CHILD"
 	markerEnv    = "PRWATCH_CHILD_MARKER"
@@ -70,18 +70,16 @@ func TestMain(m *testing.M) {
 // tree is the bus the arm writes to; paths is what main.go would hand Run.
 type tree struct {
 	t     *testing.T
-	root  string
 	paths bus.Paths
 }
 
 func newTree(t *testing.T) tree {
 	t.Helper()
-	root := t.TempDir()
-	tr := tree{t: t, root: root, paths: bus.Paths{
-		Dir: filepath.Join(root, ".dispatcher", "crew", "c1"),
-		Log: filepath.Join(root, ".dispatcher", "crew", "c1", "events.jsonl"),
+	dir := t.TempDir()
+	return tree{t: t, paths: bus.Paths{
+		Dir: filepath.Join(dir, ".dispatcher", "crew", "c1"),
+		Log: filepath.Join(dir, ".dispatcher", "crew", "c1", "events.jsonl"),
 	}}
-	return tr
 }
 
 // rows are the bus rows, parsed.
@@ -261,10 +259,9 @@ func TestNoArguments(t *testing.T) {
 	}
 }
 
-// TestStopSignalForwardsAndPostsNothing is the deviation from the arm in the
-// open: the signal is handed to the child and the wait goes on until the child
-// is gone, and the event the child had already printed is neither posted nor
-// printed.
+// TestStopSignalForwardsAndPostsNothing: the signal is handed to the child and the
+// wait goes on until the child is gone, and an event the child had already printed
+// is neither posted nor printed.
 func TestStopSignalForwardsAndPostsNothing(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: event + "\n", code: 143, wait: make(chan struct{})}
@@ -401,11 +398,9 @@ func field(t *testing.T, row, key string) string {
 	return s
 }
 
-// TestWatchedStopSignalsDropsInheritedIgnored is the first finding: a park
-// launched under nohup (or as a non-interactive bash `&` job) inherits SIGHUP or
-// SIGINT ignored, and the arm trapped nothing, so it survived those. Catching one
-// would end a park the arm finished — and take the child with it, since exec gives
-// a notified signal back its default disposition.
+// TestWatchedStopSignalsDropsInheritedIgnored: a park launched under nohup (or as a
+// non-interactive bash `&` job) inherits SIGHUP or SIGINT ignored, and it has to
+// keep surviving them.
 func TestWatchedStopSignalsDropsInheritedIgnored(t *testing.T) {
 	ignored := func(s os.Signal) bool { return s == syscall.SIGHUP || s == syscall.SIGINT }
 	got := watchedStopSignals(ignored)
@@ -421,9 +416,9 @@ func TestWatchedStopSignalsDropsInheritedIgnored(t *testing.T) {
 	}
 }
 
-// TestSecondSignalStillStopsThePark is the second finding: after the first signal
-// is forwarded, a channel left registered swallows the next one, and a child that
-// ignores TERM would then leave SIGKILL as the only way to stop the park.
+// TestSecondSignalStillStopsThePark: a channel left registered after the first
+// signal swallows the next one, and a child that ignores TERM would then leave
+// SIGKILL as the only way to stop the park.
 func TestSecondSignalStillStopsThePark(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "parked")

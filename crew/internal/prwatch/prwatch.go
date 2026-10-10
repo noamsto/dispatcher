@@ -4,14 +4,10 @@
 // this crew's dispatcher, so an armed `crew watch` wakes. Stdout stays the
 // event, so the wrapper still composes.
 //
-// The park is a child process, and its death is part of the contract: a
+// The park is a child process, and stopping it is part of the contract: a
 // dispatcher that stops a parked watch must not leave an orphaned `pr-watch`
-// polling GitHub. The bash arm inherited the signal and died around the child;
-// Go forwards it to the child, waits for the child, and exits with that status.
-//
-// The row is a plain write through bus.Append with the arm's six keys in order.
-// It needs no byte-exact body: `body` is the event text as the child printed it,
-// so no reader compares key order inside it.
+// polling GitHub. So a stop signal is forwarded to the child, and the wait goes
+// on until the child is gone.
 package prwatch
 
 import (
@@ -85,23 +81,21 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	}
 
 	// The park. Stop signals are caught before the child starts, so one that lands
-	// during the exec is forwarded rather than taken by the default action, and
-	// the wait then goes on until the child is gone — because the post below is
-	// exactly what a stopped watch must not do.
+	// during the exec is forwarded rather than taken by the default action.
 	//
-	// A signal the process inherited *ignored* is left alone, as the arm left it:
+	// A signal this process inherited *ignored* is left alone, as the arm left it:
 	// `nohup crew pr-watch &` ignores SIGHUP and a non-interactive bash `&` job
-	// ignores SIGINT, and the arm traps nothing, so both survived those. Catching
-	// one would end a park the arm finished, and it would end the child too, since
-	// exec hands a notified signal back its default disposition.
-	own := make(chan os.Signal, 1)
+	// ignores SIGINT, and the arm traps nothing, so both survived those.
+	stop := func() {}
 	sigs := o.Signals
 	if sigs == nil {
+		own := make(chan os.Signal, 1)
 		// Notify with no signals would relay *every* signal to the channel.
 		if watch := watchedStopSignals(signal.Ignored); len(watch) > 0 {
 			signal.Notify(own, watch...)
 		}
-		defer signal.Stop(own)
+		stop = func() { signal.Stop(own) }
+		defer stop()
 		sigs = own
 	}
 
@@ -124,14 +118,13 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	select {
 	case code = <-done:
 	case s := <-sigs:
-		// Unregister first: while a channel stays registered a second signal is
-		// queued to a channel nobody reads and vanishes, and a child that ignores
-		// the forwarded one would then leave SIGKILL as the only way to stop the
-		// park. The next one now takes the default disposition, as the arm's did.
-		signal.Stop(own)
+		// Unregister first: a signal arriving while the channel is registered is
+		// queued to a channel nobody reads, so a child that ignores the forwarded
+		// one would leave SIGKILL as the only way to stop the park. The next one
+		// now takes the default disposition.
+		stop()
 		_ = child.Signal(s)
-		// The child's own status, as the arm that died of the same signal would
-		// have reported it — and no post, whatever the child printed.
+		// The child's own status, and no post whatever it had printed.
 		return <-done
 	}
 	if code != 0 {
@@ -187,8 +180,9 @@ func startChild(ctx context.Context, args []string, stdout, stderr io.Writer) (C
 }
 
 // watchedStopSignals is stopSignals without the signals this process was left
-// ignoring — the predicate is signal.Ignored, injected so the choice is testable
-// without changing this process's dispositions out from under the suite.
+// ignoring, which is signal.Ignored in the caller. The predicate is a parameter so
+// the choice is testable without setting this process's dispositions out from under
+// the rest of the suite.
 func watchedStopSignals(ignored func(os.Signal) bool) []os.Signal {
 	var watch []os.Signal
 	for _, s := range stopSignals {

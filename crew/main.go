@@ -201,7 +201,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	// pr-watch runs the standalone pr-watch binary as a child and posts the event it
 	// printed, so it owns its run the way watch does rather than folding the bus.
-	// It takes the context for that child: the arm's died with it.
 	if sub == "pr-watch" {
 		return prwatch.Run(ctx, args, paths, stdout, stderr, prwatch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
