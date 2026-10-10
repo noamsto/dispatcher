@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/adopt"
 	"github.com/noamsto/dispatcher/crew/internal/await"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -37,7 +38,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -70,7 +71,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where", "stream", "stall-watch":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where", "stream", "adopt", "stall-watch":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -201,6 +202,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return where.Run(args, paths, stdout, stderr, where.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Probes: whereProbes(ctx),
+		})
+	}
+
+	// adopt rewrites a crew pid file and releases the labels a dead crew left,
+	// so it reads the caller's own identity: `$$`, `$PPID` and `$PWD` are the
+	// fields its pidfile.log line records, and crew.sh execs us with them.
+	if sub == "adopt" {
+		return adopt.Run(args, paths, stdout, stderr, adopt.Options{
+			Probes: e.procs,
+			Now:    time.Now,
+			PID:    os.Getpid(),
+			PPID:   os.Getppid(),
+			Pwd:    cwd,
 		})
 	}
 

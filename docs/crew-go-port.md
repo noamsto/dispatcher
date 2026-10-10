@@ -4,7 +4,7 @@ Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
-`stall-watch` (#832) and `stream`. Each slice must leave every bats file green;
+`stall-watch` (#832), `stream` and `adopt` (#920). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -134,6 +134,19 @@ output contract below), with each edit justified.
   window's `@crew_*` stamps and the bus's `dispatch` rows, never git discovery in
   a worktree — and falls back to the pool identity (`identity`) for a window
   stamped before `@crew_name` existed.
+- `crew/internal/adopt`: `crew adopt`, the re-attach a dispatcher runs after a
+  restart lost `CREW_ID` (#29) and the release of the `dispatched` labels a crew
+  that died mid-claim left behind (#73). stdout is the bare id alone — callers
+  run `CREW_ID=$(crew adopt <id> $PPID)` — so every message the run has to say,
+  kept claim included, is stderr. The pid file and `$dir/pidfile.log` are shared
+  with the bash arms that still write them (`register`, `deregister`), so
+  `_pidfile_log` has a Go copy with the same field order and `_owner_pid` is
+  `crews.Probes.OwnerPID`; `$$`, `$PPID` and `$PWD` are this process's own,
+  which is what crew.sh's `exec` leaves them. `claims.jq` is the arm's fold with
+  the documented jqrun patch: its final `.[] | @tsv` is dropped and Go reads the
+  rows by position. Occupancy is the one question asked of `_occupants`, and the
+  window list alone answers it, so the arm's third read (`tmux list-panes`,
+  whose rows fill only the advisory `engine`/`panes` fields) is not run.
 - `crew/internal/frame`: Go copies of `_frame_classifier`'s predicates (prompt,
   permission, quota, background-wait, meter and sub-row shapes, the claude and
   pi input boxes) and `_pane_idle_reason`. Every function takes the sampler's
@@ -252,7 +265,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where | stream)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where | stream | adopt)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;

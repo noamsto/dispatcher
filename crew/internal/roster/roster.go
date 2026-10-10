@@ -112,7 +112,7 @@ func resolveExited(row *jsonv.Value, live []string, worktrees func() (string, er
 	if err != nil {
 		return err
 	}
-	wt := worktreePath(porcelain, branch)
+	wt := WorktreePath(porcelain, branch)
 	if wt == "" || !slices.ContainsFunc(live, func(pane string) bool { return paneIsEngineAt(pane, wt) }) {
 		return nil
 	}
@@ -122,13 +122,13 @@ func resolveExited(row *jsonv.Value, live []string, worktrees func() (string, er
 	return nil
 }
 
-// worktreePath mirrors the awk program
+// WorktreePath mirrors the awk program
 //
 //	/^worktree /{p=$2} $0=="branch "b{print p}
 //
 // whose output `$(...)` joins and trims: several worktrees on one branch give
 // a multi-line value that never equals a pane path.
-func worktreePath(porcelain, branch string) string {
+func WorktreePath(porcelain, branch string) string {
 	want := "branch refs/heads/" + branch
 	var p string
 	var hits []string

@@ -24,11 +24,14 @@ type Probes struct {
 	// Parent is `ps -o ppid= -p`: the pid's parent, false when ps cannot say
 	// or names none (the walk's `'' | *[!0-9]* | 0` guard).
 	Parent func(pid int) (int, bool)
+	// Comm is `ps -o comm= -p`: the pid's command name, false when ps cannot say
+	// it or names none.
+	Comm func(pid int) (string, bool)
 }
 
 // DefaultProbes are the real reads.
 func DefaultProbes() Probes {
-	return Probes{Alive: pidAlive, Elapsed: psElapsedS, Mtime: fileMtimeS, Parent: psParent}
+	return Probes{Alive: pidAlive, Elapsed: psElapsedS, Mtime: fileMtimeS, Parent: psParent, Comm: psComm}
 }
 
 // RecordedLive is _recorded_pid_live: <pid> can still be the dispatcher
@@ -50,9 +53,9 @@ func (p Probes) recycled(now time.Time, pid int, pidfile string) bool {
 	return now.Unix()-elapsed > mtime+2
 }
 
-// isAncestor is _is_ancestor_pid: is <pid> one of this process's ancestors?
+// IsAncestor is _is_ancestor_pid: is <pid> one of this process's ancestors?
 // Bounded walk, like the bash one.
-func (p Probes) isAncestor(pid int) bool {
+func (p Probes) IsAncestor(pid int) bool {
 	cur := os.Getpid()
 	for depth := 0; depth < 32; depth++ {
 		parent, ok := p.Parent(cur)
@@ -172,4 +175,58 @@ func psParent(pid int) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// psComm is `ps -o comm= -p <pid>`, the command name the owner walk matches
+// against the shell list. The text keeps the whitespace `tr -d '[:space:]'`
+// would have removed, because shellName strips it there.
+func psComm(pid int) (string, bool) {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
+
+// shells are the command names _owner_pid climbs past. `dispatch` execs `crew
+// new` through a shell, and a shell is a step on the way to the owner rather
+// than the owner itself.
+var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "fish": true, "dash": true, "ksh": true}
+
+// OwnerPID is _owner_pid: the pid to record when the caller does not name one.
+// The caller's parent is that shell, so the walk climbs past the shells to the
+// first ancestor that is not one — the process that actually wants to own the
+// crew. Any process ps cannot name, or a parent of 0 or 1, ends the walk, and
+// the direct parent is the answer it falls back to.
+func (p Probes) OwnerPID(ppid int) int {
+	for pid := ppid; pid > 1; {
+		comm, ok := p.Comm(pid)
+		if !ok {
+			break
+		}
+		if name := shellName(comm); !shells[name] {
+			return pid
+		}
+		if pid, ok = p.Parent(pid); !ok {
+			break
+		}
+	}
+	return ppid
+}
+
+// shellName is the arm's `tr -d '[:space:]'`, `${c##*/}` and `${c#-}`: ps
+// prints the leading path for a process exec'd by absolute path, and a login
+// shell prefixes itself with '-'. A name with a space in it, or one that starts
+// with '-', is beyond `ps -o comm=` — as it was for bash.
+func shellName(comm string) string {
+	n := strings.Map(func(r rune) rune {
+		if r == ' ' || (r >= '\t' && r <= '\r') {
+			return -1
+		}
+		return r
+	}, comm)
+	if i := strings.LastIndex(n, "/"); i >= 0 {
+		n = n[i+1:]
+	}
+	return strings.TrimPrefix(n, "-")
 }
