@@ -6,10 +6,11 @@
 # seam for this branch or a resume of it after its latest dispatch, else 0.
 #
 # A plan seam is a {"seam":"plan","plan_critic_first_pass":"accept"|"revise"|
-# "reject"} msg to review:<crew> from this branch. One from an earlier
-# dispatch or session on the branch still counts, like the review and deslop
-# seams. `dispatch resume` posts a kind:"resume" row and does not rewrite
-# WORKER_TASK.md, hence the bus check: a resumed branch skips the plan phase.
+# "reject"} msg to review:<crew> from this branch. One from an earlier session
+# of the same dispatch counts, but unlike the review and deslop seams a new
+# dispatch row resets it: retro windows runs by dispatch. `dispatch resume`
+# posts a kind:"resume" row and does not rewrite WORKER_TASK.md, hence the bus
+# check: a resumed branch skips the plan phase.
 # Resume rows are crew-scoped on purpose (retro's rule is per-run, so it needs
 # no crew check), and a resume counts only after the branch's latest dispatch.
 #
@@ -25,7 +26,7 @@
     else
       $p[0] as $m
       | if $m.crew_id != $c then .
-        elif $m.kind == "dispatch" and $m.branch == $n then .resumed = false
+        elif $m.kind == "dispatch" and $m.branch == $n then .resumed = false | .seam = false
         elif $m.kind == "resume" and $m.branch == $n then .resumed = true
         elif $m.kind == "msg" and $m.to == ("review:" + $c)
              and (($m.from // "") | tostring | sub("#s[^#]*$"; "")) == $b then

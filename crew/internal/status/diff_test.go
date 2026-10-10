@@ -236,6 +236,8 @@ func TestPlanFold(t *testing.T) {
 		{"plan seam", []string{planOK}, "1"},
 		{"resume", []string{resume}, "1"},
 		{"resume then dispatch", []string{resume, dispatch}, "0"},
+		{"seam then dispatch", []string{planOK, dispatch}, "0"},
+		{"dispatch then seam", []string{dispatch, planOK}, "1"},
 		{"bad value", []string{planBad}, "0"},
 	} {
 		if got := runGo(planProg, "claude", c.seq); got != c.want {

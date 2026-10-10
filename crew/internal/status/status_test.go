@@ -762,6 +762,15 @@ func TestPlanSeamAccepted(t *testing.T) {
 	}
 }
 
+func TestPlanSeamAfterDispatch(t *testing.T) {
+	f := newFixture(t)
+	f.doc(planDoc)
+	f.log(reviewSeam, deslopSeam, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`, msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`))
+	if code, stderr := f.status(worker, "pr_open"); code != 0 {
+		t.Fatalf("%d %q", code, stderr)
+	}
+}
+
 func TestPlanSeamExemptions(t *testing.T) {
 	resume := `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x","worker_id":"worker:feat/x#s2"}`
 	for _, c := range []struct{ name, doc, extra string }{
@@ -801,6 +810,7 @@ func TestPlanSeamRejectsNonEvidence(t *testing.T) {
 		{"resume other branch", `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/y"}`},
 		{"resume other crew", `{"ts":1,"crew_id":"c2","kind":"resume","branch":"feat/x"}`},
 		{"resume then dispatch", `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x"}` + "\n" + `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`},
+		{"plan seam then dispatch", msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`) + "\n" + `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFixture(t)
