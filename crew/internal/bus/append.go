@@ -2,8 +2,7 @@
 // `_bus_append` write plus the two helpers that keep a line short enough to
 // survive it (`_fit_line` and `_shrink`). Append, FitLine and Shrink are the one
 // implementation for every Go writer; `_bus_append` stays in crew.sh for the
-// writers still there: the nudge and nudge_wait rows, the release row and the
-// reap row.
+// bash arms that still append.
 package bus
 
 import (
