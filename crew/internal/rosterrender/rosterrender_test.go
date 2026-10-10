@@ -130,6 +130,13 @@ func TestParseIsTheArmInItsOrder(t *testing.T) {
 		{name: "interval zero", args: []string{"--crew", "c1", "--interval", "0"}, msg: errInterval, code: exitUsage},
 		{name: "interval negative", args: []string{"--crew", "c1", "--interval", "-1"}, msg: errInterval, code: exitUsage},
 		{name: "interval not a number", args: []string{"--crew", "c1", "--interval", "2s"}, msg: errInterval, code: exitUsage},
+		// bash's `[ "$v" -gt 0 ]` errors on a digit string it cannot read, so the
+		// arm refused it with the same message; clamping it would be a daemon that
+		// never wakes.
+		{name: "interval overflows", args: []string{"--crew", "c1", "--interval", "99999999999999999999"},
+			msg: errInterval, code: exitUsage},
+		{name: "quiet overflows", args: []string{"--crew", "c1", "--quiet", "99999999999999999999"},
+			msg: errQuiet, code: exitUsage},
 		{name: "quiet negative", args: []string{"--crew", "c1", "--quiet", "-1"}, msg: errQuiet, code: exitUsage},
 		{name: "no crew", args: []string{"--interval", "3"}, msg: errCrewRequired, code: exitUsage},
 		{name: "once and detach", args: []string{"--crew", "c1", "--once", "--detach"}, msg: errOnceDetach, code: exitUsage},

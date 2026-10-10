@@ -33,10 +33,8 @@ type Options struct {
 	// force a sweep or a rebuild. The poll interval deliberately stays off it, so
 	// a test can never sleep for hours, and `crew roster`'s ages stay on the wall
 	// clock because that fold's child read `jq now`.
-	Clock clock.Clock
-	// Stdout takes the live count, one line per change; Stderr the arm's lines.
-	Stdout io.Writer
-	Stderr io.Writer
+	Clock  clock.Clock
+	Stderr io.Writer // every diagnostic, the arm's and the daemon's own
 	// RosterDir is $CREW_ROSTER_DIR.
 	RosterDir string
 	// Self is the build this process was started as — the arm's `readlink -f

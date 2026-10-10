@@ -78,6 +78,8 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 			got, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, roles)
 			if err == nil {
 				live = got
+			} else {
+				say(o.Stderr, "crew: roster-render: %v\n", err)
 			}
 			sig = newSig
 			lastBuild = now
@@ -96,7 +98,13 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 
 		// The upgrade point is the sleep boundary, and a crew already draining is
 		// left to exit rather than upgraded: the hop would restart its quiet window
-		// in the new build, and the next dispatch starts that build anyway.
+		// in the new build, and the next dispatch starts that build anyway. A signal
+		// that arrived during the pass is honoured here rather than execed through —
+		// the arm's `trap 'exit 0'` fired between commands, so a killed renderer never
+		// reached its exec either.
+		if ctx.Err() != nil {
+			return exitOK
+		}
 		if err := o.hop(running, idleSet, daemonArgs); err != nil {
 			// The arm's `exec` under `set -e`: a build that cannot be started takes
 			// the daemon down rather than spinning on it.

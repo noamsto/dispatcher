@@ -169,7 +169,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Procs:     e.procs,
 			Roster:    e.probes(ctx, cwd),
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
-			Stdout:    stdout,
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
 			Self:      os.Getenv("CREW_SELF"),

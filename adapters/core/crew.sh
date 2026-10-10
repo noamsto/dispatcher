@@ -258,19 +258,6 @@ _recorded_pid_live() {
   return 0
 }
 
-# _is_ancestor_pid <pid> — is <pid> one of this process's ancestors? Bounded
-# walk; `ps -o ppid= -p` is the one parent-of spelling identical on BSD and GNU.
-_is_ancestor_pid() {
-  local p=$$ depth=0
-  while [ "$depth" -lt 32 ]; do
-    depth=$((depth + 1))
-    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d '[:space:]' || true)
-    case "$p" in '' | *[!0-9]* | 0) return 1 ;; esac
-    if [ "$p" = "$1" ]; then return 0; fi
-  done
-  return 1
-}
-
 # _pidfile_log <action> <outcome> <crew> <old> <new> — one line per crew pid
 # file mutation (or refusal) in $dir/pidfile.log, naming the caller so a crew
 # dir that vanishes or changes owner can be traced (#432). Append-only and

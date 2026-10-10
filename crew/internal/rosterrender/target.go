@@ -29,8 +29,10 @@ func target(common, crew, rosterDir string, now func() time.Time) string {
 	if rosterDir == "" {
 		rosterDir = defaultRosterDir
 	}
+	// `${1%%-*}` is the whole id when it holds no dash, so a bare epoch crew id
+	// stamps the name exactly as a `<epoch>-<suffix>` one does.
 	when := crew
-	if prefix, _, found := strings.Cut(crew, "-"); found && plainEpoch.MatchString(prefix) {
+	if prefix, _, _ := strings.Cut(crew, "-"); plainEpoch.MatchString(prefix) {
 		if secs, err := strconv.ParseInt(prefix, 10, 64); err == nil {
 			when = time.Unix(secs, 0).In(now().Location()).Format("01-02-1504")
 		}

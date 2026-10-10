@@ -103,8 +103,11 @@ func parse(args []string) (call, string, int) {
 }
 
 // positive is bash's `case "$v" in ” | *[!0-9]*)` plus the decimal read. A value
-// too big for an int64 reads as the largest one: the arm's `$((…))` would have
-// wrapped, and no interval or quiet window that long is meant.
+// too big for an int64 fails bash's `[ "$v" -gt 0 ]` the same way a non-digit
+// does — `[` reports "integer expression expected" and the arm's `||` refused with
+// its own message — so it is refused rather than clamped: an interval of a hundred
+// billion years is a daemon that never wakes. The arm tests no sign for --quiet,
+// but a window no int64 holds is not a window either, so it is refused the same.
 func positive(s string) (int64, bool) {
 	if s == "" {
 		return 0, false
@@ -116,7 +119,7 @@ func positive(s string) (int64, bool) {
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 1 << 62, true
+		return 0, false
 	}
 	return n, true
 }
