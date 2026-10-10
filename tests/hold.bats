@@ -141,7 +141,7 @@ events_log() {
   [[ "$output" =~ ^[0-9]+-[0-9]+$ ]]
 }
 
-@test "hold add: a long title shrinks through _fit_line while id and task.branch survive intact" {
+@test "hold add: a long title shrinks through bus.FitLine while id and task.branch survive intact" {
   big=$(head -c 8000 /dev/zero | tr '\0' x)
   id=$(run_crew hold add --engine claude --window 5h \
     --resets-at "$(($(date +%s) + 100))" --agent codex --ref r1 \

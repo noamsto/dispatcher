@@ -6,15 +6,24 @@
 // (`\g<b>`) and look-ahead, which neither RE2 nor gojq can run, so the grammar
 // is hand-parsed here; testdata/ holds the arm's three jq programs verbatim, the
 // oracle the differential test runs. Refusing less often than the arm is a
-// regression. Known differences, each refusing more or unreachable:
+// regression. Known differences, each refusing more or unreachable unless noted:
 //   - Oniguruma's retry limit fails a pathological but well-formed ledger, which
 //     the arm then refuses; the parser here has no limit.
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
+//   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
+//     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
+//     narrower class and the run-evidence boundary also counts every mark and
+//     unassigned code point as alnum, so both refuse more (TestAlnumAgainstGlibc).
+//     The id lookup's next-character test uses Go's class, which takes some
+//     Unicode 15 letters and marks that gawk does not, so an id followed by one
+//     falls back to its number or position where the arm matched it by id
+//     (refusing more or less, depending on which entry names CI).
 package ledger
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -101,11 +110,84 @@ func readFields(line string) (string, string, string) {
 }
 
 // posixClasses maps the arm's POSIX classes onto glibc's C.UTF-8 (the arm's
-// runtime), as internal/frame does; RE2's own classes are ASCII only.
+// runtime); RE2's own classes are ASCII only. [:unassigned:] is no POSIX class:
+// it names the code points Go's Unicode tables leave unassigned.
 var posixClasses = strings.NewReplacer(
 	"[:space:]", `\t\n\v\f\r \x{1680}\x{2000}-\x{2006}\x{2008}-\x{200A}\x{2028}\x{2029}\x{205F}\x{3000}`,
-	"[:alnum:]", `\p{L}\p{Nd}\p{Nl}`,
+	"[:alnum:]", `\p{L}\p{Nd}\p{Nl}`+classBody(spansOf(unicode.Other_Alphabetic)),
+	// Go's unicode.C takes the unassigned code points too, so the C subcategories are named.
+	"[:unassigned:]", classBody(complement(spansOf(unicode.L, unicode.M, unicode.N, unicode.P, unicode.S, unicode.Z, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs))),
 )
+
+// glibcAlnum is glibc's [:alnum:], Unicode's Alphabetic plus Nd, as far as Go's
+// Unicode 15 tables know it. glibc 2.42 is Unicode 16, so its class is wider:
+// later-assigned letters and marks made Alphabetic since. A regex that would
+// accept more on a wider class (runRe's boundary) adds every mark and
+// unassigned code point instead, so each side refuses at least as often.
+func glibcAlnum(r rune) bool {
+	return unicode.In(r, unicode.L, unicode.Nd, unicode.Nl, unicode.Other_Alphabetic)
+}
+
+type span struct{ lo, hi rune }
+
+// spansOf is the tables' code points as sorted, merged ranges.
+func spansOf(tables ...*unicode.RangeTable) []span {
+	var all []span
+	add := func(lo, hi, stride rune) {
+		if stride == 1 {
+			all = append(all, span{lo, hi})
+			return
+		}
+		for r := lo; r <= hi; r += stride {
+			all = append(all, span{r, r})
+		}
+	}
+	for _, t := range tables {
+		for _, r := range t.R16 {
+			add(rune(r.Lo), rune(r.Hi), rune(r.Stride))
+		}
+		for _, r := range t.R32 {
+			add(rune(r.Lo), rune(r.Hi), rune(r.Stride))
+		}
+	}
+	slices.SortFunc(all, func(a, b span) int { return int(a.lo - b.lo) })
+	var out []span
+	for _, s := range all {
+		if n := len(out); n > 0 && s.lo <= out[n-1].hi+1 {
+			out[n-1].hi = max(out[n-1].hi, s.hi)
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// complement is every code point outside the sorted, merged spans.
+func complement(spans []span) []span {
+	var out []span
+	next := rune(0)
+	for _, s := range spans {
+		if s.lo > next {
+			out = append(out, span{next, s.lo - 1})
+		}
+		next = s.hi + 1
+	}
+	if next <= unicode.MaxRune {
+		out = append(out, span{next, unicode.MaxRune})
+	}
+	return out
+}
+
+func classBody(spans []span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		fmt.Fprintf(&b, `\x{%X}`, s.lo)
+		if s.hi > s.lo {
+			fmt.Fprintf(&b, `-\x{%X}`, s.hi)
+		}
+	}
+	return b.String()
+}
 
 func posix(pattern string) *regexp.Regexp {
 	return regexp.MustCompile(posixClasses.Replace(pattern))
@@ -124,7 +206,7 @@ var (
 	awkItem    = posix(`^([-*+]|[0-9]+[.)])[[:space:]]+`)
 
 	ciRe  = posix(`(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)`)
-	runRe = posix(`actions/runs/[0-9]+|(^|[^[:alnum:]_-])[Rr]un([ _-]?[Ii][Dd])?[ :#=]*[0-9]{6,}`)
+	runRe = posix(`actions/runs/[0-9]+|(^|[^[:alnum:]\p{M}[:unassigned:]_-])[Rr]un([ _-]?[Ii][Dd])?[ :#=]*[0-9]{6,}`)
 	numRe = regexp.MustCompile(`^([Aa][Cc][-_]?)?0*([1-9][0-9]*)$`)
 )
 
@@ -140,10 +222,13 @@ func hasAcceptanceList(doc string) bool {
 // blank is `[ -z "${d//[[:space:]]/}" ]`: glibc's space class, so a lone NBSP
 // (Oniguruma \s, hence a conforming ledger) is not blank.
 func blank(s string) bool {
-	return strings.IndexFunc(s, func(r rune) bool { return !glibcSpace(r) }) < 0
+	return strings.IndexFunc(s, func(r rune) bool { return !GlibcSpace(r) }) < 0
 }
 
-func glibcSpace(r rune) bool {
+// GlibcSpace is glibc's [:space:] in C.UTF-8, the multibyte class GNU sed and
+// bash match: Unicode White_Space less the no-break spaces (U+00A0, U+2007,
+// U+202F) and U+0085.
+func GlibcSpace(r rune) bool {
 	switch {
 	case r >= '\t' && r <= '\r', r == ' ', r == 0x1680, r >= 0x2000 && r <= 0x2006,
 		r >= 0x2008 && r <= 0x200A, r == 0x2028, r == 0x2029, r == 0x205F, r == 0x3000:
@@ -222,7 +307,7 @@ func entryByID(entries []string, id string) string {
 		if len(t) == len(idr) {
 			return e
 		}
-		if next := t[len(idr)]; next != '_' && next != '.' && !unicode.In(next, unicode.L, unicode.Nd, unicode.Nl) {
+		if next := t[len(idr)]; next != '_' && next != '.' && !glibcAlnum(next) {
 			return e
 		}
 	}

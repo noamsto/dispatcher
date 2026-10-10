@@ -118,3 +118,29 @@ func TestToGoNaNStaysFloat(t *testing.T) {
 		t.Errorf("toGo(NaN) = %#v", g)
 	}
 }
+
+func TestJQFromJSON(t *testing.T) {
+	prog := `.[] | [try _jqfromjson catch "err"], [_jqfromjson?], [(_jqfromjson? // null)]`
+	in := []jsonv.Value{
+		jsonv.Str(`{"a":"\udc00","n":-nan}`),
+		jsonv.Str(`{"a":"\ud83d"}`),
+		jsonv.Str(`1 2`),
+		jsonv.Str(``),
+		jsonv.Num(5),
+	}
+	out, err := Run(`[`+prog+`]`, in, 0, nil, WithJQFromJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[[{"a":"` + "�" + `","n":null}],[{"a":"` + "�" + `","n":null}],[{"a":"` + "�" + `","n":null}],` +
+		`["err"],[],[null],["err"],[],[null],["err"],[],[null],["err"],[],[null]]`
+	if got := compact(out); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestJQFromJSONIsOptIn(t *testing.T) {
+	if _, err := Run(`"1" | _jqfromjson`, nil, 0, nil); err == nil {
+		t.Error("_jqfromjson defined without WithJQFromJSON")
+	}
+}

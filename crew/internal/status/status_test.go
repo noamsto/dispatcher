@@ -2,8 +2,10 @@ package status
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -456,6 +458,50 @@ func TestFieldParsing(t *testing.T) {
 	}
 }
 
+// TestFieldLeadingUnicodeSpace pins `sed 's/^f:[[:space:]]*//'` under C.UTF-8:
+// glibc's multibyte space class strips a leading U+3000 or U+2003, then
+// `tr -d '[:space:]'` deletes ASCII whitespace only. NBSP is not a glibc space.
+func TestFieldLeadingUnicodeSpace(t *testing.T) {
+	t.Run("tier", func(t *testing.T) {
+		for _, sp := range []string{"\u3000", "\u2003", " \u3000\t"} {
+			f := newFixture(t)
+			f.doc("tier:" + sp + "standard\nkind: implement\n")
+			if code, stderr := f.status(worker, "done"); code != 1 || stderr != noReview("done", "standard") {
+				t.Errorf("tier:%q: got %d %q", sp, code, stderr)
+			}
+		}
+	})
+	t.Run("tier NBSP is kept", func(t *testing.T) {
+		f := newFixture(t)
+		f.doc("tier:\u00a0standard\nkind: implement\n")
+		if code, stderr := f.status(worker, "done"); code != 0 {
+			t.Errorf("got %d %q", code, stderr)
+		}
+	})
+	t.Run("tier trailing U+3000 is kept", func(t *testing.T) {
+		f := newFixture(t)
+		f.doc("tier: standard\u3000\nkind: implement\n")
+		if code, stderr := f.status(worker, "done"); code != 0 {
+			t.Errorf("got %d %q", code, stderr)
+		}
+	})
+	t.Run("kind", func(t *testing.T) {
+		f := newFixture(t)
+		f.doc("tier: trivial\nkind:\u3000implement\n\n## Acceptance\n- AC1 x\n")
+		if code, stderr := f.status(worker, "pr_open", "AC1 pending"); code != 1 || !strings.Contains(stderr, "acceptance") {
+			t.Errorf("got %d %q", code, stderr)
+		}
+	})
+	t.Run("engine", func(t *testing.T) {
+		f := newFixture(t)
+		f.doc("tier: standard\nkind: implement\nengine:\u3000pi\n")
+		f.log(msgRow(rev, branch, `{"seam":"review","verdict":"accept"}`), deslopSeam)
+		if code, stderr := f.status(worker, "done"); code != 0 {
+			t.Errorf("pi accept not honoured: %d %q", code, stderr)
+		}
+	})
+}
+
 func TestTrivialTierNoSeamGate(t *testing.T) {
 	f := newFixture(t)
 	f.doc("tier: trivial\nkind: implement\n")
@@ -560,6 +606,11 @@ func TestPiReviewerVerdicts(t *testing.T) {
 		{"role_exited is ignored", []string{verdict("accept"), msgRow(rev, branch, `{"event":"role_exited"}`), deslopSeam}, true},
 		{"non-json reviewer reply rejects", []string{verdict("accept"), msgRow(rev, branch, `looks fine`), deslopSeam}, false},
 		{"torn reviewer line rejects", []string{verdict("accept"), `{"crew_id":"c1","from":"` + rev}, false},
+		// jq's fromjson refuses a lone high surrogate escape, so the reply is not an accept.
+		{"accept body with a lone high surrogate rejects", []string{msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\ud83d"}`), deslopSeam}, false},
+		{"accept body with a lone low surrogate passes", []string{msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\udc00"}`), deslopSeam}, true},
+		{"reviewer line with a lone high surrogate rejects", []string{verdict("accept"), deslopSeam,
+			`{"ts":1,"crew_id":"c1","from":"` + rev + `","to":"` + branch + `","kind":"msg","body":"{\"seam\":\"review\",\"verdict\":\"accept\"}","x":"\ud83d"}`}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -583,6 +634,44 @@ func TestPiReviewerVerdicts(t *testing.T) {
 			t.Errorf("%d %q", code, stderr)
 		}
 	})
+}
+
+// TestSeamsRefuseLoneHighSurrogates pins jq's fromjson, which errors on a high
+// surrogate escape not followed by a low one (in the line or in the msg body),
+// so the row is no seam; a lone low surrogate decodes to U+FFFD and counts.
+func TestSeamsRefuseLoneHighSurrogates(t *testing.T) {
+	outer := func(body string) string {
+		return `{"ts":1,"crew_id":"c1","from":"` + worker + `","to":"review:c1","kind":"msg","body":` + jsonStr(body) + `,"x":"\ud83d"}`
+	}
+	cases := []struct {
+		name string
+		rows []string
+		want string
+	}{
+		{"deslop body", []string{reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d"}`)}, noDeslop("done", "standard")},
+		{"deslop body, high then non-low escape", []string{reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d\u0041"}`)}, noDeslop("done", "standard")},
+		{"deslop line", []string{reviewSeam, outer(`{"seam":"deslop"}`)}, noDeslop("done", "standard")},
+		{"review body", []string{msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\ud83d"}`), deslopSeam}, noReview("done", "standard")},
+		{"review line", []string{outer(`{"seam":"review","review_mode":"full"}`), deslopSeam}, noReview("done", "standard")},
+		{"lone low surrogates count", []string{
+			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\udc00"}`),
+			msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`),
+		}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.doc(standardDoc)
+			f.log(tc.rows...)
+			code, stderr := f.status(worker, "done")
+			if tc.want == "" && code != 0 {
+				t.Errorf("refused: %q", stderr)
+			}
+			if tc.want != "" && (code != 1 || stderr != tc.want) {
+				t.Errorf("got %d %q\nwant %q", code, stderr, tc.want)
+			}
+		})
+	}
 }
 
 func TestUnreadableLog(t *testing.T) {
@@ -710,4 +799,24 @@ func TestPanePublish(t *testing.T) {
 			t.Errorf("tmux touched: %q", f.tmux)
 		}
 	})
+}
+
+// TestZeroOptionsGateTheCheckout pins that a zero Options reads the process's
+// own checkout: a "" toplevel would skip every pr_open/done gate.
+func TestZeroOptionsGateTheCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("CREW_ID", "zero-opts")
+	o := Options{}.withDefaults()
+	top := bus.Toplevel(context.Background(), ".")
+	if top == "" {
+		t.Skip("not run inside a git checkout")
+	}
+	if got := o.Toplevel(); got != top {
+		t.Errorf("Toplevel() = %q, want %q", got, top)
+	}
+	if got, want := o.CrewID(), bus.CrewID(context.Background(), "."); got != want || got == "" {
+		t.Errorf("CrewID() = %q, want %q", got, want)
+	}
 }

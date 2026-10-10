@@ -384,8 +384,8 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
   CREW_ID=c1 run_crew msg 'worker:feat/big#s1' retro:c1 "$note"
 
   logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  # The #20/#55 guard: the note lands as ONE record inside _LINE_MAX, and
-  # _shrink cuts the string leaf rather than the object, so the body still
+  # The #20/#55 guard: the note lands as ONE record inside bus.LineMax, and
+  # bus.Shrink cuts the string leaf rather than the object, so the body still
   # parses and the tag survives.
   run wc -l <"$logf"
   [ "$output" -eq 2 ]

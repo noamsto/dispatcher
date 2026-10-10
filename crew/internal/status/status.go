@@ -10,6 +10,7 @@
 package status
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
@@ -39,7 +40,8 @@ const (
 )
 
 // Options is everything the arms read beyond the bus. Nil fields take the
-// production default except Tmux, where nil means no tmux on PATH.
+// production default (CrewID and Toplevel read the process's working
+// directory) except Tmux, where nil means no tmux on PATH.
 type Options struct {
 	CrewID   func() string                                                                           // `_crew_id`
 	Toplevel func() string                                                                           // `git rev-parse --show-toplevel`, "" outside a checkout
@@ -51,17 +53,17 @@ type Options struct {
 
 func (o Options) withDefaults() Options {
 	if o.CrewID == nil {
-		o.CrewID = func() string { return "" }
+		o.CrewID = func() string { return bus.CrewID(context.Background(), ".") }
 	}
 	if o.Toplevel == nil {
-		o.Toplevel = func() string { return "" }
+		o.Toplevel = func() string { return bus.Toplevel(context.Background(), ".") }
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
 	}
 	if o.Fold == nil {
 		o.Fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
-			return jqrun.Run(prog, rows, 0, vars)
+			return jqrun.Run(prog, rows, 0, vars, jqrun.WithJQFromJSON())
 		}
 	}
 	return o

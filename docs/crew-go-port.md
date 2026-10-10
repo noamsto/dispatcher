@@ -306,11 +306,16 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `pr_open` or `done` is refused unless the ledger conforms and, for a standard or
   deep implement session, the log holds the lead's review seam and deslop seam.
   The two seam folds are the arm's own jq (`seam.jq`, `deslop.jq`) on jqrun with
-  one patch each: the arm ran `jq -R -n` and read the log with `inputs`, here `.`
-  is the array of log lines and `inputs` is `.[]`. `diff_test.go` runs both
-  programs on the real `jq -Rn` and on gojq over one corpus of line shapes and
-  compares; that is what closes the gojq-vs-jq `fromjson` differences (torn,
-  non-object and trailing-garbage lines), so they are not listed as not mirrored.
+  two patches each: the arm ran `jq -R -n` and read the log with `inputs`, here `.`
+  is the array of log lines and `inputs` is `.[]`; and every `fromjson` is
+  `_jqfromjson` (`jqrun.WithJQFromJSON`), jq 1.8.2's `fromjson` over the repo's
+  own decoder (`jsonv.ParseOne`), because gojq's accepts a lone high surrogate
+  escape (`"\ud83d"`) that jq refuses and refuses `-nan` that jq accepts. That
+  patch closes the gojq-vs-jq `fromjson` differences, so they are not listed as
+  not mirrored. `diff_test.go` pins it: it runs both programs on the real
+  `jq -Rn` and on gojq over one corpus of line shapes (torn, non-object,
+  trailing-garbage, surrogate-escape and NaN/Infinity lines and bodies) and
+  compares.
   The row's `ts` is real time and never `CREW_CLOCK`: the arm stamped with a bare
   `jq -n 'now*1000|floor'`. The dedupe read (`lastPosted`) is the arm's
   `jq -r … | tail -1` for the sender's last `state<TAB>pr_url`, so an identical
@@ -477,10 +482,16 @@ acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
   - `mkdir`'s own error text when the bus dir cannot be created; Go prints
     `crew: <sub>: <error>` and the same status;
   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is compared
-    as U+FFFD runes, and awk's warning about an unknown escape is not printed.
+    as U+FFFD runes, and awk's warning about an unknown escape is not printed;
+  - `[:alnum:]` follows each engine's Unicode tables (bash's `=~` on glibc 2.42 is
+    Unicode 16, Go is 15, gawk's regex lags both): the CI test and the
+    run-evidence boundary take the side that refuses more, but the id lookup's
+    next-character test calls some Unicode 15 letters and marks alnum that gawk
+    does not, so such an id falls back to its number or position.
 
   gojq-vs-jq `fromjson` differences in the seam folds are not on this list: the
-  differential test in `internal/status` closes them rather than documenting them.
+  jq-compatible `_jqfromjson` patch closes them and the differential test in
+  `internal/status` pins that, rather than documenting them.
 
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values

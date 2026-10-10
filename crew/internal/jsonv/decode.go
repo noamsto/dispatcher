@@ -56,6 +56,25 @@ func DecodeStreamPrefix(r io.Reader) ([]Value, error) {
 	}
 }
 
+// ParseOne parses s as jq's fromjson does: the stream grammar, but exactly one
+// value, so empty input or a second value is an error.
+func ParseOne(s string) (Value, error) {
+	p := parser{data: bytes.TrimPrefix([]byte(s), []byte("\xef\xbb\xbf"))}
+	p.skipSpace()
+	if p.pos == len(p.data) {
+		return Value{}, p.fail("expected JSON value")
+	}
+	v, err := p.value(0)
+	if err != nil {
+		return Value{}, err
+	}
+	p.skipSpace()
+	if p.pos != len(p.data) {
+		return Value{}, p.fail("unexpected extra JSON values")
+	}
+	return v, nil
+}
+
 type parser struct {
 	data []byte
 	pos  int
@@ -353,7 +372,8 @@ func parseNumber(tok string) (Value, bool) {
 	if name == "inf" || name == "infinity" {
 		return infinity(neg), true
 	}
-	if payload, ok := strings.CutPrefix(strings.TrimPrefix(name, "s"), "nan"); ok && strings.Trim(payload, "0123456789") == "" {
+	// jq rejects a NaN that carries a nonzero payload.
+	if payload, ok := strings.CutPrefix(strings.TrimPrefix(name, "s"), "nan"); ok && strings.Trim(payload, "0") == "" {
 		return Num(math.NaN()), true
 	}
 	return Value{}, false

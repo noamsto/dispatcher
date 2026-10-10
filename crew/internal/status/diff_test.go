@@ -62,6 +62,43 @@ var corpus = []string{
 	`[]`,
 	`{"a":1} {"b":2}`,
 	`{"crew_id":"c1","kind":"msg"} trailing`,
+	// Surrogate escapes: jq's fromjson errors on a high one not followed by a
+	// low one, and decodes a lone low one to U+FFFD.
+	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d"}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d\u0041"}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00\ud83d"}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d\ude00"}`),
+	msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\ud83d"}`),
+	msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\udc00"}`),
+	msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\ud83d"}`),
+	msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\udc00"}`),
+	msgRow(rev, branch, `{"seam":"review","verdict":"revise","note":"\ud83dx"}`),
+	msgRow(worker, rev, `{"final":true,"note":"\ud83d"}`),
+	`{"ts":1,"crew_id":"c1","kind":"msg","from":"` + worker + `","to":"review:c1","body":"{\"seam\":\"deslop\"}","x":"\ud83d"}`,
+	`{"ts":1,"crew_id":"c1","kind":"msg","from":"` + worker + `","to":"review:c1","body":"{\"seam\":\"deslop\"}","x":"\udc00"}`,
+	`{"ts":1,"crew_id":"c1","kind":"msg","from":"` + worker + `","to":"review:c1","body":"{\"seam\":\"review\"}","x":"\ud83d"}`,
+	`{"ts":1,"crew_id":"c1","kind":"msg","from":"` + rev + `","to":"` + branch + `","body":"{\"seam\":\"review\",\"verdict\":\"accept\"}","x":"\ud83d"}`,
+	`{"ts":1,"crew_id":"c1","kind":"msg","from":"` + rev + `","to":"` + branch + `","body":"{\"seam\":\"review\",\"verdict\":\"accept\"}","x":"\udc00"}`,
+	// Literal edges of fromjson, in the line and in the body.
+	`Infinity`, `-Infinity`, `nan1`, `nan0`, `snan`, `1e1000`, `100000000000000000000000001`,
+	`  {"crew_id":"c1","kind":"msg"}  `, `1 2`, `{} x`,
+	"\ufeff{\"crew_id\":\"c1\"}",
+	"{\"ts\":1,\"crew_id\":\"c1\",\"kind\":\"msg\",\"from\":\"" + worker + "\",\"to\":\"review:c1\",\"body\":\"{\\\"seam\\\":\\\"deslop\\\",\\\"n\\\":\\\"\xff\\\"}\"}",
+	"{\"ts\":1,\"crew_id\":\"c1\",\"kind\":\"msg\",\"from\":\"\xff" + worker + "\",\"to\":\"review:c1\",\"body\":\"{\\\"seam\\\":\\\"deslop\\\"}\"}",
+	msgRow(worker, "review:c1", ``),
+	msgRow(worker, "review:c1", `   `),
+	msgRow(worker, "review:c1", ` {"seam":"deslop"} `),
+	msgRow(worker, "review:c1", `{"seam":"deslop"} {"x":1}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop"} x`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","n":NaN}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","n":nan1}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","n":Infinity}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","n":1e1000}`),
+	msgRow(worker, "review:c1", `{"seam":"deslop","n":100000000000000000000000001}`),
+	msgRow(rev, branch, `{"seam":"review","verdict":"accept","n":nan1}`),
+	msgRow(rev, branch, `{"seam":"review","verdict":"accept","n":-nan}`),
+	msgRow(rev, branch, ``),
 }
 
 // TestFoldsMatchJQ runs seam.jq and deslop.jq under the real jq and under the
@@ -146,7 +183,7 @@ func runGo(prog, engine string, lines []string) string {
 }
 
 // runJQ is the arm's call with the lines handed over as one array, which is the
-// documented patch to the programs: `$lines | <prog>`.
+// documented line patch to the programs: `$lines | <prog>`.
 func runJQ(t *testing.T, jq, prog, engine string, lines []string) string {
 	t.Helper()
 	arr := make([]jsonv.Value, len(lines))
@@ -156,7 +193,7 @@ func runJQ(t *testing.T, jq, prog, engine string, lines []string) string {
 	linesJSON := string(jsonv.Append(nil, jsonv.Array(arr...), jsonv.Options{}))
 	cmd := exec.Command(jq, "-nc", "--argjson", "lines", linesJSON,
 		"--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine,
-		"$lines | "+prog)
+		"$lines | "+unpatchFromJSON(prog))
 	out, err := cmd.Output()
 	if err != nil {
 		return "error"
@@ -164,11 +201,14 @@ func runJQ(t *testing.T, jq, prog, engine string, lines []string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// runJQOriginal undoes the two patches and reads the lines the arm's way,
+// unpatchFromJSON hands jq its own fromjson back, the one `_jqfromjson` copies.
+func unpatchFromJSON(prog string) string { return strings.ReplaceAll(prog, "_jqfromjson", "fromjson") }
+
+// runJQOriginal undoes the three patches and reads the lines the arm's way,
 // `jq -Rnr` over the log: the check that the patch changed only how lines arrive.
 func runJQOriginal(t *testing.T, jq, prog, engine string, lines []string) string {
 	t.Helper()
-	orig := strings.NewReplacer("reduce .[] as $line", "reduce inputs as $line", "first(.[]", "first(inputs").Replace(prog)
+	orig := strings.NewReplacer("reduce .[] as $line", "reduce inputs as $line", "first(.[]", "first(inputs").Replace(unpatchFromJSON(prog))
 	cmd := exec.Command(jq, "-Rnr", "--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine, orig)
 	if len(lines) > 0 {
 		cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")

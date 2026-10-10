@@ -1,8 +1,9 @@
 // The bus is append-only, and this is the only place that appends to it: the
 // `_bus_append` write plus the two helpers that keep a line short enough to
 // survive it (`_fit_line` and `_shrink`). Append, FitLine and Shrink are the one
-// implementation for every Go writer; `_bus_append` stays in crew.sh only for
-// nudge.
+// implementation for every Go writer; `_bus_append` stays in crew.sh for the
+// writers still there: the nudge and nudge_wait rows, the release row and the
+// reap row.
 package bus
 
 import (

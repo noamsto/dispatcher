@@ -19,12 +19,37 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
+// Option extends the jq language one Run compiles against.
+type Option struct{ compiler gojq.CompilerOption }
+
+// WithJQFromJSON defines `_jqfromjson`, jq 1.8.2's fromjson over jsonv's
+// decoder. gojq's own fromjson accepts what jq refuses (a high surrogate
+// escape with no low one after it) and refuses what jq accepts (`-nan`), so a
+// program whose verdict hinges on fromjson failing calls this instead.
+func WithJQFromJSON() Option {
+	return Option{gojq.WithFunction("_jqfromjson", 0, 0, func(v any, _ []any) any {
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("%v cannot be parsed as JSON", v)
+		}
+		parsed, err := jsonv.ParseOne(s)
+		if err != nil {
+			return fmt.Errorf("%w (while parsing '%s')", err, s)
+		}
+		g, err := toGo(parsed)
+		if err != nil {
+			return err
+		}
+		return g
+	})}
+}
+
 // Run executes prog like `jq -s -c prog`: input is the slurped event array,
 // vars become $name string/JSON variables, and the `now` builtin is frozen
 // to nowSec so folds are deterministic (see freezeNow). The program must
 // emit exactly one value; a gojq runtime error (jq's type error) is returned
 // as an error, which main maps to the jq-failure exit status.
-func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Value) (jsonv.Value, error) {
+func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Value, opts ...Option) (jsonv.Value, error) {
 	names := make([]string, 0, len(vars))
 	values := make([]any, 0, len(vars))
 	for name := range vars {
@@ -44,7 +69,11 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
 	}
 	freezeNow(q, now)
-	code, err := gojq.Compile(q, gojq.WithVariables(names))
+	compileOpts := []gojq.CompilerOption{gojq.WithVariables(names)}
+	for _, o := range opts {
+		compileOpts = append(compileOpts, o.compiler)
+	}
+	code, err := gojq.Compile(q, compileOpts...)
 	if err != nil {
 		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
 	}

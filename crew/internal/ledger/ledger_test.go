@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
@@ -114,6 +115,17 @@ var checkCases = []checkCase{
 	{name: "id lookup needs a token boundary", detail: "AC1 pass(x)", doc: "## Acceptance\n- AC10 CI\n- AC1 docs\n"},
 	{name: "id lookup is case-insensitive", detail: "ac1 pass(x)", doc: "## Acceptance\n- AC2 docs\n- AC1 CI\n", want: ciLine("ac1")},
 	{name: "awk -v unescapes the id", detail: `AC\061 pass(local)`, doc: "## Acceptance\n- AC2 docs\n- AC1 CI\n", want: ciLine(`AC\061`)},
+	// glibc's [:alnum:] (bash's =~, gawk) takes Other_Alphabetic marks: U+093E, U+0345.
+	{name: "Other_Alphabetic mark is no boundary before run", detail: "AC1 pass(CI \u093erun 1234567)", doc: docList, want: ciLine("AC1")},
+	{name: "Other_Alphabetic mark U+0345 is no boundary before run", detail: "AC1 pass(CI \u0345run 1234567)", doc: docList, want: ciLine("AC1")},
+	{name: "a mark glibc 2.42 calls alnum is no boundary before run", detail: "AC1 pass(CI \u0363run 1234567)", doc: docList, want: ciLine("AC1")},
+	{name: "letter is no boundary before run", detail: "AC1 pass(CI xrun 1234567)", doc: docList, want: ciLine("AC1")},
+	{name: "accented letter is no boundary before run", detail: "AC1 pass(CI \u00e9run 1234567)", doc: docList, want: ciLine("AC1")},
+	{name: "Other_Alphabetic mark is no boundary before CI", detail: "AC1 pass(\u093eCI green)", doc: docList},
+	{name: "Other_Alphabetic mark is no boundary before CI, U+0345", detail: "AC1 pass(\u0345CI green)", doc: docList},
+	{name: "Other_Alphabetic mark after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u093e local\n", want: ciLine("AC1")},
+	{name: "Other_Alphabetic mark U+0345 after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u0345 local\n", want: ciLine("AC1")},
+	{name: "letter after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u00e9 local\n", want: ciLine("AC1")},
 	{name: "first failing item wins", detail: "AC2 pass(local); AC3 waived(dispatcher)", doc: docList, want: ciLine("AC2")},
 
 	// waivers
@@ -205,6 +217,76 @@ func TestLongDetail(t *testing.T) {
 	deep := strings.Repeat("waived(dispatcher ", 20000) + strings.Repeat("(", 20000)
 	if conforms(deep) || len(items(deep)) != 0 {
 		t.Fatal("unbalanced ledger accepted")
+	}
+}
+
+// TestAlnumAgainstGlibc runs the arm's ci_re and run_re under bash and the id
+// lookup's next-character test under gawk, both in C.UTF-8, over a sample of
+// code points (every mark and Other_Alphabetic one, every 61st of the rest).
+// Go's tables may lag glibc's, so the regexes are pinned one way: Go finds CI
+// whenever bash does and run evidence only where bash does. gawk's own tables
+// lag both, so the id test is pinned on the plain cases and checked one way.
+func TestAlnumAgainstGlibc(t *testing.T) {
+	bash, errB := exec.LookPath("bash")
+	gawk, errG := exec.LookPath("gawk")
+	if errB != nil || errG != nil {
+		t.Skip("bash or gawk not installed")
+	}
+	env := append(os.Environ(), "LC_ALL=C.UTF-8")
+	if err := (&exec.Cmd{Path: bash, Args: []string{"bash", "-c", `[[ é =~ ^[[:alnum:]]$ ]]`}, Env: env}).Run(); err != nil {
+		t.Skip("no C.UTF-8 locale")
+	}
+	var sample []rune
+	for r := rune(1); r <= unicode.MaxRune; r++ {
+		if r == '\n' || r >= 0xd800 && r <= 0xdfff {
+			continue
+		}
+		if r%61 == 0 || r < 0x80 || unicode.In(r, unicode.M, unicode.Other_Alphabetic) {
+			sample = append(sample, r)
+		}
+	}
+	var in strings.Builder
+	for _, r := range sample {
+		in.WriteString(string(r) + "\n")
+	}
+	run := func(argv ...string) []string {
+		t.Helper()
+		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd.Env, cmd.Stdin = env, strings.NewReader(in.String())
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: %v", argv[0], err)
+		}
+		return strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	}
+	ciRun := run(bash, "-c", `ci='(^|[^-[:alnum:]_])CI([^[:alnum:]_]|$)'
+run='actions/runs/[0-9]+|(^|[^[:alnum:]_-])[Rr]un([ _-]?[Ii][Dd])?[ :#=]*[0-9]{6,}'
+while IFS= read -r c; do
+  [[ ${c}CI =~ $ci ]] && a=1 || a=0
+  [[ "${c}run 1234567" =~ $run ]] && b=1 || b=0
+  echo "$a$b"
+done`)
+	idNext := run(gawk, `{ print ($0 !~ /[[:alnum:]_.]/) ? 1 : 0 }`)
+	if len(ciRun) != len(sample) || len(idNext) != len(sample) {
+		t.Fatalf("got %d bash and %d gawk lines for %d code points", len(ciRun), len(idNext), len(sample))
+	}
+	for i, r := range sample {
+		c := string(r)
+		if bashCI, goCI := ciRun[i][0] == '1', ciRe.MatchString(c+"CI"); bashCI && !goCI {
+			t.Errorf("%U before CI: bash finds CI, Go does not", r)
+		}
+		if bashRun, goRun := ciRun[i][1] == '1', runRe.MatchString(c+"run 1234567"); goRun && !bashRun {
+			t.Errorf("%U before run: Go finds run evidence, bash does not", r)
+		}
+		if gawkBoundary := idNext[i] == "1"; !gawkBoundary && !glibcAlnum(r) && r != '_' && r != '.' {
+			t.Errorf("%U after an id: gawk calls it alnum, Go does not", r)
+		}
+	}
+	for _, r := range []rune{'A', 'z', '7', 'é', 0x093e, 0x0345, '-', ' ', '!'} {
+		i, _ := slices.BinarySearch(sample, r)
+		if gawkBoundary := idNext[i] == "1"; gawkBoundary == (glibcAlnum(r) || r == '_' || r == '.') {
+			t.Errorf("%U after an id: gawk boundary %v, Go disagrees", r, gawkBoundary)
+		}
 	}
 }
 

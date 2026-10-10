@@ -5,10 +5,14 @@
 #
 # Patch: the arm ran `jq -R -n` and read the log with `inputs`; this program
 # runs through jqrun with `.` = the array of the log's lines, so
-# `reduce inputs as $line` is `reduce .[] as $line`. Nothing else differs.
+# `reduce inputs as $line` is `reduce .[] as $line`.
+#
+# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), jq's own
+# fromjson: gojq's accepts a lone high surrogate escape that jq refuses, and
+# a refused line or body must not count as a seam. Nothing else differs.
 reduce .[] as $line (
   {ok: false, rejected: false, pending: false};
-  (try [$line | fromjson] catch null) as $p
+  (try [$line | _jqfromjson] catch null) as $p
   | if $p == null then
       if $e == "pi" and ($line | test("\\S")) and ($line | contains("\"crew_id\":" + ($c | tojson)) and contains($r | tojson | .[1:-1]))
       then .ok = false | .rejected = true
@@ -17,7 +21,7 @@ reduce .[] as $line (
     else
       $p[0] as $m
       | ($m.crew_id == $c and $m.kind == "msg") as $mine
-      | (if $mine then (($m.body | fromjson?) // null) else null end) as $o
+      | (if $mine then (($m.body | _jqfromjson?) // null) else null end) as $o
       | (($m.from // "") | tostring | sub("#s[^#]*$"; "")) as $f
       | (($m.to // "") | tostring | sub("#s[^#]*$"; "")) as $t
       | if $e == "pi" and $mine and ($o | type) != "object" then

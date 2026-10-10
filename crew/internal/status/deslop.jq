@@ -5,12 +5,16 @@
 #
 # Patch: the arm ran `jq -R -n` and read the log with `inputs`; this program
 # runs through jqrun with `.` = the array of the log's lines, so
-# `first(inputs | ...)` is `first(.[] | ...)`. Nothing else differs.
+# `first(inputs | ...)` is `first(.[] | ...)`.
+#
+# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), jq's own
+# fromjson: gojq's accepts a lone high surrogate escape that jq refuses, and
+# a refused line or body must not count as a seam. Nothing else differs.
 first(.[]
-  | (try fromjson catch null)
+  | (try _jqfromjson catch null)
   | select(type == "object" and .crew_id == $c and .kind == "msg"
            and .to == ("review:" + $c)
            and ((.from // "") | tostring | sub("#s[^#]*$"; "")) == $b)
-  | (.body | fromjson? // null)
+  | (.body | _jqfromjson? // null)
   | select(type == "object" and .seam == "deslop" and (has("tag") | not))
   | 1) // 0

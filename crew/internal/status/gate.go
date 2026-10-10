@@ -150,9 +150,10 @@ var (
 )
 
 // readTaskDoc is the doc plus its three header fields, each the first line
-// anywhere that starts `field:`, with all whitespace removed
-// (`sed -n 's/^f:[[:space:]]*//p' | head -1 | tr -d '[:space:]'`). An
-// unreadable doc leaves every field empty.
+// anywhere that starts `field:`
+// (`sed -n 's/^f:[[:space:]]*//p' | head -1 | tr -d '[:space:]'`): sed strips
+// leading glibc spaces, multibyte ones included, then tr deletes every ASCII
+// one. An unreadable doc leaves every field empty.
 func readTaskDoc(path string) taskDoc {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -162,7 +163,7 @@ func readTaskDoc(path string) taskDoc {
 	field := func(re *regexp.Regexp) string {
 		for line := range strings.SplitSeq(d.text, "\n") {
 			if m := re.FindStringSubmatch(line); m != nil {
-				return spaceRe.ReplaceAllString(m[1], "")
+				return spaceRe.ReplaceAllString(strings.TrimLeftFunc(m[1], ledger.GlibcSpace), "")
 			}
 		}
 		return ""
