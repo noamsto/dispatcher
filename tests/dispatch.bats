@@ -3335,6 +3335,86 @@ EOF
   [ "$resize_line" -lt "$launch_line" ]
 }
 
+# #947: the rows below pin the PATH of the tmux *client* that opens a pane — a
+# pane inherits its PATH from that client — so the stub logs its own environment
+# next to the argv. _grid_tmux_stub runs first for its tmux-grid-refit filter.
+_path_log_tmux() {
+  _grid_tmux_stub
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+printf 'tmux PATH=%s\n' "$PATH" >>"$STUB_LOG"
+case "$1" in
+new-window) printf '%s %s\n' '%1' '%1' ;;
+split-window) printf '%s\n' '%6' ;;
+display-message)
+  case "${*: -1}" in
+  '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  esac
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# _pinned_store_bin — a fake store bin dir standing in for the copy of `crew`
+# this build ships: flake.nix's launcherPath bakes its parent list into
+# @launcherRuntimePath@ and writeShellApplication's preamble prepends it to PATH.
+# It carries the same stub crew the launch already needs, so a launch completes
+# with the dir sitting first on PATH.
+_pinned_store_bin() {
+  local dir="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$dir"
+  cp "$STUB_DIR/crew" "$dir/crew"
+  printf '%s' "$dir"
+}
+
+# grep -A1 pairs the client's PATH with the pane-creating call itself: every
+# other tmux call keeps running with the launcher's pinned PATH.
+@test "dispatch opens the worker window under a PATH without the launcher's pinned dirs (#947)" {
+  stub_launch_bins
+  _path_log_tmux
+  local pinned pinned_script
+  pinned="$(_pinned_store_bin)"
+  pinned_script="$BATS_TEST_TMPDIR/dispatch-pinned.sh"
+  sed "s|@launcherRuntimePath@|$pinned|" "$DISPATCH" >"$pinned_script"
+  PATH="$pinned:$PATH" run bash -euo pipefail "$pinned_script" standard sonnet --effort medium --crew-id c1 42 "pinned lead path"
+  [ "$status" -eq 0 ]
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH="* ]]
+  [[ "$output" != *"$pinned"* ]]
+}
+
+@test "dispatch opens a role pane under a PATH without the launcher's pinned dirs (#947)" {
+  stub_launch_bins
+  _path_log_tmux
+  local pinned pinned_script
+  pinned="$(_pinned_store_bin)"
+  pinned_script="$BATS_TEST_TMPDIR/dispatch-pinned.sh"
+  sed "s|@launcherRuntimePath@|$pinned|" "$DISPATCH" >"$pinned_script"
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal PATH="$pinned:$PATH" run bash -euo pipefail \
+    "$pinned_script" standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "pinned grid path"
+  [ "$status" -eq 0 ]
+  run grep -A1 -- '^split-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH="* ]]
+  [[ "$output" != *"$pinned"* ]]
+}
+
+@test "a raw dispatch opens the window and its role panes under the caller's PATH unchanged (#947)" {
+  stub_launch_bins
+  _path_log_tmux
+  local pinned
+  pinned="$(_pinned_store_bin)"
+  DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal PATH="$pinned:$PATH" run run_dispatch \
+    standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "raw path"
+  [ "$status" -eq 0 ]
+  # A raw run has no store dirs to remove: even a pinned-looking dir survives,
+  # in the window and in every pane split off it.
+  run grep -A1 -E -- '^(new|split)-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH=$pinned:"* ]]
+}
+
 @test "DISPATCHER_PROTOCOL_DIR overrides the baked default" {
   run grep -c '^_resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@"' "$DISPATCH"
   [ "$output" = "1" ]

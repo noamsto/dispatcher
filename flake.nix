@@ -188,14 +188,20 @@
             '';
           };
 
-          dispatch = pkgs.writeShellApplication {
-            name = "dispatch";
+          dispatch = let
+            # One list, read twice: the preamble's runtimeInputs and the bake
+            # (#947): the dirs dispatch strips from the caller's PATH are exactly
+            # the ones its preamble prepends.
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
-            runtimeInputs = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume];
-            text = withConfig (sub (builtins.readFile ./adapters/core/dispatch.sh));
-          };
+            rt = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume];
+          in
+            pkgs.writeShellApplication {
+              name = "dispatch";
+              runtimeInputs = rt;
+              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch.sh)));
+            };
 
           # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
           # package above lists dispatch-resume so its `resume` subcommand can
