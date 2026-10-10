@@ -3409,9 +3409,12 @@ _pinned_store_bin() {
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal PATH="$pinned:$PATH" run run_dispatch \
     standard sonnet --agent claude --roles reviewer --effort high --crew-id c1 42 "raw path"
   [ "$status" -eq 0 ]
-  # A raw run has no store dirs to remove: even a pinned-looking dir survives,
-  # in the window and in every pane split off it.
-  run grep -A1 -E -- '^(new|split)-window' "$STUB_LOG"
+  # A raw run has no store dirs to remove: even a pinned-looking dir survives, in
+  # the window and in every pane split off it — each call asserted on its own, so
+  # a regression that strips only one of them cannot pass.
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH=$pinned:"* ]]
+  run grep -A1 -- '^split-window' "$STUB_LOG"
   [[ "$output" == *"tmux PATH=$pinned:"* ]]
 }
 
