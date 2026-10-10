@@ -71,78 +71,78 @@ claude	deep	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, c
 claude	deep	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
 claude	deep	sonnet-5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
 claude	deep	opus-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
-claude	standard	opus	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	sonnet	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	haiku	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	fable	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-sonnet-5	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-haiku-4-5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-fable-5-1	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-sol	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-terra	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-luna	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.4	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.4-mini	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	kimi-k3-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-low	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-low-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-medium-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-low	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-low-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-medium-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	composer-2.5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	composer-2.5-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/deepseek/deepseek-v4.1-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/deepseek/deepseek-v4-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/z-ai/glm-5.3-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/qwen/qwen3.8-flash	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.7-sol	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.4-nano	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	kimi-k3-high-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	kimi-k3-medium	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-xhigh	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-low-slow	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.6-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-high[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	grok-4.7-high[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	cursor-grok-4.6-lowx	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	composer-2.5[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	composer-2	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high-fast	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude--high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claudex-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-thigh	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[effort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[context=1m,effort=high,fast=false]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[xeffort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-sol-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.5-extra-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-sol[effort=high]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-high	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high[context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	gpt-5.6-sol-high-fast[context=1m]	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high[effort=]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high[]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high[Context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5-high[context=1m,]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[effort=high,context=1m]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	claude-opus-5[context=1m,effort=high]	1	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	sonnet-5	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
-claude	standard	opus-fast	0	opus, claude-opus-*, sonnet, or claude-sonnet-*
+claude	standard	opus	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	sonnet	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	haiku	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	fable	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-sonnet-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-haiku-4-5	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-fable-5-1	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-terra	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-luna	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.4	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.4-mini	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	kimi-k3-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-low	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-low-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-medium-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	composer-2.5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	composer-2.5-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/deepseek/deepseek-v4.1-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/deepseek/deepseek-v4-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/z-ai/glm-5.3-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/qwen/qwen3.8-flash	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.7-sol	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.4-nano	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	kimi-k3-high-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	kimi-k3-medium	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-xhigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-low-slow	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.6-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	grok-4.7-high[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	cursor-grok-4.6-lowx	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	composer-2.5[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	composer-2	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high-fast	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude--high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claudex-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-thigh	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[context=1m,effort=high,fast=false]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[xeffort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-sol-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.5-extra-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-sol[effort=high]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-high	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high[context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	gpt-5.6-sol-high-fast[context=1m]	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high[effort=]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high[]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high[Context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5-high[context=1m,]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[effort=high,context=1m]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	claude-opus-5[context=1m,effort=high]	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/deepseek/deepseek-v4-pro	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	openrouter/foo/bar	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	sonnet-5	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
+claude	standard	opus-fast	0	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
 claude	trivial	opus	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
 claude	trivial	sonnet	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*
 claude	trivial	haiku	1	opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*

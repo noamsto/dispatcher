@@ -725,13 +725,20 @@ EOF
 @test "--models --json drops a model the gate refuses for the tier" {
   DISPATCH_ENGINES="claude codex" run run_dispatch --models --json
   [ "$status" -eq 0 ]
-  jq -e '.engines.claude.tiers.standard.models | index("haiku") == null' <<<"$output"
+  # claude standard admits haiku as of #943; codex trivial still refuses sol.
+  jq -e '.engines.claude.tiers.standard.models | index("haiku") != null' <<<"$output"
   jq -e '.engines.claude.tiers.trivial.models | index("haiku") != null' <<<"$output"
   jq -e '.engines.codex.tiers.trivial.models | index("gpt-5.6-sol") == null' <<<"$output"
-  # The same pair is refused by the gate itself.
-  run run_dispatch standard haiku --agent claude --effort medium --crew-id c1 42 "haiku refused at standard"
+  # The same omission is a real gate refusal: codex trivial sol is off-row.
+  run run_dispatch trivial gpt-5.6-sol --agent codex --effort high --crew-id c1 42 "sol refused at trivial"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"is not standard's row"* ]]
+  [[ "$output" == *"is not trivial's row"* ]]
+}
+
+@test "tier gate admits claude standard haiku (policy change, #943)" {
+  stub_launch_bins
+  run run_dispatch standard haiku --agent claude --effort medium --crew-id c1 42 "haiku leads a fully specified standard"
+  [ "$status" -eq 0 ]
 }
 
 @test "--models --json includes escalation rungs outside the row" {
@@ -3765,6 +3772,7 @@ deep|fable
 deep|claude-fable-5-1
 standard|sonnet
 standard|claude-sonnet-4-5
+standard|haiku
 trivial|sonnet
 trivial|haiku
 standard|opus
@@ -13486,6 +13494,15 @@ _escalation_seed_spoof() {
   [ "$status" -eq 0 ]
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
+}
+
+@test "escalation: standard haiku→sonnet is an in-row hop (record only)" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" haiku standard
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'escalated_from: haiku (record only)' "$wt_path/WORKER_TASK.md"
 }
 
 @test "escalation: two-rung jump refuses" {

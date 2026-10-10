@@ -19,12 +19,14 @@
           "opus",
           "claude-opus-*",
           "sonnet",
-          "claude-sonnet-*"
+          "claude-sonnet-*",
+          "haiku",
+          "claude-haiku-*"
         ],
-        "expected": "opus, claude-opus-*, sonnet, or claude-sonnet-*"
+        "expected": "opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*"
       },
       "trivial": {
-        "default": "sonnet",
+        "default": "haiku",
         "models": [
           "opus",
           "claude-opus-*",
@@ -176,6 +178,17 @@
         }
       ],
       "standard": [
+        {
+          "failed": [
+            "haiku",
+            "claude-haiku-*"
+          ],
+          "baseline": "haiku",
+          "inRow": [
+            "sonnet",
+            "claude-sonnet-*"
+          ]
+        },
         {
           "failed": [
             "sonnet",
