@@ -516,19 +516,25 @@ ROWS
 
 @test "localModels merges per entry across layers and is validated" {
   user_settings '{"localModels":{
-    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072},
+    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072,"maxTokens":32768},
     "lemonade/Other":{"baseUrl":"http://halo:13305/v1","contextWindow":4096}}}'
   locked_settings '{"localModels":{"lemonade/Qwen3.8-Flash-Next-MTP":{"maxConcurrent":2}}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
   jq -e '.localModels == {
-    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072,"maxConcurrent":2},
+    "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo:13305/v1","contextWindow":131072,"maxTokens":32768,"maxConcurrent":2},
     "lemonade/Other":{"baseUrl":"http://halo:13305/v1","contextWindow":4096}}' <<<"$output"
 
   unset DISPATCH_LOCKED_SETTINGS
   user_settings '{"localModels":{"lemonade/deep-one":{"baseUrl":"http://h:1/v1","contextWindow":8192,"maxConcurrent":3,"tiers":["deep"]}}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
+
+  # Asserted by message, not only by path: an unknown field names the same path.
+  user_settings '{"localModels":{"lemonade/deep-one":{"baseUrl":"http://h:1/v1","contextWindow":8192,"maxTokens":0}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"localModels.lemonade/deep-one.maxTokens must be a positive integer"* ]]
 }
 
 @test "malformed localModels is refused, naming the path" {
@@ -557,6 +563,10 @@ ROWS
 {"lemonade/q":{"baseUrl":"http://h:1/v1"}}|lemonade/q.contextWindow
 {"lemonade/q":{"baseUrl":"http://h:1/v1","contextWindow":0}}|lemonade/q.contextWindow
 {"lemonade/q":{$ok,"maxConcurrent":1.5}}|lemonade/q.maxConcurrent
+{"lemonade/q":{$ok,"maxTokens":1.5}}|lemonade/q.maxTokens
+{"lemonade/q":{$ok,"maxTokens":0}}|lemonade/q.maxTokens
+{"lemonade/q":{$ok,"maxTokens":-1}}|lemonade/q.maxTokens
+{"lemonade/q":{$ok,"maxTokens":"65536"}}|lemonade/q.maxTokens
 {"lemonade/q":{$ok,"workerNotes":7}}|lemonade/q.workerNotes
 {"lemonade/q":{$ok,"tiers":[]}}|lemonade/q.tiers
 {"lemonade/q":{$ok,"tiers":["huge"]}}|lemonade/q.tiers
@@ -566,7 +576,7 @@ ROWS
 {"lemonade/a":{$ok},"lemonade/b":{"baseUrl":"http://other:1/v1","contextWindow":8192}}|lemonade/b
 []|localModels
 EOF
-  finish_rows 26
+  finish_rows 30
 }
 
 # #842 lane profiles: the settings half of the feature is a name plus optional

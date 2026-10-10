@@ -142,6 +142,16 @@ in {
             default = 1;
             description = "Concurrent dispatch workers allowed on this model.";
           };
+          maxTokens = lib.mkOption {
+            type = lib.types.nullOr lib.types.ints.positive;
+            default = null;
+            example = 32768;
+            description = ''
+              pi's per-response output cap for this model, in tokens. Unset,
+              pi's own default (16384) applies. Thinking tokens count against
+              the cap.
+            '';
+          };
           tiers = lib.mkOption {
             type = lib.types.nonEmptyListOf (lib.types.enum ["trivial" "standard" "deep"]);
             default = ["trivial" "standard"];

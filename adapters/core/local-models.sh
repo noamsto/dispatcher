@@ -73,8 +73,8 @@ _local_thinking() {
 # every localModels entry, grouped by provider (key text before the first `/`;
 # the rest is the model id). The apiKey is a dummy pi requires; local endpoints
 # ignore it. `{"providers":{}}` when localModels is absent or empty. The
-# optional reasoning, thinkingFormat (as compat.thinkingFormat), thinkingLevelMap
-# and sampling fields are emitted only when the entry sets them.
+# optional reasoning, maxTokens, thinkingFormat (as compat.thinkingFormat),
+# thinkingLevelMap and sampling fields are emitted only when the entry sets them.
 _local_pi_models_json() {
   jq '{providers: ((.localModels // {}) | to_entries
     | map({provider: (.key | split("/")[0]), id: (.key | sub("^[^/]*/"; "")), value})
@@ -84,7 +84,7 @@ _local_pi_models_json() {
         api: "openai-completions",
         apiKey: .[0].provider,
         models: (map({id, contextWindow: .value.contextWindow}
-          + (.value | {reasoning, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel}
+          + (.value | {reasoning, maxTokens, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel}
             + (if .thinkingFormat then {compat: {thinkingFormat}} else {} end)
             | with_entries(select(.value != null))))
           | sort_by(.id))}})
