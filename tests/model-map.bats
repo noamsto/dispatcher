@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # The model map as data (#560): the defaults.json lookups must reproduce, for
 # every fixture row, the decision the pre-#560 gate code made (the fixtures were
-# generated from 4c5ed21's own dispatch.sh/dispatch-resume.sh text).
+# generated from 4c5ed21's own dispatch.sh/dispatch-resume.sh text; the
+# claude-standard rows were re-pinned by the #943 policy change).
 
 setup() {
   load helpers

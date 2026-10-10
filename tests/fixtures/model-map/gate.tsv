@@ -1,4 +1,4 @@
-# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — do not edit
+# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — claude-standard rows updated by the #943 policy change — do not edit
 claude	deep	opus	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
 claude	deep	sonnet	1	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*
 claude	deep	haiku	0	opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*

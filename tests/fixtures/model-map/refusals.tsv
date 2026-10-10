@@ -1,4 +1,4 @@
-# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — do not edit
+# generated from 4c5ed21 dispatch.sh/dispatch-resume.sh gate code — claude-standard rows updated by the #943 policy change — do not edit
 claude	deep	haiku	dispatch: model 'haiku' is not deep's row for --agent claude — expected opus, claude-opus-*, sonnet, claude-sonnet-*, fable, or claude-fable-*, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md "Tier map".
 claude	standard	fable	dispatch: model 'fable' is not standard's row for --agent claude — expected opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md "Tier map".
 claude	trivial	fable	dispatch: model 'fable' is not trivial's row for --agent claude — expected opus, claude-opus-*, sonnet, claude-sonnet-*, haiku, or claude-haiku-*, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md "Tier map".
