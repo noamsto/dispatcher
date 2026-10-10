@@ -1009,3 +1009,45 @@ func BenchmarkFoldLegacy20k(b *testing.B) {
 func BenchmarkFoldSinglePass20k(b *testing.B) {
 	benchFoldPrograms(b, program, parseRows(b, genBus(911, 20000)))
 }
+
+// A malformed session key on the shared bus must not throw the fold down:
+// jqrun reads a throw as "poll again", so one such row would blind every
+// watch of every crew. The fold skips non-string crew_id/from when building
+// its maps and answers null for them; the legacy program tolerated them
+// through plain equality. (Other malformed shapes — a bare scalar row, an
+// own-crew non-object body — still throw here, exactly as in the arm.)
+func TestMalformedSessionKeysDoNotThrowTheFold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []string
+	}{
+		{"foreign numeric crew_id", []string{
+			`{"ts":1,"crew_id":7,"from":"x","kind":"status","body":{"state":"working"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+		{"null crew_id", []string{
+			`{"ts":1,"crew_id":null,"from":"x","kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+		{"numeric from on this crew", []string{
+			`{"ts":1,"crew_id":"c1","from":7,"kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			`{"ts":2000,"crew_id":"c1","from":7,"kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+		}},
+		{"null from on this crew", []string{
+			`{"ts":1,"crew_id":"c1","kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, tc.rows...)
+			stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+			if code != 0 {
+				t.Fatalf("code %d", code)
+			}
+			if !strings.Contains(stdout, `"events"`) {
+				t.Errorf("the fold must answer, not poll again (%s)", stdout)
+			}
+		})
+	}
+}

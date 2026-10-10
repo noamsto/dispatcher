@@ -33,34 +33,33 @@ def norm:
   gsub(" *\\(cycle [0-9]+ of [0-9]+\\)"; "")
   | gsub("awaited [0-9]+s"; "awaited Ns")
   | gsub("undelivered for [0-9]+s"; "undelivered for Ns");
-# bump records $row for session $c/$f in map $m. Rows arrive in (ts, index)
-# order, so a newer row displaces `best` into `below` (the newest row
-# strictly older than it) and a row that ties `best` (same millisecond,
+# bump records $row for session $c/$f in map $m; the caller admits only
+# rows with crew_id == $crew and a string from, because look is never
+# reached with anything else and jq object keys are strings. Rows arrive in
+# (ts, index) order, so a newer row displaces `best` into `below` (the newest
+# row strictly older than it) and a row that ties `best` (same millisecond,
 # later in the log) just moves `best` later — the arm's `sort_by(.ts) | last`
-# returned the same row. Rows without crew_id or from can never match the
-# arm's `.crew_id==$e.crew_id and .from==$e.from` predecessor filter; every
-# bus writer stamps both.
+# returned the same row.
 def bump($m; $c; $f; $row):
-  if $c == null or $f == null then $m
-  else
-    $m | .[$c][$f] as $cur
-    | if $cur == null then setpath([$c, $f]; {best: $row, below: null})
-      elif $cur.best.ts == $row.ts then setpath([$c, $f]; $cur | .best = $row)
-      else setpath([$c, $f]; {best: $row, below: $cur.best})
-      end
-  end;
+  $m | .[$c][$f] as $cur
+  | if $cur == null then setpath([$c, $f]; {best: $row, below: null})
+    elif $cur.best.ts == $row.ts then setpath([$c, $f]; $cur | .best = $row)
+    else setpath([$c, $f]; {best: $row, below: $cur.best})
+    end;
 # look is the arm's prev lookup: the newest row strictly older than $ts.
 # When `best` ties $ts, `below` is by construction strictly older, so one
-# entry is the whole history the arm's `sort_by(.ts) | last` could reach.
+# entry is the whole history the arm's `sort_by(.ts) | last` could reach. A
+# non-string crew_id or from never enters the map (bump skips it) and reads
+# back null here, so a malformed session key cannot throw the fold the way
+# it did before #910.
 def look($m; $c; $f; $ts):
-  if $c == null or $f == null then null
-  else
+  if ($c | type) == "string" and ($f | type) == "string" then
     $m | .[$c][$f] as $cur
     | if $cur == null then null
       elif $cur.best.ts < $ts then $cur.best
       else $cur.below
       end
-  end;
+  else null end;
 to_entries
 | sort_by(.value.ts, .key)
 | [ foreach .[] as $x
@@ -87,7 +86,7 @@ to_entries
                              and (($e.body.detail | detail_text) | test(" cleared\\n?\\z")) ) )
                   | not ) )
           else .wake = false end
-        | if $e.kind == "status" then
+        | if $e.kind == "status" and $e.crew_id == $crew and ($e.from | type) == "string" then
             .all = bump(.all; $e.crew_id; $e.from; $e)
             | .live = (if $e.body.state == "exited" then .live
                        else bump(.live; $e.crew_id; $e.from; $e) end)
