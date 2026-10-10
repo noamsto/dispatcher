@@ -25,9 +25,10 @@ pr-watch-rejects-an-unknown-flag	tests/pr-watch.bats	166	pr-watch	rejects an unk
 pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly	tests/pr-watch.bats	172	pr-watch	a first poll that cannot read the PR fails loudly	slow
 pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher	tests/pr-watch.bats	183	pr-watch	crew pr-watch posts the event to the crew's dispatcher	slow
 pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out	tests/pr-watch.bats	201	pr-watch	crew pr-watch posts nothing when the park times out	slow
-pr-watch-default-clock-a-1s-park-really-waits	tests/pr-watch.bats	215	pr-watch	default clock: a 1s park really waits	slow
-role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	9793	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
-role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	9808	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
-role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	9843	role-watch	role-watch: an idle claude input box receives the assignment	slow
-role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	10149	role-watch	role-watch: queued assignments go out one per tick, in order	slow
-role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	10164	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow
+pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing	tests/pr-watch.bats	215	pr-watch	crew pr-watch exits with the child's status and posts nothing	slow
+pr-watch-default-clock-a-1s-park-really-waits	tests/pr-watch.bats	232	pr-watch	default clock: a 1s park really waits	slow
+role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	10745	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
+role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	10760	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
+role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	10795	role-watch	role-watch: an idle claude input box receives the assignment	slow
+role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	11152	role-watch	role-watch: queued assignments go out one per tick, in order	slow
+role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	11167	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow

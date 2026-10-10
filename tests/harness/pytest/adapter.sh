@@ -8,6 +8,10 @@ readonly result="$root/tests/harness/bench/case-result.sh"
 readonly runner="$root/tests/harness/pytest/run.sh"
 failures=0
 rows=0
+# shellcheck source=/dev/null
+source "$root/tests/harness/ensure-crew-go.sh"
+trap cleanup_crew_go_bin EXIT
+ensure_crew_go_bin
 
 "$result" --header
 while IFS=$'\t' read -r case_id source_file _ family _ _; do

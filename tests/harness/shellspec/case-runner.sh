@@ -20,6 +20,7 @@ failures=0
 RW_PID=""
 
 cleanup() {
+  cleanup_crew_go_bin
   if [[ -n $RW_PID ]]; then
     kill "$RW_PID" 2>/dev/null || true
     wait "$RW_PID" 2>/dev/null || true
@@ -28,6 +29,12 @@ cleanup() {
   XDG_DATA_HOME="$(dirname "$CASE_TMP")/shellspec-trash" gtrash put "$CASE_TMP"
 }
 trap cleanup EXIT
+
+# The ported crew arms need CREW_GO_BIN, and a bare `shellspec` run reaches here
+# without run.sh having set it. This file runs without `set -e`: fail the case.
+# shellcheck source=/dev/null
+source "$ROOT/tests/harness/ensure-crew-go.sh"
+ensure_crew_go_bin || exit 1
 
 fail() {
   printf '%s\n' "$*" >&2
@@ -452,6 +459,22 @@ EOF
     log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ||
       fail "pw-crew-timeout-no-bus-row: git rev-parse failed"
     check_no_path pw-crew-timeout-no-bus-row "$log"
+    ;;
+  pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing)
+    cat >"$STUB_DIR/pr-watch" <<'EOF'
+#!/usr/bin/env bash
+echo '{"pr":42,"changed":["head_sha"]}'
+echo 'gh: something went wrong' >&2
+exit 3
+EOF
+    chmod +x "$STUB_DIR/pr-watch"
+    capture env CREW_ID=c1 bash -euo pipefail "$CREW" pr-watch 42
+    check_eq pw-crew-child-status "$CAPTURE_STATUS" 3
+    check_contains pw-crew-child-stderr "$CAPTURE_STDERR" 'gh: something went wrong'
+    check_not_contains pw-crew-child-no-partial-stdout "$CAPTURE_STDOUT" '"changed"'
+    log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ||
+      fail "pw-crew-child-no-bus-row: git rev-parse failed"
+    check_no_path pw-crew-child-no-bus-row "$log"
     ;;
   pr-watch-default-clock-a-1s-park-really-waits)
     unset PR_WATCH_CLOCK

@@ -186,6 +186,15 @@ def pr_watch(h, case_id):
         expect("pw-default-clock-elapsed", elapsed >= 1.0)
         return
 
+    if "exits-with-the-child-s-status" in case_id:
+        h.stub("pr-watch", "printf '%s\\n' '{\"pr\":42,\"changed\":[\"head_sha\"]}'\nprintf '%s\\n' 'gh: something went wrong' >&2\nexit 3\n")
+        result = h.crew("pr-watch", "42", env={"CREW_ID": "c1"})
+        expect("pw-crew-child-status", result.returncode == 3)
+        expect("pw-crew-child-stderr", "gh: something went wrong" in result.stderr)
+        expect("pw-crew-child-no-partial-stdout", '"changed"' not in result.stdout)
+        expect("pw-crew-child-no-bus-row", not (h.repo / ".git/crew/events.jsonl").exists())
+        return
+
     prefixes = {
         "first-park": "pw",
         "head-sha": "pw-head", "review-thread": "pw-thread", "in-flight": "pw-pending",
