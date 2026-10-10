@@ -580,34 +580,56 @@ _store_protocols() { # <dir> <content>
   [ "$status" -ne 0 ]
 }
 
-# #936: tmux takes a new window's PATH from the caller, so this launcher's own
-# pinned tool dirs — the store bins flake.nix bakes as @launcherRuntimePath@ —
-# would ride into the resumed session, whose `crew` would then resolve to the
-# build the launcher started with and never pick up a home-manager rebuild.
-@test "resume hands the engine window a PATH without the launcher's pinned dirs (#936)" {
+# #936: tmux takes a new window's PATH from the client that opens it (a `-e
+# PATH=` is overridden by it), so this launcher's own pinned tool dirs — the
+# store bins flake.nix bakes as @launcherRuntimePath@ — would ride into the
+# resumed session, whose `crew` would then resolve to the build the launcher
+# started with and never pick up a home-manager rebuild. The rows pin the PATH
+# the tmux client actually runs with, because that is what the pane inherits.
+_stub_tmux_with_path_log() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+printf 'tmux PATH=%s\n' "$PATH" >>"$STUB_LOG"
+case "$1" in
+list-panes) : ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "resume opens the engine window under a PATH without the launcher's pinned dirs (#936)" {
   setup_worker_wt
+  _stub_tmux_with_path_log
   local pinned="$TEST_REPO/store/h-pinned/bin"
   mkdir -p "$pinned"
   sed "s|@launcherRuntimePath@|$pinned|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-pinned.sh"
   cd "$WT"
   PATH="$pinned:$PATH" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-pinned.sh"
   [ "$status" -eq 0 ]
-  # The pane's PATH: the caller's minus the pinned dir, everything else in place.
-  grep -qF -- "-e PATH=$STUB_DIR:" "$STUB_LOG"
-  run grep -qF -- "$pinned" "$STUB_LOG"
-  [ "$status" -ne 0 ]
+  # The PATH of the client that opened the window: the caller's minus the pinned
+  # dir. grep -A1 pairs it with the new-window call itself, since every other
+  # tmux call keeps running with the launcher's pinned PATH.
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH="* ]]
+  [[ "$output" != *"$pinned"* ]]
 }
 
-@test "a raw resume opens the window with no PATH override (#936)" {
-  # The raw script has no store dirs to remove; the new-window line stays exactly
-  # what it was, so nothing about the pane's own shell init changes.
+@test "a raw resume opens the window under the caller's PATH unchanged (#936)" {
+  # The raw script has no store dirs to remove, so the client runs with the PATH
+  # it was given — including a directory that looks exactly like a pinned one.
   setup_worker_wt
+  _stub_tmux_with_path_log
+  local pinned="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$pinned"
   cd "$WT"
-  run run_resume
+  PATH="$pinned:$PATH" run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- 'new-window' "$STUB_LOG"
-  run grep -qF -- "-e PATH=" "$STUB_LOG"
-  [ "$status" -ne 0 ]
+  run grep -A1 -- '^new-window' "$STUB_LOG"
+  [[ "$output" == *"tmux PATH=$pinned:"* ]]
 }
 
 @test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {

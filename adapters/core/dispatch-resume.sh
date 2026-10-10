@@ -153,14 +153,14 @@ shell_quote() {
 # each launcher bakes standalone): the preamble writeShellApplication builds for
 # this script prepends its own pinned tool dirs — gh, git, jq, gnused, gnugrep,
 # coreutils, findutils, diffutils, tmux and crew, all nix store paths — to PATH.
-# The resumed engine is typed into a tmux pane, and tmux builds that pane from
-# the caller's PATH, so without this the session resolves `crew` from the store
-# build this launcher started with and never picks up a rebuild. engine_path
-# prints the caller's PATH with exactly those dirs dropped, every other entry in
-# order; the window creation below hands it to tmux as the pane's PATH, so the
-# resumed engine resolves `crew` through the user profile. flake.nix's
-# launcherPath substitutes the placeholder at build time; a raw run from a
-# checkout leaves it literal and leaves PATH untouched.
+# The resumed engine is typed into a tmux window, and tmux builds that window
+# from the PATH of the client that opens it — `new-window -e PATH=` is overridden
+# by it — so without this the session resolves `crew` from the store build this
+# launcher started with and never picks up a rebuild. engine_path prints the
+# caller's PATH with exactly those dirs dropped, every other entry in order; the
+# window creation below runs the tmux client under it. flake.nix's launcherPath
+# substitutes the placeholder at build time; a raw run from a checkout leaves it
+# literal and leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
 engine_path() {
   local pinned="$_launcher_runtime_path" entry dir keep
@@ -1177,17 +1177,18 @@ if [ -z "$pane" ]; then
       client_height=""
     fi
   fi
-  # #936: tmux takes the new window's PATH from the caller, so without this the
-  # pane — and the engine typed into it — keeps this launcher's pinned tool dirs.
-  # -e pins the pane's PATH to the caller's minus those (see engine_path); the
-  # pane's own login shell prepends its profile entries on top. Skipped when
-  # nothing was dropped, so a raw run opens the window exactly as before.
+  # #936: tmux takes the new window's PATH from the client that opens it, so the
+  # client runs under the cleaned PATH (see engine_path) — `new-window -e PATH=`
+  # would be overridden by it. tmux itself is resolved first, while the pinned
+  # PATH is still in effect. When nothing was dropped — a raw run, or a caller
+  # whose PATH never carried the pinned dirs — the window opens as before.
   engine_env_path="$(engine_path)"
-  pane_path=()
-  if [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
-    pane_path=(-e "PATH=$engine_env_path")
+  tmux_bin="$(command -v tmux)"
+  pane_client=(tmux)
+  if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
+    pane_client=(env PATH="$engine_env_path" "$tmux_bin")
   fi
-  read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" "${pane_path[@]}" -P -F '#{window_id} #{pane_id}')
+  read -r win pane < <("${pane_client[@]}" new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   fi
