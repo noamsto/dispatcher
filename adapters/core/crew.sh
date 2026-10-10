@@ -2016,8 +2016,9 @@ it to the aeye carousel beside the recorded dispatcher pane.
   --once       Render one frame and exit
   --detach     Record the pane, start the daemon detached, return
   --interval   Redraw interval (default 2)
-  --quiet      Exit after S seconds with no live role pane (default 1800;
-               0 exits as soon as the crew drains)
+  --quiet      Exit after S seconds with no working/blocked/dispatched worker
+               and no outstanding hold (default 1800; 0 exits as soon as the
+               crew drains)
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.
 
