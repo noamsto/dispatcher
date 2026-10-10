@@ -205,9 +205,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
-	// adopt rewrites a crew pid file and releases the labels a dead crew left,
-	// so it reads the caller's own identity: `$$`, `$PPID` and `$PWD` are the
-	// fields its pidfile.log line records, and crew.sh execs us with them.
+	// adopt records the caller's own identity in pidfile.log: `$$`, `$PPID` and
+	// `$PWD`, which crew.sh's exec leaves ours.
 	if sub == "adopt" {
 		return adopt.Run(args, paths, stdout, stderr, adopt.Options{
 			Probes: e.procs,

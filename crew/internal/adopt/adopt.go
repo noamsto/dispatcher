@@ -45,8 +45,7 @@ var claimsProgram string
 // the log line records.
 type Options struct {
 	// Probes are the pid reads: whether the recorded dispatcher is alive,
-	// whether it is this process's ancestor, and the owner-pid walk. Tests
-	// script them through the same seams crews and reply use.
+	// whether it is this process's ancestor, and the owner-pid walk.
 	Probes crews.Probes
 	// Now is the clock the pidfile.log line stamps.
 	Now func() time.Time
@@ -62,10 +61,9 @@ type Options struct {
 	// error.
 	Worktrees func() string
 	// Windows and SelfWindow are the two tmux reads that decide whether a
-	// worktree is occupied. `_occupants` also reads the pane list, but only to
-	// fill the `engine`/`panes` fields of the JSON it prints, and adopt asks
-	// just whether that array is empty — so the pane read cannot change the
-	// answer and is not run.
+	// worktree is occupied. `_occupants` also reads the pane list, but those
+	// rows fill only the advisory `engine`/`panes` fields of the JSON it prints,
+	// and adopt asks just whether that array is empty.
 	Windows    func() string
 	SelfWindow func(pane string) string
 	// Args is `ps -o args= -p <pid>`: the caller's command line, which the log
@@ -83,8 +81,8 @@ type Options struct {
 }
 
 // claim is one issue this crew claimed, with every branch any crew claimed it
-// on. Row one of the fold is the issue as text, row two this crew's branch, and
-// the rest the other branches a newer claim named — the arm's `crow` array.
+// on: field one of a fold row is the issue as text, field two this crew's
+// branch and the rest the other branches — the arm's `crow` array.
 type claim struct {
 	issue    string
 	branch   string
@@ -94,8 +92,8 @@ type claim struct {
 func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 
-	// `--force` is stripped from anywhere in the argv, not just the front, so
-	// `crew adopt <id> --force` and `crew adopt --force <id>` are one command.
+	// `--force` is stripped from anywhere in the argv, so `crew adopt <id>
+	// --force` cannot record the literal string "--force" as the pid.
 	force := false
 	var pos []string
 	for _, a := range args {
@@ -112,8 +110,7 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		return exitFailure
 	}
 	// The same charset bus.ValidCrewID gates every other writer of a crew id
-	// with: an unsanitized id reaches file paths, tmux window names and jq
-	// arguments downstream.
+	// with: an unsanitized id reaches file paths and jq arguments downstream.
 	if !bus.ValidCrewID(id) {
 		say(stderr, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n")
 		return exitFailure
@@ -146,9 +143,8 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 
 	if !force && live {
 		// A live owner that is this process's ancestor is the idempotent case:
-		// `dispatch` adopts the crew it just made on every retry, and refusing
-		// there would break the wake path. Liveness already proved the text is a
-		// positive integer, so the parse cannot fail.
+		// `dispatch` adopts the crew it just made on every retry. Liveness
+		// already proved the text is a positive integer, so the parse cannot fail.
 		n, _ := strconv.Atoi(epid)
 		if !o.Probes.IsAncestor(n) {
 			o.pidfileLog(paths, "adopt", "refused", id, epid, pidText)
@@ -206,8 +202,8 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 	heads, err := o.Gh("pr", "list", "--state", "open", "--limit", "500",
 		"--json", "headRefName", "--jq", ".[].headRefName")
 	if err != nil {
-		// The arm's `2>&1`: the captured text is the whole reason the line is
-		// worth printing, and gh's own message is not otherwise on the terminal.
+		// The arm's `2>&1`: gh's own message is captured, not printed, so this
+		// line is the only place it reaches the terminal.
 		say(stderr, "crew adopt: could not list open PRs (%s) — leaving the recorded claims in place\n", heads)
 		return
 	}
@@ -215,8 +211,9 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 		if c.issue == "" {
 			continue
 		}
-		// `gh issue edit` takes a number, and a claim row is old enough to
-		// predate the label, so a non-numeric issue is reported and skipped.
+		// `gh issue edit` takes a number, and the bus is caller-writable, so a
+		// malformed issue is reported and skipped rather than passed as an argv
+		// word. The well-formed rows beside it still release.
 		if !isNumber(c.issue) {
 			say(stderr, "crew adopt: skipping a claim row whose issue is not a number (%s)\n", c.issue)
 			continue
@@ -252,8 +249,7 @@ func (o Options) held(c claim, heads string) string {
 
 // occupied is the arm's `[ "$(_occupants "$wt")" != '[]' ]`: a crewed window
 // that is neither the dispatcher's nor the caller's own, rooted at exactly this
-// path. A worktree no window is in is free, which is the whole reason `dispatch
-// --pr` can adopt a crew whose worker has exited.
+// path.
 func (o Options) occupied(wt string) bool {
 	self := ""
 	if pane := o.LookupEnv("TMUX_PANE"); pane != "" {
@@ -291,8 +287,7 @@ func claimRows(paths bus.Paths, id string) []claim {
 	var adopted []claim
 	for _, row := range out.Elems() {
 		cols := row.Elems()
-		// The fold always leads with the issue and this crew's branch; a row
-		// without both is not a claim.
+		// The fold emits [issue, branch, others…]; anything shorter is not a row.
 		if len(cols) < 2 {
 			continue
 		}
@@ -306,10 +301,9 @@ func claimRows(paths bus.Paths, id string) []claim {
 }
 
 // pidfileLog is `_pidfile_log`: one line per crew pid file mutation in
-// `$dir/pidfile.log`, naming the caller so a crew dir that vanishes or changes
-// owner can be traced (#432). It is append-only and unbounded, and it is
-// diagnostic rather than state, so a failure is dropped exactly as the arm
-// drops one.
+// `$dir/pidfile.log`, naming the caller so a crew dir that changes owner can be
+// traced (#432). It is diagnostic rather than state, so a failed write is
+// dropped as the arm drops it.
 func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newPID string) {
 	line := fmt.Sprintf("%s %s %s crew=%s old=%s new=%s pid=%d ppid=%d cwd=%s by=%s",
 		o.Now().UTC().Format("2006-01-02T15:04:05Z"), action, outcome, crew,
@@ -319,9 +313,6 @@ func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newP
 }
 
 func (o Options) withDefaults() Options {
-	if o.Probes.Alive == nil {
-		o.Probes = crews.DefaultProbes()
-	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}

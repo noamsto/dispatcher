@@ -13,9 +13,8 @@ import (
 )
 
 // stub is the scripted world: which pids live, who parents whom, and what gh,
-// git and tmux answer. Every external call is logged with its argv, because the
-// arm's calls are part of its contract — a test that only read the messages
-// would pass a port that shipped the label off a live branch.
+// git and tmux answer. Every external call is logged with its argv, since which
+// calls the arm makes is part of its contract.
 type stub struct {
 	calls  []string
 	ghOut  string

@@ -232,10 +232,9 @@ func (p Probes) OwnerPID(ppid int) int {
 	return ppid
 }
 
-// shellName is the arm's `${c##*/}` and `${c#-}`: ps prints the leading path
-// for a process exec'd by absolute path, and a login shell prefixes itself with
-// '-'. It cannot report a name with a space in it or one that starts with '-',
-// exactly as bash found.
+// shellName is the arm's `${c##*/}` and `${c#-}`: ps prints the leading path for
+// a process exec'd by absolute path, and a login shell prefixes itself with '-'.
+// A name with a space in it, or one that starts with '-', is beyond `ps -o comm=`.
 func shellName(comm string) string {
 	n := comm
 	if i := strings.LastIndex(n, "/"); i >= 0 {

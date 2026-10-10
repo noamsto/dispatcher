@@ -6,9 +6,9 @@ import (
 	"strconv"
 )
 
-// The arm's five external commands, kept one function each with the argv the
-// bash writes, so a test can count and order them. `$(…)` strips the trailing
-// newlines of what it captures, which is what these return.
+// The arm's five external commands, one function each, with the argv the bash
+// writes. `$(…)` strips the trailing newlines of what it captures, which is what
+// these return.
 
 func ghCombined(args ...string) (string, error) {
 	cmd := exec.Command("gh", args...)
