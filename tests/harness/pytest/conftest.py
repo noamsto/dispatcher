@@ -1,11 +1,42 @@
 import os
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def crew_go_bin():
+    """Build crew-go so raw-source runs of crew.sh reach the ported arms.
+
+    crew.sh names the binary through CREW_GO_BIN, whose fallback is still the
+    @crewGoBin@ placeholder in a checkout. tests/setup_suite.bash does this for
+    bats; this is the same for a direct pytest run. An adapter exporting
+    CREW_GO_BIN once for a whole bench run makes this a no-op, keeping the build
+    out of the measured per-case window.
+    """
+    if os.environ.get("CREW_GO_BIN"):
+        # A generator fixture has to yield on every path; pytest 9 fails the
+        # test outright otherwise.
+        yield
+        return
+    build_dir = Path(tempfile.mkdtemp(prefix="crew-go-harness."))
+    try:
+        subprocess.run(
+            ["go", "build", "-o", str(build_dir / "crew-go"), "."],
+            cwd=ROOT / "crew",
+            env=os.environ | {"GOTOOLCHAIN": "local", "GOFLAGS": "-buildvcs=false"},
+            check=True,
+        )
+        os.environ["CREW_GO_BIN"] = str(build_dir / "crew-go")
+        yield
+    finally:
+        shutil.rmtree(build_dir, ignore_errors=True)
 
 
 @pytest.fixture

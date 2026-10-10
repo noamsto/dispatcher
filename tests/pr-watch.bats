@@ -226,7 +226,7 @@ SH
   [ "$status" -eq 3 ]
   [[ "$output" == *"gh: something went wrong"* ]]
   [[ "$output" != *'"changed"'* ]]
-  [ ! -f "$REPO/.dispatcher/crew/c1/events.jsonl" ]
+  [ ! -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ]
 }
 
 @test "default clock: a 1s park really waits" {

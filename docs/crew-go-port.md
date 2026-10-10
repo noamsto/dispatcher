@@ -480,6 +480,10 @@ constants.
 
 - `bats tests/...`: `tests/setup_suite.bash` builds `crew-go` from the working
   tree once per run and exports `CREW_GO_BIN`; a failed build fails the run.
+- The bench harnesses shell into crew.sh from the checkout as well, so their
+  entries export it too. `tests/harness/ensure-crew-go.sh` builds unless
+  `CREW_GO_BIN` is already set: a bench adapter builds once and its per-case
+  children inherit, keeping the build out of the measured per-case window.
 - `cd crew && go test ./... && go vet ./... && golangci-lint run ./...`.
   `exhaustive` is on: keep `switch` on `Kind` and `State` complete.
 - `scripts/bats-affected.sh` maps `crew/*` to the crew bats files.

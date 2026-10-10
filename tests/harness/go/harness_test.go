@@ -39,6 +39,48 @@ var repoRoot = func() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
 }()
 
+// adapters/core/crew.sh names the Go binary through CREW_GO_BIN, whose fallback
+// is still the @crewGoBin@ placeholder in a checkout, so a raw-source run needs
+// the variable. The bench adapter exports it once for the whole run; a bare
+// `go test ./...` builds it here, as tests/setup_suite.bash does for bats.
+func TestMain(m *testing.M) {
+	dir, err := ensureCrewGoBin()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	status := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(status)
+}
+
+// ensureCrewGoBin returns the directory holding the binary it built, or "" when
+// CREW_GO_BIN was already set and nothing was built.
+func ensureCrewGoBin() (string, error) {
+	if os.Getenv("CREW_GO_BIN") != "" {
+		return "", nil
+	}
+	dir, err := os.MkdirTemp("", "crew-go-harness")
+	if err != nil {
+		return "", err
+	}
+	bin := filepath.Join(dir, "crew-go")
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = filepath.Join(repoRoot, "crew")
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-buildvcs=false")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		return "", fmt.Errorf("harness: build crew-go: %w\n%s", err, out)
+	}
+	if err := os.Setenv("CREW_GO_BIN", bin); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
 func TestManifest(t *testing.T) {
 	cases := manifestCases()
 	checkRegistryParity(t, cases)
@@ -109,8 +151,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 32 || len(wantCases) != 32 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 32 each", len(cases), len(wantCases))
+	if len(cases) != 33 || len(wantCases) != 33 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 33 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -551,6 +593,15 @@ func prCase(kind string) func(*caseTest) {
 			t.check("pw-crew-timeout-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
 			t.check("pw-crew-timeout-empty-stdout", r.stdout == "", "stdout=%q", r.stdout)
 			t.check("pw-crew-timeout-no-bus-row", !exists(filepath.Join(f.dir, ".git/crew/events.jsonl")), "events file exists")
+		case "crew-child-fail":
+			// A failed park ends the arm with the child's status before the post,
+			// and before the print — the partial event JSON included.
+			f.stub("pr-watch", "printf '%s\\n' '{\"pr\":42,\"changed\":[\"head_sha\"]}'\nprintf '%s\\n' 'gh: something went wrong' >&2\nexit 3")
+			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "pr-watch", "42")
+			t.check("pw-crew-child-status", r.status == 3, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-crew-child-stderr", strings.Contains(r.stderr, "gh: something went wrong"), "stderr=%q", r.stderr)
+			t.check("pw-crew-child-no-partial-stdout", !strings.Contains(r.stdout, `"changed"`), "stdout=%q", r.stdout)
+			t.check("pw-crew-child-no-bus-row", !exists(filepath.Join(f.dir, ".git/crew/events.jsonl")), "events file exists")
 		case "default-clock":
 			env := make([]string, 0, len(f.env))
 			for _, entry := range f.env {
@@ -650,6 +701,7 @@ func manifestCases() []testCase {
 		{"pr-watch-a-first-poll-that-cannot-read-the-pr-fails-loudly", ids("pw-gh-failure-status", "pw-gh-failure-message"), prCase("gh-failure")},
 		{"pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher", ids("pw-crew-event-seed-status", "pw-crew-event-seed-empty-stdout", "pw-crew-event-seed-timeout-stderr", "pw-crew-event-status", "pw-crew-event-stdout", "pw-crew-event-bus-row"), prCase("crew-event")},
 		{"pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out", ids("pw-crew-timeout-seed-status", "pw-crew-timeout-seed-empty-stdout", "pw-crew-timeout-seed-timeout-stderr", "pw-crew-timeout-status", "pw-crew-timeout-empty-stdout", "pw-crew-timeout-no-bus-row"), prCase("crew-timeout")},
+		{"pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing", ids("pw-crew-child-status", "pw-crew-child-stderr", "pw-crew-child-no-partial-stdout", "pw-crew-child-no-bus-row"), prCase("crew-child-fail")},
 		{"pr-watch-default-clock-a-1s-park-really-waits", ids("pw-default-clock-status", "pw-default-clock-timeout-stderr", "pw-default-clock-elapsed"), prCase("default-clock")},
 		{"role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once", ids("rw-dialog-clear-no-sends", "rw-dialog-clear-one-send"), roleWatchCase("dialog-clear")},
 		{"role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer", ids("rw-defer-frames-captured"), roleWatchCase("defer-frames")},

@@ -183,6 +183,13 @@ The output should be blank
 The stderr should be blank
 End
 
+It 'pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
 It 'pr-watch-default-clock-a-1s-park-really-waits'
 When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-default-clock-a-1s-park-really-waits"
 The status should be success

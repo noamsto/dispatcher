@@ -5,6 +5,10 @@ module_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$module_dir/../../.." && pwd)
 manifest="$repo_root/tests/harness/manifest.tsv"
 result="$repo_root/tests/harness/bench/case-result.sh"
+# shellcheck source=/dev/null
+source "$repo_root/tests/harness/ensure-crew-go.sh"
+trap cleanup_crew_go_bin EXIT
+ensure_crew_go_bin
 
 "$result" --header
 failures=0
