@@ -6,16 +6,17 @@
 //
 // The fold is the arm's jq — same decisions, one pass since #910 — embedded
 // and handed to jqrun (see watch.jq).
-// Two contracts with bash `stream`, which re-enters this command as its child,
+// Two contracts with `crew stream`, which re-enters this command as its child,
 // shape the rest of the file:
 //
 //   - The clock is the wall clock. The arm stamped `start` and every deadline
 //     check with jq's `now*1000|floor` and slept with the real `sleep`, so
 //     unlike `await` and `hold` this park never reads $CREW_CLOCK.
-//   - `watch.lock.d` is held for the whole park, through the `_lock_acquire`
-//     protocol `stream` also takes. It stops and retries by sending TERM, and
-//     bash released the lock from its EXIT trap; a leaked lock dir blocks every
-//     later watch of the crew until the dead pid is reaped.
+//   - `watch.lock.d` is held for the whole park through the same internal/lock
+//     protocol `crew stream` takes. It stops and retries by sending TERM, and
+//     watch releases the lock itself (a deferred release, where the bash arm had
+//     an EXIT trap); a leaked lock dir blocks every later watch of the crew
+//     until the dead pid is reaped.
 package watch
 
 import (

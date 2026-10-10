@@ -98,6 +98,41 @@ func TestLockZeroHolderIsHeld(t *testing.T) {
 	}
 }
 
+// TestLockOutOfRangeHolderIsFree: a digits-only holder past the pid ceiling
+// names no process, and probing it answers for a different one — syscall.Kill
+// truncates to pid_t, so 4294967295 is a kill(-1) that succeeds. The lock is
+// reclaimed instead, the refusal bash's own kill handed the arm.
+func TestLockOutOfRangeHolderIsFree(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stream.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	me := strconv.Itoa(os.Getpid())
+	for _, holder := range []string{"4194305", "4294967295", "9223372036854775807", "99999999999999999999999"} {
+		if pidAlive(holder) {
+			t.Errorf("pidAlive(%q) reads alive; past the pid ceiling it must read free", holder)
+		}
+		writePID(t, dir, holder)
+		if !Acquire(dir, me) {
+			t.Errorf("Acquire kept a lock held by out-of-range pid %s", holder)
+		}
+		Release(dir)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, holder := range []string{"1", "4194304"} {
+		if !ValidHolder(holder) {
+			t.Errorf("ValidHolder(%q) = false; the ceiling itself is a pid", holder)
+		}
+	}
+	for _, holder := range []string{"", "0", "-1", "12x", "1 ", " 1", "0x10", "4194305", "99999999999999999999999"} {
+		if ValidHolder(holder) {
+			t.Errorf("ValidHolder(%q) = true; the arm refused to signal this holder", holder)
+		}
+	}
+}
+
 func writePID(t *testing.T, dir, text string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(text), 0o644); err != nil {

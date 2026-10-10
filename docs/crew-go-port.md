@@ -3,10 +3,10 @@
 Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
-`--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where` and
-`stall-watch` (#832). Each slice must leave every bats file green; tests may be
-adapted only where the Go design changes what they can observe (the output
-contract below), with each edit justified.
+`--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
+`stall-watch` (#832) and `stream`. Each slice must leave every bats file green;
+tests may be adapted only where the Go design changes what they can observe (the
+output contract below), with each edit justified.
 
 ## Layout
 
@@ -58,10 +58,10 @@ contract below), with each edit justified.
 - `crew/internal/lock`: crew.sh's `_lock_acquire`/`_lock_release` protocol —
   the `mkdir` gate, the `pid` owner file, the bare `kill -0` liveness probe and
   the dead-owner reclaim — as one package instead of a copy per caller, because
-  two of its lock dirs have bash holders on the other side: `ratings.lock.d`
+  two of its lock dirs have holders across a process boundary: `ratings.lock.d`
   (the autosweep spawner in `reap`, older installed `crew` binaries) and
-  `watch.lock.d` (bash `stream`, which takes it through the `crew watch` it
-  re-enters). Held for the two `rate` store windows and never across a gh call;
+  `watch.lock.d` (which `stream` takes, and which the child `crew watch` it
+  re-enters takes for its own park). Held for the two `rate` store windows and never across a gh call;
   `watch` holds it for its whole park and releases it on every exit path,
   including the SIGTERM/SIGINT/SIGHUP `stream` sends it.
 - `crew/internal/await`: the arm of #884, and the first port that **polls**. Its
@@ -108,9 +108,9 @@ contract below), with each edit justified.
   `inbox` and `await` now share.
 - `crew/internal/watch`: the arm of #901, the second poller. Its fold is the
   arm's jq through jqrun (`watch.jq`), and it is the port with the most
-  cross-language surface: `crew stream` stayed bash and re-enters `crew watch`
-  as its child, so the batch, the cursor file and `watch.lock.d` are all
-  contracts with bash. Two rules follow from the arm. The clock is the wall
+  cross-language surface: `crew stream` re-enters this command as its child, so
+  the batch, the cursor file and `watch.lock.d` are all contracts across that
+  boundary. Two rules follow from the arm. The clock is the wall
   clock — it stamped `start` and every deadline with jq's `now` and slept with
   the real `sleep`, so unlike `await` and `hold` it never reads `$CREW_CLOCK`
   (and the suite exports `CREW_CLOCK` for `await`'s sake, which is why this is
@@ -221,6 +221,27 @@ contract below), with each edit justified.
   `env -u CREW_WORKER_ID -u CREW_ID timeout 120 refresh-budget`. Every child runs
   in its own process group, killed whole on cancel, so a `sleep` under a seam
   dies with its parent. `Sh` is the `--sh` runner (see Delegation).
+- `crew/internal/stream`: the arm of #914, the port that owns a process group.
+  It is the only one that never exits on its own, so it writes its protocol lines
+  straight to stdout — a buffered line would wait for a batch that may never come.
+  Three children are the **crew script re-entered** (`bash -euo pipefail <self> …`,
+  `self` from the `CREW_SELF` the delegation arm exports): `watch`, `hold due` and
+  `reap`, which stayed there. That keeps the arm's fault-injection rows honest and
+  keeps `crew reap` single-implemented, and it is why the port is a subprocess
+  runner rather than three function calls: `watch` is stopped with TERM and waited
+  so it can release `watch.lock.d` itself, and `reap` is never awaited nor signalled
+  (an interrupted removal strands a worktree) and writes a per-child pair of files,
+  so a reap that outlives its stream cannot clobber the next one's.
+  `stream.lock.d` is taken through `internal/lock` before any signal is caught,
+  because the cleanup releases unconditionally and a handler armed on the refusal
+  path would unlink the _incumbent's_ lock. `lock.pidAlive` reads a holder past
+  `lock.MaxPID` free, which is what bash's own refusal (`kill -0 4294967295` →
+  "not a pid or valid job spec") gave the arm: such a lock is reclaimed, never
+  signalled — Go's `syscall.Kill` would have truncated that holder to `-1`, every
+  process this user may signal. One place the port is not the arm: `--force`
+  refuses the all-zero spellings (`00`, `000`) that bash's `kill` accepted as pid
+  `0`, TERMed this whole process group with, and then waited five seconds to
+  report had not cleared.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -231,10 +252,15 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where | stream)
+  export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
+
+`CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Only
+`stream` reads it — for its inner `watch`, its `hold due` pre-check and `crew
+reap`, all three of which stayed in the script.
 
 `flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
 `bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
@@ -372,14 +398,14 @@ real time` pins the no-`CREW_CLOCK` branch. `watch` is deliberately outside this
 pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
-`_lock_acquire` and `_lock_release` stay for `stream`, `nudge` and `roster-render`,
-and `internal/lock` is their Go copy for `rate`, `watch` and `stall-watch`'s
+`_lock_acquire` and `_lock_release` stay for `nudge` and `roster-render`, and
+`internal/lock` is their Go copy for `rate`, `watch`, `stream` and `stall-watch`'s
 budget refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one
-protocol, two languages, one lock dir:
-bash `stream` writes `watch.lock.d/pid` with `$$` through the `crew watch` it
-re-enters, and an older installed `crew` holds `ratings.lock.d`. The drift test
-is `internal/lock`'s own table (live, dead, empty and non-numeric owners, a `0`
-holder, trailing newlines) and the `stream` rows that TERM a parked Go watch.
+protocol, two languages, one lock dir: the Go `stream` holds `stream.lock.d`
+while a bash `nudge` may be reading it, and an older installed `crew` holds
+`ratings.lock.d`. The drift test is `internal/lock`'s own table (live, dead,
+empty and non-numeric owners, a `0` holder, trailing newlines) and the `stream`
+rows that TERM a parked Go watch and reclaim a `--force`'d holder.
 
 The frame classifiers (`_frame_classifier`, `_pane_idle_reason`, `_claude_idle_box`,
 `_box_rows`, the `_pi_*` helpers) stay in crew.sh for `reap`, `nudge` and
@@ -424,8 +450,8 @@ constants.
    `syscall.Exec`s crew.sh (an internal `crew-sh`, path baked in via ldflags)
    for the rest.
 2. The delegating arms in crew.sh disappear.
-3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `reap`, `hold`, `stream`,
-   `rate`) switch to a `CREW_SELF`-style env the Go front exports. `stream` is
-   the one that matters for `watch`: it re-enters `$0` for its inner park, and
-   that arm is now the delegation exec.
+3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `reap`, `hold`, `rate`) switch
+   to the `CREW_SELF` env the Go front exports. `stream` already reads that env
+   rather than a `$0` of its own — it re-enters the script for its inner park, so
+   once the front exports `CREW_SELF` itself the port needs no further change.
 4. `run_crew` and `CREW_REAL` in the bats files switch to the Go binary.

@@ -488,7 +488,7 @@ func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 }
 
 // A live holder refuses with the arm's line; a dead one is reclaimed through
-// the same mkdir gate bash `stream` uses.
+// the same mkdir gate `crew stream` takes.
 func TestLockHeldAndReclaimed(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

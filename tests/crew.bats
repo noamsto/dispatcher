@@ -9888,6 +9888,35 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ ! -e "$cdir/cursor" ]
 }
 
+# #914: the signal contract, per signal — exit 0, the status bash's single EXIT
+# trap ended with. Both lock dirs going is the point: a leaked watch.lock.d
+# refuses every later park of the crew until the dead pid is reclaimed, and a
+# leaked stream.lock.d refuses every later stream.
+@test "stream: TERM, INT and HUP each release both locks and the next stream starts at once" {
+  cdir="$(crew_dir c1)"
+  for sig in TERM INT HUP; do
+    start_stream --crew c1 --park 10 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+    poll_for 100 test -f "$cdir/stream.lock.d/pid"
+    poll_for 100 test -f "$cdir/watch.lock.d/pid"
+
+    kill -"$sig" "$STREAM_PID"
+    local rc=0
+    wait "$STREAM_PID" 2>/dev/null || rc=$?
+    # The handler stops the child, drains, unlinks and releases before it exits,
+    # so once `wait` returns both lock dirs are already gone.
+    [ "$rc" -eq 0 ]
+    STREAM_PIDS=""
+    STREAM_PID=""
+    [ ! -d "$cdir/stream.lock.d" ]
+    [ ! -d "$cdir/watch.lock.d" ]
+
+    # And the very next stream starts rather than refusing.
+    start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+    poll_for 100 lock_pid_is "$STREAM_PID"
+    stop_stream
+  done
+}
+
 @test "stream: a TERM with an undrained stream.out still emits that batch [B1]" {
   cdir="$(crew_dir c1)"
   # No qualifying event, so the inner watch is parked in its sleep with nothing
@@ -9906,7 +9935,10 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 
   # Sound only because the cleanup kills AND reaps the child before draining:
   # an unreaped child could overwrite the file from its offset-0 fd mid-drain.
-  [ "$(cat "$STREAM_OUT")" = "$batch" ]
+  # Bytes, not `$(cat …)`: that strips the trailing newline, and the batch has to
+  # end its line — a `reap` line printed next is otherwise glued onto it.
+  printf '%s\n' "$batch" >"$BATS_TEST_TMPDIR/batch.expected"
+  cmp "$STREAM_OUT" "$BATS_TEST_TMPDIR/batch.expected"
   [ ! -e "$cdir/stream.out" ]
 }
 

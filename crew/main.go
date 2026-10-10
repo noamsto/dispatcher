@@ -31,12 +31,13 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/stream"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | where <codename|branch|%id> [--crew ID] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -69,7 +70,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where", "stall-watch":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "where", "stream", "stall-watch":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -141,6 +142,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			JQColorsInvalid: !colorsOK,
 		})
 		return flush(out, stderr, code)
+	}
+
+	// stream runs for as long as the lane lives and prints one protocol line at
+	// a time, so it writes straight to stdout: a buffered line would wait for a
+	// batch that may never come. It re-enters the crew script for its children,
+	// which is why it takes the environment's CREW_SELF through Options.
+	if sub == "stream" {
+		return stream.Run(args, paths, stdout, stderr, stream.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Now:    time.Now,
+			Probes: e.procs,
+		})
 	}
 
 	// hold reads its own action and flags, prints either TSV or one JSON value,
