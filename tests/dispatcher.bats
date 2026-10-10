@@ -567,3 +567,16 @@ EOF
   grep -qF "engine PATH=$PINNED_BIN:$STUB_DIR:$PROFILE_BIN:" "$STUB_LOG"
   grep -qx "engine crew=$PINNED_BIN/crew" "$STUB_LOG"
 }
+
+# engine_path is duplicated per launcher for the same reason; one test diffs the
+# three so a fix in one file cannot silently miss the others.
+@test "engine_path is byte-identical across the three launchers" {
+  local a b f
+  a="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh")"
+  [ -n "$a" ]
+  for f in dispatch dispatch-resume; do
+    b="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
+    [ -n "$b" ]
+    [ "$a" = "$b" ]
+  done
+}

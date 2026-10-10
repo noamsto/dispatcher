@@ -1138,6 +1138,58 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
 
+# #947, duplicated from dispatch-resume.sh (adapters/core has no shared library;
+# each launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
+# launcherPath, is this script's own pinned tool PATH — the store dirs its
+# preamble prepends. engine_path prints the caller's PATH with exactly those dirs
+# dropped, every other entry in order; the client that opens a pane runs under it,
+# because tmux builds a new pane's PATH from the client that opens it. A raw run
+# from a checkout leaves the placeholder literal and leaves PATH untouched.
+_launcher_runtime_path='@launcherRuntimePath@'
+engine_path() {
+  local pinned="$_launcher_runtime_path" entry dir keep
+  local -a parts=() pinned_parts=() kept=()
+  # A substituted value is a colon-joined list of store dirs, so it starts with
+  # `/`; anything else is the raw script, where there is nothing to remove. Same
+  # "not absolute means unsubstituted" test _resolve_dir uses.
+  if [ "${pinned:0:1}" != '/' ]; then
+    printf '%s' "${PATH-}"
+    return 0
+  fi
+  IFS=: read -ra parts <<<"${PATH-}" || true
+  IFS=: read -ra pinned_parts <<<"$pinned" || true
+  for entry in "${parts[@]}"; do
+    keep=1
+    for dir in "${pinned_parts[@]}"; do
+      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
+        keep=0
+        break
+      fi
+    done
+    if [ "$keep" = 1 ]; then
+      kept+=("$entry")
+    fi
+  done
+  local IFS=:
+  printf '%s' "${kept[*]}"
+}
+
+# _pane_client <tmux args...> — the tmux client that opens a window or a role
+# pane, run under engine_path. Only these two calls take it: a pane inherits the
+# PATH of the client that opens it, and no other tmux call here opens one. tmux is
+# resolved before the swap, while the pinned dirs still hold; a box without tmux,
+# or a raw run with nothing to strip, takes plain tmux.
+_pane_client() {
+  local cleaned tmux_bin
+  cleaned="$(engine_path)"
+  tmux_bin="$(command -v tmux || true)"
+  if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
+    env PATH="$cleaned" "$tmux_bin" "$@"
+  else
+    tmux "$@"
+  fi
+}
+
 # Engine roster helpers must precede every early command, including lazy role
 # spawning, so every launch path rejects a disabled engine before scaffolding.
 ENGINES_ALL="claude codex cursor pi"
@@ -1586,7 +1638,7 @@ _ensure_roster_render() {
 # the caller scope.
 split_role_pane() {
   local win="$1" wt="$2" role="$3" worker_id="$4" crew_id="$5" pane
-  pane="$(tmux split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -e "GIT_EDITOR=true" -e "GIT_SEQUENCE_EDITOR=:" -P -F '#{pane_id}')"
+  pane="$(_pane_client split-window -t "$win" -c "$wt" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -e "CREW_ROLE_ID=role:$branch:$role" -e "GIT_EDITOR=true" -e "GIT_SEQUENCE_EDITOR=:" -P -F '#{pane_id}')"
   decorate_pane "$pane" "$role"
   printf '%s' "$pane"
 }
@@ -5356,7 +5408,7 @@ if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on
     client_height=""
   fi
 fi
-read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
 if [ -n "$client_width" ]; then
   tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   if [ -n "$window_size_mode" ] && [ "$window_size_mode" != manual ]; then

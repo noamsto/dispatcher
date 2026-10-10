@@ -464,7 +464,7 @@ placeholder_three_row() { # token bin bin bin
 # is what makes adding a runtimeInput without baking it (or the reverse) go red.
 @test "the launcher-runtime placeholder is substituted and matches each preamble" {
   local out preamble baked
-  for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume"; do
+  for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" "$OUT_DISPATCH/bin/dispatch"; do
     run grep -c '@launcherRuntimePath@' "$out"
     [ "$output" = "0" ]
     preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$out")"
