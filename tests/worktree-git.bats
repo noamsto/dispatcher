@@ -861,6 +861,99 @@ write_anchor() {
   [ "$found" -eq 1 ]
 }
 
+@test "baseline records regular legacy remotes and branches, and migration adds coverage" {
+  local found_remote=0 found_branch=0 found_mark=0
+  mkdir -p "$COMMON/remotes" "$COMMON/branches"
+  printf 'URL: https://origin.example/r.git\n' >"$COMMON/remotes/origin"
+  printf 'Branch: main\n' >"$COMMON/branches/main"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  local -a recs
+  local rec
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#legacy\nremotes\nfile\norigin\n'* ]] && found_remote=1
+    [[ $rec == $'#legacy\nbranches\nfile\nmain\n'* ]] && found_branch=1
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_remote" -eq 1 ]
+  [ "$found_branch" -eq 1 ]
+  [ "$found_mark" -eq 1 ]
+  cp "$BASELINE" "$BATS_TEST_TMPDIR/legacy-first"
+  _wt_cfg_baseline_init "$COMMON"
+  cmp "$BASELINE" "$BATS_TEST_TMPDIR/legacy-first"
+
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$BASELINE"
+  found_mark=0
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_mark" -eq 1 ]
+}
+
+@test "explicit anchored fetch ignores URL-valued branch remote selection and push defaults" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config branch.main.remote 'https://branch.example/worker.git'
+  git config branch.main.pushRemote 'https://push.example/worker.git'
+  git config remote.pushDefault 'https://default-push.example/worker.git'
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 0 ]
+  git --git-dir="$COMMON" rev-parse --verify refs/remotes/origin/main
+}
+
+@test "explicit non-recursive anchored fetch ignores submodule URLs" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config submodule.worker.url 'https://submodule.example/worker.git'
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 0 ]
+  git --git-dir="$COMMON" rev-parse --verify refs/remotes/origin/main
+}
+
+@test "post-baseline legacy remotes and branches refuse fetch before transport" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes" "$COMMON/branches"
+  printf 'URL: https://user:legacy-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  printf 'Branch: main\n' >"$COMMON/branches/main"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* || $stderr == *branches/main* ]]
+  [[ $stderr != *legacy-secret* ]]
+  run ! git --git-dir="$COMMON" rev-parse --verify --quiet refs/remotes/origin/main
+}
+
+@test "changed baselined legacy remote refuses fetch before transport" {
+  add_origin
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: %s\n' "$ORIGIN" >"$COMMON/remotes/origin"
+  _wt_cfg_baseline_init "$COMMON"
+  printf 'URL: https://user:changed-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *changed-secret* ]]
+  run ! git --git-dir="$COMMON" rev-parse --verify --quiet refs/remotes/origin/main
+}
+
+@test "post-baseline symlinked legacy remote refuses fetch without following target" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:symlink-secret@example.invalid/r.git\n' >"$BATS_TEST_TMPDIR/legacy-target"
+  ln -s "$BATS_TEST_TMPDIR/legacy-target" "$COMMON/remotes/origin"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *symlink-secret* ]]
+  [ ! -e "$COMMON/refs/remotes/origin/main" ]
+}
+
 fp8() { printf %s "$1" | sha256sum | cut -c1-8; }
 
 @test "_wt_cfg_show_url masks userinfo and query values, keeping host and path (#686)" {
