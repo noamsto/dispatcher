@@ -9045,14 +9045,12 @@ at_least_hold_due_lines() { [ "$(hold_due_lines)" -ge "$1" ]; }
 heartbeat_seen() { grep -q '"stream":"heartbeat"' "$STREAM_OUT" 2>/dev/null; }
 heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 
-# `crew hold` is Go now, but three of its bash helpers outlive it:
-# `_hold_outstanding` for `roster-render`'s `_rr_model`, and
-# `_fit_line`/`_shrink`/`_bus_append` for `status`/`msg`/`reply`. Drift guards in
-# the `_sessions`/`_await_state` idiom below: the same fixture through the bash
-# helper and the Go command, compared with `jq -S` because key order is
-# engine-internal.
-@test "hold: _hold_outstanding and the Go list agree on one bus" {
-  local log helpers
+# `crew hold` is Go, and so is the outstanding-holds fold it shares with
+# `roster-render`: `hold.Outstanding` is the one implementation. What is tested
+# here is the fixture's contract, which the fold is judged on: crew scoping, a
+# released id dropping out, and one unparseable body costing only its own row.
+@test "hold: the outstanding fold drops released ids and unparseable bodies" {
+  local log
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   seed_hold c1 h1 9999999999
   seed_hold c1 h2 9999999998
@@ -9061,16 +9059,14 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # A body that is not JSON costs its own row and nothing else.
   printf '%s\n' '{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}' >>"$log"
 
-  helpers="$(sed -n '/^_hold_outstanding() {/,/^}/p' "$CREW")"
-  eval "$helpers"
-  dir="$(dirname "$log")"
-  local want
-  want="$(_hold_outstanding c1)"
-
   run run_crew hold list --json --crew c1
   [ "$status" -eq 0 ]
-  [ "$(jq -S . <<<"$want")" = "$(jq -S . <<<"$output")" ]
   [ "$(jq -r 'length' <<<"$output")" = "1" ]
+  [ "$(jq -r '.[0].id' <<<"$output")" = "h2" ]
+
+  # Crew scoping: `other` is another crew's queue.
+  run run_crew hold list --json --crew c2
+  [ "$(jq -r '.[0].id' <<<"$output")" = "other" ]
 }
 
 # The write path's two copies: `hold.bats` pins that a long title shrinks, and
@@ -13674,41 +13670,11 @@ _rr_built_twice() { [ "$(_rr_build_count "$1" "$2")" -eq 2 ]; }
   [ "$RR_RC" -eq 0 ]
 }
 
-# _rr_installed_crew_of <path> — the resolver extracted from the source (the
-# _rr_palette idiom) run against exactly that PATH: the /nix/store skip no daemon
-# row can reach on a box that has crew installed, which is under /nix/store.
-_rr_installed_crew_of() {
-  bash -c '
-    set -euo pipefail
-    eval "$(sed -n "/^_rr_installed_crew()/,/^}/p" "$1")"
-    PATH="$2"
-    printf "%s" "$(_rr_installed_crew)"
-  ' _ "$CREW" "$1"
-}
-
-@test "roster-render: the installed-crew lookup skips store paths and non-regular entries" {
-  local d want
-  d="$BATS_TEST_TMPDIR/rr-installed"
-  mkdir -p "$d/noexec" "$d/dircrew/crew" "$d/real" "$d/link"
-  printf '#!/usr/bin/env bash\n' >"$d/noexec/crew"
-  printf '#!/usr/bin/env bash\n' >"$d/real/crew"
-  chmod +x "$d/real/crew"
-  ln -s "$d/real/crew" "$d/link/crew"
-  # readlink is the resolver's only external; a PATH without it reads as "no crew
-  # installed" rather than failing the caller, which is why it is passed in.
-  want=$(readlink -f -- "$d/real/crew")
-  local cu
-  cu=$(dirname "$(command -v readlink)")
-
-  [ "$(_rr_installed_crew_of "/nix/store/fake-crew/bin:$d/real:$cu")" = "$want" ]
-  [ "$(_rr_installed_crew_of "/nix/store:$d/real:$cu")" = "$want" ]
-  [ "$(_rr_installed_crew_of "$d/noexec:$d/dircrew:$d/real:$cu")" = "$want" ]
-  [ "$(_rr_installed_crew_of "$d/link:$cu")" = "$want" ]
-  [ "$(_rr_installed_crew_of "$d/noexec:$d/dircrew:$cu")" = "" ]
-  [ "$(_rr_installed_crew_of "/nix/store/fake-crew/bin:$cu")" = "" ]
-  # A relative entry would resolve against the bus dir the daemon runs from.
-  [ "$(cd "$d/real" && _rr_installed_crew_of ".:$cu")" = "" ]
-}
+# The installed-crew lookup (rosterrender.InstalledCrew) is a pure function of a
+# PATH string, so its rows — the /nix/store skip, the non-regular and directory
+# entries, the symlink, the relative entry — live in
+# `TestInstalledCrewSkipsStorePaths` in crew/internal/rosterrender. The daemon rows
+# above exercise it end to end.
 
 # --- crew --help: per-subcommand and grouped top-level (#812) ---------------
 

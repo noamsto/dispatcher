@@ -1542,7 +1542,8 @@ seed_pi_agent_dir() {
 # _pane_is_ancestor <pane> — is <pane>'s pid one of this process's ancestors?
 # A worker's own dispatch descends from its pane's shell; a pane id copied from
 # another window does not. Bounded walk, spelling copied from crew.sh's
-# _is_ancestor_pid. Assumes the engine's tool shell shares tmux's pid
+# _is_ancestor_pid, which was the bash one and is now crews.Probes.IsAncestor.
+# Assumes the engine's tool shell shares tmux's pid
 # namespace — a pid-namespaced sandbox makes this refuse (fail closed).
 # Only a concrete %id: a relative target (`@5.{bottom-right}`) re-resolves to
 # another pane after this check.
