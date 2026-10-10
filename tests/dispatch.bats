@@ -3106,6 +3106,7 @@ EOF
   grep -qx 'profile: local' "$task"
   [ "$(grep -cF "$LANE_HEADING" "$task")" = 1 ]
   grep -qF -- 'Never write process-matching wait loops' "$task"
+  grep -qF -- 'hold for the dispatcher' "$task"
   grep -qxF -- '<!-- lane-profile: local -->' "$task"
   # Below the ## Task heading: the doc the protocol re-reads is what carries the
   # notes past a compaction.
