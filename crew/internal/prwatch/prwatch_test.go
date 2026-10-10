@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -29,6 +30,15 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(childEnv) == "run" {
+		// The second-signal case: the child ignores the forwarded TERM, so only
+		// the default disposition of a second one can end this process.
+		_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
+		fmt.Println("parked")
+		os.Exit(Run(context.Background(), []string{"42"}, bus.Paths{}, io.Discard, io.Discard,
+			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(),
+				Start: park(&stub{wait: make(chan struct{})})}))
+	}
 	if os.Getenv(childEnv) == "1" {
 		_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
 		fmt.Println(event)
@@ -371,6 +381,74 @@ func field(t *testing.T, row, key string) string {
 	}
 	s, _ := v.AsString()
 	return s
+}
+
+// TestWatchedStopSignalsDropsInheritedIgnored is the first finding: a park
+// launched under nohup (or as a non-interactive bash `&` job) inherits SIGHUP or
+// SIGINT ignored, and the arm trapped nothing, so it survived those. Catching one
+// would end a park the arm finished — and take the child with it, since exec gives
+// a notified signal back its default disposition.
+func TestWatchedStopSignalsDropsInheritedIgnored(t *testing.T) {
+	ignored := func(s os.Signal) bool { return s == syscall.SIGHUP || s == syscall.SIGINT }
+	got := watchedStopSignals(ignored)
+	if len(got) != 1 || got[0] != syscall.SIGTERM {
+		t.Errorf("watching %v, want [terminated]", got)
+	}
+	if all := watchedStopSignals(func(os.Signal) bool { return false }); len(all) != len(stopSignals) {
+		t.Errorf("watching %v, want all three stop signals", all)
+	}
+	// Empty is what makes Run skip Notify: Notify with no signals relays them all.
+	if none := watchedStopSignals(func(os.Signal) bool { return true }); len(none) != 0 {
+		t.Errorf("watching %v, want none", none)
+	}
+}
+
+// TestSecondSignalStillStopsThePark is the second finding: after the first signal
+// is forwarded, a channel left registered swallows the next one, and a child that
+// ignores TERM would then leave SIGKILL as the only way to stop the park.
+func TestSecondSignalStillStopsThePark(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "parked")
+	t.Setenv(childEnv, "run")
+	t.Setenv(markerEnv, marker)
+
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	waitFor(t, marker, "the parked run never started")
+	// The marker is written just before Run registers its handler; give it the
+	// moment it takes, or the first TERM would test the default disposition.
+	time.Sleep(500 * time.Millisecond)
+
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- cmd.Wait() }()
+	var err2 error
+	select {
+	case err2 = <-waitErr:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second SIGTERM did not stop the park — only SIGKILL would")
+	}
+	var ee *exec.ExitError
+	if !errors.As(err2, &ee) {
+		t.Fatalf("the process exited %v, want killed by SIGTERM", err2)
+	}
+	ws, _ := ee.Sys().(syscall.WaitStatus)
+	if !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Errorf("stopped by %v, want SIGTERM (the default disposition after the first signal)", ws)
+	}
 }
 
 func waitFor(t *testing.T, path, why string) {

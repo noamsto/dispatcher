@@ -154,7 +154,10 @@ output contract below), with each edit justified.
   dispatcher through `_crew_id` (`bus.CrewID`), and keeps stdout the event. The row is
   the arm's six keys in order, and like `reply` it needs no byte-exact body: `body` is
   the event text as the child printed it. The child is injected (`Options.Start`), so
-  no test needs the binary, and `$(…)`'s trailing-newline strip is Go's own.
+  no test needs the binary, and `$(…)`'s trailing-newline strip is Go's own. The stop
+  signals follow `stall.NotifySignals`'s two rules — inherited-ignored signals are
+  left alone, and the first one stops the handler — because this is the one port whose
+  child outlives nothing.
 - `crew/internal/frame`: Go copies of `_frame_classifier`'s predicates (prompt,
   permission, quota, background-wait, meter and sub-row shapes, the claude and
   pi input boxes) and `_pane_idle_reason`. Every function takes the sampler's
@@ -386,8 +389,12 @@ Rules that still bind a porter:
   A `SIGTERM`/`SIGINT`/`SIGHUP` sent to `crew` is forwarded to the child and the wait
   goes on until the child is gone, exiting with the child's status and posting nothing
   — the arm inherited the signal and died around `pr-watch`, leaving it polling
-  GitHub. And a `pr-watch` missing from `PATH` ends on Go's own exec error line where
-  bash printed `pr-watch: command not found`; the 127 stays.
+  GitHub. A signal this process inherited as ignored stays ignored (a park under
+  `nohup`, or a non-interactive bash `&` job, survived those for the arm), and the
+  first forwarded signal unregisters the handler, so a second one takes the default
+  disposition instead of vanishing into a channel nobody reads. And a `pr-watch`
+  missing from `PATH` ends on Go's own exec error line where bash printed
+  `pr-watch: command not found`; the 127 stays.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.

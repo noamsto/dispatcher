@@ -41,6 +41,9 @@ const (
 	exitCantExec = 127
 )
 
+// stopSignals are the signals a parked watch hands on to its child.
+var stopSignals = []os.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP}
+
 // Child is a started pr-watch: enough to forward one signal to it and to wait
 // for it.
 type Child interface {
@@ -85,12 +88,21 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	// during the exec is forwarded rather than taken by the default action, and
 	// the wait then goes on until the child is gone — because the post below is
 	// exactly what a stopped watch must not do.
+	//
+	// A signal the process inherited *ignored* is left alone, as the arm left it:
+	// `nohup crew pr-watch &` ignores SIGHUP and a non-interactive bash `&` job
+	// ignores SIGINT, and the arm traps nothing, so both survived those. Catching
+	// one would end a park the arm finished, and it would end the child too, since
+	// exec hands a notified signal back its default disposition.
+	own := make(chan os.Signal, 1)
 	sigs := o.Signals
 	if sigs == nil {
-		caught := make(chan os.Signal, 1)
-		signal.Notify(caught, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-		defer signal.Stop(caught)
-		sigs = caught
+		// Notify with no signals would relay *every* signal to the channel.
+		if watch := watchedStopSignals(signal.Ignored); len(watch) > 0 {
+			signal.Notify(own, watch...)
+		}
+		defer signal.Stop(own)
+		sigs = own
 	}
 
 	start := o.Start
@@ -112,6 +124,11 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	select {
 	case code = <-done:
 	case s := <-sigs:
+		// Unregister first: while a channel stays registered a second signal is
+		// queued to a channel nobody reads and vanishes, and a child that ignores
+		// the forwarded one would then leave SIGKILL as the only way to stop the
+		// park. The next one now takes the default disposition, as the arm's did.
+		signal.Stop(own)
 		_ = child.Signal(s)
 		// The child's own status, as the arm that died of the same signal would
 		// have reported it — and no post, whatever the child printed.
@@ -167,6 +184,19 @@ func startChild(ctx context.Context, args []string, stdout, stderr io.Writer) (C
 		return nil, err
 	}
 	return &process{cmd: cmd}, nil
+}
+
+// watchedStopSignals is stopSignals without the signals this process was left
+// ignoring — the predicate is signal.Ignored, injected so the choice is testable
+// without changing this process's dispositions out from under the suite.
+func watchedStopSignals(ignored func(os.Signal) bool) []os.Signal {
+	var watch []os.Signal
+	for _, s := range stopSignals {
+		if !ignored(s) {
+			watch = append(watch, s)
+		}
+	}
+	return watch
 }
 
 // process is a started child; Wait reports its status the way a shell does.
