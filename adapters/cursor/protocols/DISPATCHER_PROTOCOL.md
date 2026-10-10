@@ -780,7 +780,8 @@ branch instead; the worktree carries over under `resume: true`.
   between dispatcher runs (the refusal is the warning); `--global`/system
   config is unchecked (its scope is named in the call text, and nix store
   paths there churn every rebuild); a key planted before the baseline existed
-  is trusted, as is one written between a check and the call it guards; `crew
+  is trusted, as is a guarded config key or legacy entry written between a
+  check and the call it guards; `crew
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
   config, not the program; refusals name the key and its file, never the
