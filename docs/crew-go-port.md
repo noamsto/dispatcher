@@ -238,8 +238,7 @@ output contract below), with each edit justified.
   `lock.MaxPID` free, which is what bash's own refusal (`kill -0 4294967295` →
   "not a pid or valid job spec") gave the arm: such a lock is reclaimed, never
   signalled — Go's `syscall.Kill` would have truncated that holder to `-1`, every
-  process this user may signal. Two places the port is not the arm: a caught
-  TERM/INT/HUP exits 128+n, where bash's handler ended in `exit 0`; and `--force`
+  process this user may signal. One place the port is not the arm: `--force`
   refuses the all-zero spellings (`00`, `000`) that bash's `kill` accepted as pid
   `0`, TERMed this whole process group with, and then waited five seconds to
   report had not cleared.

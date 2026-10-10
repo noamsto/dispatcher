@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -386,8 +387,9 @@ func TestSweepReapedRemovesPairs(t *testing.T) {
 
 // TestSignalReleasesEverything is the port's own contract, at the process
 // level: TERM stops the inner watch, drains what it printed, unlinks the temp
-// files and releases the lock — and leaves 128+15 behind. crew.bats drives the
-// same three signals end to end; this is the same claim without a bus.
+// files and releases the lock — and leaves 0 behind, the status bash's handler
+// ended with. crew.bats drives the same three signals end to end; this is the
+// same claim without a bus.
 func TestSignalReleasesEverything(t *testing.T) {
 	p := fixture(t)
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
@@ -400,23 +402,23 @@ func TestSignalReleasesEverything(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var out bytes.Buffer
+	out := &lockedWriter{}
 	done := make(chan int, 1)
 	go func() {
 		done <- Run([]string{"--crew", "c1", "--park", "1", "--interval", "1", "--coalesce", "1",
 			"--heartbeat", "3600", "--retry", "1", "--reap-every", "0"},
-			p, &out, os.Stderr, Options{Self: script, Timer: func(time.Duration) <-chan time.Time { return ready() }})
+			p, out, os.Stderr, Options{Self: script, Timer: func(time.Duration) <-chan time.Time { return ready() }})
 	}()
 
 	cdir := p.CrewDir("c1")
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(cdir, "stream.lock.d")); err == nil && out.Len() > 0 {
+		if _, err := os.Stat(filepath.Join(cdir, "stream.lock.d")); err == nil && out.len() > 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if out.Len() == 0 {
+	if out.len() == 0 {
 		t.Fatal("the stream printed no batch")
 	}
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
@@ -429,8 +431,8 @@ func TestSignalReleasesEverything(t *testing.T) {
 		t.Fatal("the stream did not stop on TERM")
 	}
 
-	if rc != 128+int(syscall.SIGTERM) {
-		t.Errorf("exit = %d, want %d", rc, 128+int(syscall.SIGTERM))
+	if rc != 0 {
+		t.Errorf("exit = %d, want 0 (a caught signal is a deliberate stop)", rc)
 	}
 	if _, err := os.Stat(filepath.Join(cdir, "stream.lock.d")); !os.IsNotExist(err) {
 		t.Error("stream.lock.d survived the cleanup")
@@ -444,9 +446,34 @@ func TestSignalReleasesEverything(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cdir, "stream.tick")); err != nil {
 		t.Error("stream.tick was removed")
 	}
-	if lines := strings.Count(out.String(), "\n"); lines < 1 {
-		t.Errorf("the batch was never printed: %q", out.String())
+	if lines := strings.Count(out.str(), "\n"); lines < 1 {
+		t.Errorf("the batch was never printed: %q", out.str())
 	}
+}
+
+// lockedWriter is a bytes.Buffer with the lock `go test -race` asks for: Run
+// prints from its own goroutine while the test polls the same buffer.
+type lockedWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *lockedWriter) len() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Len()
+}
+
+func (w *lockedWriter) str() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 // ready is an already-fired timer: the loop's waits cost nothing, so a test

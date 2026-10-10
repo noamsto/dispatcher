@@ -524,8 +524,12 @@ func (l *loop) run(sigs chan os.Signal) int {
 	l.lastReap = l.o.Now().Unix()
 
 	for {
-		if s, ok := pending(sigs); ok {
-			return l.cleanup(s)
+		if pending(sigs) {
+			// 0, not 128+n: a caught signal is a deliberate stop — a --force
+			// takeover, the harness ending the lane — and a non-zero one reads as
+			// "the lane crashed".
+			l.cleanup()
+			return 0
 		}
 		// Written at the top of every iteration — including the first, right
 		// after the lock is acquired — because a live lock pid is not evidence
@@ -535,10 +539,12 @@ func (l *loop) run(sigs chan os.Signal) int {
 		l.holdDue()
 		rc, sig := l.park(sigs)
 		if sig != nil {
-			return l.cleanup(sig)
+			l.cleanup()
+			return 0
 		}
 		if sig := l.afterWatch(rc, sigs); sig != nil {
-			return l.cleanup(sig)
+			l.cleanup()
+			return 0
 		}
 		// Cadence: every branch above may have consumed anywhere from --interval
 		// to --park+--retry seconds, so the elapsed check belongs here rather
@@ -769,8 +775,8 @@ func (l *loop) printReap(path string) {
 
 // cleanup is the arm's EXIT trap: stop the child, drain what it printed but
 // this process never got to, take the temp files and the lock with you, and
-// leave by the signal's own status.
-func (l *loop) cleanup(sig os.Signal) int {
+// leave the way its closing `exit 0` did.
+func (l *loop) cleanup() {
 	// TERM (not KILL): the inner watch's own handler releases watch.lock.d, and
 	// it is normally parked in `sleep`, so the wait is what bounds this —
 	// draining without it reads stream.out empty or partial for a batch whose
@@ -781,7 +787,9 @@ func (l *loop) cleanup(sig os.Signal) int {
 	// Drain before delete: stream.out is what an orphaned-then-reaped child
 	// wrote but this process never got to read.
 	if text, ok := readIfNonEmpty(l.outf); ok {
-		say(l.stdout, "%s", text)
+		// With the newline: `readIfNonEmpty` strips it as command substitution
+		// does, and the arm's `printf '%s\n'`/`cat` always ended the line.
+		say(l.stdout, "%s\n", text)
 	}
 	if l.reap != nil && !l.reap.live() {
 		l.printReap(l.reap.out)
@@ -791,7 +799,6 @@ func (l *loop) cleanup(sig os.Signal) int {
 	_ = os.Remove(l.holderr)
 	sweepReaped(l.reapout, l.reaperr)
 	lock.Release(l.lockd)
-	return 128 + signalNumber(sig)
 }
 
 // wait is one of the loop's two real sleeps, interruptible by a caught signal.
@@ -822,12 +829,12 @@ func (l *loop) heartbeatMS() int64 { return l.c.heartbeat * 1000 }
 
 // pending is a non-blocking look at the signal channel: the loop acts on a
 // caught signal at a cycle boundary, never mid-fold.
-func pending(sigs chan os.Signal) (os.Signal, bool) {
+func pending(sigs chan os.Signal) bool {
 	select {
-	case s := <-sigs:
-		return s, true
+	case <-sigs:
+		return true
 	default:
-		return nil, false
+		return false
 	}
 }
 
@@ -886,11 +893,4 @@ func sweepReaped(out, errf string) {
 func clockMS(o Options) int64 {
 	now := o.Now()
 	return now.UnixMilli()
-}
-
-func signalNumber(sig os.Signal) int {
-	if s, ok := sig.(syscall.Signal); ok {
-		return int(s)
-	}
-	return 0
 }
