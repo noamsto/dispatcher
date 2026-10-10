@@ -1,0 +1,6 @@
+ pi v1.0.0
+────────────────────
+hello draft
+──────────────────── EX :wq
+~/git/dispatcher
+0.0%/0 (auto)      unknown

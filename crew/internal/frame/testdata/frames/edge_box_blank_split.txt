@@ -1,0 +1,18 @@
+history 1
+history 2
+history 3
+history 4
+history 5
+history 6
+history 7
+history 8
+history 9
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+✻ Churned for 36s · done 11:20 AM · 2 shells still running
+
+
+────────────────────
+❯
+
+────────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 2 shells · ← for agents

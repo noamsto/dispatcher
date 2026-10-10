@@ -11,6 +11,7 @@
 package clock
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -110,10 +111,24 @@ const virtualPollFloor = 10 * time.Millisecond
 // mirrored — `010` advances 10 where bash adds 8, and a token Go cannot read
 // (`0x10`) advances 0, a duration flag never being a hex literal.
 func (c Clock) Sleep(interval string, stderr io.Writer) error {
+	return c.SleepCtx(context.Background(), interval, stderr)
+}
+
+// SleepCtx is Sleep that a done ctx cuts short, for a caller that must stop
+// mid-wait. A real sleep killed by the ctx reports ctx.Err() rather than the
+// kill; a virtual one checks the ctx once, before it advances.
+func (c Clock) SleepCtx(ctx context.Context, interval string, stderr io.Writer) error {
 	if c.CrewClock == "" {
-		cmd := exec.Command("sleep", interval)
+		cmd := exec.CommandContext(ctx, "sleep", interval)
 		cmd.Stderr = stderr
-		return cmd.Run()
+		err := cmd.Run()
+		if err != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	s := interval
 	if i := strings.IndexByte(interval, '.'); i >= 0 {

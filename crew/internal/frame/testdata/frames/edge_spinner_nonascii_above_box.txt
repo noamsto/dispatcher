@@ -1,0 +1,7 @@
+⏺ Read(adapters/core/crew.sh)
+é… (3s · ↓ 1.2k tokens)
+✻ Churned for 36s · done 11:20 AM
+────────────────────
+❯
+────────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents

@@ -1,0 +1,36 @@
+
+● Waiting on the shell reviewer and test-runner.
+
+✻ Waiting for 1 background agent to finish
+
+› Message from @a6fd725715048d707 (ctrl+o to expand)
+
+● The test-runner confirmed every acceptance criterion passes on the branch, and
+  the allowlist tests fail on main. Only the shell reviewer is still out.
+
+✻ Waiting for 2 background agents to finish
+
+● Agent "Review: targeted test-runner" finished · 16m 44s
+
+● Waiting on the shell reviewer.
+
+✻ Waiting for 1 background agent to finish
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+   Run bats tests matching grant filter in dispatch-resume.bats
+
+ │ Auto mode classifier requires confirmation for this command.
+ │ 3 consecutive actions were blocked. Please review the transcript before
+ │ continuing.
+ │
+ │ Latest blocked action: [Irreversible Local Destruction]
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend

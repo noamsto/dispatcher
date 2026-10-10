@@ -1,0 +1,39 @@
+╭───────────────────────────────────────────────────────────────╮
+│ ✨ Update available! 0.157.0 -> 0.157.1                       │
+│ See https://github.com/openai/codex for installation options. │
+│                                                               │
+│ See full release notes:                                       │
+│ https://github.com/openai/codex/releases/latest               │
+╰───────────────────────────────────────────────────────────────╯
+
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                         │
+│                                                    │
+│ model:     GPT-5.6-Sol low   /model to change      │
+│ directory: ~/Data/git/noamsto/…/codex/scratch-repo │
+╰────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                       Tip: Use /title to choose what appears in your terminal’s title.
+
+› Assignment: {"role":"reviewer","question":"Check the different long assignment that wraps across terminal 
+rows without an editor newline"}
+
+  GPT-5.6-Sol low · ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-a… Vim: Insert
+  ? for shortcuts                                                                             ⚠ 2 warnings · f2 to view

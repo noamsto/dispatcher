@@ -2,6 +2,8 @@ package clock
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -167,6 +169,70 @@ func TestSleepWithoutCrewClock(t *testing.T) {
 	errB.Reset()
 	if err := c.Sleep("not-an-interval", &errB); err == nil {
 		t.Error("Sleep(not-an-interval) = nil")
+	}
+	if !strings.Contains(errB.String(), "not-an-interval") {
+		t.Errorf("stderr = %q", errB.String())
+	}
+}
+
+func TestSleepCtxAdvancesTheClock(t *testing.T) {
+	for _, tc := range []struct {
+		interval string
+		want     int64
+	}{
+		{"2", 1800000002},
+		{"0.5", 1800000001},
+		{"1.9", 1800000002},
+	} {
+		c := clockIn(t, "1800000000")
+		if err := c.SleepCtx(context.Background(), tc.interval, nil); err != nil {
+			t.Fatalf("SleepCtx(%q): %v", tc.interval, err)
+		}
+		if got := c.Seconds(); got != tc.want {
+			t.Errorf("SleepCtx(%q): clock = %d, want %d", tc.interval, got, tc.want)
+		}
+	}
+}
+
+func TestSleepCtxVirtualCancelledDoesNotAdvance(t *testing.T) {
+	c := clockIn(t, "1800000000")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.SleepCtx(ctx, "5", nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("SleepCtx = %v, want context.Canceled", err)
+	}
+	if got := c.Seconds(); got != 1800000000 {
+		t.Errorf("clock = %d, a cancelled sleep advanced it", got)
+	}
+}
+
+func TestSleepCtxCancelInterruptsRealSleep(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep on PATH")
+	}
+	c := Clock{Now: func() time.Time { return now }}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	err := c.SleepCtx(ctx, "30", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("SleepCtx = %v, want context.Canceled", err)
+	}
+	if got := time.Since(start); got > 2*time.Second {
+		t.Errorf("cancel took %v to interrupt sleep 30", got)
+	}
+}
+
+func TestSleepCtxInvalidIntervalWithoutCrewClock(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("no sleep on PATH")
+	}
+	c := Clock{Now: func() time.Time { return now }}
+	var errB bytes.Buffer
+	err := c.SleepCtx(context.Background(), "not-an-interval", &errB)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Errorf("SleepCtx = %v, want exit status 1", err)
 	}
 	if !strings.Contains(errB.String(), "not-an-interval") {
 		t.Errorf("stderr = %q", errB.String())

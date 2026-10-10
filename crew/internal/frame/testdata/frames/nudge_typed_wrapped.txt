@@ -1,0 +1,6 @@
+✻ Churned for 36s · done 11:20 AM
+──────────────────
+❯ crew inbox
+  "$CREW_WORKER_ID"
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents

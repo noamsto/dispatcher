@@ -1,0 +1,3 @@
+  ⎿  Done (15 tool uses · 77.2k tokens · 5m 53s)
+✶ Hatching… (28m 13s · ↓ 73.2k tokens)
+  ◯ general-purpose  Revise spec per critic                              4m 45s · ↓ 71.5k tokens

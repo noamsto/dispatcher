@@ -595,8 +595,8 @@ func TestEngineCommands(t *testing.T) {
 		"..claude": false, "claude-wrapped-wrapped": false, "Claude": false, "bash": false,
 		"": false, "-wrapped": false, "node ": false,
 	} {
-		if got := isEngineCmd(cmd); got != want {
-			t.Errorf("isEngineCmd(%q) = %t, want %t", cmd, got, want)
+		if got := IsEngineCmd(cmd); got != want {
+			t.Errorf("IsEngineCmd(%q) = %t, want %t", cmd, got, want)
 		}
 	}
 }

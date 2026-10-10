@@ -348,6 +348,16 @@ func TestRunLogAndReport(t *testing.T) {
 	})
 }
 
+func TestRunStallWatchUsage(t *testing.T) {
+	repo, _ := repoWithLog(t, nil, 0)
+	var stdout, stderr bytes.Buffer
+	e := env{getwd: func() (string, error) { return repo, nil }}
+	code := run(context.Background(), []string{"stall-watch"}, &stdout, &stderr, e)
+	if code != exitFailure || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "crew: stall-watch <worker-id|branch|role:branch:role> --pane <id> ") {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
 // The arm has two halves: the msgs it prints, and the delivered-marks file it
 // leaves for `crew await` and the bash `_unread_scan` to read. Both are wired
 // through bus.Paths, so the marks land under the repo's crew dir next to the bus.

@@ -8763,18 +8763,6 @@ EOS
   [ "${lines[0]}" = "worker:feat/x|blocked|watchdog|budget: pi limit reached: key credit limit exhausted" ]
 }
 
-# budget_bus_reads <max-life> [stall-watch args...] — run budget_watch under
-# `bash -x` and print how many times the watch called _bus_refresh. A trace line
-# for a call ends with the bare function name.
-budget_bus_reads() {
-  run_crew() { bash -euo pipefail -x "$CREW" "$@"; }
-  budget_watch "$@"
-  [ "$status" -eq 0 ]
-  local n
-  n=$(printf '%s\n' "$output" | grep -c '_bus_refresh$' || true)
-  printf '%s\n' "$n"
-}
-
 # role_watch <max-life> [stall-watch args...] — a role watcher over a static idle
 # pane; `role_polls` afterwards shows whether it polled at all.
 role_watch() {
@@ -8789,21 +8777,42 @@ role_watch() {
 
 role_polls() { cat "$SAMPLER_DIR/n"; }
 
-@test "stall-watch: D8 budget: a skipped refresh re-reads the bus, a real one once more" {
-  now=$(budget_now)
-  budget_cache 0 "{\"claude\":{\"windows\":{\"5h\":$(bwin 10 "$((now + 99999))")}}}"
-  # D8 off entirely: the baseline is the startup read plus the loop-end cadence.
-  off=$(budget_bus_reads 10 --budget-refresh 900 --no-budget)
-  # D8 live over a fresh cache: no refresh, so the tick's existing view is used.
-  skipped=$(budget_bus_reads 10 --budget-refresh 900)
-  # With no cache the first D8 tick refreshes, and that one tick re-reads.
-  rm -f "$XDG_DATA_HOME/crew/engine-budget.json"
-  budget_count_stub
-  refreshed=$(budget_bus_reads 10 --budget-refresh 900)
-  [ "$off" -gt 0 ]
-  [ "$skipped" -eq "$off" ]
-  [ "$(budget_calls)" = "1" ]
-  [ "$refreshed" -eq $((off + 1)) ]
+@test "stall-watch: SIGTERM exits cleanly and leaves no refresh lock" {
+  stall_sampler "$(fx_idle_box)"
+  lock="$XDG_DATA_HOME/crew/engine-budget.json.refresh.d"
+  cat >"$BATS_TEST_TMPDIR/refresh-stub" <<EOS
+#!/usr/bin/env bash
+echo \$\$ >"$BATS_TEST_TMPDIR/refresh.pid"
+touch "$BATS_TEST_TMPDIR/refresh.started"
+sleep 30
+EOS
+  chmod +x "$BATS_TEST_TMPDIR/refresh-stub"
+  export CREW_BUDGET_REFRESH_CMD="$BATS_TEST_TMPDIR/refresh-stub"
+  CREW_ID=c1 bash -euo pipefail "$CREW" stall-watch worker:feat/x --pane %9 \
+    --engine claude --grace 0 --interval 1 --budget-refresh 1 --max-life 600 \
+    >"$BATS_TEST_TMPDIR/out" 2>"$BATS_TEST_TMPDIR/err" </dev/null &
+  pid=$!
+  HOLDER_PID="$pid"
+  for _ in $(seq 100); do
+    [ -e "$BATS_TEST_TMPDIR/refresh.started" ] && [ -d "$lock" ] && break
+    sleep 0.1
+  done
+  [ -e "$BATS_TEST_TMPDIR/refresh.started" ]
+  [ -d "$lock" ]
+  kill -TERM "$pid"
+  for _ in $(seq 50); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  proc_gone "$pid"
+  rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 143 ]
+  [ ! -e "$lock" ]
+  proc_gone "$(cat "$BATS_TEST_TMPDIR/refresh.pid")"
+  if [ -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ]; then
+    bus | jq -e . >/dev/null
+  fi
 }
 
 @test "stall-watch: D8 budget: a pi role on a local model exits instead of polling" {

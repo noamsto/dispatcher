@@ -1,0 +1,5 @@
+✻ Churned for 36s · done 11:20 AM
+────────────────────
+[39m❯ [2mTry "write a test"[0m
+────────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents

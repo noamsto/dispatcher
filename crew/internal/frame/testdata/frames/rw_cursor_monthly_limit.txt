@@ -1,0 +1,16 @@
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+  Error: You've reached your monthly usage limit
+  Request higher limits to continue using Cursor
+  fallbackModel:
+  spendLimitHit: true
+  chatMessage:
+
+  → Plan, search, build anything
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/src/.worktrees/example/fix-some-branch · fix/some-branch · #123
+  fix-some-branch · main

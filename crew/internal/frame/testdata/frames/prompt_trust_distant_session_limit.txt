@@ -1,0 +1,23 @@
+⏺ Monitor event: "idle wait for wave 2 reports"
+  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)
+     /upgrade to increase your usage limit.
+  ⚠ /low-priority to continue now at lower priority · uses your weekly limit
+line 1 filler
+line 2 filler
+line 3 filler
+line 4 filler
+line 5 filler
+line 6 filler
+line 7 filler
+line 8 filler
+line 9 filler
+line 10 filler
+line 11 filler
+line 12 filler
+line 13 filler
+line 14 filler
+line 15 filler
+Quick safety check: Is this a project you created or one you trust?
+> 1. Yes, I trust this folder
+2. No, exit
+Enter to confirm

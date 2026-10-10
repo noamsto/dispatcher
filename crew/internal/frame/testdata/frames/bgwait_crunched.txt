@@ -1,0 +1,6 @@
+✻ Crunched for 1m 12s · done 11:16 AM · 1 shell still running
+────────────────── reef ─
+❯ push it and re-post pr_open once CI is green
+──────────────────
+  🤖 Opus 5.5 🧠 high | 📊 350k/1M | ⚡ 29% (1h53m → 13:10)
+  -- INSERT -- ⏵⏵ auto mode on · PR #331 · 1 shell · ← for agents

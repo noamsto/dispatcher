@@ -1,0 +1,10 @@
+⏺ Monitor event: "idle wait for wave 2 reports"
+  ⎿  You've hit your session limit · resets 7pm (Asia/Jerusalem)
+     /upgrade to increase your usage limit.
+
+──────────────────────────────────────────── bronze ─
+❯ keep going
+─────────────────────────────────────────────────────
+  ⚠ /low-priority to continue now at lower priority · uses your weekly limit
+  🤖 Opus 5 🧠 high | 📊 350k/1M                                    /rc
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
