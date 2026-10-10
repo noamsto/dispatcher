@@ -12,7 +12,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
-          name: lazytmux
+          name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
@@ -39,7 +39,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
-          name: lazytmux
+          name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (module.bats, serial)
         run: nix develop -c bats tests/module.bats
@@ -55,7 +55,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
-          name: lazytmux
+          name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (shard ${{ matrix.shard }})
         shell: bash
@@ -129,7 +129,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
-          name: lazytmux
+          name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (secret-read-guard timing, serial)
         run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
@@ -141,7 +141,7 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
-          name: lazytmux
+          name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: flake check
         run: nix flake check
