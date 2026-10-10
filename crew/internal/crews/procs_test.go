@@ -1,6 +1,9 @@
 package crews
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // OwnerPID is `_owner_pid`: the caller's parent is the shell crew.sh ran under,
 // so the walk climbs past the shells to the first ancestor that is not one, and
@@ -113,5 +116,14 @@ func TestShellName(t *testing.T) {
 		if got := shellName(in); got != want {
 			t.Errorf("shellName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// psComm execs `ps`, so this needs a ps binary on PATH: the Nix check phase
+// provides one through nativeCheckInputs.
+func TestPsCommNamesOwnProcess(t *testing.T) {
+	name, ok := psComm(os.Getpid())
+	if !ok || name == "" {
+		t.Errorf("psComm(own pid) = %q, %v; want a name and true", name, ok)
 	}
 }
