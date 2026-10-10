@@ -9045,12 +9045,10 @@ at_least_hold_due_lines() { [ "$(hold_due_lines)" -ge "$1" ]; }
 heartbeat_seen() { grep -q '"stream":"heartbeat"' "$STREAM_OUT" 2>/dev/null; }
 heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 
-# `crew hold` is Go now, and so is the outstanding-holds fold it shared with
-# `roster-render` (#935): `hold.Outstanding` is the one implementation, which is
-# why the drift guard that used to compare it against `_hold_outstanding` is gone.
-# What remains is the fixture's own contract, which the fold is judged on: crew
-# scoping, a released id dropping out, and one unparseable body costing only its
-# own row.
+# `crew hold` is Go, and so is the outstanding-holds fold it shares with
+# `roster-render`: `hold.Outstanding` is the one implementation. What is tested
+# here is the fixture's contract, which the fold is judged on: crew scoping, a
+# released id dropping out, and one unparseable body costing only its own row.
 @test "hold: the outstanding fold drops released ids and unparseable bodies" {
   local log
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
@@ -13672,10 +13670,9 @@ _rr_built_twice() { [ "$(_rr_build_count "$1" "$2")" -eq 2 ]; }
   [ "$RR_RC" -eq 0 ]
 }
 
-# The installed-crew lookup (`_rr_installed_crew`, now rosterrender.InstalledCrew)
-# is a pure function of a PATH string, so its rows — the /nix/store skip no daemon
-# row can reach on a box that has crew installed under /nix/store, the non-regular
-# and directory entries, the symlink, the relative entry — moved to
+# The installed-crew lookup (rosterrender.InstalledCrew) is a pure function of a
+# PATH string, so its rows — the /nix/store skip, the non-regular and directory
+# entries, the symlink, the relative entry — live in
 # `TestInstalledCrewSkipsStorePaths` in crew/internal/rosterrender. The daemon rows
 # above exercise it end to end.
 

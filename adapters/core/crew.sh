@@ -3013,8 +3013,8 @@ crews | log | report | sessions | roster | inbox | hold | await | watch | retro 
   # `roster-render`'s idea of which build it is running: the daemon compares it
   # against the installed `crew` and re-execs that when they differ, so a
   # home-manager switch reaches a running daemon instead of waiting for the next
-  # dispatch. It is the script's path and not the Go binary's because a switch
-  # replaces the script, and the binary the script execs is read fresh each time.
+  # dispatch. The script's path, not the binary's, because a switch replaces the
+  # script and reads the binary fresh.
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;

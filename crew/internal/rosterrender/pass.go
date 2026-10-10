@@ -14,15 +14,8 @@ import (
 // is not the one last published to, and return the live count.
 //
 // The three reads that build the picture are fallible and return before anything
-// is written, so a malformed bus can never replace a good diagram. The write
-// itself keeps the arm's asymmetry: `_rr_put`'s refusal (a symlinked or
-// non-regular target) fails this branch of the `elif`, which means no publish —
-// but the pass still prints its live count, because the arm reaches `printf`
-// either way.
-//
-// The timers are not here. The 60s rebuild backstop, the quiet exit and the
-// signature that decides whether to render at all belong to the loop, which owns
-// the clock.
+// is written, so a malformed bus can never replace a good diagram. A refused
+// `put` is not: it stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
 	m, err := model(paths, crew, float64(o.wallSec()), roleRows, o.Roster)
 	if err != nil {

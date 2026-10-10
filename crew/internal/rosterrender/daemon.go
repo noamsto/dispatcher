@@ -101,12 +101,9 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 			idleSet = false
 		}
 
-		// The upgrade point is the sleep boundary, and a crew already draining is
-		// left to exit rather than upgraded: the hop would restart its quiet window
-		// in the new build, and the next dispatch starts that build anyway. A signal
-		// that arrived during the pass is honoured here rather than execed through —
-		// the arm's `trap 'exit 0'` fired between commands, so a killed renderer never
-		// reached its exec either.
+		// The arm's `trap 'exit 0' INT TERM` fired between commands, so a renderer
+		// signalled during a pass never reached its exec; checking here rather than
+		// waiting for the sleep keeps that.
 		if ctx.Err() != nil {
 			return exitOK
 		}
@@ -125,11 +122,10 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 
 // hop is the build hop: when the installed `crew` is a different build than this
 // process, replace this one with it, PATH restored to the value this daemon
-// started with so a hop carries one wrapper prefix rather than growing it.
-//
-// Only the running build is refused, so a rollback is followed the same way as an
-// upgrade: the entry is the thing being followed, and which build it happens to
-// name is not the daemon's business.
+// started with so a hop carries one wrapper prefix rather than growing it. Both
+// directions count — the entry is what is followed, so a rollback is taken as
+// readily as an upgrade — and a crew already draining is left to exit on its quiet
+// window, since the hop would restart that window in the new build.
 //
 // A successful call never returns, so any error is the failure to start the other
 // build. `idleSince` is whether the crew is already draining, which is the arm's

@@ -161,8 +161,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// roster-render is the per-crew diagram daemon. It replaces the process for a
 	// newer installed build, so it takes the environment's CREW_SELF as its own
-	// identity the way stream takes it for its children, and it writes the live
-	// count straight to stdout for the same reason stream does.
+	// identity the way stream takes it for its children.
 	if sub == "roster-render" {
 		return rosterrender.Run(ctx, args, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(ctx),

@@ -39,8 +39,7 @@ type Options struct {
 	RosterDir string
 	// Self is the build this process was started as — the arm's `readlink -f
 	// "$0"`, which for a ported arm is the crew script the delegation exported as
-	// CREW_SELF. Empty is "no identity of my own": the installed entry is then
-	// followed once and the script that answers it does the real comparison.
+	// CREW_SELF. Unset, the binary this process is running stands in for it.
 	Self string
 	// Path is $PATH, the walk the installed-crew lookup reads. StartPath is
 	// $CREW_RR_START_PATH, the PATH this daemon started with before any wrapper
@@ -63,15 +62,14 @@ func (o Options) clockSec() int64 {
 	return int64(n)
 }
 
-// Run is the arm, flag for flag and refusal for refusal. It moves the process to
-// the git common dir before anything else resolves a path, so a worktree reaped
-// while the daemon lives cannot take the bus down with it.
-// say is the arm's `echo … >&2`: a line the caller cannot act on, so its write
-// error is discarded rather than pretending to be a status.
+// say is the arm's `echo … >&2`: a line its caller cannot act on.
 func say(w io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(w, format, args...)
 }
 
+// Run is the arm, flag for flag and refusal for refusal. It moves the process to
+// the git common dir before anything else resolves a path, so a worktree reaped
+// while the daemon lives cannot take the bus down with it.
 func Run(ctx context.Context, argv []string, paths bus.Paths, o Options) int {
 	c, msg, code := parse(argv)
 	if msg != "" {
