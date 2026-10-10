@@ -3,7 +3,6 @@ package stall
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -279,70 +278,6 @@ func TestEngineAlive(t *testing.T) {
 		w := newHarness(t, f).watch("feat/x", "--pane", "%1")
 		if got, err := w.engineAlive(); err != nil || got != want {
 			t.Errorf("engineAlive(%q) = %v, %v; want %v", cmd, got, err, want)
-		}
-	}
-}
-
-// shebang is the stub scripts' interpreter line: bash by absolute path, since
-// the Nix build sandbox has no /usr/bin/env.
-func shebang(t *testing.T) string {
-	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not on PATH")
-	}
-	return "#!" + bash + "\n"
-}
-
-// publishPaneState must issue exactly the tmux argv `_publish_pane_state`
-// does, the 40-character cut included, until the bash copy goes.
-func TestPublishPaneStateMatchesCrewSh(t *testing.T) {
-	src, err := os.ReadFile(crewScript)
-	if err != nil {
-		t.Skip("crew.sh is not in this tree")
-	}
-	fn := regexp.MustCompile(`(?ms)^_publish_pane_state\(\) \{\n.*?^\}\n`).Find(src)
-	if fn == nil {
-		t.Fatal("crew.sh no longer defines _publish_pane_state")
-	}
-	bin := t.TempDir()
-	stub := shebang(t) + "for a in \"$@\"; do printf '%s\\x1f' \"$a\"; done >>\"$TMUX_LOG\"\necho >>\"$TMUX_LOG\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	long := strings.Repeat("é", 30) + strings.Repeat("✓", 20) + " tail"
-	cases := []struct{ pane, state, detail, source string }{
-		{"%1", "blocked", "quiet: pane unchanged for 1800s", "watchdog"},
-		{"%1", "working", "quiet: cleared", ""},
-		{"%2", "blocked", long, "watchdog"},
-		{"%3", "failed", strings.Repeat("x", 41), ""},
-		{"", "blocked", "d", "watchdog"},
-	}
-	for _, tc := range cases {
-		log := filepath.Join(t.TempDir(), "tmux.log")
-		cmd := exec.Command("bash", "-c", string(fn)+`_publish_pane_state "$@"`, "bash", tc.pane, tc.state, tc.detail, tc.source)
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TMUX_LOG="+log, "LC_ALL=C.UTF-8")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("bash: %v %s", err, out)
-		}
-		data, _ := os.ReadFile(log)
-		bash := string(data)
-
-		f := newFake()
-		h := newHarness(t, f)
-		w := h.watch("feat/x", "--pane", "%0")
-		w.cfg.pane = tc.pane
-		f.pane = tc.pane
-		w.publishPaneState(tc.state, tc.detail, tc.source)
-		var goLog strings.Builder
-		for _, argv := range f.opts {
-			for _, a := range argv {
-				goLog.WriteString(a + "\x1f")
-			}
-			goLog.WriteString("\n")
-		}
-		if goLog.String() != bash {
-			t.Errorf("%q %q:\n bash %q\n go   %q", tc.pane, tc.detail, bash, goLog.String())
 		}
 	}
 }

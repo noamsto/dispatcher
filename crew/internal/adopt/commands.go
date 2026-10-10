@@ -51,7 +51,8 @@ func selfWindow(pane string) string {
 	return trimNewlines(string(out))
 }
 
-func psArgs(pid int) string {
+// PsArgs is `ps -o args= -p <pid>`.
+func PsArgs(pid int) string {
 	out, _ := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
 	return trimNewlines(string(out))
 }

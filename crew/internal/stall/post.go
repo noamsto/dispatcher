@@ -8,6 +8,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/panestate"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -125,18 +126,12 @@ func (w *watch) postClear(prefix string) error {
 	return nil
 }
 
-// publishPaneState is `_publish_pane_state`: the status mirrored onto the
-// pane's border options, detail cut to the 40-character contract.
+// publishPaneState mirrors the status onto the pane's border options.
 func (w *watch) publishPaneState(state, detail, source string) {
 	if w.cfg.pane == "" {
 		return
 	}
-	if r := []rune(detail); len(r) > 40 {
-		detail = string(r[:40])
-	}
-	w.p.SetPaneOption(w.ctx, "@crew_state", state)
-	w.p.SetPaneOption(w.ctx, "@crew_detail", detail)
-	w.p.SetPaneOption(w.ctx, "@crew_source", source)
+	panestate.Publish(func(option, value string) { w.p.SetPaneOption(w.ctx, option, value) }, state, detail, source)
 }
 
 // engineAlive is `_pane_engine_alive`, quiet:'s corroborating evidence for

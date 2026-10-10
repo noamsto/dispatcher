@@ -4,8 +4,8 @@ Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
-`stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934) and `roster-render`
-(#935). Each slice must leave every bats file green;
+`stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
+(#935), and `status`, `msg`, `register` and `deregister` (#945). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -22,8 +22,9 @@ output contract below), with each edit justified.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads, and
   the writer `hold` appends through: `Append` is `_bus_append` (create the
   directory, terminate a torn tail, `O_APPEND`), `FitLine`/`Shrink` are
-  `_fit_line`/`_shrink` at `LineMax`. `status` and `msg` still call the
-  bash originals, so both copies are guarded from each side.
+  `_fit_line`/`_shrink` at `LineMax`, the one copy now that `status` and `msg`
+  are Go too. `Toplevel` is `git rev-parse --show-toplevel` from the cwd, which
+  the status gate reads the worker's `WORKER_TASK.md` through.
 - `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
 - `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`,
   `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
@@ -139,10 +140,10 @@ output contract below), with each edit justified.
   restart lost `CREW_ID` (#29) and the release of the `dispatched` labels a crew
   that died mid-claim left behind (#73). stdout is the bare id alone — callers
   run `CREW_ID=$(crew adopt <id> $PPID)` — so every message the run has to say,
-  kept claim included, is stderr. The pid file and `$dir/pidfile.log` are shared
-  with the bash arms that still write them (`register`, `deregister`), so
-  `_pidfile_log` has a Go copy with the same field order and `_owner_pid` is
-  `crews.Probes.OwnerPID`; `$$`, `$PPID` and `$PWD` are this process's own,
+  kept claim included, is stderr. The pid file and `$dir/pidfile.log` have no bash
+  writer left: `_pidfile_log` is `crews.PidfileLog` (with `crews.Caller` as the
+  pid/ppid/pwd/by identity it stamps), shared with `register`, and `_owner_pid`
+  is `crews.Probes.OwnerPID`; `$$`, `$PPID` and `$PWD` are this process's own,
   which is what crew.sh's `exec` leaves them. `claims.jq` is the arm's fold with
   the documented jqrun patch: its final `.[] | @tsv` is dropped and Go reads the
   rows by position. Occupancy is the one question asked of `_occupants`, and the
@@ -287,6 +288,45 @@ output contract below), with each edit justified.
   Losing the lock ends the loop, and the release checks the owner first: `_lock_release`
   is an unconditional `rm -rf`, so a renderer whose crew dir was removed and re-created
   must not delete the new owner's lock.
+- `crew/internal/ledger`: the pure acceptance-ledger gate of `crew status <from>
+pr_open` for an implement task: the ledger's form, the empty-detail rule, the
+  CI-evidence rule and the dispatcher-waiver rule. It is hand-parsed, not run on
+  jqrun, because the arm's form test and item scan are Oniguruma regexes with
+  recursion (`\g<b>`) and look-ahead, which RE2 cannot express and gojq (built on
+  RE2) cannot run. Matching the arm means matching Oniguruma's classes too: `\s` is
+  Unicode, the `i` flag is full case folding (so `ß`/`ẞ` match `ss` and back), and
+  the `\b` the arm tests uses Oniguruma's word class, not RE2's ASCII one. The
+  arm's three jq programs sit verbatim in `testdata/` (`ledger.jq`, `items.jq`,
+  `waiver.jq`) as the oracle: the differential test runs them under the real `jq`
+  over a generated corpus and skips when `jq` is absent (the Nix sandbox). The
+  package header lists the known differences; each one refuses more often than
+  the arm or is unreachable.
+- `crew/internal/status`: `crew status` and `crew msg`, the two writers of a row
+  onto the bus. `status` is a write behind gates (`gate.go`): a worker posting
+  `pr_open` or `done` is refused unless the ledger conforms and, for a standard or
+  deep implement session, the log holds the lead's review seam and deslop seam.
+  The two seam folds are the arm's own jq (`seam.jq`, `deslop.jq`) on jqrun with
+  one patch each: the arm ran `jq -R -n` and read the log with `inputs`, here `.`
+  is the array of log lines and `inputs` is `.[]`. `diff_test.go` runs both
+  programs on the real `jq -Rn` and on gojq over one corpus of line shapes and
+  compares; that is what closes the gojq-vs-jq `fromjson` differences (torn,
+  non-object and trailing-garbage lines), so they are not listed as not mirrored.
+  The row's `ts` is real time and never `CREW_CLOCK`: the arm stamped with a bare
+  `jq -n 'now*1000|floor'`. The dedupe read (`lastPosted`) is the arm's
+  `jq -r … | tail -1` for the sender's last `state<TAB>pr_url`, so an identical
+  repeat post is swallowed; like jq it stops at the first unparseable line and
+  the well-formed prefix decides. The pane publish after a successful append goes through `panestate`.
+  `msg` carries its own recipient checks (empty id after the colon, a control
+  byte in a `role:` body), then fits the line through `bus`.
+- `crew/internal/register`: `crew register` and `crew deregister`, a dispatcher
+  claiming and releasing its crew directory. The pid and pane files and
+  `$dir/pidfile.log` are read by `crews`, `adopt` and dispatch, so their text is a
+  contract: the pid is written verbatim, whatever the caller passed. Liveness,
+  the owner-pid walk and the recycle check run through `crews.Probes`; the log
+  line is `crews.PidfileLog`.
+- `crew/internal/panestate`: the three `@crew_*` pane options
+  `_publish_pane_state` set (state, detail cut to 40 characters, source), in that
+  order. One copy shared by `stall` and `status`, so there is nothing to guard.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -297,7 +337,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -425,6 +465,23 @@ Rules that still bind a porter:
   disposition instead of vanishing into a channel nobody reads. And a `pr-watch`
   missing from `PATH` ends on Go's own exec error line where bash printed
   `pr-watch: command not found`; the 127 stays.
+- Specific to `status`, `msg`, `register` and `deregister`, and not mirrored:
+  - Oniguruma's retry limit: a pathological but well-formed ledger makes jq fail
+    the match and the arm refuse, where the hand-parser has no limit and accepts.
+    The one stated exception that refuses less; unreachable at bus line sizes;
+  - `could not check the acceptance ledger (jq exit N)` and `could not parse the
+acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
+  - `sed`/`grep`/`awk`'s own `Permission denied` lines before the refusal on an
+    unreadable task doc; Go prints the refusal alone (the exit and the refusal
+    line stay);
+  - `mkdir`'s own error text when the bus dir cannot be created; Go prints
+    `crew: <sub>: <error>` and the same status;
+  - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is compared
+    as U+FFFD runes, and awk's warning about an unknown escape is not printed.
+
+  gojq-vs-jq `fromjson` differences in the seam folds are not on this list: the
+  differential test in `internal/status` closes them rather than documenting them.
+
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
@@ -490,22 +547,26 @@ The rest of what `stall-watch` reaches stays bash and is delegated, not copied
 (one copy needs no guard): `_unread_scan` (it keeps `nudge` as a caller, reads the
 marks through the `_await_*` trio, and runs every 4th tick), `_release_windows`
 (with `reap`), `_nudge_pane` (with `nudge`), and budget-gate.sh and local-models.sh,
-reached through `--sh budget` and `--sh local-model`. Two helpers do have a Go copy
-and a guard: `_publish_pane_state` stays for `status`, and a Go test runs the
-extracted bash function and `publishPaneState` against one stub `tmux` and
-compares the argv logs, including a multibyte detail over 40 runes; `release_grace`
-stays for `reap`, and a Go test parses `^release_grace=` from crew.sh and asserts
-it equals `--release`'s default. Both tests skip when crew.sh is absent.
+reached through `--sh budget` and `--sh local-model`. One helper still has a
+Go copy and a guard: `release_grace` stays for `reap`, and a Go test parses
+`^release_grace=` from crew.sh and asserts it equals `--release`'s default (skipped
+when crew.sh is absent). `_publish_pane_state` is gone with its guard: `panestate`
+is the one copy, shared by `stall` and `status`.
 
 `_hold_outstanding` lost its last bash caller when `roster-render` moved (#935)
 and is gone: `hold.Outstanding` is the one implementation, reached in process by
 the renderer's model and by `hold list` alike, so the guard that compared the two
 copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
-`_fit_line`, `_shrink` and `_bus_append` stay
-for `status` and `msg`, and Go copies all three — so crew.bats replays the
-appended row through the extracted `_fit_line`/`_shrink`, and
-`internal/bus` parses `_LINE_MAX`/`_ELIDED` out of crew.sh against its own
-constants.
+`_fit_line`, `_shrink`, `_LINE_MAX`/`_ELIDED` and
+their drift guards are gone with the `status`/`msg` port (#945): `bus` is the one
+copy. `_bus_append` stays for `nudge`, and `internal/bus.Append` is its Go copy.
+`_owner_pid`, `_pidfile_log` and `_has_c0` are gone (`crews.Probes.OwnerPID`,
+`crews.PidfileLog`, and `msg`'s own control-byte test). `_pid_alive`,
+`_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no
+crew.sh caller left but stay, as the canonical copies adapters.bats pins
+dispatch.sh and dispatch-resume.sh against (the same arrangement as
+`_is_quota_cursor_limit`). `_crew_id` stays for the bash arms that resolve a
+crew id.
 
 ## Running the suite
 

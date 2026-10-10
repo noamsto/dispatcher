@@ -2,7 +2,6 @@ package bus
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,39 +211,6 @@ func TestFitLineTerminatesOnPathologicalText(t *testing.T) {
 	if len(line) > LineMax {
 		t.Errorf("%d bytes, over the cap", len(line))
 	}
-}
-
-// The two copies of the cap and the marker are one contract: crew.sh keeps
-// _LINE_MAX and _ELIDED for status/msg/reply, and Go reads them here so a change
-// on either side fails a test. Skipped where crew.sh is not in the tree (the Nix
-// sandbox builds ./crew alone).
-func TestCrewShLineContract(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "adapters", "core", "crew.sh"))
-	if err != nil {
-		t.Skip("crew.sh is not in this tree")
-	}
-	want := map[string]string{"_LINE_MAX": fmt.Sprint(LineMax), "_ELIDED": elided}
-	for name, wantValue := range want {
-		line := crewShLine(string(src), name)
-		if line == "" {
-			t.Errorf("crew.sh no longer defines %s", name)
-			continue
-		}
-		if line != wantValue {
-			t.Errorf("crew.sh %s = %q, Go has %q", name, line, wantValue)
-		}
-	}
-}
-
-func crewShLine(src, name string) string {
-	for _, line := range strings.Split(src, "\n") {
-		rest, ok := strings.CutPrefix(line, name+"=")
-		if !ok {
-			continue
-		}
-		return strings.Trim(strings.TrimPrefix(rest, "'"), "'")
-	}
-	return ""
 }
 
 // `cut -c1-keep` is line-oriented, and _shrink's blob branch runs the text

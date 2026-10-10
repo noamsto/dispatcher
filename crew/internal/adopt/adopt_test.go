@@ -642,12 +642,6 @@ func TestClaimRows(t *testing.T) {
 }
 
 func TestHelpers(t *testing.T) {
-	if got := firstRunes("héllo wörld", 5); got != "héllo" {
-		t.Errorf("firstRunes = %q", got)
-	}
-	if got := firstRunes("héllo", 10); got != "héllo" {
-		t.Errorf("firstRunes = %q", got)
-	}
 	for _, tc := range []struct{ line, wid, nm, path string }{
 		{"@1\tsage\t/wt", "@1", "sage", "/wt"},
 		{"@1\t\t/wt", "@1", "/wt", ""},
