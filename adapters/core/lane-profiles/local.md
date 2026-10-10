@@ -2,3 +2,4 @@
 - Never write process-matching wait loops. Wait on a captured pid (`cmd & p=$!; wait $p`), or use `gh run watch <id> --exit-status` for CI.
 - Post `crew status` at every step (plan, implement, test, push, CI wait).
 - Don't deliberate over review-promotion or tier rules your task doesn't hit. Follow the tier stamped in the header.
+- After `pr_open` and the metrics snapshot, hold for the dispatcher's review before `done`: run `crew await "$CREW_WORKER_ID" --from "dispatcher:$CREW_ID" --timeout 600` up to three times (30 min total), treat a review directive as a work-changing directive on the existing-PR path (`WORKER_PROTOCOL.md` → completion peeks), and post `done` on an approval or after the third await with no reply.
