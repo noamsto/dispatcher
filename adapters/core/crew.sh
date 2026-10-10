@@ -1666,7 +1666,8 @@ Post or update a session's state on the crew bus.
   --         Everything after this is positional
 
 pr_open and done are refused on a standard/deep implement run until the branch
-carries a review seam and a deslop seam.
+carries a review seam and a deslop seam, plus a plan seam when its task doc says
+plan: required.
 
   crew status "$CREW_WORKER_ID" working "execute: tests"
 HELP

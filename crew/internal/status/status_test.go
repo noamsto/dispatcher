@@ -322,6 +322,14 @@ var (
 	deslopSeam = msgRow(worker, "review:c1", `{"seam":"deslop"}`)
 )
 
+const planDoc = standardDoc + "plan: required\n"
+
+var planSeam = msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`)
+
+func noPlan(state, tier string) string {
+	return "crew: refusing " + state + " for " + tier + ` session worker:feat/x#s1-1 — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:c1" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict` + "\n"
+}
+
 const (
 	noReviewTail = ` session worker:feat/x#s1-1 — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg "$CREW_WORKER_ID" "review:c1" '{"seam":"review","review_mode":"full"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:c1 seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {"final":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives` + "\n"
 	noDeslopTail = ` session worker:feat/x#s1-1 — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:c1" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate` + "\n"
@@ -694,23 +702,122 @@ func TestUnreadableLog(t *testing.T) {
 
 func TestFoldErrors(t *testing.T) {
 	boom := errors.New("boom")
-	for _, which := range []string{"review", "deslop"} {
-		t.Run(which, func(t *testing.T) {
+	for _, c := range []struct{ which, doc, failing string }{
+		{"review", standardDoc, seamProg},
+		{"deslop", standardDoc, deslopProg},
+		{"plan", planDoc, planProg},
+	} {
+		t.Run(c.which, func(t *testing.T) {
 			f := newFixture(t)
-			f.doc(standardDoc)
-			f.log(reviewSeam, deslopSeam)
+			f.doc(c.doc)
+			f.log(reviewSeam, deslopSeam, planSeam)
 			f.fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
-				if (prog == seamProg) == (which == "review") {
+				if prog == c.failing {
 					return jsonv.Value{}, boom
 				}
 				return Options{}.withDefaults().Fold(prog, rows, vars)
 			}
-			want := "crew: refusing pr_open for " + worker + " — could not read the crew log for the " + which + " seam (jq exit 5)\n"
+			want := "crew: refusing pr_open for " + worker + " — could not read the crew log for the " + c.which + " seam (jq exit 5)\n"
 			if code, stderr := f.status(worker, "pr_open"); code != 1 || stderr != want {
 				t.Errorf("got %d %q", code, stderr)
 			}
-			if got := len(f.lines()); got != 2 {
-				t.Errorf("log has %d rows, want 2", got)
+			if got := len(f.lines()); got != 3 {
+				t.Errorf("log has %d rows, want 3", got)
+			}
+		})
+	}
+}
+
+func TestPlanRequiredRefusedWithoutPlanSeam(t *testing.T) {
+	for _, tier := range []string{"standard", "deep"} {
+		for _, state := range []string{"pr_open", "done"} {
+			t.Run(tier+"/"+state, func(t *testing.T) {
+				f := newFixture(t)
+				f.doc("tier: " + tier + "\nkind: implement\nengine: claude\nplan: required\n")
+				f.log(reviewSeam, deslopSeam)
+				if code, stderr := f.status(worker, state); code != 1 || stderr != noPlan(state, tier) {
+					t.Errorf("%d %q", code, stderr)
+				}
+				if got := len(f.lines()); got != 2 {
+					t.Errorf("log has %d rows, want 2", got)
+				}
+			})
+		}
+	}
+}
+
+func TestPlanSeamAccepted(t *testing.T) {
+	for _, v := range []string{"accept", "revise", "reject"} {
+		t.Run(v, func(t *testing.T) {
+			f := newFixture(t)
+			f.doc(planDoc)
+			f.log(reviewSeam, deslopSeam, msgRow("worker:feat/x#s0-9", "review:c1", `{"seam":"plan","plan_critic_first_pass":"`+v+`"}`))
+			if code, stderr := f.status(worker, "pr_open"); code != 0 {
+				t.Fatalf("%d %q", code, stderr)
+			}
+			if got := len(f.lines()); got != 4 {
+				t.Errorf("row not appended: %d rows", got)
+			}
+		})
+	}
+}
+
+func TestPlanSeamAfterDispatch(t *testing.T) {
+	f := newFixture(t)
+	f.doc(planDoc)
+	f.log(reviewSeam, deslopSeam, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`, planSeam)
+	if code, stderr := f.status(worker, "pr_open"); code != 0 {
+		t.Fatalf("%d %q", code, stderr)
+	}
+}
+
+func TestPlanSeamExemptions(t *testing.T) {
+	resume := `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x","worker_id":"worker:feat/x#s2"}`
+	for _, c := range []struct{ name, doc, extra string }{
+		{"provided", standardDoc + "plan: provided\n", ""},
+		{"no plan field", standardDoc, ""},
+		{"trivial", "tier: trivial\nkind: implement\nengine: claude\nplan: required\n", ""},
+		{"review kind", "tier: standard\nkind: review\nengine: claude\nplan: required\n", ""},
+		{"resume in doc", planDoc + "resume: true\n", ""},
+		{"bus resume row", planDoc, resume},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.doc(c.doc)
+			rows := []string{reviewSeam, deslopSeam}
+			if c.extra != "" {
+				rows = append(rows, c.extra)
+			}
+			f.log(rows...)
+			if code, stderr := f.status(worker, "pr_open"); code != 0 {
+				t.Fatalf("%d %q", code, stderr)
+			}
+			if got := len(f.lines()); got != len(rows)+1 {
+				t.Errorf("row not appended: %d rows", got)
+			}
+		})
+	}
+}
+
+func TestPlanSeamRejectsNonEvidence(t *testing.T) {
+	for _, c := range []struct{ name, row string }{
+		{"no first pass", msgRow(worker, "review:c1", `{"seam":"plan"}`)},
+		{"bad value", msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"maybe"}`)},
+		{"tag", msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept","tag":"note"}`)},
+		{"other branch", msgRow("worker:feat/y#s1-1", "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`)},
+		{"other crew", `{"ts":1,"crew_id":"c2","from":"` + worker + `","to":"review:c2","kind":"msg","body":"{\"seam\":\"plan\",\"plan_critic_first_pass\":\"accept\"}"}`},
+		{"to dispatcher", msgRow(worker, "dispatcher:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`)},
+		{"resume other branch", `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/y"}`},
+		{"resume other crew", `{"ts":1,"crew_id":"c2","kind":"resume","branch":"feat/x"}`},
+		{"resume then dispatch", `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x"}` + "\n" + `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`},
+		{"plan seam then dispatch", msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`) + "\n" + `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.doc(planDoc)
+			f.log(reviewSeam, deslopSeam, c.row)
+			if code, stderr := f.status(worker, "pr_open"); code != 1 || stderr != noPlan("pr_open", "standard") {
+				t.Errorf("%d %q", code, stderr)
 			}
 		})
 	}

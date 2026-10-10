@@ -23,11 +23,13 @@ type taskDoc struct {
 	text               string
 	unreadable         bool
 	tier, kind, engine string
+	plan, resume       string
 }
 
-// check returns the refusal line, or "" when the row may be posted. Seams from
-// any earlier session on this branch in this crew count (the resume case), and
-// a worker that cannot review stops on an ungated state (blocked/failed), so
+// check returns the refusal line, or "" when the row may be posted. The review,
+// deslop and (for `plan: required`) plan seams are checked in that order. Seams
+// from any earlier session on this branch in this crew count (the resume case;
+// the plan seam only since the branch's latest dispatch), and a worker that cannot review stops on an ungated state (blocked/failed), so
 // refusing here never strands one.
 func (g gate) check() string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
@@ -92,6 +94,15 @@ func (g gate) check() string {
 		return fmt.Sprintf(`crew: refusing %s for %s session %s — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate`,
 			g.state, doc.tier, g.from, g.crew)
 	}
+	if doc.plan == "required" && doc.resume != "true" {
+		if line, ok := g.seam("plan", planProg, log, vars); !ok {
+			if line != "" {
+				return line
+			}
+			return fmt.Sprintf(`crew: refusing %s for %s session %s — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict`,
+				g.state, doc.tier, g.from, g.crew)
+		}
+	}
 	return ""
 }
 
@@ -146,10 +157,12 @@ var (
 	tierRe   = regexp.MustCompile(`^tier:(.*)`)
 	kindRe   = regexp.MustCompile(`^kind:(.*)`)
 	engineRe = regexp.MustCompile(`^engine:(.*)`)
+	planRe   = regexp.MustCompile(`^plan:(.*)`)
+	resumeRe = regexp.MustCompile(`^resume:(.*)`)
 	spaceRe  = regexp.MustCompile(`[ \t\n\v\f\r]+`)
 )
 
-// readTaskDoc is the doc plus its three header fields, each the first line
+// readTaskDoc is the doc plus its five header fields, each the first line
 // anywhere that starts `field:`
 // (`sed -n 's/^f:[[:space:]]*//p' | head -1 | tr -d '[:space:]'`): sed strips
 // leading glibc spaces, multibyte ones included, then tr deletes every ASCII
@@ -169,5 +182,6 @@ func readTaskDoc(path string) taskDoc {
 		return ""
 	}
 	d.tier, d.kind, d.engine = field(tierRe), field(kindRe), field(engineRe)
+	d.plan, d.resume = field(planRe), field(resumeRe)
 	return d
 }

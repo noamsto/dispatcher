@@ -27,11 +27,12 @@
 # The worker's own words stay on top: never overwrite a non-working state it
 # posted itself, never post after a terminal one. Both are reads of the bus rather
 # than a mirror of observed `crew status` calls, because a mirror latches on the
-# refused ones — `crew status … pr_open` is routinely refused until the review and
-# deslop seams exist. The read is bounded and rare: only once the throttle says the
-# phase changed, over the last 2000 rows (the window crew.sh's _unread_scan
-# accepts). A row older than that reads as absent, so the cost is a duplicate
-# `working` post or, rarely, an overwritten terminal row.
+# refused ones — `crew status … pr_open` is routinely refused until the review,
+# deslop and (under plan: required) plan seams exist. The read is bounded and
+# rare: only once the throttle says the phase changed, over the last 2000 rows
+# (the window crew.sh's _unread_scan accepts). A row older than that reads as
+# absent, so the cost is a duplicate `working` post or, rarely, an overwritten
+# terminal row.
 #
 # A watchdog `blocked` row does not suppress: dispatch spawns
 # `crew stall-watch "$worker_id"`, and crew.sh posts that row under the worker's

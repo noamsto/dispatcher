@@ -492,6 +492,28 @@ tag	x' '{seam:"execute", tag:$t, detail:"tag carries a newline and a tab"}')"
   [ "$output" = "$HDR" ]
 }
 
+@test "plan_required_unaudited: a plan seam in the window does not flag" {
+  seed_dispatch_plan feat/x 1000 required standard
+  seed_msg 'worker:feat/x#s1' review:c1 1100 '{"seam":"plan","plan_critic_first_pass":"accept"}'
+  seed_msg 'worker:feat/x#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
+  seed_status 'worker:feat/x#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "$output" = "$HDR" ]
+}
+
+@test "plan_required_unaudited: a malformed plan seam still flags" {
+  seed_dispatch_plan feat/x 1000 required standard
+  seed_msg 'worker:feat/x#s1' review:c1 1100 '{"seam":"plan","plan_critic_first_pass":"maybe"}'
+  seed_msg 'worker:feat/x#s1' metrics:c1 1200 '{"plan_critic_first_pass":null,"review_mode":"full"}'
+  seed_status 'worker:feat/x#s1' 1300 done
+
+  run run_crew retro
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = $'feat/x\tclaude\tsonnet\tstandard\tdone\tplan_required_unaudited' ]
+}
+
 @test "plan_required_unaudited: plan provided does not flag" {
   seed_dispatch_plan feat/planprovided 1000 provided standard
   seed_msg 'worker:feat/planprovided#s1' metrics:c1 1200 '{"plan_critic_first_pass":null}'

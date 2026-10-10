@@ -4,9 +4,11 @@
 // `status` is a write behind gates. A worker session posting pr_open or done
 // is refused unless its task doc's acceptance ledger conforms (pr_open,
 // internal/ledger) and, for a standard or deep implement session, the log holds
-// the lead's review seam and deslop seam. The two seam folds are the arm's own
-// jq programs (seam.jq, deslop.jq), run through jqrun. Refusing less often than
-// the arm is a regression: every gate fails closed.
+// the lead's review seam and deslop seam, plus a plan seam (or a resume of the
+// branch) when its task doc says `plan: required`. The seam folds are jq
+// programs (the arm's own seam.jq and deslop.jq, plus plan.jq), run through
+// jqrun. Refusing less often than the arm is a regression: every gate fails
+// closed.
 package status
 
 import (
@@ -30,6 +32,9 @@ var seamProg string
 
 //go:embed deslop.jq
 var deslopProg string
+
+//go:embed plan.jq
+var planProg string
 
 const (
 	exitFailure = 1
