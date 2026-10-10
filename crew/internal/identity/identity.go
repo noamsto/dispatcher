@@ -74,6 +74,17 @@ func At(slot int) jsonv.Value {
 	)
 }
 
+// Palette is the `_colors` pool as a value: the roster renderer's D2 program
+// looks a row's colour up in it to decide whether the branch box gets a stroke,
+// which is why the whole list travels rather than one slot.
+func Palette() jsonv.Value {
+	out := make([]jsonv.Value, len(colors))
+	for i, c := range colors {
+		out[i] = jsonv.Str(c)
+	}
+	return jsonv.Array(out...)
+}
+
 // Recorded is the identity of the last well-formed `dispatch` event for
 // branch, across every crew. Events that are not objects never match.
 func Recorded(events []jsonv.Value, branch string) (jsonv.Value, bool) {

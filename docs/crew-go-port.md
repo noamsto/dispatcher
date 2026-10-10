@@ -4,7 +4,8 @@ Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
-`stall-watch` (#832), `stream`, `adopt` (#920) and `pr-watch` (#934). Each slice must leave every bats file green;
+`stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934) and `roster-render`
+(#935). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -266,6 +267,26 @@ output contract below), with each edit justified.
   refuses the all-zero spellings (`00`, `000`) that bash's `kill` accepted as pid
   `0`, TERMed this whole process group with, and then waited five seconds to
   report had not cleared.
+- `crew/internal/rosterrender`: the `roster-render` arm of #935, the port that
+  **replaces its own process**. It is a daemon, a writer outside the bus, and a renderer
+  whose output is compared byte for byte, and those three pull in different directions.
+  Rendering stays jq: `d2.jq` is `_rr_d2` verbatim (patched only to take its input as
+  jqrun's array and to collect the arm's `jq -r` lines into the one value jqrun
+  returns), because the diagram is text a `cmp -s` gates and every label is quoted
+  against injection. Row folding is the one part that stops being a subprocess: the arm
+  re-entered the script for `crew roster`, and Go calls `roster.Fold` in process on the
+  same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
+  else, so the pid never changes hands and the lock is never released or inherited; the
+  entry is followed whenever it names a build other than the running one, a rollback
+  included, and only the running build is refused. PATH is restored to the value the
+  daemon started with on every hop (`CREW_RR_START_PATH`, exported once), so N hops
+  carry one wrapper prefix instead of growing it. The clock is split the way the arm
+  split it: the render timers read `_clock_now_f`, so the suite drives them through
+  `CREW_CLOCK`, while the poll sleeps on the wall clock and `crew roster`'s ages stay
+  real. A daemon that slept on the virtual clock would let a test retire a live crew.
+  Losing the lock ends the loop, and the release checks the owner first: `_lock_release`
+  is an unconditional `rm -rf`, so a renderer whose crew dir was removed and re-created
+  must not delete the new owner's lock.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
@@ -276,15 +297,24 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | adopt)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
 
-`CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Only
-`stream` reads it — for its inner `watch`, its `hold due` pre-check and `crew
-reap`, all three of which stayed in the script.
+`CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
+read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
+`crew reap`, all three of which stayed in the script. `roster-render` reads it as
+its own build identity: the daemon compares it against the installed `crew` and
+`syscall.Exec`s that in place, so a home-manager switch reaches a daemon that
+outlived the dispatch that started it. The script's path and not the Go binary's,
+because a switch replaces the script and the binary it execs is read fresh each
+time. And resolved **once**, at start — `CREW_SELF` names the entry, which is the
+very symlink a switch repoints, so re-resolving it per tick follows the new build
+and reads as "no hop needed" forever.
+`TestDaemonFollowsTheInstalledEntryNotItsOwnStart` repoints a fixture entry under
+a running loop to hold that.
 
 `flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
 `bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
@@ -429,17 +459,17 @@ through jqrun — and two more read the other way: crew.bats hands the marks a G
 `await` raised to the extracted `_unread_scan`, and to `crew nudge` itself.
 
 `_clock_now`, `_clock_now_f`, `_clock_now_ms` and `_clock_sleep` stay for `nudge`
-(the arm and `_nudge_pane`, which `stall-watch --sh nudge` also runs) and
-`roster-render`, and `internal/clock` is their Go copy for `hold`, `await` and
-`stall-watch`. The guard is that both sides read and write one file: the suite
+(the arm and `_nudge_pane`, which `stall-watch --sh nudge` also runs), and
+`internal/clock` is their Go copy for `hold`, `await`, `stall-watch` and
+`roster-render`. The guard is that both sides read and write one file: the suite
 exports `CREW_CLOCK`, so the clock a Go `await` or `stall-watch` seeds is the
 file a bash `nudge` advances, and `crew clock: unset, await and hold still use
 real time` pins the no-`CREW_CLOCK` branch. `watch` is deliberately outside this
 pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
-`_lock_acquire` and `_lock_release` stay for `nudge` and `roster-render`, and
-`internal/lock` is their Go copy for `rate`, `watch`, `stream` and `stall-watch`'s
+`_lock_acquire` and `_lock_release` stay for `nudge`, and `internal/lock` is their
+Go copy for `rate`, `watch`, `stream`, `roster-render` and `stall-watch`'s
 budget refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one
 protocol, two languages, one lock dir: the Go `stream` holds `stream.lock.d`
 while a bash `nudge` may be reading it, and an older installed `crew` holds
@@ -467,12 +497,13 @@ compares the argv logs, including a multibyte detail over 40 runes; `release_gra
 stays for `reap`, and a Go test parses `^release_grace=` from crew.sh and asserts
 it equals `--release`'s default. Both tests skip when crew.sh is absent.
 
-`_hold_outstanding` stays for `roster-render`'s `_rr_model`, which reads the same
-bus `crew hold list` reads; `_hold_crew` and `_hold_render` lost their last
-caller with the arm and are gone. `_fit_line`, `_shrink` and `_bus_append` stay
+`_hold_outstanding` lost its last bash caller when `roster-render` moved (#935)
+and is gone: `hold.Outstanding` is the one implementation, reached in process by
+the renderer's model and by `hold list` alike, so the guard that compared the two
+copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
+`_fit_line`, `_shrink` and `_bus_append` stay
 for `status` and `msg`, and Go copies all three — so crew.bats replays the
-appended row through the extracted `_fit_line`/`_shrink`, compares
-`_hold_outstanding` with `crew hold list --json` on one fixture bus, and
+appended row through the extracted `_fit_line`/`_shrink`, and
 `internal/bus` parses `_LINE_MAX`/`_ELIDED` out of crew.sh against its own
 constants.
 

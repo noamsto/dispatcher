@@ -70,6 +70,26 @@ func (p Probes) IsAncestor(pid int) bool {
 	return false
 }
 
+// AncestorOf is _is_ancestor_pid asked of a set instead of this process: does any
+// ancestor of pid appear in have? `roster-render` asks it of a --pane's shell pid
+// with have = the dispatcher panes it was started under, so a caller can point the
+// renderer at its own pane and never at whoever owned the pane before it. Same
+// bounded walk, same `ps` probe.
+func (p Probes) AncestorOf(pid int, have map[int]bool) bool {
+	cur := pid
+	for depth := 0; depth < 32; depth++ {
+		if have[cur] {
+			return true
+		}
+		parent, ok := p.Parent(cur)
+		if !ok {
+			return false
+		}
+		cur = parent
+	}
+	return false
+}
+
 // pidAlive is _pid_alive under any uid: a failed signal is not proof of
 // death — another uid's process answers EPERM, and the signal merely being
 // refused proves it exists. `ps -p` is the fallback for any other error,

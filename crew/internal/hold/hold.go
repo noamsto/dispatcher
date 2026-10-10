@@ -5,9 +5,9 @@
 // dispatcher that wrote it, while `crew log` still shows it.
 //
 // The read side (`list`, `due`, `park`) runs the arm's own jq, embedded and
-// handed to jqrun: `_hold_outstanding` stays in bash for `roster-render`, so its
-// program is the contract between the two and copying its meaning into Go would
-// only create a second thing to drift.
+// handed to jqrun. It is the one implementation of `_hold_outstanding`'s fold
+// since #935 ported `roster-render`, the helper's last bash caller, and
+// `Outstanding` is how that command reaches it too.
 //
 // The write side (`add`, `release`) cannot be jq at all. The row's `body` is
 // `{...} | tostring`, and gojq returns object keys sorted where jq keeps
@@ -122,10 +122,10 @@ func (f *folds) call(prog string, in []jsonv.Value, vars map[string]jsonv.Value)
 	return out, 0
 }
 
-// outstanding is `_hold_outstanding`: `[]` and no jq at all where the arm's
-// `[ -f "$log" ]` fails — `due` and `list` depend on that unambiguous empty-array
-// read — and otherwise a strict `jq -s` read (no torn-tail tolerance) through the
-// embedded program.
+// outstanding is the arm's `[ -f "$log" ]` and its strict `jq -s` read (no
+// torn-tail tolerance) around the embedded fold: `[]` and no jq at all where the
+// log is not a regular file — `due` and `list` depend on that unambiguous
+// empty-array read — and otherwise the fold over the decoded events.
 func (f *folds) outstanding(crew string) (jsonv.Value, int) {
 	events, err := bus.ReadEvents(f.paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
@@ -140,10 +140,22 @@ func (f *folds) outstanding(crew string) (jsonv.Value, int) {
 	for i, ev := range events {
 		raws[i] = ev.Raw
 	}
-	return f.call(outstandingProg, raws, map[string]jsonv.Value{
+	return f.call(outstandingProg, raws, holdVars(crew))
+}
+
+// Outstanding is the `_hold_outstanding` fold over events the caller already
+// read: the adds to `hold:<crew>` with no matching release, one per `crew hold
+// list --json` row. `roster-render` reads it for the hexagons beside the workers.
+func Outstanding(events []jsonv.Value, crew string) (jsonv.Value, error) {
+	return jqrun.Run(outstandingProg, events, 0, holdVars(crew))
+}
+
+// holdVars are the fold's two `--arg`s.
+func holdVars(crew string) map[string]jsonv.Value {
+	return map[string]jsonv.Value{
 		"crew": jsonv.Str(crew),
 		"to":   jsonv.Str("hold:" + crew),
-	})
+	}
 }
 
 // `list` and `due`: `[--json] [--crew ID]` in either order, as the arm's loop
@@ -494,7 +506,7 @@ func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options
 		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
 	// Always appended — the bus is append-only — so an unknown or already
-	// released id is a no-op by construction: `_hold_outstanding` excludes any id
+	// released id is a no-op by construction: the outstanding fold excludes any id
 	// with a matching release, however many it finds.
 	body := compact(jsonv.Object(
 		jsonv.Member{Key: "id", Val: jsonv.Str(hid)},
