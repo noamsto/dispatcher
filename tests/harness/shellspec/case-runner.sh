@@ -30,9 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The crew arms ported to Go need CREW_GO_BIN. A bare `shellspec` run reaches here
-# without run.sh exporting it, and this file runs without `set -e`, so a failed
-# build has to fail the case now rather than as a far-off assertion mismatch.
+# The ported crew arms need CREW_GO_BIN, and a bare `shellspec` run reaches here
+# without run.sh having set it. This file runs without `set -e`: fail the case.
 # shellcheck source=/dev/null
 source "$ROOT/tests/harness/ensure-crew-go.sh"
 ensure_crew_go_bin || exit 1
@@ -462,8 +461,6 @@ EOF
     check_no_path pw-crew-timeout-no-bus-row "$log"
     ;;
   pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing)
-    # A failed park ends the arm with the child's status before the post,
-    # and before the print — the partial event JSON included.
     cat >"$STUB_DIR/pr-watch" <<'EOF'
 #!/usr/bin/env bash
 echo '{"pr":42,"changed":["head_sha"]}'

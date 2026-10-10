@@ -187,8 +187,6 @@ def pr_watch(h, case_id):
         return
 
     if "exits-with-the-child-s-status" in case_id:
-        # A failed park ends the arm with the child's status before the post,
-        # and before the print — the partial event JSON included.
         h.stub("pr-watch", "printf '%s\\n' '{\"pr\":42,\"changed\":[\"head_sha\"]}'\nprintf '%s\\n' 'gh: something went wrong' >&2\nexit 3\n")
         result = h.crew("pr-watch", "42", env={"CREW_ID": "c1"})
         expect("pw-crew-child-status", result.returncode == 3)

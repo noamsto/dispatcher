@@ -12,13 +12,11 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture(scope="session", autouse=True)
 def crew_go_bin():
-    """Build crew-go so raw-source runs of crew.sh reach the ported arms.
+    """Build crew-go for a direct pytest run; crew.sh names it through
+    CREW_GO_BIN, whose fallback is the @crewGoBin@ placeholder in a checkout.
 
-    crew.sh names the binary through CREW_GO_BIN, whose fallback is still the
-    @crewGoBin@ placeholder in a checkout. tests/setup_suite.bash does this for
-    bats; this is the same for a direct pytest run. An adapter exporting
-    CREW_GO_BIN once for a whole bench run makes this a no-op, keeping the build
-    out of the measured per-case window.
+    An adapter that exports CREW_GO_BIN for a whole bench run makes this a no-op,
+    so the build stays out of the measured per-case window.
     """
     if os.environ.get("CREW_GO_BIN"):
         # A generator fixture has to yield on every path; pytest 9 fails the

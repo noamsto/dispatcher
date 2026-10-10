@@ -40,9 +40,8 @@ var repoRoot = func() string {
 }()
 
 // adapters/core/crew.sh names the Go binary through CREW_GO_BIN, whose fallback
-// is still the @crewGoBin@ placeholder in a checkout, so a raw-source run needs
-// the variable. The bench adapter exports it once for the whole run; a bare
-// `go test ./...` builds it here, as tests/setup_suite.bash does for bats.
+// is still the @crewGoBin@ placeholder in a checkout. The bench adapter exports
+// it once; a bare `go test ./...` builds it here, as tests/setup_suite.bash does.
 func TestMain(m *testing.M) {
 	dir, err := ensureCrewGoBin()
 	if err != nil {
@@ -594,8 +593,6 @@ func prCase(kind string) func(*caseTest) {
 			t.check("pw-crew-timeout-empty-stdout", r.stdout == "", "stdout=%q", r.stdout)
 			t.check("pw-crew-timeout-no-bus-row", !exists(filepath.Join(f.dir, ".git/crew/events.jsonl")), "events file exists")
 		case "crew-child-fail":
-			// A failed park ends the arm with the child's status before the post,
-			// and before the print — the partial event JSON included.
 			f.stub("pr-watch", "printf '%s\\n' '{\"pr\":42,\"changed\":[\"head_sha\"]}'\nprintf '%s\\n' 'gh: something went wrong' >&2\nexit 3")
 			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "pr-watch", "42")
 			t.check("pw-crew-child-status", r.status == 3, "status=%d stderr=%q", r.status, r.stderr)
