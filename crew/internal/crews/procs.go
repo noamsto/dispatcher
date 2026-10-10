@@ -178,18 +178,26 @@ func psParent(pid int) (int, bool) {
 }
 
 // psComm is `ps -o comm= -p <pid>`, the command name the owner walk matches
-// against the shell list. A ps that says nothing is "no name", which is what
-// makes the arm break its walk and record $PPID.
+// against the shell list.
 func psComm(pid int) (string, bool) {
 	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return "", false
 	}
-	name := strings.TrimSpace(string(out))
-	if name == "" {
-		return "", false
-	}
-	return name, true
+	return commName(string(out))
+}
+
+// commName is the arm's `tr -d '[:space:]'` and `[ -n "$c" ]`: whitespace goes
+// whole, and nothing left over means ps named no process — the walk breaks
+// there and records $PPID.
+func commName(out string) (string, bool) {
+	name := strings.Map(func(r rune) rune {
+		if r == ' ' || (r >= '\t' && r <= '\r') {
+			return -1
+		}
+		return r
+	}, out)
+	return name, name != ""
 }
 
 // shells are the command names _owner_pid climbs past. `dispatch` execs `crew
@@ -224,17 +232,12 @@ func (p Probes) OwnerPID(ppid int) int {
 	return ppid
 }
 
-// shellName is the arm's `tr -d '[:space:]'`, `${c##*/}` and `${c#-}`: ps
-// prints the leading path for a process exec'd by absolute path, and a login
-// shell prefixes itself with '-'. A name with a space in it, or one that starts
-// with '-', is beyond `ps -o comm=` — as it was for bash.
+// shellName is the arm's `${c##*/}` and `${c#-}`: ps prints the leading path
+// for a process exec'd by absolute path, and a login shell prefixes itself with
+// '-'. It cannot report a name with a space in it or one that starts with '-',
+// exactly as bash found.
 func shellName(comm string) string {
-	n := strings.Map(func(r rune) rune {
-		if r == ' ' || (r >= '\t' && r <= '\r') {
-			return -1
-		}
-		return r
-	}, comm)
+	n := comm
 	if i := strings.LastIndex(n, "/"); i >= 0 {
 		n = n[i+1:]
 	}
