@@ -778,7 +778,7 @@ main() {
      # resets_at later than the engine'"'"'s own monthly reset is capped at it.
      # starts_at is left alone: the pace length stays 604800.
      def cap_weekly($now):
-       (.windows.month.resets_at // (.limit_reached | objects | .individual_resets_at)) as $m
+       (.windows.month.resets_at // (.limit_reached | objects | .individual_resets_at) // null) as $m
        | if ($m | type) != "number" or $m <= $now then .
          else .windows |= with_entries(
            if (.key == "7d" or .key == "7d_opus" or .key == "7d_sonnet")
