@@ -149,18 +149,14 @@ shell_quote() {
   _out="'$_res'"
 }
 
-# #936, duplicated from dispatcher.sh (adapters/core has no shared library;
-# each launcher bakes standalone): the preamble writeShellApplication builds for
-# this script prepends its own pinned tool dirs — gh, git, jq, gnused, gnugrep,
-# coreutils, findutils, diffutils, tmux and crew, all nix store paths — to PATH.
-# The resumed engine is typed into a tmux window, and tmux builds that window
-# from the PATH of the client that opens it — `new-window -e PATH=` is overridden
-# by it — so without this the session resolves `crew` from the store build this
-# launcher started with and never picks up a rebuild. engine_path prints the
-# caller's PATH with exactly those dirs dropped, every other entry in order; the
-# window creation below runs the tmux client under it. flake.nix's launcherPath
-# substitutes the placeholder at build time; a raw run from a checkout leaves it
-# literal and leaves PATH untouched.
+# #936, duplicated from dispatcher.sh (adapters/core has no shared library; each
+# launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
+# launcherPath, is this script's own pinned tool PATH — the store dirs its
+# preamble prepends. engine_path prints the caller's PATH with exactly those dirs
+# dropped, every other entry in order; the window creation below runs the tmux
+# client under it, because tmux builds a new window's PATH from the client that
+# opens it. A raw run from a checkout leaves the placeholder literal and leaves
+# PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
 engine_path() {
   local pinned="$_launcher_runtime_path" entry dir keep
@@ -1177,15 +1173,11 @@ if [ -z "$pane" ]; then
       client_height=""
     fi
   fi
-  # #936: tmux takes the new window's PATH from the client that opens it, so the
-  # client runs under the cleaned PATH (see engine_path) — `new-window -e PATH=`
-  # would be overridden by it. tmux itself is resolved first, while the pinned
-  # PATH is still in effect. When nothing was dropped — a raw run, or a caller
-  # whose PATH never carried the pinned dirs — the window opens as before.
+  # tmux takes the window's PATH from the client that opens it, so the client
+  # runs under the cleaned PATH; tmux itself is resolved first, while the pinned
+  # PATH still holds. The `|| true` keeps a box without tmux reaching the "could
+  # not resolve a tmux pane" message below instead of dying under errexit.
   engine_env_path="$(engine_path)"
-  # `|| true`: a bare `command -v` would end the script under errexit when tmux
-  # is missing; falling back to plain tmux keeps the "could not resolve a tmux
-  # pane" message below, which is what it said before this block existed.
   tmux_bin="$(command -v tmux || true)"
   pane_client=(tmux)
   if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then

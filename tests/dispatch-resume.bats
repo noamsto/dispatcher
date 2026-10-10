@@ -580,12 +580,9 @@ _store_protocols() { # <dir> <content>
   [ "$status" -ne 0 ]
 }
 
-# #936: tmux takes a new window's PATH from the client that opens it (a `-e
-# PATH=` is overridden by it), so this launcher's own pinned tool dirs — the
-# store bins flake.nix bakes as @launcherRuntimePath@ — would ride into the
-# resumed session, whose `crew` would then resolve to the build the launcher
-# started with and never pick up a home-manager rebuild. The rows pin the PATH
-# the tmux client actually runs with, because that is what the pane inherits.
+# #936: tmux takes a new window's PATH from the client that opens it, so the rows
+# pin the PATH that client runs with — what the pane inherits — and not the argv
+# of a stub that never interprets it.
 _stub_tmux_with_path_log() {
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
@@ -610,17 +607,15 @@ EOF
   cd "$WT"
   PATH="$pinned:$PATH" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-pinned.sh"
   [ "$status" -eq 0 ]
-  # The PATH of the client that opened the window: the caller's minus the pinned
-  # dir. grep -A1 pairs it with the new-window call itself, since every other
-  # tmux call keeps running with the launcher's pinned PATH.
+  # grep -A1 pairs the client's PATH with the new-window call itself: every other
+  # tmux call keeps running with the launcher's pinned PATH. The pinned dir must
+  # be gone from this one.
   run grep -A1 -- '^new-window' "$STUB_LOG"
   [[ "$output" == *"tmux PATH="* ]]
   [[ "$output" != *"$pinned"* ]]
 }
 
 @test "a raw resume opens the window under the caller's PATH unchanged (#936)" {
-  # The raw script has no store dirs to remove, so the client runs with the PATH
-  # it was given — including a directory that looks exactly like a pinned one.
   setup_worker_wt
   _stub_tmux_with_path_log
   local pinned="$TEST_REPO/store/h-pinned/bin"
@@ -628,6 +623,7 @@ EOF
   cd "$WT"
   PATH="$pinned:$PATH" run run_resume
   [ "$status" -eq 0 ]
+  # A raw run has no store dirs to remove: even a pinned-looking dir survives.
   run grep -A1 -- '^new-window' "$STUB_LOG"
   [[ "$output" == *"tmux PATH=$pinned:"* ]]
 }

@@ -109,13 +109,10 @@
           withConfig = builtins.replaceStrings ["@dispatchConfig@"] ["${dispatchConfig}/bin/dispatch-config"];
           # @launcherRuntimePath@ (#936) is a launcher's own pinned tool PATH:
           # exactly the dirs writeShellApplication's preamble prepends, i.e.
-          # `lib.makeBinPath` of the very list passed as its runtimeInputs — so
-          # the dirs a launcher strips are the dirs it was given, and a bump of
-          # either list cannot drift from the other. dispatcher.sh and
-          # dispatch-resume.sh remove them from PATH for the engine they launch,
-          # so a session that outlives a home-manager rebuild resolves `crew`
-          # through the user profile and picks up the new build. A raw run from a
-          # checkout (bats) never gets the substitution and leaves PATH alone.
+          # `lib.makeBinPath` of the very list passed as its runtimeInputs, so the
+          # dirs a launcher strips cannot drift from the dirs it was given. Its
+          # script removes them from PATH for the engine it launches; a raw run
+          # from a checkout never gets the substitution and leaves PATH alone.
           launcherPath = runtimeInputs:
             builtins.replaceStrings ["@launcherRuntimePath@"] [(pkgs.lib.makeBinPath runtimeInputs)];
         in rec {
@@ -207,8 +204,7 @@
           # ambient PATH instead — the same ambient-tool pattern dispatch
           # itself uses for `wt`.
           dispatch-resume = let
-            # One list, read twice: as the preamble's runtimeInputs and as the
-            # @launcherRuntimePath@ bake the script strips (#936).
+            # One list, read twice: the preamble's runtimeInputs and the bake.
             rt = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
           in
             pkgs.writeShellApplication {

@@ -458,11 +458,10 @@ placeholder_three_row() { # token bin bin bin
   done
 }
 
-# #936: the dirs a launcher strips from the engine's PATH must be exactly the
-# dirs its own preamble prepends — anything else either leaves a pinned `crew`
-# behind or strips a tool the launcher still needs. Checked against each built
-# launcher's own preamble line, so adding a runtimeInput without baking it (or
-# the other way round) goes red here.
+# #936: the dirs a launcher strips must be exactly the dirs its preamble
+# prepends — anything else leaves a pinned `crew` behind or strips a tool the
+# launcher still needs. Comparing against each built launcher's own preamble line
+# is what makes adding a runtimeInput without baking it (or the reverse) go red.
 @test "the launcher-runtime placeholder is substituted and matches each preamble" {
   local out preamble baked
   for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume"; do

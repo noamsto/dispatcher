@@ -509,8 +509,7 @@ _store_launcher_dirs() {
 # the dirs flake.nix bakes into @launcherRuntimePath@ and that writeShellApplication
 # prepends to PATH. $PINNED_BIN goes first on PATH, so the launcher resolves
 # `crew` there; $PROFILE_BIN is the later entry the launched engine must resolve
-# instead, or a dispatcher session keeps calling the `crew` build it launched
-# with through a home-manager rebuild.
+# instead.
 _pinned_launcher() {
   PINNED_BIN="$TEST_REPO/store/h-pinned/bin"
   PROFILE_BIN="$TEST_REPO/profile/bin"
@@ -525,7 +524,7 @@ EOF
 printf 'profile crew %s\n' "$*" >>"$STUB_LOG"
 exit 0
 EOF
-  # The engine reports the crew IT resolves — that is the whole question.
+  # The engine reports the crew IT resolves.
   cat >"$STUB_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
 printf 'engine crew=%s\n' "$(command -v crew)" >>"$STUB_LOG"
@@ -545,8 +544,7 @@ EOF
   CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-pinned.sh"
   [ "$status" -eq 0 ]
   grep -qx "engine crew=$PROFILE_BIN/crew" "$STUB_LOG"
-  # The launcher keeps its pinned tools to its last own call: register is not
-  # the engine's, and must still land on the pinned crew.
+  # register is the launcher's own call: it must still land on the pinned crew.
   grep -q '^pinned crew register' "$STUB_LOG"
 }
 
@@ -558,13 +556,11 @@ EOF
   PATH="$PINNED_BIN:$keep:$other:$PINNED_BIN/extra:$STUB_DIR:$PROFILE_BIN:$PATH" \
     CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-two.sh"
   [ "$status" -eq 0 ]
-  # $PINNED_BIN/extra shares a prefix but is not one of the entries: it stays,
-  # and everything after it keeps its place.
+  # $PINNED_BIN/extra shares a prefix but is not an entry: it stays, in place.
   grep -qF "engine PATH=$keep:$PINNED_BIN/extra:$STUB_DIR:$PROFILE_BIN:" "$STUB_LOG"
 }
 
 @test "an unsubstituted placeholder leaves the engine's PATH untouched" {
-  # A raw run from a checkout has no store dirs to remove; PATH is the caller's.
   _pinned_launcher
   CREW_ID=c1 run bash -euo pipefail "$LAUNCHER"
   [ "$status" -eq 0 ]

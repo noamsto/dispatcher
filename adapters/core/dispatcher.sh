@@ -265,16 +265,13 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
   fi
 fi
 
-# #936: the preamble writeShellApplication builds for this script prepends its
-# own pinned tool dirs — git, jq, coreutils, diffutils, tmux and crew, all nix
-# store paths — to PATH, and the engine launched below inherits it. A dispatcher
-# session that outlives a home-manager rebuild keeps calling the `crew` build it
-# was launched with, while a worker pane (a fresh login shell) picks up the new
-# one. engine_path prints the caller's PATH with exactly those dirs dropped and
-# every other entry in order; the launches below run under it, so only the
-# engine's environment changes and every launcher lookup above stays pinned.
-# flake.nix's launcherPath substitutes the placeholder at build time; a raw run
-# from a checkout leaves it literal and PATH untouched.
+# #936: @launcherRuntimePath@, substituted by flake.nix's launcherPath, is this
+# launcher's own pinned tool PATH — the store dirs its preamble prepends.
+# engine_path prints the caller's PATH with exactly those dirs dropped, every
+# other entry in order; the launches below run under `env PATH=…`, so the engine
+# resolves `crew` through the user profile while every launcher lookup above
+# stays pinned. A raw run from a checkout leaves the placeholder literal and
+# leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
 engine_path() {
   local pinned="$_launcher_runtime_path" entry dir keep
@@ -304,9 +301,8 @@ engine_path() {
   printf '%s' "${kept[*]}"
 }
 
-# Computed while the pinned PATH is still in effect: `env` itself, and every
-# tool the launcher still needs after the launch (crew for deregister), resolve
-# exactly as before.
+# Computed while the pinned PATH is still in effect; `env` itself and the tools
+# the launcher still calls after the launch resolve as before.
 engine_env_path="$(engine_path)"
 
 case "$agent" in
