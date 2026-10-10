@@ -251,6 +251,10 @@ func TestValidPidMatrix(t *testing.T) {
 		{"12 34", 0, false},
 		{"12\n34", 0, false},
 		{"-1", 0, false},
+		{"4194304", 4194304, true},
+		{"4194305", 0, false},
+		{"4294967295", 0, false}, // kill(2) truncates to pid_t -1
+		{"9999999999", 0, false},
 		{"99999999999999999999999", 0, false}, // bash: kill and ps both fail
 	} {
 		got, ok := validPid(tc.in)
@@ -293,5 +297,14 @@ func TestTableNonStringCrewIDsDropped(t *testing.T) {
 	}
 	if out != "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n" {
 		t.Errorf("stdout %q, want header only", out)
+	}
+}
+
+func TestPidAliveRejectsOverRangePid(t *testing.T) {
+	for _, in := range []string{"4294967295", "9999999999"} {
+		got := PidAlive(Probes{}, time.Now(), "", in)
+		if got == nil || *got {
+			t.Errorf("PidAlive(%q) = %v; want false", in, got)
+		}
 	}
 }
