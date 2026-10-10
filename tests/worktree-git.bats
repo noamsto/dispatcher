@@ -861,7 +861,7 @@ write_anchor() {
   [ "$found" -eq 1 ]
 }
 
-@test "baseline records regular legacy remotes and branches, and migration adds coverage" {
+@test "baseline records regular legacy remotes and branches, and migration refuses existing entries" {
   local found_remote=0 found_branch=0 found_mark=0
   mkdir -p "$COMMON/remotes" "$COMMON/branches"
   printf 'URL: https://origin.example/r.git\n' >"$COMMON/remotes/origin"
@@ -886,9 +886,19 @@ write_anchor() {
   _wt_cfg_union "$COMMON" >"$BASELINE"
   printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
   run --separate-stderr _wt_cfg_baseline_init "$COMMON"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"legacy remotes or branches entries exist"* ]]
   mapfile -d '' recs <"$BASELINE"
   found_mark=0
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_mark" -eq 0 ]
+  mv "$COMMON/remotes" "$BATS_TEST_TMPDIR/remotes"
+  mv "$COMMON/branches" "$BATS_TEST_TMPDIR/branches"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$BASELINE"
   for rec in "${recs[@]}"; do
     [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
   done

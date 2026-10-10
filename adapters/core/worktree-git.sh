@@ -340,6 +340,10 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
     done
     mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
     wait $! || return 1
+    if [ "$legacy_covered" -eq 0 ] && ((${#legacy[@]})); then
+      echo "refusing git-config baseline migration: legacy remotes or branches entries exist — inspect and remove them before re-running dispatch" >&2
+      return 1
+    fi
     for rec in "${legacy[@]}"; do
       [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
       _wt_cfg_legacy_fields "$rec" ns kind name hash
