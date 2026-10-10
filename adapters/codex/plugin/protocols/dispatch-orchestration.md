@@ -340,6 +340,12 @@ so `--effort` never reaches it and a Qwen chat template thinks at full depth:
   `--thinking` level launched, for a local lead and a local role; unlisted
   rungs map unchanged. The effort on the bus stays the dispatch effort.
 
+`maxTokens` (positive integer) is the model's per-response output cap, written
+into `models.json`; omitted, pi's own default of 16,384 applies. Thinking tokens
+count against that cap, so a local model that thinks can spend a whole turn
+thinking and come back truncated (`Response was truncated before completion`).
+Qwen3.8 recommends 32,768 for general use and more for hard reasoning.
+
 This lane's recommended entry adds `"reasoning": true, "thinkingFormat":
 "qwen-chat-template", "effortThinking": {"low": "off"}`: `--effort low` runs
 with thinking off, every other rung with it on.

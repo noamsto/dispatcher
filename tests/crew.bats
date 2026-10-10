@@ -911,6 +911,21 @@ EOF
   jq -e '. == {providers: {}}' "$WORKER/models.json"
 }
 
+@test "pi-agent-dir: models.json carries maxTokens only when the entry sets it" {
+  _pi_fixture
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  cat >"$XDG_CONFIG_HOME/dispatcher/settings.json" <<'EOF'
+{"localModels": {
+  "lemonade/Big": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 131072, "maxTokens": 65536},
+  "lemonade/Default": {"baseUrl": "http://halo.test:13305/v1", "contextWindow": 4096}
+}}
+EOF
+  run_crew pi-agent-dir >/dev/null
+  jq -e '.providers.lemonade.models == [{id: "Big", contextWindow: 131072, maxTokens: 65536}, {id: "Default", contextWindow: 4096}]' "$WORKER/models.json"
+  # An entry without the field comes out without the key, not as JSON null.
+  jq -e '.providers.lemonade.models[1] | has("maxTokens") | not' "$WORKER/models.json"
+}
+
 @test "pi-agent-dir: a localModels provider with a stored credential is refused" {
   _pi_fixture
   printf '{"openai":{"type":"api_key","key":"sk-test-fixture"}}\n' >"$AMBIENT/auth.json"

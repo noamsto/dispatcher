@@ -281,10 +281,11 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "keyed <provider>/<model> with letters, digits, \".\", \"_\", \"-\" and \"/\" (no \":\")"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "tiers", "workerNotes", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, tiers, workerNotes, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
+            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "maxTokens", "tiers", "workerNotes", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, maxTokens, tiers, workerNotes, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
             ($v.baseUrl | select(type != "string" or (test("^https?://[^[:space:]]*[^/[:space:]]$") | not)) | [$p + ["baseUrl"], "an http(s) URL without whitespace or a trailing \"/\""]),
             ($v.contextWindow | select(pos_int | not) | [$p + ["contextWindow"], "a positive integer"]),
             ($v | select(has("maxConcurrent") and (.maxConcurrent | pos_int | not)) | [$p + ["maxConcurrent"], "a positive integer"]),
+            ($v | select(has("maxTokens") and (.maxTokens | pos_int | not)) | [$p + ["maxTokens"], "a positive integer"]),
             ($v | select(has("tiers") and ((.tiers | type == "array" and length > 0 and all(.[]; IN("trivial", "standard", "deep"))) | not)) | [$p + ["tiers"], "a non-empty array of trivial, standard or deep"]),
             ($v | select(has("workerNotes") and (($v.workerNotes | type) != "string")) | [$p + ["workerNotes"], "a string"]),
             ($v | select(has("reasoning") and (.reasoning | type != "boolean")) | [$p + ["reasoning"], "a boolean"]),

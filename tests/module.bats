@@ -158,6 +158,7 @@ let
       contextWindow = 4096;
       reasoning = true;
       thinkingFormat = "qwen-chat-template";
+      maxTokens = 32768;
       effortThinking.low = "off";
     };
     # A second id with no workerNotes: its locked entry must come out without
@@ -656,7 +657,7 @@ placeholder_three_row() { # token bin bin bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
+  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Lane profiles: set entries land in the locked layer, and a name-only entry
