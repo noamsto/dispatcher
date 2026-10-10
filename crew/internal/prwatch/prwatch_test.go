@@ -25,19 +25,37 @@ const event = `{"pr":42,"changed":["head_sha"],"state":"open"}`
 // `pr-watch`, announces itself, prints the event and parks forever — so the only
 // way the test's Run returns is the signal it forwards.
 const (
-	childEnv  = "PRWATCH_CHILD"
-	markerEnv = "PRWATCH_CHILD_MARKER"
+	childEnv     = "PRWATCH_CHILD"
+	markerEnv    = "PRWATCH_CHILD_MARKER"
+	forwardedEnv = "PRWATCH_CHILD_FORWARDED"
 )
+
+// parkedChild is a park that cannot be stopped by a signal it is handed: it
+// records the forward and waits forever.
+type parkedChild struct{}
+
+func (parkedChild) Signal(os.Signal) error {
+	_ = os.WriteFile(os.Getenv(forwardedEnv), []byte("x"), 0o644)
+	return nil
+}
+
+func (parkedChild) Wait() int {
+	for {
+		time.Sleep(time.Hour)
+	}
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv(childEnv) == "run" {
-		// The second-signal case: the child ignores the forwarded TERM, so only
-		// the default disposition of a second one can end this process.
-		_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
-		fmt.Println("parked")
+		// The second-signal case. The markers are written from inside the run, so
+		// the test never races the signal handler: `started` means Notify is
+		// registered (Run registers it before it starts the child), `forwarded`
+		// means the first TERM reached the child, which never exits.
 		os.Exit(Run(context.Background(), []string{"42"}, bus.Paths{}, io.Discard, io.Discard,
-			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(),
-				Start: park(&stub{wait: make(chan struct{})})}))
+			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: func(context.Context, []string, io.Writer, io.Writer) (Child, error) {
+				_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
+				return parkedChild{}, nil
+			}}))
 	}
 	if os.Getenv(childEnv) == "1" {
 		_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
@@ -409,8 +427,10 @@ func TestWatchedStopSignalsDropsInheritedIgnored(t *testing.T) {
 func TestSecondSignalStillStopsThePark(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "parked")
+	forwarded := filepath.Join(dir, "forwarded")
 	t.Setenv(childEnv, "run")
 	t.Setenv(markerEnv, marker)
+	t.Setenv(forwardedEnv, forwarded)
 
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = os.Environ()
@@ -422,14 +442,12 @@ func TestSecondSignalStillStopsThePark(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	})
 	waitFor(t, marker, "the parked run never started")
-	// The marker is written just before Run registers its handler; give it the
-	// moment it takes, or the first TERM would test the default disposition.
-	time.Sleep(500 * time.Millisecond)
-
 	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	// Only once the first one has been forwarded is the handler stopped; sending
+	// the second earlier would test the default disposition it should still have.
+	waitFor(t, forwarded, "the first SIGTERM was never forwarded to the child")
 	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}

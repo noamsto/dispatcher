@@ -156,8 +156,8 @@ output contract below), with each edit justified.
   the event text as the child printed it. The child is injected (`Options.Start`), so
   no test needs the binary, and `$(…)`'s trailing-newline strip is Go's own. The stop
   signals follow `stall.NotifySignals`'s two rules — inherited-ignored signals are
-  left alone, and the first one stops the handler — because this is the one port whose
-  child outlives nothing.
+  left alone, and the first one stops the handler — because this is the one port that
+  parks on a child which must not outlive it.
 - `crew/internal/frame`: Go copies of `_frame_classifier`'s predicates (prompt,
   permission, quota, background-wait, meter and sub-row shapes, the claude and
   pi input boxes) and `_pane_idle_reason`. Every function takes the sampler's
