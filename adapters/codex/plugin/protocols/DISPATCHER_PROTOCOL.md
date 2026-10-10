@@ -684,18 +684,19 @@ branch instead; the worktree carries over under `resume: true`.
   what it trusts (`url.*.insteadOf`/`pushInsteadOf`,
   `remote.*.url`/`pushurl`/`proxy`, `http[.<url>].proxy`, `sslVerify`,
   `sslCAInfo`/`sslCAPath`, `curloptResolve`, `fetch.bundleURI` —
-  `_wt_redirect_keys`) would send the dispatcher's only anchored network
-  action, the explicit non-recursive `git fetch origin <refspec>`, with the
-  operator's credential-helper token, to a worker-chosen endpoint. There is
-  no anchored push. Defense: `dispatch`, `dispatch resume`
+  `_wt_redirect_keys`) would send either anchored network action —
+  `git ls-remote --heads origin <pattern>` during claim checks or the explicit
+  non-recursive `git fetch origin <refspec>` — with the operator's
+  credential-helper token to a worker-chosen endpoint. There is no anchored
+  push. Defense: `dispatch`, `dispatch resume`
   and `crew reap` diff those keys' local/worktree-scope config (includes
   resolved; the call's git dir and the caller's own) against a baseline at
   `<git-common-dir>/crew/git-config-baseline`, refusing — naming the key and
   the file it came from, never its value — at dispatch entry, inside every
-  anchored git call, and before `wt switch` and any anchored fetch,
+  anchored git call, and before `wt switch` and either anchored network action,
   `crew reap`'s worktree removal and `git branch -D`. `dispatch` and
   `crew reap` first leave a recorded worker worktree for the main checkout,
-  and run the explicit fetch plus `git branch -D`/`git worktree remove
+  and run the explicit `ls-remote` or fetch plus `git branch -D`/`git worktree remove
   --force` anchored — `--git-dir=<git-common-dir>` plus the `-c` keys of
   `_wt_neutral_cfg` (these commands read no attributes) — so no worker
   `.git`, standalone or swapped mid-run, is ever discovered by
@@ -753,16 +754,20 @@ branch instead; the worktree carries over under `resume: true`.
   union over the main checkout and every linked worktree's context — resume
   and reap never do, and `crew git-baseline` writes only on the human's
   `--accept`. URL-valued `branch.<n>.remote`, `branch.<n>.pushRemote` and
-  `remote.pushDefault` do not affect that fetch: the remote and refspec are
-  explicit, and no anchored push consumes them. `submodule.<n>.url` is inert
-  on anchored calls because they set `submodule.recurse=false`, while fetch
-  also passes `--no-recurse-submodules`; no anchored call reaches a submodule
-  URL. The legacy `$GIT_COMMON_DIR/remotes/<name>` and
+  `remote.pushDefault` do not affect either network action: `origin` is
+  explicit, fetch also spells its refspec, and no anchored push consumes them.
+  `submodule.<n>.url` is inert on anchored calls because they set
+  `submodule.recurse=false`, while fetch also passes
+  `--no-recurse-submodules`; no anchored call reaches a submodule URL. The
+  legacy `$GIT_COMMON_DIR/remotes/<name>` and
   `$GIT_COMMON_DIR/branches/<name>` entries are covered separately from
   config: the baseline records regular files, and the guard refuses an unsafe
-  entry type (including a symlink) without following it. A human must inspect
-  and restore or remove a refused entry before accepting a new baseline; the
-  dispatcher never follows or repairs it. Migration: a baseline recorded before redirect keys were covered
+  entry type (including a symlink) without following it. A legacy-coverage
+  migration records its marker only when those directories are empty; it
+  refuses instead of accepting an existing entry, so a worker cannot launder
+  one through migration. A human must inspect and remove a refused entry before
+  re-running dispatch; the dispatcher never follows or repairs it. Migration:
+  a baseline recorded before redirect keys were covered
   (#678) lacks the `#covers` marker record; until the marker is written the
   guard checks
   program keys only, and the next `dispatch` entry records the redirect keys
