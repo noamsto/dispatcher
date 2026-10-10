@@ -9888,6 +9888,35 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ ! -e "$cdir/cursor" ]
 }
 
+# #914: the signal contract, per signal — including the 128+n each leaves
+# behind, where bash's single EXIT trap exited 0. Both lock dirs going is the
+# point: a leaked watch.lock.d refuses every later park of the crew until the
+# dead pid is reclaimed, and a leaked stream.lock.d refuses every later stream.
+@test "stream: TERM, INT and HUP each release both locks and the next stream starts at once" {
+  cdir="$(crew_dir c1)"
+  for sig in TERM INT HUP; do
+    start_stream --crew c1 --park 10 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+    poll_for 100 test -f "$cdir/stream.lock.d/pid"
+    poll_for 100 test -f "$cdir/watch.lock.d/pid"
+
+    kill -"$sig" "$STREAM_PID"
+    local rc=0
+    wait "$STREAM_PID" 2>/dev/null || rc=$?
+    # 128+n: the handler stops the child, drains, unlinks and releases, and only
+    # then leaves — so once `wait` returns, both lock dirs are already gone.
+    [ "$rc" -eq "$((128 + $(kill -l "$sig")))" ]
+    STREAM_PIDS=""
+    STREAM_PID=""
+    [ ! -d "$cdir/stream.lock.d" ]
+    [ ! -d "$cdir/watch.lock.d" ]
+
+    # And the very next stream starts rather than refusing.
+    start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+    poll_for 100 lock_pid_is "$STREAM_PID"
+    stop_stream
+  done
+}
+
 @test "stream: a TERM with an undrained stream.out still emits that batch [B1]" {
   cdir="$(crew_dir c1)"
   # No qualifying event, so the inner watch is parked in its sleep with nothing
