@@ -99,6 +99,10 @@ var corpus = []string{
 	msgRow(rev, branch, `{"seam":"review","verdict":"accept","n":nan1}`),
 	msgRow(rev, branch, `{"seam":"review","verdict":"accept","n":-nan}`),
 	msgRow(rev, branch, ``),
+	msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`),
+	msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"maybe"}`),
+	`{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x"}`,
+	`{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`,
 }
 
 // TestFoldsMatchJQ runs seam.jq and deslop.jq under the real jq and under the
@@ -142,6 +146,7 @@ func TestFoldsMatchJQ(t *testing.T) {
 	}{
 		{"seam", seamProg, []string{"pi", "claude"}},
 		{"deslop", deslopProg, []string{"claude"}},
+		{"plan", planProg, []string{"claude"}},
 	}
 	for _, p := range progs {
 		for _, engine := range p.engines {
@@ -218,4 +223,23 @@ func runJQOriginal(t *testing.T, jq, prog, engine string, lines []string) string
 		return "error"
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func TestPlanFold(t *testing.T) {
+	n := len(corpus)
+	planOK, planBad, resume, dispatch := corpus[n-4], corpus[n-3], corpus[n-2], corpus[n-1]
+	for _, c := range []struct {
+		name string
+		seq  []string
+		want string
+	}{
+		{"plan seam", []string{planOK}, "1"},
+		{"resume", []string{resume}, "1"},
+		{"resume then dispatch", []string{resume, dispatch}, "0"},
+		{"bad value", []string{planBad}, "0"},
+	} {
+		if got := runGo(planProg, "claude", c.seq); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
 }

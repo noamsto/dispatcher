@@ -87,7 +87,15 @@
         # (#179) — except tier/task_kind runs with no plan phase, a resumed run
         # (either shape — a `dispatch resume` row has no `from`, hence $resumed
         # above), or a run that never reached the review gate (review_mode ==
-        # "none"), which never got far enough to skip anything.
+        # "none"), which never got far enough to skip anything. A valid plan seam
+        # (review:<crew>) also counts: the snapshot may have forgotten the verdict.
+        | ($ev | any(.[]; .kind == "msg"
+                          and ((.to // "") | startswith("review:"))
+                          and ((.body | body_obj) as $o
+                               | $o != null and $o.seam == "plan"
+                                 and ($o | has("tag") | not)
+                                 and ($o.plan_critic_first_pass
+                                      | IN("accept", "revise", "reject"))))) as $plan_seam
         | (if $d.plan == "required"
               and ($d.tier // null) != "trivial"
               and (($d.task_kind // "implement") != "review")
@@ -95,6 +103,7 @@
               and (($d.resume // false) != true)
               and $m != null
               and (($m.plan_critic_first_pass // null) == null)
+              and ($plan_seam | not)
               and (($m.review_mode // null) != "none")
            then [{seam: "plan", tag: "plan_required_unaudited",
                   detail: "plan: required but plan_critic_first_pass is null in the metrics snapshot"}]
