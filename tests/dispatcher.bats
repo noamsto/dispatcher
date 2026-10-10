@@ -568,9 +568,8 @@ EOF
   grep -qx "engine crew=$PINNED_BIN/crew" "$STUB_LOG"
 }
 
-# Each launcher bakes its own copy of engine_path (adapters/core has no shared
-# library); one test diffs them so a fix in one file cannot silently miss the
-# others — #947 is the copy that made it three.
+# engine_path is duplicated per launcher for the same reason; one test diffs the
+# three so a fix in one file cannot silently miss the others.
 @test "engine_path is byte-identical across the three launchers" {
   local a b f
   a="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh")"

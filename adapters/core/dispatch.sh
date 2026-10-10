@@ -1143,10 +1143,8 @@ _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
 # launcherPath, is this script's own pinned tool PATH — the store dirs its
 # preamble prepends. engine_path prints the caller's PATH with exactly those dirs
 # dropped, every other entry in order; the client that opens a pane runs under it,
-# because tmux builds a new pane's PATH from the client that opens it — a pane
-# opened under the pinned PATH resolves the crew this build shipped, not the
-# user's profile. A raw run from a checkout leaves the placeholder literal and
-# leaves PATH untouched.
+# because tmux builds a new pane's PATH from the client that opens it. A raw run
+# from a checkout leaves the placeholder literal and leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
 engine_path() {
   local pinned="$_launcher_runtime_path" entry dir keep
@@ -1176,11 +1174,11 @@ engine_path() {
   printf '%s' "${kept[*]}"
 }
 
-# _pane_client <tmux args...> — run the tmux client that opens a window or pane
-# under engine_path, so the new pane inherits the caller's PATH (#947). tmux is
-# resolved first, while the pinned PATH still holds. A box without tmux, or a raw
-# run with nothing to strip, keeps the plain client; every other tmux call in this
-# file stays on the pinned PATH — only a pane's PATH is inherited.
+# _pane_client <tmux args...> — the tmux client that opens a window or a role
+# pane, run under engine_path. Only these two calls take it: a pane inherits the
+# PATH of the client that opens it, and no other tmux call here opens one. tmux is
+# resolved before the swap, while the pinned dirs still hold; a box without tmux,
+# or a raw run with nothing to strip, takes plain tmux.
 _pane_client() {
   local cleaned tmux_bin
   cleaned="$(engine_path)"

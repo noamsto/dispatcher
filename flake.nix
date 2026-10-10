@@ -189,9 +189,7 @@
           };
 
           dispatch = let
-            # One list, read twice: the preamble's runtimeInputs and the bake
-            # (#947): the dirs dispatch strips from the caller's PATH are exactly
-            # the ones its preamble prepends.
+            # One list, read twice: the preamble's runtimeInputs and the bake.
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
