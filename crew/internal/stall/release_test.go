@@ -11,6 +11,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
 func frameText(t *testing.T, name string) string {
@@ -263,12 +264,12 @@ func TestReleaseEmptyStateLoopsWithoutMaxLife(t *testing.T) {
 	f := newFake()
 	h, w := releaseWatch(t, f, "worker:feat/x", "", "--engine", "claude", "--max-life", "10")
 	reads := 0
-	w.p.BusRows = func(path string) ([]jsonv.Value, bool) {
+	w.p.BusRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
 		reads++
 		if reads == 5 {
 			h.writeRows(h.status("worker:feat/x", 1, `{"state":"working"}`))
 		}
-		return fileRows(path)
+		return probe.BusRows(path, sinceMS, maxLines)
 	}
 	if err := w.finishedRelease(); err != nil {
 		t.Fatalf("finishedRelease = %v, want nil", err)

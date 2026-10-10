@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -30,6 +31,7 @@ type Options struct {
 	NewProbes  func(pane string) probe.Probes // called once, after --pane parses
 	BudgetFile string                         // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
 	PID        int                            // lock owner ($$)
+	CrewSH     string                         // $CREW_SH: the crew.sh holding the --sh helpers
 }
 
 // exitCode ends the watch with that status: every `exit` in the arm is one.
@@ -56,6 +58,7 @@ type watch struct {
 	text                             string
 	suppressed                       bool // D8 may set it mid-tick; later detectors see it
 	bgwait, engineSeen, busStale     bool // engineSeen is shared by D5 and role EOL
+	shFailLogged                     bool // the first --sh failure is on stderr
 	bus                              busView
 
 	fd frameDet
@@ -71,18 +74,27 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		}
 		return 1
 	}
-	p := o.NewProbes(cfg.pane)
-	cfg.budgetOn = decideBudget(ctx, cfg, p)
-	// A non-claude role watch has only D8 and its end-of-life exit live; with
-	// D8 off nothing is left, and the pane's @crew_state belongs to dispatch's
-	// --role-watch.
-	if cfg.roleMode && !cfg.budgetOn && cfg.engine != "claude" {
-		return 0
+	// Every bash helper the watch needs — D6's unread scan and nudge, D8's
+	// budget verdict, the pi local-model check, the finished-worker release — is
+	// reached through CREW_SH, so without it they all fail with nothing on the
+	// bus. The crew wrapper always exports it: this is a direct crew-go call or
+	// a script removed mid-deploy.
+	if err := crewSHError(o.CrewSH); err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 1
 	}
+	p := o.NewProbes(cfg.pane)
 	// One second of slack: the clock truncates to seconds while rows carry ms,
 	// so a status the launcher posted just before this start still counts.
 	cfg.runStartMS = (o.Clock.Seconds() - 1) * 1000
 	w := &watch{ctx: ctx, cfg: cfg, p: p, o: o, paths: paths, stderr: stderr}
+	w.cfg.budgetOn = w.decideBudget(ctx)
+	// A non-claude role watch has only D8 and its end-of-life exit live; with
+	// D8 off nothing is left, and the pane's @crew_state belongs to dispatch's
+	// --role-watch.
+	if w.cfg.roleMode && !w.cfg.budgetOn && w.cfg.engine != "claude" {
+		return 0
+	}
 	var code exitCode
 	if err := w.run(); !errors.As(err, &code) {
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: %v\n", err)
@@ -94,23 +106,39 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 // decideBudget is D8's on/off switch, decided once: the engine and the pane's
 // model are fixed for the watch. A pi pane on a local model spends no metered
 // quota (the launch gate skips it too); any failure to tell keeps D8 on.
-func decideBudget(ctx context.Context, cfg config, p probe.Probes) bool {
-	if cfg.noBudget {
+func (w *watch) decideBudget(ctx context.Context) bool {
+	if w.cfg.noBudget {
 		return false
 	}
-	switch cfg.engine {
+	switch w.cfg.engine {
 	case "claude", "codex", "cursor":
 		return true
 	case "pi":
-		model := p.PaneModel(ctx)
+		model := w.p.PaneModel(ctx)
 		if model == "" {
 			return true
 		}
-		out, rc := p.Sh(ctx, "local-model", model)
+		out, rc := w.p.Sh(ctx, "local-model", model)
 		_, ok := shVerdict(rc)
+		if !ok {
+			w.logHelperFailure("local-model", rc)
+		}
 		return !ok || out == ""
 	}
 	return false
+}
+
+// crewSHError is Run's precondition: an unset CREW_SH, or one pointing at
+// nothing a helper can run — a directory, or a path unlinked mid-watch.
+func crewSHError(path string) error {
+	if path == "" {
+		return errors.New("crew: stall-watch: CREW_SH is unset; run through the crew wrapper")
+	}
+	st, err := os.Stat(path)
+	if err != nil || !st.Mode().IsRegular() {
+		return fmt.Errorf("crew: stall-watch: CREW_SH '%s' is not a file", path)
+	}
+	return nil
 }
 
 // run is the arm's main loop. It only ever returns an exitCode, or the error

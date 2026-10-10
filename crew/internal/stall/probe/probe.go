@@ -42,7 +42,7 @@ type Probes struct {
 	RefreshBudget func(ctx context.Context)
 	SetPaneOption func(ctx context.Context, name, value string)
 	Sh            func(ctx context.Context, op string, args ...string) (out string, rc int)
-	BusRows       func(path string) (rows []jsonv.Value, ok bool) // decoded prefix; ok=false if not a regular file
+	BusRows       func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) // log tail, oldest first; ok=false if not a regular file
 }
 
 // Env is what the probes read from their surroundings.
@@ -210,7 +210,7 @@ func Default(e Env) Probes {
 			}
 			return runIn(ctx, e.Dir, e.Stderr, "bash", append([]string{"-euo", "pipefail", e.CrewSH}, argv...)...)
 		},
-		BusRows: busRows,
+		BusRows: BusRows,
 	}
 }
 
@@ -235,25 +235,4 @@ func collapseCwd(line string) string {
 		return line
 	}
 	return line[:m[0]] + line[m[2]:m[3]] + " " + line[m[1]:]
-}
-
-// busRows decodes the bus log with the torn-tail tolerance of
-// bus.ReadEventsTolerant: the well-formed prefix is returned and the break is
-// not an error.
-func busRows(path string) ([]jsonv.Value, bool) {
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		return nil, false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = f.Close() }()
-	rows, err := jsonv.DecodeStreamPrefix(f)
-	var syn *jsonv.SyntaxError
-	if err != nil && !errors.As(err, &syn) {
-		return nil, false
-	}
-	return rows, true
 }

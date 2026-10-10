@@ -28,6 +28,7 @@ type fake struct {
 	shc                          func(ctx context.Context, op string, args ...string) (string, int) // wins over sh
 	shCalls                      []string
 	opts                         [][]string // tmux set-option argv, as the bash stub logs it
+	busRows                      func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool)
 }
 
 func newFake() *fake { return &fake{} }
@@ -61,26 +62,14 @@ func (f *fake) probes() probe.Probes {
 			}
 			return f.sh(op, args...)
 		},
-		BusRows: func(path string) ([]jsonv.Value, bool) {
+		BusRows: func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
 			f.busReads++
-			return fileRows(path)
+			if f.busRows != nil {
+				return f.busRows(path, sinceMS, maxLines)
+			}
+			return probe.BusRows(path, sinceMS, maxLines)
 		},
 	}
-}
-
-// fileRows is the production BusRows contract over a real file.
-func fileRows(path string) ([]jsonv.Value, bool) {
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		return nil, false
-	}
-	fh, err := os.Open(path)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = fh.Close() }()
-	vs, _ := jsonv.DecodeStreamPrefix(fh)
-	return vs, true
 }
 
 // harness is a temp bus plus a virtual clock seeded at the real time, the way
@@ -89,6 +78,7 @@ type harness struct {
 	t      *testing.T
 	f      *fake
 	crew   string
+	crewSH string
 	paths  bus.Paths
 	clock  clock.Clock
 	seed   int64
@@ -104,8 +94,12 @@ func newHarness(t *testing.T, f *fake) *harness {
 	if err := os.WriteFile(clockFile, []byte(strconv.FormatInt(seed, 10)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	crewSH := dir + "/crew.sh"
+	if err := os.WriteFile(crewSH, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	return &harness{
-		t: t, f: f, crew: "c1", seed: seed, ctx: t.Context(),
+		t: t, f: f, crew: "c1", seed: seed, ctx: t.Context(), crewSH: crewSH,
 		paths: bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"},
 		clock: clock.Clock{Now: time.Now, CrewClock: clockFile},
 	}
@@ -115,6 +109,7 @@ func (h *harness) options() Options {
 	return Options{
 		CrewID: func() string { return h.crew },
 		Clock:  h.clock,
+		CrewSH: h.crewSH,
 		NewProbes: func(pane string) probe.Probes {
 			h.f.newProbes++
 			h.f.pane = pane

@@ -887,3 +887,28 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 		})
 	}
 }
+
+// Every bus read is bounded: refresh reads this run's rows, nudged the last
+// 2000 lines. A whole-log read every 4th tick — and again before every post —
+// costs memory proportional to a log that never shrinks.
+func TestBusReadsAreBounded(t *testing.T) {
+	s := &d6Script{}
+	_, f, w := d6Watch(t, s)
+	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	runRead := fmt.Sprintf("%d/0", w.cfg.runStartMS)
+	tailRead := fmt.Sprintf("0/%d", nudgedTailLines)
+	seen := map[string]int{}
+	f.busRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+		seen[fmt.Sprintf("%d/%d", sinceMS, maxLines)]++
+		return probe.BusRows(path, sinceMS, maxLines)
+	}
+	pdOK(t, w, 0, 0, w.d6)
+	if seen[runRead] == 0 || seen[tailRead] == 0 {
+		t.Fatalf("reads %v, want the run's rows (%s) and the nudge scan (%s)", seen, runRead, tailRead)
+	}
+	delete(seen, runRead)
+	delete(seen, tailRead)
+	for unbounded := range seen {
+		t.Errorf("bus read %s is unbounded", unbounded)
+	}
+}

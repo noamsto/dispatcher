@@ -268,6 +268,17 @@ func CrewID(ctx context.Context, cwd string) string {
 	return os.Getenv("CREW_ID")
 }
 
+// CrewIDEnvFirst is CrewID with the launcher's env preferred over the checkout:
+// for a process started with CREW_ID in its environment and cwd inside a
+// worktree its own watched worker can rewrite, the task doc is an argument that
+// worker could edit, not the anchor the launcher passed.
+func CrewIDEnvFirst(ctx context.Context, cwd string) string {
+	if id := os.Getenv("CREW_ID"); id != "" {
+		return id
+	}
+	return CrewID(ctx, cwd)
+}
+
 // taskCrewID returns "" when the file is not a regular file, cannot be read or
 // has no usable id: `[ -f ]` and the `|| true` after the pipeline make all of
 // those fall through to the env.

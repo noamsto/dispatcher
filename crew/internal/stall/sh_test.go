@@ -3,6 +3,7 @@ package stall
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -143,5 +144,55 @@ func TestReleaseHelperFailureKeepsWatching(t *testing.T) {
 				t.Errorf("sh calls %d samples %d, want 2 and 5", len(f.shCalls), f.samples)
 			}
 		})
+	}
+}
+
+// A watch started without CREW_SH would run its whole --max-life posting
+// nothing, with every bash helper failing alike.
+func TestCrewSHRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(h *harness) string
+	}{
+		{"unset", func(*harness) string { return "" }},
+		{"missing", func(h *harness) string { return h.paths.Common + "/crew.sh.gone" }},
+		{"not a file", func(h *harness) string { return h.paths.Common }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake()
+			h := newHarness(t, f)
+			o := h.options()
+			o.CrewSH = tc.path(h)
+			h.stderr.Reset()
+			if code := Run(h.ctx, []string{"feat/x", "--pane", "%1", "--grace", "0"}, h.paths, &h.stderr, o); code != 1 {
+				t.Errorf("exit %d, want 1", code)
+			}
+			msg := h.stderr.String()
+			if strings.Count(msg, "\n") != 1 || !strings.Contains(msg, "CREW_SH") {
+				t.Errorf("stderr %q, want one line naming CREW_SH", msg)
+			}
+			if f.newProbes != 0 || f.samples != 0 || len(f.shCalls) != 0 {
+				t.Errorf("probes %d samples %d sh calls %q: the watch ran past the refusal", f.newProbes, f.samples, f.shCalls)
+			}
+		})
+	}
+}
+
+// A helper that cannot run fails every call-out it is asked for. One line on
+// stderr names the first; the silence before it read as a worker with nothing
+// to report.
+func TestHelperFailureLoggedOnce(t *testing.T) {
+	f := newFake()
+	f.sample = sampling("static frame")
+	h, w := d8Watch(t, f)
+	f.sh = func(string, ...string) (string, int) { return "", 127 }
+	pdOK(t, w, 0, 0, w.probePre)
+	pdOK(t, w, 60, 4, w.probePre)
+	msg := h.stderr.String()
+	if n := strings.Count(msg, "helper failed to run"); n != 1 {
+		t.Errorf("%d helper-failure lines, want 1: %q", n, msg)
+	}
+	if !strings.Contains(msg, "'budget'") || !strings.Contains(msg, "127") {
+		t.Errorf("stderr %q, want the op and its status", msg)
 	}
 }
