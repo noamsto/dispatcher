@@ -4,7 +4,7 @@ Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
-`stall-watch` (#832), `stream` and `adopt` (#920). Each slice must leave every bats file green;
+`stall-watch` (#832), `stream`, `adopt` (#920) and `pr-watch` (#934). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -147,6 +147,14 @@ output contract below), with each edit justified.
   rows by position. Occupancy is the one question asked of `_occupants`, and the
   window list alone answers it, so the arm's third read (`tmux list-panes`,
   whose rows fill only the advisory `engine`/`panes` fields) is not run.
+- `crew/internal/prwatch`: `crew pr-watch`, the thin bus bridge over the standalone
+  `pr-watch` binary — the first port that runs a child named after itself. The binary
+  owns the park, the change signals and the
+  per-PR cursor and needs no crew id; the arm adds the post, addressed to this crew's
+  dispatcher through `_crew_id` (`bus.CrewID`), and keeps stdout the event. The row is
+  the arm's six keys in order, and like `reply` it needs no byte-exact body: `body` is
+  the event text as the child printed it. The child is injected (`Options.Start`), so
+  no test needs the binary, and `$(…)`'s trailing-newline strip is Go's own.
 - `crew/internal/frame`: Go copies of `_frame_classifier`'s predicates (prompt,
   permission, quota, background-wait, meter and sub-row shapes, the claude and
   pi input boxes) and `_pane_idle_reason`. Every function takes the sampler's
@@ -265,7 +273,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where | stream | adopt)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | adopt)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -374,6 +382,12 @@ Rules that still bind a porter:
   `adopt` asks only whether that array is empty — which the window list alone
   answers — so the read would run for nothing. The two reads that decide it keep
   their argv, count and order.
+- Specific to `pr-watch`, and not mirrored: two places the port is not the arm.
+  A `SIGTERM`/`SIGINT`/`SIGHUP` sent to `crew` is forwarded to the child and the wait
+  goes on until the child is gone, exiting with the child's status and posting nothing
+  — the arm inherited the signal and died around `pr-watch`, leaving it polling
+  GitHub. And a `pr-watch` missing from `PATH` ends on Go's own exec error line where
+  bash printed `pr-watch: command not found`; the 127 stays.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.

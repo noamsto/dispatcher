@@ -3292,7 +3292,7 @@ register | deregister)
     rm -rf "$cdir"
   fi
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | where | stream | adopt)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | adopt)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
@@ -3742,27 +3742,6 @@ stall-watch)
     exit $((rc + 10))
   fi
   CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
-  ;;
-pr-watch)
-  # pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]
-  # Thin bus bridge over the standalone `pr-watch` binary, which owns the park,
-  # the change signals and the per-PR cursor — and needs no crew id at all. All
-  # this adds is the post: addressed to this crew's dispatcher, so an armed
-  # `crew watch` wakes. Stdout stays the event, so the wrapper still composes.
-  crew=$(_crew_id)
-  [ -n "$crew" ] || {
-    echo "crew: CREW_ID unset and no WORKER_TASK.md crew_id" >&2
-    exit 1
-  }
-  ev=$(pr-watch "$@")
-  # Empty stdout is pr-watch's timeout marker, not a failure — nothing to post.
-  [ -n "$ev" ] || exit 0
-  mkdir -p "$dir"
-  line=$(jq -nc --arg crew "$crew" --arg from "pr-watch:${1:-}" --arg body "$ev" \
-    '{ts:(now*1000|floor), crew_id:$crew, from:$from, to:("dispatcher:"+$crew),
-        kind:"msg", body:$body}')
-  _bus_append "$log" "$line"
-  printf '%s\n' "$ev"
   ;;
 git-baseline)
   # Lists — or, with --accept, merges into — the exec-capable and redirecting

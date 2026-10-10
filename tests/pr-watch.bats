@@ -212,6 +212,23 @@ EOF
   [ ! -f "$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ]
 }
 
+@test "crew pr-watch exits with the child's status and posts nothing" {
+  # The arm ran under `set -e`, so a failed park ended it with the child's status
+  # — before the post and before the print, the partial stdout included.
+  cat > "$STUB_DIR/pr-watch" <<'SH'
+#!/usr/bin/env bash
+echo '{"pr":42,"changed":["head_sha"]}'
+echo 'gh: something went wrong' >&2
+exit 3
+SH
+  chmod +x "$STUB_DIR/pr-watch"
+  run env CREW_ID=c1 PATH="$STUB_DIR:$PATH" bash "$CREW" pr-watch 42
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"gh: something went wrong"* ]]
+  [[ "$output" != *'"changed"'* ]]
+  [ ! -f "$REPO/.dispatcher/crew/c1/events.jsonl" ]
+}
+
 @test "default clock: a 1s park really waits" {
   unset PR_WATCH_CLOCK
   t0=$SECONDS
