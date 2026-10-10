@@ -9280,6 +9280,40 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ -z "$output" ]
 }
 
+# #910: stall-watch re-posts its `unread:` blocked while the msg stays
+# unread, and only the age grows. The age normalizes away like the cycle
+# and awaited noise, for both unread: variants.
+@test "watch: a re-posted unread: directive differing only in age does not wake" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "unread: dispatcher directive undelivered for 644s — lead is working but has not reached a peek seam (long stage or idle on a background task)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked "unread: dispatcher directive undelivered for 1850s — lead is working but has not reached a peek seam (long stage or idle on a background task)" "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: a re-posted unread: verdict differing only in age does not wake" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked 'unread: role verdict undelivered for 2212s — lead is working but has not read it; nudge it to run `crew await`' "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked 'unread: role verdict undelivered for 2393s — lead is working but has not read it; nudge it to run `crew await`' "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "watch: an unread: whose reason changed wakes" {
+  t="$(($(date +%s) * 1000))"
+  seed_raw "worker:feat/x#s1-1" blocked "unread: dispatcher directive undelivered for 644s — lead is working but has not reached a peek seam (long stage or idle on a background task)" "" "$t"
+  seed_raw "worker:feat/x#s1-1" blocked 'unread: role verdict undelivered for 1850s — lead is working but has not read it; nudge it to run `crew await`' "" "$((t + 1000))"
+
+  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  run jq -e '(.events | length) == 1 and (.events[0].body.detail | startswith("unread: role verdict undelivered for 1850s"))' <<<"$output"
+  [ "$status" -eq 0 ]
+}
+
 @test "watch: a changed blocked detail wakes" {
   t="$(($(date +%s) * 1000))"
   seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$t"

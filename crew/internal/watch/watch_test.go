@@ -2,8 +2,11 @@ package watch
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +17,8 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -643,5 +648,406 @@ func TestRunCreatesBusDir(t *testing.T) {
 	}
 	if st, err := os.Stat(p.Dir); err != nil || !st.IsDir() {
 		t.Errorf("bus dir %s: %v", p.Dir, err)
+	}
+}
+
+// #910: `crew stall-watch` re-posts its `unread:` blocked while a msg stays
+// unread, and only the age changes. norm strips the `undelivered for <N>s`
+// age the way it strips the cycle and awaited noise, so the re-post is the
+// suppressed repeated-blocked case; a changed reason is a different detail
+// and wakes.
+func TestUnreadRestampSuppressed(t *testing.T) {
+	const (
+		directive = "unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)"
+		verdict   = "unread: role verdict undelivered for %ds — lead is working but has not read it; nudge it to run `crew await`"
+		nudge     = "unread: dispatcher directive undelivered for %ds — auto-nudge typed but not accepted (nudge held: %%9 worker:feat/x#s1-1); verify the pane with crew where"
+	)
+	for _, tc := range []struct {
+		name          string
+		first, second string
+		wakes         bool
+	}{
+		{"directive re-post differing only in age", fmt.Sprintf(directive, 644), fmt.Sprintf(directive, 1850), false},
+		{"verdict re-post differing only in age", fmt.Sprintf(verdict, 2212), fmt.Sprintf(verdict, 2393), false},
+		{"directive to verdict is a changed reason", fmt.Sprintf(directive, 644), fmt.Sprintf(verdict, 1850), true},
+		{"directive to auto-nudge is a changed reason", fmt.Sprintf(directive, 644), fmt.Sprintf(nudge, 1850), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			from := "worker:feat/x#s1-1"
+			writeLog(t, p,
+				status(1000, from, "blocked", tc.first, ""),
+				status(2000, from, "blocked", tc.second, ""))
+			stdout, _, code, _ := run(t, p, "--since", "1000", "--timeout", "1", "--interval", "1")
+			if code != 0 {
+				t.Fatalf("code %d", code)
+			}
+			if got := strings.Contains(stdout, "blocked"); got != tc.wakes {
+				t.Errorf("wakes = %v, want %v (%s)", got, tc.wakes, stdout)
+			}
+		})
+	}
+}
+
+// A first `unread:` wakes and the restamped age does not: with since 0 the
+// dispatcher gets exactly one event, the first post.
+func TestFirstUnreadWakesRestampQuiet(t *testing.T) {
+	p := fixture(t)
+	from := "worker:feat/x#s1-1"
+	writeLog(t, p,
+		status(1000, from, "blocked", fmt.Sprintf("unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)", 644), ""),
+		status(2000, from, "blocked", fmt.Sprintf("unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)", 1850), ""))
+	stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if n := strings.Count(stdout, `"state":"blocked"`); n != 1 {
+		t.Errorf("blocked events = %d, want 1 (%s)", n, stdout)
+	}
+	if !strings.Contains(stdout, `"ts":1000`) {
+		t.Errorf("the first unread must be the wake (%s)", stdout)
+	}
+}
+
+// genBus is the equivalence fixture: a deterministic mixed-session bus that
+// exercises every suppression case — first-terminal exited, repeated
+// blocked with cycle and awaited noise, blocked after working with the
+// same detail, watchdog `… cleared`, msgs to me/*/other, sessions that tie
+// on a millisecond, sessions that share a name across crews, rows of other
+// kinds, and a clock that steps backwards (the legacy program rescanned the
+// whole log and never trusted order, so the single pass may not either).
+// It never emits the one row whose behavior #910 changed: an `unread:`
+// blocked re-posted with a different age.
+func genBus(seed int64, n int) []string {
+	rng := rand.New(rand.NewSource(seed))
+	sessions := map[string][]string{
+		"c1": {"worker:feat/a#s1-1", "worker:feat/a#s2-2", "worker:feat/b#s1-1", "dispatcher:c1", "role:feat/a:reviewer", "worker:feat/c#s3-3"},
+		"c2": {"worker:feat/a#s1-1", "worker:feat/d#s1-1", "dispatcher:c2"},
+		"c3": {"worker:feat/e#s1-1", "dispatcher:c3"},
+	}
+	crews := []string{"c1", "c2", "c3"}
+	plain := []string{"need a waiver: fast gate red", "plan-shaped gate rework: flaky bats", ""}
+	other := []string{"done", "failed", "pr_open", "pending"}
+	rows := make([]string, 0, n)
+	ts := int64(1700000000000)
+	for i := 0; i < n; i++ {
+		crew := crews[rng.Intn(len(crews))]
+		pool := sessions[crew]
+		from := pool[rng.Intn(len(pool))]
+		switch d := rng.Intn(100); {
+		case d < 15:
+			rows = append(rows, statusRow(crew, from, "blocked", plain[rng.Intn(len(plain))], "", ts))
+		case d < 29:
+			rows = append(rows, statusRow(crew, from, "blocked",
+				fmt.Sprintf("need a waiver — awaited %ds, no reply (cycle %d of 24)", 298+rng.Intn(6), 1+rng.Intn(24)), "", ts))
+		case d < 38:
+			rows = append(rows, statusRow(crew, from, "blocked",
+				fmt.Sprintf("question %d (cycle %d of 24)", rng.Intn(50), 1+rng.Intn(24)), "", ts))
+		case d < 42:
+			rows = append(rows, statusRow(crew, from, "blocked", "", "", ts))
+		case d < 45:
+			rows = append(rows, rawRow(ts, crew, from, "dispatcher:"+crew, "status", `{"state":"blocked","detail":{"k":true}}`))
+		case d < 59:
+			rows = append(rows, statusRow(crew, from, "working", "", "", ts))
+		case d < 63:
+			rows = append(rows, statusRow(crew, from, "working", "load: cleared", "watchdog", ts))
+		case d < 65:
+			rows = append(rows, statusRow(crew, from, "working", "turn-stall: cleared\n", "watchdog", ts))
+		case d < 67:
+			rows = append(rows, statusRow(crew, from, "blocked", "prompt: option-select frame", "watchdog", ts))
+		case d < 73:
+			rows = append(rows, statusRow(crew, from, "exited", "", "", ts))
+		case d < 80:
+			rows = append(rows, statusRow(crew, from, other[rng.Intn(len(other))], "", "", ts))
+		case d < 92:
+			rows = append(rows, msgRow(ts, crew, from, "dispatcher:"+crew))
+		case d < 96:
+			rows = append(rows, msgRow(ts, crew, from, "*"))
+		case d < 99:
+			rows = append(rows, msgRow(ts, crew, from, "worker:feat/a#s1-1"))
+		default:
+			rows = append(rows, rawRow(ts, crew, from, "dispatcher:"+crew, "start", `{"session":"s1","kind":"dispatch"}`))
+		}
+		if rng.Intn(100) < 12 {
+			// ts tie: the same millisecond as the row before it.
+		} else {
+			ts += int64(rng.Intn(300))
+		}
+		if i%400 == 399 {
+			ts -= 250 // a clock that steps back; the fold may not trust order
+		}
+	}
+	return rows
+}
+
+func rawRow(ts int64, crew, from, to, kind, body string) string {
+	return `{"ts":` + itoa(ts) + `,"crew_id":` + strconv.Quote(crew) + `,"from":` + strconv.Quote(from) +
+		`,"to":` + strconv.Quote(to) + `,"kind":` + strconv.Quote(kind) + `,"body":` + body + "}"
+}
+
+func statusRow(crew, from, state, detail, source string, ts int64) string {
+	body := `{"state":` + strconv.Quote(state) + "}"
+	if detail != "" {
+		body = strings.TrimSuffix(body, "}") + `,"detail":` + strconv.Quote(detail) + "}"
+	}
+	if source != "" {
+		body = strings.TrimSuffix(body, "}") + `,"source":` + strconv.Quote(source) + "}"
+	}
+	return rawRow(ts, crew, from, "dispatcher:"+crew, "status", body)
+}
+
+func msgRow(ts int64, crew, from, to string) string {
+	return rawRow(ts, crew, from, to, "msg", `"{\"verdict\":\"accept\"}"`)
+}
+
+// legacyProgram reads the frozen pre-#910 fold, the equivalence oracle.
+func legacyProgram(t testing.TB) string {
+	t.Helper()
+	b, err := os.ReadFile("testdata/watch-legacy.jq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// foldWith runs one program the way fold does — same bindings, and the same
+// "no value means poll again" outcome — and returns the batch line.
+func foldWith(prog string, rows []jsonv.Value, since int64, states []string) (string, bool) {
+	sv := make([]jsonv.Value, len(states))
+	for i, s := range states {
+		sv[i] = jsonv.Str(s)
+	}
+	out, err := jqrun.Run(prog, rows, 0, map[string]jsonv.Value{
+		"crew":   jsonv.Str("c1"),
+		"me":     jsonv.Str("dispatcher:c1"),
+		"since":  jsonv.Num(float64(since)),
+		"states": jsonv.Array(sv...),
+	})
+	if err != nil || out.Kind() != jsonv.KindObject {
+		return "", false
+	}
+	var b strings.Builder
+	if err := jsonv.Encode(&b, out, jsonv.Options{}); err != nil {
+		return "encode error: " + err.Error(), true
+	}
+	return b.String(), true
+}
+
+func parseRows(t testing.TB, rows []string) []jsonv.Value {
+	t.Helper()
+	vs, err := jsonv.DecodeStream(strings.NewReader(strings.Join(rows, "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return vs
+}
+
+type genRow struct {
+	Ts   int64           `json:"ts"`
+	Crew string          `json:"crew_id"`
+	From string          `json:"from"`
+	To   string          `json:"to"`
+	Kind string          `json:"kind"`
+	Body json.RawMessage `json:"body"`
+}
+
+// assertSuppressionCases fails the equivalence run when the generated bus
+// never reached one of the selection rules it is meant to cover — the fold
+// agreeing on cases it never saw would prove nothing.
+func assertSuppressionCases(t *testing.T, rows []string) {
+	t.Helper()
+	hit := map[string]bool{}
+	type hist struct {
+		states  [2]string // [previous, last]
+		details [2]string
+	}
+	sess := map[string]*hist{}
+	var lastTS int64
+	for _, r := range rows {
+		var g genRow
+		if err := json.Unmarshal([]byte(r), &g); err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			State  string          `json:"state"`
+			Detail json.RawMessage `json:"detail"`
+			Source string          `json:"source"`
+		}
+		if g.Kind == "status" {
+			if err := json.Unmarshal(g.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+		}
+		detail := string(body.Detail)
+		state := body.State
+		if g.Kind == "status" && state == "blocked" && body.Detail == nil {
+			// A blocked with no detail field is its own coverage case.
+			hit["blocked with no detail"] = true
+		}
+		switch {
+		case g.Kind == "msg" && g.To == "dispatcher:c1":
+			hit["msg to dispatcher"] = true
+		case g.Kind == "msg" && g.To == "*":
+			hit["msg to *"] = true
+		case g.Kind == "start":
+			hit["row of another kind"] = true
+		case g.Kind == "status" && state == "blocked" && len(body.Detail) > 0 && body.Detail[0] == '{':
+			hit["object blocked detail"] = true
+		case g.Kind == "status" && state == "blocked" && body.Source == "watchdog":
+			hit["watchdog blocked"] = true
+		case g.Kind == "status" && state == "working" && body.Source == "watchdog" &&
+			(strings.HasSuffix(detail, `cleared"`) || strings.HasSuffix(detail, `cleared\n"`)):
+			hit["watchdog cleared working"] = true
+		}
+		if g.Ts == lastTS {
+			hit["millisecond ts tie"] = true
+		}
+		if g.Ts < lastTS {
+			hit["backwards clock step"] = true
+		}
+		lastTS = g.Ts
+		if g.Kind != "status" {
+			continue
+		}
+		key := g.Crew + "|" + g.From
+		h := sess[key]
+		if h == nil {
+			h = &hist{}
+			sess[key] = h
+		}
+		switch {
+		case h.states[1] == "blocked" && state == "blocked" && h.details[1] == detail && detail != "":
+			hit["repeated blocked, same detail"] = true
+		case h.states[1] == "working" && h.states[0] == "blocked" && h.details[0] == detail:
+			hit["blocked after working, same detail"] = true
+		case h.states[1] == "working" && state == "exited":
+			hit["exited after working"] = true
+		case (h.states[1] == "done" || h.states[1] == "failed") && state == "exited":
+			hit["exited after terminal"] = true
+		}
+		h.states[0], h.states[1] = h.states[1], state
+		h.details[0], h.details[1] = h.details[1], detail
+	}
+	for _, w := range []string{
+		"msg to dispatcher", "msg to *", "row of another kind",
+		"object blocked detail", "watchdog blocked", "watchdog cleared working",
+		"repeated blocked, same detail", "blocked after working, same detail",
+		"exited after working", "exited after terminal", "blocked with no detail",
+		"millisecond ts tie", "backwards clock step",
+	} {
+		if !hit[w] {
+			t.Errorf("generated bus never produced: %s", w)
+		}
+	}
+}
+
+func TestFoldEquivalentToLegacyProgram(t *testing.T) {
+	rows := genBus(910, 6000)
+	if len(rows) < 5000 {
+		t.Fatalf("generator produced %d rows", len(rows))
+	}
+	for _, r := range rows {
+		if strings.Contains(r, "undelivered for") {
+			t.Fatal("the equivalence bus may not contain the row whose behavior changed")
+		}
+	}
+	vs := parseRows(t, rows)
+	assertSuppressionCases(t, rows)
+	legacy := legacyProgram(t)
+	def := []string{"blocked", "pr_open", "done", "failed", "exited"}
+	for _, bind := range []struct {
+		since  int64
+		states []string
+	}{
+		{0, def},
+		{1700000450000, def},
+		{0, []string{"blocked", "working", "exited", "done", "failed", "pr_open", "pending"}},
+		{1700000600000, []string{"exited", "done"}},
+		{1800000000000, []string{"blocked"}},
+	} {
+		wantLine, wantOK := foldWith(legacy, vs, bind.since, bind.states)
+		gotLine, gotOK := foldWith(program, vs, bind.since, bind.states)
+		name := fmt.Sprintf("since %d states %v", bind.since, bind.states)
+		if wantOK != gotOK {
+			t.Errorf("%s: legacy ok=%v, new ok=%v", name, wantOK, gotOK)
+			continue
+		}
+		if wantOK && wantLine != gotLine {
+			t.Errorf("%s: batches differ\n legacy: %.400s\n    new: %.400s", name, wantLine, gotLine)
+		}
+		if wantOK && wantLine != "" {
+			t.Logf("%s: %d bytes identical", name, len(wantLine))
+		}
+	}
+}
+
+// The #910 poll cost, measured at the size the issue cites: 20k rows, one
+// fold each. `go test -bench 'Fold' -benchtime 3x`.
+func benchFoldPrograms(b *testing.B, prog string, rows []jsonv.Value) {
+	states := []string{"blocked", "pr_open", "done", "failed", "exited"}
+	sv := make([]jsonv.Value, len(states))
+	for i, s := range states {
+		sv[i] = jsonv.Str(s)
+	}
+	vars := map[string]jsonv.Value{
+		"crew":   jsonv.Str("c1"),
+		"me":     jsonv.Str("dispatcher:c1"),
+		"since":  jsonv.Num(0),
+		"states": jsonv.Array(sv...),
+	}
+	for b.Loop() {
+		if _, err := jqrun.Run(prog, rows, 0, vars); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFoldLegacy20k(b *testing.B) {
+	benchFoldPrograms(b, legacyProgram(b), parseRows(b, genBus(911, 20000)))
+}
+
+func BenchmarkFoldSinglePass20k(b *testing.B) {
+	benchFoldPrograms(b, program, parseRows(b, genBus(911, 20000)))
+}
+
+// A malformed session key on the shared bus must not throw the fold down:
+// jqrun reads a throw as "poll again", so one such row would blind every
+// watch of every crew. The fold skips non-string crew_id/from when building
+// its maps and answers null for them; the legacy program tolerated them
+// through plain equality. (Other malformed shapes — a bare scalar row, an
+// own-crew non-object body — still throw here, exactly as in the arm.)
+func TestMalformedSessionKeysDoNotThrowTheFold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []string
+	}{
+		{"foreign numeric crew_id", []string{
+			`{"ts":1,"crew_id":7,"from":"x","kind":"status","body":{"state":"working"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+		{"null crew_id", []string{
+			`{"ts":1,"crew_id":null,"from":"x","kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+		{"numeric from on this crew", []string{
+			`{"ts":1,"crew_id":"c1","from":7,"kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			`{"ts":2000,"crew_id":"c1","from":7,"kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+		}},
+		{"null from on this crew", []string{
+			`{"ts":1,"crew_id":"c1","kind":"status","body":{"state":"blocked"},"to":"dispatcher:c1"}`,
+			status(2000, "worker:feat/x#s1-1", "done", "", ""),
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, tc.rows...)
+			stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+			if code != 0 {
+				t.Fatalf("code %d", code)
+			}
+			if !strings.Contains(stdout, `"events"`) {
+				t.Errorf("the fold must answer, not poll again (%s)", stdout)
+			}
+		})
 	}
 }

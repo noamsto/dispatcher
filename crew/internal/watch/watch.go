@@ -4,7 +4,8 @@
 // exit 0. An expired park prints nothing on stdout (that is the marker, so a
 // backgrounded park is not a failed command) and one line on stderr.
 //
-// The fold is the arm's own jq, embedded and handed to jqrun (see watch.jq).
+// The fold is the arm's jq — same decisions, one pass since #910 — embedded
+// and handed to jqrun (see watch.jq).
 // Two contracts with bash `stream`, which re-enters this command as its child,
 // shape the rest of the file:
 //

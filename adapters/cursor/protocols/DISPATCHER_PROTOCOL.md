@@ -1173,7 +1173,8 @@ worker's worktree or by target** (not a fresh `dispatch`), exactly as for any wo
 mid-task.
 
 A later `blocked` from the same session does not wake when its detail matches the
-previous `blocked` once ` (cycle N of M)` is removed. A first `blocked`, a changed
+previous `blocked` once ` (cycle N of M)` and the `unread:` age `undelivered for Ns`
+are removed. A first `blocked`, a changed
 detail, and a question `msg` still wake. The row stays on the log, so roster
 `age_s` still advances. A watchdog `working` whose detail ends in ` cleared`
 (for example `load: cleared`) does not wake, including when `working` is passed
