@@ -502,7 +502,7 @@ Right before every stopping path (done; terminal failure of spec, plan, consult 
    codex: plugin `PreToolUse` hook on `Bash` (only read path) once codex trusts plugin hooks. cursor: only with the README's `~/.cursor/hooks.json` stanza. pi: only where hookyard loads this repo's `hookyard.json`.
 <!-- /only -->
    Backstop only: where absent or unparsed, this rule enforces.
-8. **Clean up every background process you start.** Up front, register a time-bounded `trap '<reap the pids>' EXIT INT TERM` so every exit path (`done`, `failed`, kill, timeout, early exit) stops them; confirm gone (`pgrep -f <pattern>` empty) before the next stage. Load generators (`yes`, `stress`, `lookbusy`, `md5sum </dev/urandom`, …) are never exempt (no hogs reparented to init).
+8. **Clean up every background process you start.** Up front, register a time-bounded `trap '<reap the pids>' EXIT INT TERM` so every exit path (`done`, `failed`, kill, timeout, early exit) stops them; confirm each pid you recorded is gone (`kill -0 <pid>` fails, or `wait <pid>` returned), never by matching process lists by pattern (`pgrep -f`/`pkill -f`), before the next stage. Load generators (`yes`, `stress`, `lookbusy`, `md5sum </dev/urandom`, …) are never exempt (no hogs reparented to init).
 
 ### Deliberate load (timing repros)
 
