@@ -1,6 +1,7 @@
 package stall
 
 import (
+	"bytes"
 	"os"
 	"regexp"
 	"strconv"
@@ -223,7 +224,8 @@ func TestBudgetOn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := decideBudget(t.Context(), c, f.probes()); got != tc.want {
+			w := &watch{ctx: t.Context(), cfg: c, p: f.probes(), stderr: &bytes.Buffer{}}
+			if got := w.decideBudget(t.Context()); got != tc.want {
 				t.Errorf("budgetOn = %v, want %v", got, tc.want)
 			}
 			if got := strings.Join(f.shCalls, ";"); got != tc.wantShOp {

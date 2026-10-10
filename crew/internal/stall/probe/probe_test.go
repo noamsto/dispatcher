@@ -427,25 +427,25 @@ func TestBusRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := Default(envOf(nil, nil))
-	rows, ok := p.BusRows(log)
+	rows, ok := p.BusRows(log, 0, 0)
 	if !ok || len(rows) != 2 {
-		t.Fatalf("BusRows = %d rows, ok=%v; want the 2-row well-formed prefix, true", len(rows), ok)
+		t.Fatalf("BusRows = %d rows, ok=%v; want the 2 whole rows, true", len(rows), ok)
 	}
 	v, _ := rows[1].Get("b")
 	if s, _ := v.AsString(); s != "x" {
 		t.Errorf("row 1 field b = %q, want x", s)
 	}
-	if _, ok := p.BusRows(dir); ok {
+	if _, ok := p.BusRows(dir, 0, 0); ok {
 		t.Error("a directory reported ok")
 	}
-	if _, ok := p.BusRows(filepath.Join(dir, "missing")); ok {
+	if _, ok := p.BusRows(filepath.Join(dir, "missing"), 0, 0); ok {
 		t.Error("a missing path reported ok")
 	}
 	empty := filepath.Join(dir, "empty")
 	if err := os.WriteFile(empty, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if rows, ok := p.BusRows(empty); !ok || len(rows) != 0 {
+	if rows, ok := p.BusRows(empty, 0, 0); !ok || len(rows) != 0 {
 		t.Errorf("empty log = %d rows, ok=%v; want 0, true", len(rows), ok)
 	}
 }

@@ -211,8 +211,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		ctx, stop := stall.NotifySignals(ctx)
 		defer stop()
 		return stall.Run(ctx, args, paths, stderr, stall.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			// Anchor, don't discover: dispatch hands a watchdog its crew in the
+			// env, and its cwd is a worktree whose WORKER_TASK.md the watched
+			// worker can rewrite.
+			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			CrewSH: os.Getenv("CREW_SH"),
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: os.Getenv("CREW_SH"), Dir: paths.Common, Stderr: stderr})
 			},

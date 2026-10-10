@@ -21,7 +21,8 @@ func (e SignalError) Error() string { return "signal: " + e.Sig.String() }
 // starts the watchdog as a non-interactive bash `&` job, which ignores SIGINT,
 // so a Ctrl-C to dispatch's process group never killed it. The returned func
 // stops notification and cancels with a nil cause; it is also safe to call
-// after a signal.
+// after a signal, which the first one has already stopped notification for, so
+// a second signal finds the default disposition waiting.
 func NotifySignals(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	ch := make(chan os.Signal, 1)
@@ -33,6 +34,12 @@ func NotifySignals(parent context.Context) (context.Context, func()) {
 	go func() {
 		select {
 		case sig := <-ch:
+			// Uninstall the handler here, not only in the returned stop: the arm
+			// can hold on for an --sh write's 2-minute cap after the first
+			// signal, and while a channel stays registered a second SIGTERM is
+			// queued to a channel nobody reads and vanishes. Stopped, the
+			// default disposition is back and a second signal ends the process.
+			signal.Stop(ch)
 			if s, ok := sig.(syscall.Signal); ok {
 				cancel(SignalError{s})
 			}

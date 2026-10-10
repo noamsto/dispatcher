@@ -622,3 +622,39 @@ func TestReadEventsTolerant(t *testing.T) {
 		}
 	})
 }
+
+// A watchdog is launched by dispatch with its crew in the environment, and its
+// cwd is a worktree whose WORKER_TASK.md the watched worker can rewrite. For
+// that caller the env is the anchor and the task doc is an argument; CrewID's
+// own order stands for every other subcommand.
+func TestCrewIDEnvFirst(t *testing.T) {
+	task := "tier: standard\ncrew_id: taskdoc\nengine: pi\n"
+	cases := []struct {
+		name string
+		task *string
+		env  string
+		want string
+	}{
+		{"a worker-edited task doc loses to the env", ptr(task), "1791464376-1014098", "1791464376-1014098"},
+		{"empty env falls back to the task doc", ptr(task), "", "taskdoc"},
+		{"no task doc, env only", nil, "envid", "envid"},
+		{"neither", nil, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			main, _ := newRepo(t)
+			if c.task != nil {
+				writeFile(t, filepath.Join(main, "WORKER_TASK.md"), *c.task)
+			}
+			t.Setenv("CREW_ID", c.env)
+			if got := CrewIDEnvFirst(context.Background(), main); got != c.want {
+				t.Fatalf("CrewIDEnvFirst = %q, want %q", got, c.want)
+			}
+			if c.env != "" && c.task != nil {
+				if got := CrewID(context.Background(), main); got != "taskdoc" {
+					t.Fatalf("CrewID = %q, want the task doc to keep winning there", got)
+				}
+			}
+		})
+	}
+}

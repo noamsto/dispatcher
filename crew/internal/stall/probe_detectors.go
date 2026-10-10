@@ -4,7 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"errors"
-	"os"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -87,7 +87,22 @@ func (w *watch) shOn(ctx context.Context, op string, args ...string) (string, in
 		return "", 0, false, err
 	}
 	verdict, ok := shVerdict(rc)
+	if !ok {
+		w.logHelperFailure(op, rc)
+	}
 	return out, verdict, ok, nil
+}
+
+// logHelperFailure puts the first --sh call-out that failed to run on stderr
+// and stays quiet after it: a helper that cannot run fails every one of them,
+// and one line names the cause where a silent D6, D8 or release looks like a
+// worker with nothing to say.
+func (w *watch) logHelperFailure(op string, rc int) {
+	if w.shFailLogged {
+		return
+	}
+	w.shFailLogged = true
+	_, _ = fmt.Fprintf(w.stderr, "crew: stall-watch: '%s' helper failed to run (status %d)\n", op, rc)
 }
 
 // d4 is host load. Engine-independent: it reads the host, not the pane.
@@ -441,22 +456,17 @@ func (w *watch) autoNudge() (bool, error) {
 	return false, nil
 }
 
-// nudged runs nudged.jq over the log's last 2000 lines, each decoded on its
-// own; any failure reads as not nudged.
+// nudgedTailLines is the arm's `tail -n 2000`: history enough to cover a
+// directive still open, bounded so the check costs the same on a day-old log
+// and a month-old one.
+const nudgedTailLines = 2000
+
+// nudged runs nudged.jq over the log's last nudgedTailLines lines, each decoded
+// on its own; any failure reads as not nudged.
 func (w *watch) nudged(msgTS int64) bool {
-	data, err := os.ReadFile(w.paths.Log)
-	if err != nil {
+	rows, ok := w.p.BusRows(w.paths.Log, 0, nudgedTailLines)
+	if !ok {
 		return false
-	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	lines = lines[max(len(lines)-2000, 0):]
-	var rows []jsonv.Value
-	for _, line := range lines {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 {
-			continue
-		}
-		rows = append(rows, vs[0])
 	}
 	out, err := jqrun.Run(nudgedProgram, rows, 0, map[string]jsonv.Value{
 		"c":  jsonv.Str(w.cfg.crew),

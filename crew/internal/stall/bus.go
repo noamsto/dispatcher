@@ -20,7 +20,9 @@ var refreshProgram string
 // samples the successor's pane under a dead session id.
 func (w *watch) refresh() error {
 	w.bus = busView{}
-	rows, ok := w.p.BusRows(w.paths.Log)
+	// Rows older than the run are dropped by the reader and by the jq below: a
+	// whole-log read every 4th tick costs memory proportional to the log.
+	rows, ok := w.p.BusRows(w.paths.Log, w.cfg.runStartMS, 0)
 	if !ok {
 		return nil
 	}

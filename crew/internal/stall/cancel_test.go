@@ -3,11 +3,12 @@ package stall
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
 // sigterm is a context NotifySignals cancelled on SIGTERM, and its cancel.
@@ -153,23 +154,11 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
-	fifo := filepath.Join(t.TempDir(), "log.fifo")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.shc = func(_ context.Context, op string, args ...string) (string, int) {
-		if op == "unread" {
-			// Hold nudged()'s read open until the signal has landed.
-			w.paths.Log = fifo
-			go func() {
-				fh, err := os.OpenFile(fifo, os.O_WRONLY, 0)
-				cancel()
-				if err == nil {
-					_ = fh.Close()
-				}
-			}()
+	f.busRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+		if maxLines == nudgedTailLines {
+			cancel() // the signal lands mid-scan, before the write could start
 		}
-		return s.sh(op, args...)
+		return probe.BusRows(path, sinceMS, maxLines)
 	}
 	if code, ok := codeOf(pdTick(t, w, 0, 0, w.d6)); !ok || code != 143 {
 		t.Errorf("d6 = (%d, %v), want 143", code, ok)
