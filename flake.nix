@@ -160,7 +160,7 @@
             version = "0.1.0";
             src = ./crew;
             vendorHash = "sha256-9H7aWvuqfuxsL3UIoxaqNEofuFXE2D9Dq3Hk32qSHmk=";
-            nativeCheckInputs = [pkgs.git];
+            nativeCheckInputs = [pkgs.git pkgs.ps];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
 
