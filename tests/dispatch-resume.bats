@@ -580,6 +580,36 @@ _store_protocols() { # <dir> <content>
   [ "$status" -ne 0 ]
 }
 
+# #936: tmux takes a new window's PATH from the caller, so this launcher's own
+# pinned tool dirs — the store bins flake.nix bakes as @launcherRuntimePath@ —
+# would ride into the resumed session, whose `crew` would then resolve to the
+# build the launcher started with and never pick up a home-manager rebuild.
+@test "resume hands the engine window a PATH without the launcher's pinned dirs (#936)" {
+  setup_worker_wt
+  local pinned="$TEST_REPO/store/h-pinned/bin"
+  mkdir -p "$pinned"
+  sed "s|@launcherRuntimePath@|$pinned|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-pinned.sh"
+  cd "$WT"
+  PATH="$pinned:$PATH" run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-pinned.sh"
+  [ "$status" -eq 0 ]
+  # The pane's PATH: the caller's minus the pinned dir, everything else in place.
+  grep -qF -- "-e PATH=$STUB_DIR:" "$STUB_LOG"
+  run grep -qF -- "$pinned" "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "a raw resume opens the window with no PATH override (#936)" {
+  # The raw script has no store dirs to remove; the new-window line stays exactly
+  # what it was, so nothing about the pane's own shell init changes.
+  setup_worker_wt
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q -- 'new-window' "$STUB_LOG"
+  run grep -qF -- "-e PATH=" "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
 @test "resume keeps a store-path DISPATCHER_PROTOCOL_DIR whose content matches the baked dir, silently" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

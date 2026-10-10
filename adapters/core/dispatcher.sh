@@ -265,6 +265,50 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
   fi
 fi
 
+# #936: the preamble writeShellApplication builds for this script prepends its
+# own pinned tool dirs — git, jq, coreutils, diffutils, tmux and crew, all nix
+# store paths — to PATH, and the engine launched below inherits it. A dispatcher
+# session that outlives a home-manager rebuild keeps calling the `crew` build it
+# was launched with, while a worker pane (a fresh login shell) picks up the new
+# one. engine_path prints the caller's PATH with exactly those dirs dropped and
+# every other entry in order; the launches below run under it, so only the
+# engine's environment changes and every launcher lookup above stays pinned.
+# flake.nix's launcherPath substitutes the placeholder at build time; a raw run
+# from a checkout leaves it literal and PATH untouched.
+_launcher_runtime_path='@launcherRuntimePath@'
+engine_path() {
+  local pinned="$_launcher_runtime_path" entry dir keep
+  local -a parts=() pinned_parts=() kept=()
+  # A substituted value is a colon-joined list of store dirs, so it starts with
+  # `/`; anything else is the raw script, where there is nothing to remove. Same
+  # "not absolute means unsubstituted" test _resolve_dir uses.
+  if [ "${pinned:0:1}" != '/' ]; then
+    printf '%s' "${PATH-}"
+    return 0
+  fi
+  IFS=: read -ra parts <<<"${PATH-}" || true
+  IFS=: read -ra pinned_parts <<<"$pinned" || true
+  for entry in "${parts[@]}"; do
+    keep=1
+    for dir in "${pinned_parts[@]}"; do
+      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
+        keep=0
+        break
+      fi
+    done
+    if [ "$keep" = 1 ]; then
+      kept+=("$entry")
+    fi
+  done
+  local IFS=:
+  printf '%s' "${kept[*]}"
+}
+
+# Computed while the pinned PATH is still in effect: `env` itself, and every
+# tool the launcher still needs after the launch (crew for deregister), resolve
+# exactly as before.
+engine_env_path="$(engine_path)"
+
 case "$agent" in
 claude)
   # Pinned, not inherited: /model and /effort persist across sessions, so an
@@ -274,7 +318,7 @@ claude)
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   [ -n "$ac" ] && [ "$ac" != auto ] && set -- "$@" --autocompact "$ac"
-  claude "$@" ${task:+"$task"}
+  env PATH="$engine_env_path" claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
   # Neither CLI has --append-system-prompt-file — inject the protocol as the
@@ -288,7 +332,7 @@ codex | cursor)
     # the unattended dispatcher at 2.5x cost.
     ac_flag=()
     [ -n "$ac" ] && [ "$ac" != auto ] && ac_flag=(-c "model_auto_compact_token_limit=$ac")
-    codex --profile worker \
+    env PATH="$engine_env_path" codex --profile worker \
       -m "${model:-$(orch_default model)}" \
       -c "model_reasoning_effort=\"${effort:-$(orch_default effort)}\"" \
       -c 'service_tier="default"' \
@@ -299,7 +343,7 @@ codex | cursor)
     # accepted-and-ignored (cursor encodes effort in the model id).
     [ -n "$effort" ] && echo "dispatcher: --effort is ignored for cursor (effort lives in the model id)" >&2
     [ -n "$ac" ] && [ "$ac" != auto ] && echo "dispatcher: --autocompact is ignored for cursor (no compaction knob)" >&2
-    cursor-agent --model "${model:-$(orch_default model)}" \
+    env PATH="$engine_env_path" cursor-agent --model "${model:-$(orch_default model)}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
   ;;
@@ -318,7 +362,7 @@ pi)
     --no-approve \
     --append-system-prompt "$protocol"
   [ -n "$task" ] && set -- "$@" "$task"
-  pi "$@"
+  env PATH="$engine_env_path" pi "$@"
   ;;
 esac
 

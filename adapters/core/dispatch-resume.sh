@@ -149,6 +149,47 @@ shell_quote() {
   _out="'$_res'"
 }
 
+# #936, duplicated from dispatcher.sh (adapters/core has no shared library;
+# each launcher bakes standalone): the preamble writeShellApplication builds for
+# this script prepends its own pinned tool dirs — gh, git, jq, gnused, gnugrep,
+# coreutils, findutils, diffutils, tmux and crew, all nix store paths — to PATH.
+# The resumed engine is typed into a tmux pane, and tmux builds that pane from
+# the caller's PATH, so without this the session resolves `crew` from the store
+# build this launcher started with and never picks up a rebuild. engine_path
+# prints the caller's PATH with exactly those dirs dropped, every other entry in
+# order; the window creation below hands it to tmux as the pane's PATH, so the
+# resumed engine resolves `crew` through the user profile. flake.nix's
+# launcherPath substitutes the placeholder at build time; a raw run from a
+# checkout leaves it literal and leaves PATH untouched.
+_launcher_runtime_path='@launcherRuntimePath@'
+engine_path() {
+  local pinned="$_launcher_runtime_path" entry dir keep
+  local -a parts=() pinned_parts=() kept=()
+  # A substituted value is a colon-joined list of store dirs, so it starts with
+  # `/`; anything else is the raw script, where there is nothing to remove. Same
+  # "not absolute means unsubstituted" test _resolve_dir uses.
+  if [ "${pinned:0:1}" != '/' ]; then
+    printf '%s' "${PATH-}"
+    return 0
+  fi
+  IFS=: read -ra parts <<<"${PATH-}" || true
+  IFS=: read -ra pinned_parts <<<"$pinned" || true
+  for entry in "${parts[@]}"; do
+    keep=1
+    for dir in "${pinned_parts[@]}"; do
+      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
+        keep=0
+        break
+      fi
+    done
+    if [ "$keep" = 1 ]; then
+      kept+=("$entry")
+    fi
+  done
+  local IFS=:
+  printf '%s' "${kept[*]}"
+}
+
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -1136,7 +1177,17 @@ if [ -z "$pane" ]; then
       client_height=""
     fi
   fi
-  read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+  # #936: tmux takes the new window's PATH from the caller, so without this the
+  # pane — and the engine typed into it — keeps this launcher's pinned tool dirs.
+  # -e pins the pane's PATH to the caller's minus those (see engine_path); the
+  # pane's own login shell prepends its profile entries on top. Skipped when
+  # nothing was dropped, so a raw run opens the window exactly as before.
+  engine_env_path="$(engine_path)"
+  pane_path=()
+  if [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
+    pane_path=(-e "PATH=$engine_env_path")
+  fi
+  read -r win pane < <(tmux new-window -d -c "$wt_path" -n "$sanitized" "${pane_path[@]}" -P -F '#{window_id} #{pane_id}')
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   fi
