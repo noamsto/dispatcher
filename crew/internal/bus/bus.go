@@ -269,10 +269,9 @@ func CrewID(ctx context.Context, cwd string) string {
 }
 
 // CrewIDEnvFirst is CrewID with the launcher's env preferred over the checkout:
-// for a process the dispatcher starts with CREW_ID in its environment and cwd
-// inside a worktree someone else can write — stall-watch, and the role watchdog
-// dispatch --spawn-role starts inside a worker's tree — the task doc is an
-// argument the worker could edit, not the anchor the launcher passed.
+// for a process started with CREW_ID in its environment and cwd inside a
+// worktree its own watched worker can rewrite, the task doc is an argument that
+// worker could edit, not the anchor the launcher passed.
 func CrewIDEnvFirst(ctx context.Context, cwd string) string {
 	if id := os.Getenv("CREW_ID"); id != "" {
 		return id

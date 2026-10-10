@@ -16,9 +16,8 @@ const tailChunk = 256 << 10
 
 // tailDisorder is how far below its floor a row may sit and still end the scan,
 // in ms. A writer stamps a row before appending it, so two writers can land the
-// later row first; without a margin that slip hides the newer row, and a
-// watchdog that reads no status at all treats a worker that has gone pr_open
-// like one it should nudge. Five minutes is orders past any stamp-to-append
+// later row first, and a scan that stopped at the floor would end at that slip
+// and miss the newer row. Five minutes is orders past any stamp-to-append
 // latency, and the previous run it has to reach is hours away.
 const tailDisorder = 5 * 60 * 1000
 
@@ -27,14 +26,12 @@ const tailDisorder = 5 * 60 * 1000
 //
 // The log is append-only with one JSON row per line, and both callers only ever
 // want its end — refresh the rows at or after sinceMS, nudged the last maxLines
-// lines — so decoding all of it costs memory and time proportional to the whole
-// file (about 13x its size in allocations), paid by every resident watchdog
-// every 4th tick. Instead the reader takes a window off the end, walks its
-// complete lines newest first, and stops at the first row older than the run or
-// once maxLines lines are read; a window that runs out before either stop
-// doubles. Rows are appended in ts order but not strictly (see tailDisorder),
-// and a row whose ts is not a number cannot be shown older and is kept, which
-// is what the callers' jq (`.ts >= $t0`, where strings outrank numbers) does.
+// lines — so the reader takes a window off the end, walks its complete lines
+// newest first, and stops at the first row older than the run or once maxLines
+// lines are read; a window that runs out before either stop doubles. Rows are
+// appended in ts order but not strictly (see tailDisorder), and a row whose ts
+// is not a number cannot be shown older and is kept, which is what the callers'
+// jq (`.ts >= $t0`, where strings outrank numbers) does.
 //
 // A line that does not decode to exactly one value is skipped — the arm's
 // `jq -R 'fromjson?'` — so the torn tail of a concurrent append drops out alone.
@@ -118,8 +115,8 @@ func scanWindow(f *os.File, size, window, sinceMS int64, maxLines int) (rows []j
 	return reverse(rev), stop, true
 }
 
-// afterNewline is the byte before off being a newline: the window at off starts
-// a line.
+// afterNewline is true when the byte before off is a newline, so a window read
+// at off starts on a line boundary.
 func afterNewline(f *os.File, off int64) bool {
 	b := make([]byte, 1)
 	if _, err := f.ReadAt(b, off-1); err != nil {
@@ -138,10 +135,10 @@ func row(line []byte) (jsonv.Value, bool) {
 	return vs[0], true
 }
 
-// older is a row's ts falling before bound. A bound of 0 or less bounds nothing,
-// and a ts that is not a number cannot be shown to fall before one.
-func older(v jsonv.Value, sinceMS int64) bool {
-	if sinceMS <= 0 {
+// older is whether v's ts falls before bound. A bound of 0 or less bounds
+// nothing, and a ts that is not a number cannot be shown to fall before one.
+func older(v jsonv.Value, bound int64) bool {
+	if bound <= 0 {
 		return false
 	}
 	ts, ok := v.Get("ts")
@@ -149,7 +146,7 @@ func older(v jsonv.Value, sinceMS int64) bool {
 		return false
 	}
 	f, ok := ts.AsFloat()
-	return ok && f < float64(sinceMS)
+	return ok && f < float64(bound)
 }
 
 func reverse(vs []jsonv.Value) []jsonv.Value {

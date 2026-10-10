@@ -623,10 +623,9 @@ func TestReadEventsTolerant(t *testing.T) {
 	})
 }
 
-// A watchdog is launched by dispatch with its crew in the environment, and its
-// cwd is a worktree whose WORKER_TASK.md the watched worker can rewrite. For
-// that caller the env is the anchor and the task doc is an argument; CrewID's
-// own order stands for every other subcommand.
+// A watchdog launched by dispatch carries its crew in the env, and its cwd is a
+// worktree the watched worker can rewrite; CrewID's own order has to stand for
+// every other subcommand.
 func TestCrewIDEnvFirst(t *testing.T) {
 	task := "tier: standard\ncrew_id: taskdoc\nengine: pi\n"
 	cases := []struct {

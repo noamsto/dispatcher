@@ -147,11 +147,8 @@ func TestReleaseHelperFailureKeepsWatching(t *testing.T) {
 	}
 }
 
-// Every bash helper is reached through CREW_SH, so a watch started without it
-// would run for its whole --max-life posting nothing: D6's unread scan and
-// nudge, D8's budget verdict, the pi local-model check and the finished-worker
-// release all fail alike. The crew wrapper always exports it, so this refuses a
-// direct crew-go call or a script removed mid-deploy.
+// A watch started without CREW_SH would run its whole --max-life posting
+// nothing, with every bash helper failing alike.
 func TestCrewSHRefusal(t *testing.T) {
 	for _, tc := range []struct {
 		name string

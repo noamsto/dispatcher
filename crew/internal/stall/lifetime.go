@@ -34,11 +34,10 @@ func NotifySignals(parent context.Context) (context.Context, func()) {
 	go func() {
 		select {
 		case sig := <-ch:
-			// Uninstall the handler here, not only in the returned stop: the arm
+			// Stop notification here, not only in the returned func: the watch
 			// can hold on for an --sh write's 2-minute cap after the first
 			// signal, and while a channel stays registered a second SIGTERM is
-			// queued to a channel nobody reads and vanishes. Stopped, the
-			// default disposition is back and a second signal ends the process.
+			// queued to a channel nobody reads and vanishes.
 			signal.Stop(ch)
 			if s, ok := sig.(syscall.Signal); ok {
 				cancel(SignalError{s})

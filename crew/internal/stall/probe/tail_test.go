@@ -203,10 +203,9 @@ func allocBytes(t *testing.T, f func()) uint64 {
 	return best
 }
 
-// The whole point of reading from the tail: refresh's cost tracks the run's
-// rows, not the log's. Rows written before the run started — every earlier run
-// on this branch, and every other branch's traffic — must cost nothing, and a
-// window of them must not be paid for twice as the log grows.
+// The tail reader's cost tracks the run's rows, not the log's: rows written
+// before the run started — earlier runs on this branch, other branches'
+// traffic — must cost nothing.
 func TestBusRowsAllocationDoesNotGrowWithOldRows(t *testing.T) {
 	const run = int64(1_700_000_000_000)
 	const inRun = 5
@@ -218,8 +217,8 @@ func TestBusRowsAllocationDoesNotGrowWithOldRows(t *testing.T) {
 			if !ok {
 				t.Fatalf("ok = false on a %d B log", size)
 			}
-			// The reader's own bound: rows older than the run never reach it,
-			// so the cost of measuring it is the cost of the run's rows.
+			// Rows older than the run must not reach the reader at all, or
+			// this measures their decoding.
 			if len(rows) != inRun {
 				t.Fatalf("%d rows, want %d on a %d B log", len(rows), inRun, size)
 			}

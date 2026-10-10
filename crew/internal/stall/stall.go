@@ -74,11 +74,11 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		}
 		return 1
 	}
-	// Every bash helper the watch needs — the D6 nudge and unread scan, D8's
-	// budget verdict, the pi local-model check, the finished-worker release —
-	// is reached through CREW_SH. Without it they all fail and nothing reaches
-	// the bus, which looks like a quiet worker. The crew wrapper always sets
-	// it, so this refuses a direct crew-go call or a script removed mid-deploy.
+	// Every bash helper the watch needs — D6's unread scan and nudge, D8's
+	// budget verdict, the pi local-model check, the finished-worker release — is
+	// reached through CREW_SH, so without it they all fail with nothing on the
+	// bus. The crew wrapper always exports it: this is a direct crew-go call or
+	// a script removed mid-deploy.
 	if err := crewSHError(o.CrewSH); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1

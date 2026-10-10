@@ -130,11 +130,8 @@ func TestHelperInt(t *testing.T) {
 	}
 }
 
-// A second SIGTERM landing while an --sh write runs — the watch holds on for up
-// to that op's 2-minute cap after the first signal, so its own write finishes —
-// has to end the process. While the handler stays installed the signal is
-// queued to a channel nobody reads and vanishes, leaving SIGKILL the only way
-// out.
+// A second SIGTERM landing while an --sh write runs — up to that op's 2-minute
+// cap after the first signal — has to end the process.
 func TestSecondSignalEndsTheProcess(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperSecondSignal$")
 	cmd.Env = append(os.Environ(), "STALL_HELPER_SECOND=1")

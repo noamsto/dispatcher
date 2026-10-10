@@ -94,9 +94,7 @@ func (w *watch) shOn(ctx context.Context, op string, args ...string) (string, in
 }
 
 // logHelperFailure puts the first --sh call-out that failed to run on stderr
-// and stays quiet after it: a helper that cannot run fails every one of them,
-// and one line names the cause where a silent D6, D8 or release looks like a
-// worker with nothing to say.
+// and stays quiet after it: a helper that cannot run fails every one of them.
 func (w *watch) logHelperFailure(op string, rc int) {
 	if w.shFailLogged {
 		return
