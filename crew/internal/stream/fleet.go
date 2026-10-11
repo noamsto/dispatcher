@@ -101,8 +101,10 @@ func RunFleet(argv []string, stdout, stderr io.Writer, opts FleetOptions) int {
 	c.reapEvery = 0
 
 	// Each bus loop's child runs in its repo's git common dir, so a relative
-	// script path would resolve there instead of where it was given.
-	if strings.Contains(o.Self, "/") {
+	// script path would resolve there instead of where it was given. bash runs
+	// a bare name from the cwd before searching PATH, so one that exists here
+	// is relative too.
+	if !filepath.IsAbs(o.Self) && (strings.Contains(o.Self, "/") || isFile(o.Self)) {
 		self, err := filepath.Abs(o.Self)
 		if err != nil {
 			say(stderr, "crew: %v\n", err)
@@ -264,9 +266,9 @@ func (f *fleet) shutdown(s os.Signal) int {
 }
 
 // discover is one pass over the candidates: skip notes, a loop stopped for a
-// repo that is gone or no longer listed as a bus, and a join for each bus that has gained a row for the crew.
-// A bus with none is never watched, so no cursor or crew dir is created in a
-// repo the crew never touched.
+// repo that is gone or no longer listed as a bus, and a join for each bus that
+// has gained a row for the crew. A bus with none is never watched, so no cursor
+// or crew dir is created in a repo the crew never touched.
 func (f *fleet) discover() {
 	var notes bytes.Buffer
 	found := f.o.Discover(&notes)
@@ -280,13 +282,18 @@ func (f *fleet) discover() {
 
 	// A repo deleted under a sweep root just drops out of discovery, with no
 	// gone row to say so.
-	listed := make(map[string]bool, len(found))
+	listed := make(map[string]repos.Status, len(found))
 	for _, r := range found {
-		listed[r.Common] = r.Status == repos.StatusOK
+		listed[r.Common] = r.Status
 	}
 	for common := range f.buses {
-		if !listed[common] {
-			f.leave(common)
+		status, present := listed[common]
+		if status == repos.StatusOK {
+			continue
+		}
+		f.leave(common)
+		if !present {
+			f.skip(common, "no longer discovered")
 		}
 	}
 
@@ -323,6 +330,11 @@ func (f *fleet) skip(common, why string) {
 	}
 	f.noted[common] = why
 	say(f.stderr, "crew: fleet stream: %s: skipped (%s)\n", common, why)
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 func hasCrew(events []bus.Event, crew string) bool {

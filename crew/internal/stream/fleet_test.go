@@ -431,22 +431,32 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 }
 
 func TestFleetRelativeSelfStillDelivers(t *testing.T) {
-	alpha := gitRepo(t, "alpha")
-	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
-	stub := watchStub(t)
-	// The child runs in alpha, not here, so only an absolute path still finds it.
-	t.Chdir(filepath.Dir(stub))
-	self := "./" + filepath.Base(stub)
+	for _, tc := range []struct {
+		name string
+		self func(stub string) string
+	}{
+		{"with a slash", func(stub string) string { return "./" + filepath.Base(stub) }},
+		// bash runs a bare script name from the cwd before searching PATH.
+		{"bare name in the cwd", func(stub string) string { return filepath.Base(stub) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			alpha := gitRepo(t, "alpha")
+			appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+			stub := watchStub(t)
+			// The child runs in alpha, not here, so only an absolute path still finds it.
+			t.Chdir(filepath.Dir(stub))
 
-	l := startFleet(t, FleetOptions{
-		Options:  Options{Self: self},
-		Discover: okRepos(alpha),
-		Origin:   origins(nil),
-	}, fastFlags()...)
+			l := startFleet(t, FleetOptions{
+				Options:  Options{Self: tc.self(stub)},
+				Discover: okRepos(alpha),
+				Origin:   origins(nil),
+			}, fastFlags()...)
 
-	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
-	waitFor(t, "alpha's batch through a relative Self", func() bool { return l.delivered()["alpha"][2000] > 0 })
-	l.stop()
+			appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
+			waitFor(t, "alpha's batch through a relative Self", func() bool { return l.delivered()["alpha"][2000] > 0 })
+			l.stop()
+		})
+	}
 }
 
 func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
@@ -478,6 +488,11 @@ func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
 	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
 	waitFor(t, "alpha's batch", func() bool { return l.delivered()["alpha"][2000] > 0 })
 	l.stop()
+
+	want := "crew: fleet stream: " + beta + ": skipped (no longer discovered)\n"
+	if n := strings.Count(l.errb.str(), want); n != 1 {
+		t.Errorf("%q noted %d times, want once; stderr %q", want, n, l.errb.str())
+	}
 }
 
 func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
@@ -787,4 +802,46 @@ func mkdir(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func TestFleetLeavesRepoNoLongerListedOK(t *testing.T) {
+	alpha, beta := gitRepo(t, "alpha"), gitRepo(t, "beta")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	appendRow(t, beta, statusRow(1000, "c1", "worker:feat/b", "working"))
+	var betaStatus atomic.Value
+	betaStatus.Store(repos.StatusOK)
+
+	l := startFleet(t, FleetOptions{
+		Options: Options{Self: watchStub(t)},
+		Discover: func(io.Writer) []repos.Repo {
+			return []repos.Repo{
+				{Common: alpha, Status: repos.StatusOK},
+				{Common: beta, Status: betaStatus.Load().(repos.Status)},
+			}
+		},
+		Origin: origins(nil),
+	}, fastFlags("--rediscover", "1")...)
+
+	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
+	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
+	appendRow(t, beta, statusRow(2000, "c1", "worker:feat/b", "pr_open"))
+	waitFor(t, "beta's first batch", func() bool { return l.delivered()["beta"][2000] > 0 })
+
+	betaStatus.Store(repos.StatusNoBus)
+	l.kickUntil("beta's loop to stop", func() bool { _, err := os.Stat(betaScratch); return os.IsNotExist(err) })
+
+	appendRow(t, beta, statusRow(3000, "c1", "worker:feat/b", "done"))
+	betaStatus.Store(repos.StatusOK)
+	l.kickUntil("beta's new batch", func() bool { return l.delivered()["beta"][3000] > 0 })
+	l.stop()
+
+	for ts, n := range l.delivered()["beta"] {
+		if n != 1 {
+			t.Errorf("beta's event %d delivered %d times, want once", ts, n)
+		}
+	}
+	want := "crew: fleet stream: " + beta + ": skipped (no bus)\n"
+	if n := strings.Count(l.errb.str(), want); n != 1 {
+		t.Errorf("%q noted %d times, want once; stderr %q", want, n, l.errb.str())
+	}
 }
