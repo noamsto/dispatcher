@@ -33,6 +33,7 @@ type frameDet struct {
 	d9Typed            bool
 	d9Outcome          string // "typed": this watch typed this episode; "prior": an earlier watchdog's auto-continued row stands, nothing typed here
 	d9Count            int64  // continue helper attempts this watch, across episodes
+	d9Base             string // the frame the type rode on, "" until one types: D9's resume baseline
 }
 
 // d9Limit caps continue helper attempts per watch: a lead that keeps stopping,
@@ -428,7 +429,10 @@ func (w *watch) d0() error {
 // line per episode on the second stopped sample, typed through the same gated
 // nudge.Pane as D6's auto-nudge; it never escalates. An idle box still holding
 // text is the typed line or a human draft: it holds the episode open without
-// resuming or clearing it.
+// resuming or clearing it. After a type, the episode is judged by the pane, not
+// by the stop kind alone: a same-kind stopped frame that differs from the frame
+// the type rode on is a resumed lead that stopped again, so the episode closes
+// and a fresh one opens instead of posting "not resumed".
 func (w *watch) d9() error {
 	fd := &w.fd
 	kind := ""
@@ -452,7 +456,26 @@ func (w *watch) d9() error {
 	if fd.d9Hits >= 2 && !fd.d9Typed {
 		// Set before the call: a helper that crashes mid-type never retypes.
 		fd.d9Typed, fd.d9TypedHit = true, fd.d9Hits
-		return w.d9Continue()
+		if err := w.d9Continue(); err != nil {
+			return err
+		}
+		if fd.d9Outcome == "typed" {
+			fd.d9Base = w.text
+		}
+		return nil
+	}
+	// A resumed lead whose new turn stops again the same way before any
+	// sample catches it working never produces a non-stopped tick, so hit
+	// counting alone reports "not resumed" after it did work. The test is
+	// quiet:'s byte identity (the loop's raw `text != lastText`). d9Count
+	// stays untouched: the per-watch cap must span episodes so a lead that
+	// keeps stopping still surfaces.
+	if fd.d9Outcome == "typed" && fd.d9Base != "" && w.text != fd.d9Base {
+		if err := w.d9Close(); err != nil {
+			return err
+		}
+		fd.d9Kind, fd.d9Hits = kind, 1
+		return nil
 	}
 	if (fd.d9Outcome == "typed" || fd.d9Outcome == "prior") && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
 		if fd.d9Outcome == "prior" {
@@ -493,7 +516,7 @@ func (w *watch) d9Close() error {
 			return err
 		}
 	}
-	fd.d9Kind, fd.d9Hits, fd.d9TypedHit, fd.d9At, fd.d9Typed, fd.d9Outcome = "", 0, 0, 0, false, ""
+	fd.d9Kind, fd.d9Hits, fd.d9TypedHit, fd.d9At, fd.d9Typed, fd.d9Outcome, fd.d9Base = "", 0, 0, 0, false, "", ""
 	return nil
 }
 
