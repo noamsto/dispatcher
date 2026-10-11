@@ -17,6 +17,10 @@ type Probes struct {
 	// RolePanes is the stdout of `tmux list-panes -a -F` with rolePaneFormat. A
 	// tmux failure is the arm's `|| true`: no rows.
 	RolePanes func() string
+	// Windows is the stdout of `tmux list-windows -a -F '#{@crew_branch}'`, or ""
+	// when there is no tmux server: the branch stamps the liveness rule reads,
+	// exactly as `crew fleet` reads them.
+	Windows func() string
 	// PanePID is `tmux display-message -p -t <pane> '#{pane_pid}'`, ok=false when
 	// tmux fails or the pane is gone.
 	PanePID func(pane string) (string, bool)
@@ -42,6 +46,13 @@ func Default(ctx context.Context) Probes {
 	return Probes{
 		RolePanes: func() string {
 			out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", rolePaneFormat).Output()
+			if err != nil {
+				return ""
+			}
+			return string(out)
+		},
+		Windows: func() string {
+			out, err := exec.CommandContext(ctx, "tmux", "list-windows", "-a", "-F", "#{@crew_branch}").Output()
 			if err != nil {
 				return ""
 			}

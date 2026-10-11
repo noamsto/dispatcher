@@ -12731,16 +12731,54 @@ _rr_status() {
             + (if $pr != "" then {pr_url:$pr} else {} end))}' >>"$(_rr_bus)"
 }
 
+# _rr_branches — every branch the bus names: a dispatch's, or the branch of a
+# `worker:<branch>[#session]` status `from`.
+_rr_branches() {
+  local busf
+  busf="$(_rr_bus)"
+  [ -f "$busf" ] || return 0
+  jq -r 'if .kind == "dispatch" then .branch
+         elif ((.from // "") | startswith("worker:"))
+           then ((.from | sub("^worker:"; "")) | sub("#[^#]*$"; ""))
+         else empty end' "$busf" 2>/dev/null |
+    grep -vE '^(null)?$' | sort -u || true
+}
+
+# _rr_windows <branch>… — who the renderer may count as live: the branches it
+# sees stamped on a tmux window. `_rr_stubs` seeds that list from the bus, so a
+# fixture calls this only to narrow it, and after `_rr_stubs`.
+_rr_windows() {
+  printf '%s\n' "$@" | grep -v '^$' >"$STUB_DIR/tmux-windows" || true
+}
+
+# _rr_worktree <branch> — a worktree checked out on <branch>, the one piece of
+# evidence a finished row needs to stay drawn while it waits for `crew reap`.
+# The fixture repo starts with no commit, so seed one.
+_rr_worktree() {
+  local wt="$BATS_TEST_TMPDIR/wt-${1//\//-}"
+  git rev-parse -q --verify HEAD >/dev/null || git commit -q --allow-empty -m seed
+  git branch "$1" 2>/dev/null || true
+  git worktree add -q "$wt" "$1"
+  printf '%s\n' "$wt"
+}
+
 # _rr_stubs <panes-tsv-body> — tmux answers the role listing (the `-F` format
 # naming @crew_dir) from the body, a pane's #{pane_pid} with RR_PANE_PID (this
 # test process, an ancestor of every crew.sh it runs) and everything else,
 # including crew roster's own pane_current_command listing, with nothing; aeye
 # logs argv and its --help names no publish-diagram.
+#
+# The `-F` format naming @crew_branch is the liveness listing (#999): a real
+# dispatch stamps its worker's window with the branch, so the list is seeded
+# with every branch this bus names and a fixture about rendering keeps drawing
+# the rows it asserts on. It is a convenience, not the liveness contract: only
+# the two liveness tests below assert on what staleness hides.
 _rr_stubs() {
   stub_bin tmux
   stub_bin aeye
   export RR_PANE_PID=$$
   printf '%s' "$1" >"$STUB_DIR/tmux-panes"
+  _rr_branches >"$STUB_DIR/tmux-windows"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf 'tmux %s\n' "$*" >>"$STUB_LOG"
@@ -12758,6 +12796,7 @@ while [ $# -gt 0 ]; do
 done
 case "$fmt" in
 *@crew_dir*) cat "$STUB_DIR/tmux-panes" ;;
+*@crew_branch*) cat "$STUB_DIR/tmux-windows" ;;
 esac
 exit 0
 EOF
@@ -12787,6 +12826,9 @@ _rr_seed() {
   _rr_status 'worker:feat/2-b#s1' 1791362400000 done
   _rr_status 'worker:feat/3-c#s2' 1791363000000 blocked 'quiet: %204' watchdog
   seed_hold c1 h-1 1791374400 feat/5-e r-5 claude codex "Echo task"
+  # The finished branch still has its worktree, which is what keeps a `done` row
+  # drawn: it waits for `crew reap`, it is not history yet.
+  _rr_worktree feat/2-b >/dev/null
   local cdir
   cdir="$(_rr_crewdir)"
   mkdir -p "$cdir/artifacts/feat/1-a"
@@ -12859,6 +12901,63 @@ EOF
 
   run d2 "$target" "$BATS_TEST_TMPDIR/palette.svg"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
+}
+
+# A crew that lives a few days folds 74 rows and the diagram drew every one of
+# them beside the worker that was actually running (#999). What is left to draw
+# is `crew fleet`'s liveness rule: a running row that is not stale, and a finished
+# row only while its worktree still waits for `crew reap`.
+# shellcheck disable=SC2016
+@test "roster-render: a stale, finished or reaped row is not drawn" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_dispatch feat/2-b 1791360060000 atlas blue colour32 "Bravo task" standard claude sonnet
+  _rr_dispatch feat/3-c 1791360120000 nova magenta colour127 "Charlie task" standard claude sonnet
+  _rr_dispatch feat/4-d 1791360180000 ember orange colour130 "Delta task" standard claude sonnet
+  _rr_dispatch feat/5-e 1791360240000 iris red colour91 "Echo task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791360600000 working
+  _rr_status 'worker:feat/2-b#s1' 1791360600000 working
+  _rr_status 'worker:feat/3-c#s1' 1791360600000 done
+  _rr_status 'worker:feat/4-d#s1' 1791360600000 reaped
+  # feat/5-e was dispatched and has not answered: live by definition.
+  _rr_stubs ''
+  # Only feat/1-a has a window, none of them has a worktree, and every stamp is
+  # days old.
+  _rr_windows feat/1-a
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$(_rr_file)"
+  grep -qF 'sage\nAlpha task' "$target"
+  grep -qF 'iris\nEcho task' "$target"
+  run grep -cE 'atlas|nova|ember' "$target"
+  [ "$output" = 0 ]
+  run grep -cE '^w[0-9]+: ' "$target"
+  [ "$output" = 2 ]
+  grep -qF 'legend: "2 active · 0 blocked · 0 done"' "$target"
+}
+
+# shellcheck disable=SC2016
+@test "roster-render: a finished branch is drawn until its worktree is reaped" {
+  export TZ=UTC
+  export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
+  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status 'worker:feat/1-a#s1' 1791360600000 done
+  _rr_stubs ''
+  _rr_windows ''
+  local wt
+  wt="$(_rr_worktree feat/1-a)"
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  target="$(_rr_file)"
+  grep -qF 'sage\nAlpha task' "$target"
+  # `crew reap` takes the worktree. The row was the pointer to it; with it gone
+  # the row is history.
+  git worktree remove --force "$wt"
+  run run_crew roster-render --crew c1 --once
+  [ "$status" -eq 0 ]
+  run grep -c 'sage' "$target"
+  [ "$output" = 0 ]
 }
 
 @test "roster-render: an unchanged bus writes nothing; a working detail change writes once" {
@@ -13371,14 +13470,31 @@ _rr_lock_taken() {
 _rr_publish_logged() { _rr_publishes | grep -qxF "aeye publish-diagram $1"; }
 _rr_file_has() { grep -qF -- "$2" "$1" 2>/dev/null; }
 
-# _rr_mini <state> [detail] — one dispatched worker in the given state, no
-# hold, and hermetic tmux/aeye stubs listing no role panes.
+# _rr_mini <state> [detail] — the daemon tests' bus: one worker on feat/1-a,
+# dispatched and stamped a moment ago, with no worktree of its own. The recent
+# stamp is what keeps a row eligible at all (#999 hides a row past 48h whatever
+# else it has); `_rr_plant` then decides whether it is drawn. A daemon may reach
+# the host's tmux rather than these stubs — its build hop re-prepends crew.sh's
+# tool PATH, which names the real tmux first — so a worktree, not a window stamp,
+# is the liveness a daemon test can rely on.
 _rr_mini() {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
-  _rr_dispatch feat/1-a 1791360000000 sage green colour28 "Alpha task" standard claude sonnet
-  _rr_status 'worker:feat/1-a#s1' 1791360600000 "$1" "${2:-}"
+  local now
+  now="$(_rr_now_ms)"
+  _rr_dispatch feat/1-a "$now" sage green colour28 "Alpha task" standard claude sonnet
+  _rr_status "worker:feat/1-a#s1" "$now" "$1" "${2:-}"
   _rr_stubs ''
+}
+
+# _rr_now_ms — this second, in the bus's milliseconds. The renderer folds ages on
+# the wall clock, so a fixture that wants a row to count as new stamps it here.
+_rr_now_ms() { echo $(($(date +%s) * 1000)); }
+
+# _rr_plant [branch] — give a row its worktree, the evidence #999 needs to keep a
+# finished state drawn. Call it after `_rr_mini`.
+_rr_plant() {
+  _rr_worktree "${1:-feat/1-a}" >/dev/null
 }
 
 @test "roster-render: a second daemon for the same crew exits at once" {
@@ -13431,6 +13547,7 @@ _rr_mini() {
 
 @test "roster-render: a crew with a live worker outlasts the quiet window" {
   _rr_mini working 'execute: tests'
+  _rr_plant
   date +%s >"$CREW_CLOCK"
   _rr_daemon --quiet 30
   _rr_wait test -f "$(_rr_file)"
@@ -13442,6 +13559,7 @@ _rr_mini() {
 
 @test "roster-render: the daemon survives its launch worktree being reaped" {
   _rr_mini working 'execute: tests'
+  _rr_plant
   local wt="$BATS_TEST_TMPDIR/rr-wt"
   git worktree add -q -b rr-wt "$wt"
   RR_CWD="$wt" _rr_daemon
@@ -13449,7 +13567,7 @@ _rr_mini() {
   git worktree remove --force "$wt"
   [ ! -d "$wt" ]
 
-  _rr_status 'worker:feat/1-a#s1' 1791361500000 working 'after-reap detail'
+  _rr_status "worker:feat/1-a#s1" "$(_rr_now_ms)" working 'after-reap detail'
   _rr_wait _rr_file_has "$(_rr_file)" 'after-reap detail'
   kill -0 "$RR_PID"
 }
