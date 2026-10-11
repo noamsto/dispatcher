@@ -1017,13 +1017,17 @@ if [ -n "$reused" ] && crew engine-cmd "$pane_cmd" 2>/dev/null; then
 fi
 
 # Which engine session is the lead's own. Role panes share this worktree, so
-# the engine's "latest session here" (--continue, resume --last) may be a role's
-# transcript. dispatch records the lead in $crew_dir/leads/<branch> as
-# `<engine> <id>` (`-` for codex/cursor, whose id cannot be pre-assigned). A
-# dispatch that reaches its lead launch always leaves a record, so an absent
-# record means a worker dispatched before records existed. Resume never resumes
-# a session it cannot attribute to the lead: it relaunches fresh with the
-# reorient note instead.
+# the engine's "latest session here" (--continue) may be a role's transcript.
+# dispatch records the lead in $crew_dir/leads/<branch> as `<engine> <id>`
+# (`-` for codex/cursor, whose id cannot be pre-assigned). A dispatch that
+# reaches its lead launch always leaves a record, so an absent record means a
+# worker dispatched before records existed. Resume never resumes a session it
+# cannot attribute to the lead: it relaunches fresh with the reorient note.
+# claude and pi read the id from the record. codex continues only by an id in
+# the record: `codex resume --last` is the latest session globally, so resuming
+# two codex leads back to back hands the second one the first's conversation,
+# in the wrong worktree (#940). cursor's --continue stays: it resolves inside
+# the cwd's own session bucket, so it cannot leave the worktree.
 #   lead_cont   flag(s) after the engine binary that select the session
 #   lead_sid    id for --session-id (claude/pi fresh launch; pi resume by id)
 #   lead_record id to write to the record once the launch is committed to
@@ -1035,10 +1039,7 @@ lead_record=""
 lead_session="-"
 fresh_why=""
 claude_projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
-case "$agent" in
-codex) legacy_cont="resume --last" ;;
-*) legacy_cont="--continue" ;;
-esac
+legacy_cont="--continue"
 
 # Existence only, never read: roles.json is worker-writable.
 has_roles=""
@@ -1058,7 +1059,11 @@ elif [ -f "$lead_rec" ]; then
   if [ -z "$rec_extra" ]; then
     case "$rec_engine" in
     claude | pi) [[ $rec_id =~ $_uuid_re ]] && rec_state=ok ;;
-    codex | cursor) [ "$rec_id" = - ] && rec_state=ok ;;
+    codex)
+      # `-` is "launched, id never learned": a valid record, nothing attributable.
+      [[ $rec_id =~ $_uuid_re || $rec_id == - ]] && rec_state=ok
+      ;;
+    cursor) [ "$rec_id" = - ] && rec_state=ok ;;
     esac
   fi
 fi
@@ -1083,6 +1088,11 @@ elif [ "$rec_state" = ok ] && [ "$rec_id" != - ]; then
     else
       fresh_why="the lead's recorded claude session has no transcript"
     fi
+  elif [ "$agent" = codex ]; then
+    # The record's id was written for this lead, so codex resumes exactly it.
+    # No rollout probe: codex names a session id it cannot find and exits.
+    lead_cont="resume $rec_id"
+    lead_session="$rec_id"
   else
     # pi has no cheap existence probe: --session-id silently starts a new
     # session under that id if the transcript vanished.
@@ -1093,8 +1103,11 @@ elif [ "$rec_state" = none ] && [ "$(_hdr engine)" != "$agent" ]; then
   fresh_why="the lead ran $(_hdr engine), not $agent, and has no recorded session"
 elif [ -n "$has_roles" ]; then
   fresh_why="the lead shares this worktree with role panes and has no recorded session"
+elif [ "$agent" = codex ]; then
+  fresh_why="codex has no session id recorded for this lead, and its --last is the latest session globally, not this worktree's"
 else
-  # A pre-records solo worker, or a codex/cursor solo lead (`codex -`).
+  # A pre-records solo worker, or a cursor solo lead (`cursor -`): both engines'
+  # --continue resolves inside this worktree's own session bucket.
   lead_cont="$legacy_cont"
 fi
 
