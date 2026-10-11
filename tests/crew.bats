@@ -14330,6 +14330,24 @@ EOF
   [ "$output" = "$PARENT_OID" ]
 }
 
+@test "stack cut: --record ignores a newer --pr attach row whose base the worker could retarget" {
+  _stack_fixture
+  jq -nc '{ts:2,crew_id:"c1",kind:"dispatch",branch:"feat/child",base:"main",base_oid:null}' >>"$SLOG"
+  run run_crew stack cut --record feat/child
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .parent' "$SLOG")" = feat/parent ]
+  [ "$(jq -c 'select(.kind == "stack_cut" and .parent == "main")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record refuses when only a --pr attach row names a base" {
+  _stack_fixture
+  jq -nc '{ts:2,crew_id:"c1",kind:"dispatch",branch:"feat/child",base:"main",base_oid:null}' >"$SLOG"
+  run run_crew stack cut --record feat/child
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no recorded parent"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
 @test "stack cut: --record <oid> records the cut the child reports when it is an ancestor of the child" {
   _stack_fixture
   _stack_advance_parent 0

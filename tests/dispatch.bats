@@ -5878,8 +5878,9 @@ EOS
   grep -qx 'base: feat/parent' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
-  run jq -sr '[.[] | select(.kind=="dispatch")] | last | .base_oid' "$log"
-  [ "$output" = "null" ]
+  # The carried base: is read after the row is written, so the row has neither key.
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | [has("base"), has("base_oid")] | map(tostring) | join(" ")' "$log"
+  [ "$output" = "false false" ]
 }
 
 @test "base: a plain dispatch's event has no base_oid key" {

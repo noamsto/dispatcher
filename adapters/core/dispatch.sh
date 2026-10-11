@@ -5227,10 +5227,9 @@ case "$agent" in
 claude | pi) lead_sid="$(_uuid)" ;;
 esac
 # row_base_oid: the parent tip a --base create branched from, so a stacked rebase
-# can use it as the cut point. Only a parent this dispatch chose counts: gh's
-# baseRefName and a carried base: are worker-controlled, and so is the child's
-# head an ancestor check would test against. Later cuts come from
-# `crew stack cut --record`.
+# can use it as the cut point. Anything else would rest on worker-controlled
+# input: a --pr parent is gh's baseRefName, and on any resume the only check is
+# against the child's own head. Later cuts come from `crew stack cut --record`.
 row_base_oid=""
 if [ "$switch_mode" = create ] && [ -n "$base_flag" ]; then
   row_base_oid="$create_base_oid"

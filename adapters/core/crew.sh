@@ -3405,11 +3405,14 @@ stack)
     exit 1
   fi
   # Trust boundary: only the dispatcher-written kinds are consulted. Worker
-  # status/msg rows can carry any body, so they never feed a cut point.
+  # status/msg rows can carry any body, so they never feed a cut point. A
+  # dispatch row counts only when it carries a base_oid (a --base create, where
+  # the dispatcher chose the parent); a --pr attach row's base is the PR's live
+  # baseRefName, which the worker can retarget.
   _stack_newest() { # <dispatch field> <stack_cut field>
     jq -Rr -n --arg crew "$stack_crew" --arg child "$stack_child" --arg df "$1" --arg sf "$2" '
       [inputs | fromjson? | select(type == "object" and .crew_id == $crew and .branch == $child)
-        | select((.kind == "dispatch" and (.[$df] | type) == "string")
+        | select((.kind == "dispatch" and (.base_oid | type) == "string" and (.[$df] | type) == "string")
               or (.kind == "stack_cut" and (.[$sf] | type) == "string"))]
       | sort_by(.ts) | last | (.[$df] // .[$sf]) // empty' "$stack_src"
   }
