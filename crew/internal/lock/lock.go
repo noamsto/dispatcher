@@ -20,8 +20,7 @@ import (
 )
 
 // Acquire is the helper: mkdir is the ONLY gate (atomic on POSIX), the pid file
-// inside is for reclaim. Re-acquiring as the same owner is a success. An empty
-// holder in a dir younger than emptyGrace reads as held: see below.
+// inside is for reclaim. Re-acquiring as the same owner is a success.
 func Acquire(dir, owner string) bool {
 	if tryDir(dir, owner) {
 		return true

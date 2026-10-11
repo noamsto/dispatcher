@@ -367,7 +367,9 @@ func TestBudgetRefreshLockStaleReclaimed(t *testing.T) {
 	_, w, calls := refreshWatch(t, "--budget-refresh", "900")
 	writeFile(t, w.o.BudgetFile+".refresh.d/pid", "\n")
 	old := time.Now().Add(-10 * time.Second)
-	_ = os.Chtimes(w.o.BudgetFile+".refresh.d", old, old)
+	if err := os.Chtimes(w.o.BudgetFile+".refresh.d", old, old); err != nil {
+		t.Fatal(err)
+	}
 	if ran, err := w.refreshMaybe(); err != nil || !ran || *calls != 1 {
 		t.Errorf("ran %v calls %d err %v, want a refresh", ran, *calls, err)
 	}
