@@ -597,9 +597,8 @@ func probes(ctx context.Context, cwd string) roster.Probes {
 
 // renderProbes is the renderer's row fold, anchored at the common dir rather
 // than at the caller's directory: `roster-render` moves out of the worktree it
-// was started in because a reap can take that directory away while the daemon
-// lives, and a worktree list that dies with it would hide nothing (unknown is
-// not stale) while the diagram is supposed to be shrinking.
+// was started in, because a reap can take that directory away while the daemon
+// lives, and a worktree list that dies with it says nothing about who is gone.
 func renderProbes(ctx context.Context, common string) roster.Probes {
 	p := probes(ctx, "")
 	p.Worktrees = func() (string, error) {

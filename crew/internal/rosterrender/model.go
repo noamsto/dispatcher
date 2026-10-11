@@ -63,12 +63,11 @@ func emptyModel() jsonv.Value {
 // `crew roster`, and this is the same fold, on the same wall clock. `nowSec` is
 // therefore real time and never CREW_CLOCK, exactly as that child read `jq now`.
 //
-// The fold is then cut to the rows `live` finds drawn (#999): a crew that lives
-// for a few days otherwise stacks its whole history beside the one or two workers
-// that are running. The cut happens here rather than in `modelProg` so the
-// `dispatched` rows the merge synthesizes from a pending dispatch survive — a
-// session launched and not yet posting is live by definition — and so the live
-// count, the legend and the boxes all speak of the same rows.
+// The fold is then cut to the rows `live` finds drawn. The cut happens here and
+// not in `modelProg` so the `dispatched` rows the merge synthesizes from a
+// pending dispatch survive — a session launched and not yet posting is live by
+// definition — and so the live count, the legend and the boxes speak of the same
+// rows.
 func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (jsonv.Value, error) {
 	events, err := bus.ReadEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {

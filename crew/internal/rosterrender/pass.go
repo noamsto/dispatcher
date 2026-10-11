@@ -11,11 +11,10 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
-// passProbes is one pass's outside reads: the worktree list is probed at most
-// once and shared by the row fold and the liveness rule — the fold re-reads it
-// for every `exited` row otherwise — and the window stamps are parsed once.
-// `sync.OnceValues` memoizes the failure with the result, so `resolveExited` and
-// the liveness rule see one probe outcome per pass.
+// passProbes is one pass's outside reads. The worktree list is shared because
+// the fold re-reads it for every `exited` row, and `sync.OnceValues` memoizes the
+// failure with the result, so `resolveExited` and the liveness rule see one probe
+// outcome per pass.
 func (o Options) passProbes() (roster.Probes, roster.Liveness) {
 	wt := sync.OnceValues(o.Roster.Worktrees)
 	windows := sync.OnceValue(func() map[string]bool { return roster.WindowBranches(o.Probes.Windows()) })

@@ -45,10 +45,10 @@ func live(windows []string, worktrees []string, probeErr error) Liveness {
 
 const young = "60"
 
-// TestDrawnIsTheLiveView is #999's rule as one table: what a diagram that stops
-// drawing a crew's whole history keeps, and what it drops.
+// TestDrawnIsTheLiveView is the rule as one table: what a live view keeps, and
+// what it drops.
 func TestDrawnIsTheLiveView(t *testing.T) {
-	const stale = "172801" // one second past StaleAfter
+	const stale = "172801" // one second past staleAfter
 
 	for _, tc := range []struct {
 		name    string
@@ -87,7 +87,7 @@ func TestDrawnIsTheLiveView(t *testing.T) {
 	}
 }
 
-// TestProbeFailureHidesNothing is `crew fleet`'s stance, now shared: a worktree
+// TestProbeFailureHidesNothing is `crew fleet`'s stance: a worktree
 // list that could not be read says nothing, so a diagram never empties on a
 // transient git error.
 func TestProbeFailureHidesNothing(t *testing.T) {
@@ -103,7 +103,7 @@ func TestProbeFailureHidesNothing(t *testing.T) {
 	}
 	// Age is the one thing the probe cannot vouch for, so it still short-circuits.
 	if l.Drawn(row(t, "working", "feat/a", "999999")) {
-		t.Error("a failed probe revived a row past StaleAfter")
+		t.Error("a failed probe revived a row past staleAfter")
 	}
 }
 

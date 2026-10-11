@@ -59,7 +59,7 @@ func newLoop(t *testing.T) *loop {
 			// The fixtures' one branch is stamped on a window, which is what keeps
 			// its row live: these tests are about the loop, not the liveness rule.
 			Windows: func() string { return "feat/1-a\n" },
-			PanePID:   func(string) (string, bool) { return "", false },
+			PanePID: func(string) (string, bool) { return "", false },
 			AeyeHelp: func(context.Context) (string, error) {
 				return "", nil
 			},

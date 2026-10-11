@@ -190,10 +190,10 @@ func TestModelCarriesTheDispatchedRowUntilTheBranchSpeaks(t *testing.T) {
 	}
 }
 
-// TestModelDrawsOnlyLiveRows is #999: a three-day-old crew folded 74 rows and the
-// diagram drew every one of them beside the worker that was actually running. The
-// model keeps the live rows, the finished ones whose worktree still waits for the
-// reaper, and the dispatch that has not been answered yet.
+// TestModelDrawsOnlyLiveRows is the diagram's cut: of a bus holding live,
+// finished, awaiting-reap, reaped and unanswered-dispatch rows, the model keeps
+// the live one, the one whose worktree still waits for the reaper, and the
+// dispatch nothing has answered yet.
 func TestModelDrawsOnlyLiveRows(t *testing.T) {
 	events := func(branch, state string) []string {
 		out := []string{

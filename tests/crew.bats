@@ -12768,11 +12768,10 @@ _rr_worktree() {
 # including crew roster's own pane_current_command listing, with nothing; aeye
 # logs argv and its --help names no publish-diagram.
 #
-# The `-F` format naming @crew_branch is the liveness listing (#999): a real
-# dispatch stamps its worker's window with the branch, so the list is seeded
-# with every branch this bus names and a fixture about rendering keeps drawing
-# the rows it asserts on. It is a convenience, not the liveness contract: only
-# the two liveness tests below assert on what staleness hides.
+# The `-F` format naming @crew_branch is the liveness listing: a real dispatch
+# stamps its worker's window with the branch, so the list is seeded with every
+# branch this bus names and a fixture about rendering keeps drawing the rows it
+# asserts on. Only the two liveness tests assert on what staleness hides.
 _rr_stubs() {
   stub_bin tmux
   stub_bin aeye
@@ -12903,10 +12902,9 @@ EOF
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-# A crew that lives a few days folds 74 rows and the diagram drew every one of
-# them beside the worker that was actually running (#999). What is left to draw
-# is `crew fleet`'s liveness rule: a running row that is not stale, and a finished
-# row only while its worktree still waits for `crew reap`.
+# The diagram's cut, on the renderer's own entry point: it keeps a running row
+# that is not stale and a finished row only while its worktree still waits for
+# `crew reap`.
 # shellcheck disable=SC2016
 @test "roster-render: a stale, finished or reaped row is not drawn" {
   export TZ=UTC
@@ -13471,12 +13469,11 @@ _rr_publish_logged() { _rr_publishes | grep -qxF "aeye publish-diagram $1"; }
 _rr_file_has() { grep -qF -- "$2" "$1" 2>/dev/null; }
 
 # _rr_mini <state> [detail] — the daemon tests' bus: one worker on feat/1-a,
-# dispatched and stamped a moment ago, with no worktree of its own. The recent
-# stamp is what keeps a row eligible at all (#999 hides a row past 48h whatever
-# else it has); `_rr_plant` then decides whether it is drawn. A daemon may reach
-# the host's tmux rather than these stubs — its build hop re-prepends crew.sh's
-# tool PATH, which names the real tmux first — so a worktree, not a window stamp,
-# is the liveness a daemon test can rely on.
+# dispatched and stamped a moment ago (a row past 48h is hidden whatever else it
+# has), with no worktree of its own; `_rr_plant` decides whether it is drawn. A
+# daemon may reach the host's tmux rather than these stubs — its build hop
+# re-prepends crew.sh's tool PATH, which names the real tmux first — so a worktree
+# is the liveness a daemon test can rely on, not a window stamp.
 _rr_mini() {
   export TZ=UTC
   export CREW_ROSTER_DIR="$BATS_TEST_TMPDIR/d2"
@@ -13491,7 +13488,7 @@ _rr_mini() {
 # the wall clock, so a fixture that wants a row to count as new stamps it here.
 _rr_now_ms() { echo $(($(date +%s) * 1000)); }
 
-# _rr_plant [branch] — give a row its worktree, the evidence #999 needs to keep a
+# _rr_plant [branch] — give a row its worktree, the evidence that keeps a
 # finished state drawn. Call it after `_rr_mini`.
 _rr_plant() {
   _rr_worktree "${1:-feat/1-a}" >/dev/null
