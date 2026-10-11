@@ -15,8 +15,8 @@
 //   - `watch.lock.d` is held for the whole park through the same internal/lock
 //     protocol `crew stream` takes. It stops and retries by sending TERM, and
 //     watch releases the lock itself (a deferred release, where the bash arm had
-//     an EXIT trap); a leaked lock dir blocks every later watch of the crew
-//     until the dead pid is reaped.
+//     an EXIT trap); a watch killed before it releases leaves its record behind
+//     until the next watch replaces it.
 package watch
 
 import (

@@ -71,7 +71,8 @@ func (w *watch) lastTry() int64 {
 // re-reads the bus.
 //
 // A signal kills the probe's process group and the deferred release still
-// runs; the arm leaked the lock directory when killed mid-probe.
+// runs; the arm left the lock directory behind when killed mid-probe, where the
+// flock now dies with the process.
 func (w *watch) refreshMaybe() (bool, error) {
 	every := w.cfg.budgetRefresh
 	if every == 0 || w.now-w.lastTry() < every {

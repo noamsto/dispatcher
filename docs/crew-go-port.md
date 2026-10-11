@@ -70,37 +70,43 @@ output contract below), with each edit justified.
   (same argv, so a
   rejected interval costs coreutils' own message and status, which is what
   killed the arm under `set -e`).
-- `crew/internal/lock`: crew.sh's `_lock_acquire`/`_lock_release` protocol —
-  the `mkdir` gate, the `pid` owner file, the bare `kill -0` liveness probe and
-  the dead-owner reclaim (an empty `pid` younger than 2s is an acquirer
-  mid-write and counts as held) — as one package instead of a copy per caller, because
-  two of its lock dirs have holders across a process boundary: `ratings.lock.d`
-  (the autosweep spawner in `reap`, older installed `crew` binaries) and
-  `watch.lock.d` (which `stream` takes, and which the child `crew watch` it
-  re-enters takes for its own park). Held for the two `rate` store windows and never across a gh call;
-  `watch` holds it for its whole park and releases it on every exit path,
-  including the SIGTERM/SIGINT/SIGHUP `stream` sends it. Reclaiming a dead or
-  empty-file owner is a pid-file compare-and-swap: rename the pid inside the
-  dir, compare with what was judged, publish by link; a displaced live pid is
-  linked back and the reclaimer loses. An acquirer that finds no pid file never
-  renames or rmdirs: it only links into the existing dir (after restoring a lone
-  `pid.stale.*`), so the dir is never removed by an acquirer (Release still
-  `rm -rf`s it). Pids are published atomically via temp+link. The guarantee
-  holds only among acquirers on this protocol (older installed `crew` and
-  long-lived old-build watch/stall processes still `rm -rf`) and assumes no
-  reclaimer stalls past the grace (1-2s, whole-second mtimes) between its CAS
-  and its publish. One interleaving stays outside that: a crash-left pid-less
-  dir, two acquirers on the pid-less path, and a third whose stale judgment
-  predates the crash and whose rename lands between one of them checking and
-  linking (two holders); it needs a crashed acquirer plus a judge stalled
-  across both publishes, and closing it needs an atomic rename over an empty
-  dir, which BSD `mv` cannot do. Known gaps: a Release racing a losing reclaimer's displace/restore can fail
-  its `rm -rf` (ENOTEMPTY) and leave the dir with the released holder's pid
-  relinked, so the lock reads as held until that process exits; `Holder` can
-  read empty for a live lock while a loser has its pid displaced
-  (roster-render's `Holder != owner` poll can exit spuriously; follow-up); two
-  leftover `pid.stale.*` with no pid wedge the lock until the dir is removed by
-  hand; crashed acquirers leave `<dir>.new.*` siblings that nothing sweeps.
+- `crew/internal/lock`: the lock under `ratings.lock.d`, `watch.lock.d`, `stream.lock.d`,
+  `roster-render.lock.d`, the `nudge --wait` dir and the budget refresh, as one package
+  instead of a copy per caller. Exclusion is `flock(2)` (`LOCK_EX|LOCK_NB`) on
+  `<dir>.flock`, which the kernel drops when the holder dies, so no acquirer judges
+  staleness. The record dir `<dir>/` holds `pid` (reporting only: `Holder`,
+  `stream --force` and `--status` read it) and a `flock` marker, and is published whole by
+  renaming `<dir>.new` into place, so `Holder` never reads empty under a live holder. A
+  record whose marker matches its `pid` and whose flock is free is replaced with no
+  liveness probe, so pid reuse or a reboot cannot wedge it. Held for the two `rate` store
+  windows and never across a gh call; `watch` holds it for its whole park and releases it on
+  every exit path, including the SIGTERM/SIGINT/SIGHUP `stream` sends it. In-process
+  re-acquire by the same owner succeeds and another owner is refused. Release acts only
+  while this process holds the lock, and touches paths only while `<dir>.flock` is still
+  the file it locked: it then retires the record (rename to `<dir>.stale`, re-check,
+  remove) if its `pid` is still the owner's, and unlinks `<dir>.flock`; it always closes
+  the fd; an acquirer that locked a file
+  its holder had since unlinked sees the inode mismatch and retries. The `roster-render`
+  exec hop drops the flock (`O_CLOEXEC`) and the new image adopts the record carrying its
+  own pid.
+
+  An old-format record (no matching marker) is the one-time compatibility path for
+  old-build processes still on the mkdir protocol: a live `pid` by bare `kill -0` refuses,
+  an empty one inside the 2s grace refuses (an old acquirer mid-write), anything else is
+  retired by renaming the dir to `<dir>.stale`, re-reading the retired `pid`, and
+  renaming it back if an old acquirer published meanwhile. That keeps old builds out too:
+  their `mkdir` fails on the record and they read a live pid. Residual windows, all
+  transitional and closing when the last old-build lock user exits: two old-build
+  acquirers interleaving inside one retire can both hold (the retire renames `<dir>` away,
+  one reclaims by its compare-and-swap before the rename, another `mkdir`s the gap before
+  the restore); old builds can already double-hold among themselves by their own
+  protocol's gaps, so no new-side rule reaches zero while they run; an old reclaimer that judged a
+  dead record before a new publish can briefly make `Holder` read empty for a live new
+  holder (a `roster-render` poll there exits early and the next start re-acquires); and
+  old builds keep their own pid-reuse wedge for records they write. After a switch,
+  re-arm running streams with `crew stream --force` and let old workers' stall-watches
+  finish; nothing else needs restarting.
+
 - `crew/internal/await`: the arm of #884, and the first port that **polls**. Its
   fold is the arm's jq through jqrun (`await.jq`), over rows the caller decoded
   one per line — the arm's `-R` + `fromjson?` skip, with the repo's own decoder.
@@ -131,12 +137,11 @@ output contract below), with each edit justified.
   `burn.go` prices models from the settings `burnClasses` table, whose globs are
   bash `case` patterns, not `path.Match` (`*` crosses `/`, and `|` is literal
   because the helper matched an expanded pattern). The `ratings.lock.d` gate is
-  `internal/lock` (#901): mkdir, `pid` file, bare `kill -0` liveness, kept
-  byte-compatible so an older installed `crew` and the autosweep spawner
-  interoperate; it is held for the two store windows and never across a gh
-  call, and released on every exit path while held. `nudge --wait` holds
+  `internal/lock`'s flock, held for the two store windows and never across a gh
+  call, and released on every exit path while held; an older installed `crew` whose
+  `rate` is the bash arm is met by its old-format branch. `nudge --wait` holds
   `<dir>/nudge-wait/<sid>.<cksum>.d` for its whole park (one waiter per lead
-  session), keeping the bash helper's name, `pid` file and reclaim so a call on
+  session), keeping the bash helper's name and `pid` file so a call on
   an older installed `crew` joins the same wait. The batch append is one
   `O_APPEND` write, the same single-write guarantee the arm's `dd bs=1048576`
   gave.
@@ -158,9 +163,9 @@ output contract below), with each edit justified.
   (and the suite exports `CREW_CLOCK` for `await`'s sake, which is why this is
   worth saying). And the lock is held for the whole park and released on every
   exit path, including the SIGTERM/SIGINT/SIGHUP `stream` sends its inner watch
-  when it stops or retries: bash ran its `trap … EXIT` for those three, and a
-  leaked `watch.lock.d` refuses every later watch of the crew until the dead pid
-  is reclaimed. The batch prints before the cursor moves, as the arm's `printf`
+  when it stops or retries: bash ran its `trap … EXIT` for those three. A watch killed
+  before it releases leaves only an inert record (its flock dies with it), which the next
+  watch replaces at once; only an old-build watch still judges that record by `kill -0`. The batch prints before the cursor moves, as the arm's `printf`
   preceded its `mv`.
 - `crew/internal/resolve`: `crew resolve-target`, and the fold `crew where` reads
   for one question. `resolve.jq` is `_resolve_target`'s program and `Rows` is its
@@ -350,11 +355,11 @@ output contract below), with each edit justified.
   so it can release `watch.lock.d` itself, and `reap` is never awaited nor signalled
   (an interrupted removal strands a worktree) and writes a per-child pair of files,
   so a reap that outlives its stream cannot clobber the next one's.
-  `stream.lock.d` is taken through `internal/lock` before any signal is caught,
-  because the cleanup releases unconditionally and a handler armed on the refusal
-  path would unlink the _incumbent's_ lock. `lock.pidAlive` reads a holder past
+  `stream.lock.d` is taken through `internal/lock` before any signal is caught, so the
+  refusal path is signal-free and a handler armed earlier has nothing to release.
+  `lock.pidAlive` reads a holder past
   `lock.MaxPID` free, which is what bash's own refusal (`kill -0 4294967295` →
-  "not a pid or valid job spec") gave the arm: such a lock is reclaimed, never
+  "not a pid or valid job spec") gave the arm: such an old-format lock is replaced, never
   signalled — Go's `syscall.Kill` would have truncated that holder to `-1`, every
   process this user may signal. One place the port is not the arm: `--force`
   refuses the all-zero spellings (`00`, `000`) that bash's `kill` accepted as pid
@@ -369,7 +374,8 @@ output contract below), with each edit justified.
   against injection. Row folding is the one part that stops being a subprocess: the arm
   re-entered the script for `crew roster`, and Go calls `roster.Fold` in process on the
   same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
-  else, so the pid never changes hands and the lock is never released or inherited; the
+  else, so the pid never changes hands; the flock does not survive the exec (`O_CLOEXEC`),
+  and the new image re-acquires it and adopts the record carrying its own pid; the
   entry is followed whenever it names a build other than the running one, a rollback
   included, and only the running build is refused. PATH is restored to the value the
   daemon started with on every hop (`CREW_RR_START_PATH`, exported once), so N hops
@@ -377,9 +383,12 @@ output contract below), with each edit justified.
   split it: the render timers read `_clock_now_f`, so the suite drives them through
   `CREW_CLOCK`, while the poll sleeps on the wall clock and `crew roster`'s ages stay
   real. A daemon that slept on the virtual clock would let a test retire a live crew.
-  Losing the lock ends the loop, and the release checks the owner first: `_lock_release`
-  is an unconditional `rm -rf`, so a renderer whose crew dir was removed and re-created
-  must not delete the new owner's lock.
+  Losing the lock ends the loop, and the owner check on release lives in `internal/lock`
+  (Release is a no-op unless this process holds the lock), so a renderer whose crew dir
+  was removed and re-created cannot delete the new owner's record. The exec hop drops
+  the flock (`O_CLOEXEC`), and the new image's re-acquire adopts the record carrying its
+  own pid; if another renderer took the flock in that instant it replaced the record and
+  the hopping one's re-acquire refuses, so it exits quietly.
 - `crew/internal/ledger`: the pure acceptance-ledger gate of `crew status <from>
 pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   CI-evidence rule and the dispatcher-waiver rule. It is hand-parsed, not run on
@@ -660,16 +669,33 @@ real time` pins the no-`CREW_CLOCK` branch. `watch` is deliberately outside this
 pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
-`_lock_acquire` and `_lock_release` stay for `roster-render`, and `internal/lock` is
-their Go copy for `rate`, `watch`, `stream`, `nudge` and `stall-watch`'s budget
-refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one protocol,
-two languages, one lock dir: `nudge --wait`'s lock dir keeps the bash helper's
-`tr -c 'A-Za-z0-9._-' '_'` name and cksum suffix, so a `crew nudge` on an older
-installed `crew` joins the same wait, and the Go `stream` holds `stream.lock.d`
-while an older installed `crew` holds
-`ratings.lock.d`. The drift test is `internal/lock`'s own table (live, dead,
-empty and non-numeric owners, a `0` holder, trailing newlines) and the `stream`
-rows that TERM a parked Go watch and reclaim a `--force`'d holder.
+`_lock_acquire` and `_lock_release` stay for the two bash-only locks until `reap` is
+ported, and `internal/lock` no longer copies them: it holds a `flock(2)` and reads
+a `*.d` only as the record it publishes (or, for an old build's, as the old format).
+Which lock paths either language takes, from `grep -rn '_lock_acquire\|lock\.d\|refresh\.d\|nudge-wait'`
+over the non-test code:
+
+| lock path                                  | bash (`adapters/core/crew.sh`) | Go                           |
+| ------------------------------------------ | ------------------------------ | ---------------------------- |
+| `$XDG_DATA_HOME/crew/ratings.sweep.lock.d` | `_rate_autosweep` (in `reap`)  | none                         |
+| `<crew dir>/reap.lock.d`                   | `reap`                         | none                         |
+| `$XDG_DATA_HOME/crew/ratings.lock.d`       | none                           | `rate` sweep                 |
+| `<crew dir>/watch.lock.d`                  | none                           | `watch`                      |
+| `<crew dir or lane>/stream.lock.d`         | none                           | `stream`, fleet lane         |
+| `<crew dir>/roster-render.lock.d`          | none                           | `roster-render`              |
+| `<bus dir>/nudge-wait/<sid>.<cksum>.d`     | none                           | `nudge --wait`               |
+| `<budget file>.refresh.d`                  | none                           | `stall-watch` budget refresh |
+
+No lock is taken by both bash and Go, so bash keeps its mkdir helper until `reap` is
+ported, and neither a `crew lock` helper nor `flock(1)` (absent on macOS by default)
+is needed. The sharing that remains is across builds, not languages: old-build
+processes still running after a switch (an old `stream` re-entering its old
+`CREW_SELF` for `watch`, old `stall-watch`es, an older installed `crew` whose `rate`
+and `nudge` are bash arms) take the same paths with the mkdir protocol, and
+`internal/lock`'s old-format branch handles them. Its own tests are the drift
+guard: live, dead, empty, non-numeric, `0`, out-of-range and trailing-newline
+holders against that branch, plus the `stream` rows that TERM a parked Go watch and
+replace a `--force`'d holder.
 
 The frame classifiers (`_frame_classifier`, `_pane_idle_reason`, `_claude_idle_box`,
 `_box_rows`, the `_pi_*` helpers) stay in crew.sh for `reap`

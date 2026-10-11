@@ -1,19 +1,26 @@
 package lock
 
 import (
-	"math/rand/v2"
+	"bufio"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
 
 func TestLockAcquireRelease(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ratings.lock.d")
 
 	if !Acquire(dir, "12345") {
 		t.Fatal("first acquire refused")
@@ -22,15 +29,15 @@ func TestLockAcquireRelease(t *testing.T) {
 	if err != nil || string(pid) != "12345\n" {
 		t.Errorf("pid file = %q, %v, want \"12345\\n\"", pid, err)
 	}
+	assertNames(t, dir, "flock", "pid")
+	assertNames(t, parent, "ratings.lock.d", "ratings.lock.d.flock")
 	// The same owner is an idempotent success, not a refusal.
 	if !Acquire(dir, "12345") {
 		t.Error("re-acquire by the owner refused; the helper returns 0 idempotently")
 	}
 	Release(dir)
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Error("release left the lock dir behind")
-	}
-	// Release is unconditional, so a double release is a no-op.
+	assertNames(t, parent)
+	// A double release is a no-op.
 	Release(dir)
 }
 
@@ -50,6 +57,7 @@ func TestLockHeldByLivePID(t *testing.T) {
 	if Acquire(dir, strconv.Itoa(os.Getpid())) != true {
 		t.Error("the live holder's own pid must re-acquire idempotently")
 	}
+	Release(dir)
 }
 
 func TestLockReclaimsDeadAndEmpty(t *testing.T) {
@@ -68,6 +76,7 @@ func TestLockReclaimsDeadAndEmpty(t *testing.T) {
 			if !Acquire(dir, "12345") {
 				t.Fatal("a stale lock was not reclaimed")
 			}
+			defer Release(dir)
 			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
 			if string(got) != "12345\n" {
 				t.Errorf("pid file after reclaim = %q, want \"12345\\n\"", got)
@@ -98,19 +107,21 @@ func TestLockEmptyHolderFutureMtime(t *testing.T) {
 			if err := os.Chtimes(dir, future, future); err != nil {
 				t.Fatal(err)
 			}
-			if got := Acquire(dir, "12345"); got != tc.acquire {
+			got := Acquire(dir, "12345")
+			defer Release(dir)
+			if got != tc.acquire {
 				t.Fatalf("Acquire = %v, want %v", got, tc.acquire)
 			}
-			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-			if string(got) != tc.wantPID {
-				t.Errorf("pid file = %q, want %q", got, tc.wantPID)
+			pid, _ := os.ReadFile(filepath.Join(dir, "pid"))
+			if string(pid) != tc.wantPID {
+				t.Errorf("pid file = %q, want %q", pid, tc.wantPID)
 			}
 		})
 	}
 }
 
-// TestLockEmptyHolderInGraceIsHeld: the owner writes its pid after mkdir, so an
-// empty holder in a just-made dir is an acquirer mid-write, not a dead one.
+// TestLockEmptyHolderInGraceIsHeld: an old-build acquirer writes its pid after
+// mkdir, so an empty holder in a just-made dir is mid-write, not dead.
 func TestLockEmptyHolderInGraceIsHeld(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -120,7 +131,8 @@ func TestLockEmptyHolderInGraceIsHeld(t *testing.T) {
 		{"empty pid file", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+			parent := t.TempDir()
+			dir := filepath.Join(parent, "ratings.lock.d")
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -147,11 +159,10 @@ func TestLockEmptyHolderInGraceIsHeld(t *testing.T) {
 			for i, ok := range got {
 				if ok {
 					t.Errorf("acquirer %d reclaimed a lock whose owner is mid-write", i)
+					Release(dir)
 				}
 			}
-			if _, err := os.Stat(dir); err != nil {
-				t.Errorf("lock dir gone: %v", err)
-			}
+			assertNames(t, parent, "ratings.lock.d")
 			data, err := os.ReadFile(filepath.Join(dir, "pid"))
 			if tc.emptyPID && len(data) != 0 || !tc.emptyPID && !os.IsNotExist(err) {
 				t.Errorf("pid file = %q, %v; a refused acquirer rewrote the holder", data, err)
@@ -171,6 +182,7 @@ func TestLockReadsBashPidFile(t *testing.T) {
 	writePID(t, dir, strconv.Itoa(os.Getpid())+"\n\n")
 	if Acquire(dir, "12345") {
 		t.Error("trailing newlines hid a live holder")
+		Release(dir)
 	}
 }
 
@@ -184,31 +196,33 @@ func TestLockZeroHolderIsHeld(t *testing.T) {
 	writePID(t, dir, "0")
 	if Acquire(dir, "12345") {
 		t.Error("a `0` holder must read as held")
+		Release(dir)
 	}
 }
 
 // TestLockOutOfRangeHolderIsFree: a digits-only holder past the pid ceiling
 // names no process, and probing it answers for a different one — syscall.Kill
-// truncates to pid_t, so 4294967295 is a kill(-1) that succeeds. The lock is
-// reclaimed instead, the refusal bash's own kill handed the arm.
+// truncates to pid_t, so 4294967295 is a kill(-1) that succeeds. The record is
+// replaced instead, the refusal bash's own kill handed the arm.
 func TestLockOutOfRangeHolderIsFree(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "stream.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	me := strconv.Itoa(os.Getpid())
 	for _, holder := range []string{"4194305", "4294967295", "9223372036854775807", "99999999999999999999999"} {
 		if pidAlive(holder) {
 			t.Errorf("pidAlive(%q) reads alive; past the pid ceiling it must read free", holder)
 		}
-		writePID(t, dir, holder)
-		if !Acquire(dir, me) {
-			t.Errorf("Acquire kept a lock held by out-of-range pid %s", holder)
-		}
-		Release(dir)
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		writePID(t, dir, holder)
+		if !Acquire(dir, me) {
+			t.Errorf("Acquire kept a lock held by out-of-range pid %s", holder)
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		Release(dir)
 	}
 	for _, holder := range []string{"1", "4194304"} {
 		if !ValidHolder(holder) {
@@ -222,336 +236,8 @@ func TestLockOutOfRangeHolderIsFree(t *testing.T) {
 	}
 }
 
-// TestLockStaleReclaimRaceSingleHolder: B judges the lock stale and stalls
-// before its destructive step; A reclaims and holds the lock; B then resumes.
-// B must not destroy A's live lock.
-//
-// The owners are arbitrary text, so the lock A leaves behind is itself judged
-// stale by B.
-func TestLockStaleReclaimRaceSingleHolder(t *testing.T) {
-	for _, tc := range []struct{ name, held string }{
-		{"dead pid", deadPID(t)},
-		{"empty pid file past the grace", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "ratings.lock.d")
-			if err := os.Mkdir(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			writePID(t, dir, tc.held)
-			backdate(t, dir)
-
-			b := park(t, &staleJudged, "B")
-			bGot := b.async(dir, "B")
-			b.waitReached(t)
-
-			aGot := Acquire(dir, "A")
-			b.unpark()
-
-			gotB := recv(t, bGot, "B")
-			if !aGot {
-				t.Error("A, the first reclaimer, was refused")
-			}
-			if gotB {
-				t.Error("B acquired a lock A already holds")
-			}
-			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-			if string(got) != "A\n" {
-				t.Errorf("pid file = %q, want \"A\\n\"", got)
-			}
-		})
-	}
-}
-
-// TestLockDisplacedLivePidIsRestored: the reclaimer judged a dead pid, but a
-// live holder took the lock before its rename. It must put that pid back
-// untouched and refuse, and leave no scratch files behind.
-func TestLockDisplacedLivePidIsRestored(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writePID(t, dir, deadPID(t))
-	backdate(t, dir)
-
-	live := strconv.Itoa(os.Getpid()) + "\n"
-	hook(t, &staleJudged, func(string) { writePID(t, dir, live) })
-
-	if Acquire(dir, "A") {
-		t.Error("acquired a lock whose live holder it displaced")
-	}
-	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-	if string(got) != live {
-		t.Errorf("pid file = %q, want the displaced %q restored", got, live)
-	}
-	assertNames(t, dir, "pid")
-	assertNames(t, parent, "ratings.lock.d")
-}
-
-// TestLockCrashedDirReclaimRace: a crashed acquirer left a dir with no pid.
-// A stalls with its pid written but not linked; B and C then race in. Exactly
-// one acquirer links, and A's late link must lose.
-func TestLockCrashedDirReclaimRace(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	backdate(t, dir)
-	owners := liveOwners(t, 3)
-	a, b, c := owners[0], owners[1], owners[2]
-
-	pa := park(t, &beforeLink, a)
-	aGot := pa.async(dir, a)
-	pa.waitReached(t)
-
-	if !Acquire(dir, b) {
-		t.Error("B could not take the crashed dir")
-	}
-	if Acquire(dir, c) {
-		t.Error("C acquired a lock B holds")
-	}
-	pa.unpark()
-	if recv(t, aGot, "A") {
-		t.Error("A's late link displaced B")
-	}
-	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-	if string(got) != b+"\n" {
-		t.Errorf("pid file = %q, want %q", got, b+"\n")
-	}
-	assertNames(t, dir, "pid")
-	assertNames(t, parent, "ratings.lock.d")
-}
-
-// TestLockRenameLostToRivalBacksOff: a dead-pid judge whose rename finds the pid
-// already moved is facing a rival mid-reclaim, and must not touch the dir.
-func TestLockRenameLostToRivalBacksOff(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writePID(t, dir, deadPID(t))
-	backdate(t, dir)
-	hook(t, &staleJudged, func(string) {
-		if err := os.Remove(filepath.Join(dir, "pid")); err != nil {
-			t.Error(err)
-		}
-	})
-
-	if Acquire(dir, "A") {
-		t.Error("acquired after losing the rename to a rival")
-	}
-	assertNames(t, dir)
-	assertNames(t, parent, "ratings.lock.d")
-}
-
-// TestLockPidlessFreshRecheckRefuses: a dir judged stale with no pid file that
-// is touched before the reclaim is a rival mid-write, not a crashed dir.
-func TestLockPidlessFreshRecheckRefuses(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	backdate(t, dir)
-	hook(t, &staleJudged, func(string) {
-		now := time.Now()
-		if err := os.Chtimes(dir, now, now); err != nil {
-			t.Error(err)
-		}
-	})
-
-	if Acquire(dir, "A") {
-		t.Error("acquired a dir that became fresh after the judgment")
-	}
-	assertNames(t, dir)
-	assertNames(t, parent, "ratings.lock.d")
-}
-
-// TestLockPidlessReleasedMidReclaimIsAcquired: a dir released between the failed
-// mkdir and the holder read is simply free.
-func TestLockPidlessReleasedMidReclaimIsAcquired(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	backdate(t, dir)
-	hook(t, &staleJudged, func(string) { Release(dir) })
-
-	if !Acquire(dir, "A") {
-		t.Fatal("a lock released mid-reclaim was refused")
-	}
-	if got := Holder(dir); got != "A" {
-		t.Errorf("holder = %q, want A", got)
-	}
-}
-
-// TestLockMultipleOrphansAreLeft: more than one pid.stale.* is not a lone
-// displacement, so nothing is restored, removed or acquired.
-func TestLockMultipleOrphansAreLeft(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"pid.stale.x", "pid.stale.y"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(deadPID(t)+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	backdate(t, dir)
-
-	if Acquire(dir, "A") {
-		t.Error("acquired a dir holding several orphaned displacements")
-	}
-	assertNames(t, dir, "pid.stale.x", "pid.stale.y")
-}
-
-// TestLockReclaimStress hammers each stale shape with concurrent acquirers whose
-// every seam sleeps a random moment, and checks the lock never has two holders.
-func TestLockReclaimStress(t *testing.T) {
-	if testing.Short() {
-		t.Skip("stress test")
-	}
-	const rounds, acquirers = 150, 6
-	owners := liveOwners(t, acquirers)
-	dead := deadPID(t)
-	sleepy := func(string) { time.Sleep(time.Duration(rand.IntN(200)) * time.Microsecond) }
-	hook(t, &staleJudged, sleepy)
-	hook(t, &displaced, sleepy)
-	hook(t, &beforeLink, sleepy)
-
-	for _, tc := range []struct {
-		name string
-		seed func(t *testing.T, dir string)
-	}{
-		{"dead pid", func(t *testing.T, dir string) { writePID(t, dir, dead) }},
-		{"empty pid file", func(t *testing.T, dir string) { writePID(t, dir, "") }},
-		{"no pid file", func(*testing.T, string) {}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			for round := range rounds {
-				dir := filepath.Join(root, strconv.Itoa(round))
-				if err := os.Mkdir(dir, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				tc.seed(t, dir)
-				backdate(t, dir)
-
-				var wg sync.WaitGroup
-				var winners []string
-				var mu sync.Mutex
-				for _, owner := range owners {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						if Acquire(dir, owner) {
-							mu.Lock()
-							winners = append(winners, owner)
-							mu.Unlock()
-						}
-					}()
-				}
-				wg.Wait()
-
-				if len(winners) > 1 {
-					t.Fatalf("round %d: %d holders %q", round, len(winners), winners)
-				}
-				if len(winners) == 1 {
-					got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-					if string(got) != winners[0]+"\n" {
-						t.Fatalf("round %d: pid file = %q, winner %q", round, got, winners[0])
-					}
-				}
-			}
-		})
-	}
-}
-
-// TestLockOrphanedDisplacementIsRestored: a reclaimer that crashed between its
-// rename and its delete leaves the dead holder's pid under pid.stale.*. The
-// next acquirer restores it, and the one after reclaims it as an ordinary
-// dead-pid dir.
-func TestLockOrphanedDisplacementIsRestored(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dead := deadPID(t) + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "pid.stale.x"), []byte(dead), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	backdate(t, dir)
-
-	if Acquire(dir, "A") {
-		t.Error("acquired a dir that held an orphaned displacement")
-	}
-	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-	if string(got) != dead {
-		t.Errorf("pid file = %q, want the orphan %q restored", got, dead)
-	}
-	assertNames(t, dir, "pid")
-
-	if !Acquire(dir, "A") {
-		t.Error("the restored dead pid was not reclaimed")
-	}
-	got, _ = os.ReadFile(filepath.Join(dir, "pid"))
-	if string(got) != "A\n" {
-		t.Errorf("pid file = %q, want \"A\\n\"", got)
-	}
-}
-
-// TestLockPublishIsAtomic: between writing the temp file and linking it the
-// pid file does not exist, so no reader or rival ever sees it empty or partial.
-func TestLockPublishIsAtomic(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		stale bool
-		pid   bool
-	}{
-		{"fresh dir", false, false},
-		{"reclaim", true, true},
-		{"pidless dir", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			parent := t.TempDir()
-			dir := filepath.Join(parent, "ratings.lock.d")
-			if tc.stale {
-				if err := os.Mkdir(dir, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if tc.pid {
-					writePID(t, dir, deadPID(t))
-				}
-				backdate(t, dir)
-			}
-			calls := 0
-			hook(t, &beforeLink, func(string) {
-				calls++
-				if _, err := os.Stat(filepath.Join(dir, "pid")); !os.IsNotExist(err) {
-					t.Errorf("pid file exists before the link: %v", err)
-				}
-			})
-			if !Acquire(dir, "A") {
-				t.Fatal("acquire refused")
-			}
-			if calls != 1 {
-				t.Errorf("beforeLink ran %d times, want 1", calls)
-			}
-			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-			if string(got) != "A\n" {
-				t.Errorf("pid file = %q, want \"A\\n\"", got)
-			}
-			assertNames(t, dir, "pid")
-			assertNames(t, parent, "ratings.lock.d")
-		})
-	}
-}
-
 // TestLockReclaimsBashDeadPidFile: a pid text with extra trailing newlines
-// still compares equal to the judged holder, which holder() trims.
+// still compares equal to the judged holder, which Holder trims.
 func TestLockReclaimsBashDeadPidFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -562,27 +248,406 @@ func TestLockReclaimsBashDeadPidFile(t *testing.T) {
 	if !Acquire(dir, "A") {
 		t.Fatal("a dead pid with trailing newlines was not reclaimed")
 	}
+	defer Release(dir)
 	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
 	if string(got) != "A\n" {
 		t.Errorf("pid file = %q, want \"A\\n\"", got)
 	}
 }
 
-// parkGuard bounds every wait on a parked acquirer, so a missed hook or a
-// missed release fails the test instead of hanging it.
-const parkGuard = 5 * time.Second
-
-// parked is one owner stalled inside a test seam.
-type parked struct {
-	reached chan struct{}
-	release chan struct{}
-	reach   sync.Once
-	free    sync.Once
-	wg      sync.WaitGroup
+// TestFlockProcessesNeverOverlap: processes hammering one lock, each proving
+// its hold with an O_EXCL sentinel, never hold it at once.
+func TestFlockProcessesNeverOverlap(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+	var kids []*child
+	for range 6 {
+		kids = append(kids, spawn(t, "contend", dir))
+	}
+	total := 0
+	for _, c := range kids {
+		lines, err := c.finish()
+		if err != nil {
+			t.Errorf("child %s: %v, said %q", c.pid, err, lines)
+		}
+		for _, line := range lines {
+			if strings.HasPrefix(line, "overlap") {
+				t.Errorf("child %s: %s", c.pid, line)
+			}
+			if n, ok := strings.CutPrefix(line, "count "); ok {
+				k, _ := strconv.Atoi(n)
+				t.Logf("child %s acquired %d times", c.pid, k)
+				total += k
+			}
+		}
+	}
+	if total == 0 {
+		t.Error("no child ever acquired the lock")
+	}
 }
 
-// hook installs fn in seam before any goroutine starts and restores the old
-// seam on cleanup.
+// TestFlockSIGKILLFreesLock: the kernel drops a killed holder's flock, and its
+// marked record is replaced.
+func TestFlockSIGKILLFreesLock(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stream.lock.d")
+	c := spawn(t, "hold", dir)
+	c.expect(t, "held")
+	if err := c.cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.finish()
+	if !Acquire(dir, "A") {
+		t.Fatal("a SIGKILLed holder's lock was refused")
+	}
+	defer Release(dir)
+	if got := Holder(dir); got != "A" {
+		t.Errorf("holder = %q, want A", got)
+	}
+}
+
+// TestFlockMarkerRecordIsReplacedWithoutProbe: a marked record with a free
+// flock is a gone holder even when its pid now names a live process (reuse).
+func TestFlockMarkerRecordIsReplacedWithoutProbe(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stream.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	live := strconv.Itoa(os.Getppid()) + "\n"
+	writePID(t, dir, live)
+	if err := os.WriteFile(filepath.Join(dir, "flock"), []byte(live), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !Acquire(dir, "A") {
+		t.Fatal("a marked record with a free flock was refused")
+	}
+	defer Release(dir)
+	if got := Holder(dir); got != "A" {
+		t.Errorf("holder = %q, want A", got)
+	}
+}
+
+// TestFlockHolderStableUnderContention: refused contenders never disturb the
+// record, so Holder names the holder on every read.
+func TestFlockHolderStableUnderContention(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stream.lock.d")
+	c := spawn(t, "hold", dir)
+	c.expect(t, "held")
+
+	var stop atomic.Bool
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			owner := "c" + strconv.Itoa(i)
+			for !stop.Load() {
+				if Acquire(dir, owner) {
+					t.Errorf("%s acquired a held lock", owner)
+					Release(dir)
+				}
+			}
+		})
+	}
+	reads := 0
+	for deadline := time.Now().Add(300 * time.Millisecond); time.Now().Before(deadline); reads++ {
+		if got := Holder(dir); got != c.pid {
+			t.Errorf("read %d: holder = %q, want %s", reads, got, c.pid)
+			break
+		}
+	}
+	stop.Store(true)
+	wg.Wait()
+	c.stop(t)
+}
+
+func TestFlockInProcessOwners(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "stream.lock.d")
+	if !Acquire(dir, "A") {
+		t.Fatal("A refused on a free lock")
+	}
+	if !Acquire(dir, "A") {
+		t.Error("A's re-acquire refused")
+	}
+	if Acquire(dir, "B") {
+		t.Error("B acquired the lock A holds in this process")
+	}
+	Release(dir)
+	if !Acquire(dir, "B") {
+		t.Fatal("B refused after A released")
+	}
+	defer Release(dir)
+	if got := Holder(dir); got != "B" {
+		t.Errorf("holder = %q, want B", got)
+	}
+}
+
+// TestFlockAdoptsOwnRecord: a same-pid exec hop finds its own record, written
+// by either build, and adopts it.
+func TestFlockAdoptsOwnRecord(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "roster-render.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePID(t, dir, "12345\n")
+	if !Acquire(dir, "12345") {
+		t.Fatal("the owner's own record was not adopted")
+	}
+	defer Release(dir)
+	got, err := os.ReadFile(filepath.Join(dir, "flock"))
+	if err != nil || string(got) != "12345\n" {
+		t.Errorf("marker = %q, %v, want \"12345\\n\"", got, err)
+	}
+}
+
+// TestFlockEmptyDirBeforePublishRefuses: an old-build acquirer's mkdir landing
+// before the publish rename wins; nothing of ours is left behind.
+func TestFlockEmptyDirBeforePublishRefuses(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ratings.lock.d")
+	hook(t, &beforePublish, func(string) {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Error(err)
+		}
+	})
+	if Acquire(dir, "A") {
+		t.Error("acquired over an old-build acquirer's fresh dir")
+		Release(dir)
+	}
+	assertNames(t, parent, "ratings.lock.d")
+	assertNames(t, dir)
+}
+
+// TestFlockRetiredRecordChangedIsRestored: an old-build acquirer published
+// between the judgment and the retire; its record goes back untouched.
+func TestFlockRetiredRecordChangedIsRestored(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ratings.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePID(t, dir, deadPID(t))
+	backdate(t, dir)
+	live := strconv.Itoa(os.Getppid()) + "\n"
+	hook(t, &judged, func(string) { writePID(t, dir, live) })
+
+	if Acquire(dir, "A") {
+		t.Error("acquired a record an old-build acquirer had just published")
+		Release(dir)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
+	if string(got) != live {
+		t.Errorf("pid file = %q, want the live %q restored", got, live)
+	}
+	assertNames(t, dir, "pid")
+	assertNames(t, parent, "ratings.lock.d")
+}
+
+// TestFlockReleaseSkipsAnotherOwnersRecord: Release removes only its own
+// record, and the record left behind is then judged as an old-build one.
+func TestFlockReleaseSkipsAnotherOwnersRecord(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ratings.lock.d")
+	if !Acquire(dir, "A") {
+		t.Fatal("A refused on a free lock")
+	}
+	writePID(t, dir, deadPID(t))
+	Release(dir)
+	assertNames(t, parent, "ratings.lock.d")
+
+	if !Acquire(dir, "B") {
+		t.Fatal("B refused a record whose pid is dead")
+	}
+	defer Release(dir)
+	if got := Holder(dir); got != "B" {
+		t.Errorf("holder = %q, want B", got)
+	}
+}
+
+// TestFlockReleaseAfterLockFileReplaced: the crew dir was deleted and another
+// process holds the re-created lock; the old holder's Release leaves it alone.
+func TestFlockReleaseAfterLockFileReplaced(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "roster-render.lock.d")
+	if !Acquire(dir, "A") {
+		t.Fatal("A refused on a free lock")
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dir + ".flock"); err != nil {
+		t.Fatal(err)
+	}
+	c := spawn(t, "hold", dir)
+	c.expect(t, "held")
+
+	Release(dir)
+	if got := Holder(dir); got != c.pid {
+		t.Errorf("holder = %q, want the new holder %s", got, c.pid)
+	}
+	if _, err := os.Stat(dir + ".flock"); err != nil {
+		t.Errorf("the new holder's lock file is gone: %v", err)
+	}
+	c.stop(t)
+}
+
+// TestFlockSweepsOldLitter: the old protocol's temp files beside the record and
+// displaced pids inside a dead one are gone once the lock is taken.
+func TestFlockSweepsOldLitter(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "ratings.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dead := deadPID(t) + "\n"
+	writePID(t, dir, dead)
+	if err := os.WriteFile(filepath.Join(dir, "pid.stale.x"), []byte(dead), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+".new.abc", []byte(dead), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, dir)
+
+	if !Acquire(dir, "A") {
+		t.Fatal("a dead record with litter was refused")
+	}
+	defer Release(dir)
+	assertNames(t, parent, "ratings.lock.d", "ratings.lock.d.flock")
+	assertNames(t, dir, "flock", "pid")
+}
+
+const (
+	helperEnv = "CREW_LOCK_HELPER"
+	dirEnv    = "CREW_LOCK_DIR"
+)
+
+// TestHelperHolder is the child process the TestFlock* rows spawn; it does
+// nothing unless helperEnv names its mode. "hold" acquires as its own pid,
+// prints "held" and releases on stdin EOF or SIGTERM. "contend" loops on the
+// lock for a second, proving each hold with an O_EXCL sentinel, and prints
+// "count N" (or "overlap ..." and exits 1).
+func TestHelperHolder(*testing.T) {
+	mode, dir := os.Getenv(helperEnv), os.Getenv(dirEnv)
+	me := strconv.Itoa(os.Getpid())
+	switch mode {
+	case "":
+		return
+	case "hold":
+		if !Acquire(dir, me) {
+			fmt.Println("refused")
+			os.Exit(1)
+		}
+		stop := make(chan os.Signal, 2)
+		signal.Notify(stop, syscall.SIGTERM)
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			stop <- syscall.SIGTERM
+		}()
+		fmt.Println("held")
+		<-stop
+		Release(dir)
+	case "contend":
+		occupied := filepath.Join(filepath.Dir(dir), "occupied")
+		count := 0
+		for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+			if Acquire(dir, me) {
+				f, err := os.OpenFile(occupied, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+				if err != nil {
+					fmt.Println("overlap:", err)
+					os.Exit(1)
+				}
+				_ = f.Close()
+				time.Sleep(time.Millisecond)
+				if err := os.Remove(occupied); err != nil {
+					fmt.Println("overlap:", err)
+					os.Exit(1)
+				}
+				Release(dir)
+				count++
+			}
+			time.Sleep(100 * time.Microsecond)
+		}
+		fmt.Println("count", count)
+	default:
+		fmt.Println("unknown mode", mode)
+		os.Exit(1)
+	}
+}
+
+// child is a running TestHelperHolder process; the cleanup kills and reaps it,
+// since a zombie still answers kill -0.
+type child struct {
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	lines chan string
+	pid   string
+
+	once sync.Once
+	tail []string
+	err  error
+}
+
+func spawn(t *testing.T, mode, dir string) *child {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperHolder$", "-test.timeout=30s")
+	// A race-built child otherwise sleeps a second at exit.
+	cmd.Env = append(os.Environ(), helperEnv+"="+mode, dirEnv+"="+dir, "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0")
+	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	c := &child{cmd: cmd, stdin: stdin, lines: make(chan string, 64), pid: strconv.Itoa(cmd.Process.Pid)}
+	go func() {
+		defer close(c.lines)
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			c.lines <- sc.Text()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = c.finish()
+	})
+	return c
+}
+
+func (c *child) expect(t *testing.T, want string) {
+	t.Helper()
+	select {
+	case got, ok := <-c.lines:
+		if !ok || got != want {
+			t.Fatalf("child %s said %q (open %v), want %q", c.pid, got, ok, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("child %s never said %q", c.pid, want)
+	}
+}
+
+// finish reads the child's remaining output and reaps it.
+func (c *child) finish() ([]string, error) {
+	c.once.Do(func() {
+		for line := range c.lines {
+			c.tail = append(c.tail, line)
+		}
+		c.err = c.cmd.Wait()
+	})
+	return c.tail, c.err
+}
+
+// stop closes the child's stdin, which makes a holder release and exit 0.
+func (c *child) stop(t *testing.T) {
+	t.Helper()
+	_ = c.stdin.Close()
+	if lines, err := c.finish(); err != nil {
+		t.Errorf("child %s: %v, said %q", c.pid, err, lines)
+	}
+}
+
+// hook installs fn in seam and restores the old seam on cleanup.
 func hook(t *testing.T, seam *func(string), fn func(string)) {
 	t.Helper()
 	old := *seam
@@ -590,62 +655,8 @@ func hook(t *testing.T, seam *func(string), fn func(string)) {
 	t.Cleanup(func() { *seam = old })
 }
 
-// park installs a hook in seam that blocks owner until unpark; other owners
-// pass through. The cleanup frees the owner and waits for every goroutine
-// started through async before the seam is restored.
-func park(t *testing.T, seam *func(string), owner string) *parked {
-	t.Helper()
-	p := &parked{reached: make(chan struct{}), release: make(chan struct{})}
-	hook(t, seam, func(o string) {
-		if o != owner {
-			return
-		}
-		p.reach.Do(func() { close(p.reached) })
-		select {
-		case <-p.release:
-		case <-time.After(parkGuard):
-		}
-	})
-	t.Cleanup(p.wg.Wait)
-	t.Cleanup(p.unpark)
-	return p
-}
-
-// async runs Acquire(dir, owner) in a goroutine the cleanup waits for.
-func (p *parked) async(dir, owner string) <-chan bool {
-	got := make(chan bool, 1)
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		got <- Acquire(dir, owner)
-	}()
-	return got
-}
-
-func (p *parked) waitReached(t *testing.T) {
-	t.Helper()
-	select {
-	case <-p.reached:
-	case <-time.After(parkGuard):
-		t.Fatal("the parked acquirer never reached its seam")
-	}
-}
-
-func (p *parked) unpark() { p.free.Do(func() { close(p.release) }) }
-
-func recv(t *testing.T, ch <-chan bool, who string) bool {
-	t.Helper()
-	select {
-	case got := <-ch:
-		return got
-	case <-time.After(parkGuard):
-		t.Fatalf("%s never returned", who)
-		return false
-	}
-}
-
-// assertNames fails unless dir holds exactly want, which catches `.stale.` and
-// `.new.` litter.
+// assertNames fails unless dir holds exactly want, which catches `.flock`,
+// `.new` and `.stale` litter.
 func assertNames(t *testing.T, dir string, want ...string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -676,25 +687,6 @@ func backdate(t *testing.T, dir string) {
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// liveOwners starts n idle child processes and returns their pids as owner
-// texts, so every owner reads as a live holder and none can be reclaimed.
-func liveOwners(t *testing.T, n int) []string {
-	t.Helper()
-	var owners []string
-	for range n {
-		cmd := exec.Command("sleep", "600")
-		if err := cmd.Start(); err != nil {
-			t.Skipf("cannot spawn a child: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		})
-		owners = append(owners, strconv.Itoa(cmd.Process.Pid))
-	}
-	return owners
 }
 
 // deadPID returns a pid that has already exited. Recycling it to a live

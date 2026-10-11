@@ -1,152 +1,214 @@
-// Package lock is crew.sh's `_lock_acquire`/`_lock_release` protocol, a copy
-// rather than a reimplementation: an older installed `crew` and the bash arms
-// that stayed there (`nudge`, `roster-render`, the autosweep spawner inside
-// `reap`) take the same lock dirs, so the gate (mkdir), the owner file (`pid`)
-// and the liveness probe (bare `kill -0`) have to agree byte-for-byte across the
-// two languages.
+// Package lock is the crew's single-holder lock on a `*.d` path.
 //
-// It backs every Go caller of that helper: `rate`'s `ratings.lock.d`, and
-// `watch`'s `watch.lock.d` and `stream`'s `stream.lock.d`, each of which a
-// process on the other side of a fork also reads.
+// Exclusion is flock(2) on the regular file `<dir>.flock`: the kernel drops it
+// when its holder dies, so no acquirer ever has to judge whether a holder
+// crashed. Who holds the lock is reported by a record, the dir `<dir>` with
+// `pid` (the owner text) and `flock` (the same text, a marker that a flock
+// holder wrote it). Only the flock holder writes, replaces or removes the
+// record, and always by renaming a whole dir, so `<dir>` never exists without
+// its `pid`.
+//
+// The record stays a dir with a `pid` because builds from before the flock run
+// crew.sh's mkdir protocol on the same paths until they exit: their mkdir fails
+// on it and they read a live pid, so they refuse. A record whose marker does
+// not match its `pid` is one of theirs, and judging it by their rules (a live
+// pid, or an empty one within the grace, is held) is a one-time compatibility
+// path that closes when the last of those processes exits.
 package lock
 
 import (
 	"errors"
 	"io/fs"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-// Acquire is the helper: mkdir creates the dir and linking the pid file in is
-// the gate (link refuses an existing pid), for a fresh lock and a reclaim alike.
-// The pid file inside is for reclaim. Re-acquiring as the same owner is a
-// success.
-func Acquire(dir, owner string) bool {
-	if tryDir(dir, owner) {
-		return true
-	}
-	held, exists := readHolder(dir)
-	if held == owner {
-		return true
-	}
-	if held == "" && fresh(dir) {
-		return false
-	}
-	if held != "" && pidAlive(held) {
-		return false
-	}
-	// Stale (owner PID dead, or empty in a dir past the grace).
-	staleJudged(owner)
-	if !exists {
-		return reclaimMissing(dir, owner)
-	}
-	return reclaim(dir, owner, held)
+type handle struct {
+	f     *os.File
+	owner string
 }
 
-// Test seams, each called with the acquirer's owner: staleJudged after the
-// stale judgment and before the reclaim, displaced between the displacing
-// rename and its restore, beforeLink between the temp write and the link.
+// holds is this process's held locks: a second fd on the same file would be a
+// separate flock, so the owner it was taken for is what answers a re-acquire.
 var (
-	staleJudged = func(string) {}
-	displaced   = func(string) {}
-	beforeLink  = func(string) {}
+	mu    sync.Mutex
+	holds = map[string]*handle{}
 )
 
-// reclaim removes the holder judged stale without ever removing the lock dir
-// out from under a rival: another acquirer may have judged the same holder, won
-// the reclaim and be live by now. So the destructive step is a compare-and-swap
-// on the pid file. Renaming it into the dir (exactly one rival can move a given
-// file) lets us read what we took: the judged holder is deleted and replaced by
-// our pid, anything else is someone's live pid and goes back. A rename that
-// fails means a rival is mid-reclaim, so we back off.
-func reclaim(dir, owner, judged string) bool {
-	pid := filepath.Join(dir, "pid")
-	moved := pid + ".stale." + owner + "." + nonce()
-	if err := os.Rename(pid, moved); err != nil {
+// Test seams, each called with the acquirer's owner: judged after a record is
+// judged replaceable and before it is retired, beforePublish before the new
+// record is renamed into place.
+var (
+	judged        = func(string) {}
+	beforePublish = func(string) {}
+)
+
+// Acquire takes the lock for owner, or refuses at once: callers poll. In this
+// process, re-acquiring as the owner already holding it is a success and any
+// other owner is refused.
+func Acquire(dir, owner string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	if h, ok := holds[dir]; ok {
+		return h.owner == owner
+	}
+	f := openLocked(dir + ".flock")
+	if f == nil {
 		return false
 	}
-	displaced(owner)
-	data, err := os.ReadFile(moved)
-	if err != nil {
-		_ = os.Link(moved, pid)
-		_ = os.Remove(moved)
+	if !claim(dir, owner) {
+		drop(dir, f, "")
 		return false
 	}
-	if strings.TrimRight(string(data), "\n") != judged {
-		// Link, not rename, so a pid published in the gap is never clobbered. The
-		// rename bumped the dir mtime, so late judges refuse until this lands;
-		// that is the grace assumption, not a proof (see docs/crew-go-port.md).
-		_ = os.Link(moved, pid)
-		_ = os.Remove(moved)
-		return false
-	}
-	_ = os.Remove(moved)
-	return publish(dir, owner)
+	holds[dir] = &handle{f: f, owner: owner}
+	return true
 }
 
-// reclaimMissing handles a dir past the grace whose pid file did not exist when
-// it was judged: a crashed acquirer, or a rival mid-displacement. There is no
-// file to swap, and a pid published after the judgment must not be displaced, so
-// it never renames and never removes the dir. A lone pid.stale.* is a rival's
-// in-flight displacement or a crashed reclaimer's leftover: putting it back is
-// always safe, and turns a wedged dir into an ordinary dead-pid dir for the next
-// acquirer. With more than one nothing is guessed. Otherwise it links its pid
-// into the existing dir, and link refuses if a rival got there first.
-func reclaimMissing(dir, owner string) bool {
-	if fresh(dir) {
-		return false
+// openLocked returns path opened and flocked, or nil if another holder has it.
+// A releasing holder unlinks the path, so a flock won on an fd opened before
+// that is on a file no later acquirer opens; it is closed (the path is someone
+// else's now) and the open retried.
+func openLocked(path string) *os.File {
+	for range 8 {
+		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+		if err != nil {
+			return nil
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = f.Close()
+			return nil
+		}
+		if same(f, path) {
+			return f
+		}
+		_ = f.Close()
 	}
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return tryDir(dir, owner) // released between our failed mkdir and the read
-	}
+	return nil
+}
+
+func same(f *os.File, path string) bool {
+	fi, err := f.Stat()
 	if err != nil {
 		return false
 	}
-	var orphans []string
+	pi, err := os.Stat(path)
+	return err == nil && os.SameFile(fi, pi)
+}
+
+// claim publishes owner's record while holding the flock, replacing whatever
+// record is there unless it is an old-build holder's.
+func claim(dir, owner string) bool {
+	sweep(dir)
+	if _, err := os.Lstat(dir); err != nil {
+		return errors.Is(err, fs.ErrNotExist) && publish(dir, owner)
+	}
+	pid := Holder(dir)
+	if !replaceable(dir, owner, pid) {
+		return false
+	}
+	judged(owner)
+	return retire(dir, pid) && publish(dir, owner)
+}
+
+// replaceable judges the record of a lock whose flock is free. Owner's own pid
+// is a same-pid exec hop. A matching marker is a flock holder that is gone, so
+// there is no liveness probe for pid reuse to fool.
+func replaceable(dir, owner, pid string) bool {
+	if pid == owner {
+		return true
+	}
+	if marker, err := os.ReadFile(filepath.Join(dir, "flock")); err == nil && strings.TrimRight(string(marker), "\n") == pid {
+		return true
+	}
+	if pid != "" {
+		return !pidAlive(pid)
+	}
+	return !fresh(dir)
+}
+
+// sweep removes the old protocol's `<dir>.new.*` temp files, which only a
+// crashed old-build acquirer leaves behind for long.
+func sweep(dir string) {
+	parent, prefix := filepath.Dir(dir), filepath.Base(dir)+".new."
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return
+	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "pid.stale.") {
-			orphans = append(orphans, filepath.Join(dir, e.Name()))
+		if strings.HasPrefix(e.Name(), prefix) {
+			_ = os.RemoveAll(filepath.Join(parent, e.Name()))
 		}
 	}
-	switch len(orphans) {
-	case 0:
-		return publish(dir, owner)
-	case 1:
-		_ = os.Link(orphans[0], filepath.Join(dir, "pid"))
-		_ = os.Remove(orphans[0])
-	}
-	return false
 }
 
-// publish writes owner's pid so the pid file is never visible empty or partial:
-// a sibling temp (outside dir, so a crash here leaves the dir truly empty) is
-// linked into place, and link refuses if a pid is already there.
-func publish(dir, owner string) bool {
-	tmp := dir + ".new." + owner + "." + nonce()
-	if err := os.WriteFile(tmp, []byte(owner+"\n"), 0o644); err != nil {
+// retire removes the record whose pid was judged. It renames before removing
+// because old-build actors work on `<dir>/pid` by path: once `<dir>` is gone
+// their in-flight steps fail. One may have published between the judgment and
+// the rename, so the retired pid is re-read and a changed record goes back.
+func retire(dir, judged string) bool {
+	stale := dir + ".stale"
+	_ = os.RemoveAll(stale)
+	if err := os.Rename(dir, stale); err != nil {
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	if Holder(stale) != judged {
+		_ = os.Rename(stale, dir)
 		return false
 	}
-	defer func() { _ = os.Remove(tmp) }()
-	beforeLink(owner)
-	return os.Link(tmp, filepath.Join(dir, "pid")) == nil
+	_ = os.RemoveAll(stale)
+	return true
 }
 
-func nonce() string { return strconv.FormatUint(rand.Uint64(), 36) }
+// publish builds owner's record beside dir and renames it into place. Go's
+// os.Rename refuses an existing dir target, so an old-build acquirer that made
+// `<dir>` since the judgment wins and this refuses.
+func publish(dir, owner string) bool {
+	tmp := dir + ".new"
+	_ = os.RemoveAll(tmp)
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		return false
+	}
+	for _, name := range []string{"pid", "flock"} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(owner+"\n"), 0o644); err != nil {
+			_ = os.RemoveAll(tmp)
+			return false
+		}
+	}
+	beforePublish(owner)
+	if err := os.Rename(tmp, dir); err != nil {
+		_ = os.RemoveAll(tmp)
+		return false
+	}
+	return true
+}
 
-// emptyGrace is how long, in whole epoch seconds, a dir with no pid text may
-// be a live acquirer: the owner writes its pid after mkdir, so a fresh empty
-// holder is mid-write and reclaiming it would give two owners.
+// drop gives up the flock taken through f. While dir+".flock" is still the
+// file f locked, owner's record is retired first, so a new acquirer never sees
+// it without the flock behind it, and then the path goes; an empty owner leaves
+// the record. Closing f frees the flock either way.
+func drop(dir string, f *os.File, owner string) {
+	if same(f, dir+".flock") {
+		if owner != "" && Holder(dir) == owner {
+			retire(dir, owner)
+		}
+		_ = os.Remove(dir + ".flock")
+	}
+	_ = f.Close()
+}
+
+// emptyGrace is how long, in whole epoch seconds, an old-build record with no
+// pid text may be a live acquirer: that protocol writes its pid after mkdir, so
+// a fresh empty record is mid-write and replacing it would give two owners.
 const emptyGrace = 2
 
 // fresh reports whether dir's mtime is within emptyGrace of now, on either side
 // so a skewed clock cannot wedge the lock. Wall clock, because the mtime is; a
-// vanished dir is not fresh and falls through to the reclaim.
+// vanished dir is not fresh.
 func fresh(dir string) bool {
 	fi, err := os.Stat(dir)
 	if err != nil {
@@ -156,9 +218,19 @@ func fresh(dir string) bool {
 	return age > -emptyGrace && age < emptyGrace
 }
 
-// Release is `_lock_release`: an unconditional `rm -rf` with no owner check,
-// which is why a caller arms it only while it holds the lock.
-func Release(dir string) { _ = os.RemoveAll(dir) }
+// Release gives up dir if this process holds it, and is a no-op otherwise. A
+// record or lock file that is no longer this holder's (the crew dir was
+// removed and re-created under it) is left alone.
+func Release(dir string) {
+	mu.Lock()
+	defer mu.Unlock()
+	h, ok := holds[dir]
+	if !ok {
+		return
+	}
+	delete(holds, dir)
+	drop(dir, h.f, h.owner)
+}
 
 // Holder is `$(cat "$dir/pid" 2>/dev/null || true)`: the owner text a refused
 // acquisition reports, and the pid `stream --force` decides whether to signal.
@@ -167,16 +239,9 @@ func Holder(dir string) string {
 	return held
 }
 
-func tryDir(dir, owner string) bool {
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		return false
-	}
-	return publish(dir, owner)
-}
-
 // readHolder is `$(cat "$ld/pid" 2>/dev/null || true)`: command substitution
 // drops trailing newlines, and an unreadable file is empty. exists tells a
-// missing file from an empty one, which the reclaim treats differently.
+// missing file from an empty one.
 func readHolder(dir string) (held string, exists bool) {
 	data, err := os.ReadFile(filepath.Join(dir, "pid"))
 	if err != nil {

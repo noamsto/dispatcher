@@ -33,19 +33,14 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 	owner := strconv.Itoa(o.PID)
 
 	// Acquired before the signal handler is armed, like the arm's `trap` after its
-	// `_lock_acquire`: a start refused because another renderer holds the lock must
-	// not release the incumbent's.
+	// `_lock_acquire`: a start refused because another renderer holds the lock has
+	// nothing to clean up.
 	if !lock.Acquire(ld, owner) {
 		return exitOK
 	}
-	// `_lock_release` is an unconditional `rm -rf`; the owner check is the arm's,
-	// which keeps a renderer whose lock was reclaimed (crew dir deleted and
-	// re-created) from deleting the new owner's.
-	defer func() {
-		if lock.Holder(ld) == owner {
-			lock.Release(ld)
-		}
-	}()
+	// The owner check is the lock package's: a renderer whose crew dir was
+	// deleted and re-created does not remove the new owner's record.
+	defer lock.Release(ld)
 
 	// The arm's `trap 'exit 0' INT TERM`, armed only now so a refused start stays a
 	// silent no-op rather than a signal-driven exit.
