@@ -284,14 +284,16 @@ _reattach_or_switch() {
     # Alive but no pane (detached client, killed window): not live for the
     # switch, so the crew is adopted below.
     echo "dispatcher: crew $live_id's dispatcher pid $live_pid has no tmux pane — re-attaching to the crew instead" >&2
-    # That crew still records a live pid, and `crew register` refuses to
-    # overwrite one; the mint block names the takeover instead of bypassing it.
-    adopted_live=1
   fi
 
   adopt=$newest
   [ -n "$adopt" ] || adopt=$first_id
   if [ -n "$adopt" ]; then
+    # Only the crew that still records a live pid gets `crew register`'s refusal
+    # tolerated below, and only that one is worth naming the takeover for.
+    if [ "$adopt" = "$live_id" ]; then
+      adopted_live=1
+    fi
     CREW_ID=$adopt
     export CREW_ID
     echo "dispatcher: re-attached to crew $adopt" >&2

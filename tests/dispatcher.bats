@@ -830,3 +830,28 @@ EOF
   [[ "$out" == *"crew adopt --force c-live"* ]]
   [[ "$out" == *"crew id: c-live"* ]]
 }
+
+@test "929: a register failure is not tolerated for a crew with no live pid" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-fresh\t3\t3\t0\t998\tno')" "$(printf 'c-live\t500\t500\t1\t4321\tyes')")"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-minted ;;
+crews) cat "$STUB_DIR/crews.tsv" ;;
+register)
+  echo "crew: crew 'c-fresh' still has a live dispatcher (pid 998)" >&2
+  exit 1
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run run_launcher
+  # The dead crew is adopted, so `crew register`'s refusal is a real failure and
+  # the launcher dies on it rather than naming a takeover for the wrong crew.
+  [ "$status" -ne 0 ]
+  out="$output"
+  [[ "$out" == *"re-attached to crew c-fresh"* ]]
+  [[ "$out" != *"keeps its live dispatcher pid"* ]]
+}
