@@ -41,6 +41,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/stack"
 	"github.com/noamsto/dispatcher/crew/internal/status"
 	"github.com/noamsto/dispatcher/crew/internal/stream"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
@@ -48,7 +49,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path>"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path> | stack cut [--record] <child-branch|PR#> [<oid>] | stack align <top-PR#|branch>"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -81,7 +82,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep", "stack":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -149,6 +150,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return reap.RunAutosweep(args, paths, cwd, o)
 		}
 		return reap.Run(ctx, args, paths, cwd, stdout, stderr, o)
+	}
+
+	// stack cut/align read the bus and the anchored git of the repo they are
+	// called in, and change the process's cwd to the trusted one first, like reap.
+	if sub == "stack" {
+		return stack.Run(ctx, args, paths, cwd, stdout, stderr, stack.Options{Probes: stack.DefaultProbes()})
 	}
 
 	// crews emits TSV, reads the log with its own torn-line tolerance, and

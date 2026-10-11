@@ -464,7 +464,7 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `GIT_ATTR_SOURCE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`), where bash
   inherits it, and `GIT_INDEX_FILE` is set only through `Opts.IndexFile` (the `--discard`
   scratch index); `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` and `HOME` pass through, since
-  the suite isolates with them. The bash copy stays for `crew stack` and dispatch, so a
+  the suite isolates with them. The bash copy stays for dispatch, so a
   drift test parses `_wt_neutral_cfg=( … )` and the common extras from `worktree-git.sh` and
   asserts equality with the Go lists (skipped via `internal/drift` when the file is absent).
 - `crew/internal/reap`: the `reap` arm (#997) and `occupants`, plus `_release_windows`. The
@@ -488,6 +488,17 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   place to its last 200 lines. `reap` takes `reap.lock.d` through `internal/lock`. SIGTERM,
   SIGINT and SIGHUP, each only when not inherited ignored, remove the `--discard` temp dir
   and release the locks, then exit 128+signo, as the arm's EXIT trap did.
+- `crew/internal/stack`: `crew stack cut` and `crew stack align` (#1004). One argv
+  parser keeps the arm's usage lines, refusals and exit codes, and one record fold
+  (`newest.jq`, the arm's own program, patched as its header documents) answers both of
+  its questions about the bus: `cut` reads the newest complete record for a branch, and
+  `align` folds every branch in the stack in a single pass (`record.jq`, keyed by branch).
+  `align`'s walk is the arm's: gh resolves each PR, the recorded parent overrides the PR
+  base only where the arm let it, and each layer comes back `ff`, `onto` or `unknown` with
+  the directive a worker runs verbatim. Every outside call is a `Probes` seam (git through
+  `internal/wtgit`'s anchored invocation, gh, the clock, the bus append), so the tests
+  drive the whole command against a fixture repo and a gh stub — including the row-level
+  assertions the bats rows make, which the port keeps as the contract.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 - `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
@@ -499,7 +510,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap | stack)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -514,6 +525,15 @@ bash `rate --sweep-all` loop used to shell out to is gone now that the loop is G
 Candidates are byte-sorted (Go `sort.Strings`) where bash `sort -u` used the
 caller's locale collation, so `rate --sweep-all` may list repos in a different
 order; the set is identical (behaviour, not bytes).
+
+`crew stack cut|align` is Go (#1004) and joins the one-liner arm after the repo check;
+its `--help` stays in the preamble, as every ported subcommand's does. `cut` is the one
+of the two that writes: one `stack_cut` row through `bus.Append`, the record of a parent
+oid a child is based on. Its reader is the same fold that reads the `dispatch` row
+`dispatch` appends when it creates the child — the newest of the two wins — and nothing
+else in the repo reads `stack_cut`, so the row is compatible in _value_ (jsonv parses it)
+rather than in bytes. What is read verbatim is the other side: the oid `cut` prints and
+the refusal text, which the dispatcher quotes into a rebase directive.
 
 `crew occupants <worktree-path>` needs no repo either, and `reap` is ported, so the
 script's pre-repo preamble branch for `occupants` is now `exec "${CREW_GO_BIN:-@crewGoBin@}"
@@ -872,7 +892,9 @@ the renderer's model and by `hold list` alike, so the guard that compared the tw
 copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
 `_fit_line`, `_shrink`, `_LINE_MAX`/`_ELIDED` and
 their drift guards are gone with the `status`/`msg` port (#945): `bus` is the one
-copy. `_bus_append` stays for `crew stack`, and `internal/bus.Append` is its Go copy.
+copy. `_bus_append` has had no crew.sh caller since `crew stack` moved (#1004); it stays
+as the canonical copy adapters.bats pins dispatch.sh and dispatch-notify.sh against (the
+same arrangement as `_pid_alive`), and `internal/bus.Append` is its Go copy.
 `_owner_pid`, `_pidfile_log` and `_has_c0` are gone (`crews.Probes.OwnerPID`,
 `crews.PidfileLog`, and `msg`'s own control-byte test). `_pid_alive`,
 `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no
@@ -896,11 +918,15 @@ baseline init and migrations, and the guard and cwd guard bodies are all
   `_wt_cfg_commondir` first and again after the `cd`);
 - `_wt_admin_dir`, `_wt_gitlink_ok`, `_wt_status`, `_wt_plain_branch_name`,
   `_wt_fetch_origin_branch` and `_worktree_anchor_path`: bash callers' helpers over git
-  and the dispatcher records, with no config check in them.
+  and the dispatcher records, with no config check in them. `internal/wtgit` carries Go
+  copies of `_wt_plain_branch_name` (`PlainBranchName`) and `_wt_fetch_origin_branch`
+  (`FetchOriginBranch`) for `crew stack`; the bash copies stay for dispatch, whose
+  branch-name and fetch checks are load-bearing.
 
 `crew reap` is Go (#997) and uses `internal/wtgit`, the Go copy of the anchored invocation,
 `_wt_trusted_cwd` (as a returned directory), `_wt_admin_dir`, `_wt_gitlink_ok`, `_wt_status`
-and `_worktree_anchor_path`. The bash copies stay for `crew stack` and dispatch until they
+and `_worktree_anchor_path`, plus `PlainBranchName` and `FetchOriginBranch` (`crew stack`
+has run the Go copies since #1004). The bash copies stay for dispatch until its callers
 are ported, and `wtgit`'s drift test pins `_wt_neutral_cfg` and the common extras against
 `worktree-git.sh`, so a change to either list fails until both agree. The rest of the
 invocation (the refusals, `--attr-source`, anchoring) has no second guard: it is covered by
