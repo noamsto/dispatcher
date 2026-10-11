@@ -4,6 +4,7 @@ Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
+`identity` (#981),
 `stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
 (#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), and `nudge`
 (#939). Each slice must leave every bats file green;
@@ -26,7 +27,9 @@ output contract below), with each edit justified.
   `_fit_line`/`_shrink` at `LineMax`, the one copy now that `status` and `msg`
   are Go too. `Toplevel` is `git rev-parse --show-toplevel` from the cwd, which
   the status gate reads the worker's `WORKER_TASK.md` through.
-- `crew/internal/identity`: codename, colour and tmux pools, the cksum slot.
+- `crew/internal/identity`: codename, colour and tmux pools, the cksum slot, and
+  the assignment the arm made: `Assign` is `_identity_assign`, reusing `Recorded`
+  for what dispatch stamped and folding the bus for who holds what.
 - `crew/internal/roster`, `crew/internal/sessions`, `crew/internal/crews`,
   `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
   crew.sh apart from documented patches) plus the Go glue: tmux/worktree
@@ -173,6 +176,16 @@ output contract below), with each edit justified.
   window's `@crew_*` stamps and the bus's `dispatch` rows, never git discovery in
   a worktree — and falls back to the pool identity (`identity`) for a window
   stamped before `@crew_name` existed.
+- `crew/internal/identity` is also the `crew identity` arm of #981: the codename a
+  branch works under, which `dispatch` stamps on its dispatch row and on the
+  window's `@crew_name`. A branch keeps what it recorded unless another live
+  worker holds that name, else its hash slot steps forward to the first free
+  codename — occupancy the arm read twice, and both reads stay tolerant: no bus,
+  a bus `jq -s` could not slurp, and a failed `tmux list-windows` each contribute
+  nothing rather than refusing, because a branch always gets an identity. The
+  window list is an injected probe (the arm's argv; a failed read names nothing),
+  so no test needs tmux, and it is consulted only on the fallback path — a
+  recorded name is gated by the bus alone, as the arm gated it.
 - `crew/internal/adopt`: `crew adopt`, the re-attach a dispatcher runs after a
   restart lost `CREW_ID` (#29) and the release of the `dispatched` labels a crew
   that died mid-claim left behind (#73). stdout is the bare id alone — callers
@@ -421,7 +434,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -605,12 +618,18 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
 
 ## Bash helpers that stay
 
-`_identity*`, `_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at`
-keep other callers (`reap`). Delete each only with its last caller.
-While two copies exist, guard drift:
+`_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at` keep other callers (`reap`).
+Delete each only with its last caller. While two copies exist, guard drift:
 
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
+
+The `_identity*` helpers lost their last caller with the `identity` arm (#981) and
+are gone; `crew/internal/identity` is now the only picker of a codename. The three
+pools stay: no bash caller reads them either, but they are the canonical copy —
+crew.bats's `_rr_palette` enumerates `_colors` from here to compile every palette
+stroke through d2, and `identity_test.go` asserts the Go pools against all three,
+which is what keeps a slot from being reordered under a recorded identity.
 
 `_sessions` and `_resolve_target` lost their last caller with the `nudge` arm and
 are gone, and their drift guards went with them: `crew sessions` and

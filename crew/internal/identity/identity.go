@@ -3,10 +3,17 @@
 package identity
 
 import (
+	"fmt"
+	"io"
 	"regexp"
+	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
+
+// exitFailure is the arm's exit status for a refusal.
+const exitFailure = 1
 
 // The pools mirror _names/_colors/_tmuxc in adapters/core/crew.sh; a test
 // guards them against drift.
@@ -158,3 +165,237 @@ func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
 	}
 	return At(Slot(branch))
 }
+
+// Probes is the arm's tmux read, injected so tests never touch a server.
+type Probes struct {
+	// Windows is `tmux list-windows -a -F '#{@crew_name}'`: every codename a live
+	// window already carries, one per line. The arm ran it under `2>/dev/null ||
+	// true`, so a failed read names nothing rather than refusing.
+	Windows func() (string, error)
+}
+
+// Options is everything Run reads beyond the bus: the crew the arm defaults to
+// (`_crew_id`) and the tmux probe.
+type Options struct {
+	CrewID func() string
+	Probes Probes
+}
+
+// Run is the `crew identity <branch> [crew]` arm: the usage refusal, the `--hash`
+// form, and the identity a branch gets.
+func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	if len(argv) == 0 || argv[0] == "" {
+		say(stderr, "crew: identity <branch> [crew]\n")
+		return exitFailure
+	}
+	if argv[0] == "--hash" {
+		// The arm failed on `${2:?crew: identity --hash <name>}`, so bash wrapped
+		// that message in its own "parameter null or not set" line. The refusal and
+		// its exit code are the behaviour; this is the message.
+		if len(argv) < 2 || argv[1] == "" {
+			say(stderr, "crew: identity --hash <name>\n")
+			return exitFailure
+		}
+		return emit(stdout, At(Slot(argv[1])))
+	}
+	branch := argv[0]
+	crew := ""
+	if len(argv) > 1 {
+		crew = argv[1]
+	}
+	if crew == "" && o.CrewID != nil {
+		crew = o.CrewID()
+	}
+	// Both of the arm's bus reads ran `jq … 2>/dev/null || true`: a log that is
+	// missing, and one jq could not slurp, are both "nothing recorded, nothing
+	// occupied", which lands on the pool fallback rather than refusing.
+	return emit(stdout, Assign(busEvents(paths.Log), branch, crew, o.Probes))
+}
+
+// Assign is `_identity_assign <branch> <crew>`: the identity a dispatch stamps.
+// A branch keeps the identity it recorded unless another live worker holds that
+// name; otherwise it takes its hash slot stepped forward to the first codename no
+// live worker holds, falling back to the hash slot when all 32 are taken. A branch
+// always gets an identity.
+func Assign(rows []bus.Event, branch, crew string, p Probes) jsonv.Value {
+	// Only the bus occupancy gates the recorded identity: the arm checked it
+	// before it ever asked tmux.
+	occ := occupied(rows, branch, crew)
+	if rec, ok := Recorded(rawValues(rows), branch); ok {
+		name, _ := rec.Get("name")
+		if held, _ := name.AsString(); !occ[held] {
+			return rec
+		}
+	}
+	for _, win := range windowNames(p) {
+		occ[win] = true
+	}
+	base := Slot(branch)
+	slot := base
+	for i := range names {
+		slot = (base + i) % poolSize
+		if !occ[names[slot]] {
+			break
+		}
+	}
+	if occ[names[slot]] {
+		slot = base // every codename taken: the hash slot, taken or not
+	}
+	return At(slot)
+}
+
+// occupied is `_identity_bus_occ <branch> <crew>`: the codename of every OTHER
+// branch dispatched into the crew no later than this branch's latest dispatch,
+// whose newest `worker:` status is not terminal. A dispatch row that recorded no
+// name counts by that branch's hash slot, which is how a pre-#470 row still holds
+// a codename rather than freeing whatever slot it was handed.
+func occupied(rows []bus.Event, branch, crew string) map[string]bool {
+	// The newest `worker:` status row per branch, keyed by the branch its id
+	// names: a finished worker frees the name it held.
+	status := map[string]bus.Event{}
+	// Each other branch's last dispatch row, in log order as the arm's
+	// `group_by(.branch) | map(last)` took it.
+	dispatch := map[string]bus.Event{}
+	selfts, haveSelf := 0.0, false
+	for _, ev := range rows {
+		if ev.Raw.Kind() != jsonv.KindObject || ev.CrewID != crew {
+			continue
+		}
+		if ev.Kind == bus.KindStatus {
+			if wid, held := workerBranch(ev.From); held {
+				if cur, seen := status[wid]; !seen || atLeast(ev.TS, cur.TS) {
+					status[wid] = ev
+				}
+			}
+			continue
+		}
+		if ev.Kind != bus.KindDispatch {
+			continue
+		}
+		// A row whose branch is not a string keys nothing. The arm's jq died on it
+		// and took every occupancy with it; dropping the row alone is what it meant.
+		key, _ := ev.Raw.Get("branch")
+		name, isStr := key.AsString()
+		if !isStr {
+			continue
+		}
+		if name == branch {
+			if ts, ok := ev.TS.AsFloat(); ok && (!haveSelf || ts > selfts) {
+				selfts, haveSelf = ts, true
+			}
+			continue
+		}
+		dispatch[name] = ev
+	}
+	// The arm's `$selfts`, 1e18 when this branch was never dispatched here: every
+	// other branch is then older, so all of them hold their names.
+	limit := 1e18
+	if haveSelf {
+		limit = selfts
+	}
+	occ := map[string]bool{}
+	for name, ev := range dispatch {
+		if ts, ok := ev.TS.AsFloat(); ok && ts > limit {
+			continue // dispatched after us: it yields, we hold
+		}
+		if st, ok := status[name].Body.Get("state"); ok {
+			if s, isStr := st.AsString(); isStr && bus.State(s).Terminal() {
+				continue // its worker is done, failed, exited or reaped
+			}
+		}
+		if held, ok := heldName(ev, name); ok {
+			occ[held] = true
+		}
+	}
+	return occ
+}
+
+// heldName is the codename a dispatch row holds for its branch: the one it
+// stamped, or the pool name that branch hashes to when it recorded none, which is
+// how a pre-#470 row still holds a codename. ok is false for a name that is
+// neither: bash `@tsv`'d a number or a `true` into a token no pool holds, so it
+// held nothing — and no pool codename is ever a number or a bool, so holding
+// nothing here is the same answer. (An object or array name made that jq program
+// die, taking every other branch's occupancy with it; dispatch writes strings.)
+func heldName(ev bus.Event, branch string) (string, bool) {
+	name, _ := ev.Raw.Get("name")
+	switch {
+	case name.Kind() == jsonv.KindString:
+		s, _ := name.AsString()
+		if s == "" {
+			return names[Slot(branch)], true
+		}
+		return s, true
+	case name.IsNull() || name.Kind() == jsonv.KindFalse: // jq's `// "": both are no name
+		return names[Slot(branch)], true
+	default:
+		return "", false
+	}
+}
+
+// workerBranch is the fold's `ltrimstr("worker:") | sub("#[^#]*$";"")`: the branch
+// a `worker:<branch>#<session>` id names. ok is false for every other sender (a
+// role pane, the dispatcher), whose statuses never gate a name.
+func workerBranch(from string) (string, bool) {
+	branch, found := strings.CutPrefix(from, "worker:")
+	if !found {
+		return "", false
+	}
+	if i := strings.LastIndex(branch, "#"); i >= 0 {
+		branch = branch[:i]
+	}
+	return branch, true
+}
+
+// atLeast reports whether left's `ts` orders at or after right's, the tie broken
+// for the later row as jq's `max_by` breaks it. A `ts` that is not a number is
+// jq's null: below every number, so the newest real row wins.
+func atLeast(left, right jsonv.Value) bool {
+	lt, lok := left.AsFloat()
+	rt, rok := right.AsFloat()
+	if !rok {
+		return true
+	}
+	return lok && lt >= rt
+}
+
+// windowNames is the arm's tmux read flattened to the codenames it lists: one per
+// window, and the arm matched them as whitespace-delimited tokens after `tr
+// '\n' ' '`, so that is how they split here. A failed read, like the arm's
+// `2>/dev/null`, names nothing.
+func windowNames(p Probes) []string {
+	if p.Windows == nil {
+		return nil
+	}
+	out, err := p.Windows()
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(out)
+}
+
+// busEvents is the arm's `jq -s … "$log" 2>/dev/null || true` over the bus: no
+// log, and one jq could not slurp, are both no rows.
+func busEvents(path string) []bus.Event {
+	events, err := bus.ReadEvents(path)
+	if err != nil {
+		return nil
+	}
+	return events
+}
+
+func rawValues(rows []bus.Event) []jsonv.Value {
+	out := make([]jsonv.Value, len(rows))
+	for i, ev := range rows {
+		out[i] = ev.Raw
+	}
+	return out
+}
+
+// emit prints one identity as the arm's `jq -nc` did: compact, on one line.
+func emit(w io.Writer, v jsonv.Value) int {
+	say(w, "%s\n", jsonv.Append(nil, v, jsonv.Options{}))
+	return 0
+}
+
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

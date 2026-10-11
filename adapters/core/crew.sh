@@ -19,93 +19,17 @@
 # whatever slips through for legacy events with no recorded name.
 # The 16 added codes were picked by measured WCAG contrast against both bases
 # (worst added: 2.86 mocha / 2.88 latte — above the 2.54 floor of the original 16).
+#
+# Picking a slot moved to Go with #981 (crew/internal/identity), so no bash
+# caller reads these three left. They stay as the canonical pool: crew.bats's
+# `_rr_palette` enumerates `_colors` from here to compile every palette stroke
+# through d2, and the Go pools are asserted against all three (identity_test.go).
 _names=(sage atlas nova ember reef iris amber coral moss slate rust plum lime rose sky onyx
   pine lagoon indigo fern bronze violet khaki ash brick mauve tan crimson fuchsia blush orchid cobalt)
 _colors=(green blue magenta orange teal purple yellow salmon olive steel rust plum lime pink sky grey
   seagreen darkcyan indigo forestgreen darkgoldenrod mediumpurple darkkhaki dimgrey indianred palevioletred peru crimson mediumvioletred hotpink orchid royalblue)
 _tmuxc=(colour28 colour32 colour127 colour130 colour30 colour98 colour136 colour167 colour100 colour67 colour166 colour96 colour64 colour162 colour25 colour244
   colour29 colour31 colour61 colour65 colour94 colour97 colour101 colour102 colour131 colour132 colour137 colour160 colour163 colour168 colour169 colour68)
-
-_identity_at() { # $1=slot -> {name,color,tmux}
-  jq -nc --arg name "${_names[$1]}" --arg color "${_colors[$1]}" --arg tmux "${_tmuxc[$1]}" \
-    '{name:$name, color:$color, tmux:$tmux}'
-}
-
-_identity_slot() { # $1=branch -> hash slot; cksum is POSIX (portable to macOS)
-  local n
-  n=$(printf '%s' "$1" | cksum | cut -d' ' -f1)
-  echo $((n % ${#_names[@]}))
-}
-
-_identity() { # $1=branch -> {name,color,tmux}
-  _identity_at "$(_identity_slot "$1")"
-}
-
-# _identity_recorded <branch> — the identity `dispatch` recorded for this branch
-# (latest dispatch event that carries one), or nothing for a legacy branch.
-_identity_recorded() {
-  [ -f "$log" ] || return 0
-  jq -c -s --arg b "$1" '
-    map(select(.kind == "dispatch" and .branch == $b and .name != null
-      and (.name | strings | test("\\A[a-z][a-z0-9-]*\\z"))
-      and (.tmux | strings | test("\\Acolour[0-9]+\\z"))))
-    | last // empty | {name, color, tmux}' "$log" 2>/dev/null || true
-}
-
-# _identity_bus_occ <branch> <crew> — " name " for every OTHER branch dispatched
-# into the crew, dispatched no later than this one, whose latest status is not
-# terminal (legacy events count by hash). Earliest dispatch keeps a duplicated name.
-_identity_bus_occ() {
-  local br name occ=""
-  [ -f "$log" ] || return 0
-  while IFS=$'\t' read -r br name; do
-    [ -n "$br" ] || continue
-    if [ -z "$name" ]; then
-      name=$(_identity "$br" | jq -r .name)
-    fi
-    occ="$occ $name "
-  done < <(jq -r -s --arg crew "$2" --arg self "$1" '
-    def wid_branch: ltrimstr("worker:") | sub("#[^#]*$";"");
-    (map(select(.crew_id == $crew and .kind == "status" and ((.from // "") | startswith("worker:"))))
-      | group_by(.from | wid_branch)
-      | map({key: (.[0].from | wid_branch), value: (max_by(.ts) | .body.state)}) | from_entries) as $st
-    | . as $all
-    | (($all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch == $self) | .ts) | max) // 1e18) as $selfts
-    | $all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch != $self))
-    | group_by(.branch) | map(last)
-    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited", "reaped") | not)
-    | [.branch, (.name // "")] | @tsv' "$log" 2>/dev/null || true)
-  printf '%s' "$occ"
-}
-
-# _identity_assign <branch> <crew> — the identity a dispatch should stamp: the
-# branch's recorded one unless another live worker now holds that name, else its
-# hash slot stepped forward to the first codename no live worker holds. Live =
-# the crew's other non-terminal dispatched branches plus every tmux window
-# already carrying @crew_name. The caller serialises concurrent dispatches (see
-# dispatch.sh), so the pick is race-free.
-_identity_assign() {
-  local rec occ i slot base
-  occ=$(_identity_bus_occ "$1" "$2")
-  rec=$(_identity_recorded "$1")
-  if [ -n "$rec" ]; then
-    case "$occ" in *" $(printf '%s' "$rec" | jq -r .name) "*) ;; *)
-      printf '%s\n' "$rec"
-      return 0
-      ;;
-    esac
-  fi
-  occ="$occ $(tmux list-windows -a -F '#{@crew_name}' 2>/dev/null | tr '\n' ' ' || true) "
-  base=$(_identity_slot "$1")
-  slot=$base
-  for ((i = 0; i < ${#_names[@]}; i++)); do
-    slot=$(((base + i) % ${#_names[@]}))
-    case "$occ" in *" ${_names[$slot]} "*) ;; *) break ;; esac
-  done
-  # Every codename taken: fall back to the hash slot rather than refuse.
-  case "$occ" in *" ${_names[$slot]} "*) slot=$base ;; esac
-  _identity_at "$slot"
-}
 
 # _is_engine_cmd <pane_current_command> — is this pane running an agent engine?
 # Under Nix the literal binary name doesn't always reach tmux. The engines
@@ -2043,19 +1967,6 @@ fi
 dir="$common/crew"
 log="$dir/events.jsonl"
 
-if [ "$sub" = identity ]; then
-  [ -n "${1:-}" ] || {
-    echo "crew: identity <branch> [crew]" >&2
-    exit 1
-  }
-  if [ "$1" = --hash ]; then
-    _identity "${2:?crew: identity --hash <name>}"
-    exit 0
-  fi
-  _identity_assign "$1" "${2:-$(_crew_id)}"
-  exit 0
-fi
-
 case "$sub" in
 nudge)
   # Ported to Go (crew/internal/nudge, docs/crew-go-port.md). It execs directly:
@@ -2063,7 +1974,7 @@ nudge)
   # with stall-watch — moved to Go with #968 (crew/internal/unread).
   exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
