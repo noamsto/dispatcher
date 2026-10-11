@@ -161,3 +161,6 @@ func realpathMissing(p string) (string, error) {
 	}
 	return resolved, nil
 }
+
+// RealpathMissing is realpathMissing for callers outside the package.
+func RealpathMissing(p string) (string, error) { return realpathMissing(p) }
