@@ -41,33 +41,6 @@ _identity() { # $1=branch -> {name,color,tmux}
   _identity_at "$(_identity_slot "$1")"
 }
 
-# _resolve_target <target> [crew] — one TSV line (branch, codename, host, crew)
-# per branch the target names, from the latest `dispatch` row of each branch in
-# the bus: `#N`/`N` (branch `<type>/N-…`, or an `also_closes` entry), a Linear
-# id (`eng-N-…`, or an `also_closes` entry), `worker:<branch>#<session>`, a
-# branch, or a codename. `crew where` and `crew resolve-target` are Go (#902,
-# crew/internal/resolve) with their own copy of this fold, so `nudge` is the
-# last bash caller; a crew.bats row replays this helper against
-# `crew resolve-target` on one fixture bus. The rows are unauthenticated
-# (workers can append to the bus): a caller that acts on the result must still
-# gate on the dispatcher-written worktree record.
-_resolve_target() {
-  [ -f "$log" ] || return 0
-  jq -nrR --arg t "$1" --arg c "${2:-}" '
-    ($t | ltrimstr("#")) as $s
-    | ($s | ascii_downcase) as $l
-    | (if $t | startswith("worker:") then $t | ltrimstr("worker:") | sub("#[^#]*$"; "") else $t end) as $b
-    | (if $s | test("^[0-9]+$") then "issue"
-       elif $s | test("^[A-Za-z]+-[0-9]+$") then "linear" else "name" end) as $k
-    | [inputs | fromjson? | objects
-        | select(.kind == "dispatch" and ((.branch // null) | type) == "string" and ($c == "" or .crew_id == $c))]
-    | group_by(.branch) | map(max_by(.ts))[]
-    | select(.branch == $b or (.name // "") == $t
-        or ($k == "issue" and ((.branch | test("(^|/)" + $s + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring == $s)))
-        or ($k == "linear" and ((.branch | ascii_downcase | test("(^|/)" + $l + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring | ascii_downcase == $l))))
-    | [.branch, (.name // ""), (.host // ""), (.crew_id // "")] | @tsv' "$log" 2>/dev/null || true
-}
-
 # _identity_recorded <branch> — the identity `dispatch` recorded for this branch
 # (latest dispatch event that carries one), or nothing for a legacy branch.
 _identity_recorded() {
@@ -757,34 +730,16 @@ _release_windows() {
   }
 }
 
-# _is_session_id <id> — 0 when the suffix after the LAST '#' has the sid shape
-# s<epoch>-<pid>. A '#' inside a branch name (legal in git) does not match, so
-# `worker:feat/a#b` is branch-only while `worker:feat/a#b#s1-1` is sessioned.
-_is_session_id() {
-  [[ "${1##*#}" =~ ^s[0-9]+-[0-9]+$ ]]
-}
-
 # CREW_CLOCK=<file> is a test-only virtual clock for the waits in `await`, the
-# hold paths and `stall-watch`: _clock_now reads epoch seconds from it and
-# _clock_sleep advances it instead of waiting. It starts at the real time and
-# only moves forward, so bus rows (real ms) posted during a run still sort at or
-# before `now`, as they do in production. Unset, these are exactly `date +%s`
-# and `sleep`.
+# hold paths and `stall-watch`: _clock_now reads epoch seconds from it, and the
+# Go clock (crew/internal/clock) reads and advances it the same way — `crew nudge
+# --wait` among its callers. It starts at the real time and only moves forward, so
+# bus rows (real ms) posted during a run still sort at or before `now`, as they do
+# in production. Unset, these are exactly `date +%s` and `sleep`.
 _clock_now() {
   [ -n "${CREW_CLOCK:-}" ] || { date +%s; return; }
   [ -s "$CREW_CLOCK" ] || date +%s >"$CREW_CLOCK"
   cat "$CREW_CLOCK"
-}
-_clock_sleep() {
-  [ -n "${CREW_CLOCK:-}" ] || { sleep "$1"; return; }
-  local s="${1%%.*}"
-  [ "$s" = "$1" ] || s=$((${s:-0} + 1))
-  printf '%s\n' "$(($(_clock_now) + s))" >"$CREW_CLOCK.$$"
-  mv -f "$CREW_CLOCK.$$" "$CREW_CLOCK"
-}
-_clock_now_ms() {
-  [ -n "${CREW_CLOCK:-}" ] || { jq -nc 'now*1000|floor'; return; }
-  printf '%s\n' "$(($(_clock_now) * 1000))"
 }
 # _clock_now_f — fractional epoch seconds, jq's `now` when the clock is unset.
 _clock_now_f() {
@@ -797,7 +752,7 @@ _clock_now_f() {
 # await` and `crew inbox` both raise it from Go (crew/internal/marks, the same
 # path and the same two programs), so a reply taken through the straggler fold is
 # not handed back by the next `await`. These three stay for `_unread_scan` (and
-# through it `nudge` and `stall-watch --unread`), which read the same file, and
+# through it `crew nudge` and `stall-watch --unread`), which read the same file, and
 # for the crew.bats guards that replay Go's writes through them. Not a bus row:
 # it never reaches `roster`, `watch` or another session's reads.
 _await_state() { # <crew> <agent> -> path
@@ -858,316 +813,6 @@ _unread_scan() {
         else
           ($u | min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"
         end' 2>/dev/null || true
-}
-
-# _sessions <branch> <crew_or_empty> -> [{session,worker_id,state,ts,age_s,terminal}]
-# oldest -> newest. Every fold is per SESSION: aggregating across a branch is how
-# three workers came to read as one flip-flopping identity (#17). A session with a
-# dispatch event but no status yet is still listed (state null) — dispatch needs to
-# see a booting worker. No crew filter by default, same reason `reap` has none: the
-# sessions worth inspecting are the ones from earlier dispatcher crews.
-# A session-less status row (watchdog, bare heartbeat, legacy) belongs to the
-# sessioned session that had started by its ts: left as its own null entry it
-# could become `last`, and `reply` would address a bare id no live inbox reads
-# (#173). A resume row starts a session exactly as a dispatch row does, or a
-# row landing before the resumed worker's first status would pick the dead
-# predecessor. The row stays a null entry when no session precedes it, or when
-# that session's own last word was terminal: a finished session reads no inbox,
-# so reviving it would hand `reply` a dead address instead of a refusal.
-_sessions() {
-  local branch="$1" crewf="$2"
-  [ -f "$log" ] || {
-    printf '[]'
-    return 0
-  }
-  jq -s -c --arg b "$branch" --arg crew "$crewf" '
-      def split_wid: ltrimstr("worker:") as $r
-        | ($r | capture("#(?<s>s[0-9]+-[0-9]+)$").s // null) as $s
-        | {branch: (if $s == null then $r else ($r | rtrimstr("#" + $s)) end), session: $s};
-      def is_terminal: . as $x | (["done","failed","exited"] | index($x // "")) != null;
-      map(select($crew=="" or .crew_id==$crew))
-      | ( map(select((.kind=="dispatch" or .kind=="resume") and .branch==$b))
-          | map({session:(.session // null), ts:.ts}) ) as $disp
-      | ( map(select(.kind=="status" and ((.from // "") | startswith("worker:")))
-              | ((.from) | split_wid) as $w
-              | select($w.branch == $b)
-              | {session:$w.session, state:.body.state, ts:.ts}) ) as $raw
-      | ( ($disp + $raw) | map(select(.session != null)) | group_by(.session)
-          | map({session:.[0].session, start:(map(.ts) | min)}) ) as $starts
-      | ( $raw | map(select(.session != null)) ) as $sessioned
-      | ( $raw | map(if .session != null then . else
-            .ts as $t
-            | ($starts | map(select(.start <= $t)) | max_by(.start) | .session) as $s
-            | ($sessioned | map(select(.session == $s and .ts <= $t)) | max_by(.ts) | .state) as $prev
-            | if ($prev | is_terminal) then . else .session = $s end
-          end) ) as $st
-      | ( ($disp + $st) | map(.session) | unique ) as $ids
-      | [ $ids[] as $s
-          | ($st | map(select(.session == $s)) | sort_by(.ts) | last) as $latest
-          | ($disp | map(select(.session == $s)) | sort_by(.ts) | last) as $d
-          | { session: $s,
-              worker_id: ("worker:" + $b + (if $s == null then "" else "#" + $s end)),
-              state: ($latest.state // null),
-              ts: ($latest.ts // $d.ts),
-              terminal: ((["done","failed","exited"] | index($latest.state // "")) != null) } ]
-      | sort_by(.ts)
-      | map(. + {age_s: (((now*1000) - .ts) / 1000 | floor)})' "$log"
-}
-
-# _nudge_busy_reason <plain> <colored> <why> — a claude lead's
-# _pane_idle_reason refusal, narrowed to what is actually on screen.
-_nudge_busy_reason() {
-  case "$3" in
-  "prompt on screen")
-    if _is_permission_prompt "$1"; then
-      printf '%s' "permission dialog on screen"
-    elif _is_quota_prompt "$1" || _is_quota_session_limit "$1"; then
-      printf '%s' "quota frame on screen"
-    else
-      printf '%s' "dialog on screen (option-select or workspace trust)"
-    fi
-    ;;
-  "live turn, unsent input, or no idle input box")
-    # Only a non-empty, non-ghost row passes the own-text form after the
-    # plain form failed.
-    if _claude_idle_box "$1" "$2" 1; then
-      printf '%s' "unsent input in the input box"
-    else
-      printf '%s' "live turn or no idle input box"
-    fi
-    ;;
-  *) printf '%s' "$3" ;;
-  esac
-}
-
-# The line a nudge types, literally: the lead's own shell expands the variable
-# its engine environment exports, so nothing bus- or branch-derived is typed.
-_nudge_line="crew inbox \"\$CREW_WORKER_ID\""
-
-# The line the stall-watch auto-continue types into a pi lead whose turn ended
-# on a truncated response or a provider error; msg_ts 0 keeps its nudge row from
-# covering any directive.
-_continue_line="continue from where you stopped; if a command's result is missing, re-run it"
-
-# _nudge_box_text <text> — every row inside the lead's input box (same bounds
-# as _box_rows) concatenated with claude's `❯` and all whitespace dropped, so a
-# box the engine wrapped (at a space or mid-word) still compares equal to the
-# whitespace-free line; empty when the box is empty or absent.
-_nudge_box_text() {
-  local rx='.*'
-  [ "$engine" != claude ] || rx='^[[:space:]]*❯'
-  printf '%s\n' "$1" |
-    rx="$rx" csi="$csi_re" awk '
-      {
-        stripped = $0
-        gsub(ENVIRON["csi"], "", stripped)
-        if (stripped ~ /^[[:space:]]*$/) next
-        plain[++n] = stripped
-      }
-      END {
-        off = (n > 30) ? n - 30 : 0
-        b = 0; a = 0
-        for (i = n; i > off; i--) if (index(plain[i], "─") == 1) { if (!b) b = i; else { a = i; break } }
-        if (!a || b - a < 1 || b - a - 1 > 12 || n - b < 1 || n - b > 5) exit
-        if (b - a > 1 && plain[a + 1] !~ ENVIRON["rx"]) exit
-        s = ""
-        for (i = a + 1; i < b; i++) s = s plain[i]
-        sub(/^[[:space:]]*❯/, "", s)
-        gsub(/[[:space:]]|\302\240/, "", s)
-        print s
-      }' || true
-}
-
-# _nudge_frame_gate <pane> — reads $engine. Returns 0 when the pane shows an
-# idle, empty input box; else prints the refusal reason and returns 2.
-_nudge_frame_gate() {
-  local pane="$1" plain colored why
-  plain=$(_pane_capture "$pane" || true)
-  colored=$(_pane_capture "$pane" colored || true)
-  [ -n "$plain" ] || {
-    printf '%s\n' "pane unreadable"
-    return 2
-  }
-  if [ "$engine" = claude ]; then
-    if ! why=$(_pane_idle_reason "$plain" "$colored" 1); then
-      _nudge_busy_reason "$plain" "$colored" "$why"
-      printf '\n'
-      return 2
-    fi
-  else
-    why=""
-    if _is_prompt "$plain"; then
-      why="prompt on screen"
-    elif ! _pi_idle_box "$plain"; then
-      why="live turn or no idle input box"
-    elif [ -n "$(_nudge_box_text "$plain")" ]; then
-      why="unsent input in the input box"
-    fi
-    [ -z "$why" ] || {
-      printf '%s\n' "$why"
-      return 2
-    }
-  fi
-}
-
-# _nudge_pane <pane> <engine> <session-id> <crew> <actor> <msg-ts> — type the
-# constant $_nudge_line into a worker lead's provably idle, empty input box and
-# submit it, so a lead whose wake expired reads its unread directive. Needs
-# _frame_classifier already called. Prints one line; returns 0 accepted, 2
-# refused before typing (nothing typed, no bus row; an anchor-gate refusal
-# starts with `anchor:`), 3 typed but not accepted (held, unknown,
-# unconfirmed). Every typed attempt appends one `kind:"nudge"` row. Never
-# retries the text or the Enter: whatever the pane shows instead may be a human's.
-_nudge_pane() {
-  local engine="$2"
-  local pane="$1" sid="$3" crew="$4" actor="$5" msg_ts="$6" key branch wins panes prow wid role cmd wrow n last
-  local p2 c2 p3 c3 tail_n out row result detail entry
-  key="${_nudge_line//[[:space:]]/}"
-  if ! _is_session_id "$sid"; then
-    printf '%s\n' "'$sid' is not a sessioned worker id"
-    return 2
-  fi
-  case "$msg_ts" in '' | *[!0-9]*)
-    printf '%s\n' "msg ts '$msg_ts' is not a ms timestamp"
-    return 2
-    ;;
-  esac
-  case "$engine" in
-  claude | pi) ;;
-  *)
-    printf '%s\n' "no verified idle lead frame for ${engine:-an unknown engine}"
-    return 2
-    ;;
-  esac
-
-  # The frame gate runs before the anchor gate: the anchor's _sessions reads
-  # the whole bus log, and a busy lead is the common refusal. It runs again
-  # right before typing, since that read leaves time for a human to start typing.
-  _nudge_frame_gate "$pane" || return 2
-
-  # Anchor: the pane is the lead of this crew's window for the session's
-  # branch, still runs an engine, and the session is that branch's live newest.
-  branch="${sid%#*}"
-  branch="${branch#worker:}"
-  wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_id}' 2>/dev/null) || {
-    printf '%s\n' "anchor: cannot read tmux windows"
-    return 2
-  }
-  panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}' 2>/dev/null) || {
-    printf '%s\n' "anchor: cannot read tmux panes"
-    return 2
-  }
-  prow=$(printf '%s\n' "$panes" | awk -F'\t' -v p="$pane" '$2 == p { print; exit }')
-  [ -n "$prow" ] || {
-    printf '%s\n' "anchor: no pane $pane"
-    return 2
-  }
-  wid=$(printf '%s' "$prow" | cut -f1)
-  role=$(printf '%s' "$prow" | cut -f3)
-  cmd=$(printf '%s' "$prow" | cut -f4)
-  wrow=$(printf '%s\n' "$wins" | awk -F'\t' -v w="$wid" '$1 == w { print; exit }')
-  if [ -z "$crew" ] || [ "$(printf '%s' "$wrow" | cut -f3)" != "$crew" ]; then
-    printf '%s\n' "anchor: window $wid of $pane is not anchored to crew $crew"
-    return 2
-  fi
-  if [ "$(printf '%s' "$wrow" | cut -f2)" != "$branch" ]; then
-    printf '%s\n' "anchor: window $wid of $pane is not $branch's window"
-    return 2
-  fi
-  if [ "$role" != lead ]; then
-    n=$(printf '%s\n' "$panes" | awk -F'\t' -v w="$wid" '$1 == w' | grep -c . || true)
-    if [ -n "$role" ] || [ "$n" -ne 1 ]; then
-      printf '%s\n' "anchor: $pane is not the lead pane of $wid"
-      return 2
-    fi
-  fi
-  _is_engine_cmd "$cmd" || {
-    printf '%s\n' "anchor: $pane is not running an engine (${cmd:-no command})"
-    return 2
-  }
-  last=$(_sessions "$branch" "$crew" | jq -c 'last // empty' 2>/dev/null || true)
-  if [ -z "$last" ] || ! printf '%s' "$last" | jq -e --arg s "$sid" '.worker_id == $s and (.terminal | not)' >/dev/null 2>&1; then
-    printf '%s\n' "anchor: $sid is not the live newest session on $branch"
-    return 2
-  fi
-
-  _nudge_frame_gate "$pane" || return 2
-  tmux send-keys -t "$pane" -l "$_nudge_line" 2>/dev/null || {
-    printf '%s\n' "send-keys failed"
-    return 2
-  }
-
-  # Enter only once the line provably sits alone in a still-idle box: an Enter
-  # into anything else could answer a dialog or submit a human's text. The
-  # settle lets the engine redraw the typed text before it is read back.
-  _clock_sleep "${CREW_NUDGE_SETTLE:-1}"
-  p2=$(_pane_capture "$pane" || true)
-  c2=$(_pane_capture "$pane" colored || true)
-  entry=0
-  if ! _is_prompt "$p2" && [ "$(_nudge_box_text "$p2")" = "$key" ]; then
-    if [ "$engine" = claude ]; then
-      ! _is_permission_prompt "$p2" && _claude_idle_box "$p2" "$c2" 1 && entry=1
-    else
-      _pi_idle_box "$p2" && entry=1
-    fi
-  fi
-  if [ "$entry" = 0 ]; then
-    result=unconfirmed
-    detail="typed but not confirmed in the input box; no Enter sent — the text may be left as an unsent draft a human must clear (crew where), never re-typed"
-  elif ! tmux send-keys -t "$pane" Enter 2>/dev/null; then
-    result=unknown
-    detail="typed and confirmed, but the Enter failed; the line may sit in the input box (crew where), never re-typed"
-  else
-    _clock_sleep "${CREW_NUDGE_GAP:-2}"
-    p3=$(_pane_capture "$pane" || true)
-    c3=$(_pane_capture "$pane" colored || true)
-    result=unknown
-    if [ "$engine" = claude ]; then
-      tail_n=$(printf '%s\n' "$p3" | grep -v '^[[:space:]]*$' | tail -30 || true)
-      if [ -n "$(_meter_line "$tail_n")" ] || _has_subrow "$tail_n" ||
-        printf '%s\n' "$tail_n" | grep -qF 'esc to interrupt' ||
-        { out=$(_box_rows "$p3" '^[[:space:]]*❯') &&
-          printf '%s\n' "$out" | tail -n +2 | grep -qE '^[^[:alnum:]]*[A-Za-z]+…'; } ||
-        _claude_idle_box "$p3" "$c3" 0; then
-        result=accepted
-      elif _claude_idle_box "$p3" "$c3" 1 && [ "$(_nudge_box_text "$p3")" = "$key" ]; then
-        result=held
-      fi
-    elif _pi_working_label "$p3"; then
-      result=accepted
-    elif _pi_idle_box "$p3"; then
-      row=$(_nudge_box_text "$p3")
-      if [ -z "$row" ]; then
-        result=accepted
-      elif [ "$row" = "$key" ]; then
-        result=held
-      fi
-    fi
-    case "$result" in
-    accepted) detail="the lead took the line (live turn or emptied input box)" ;;
-    held) detail="the line still sits in the input box after one Enter; not re-sent — a human must submit or clear it (crew where)" ;;
-    *) detail="the pane after Enter is neither a live turn nor the held line; verify it (crew where), never re-typed" ;;
-    esac
-  fi
-
-  _bus_append "$log" "$(jq -nc --arg crew "$crew" --arg from "$actor" --arg to "$sid" \
-    --arg branch "$branch" --arg pane "$pane" --arg engine "$engine" --arg result "$result" \
-    --arg detail "$detail" --argjson msg_ts "$msg_ts" \
-    '{ts:(now*1000|floor), crew_id:$crew, kind:"nudge", from:$from, to:$to, branch:$branch,
-      pane:$pane, engine:$engine, result:$result, detail:$detail, msg_ts:$msg_ts}')"
-  printf 'nudge %s: %s %s — %s\n' "$result" "$pane" "$sid" "$detail"
-  [ "$result" = accepted ] || return 3
-}
-
-# _nudge_wait_row <state> <result> <rc> <detail> — the `nudge` arm's --wait
-# bookkeeping row, from the arm's nudge_* variables.
-_nudge_wait_row() {
-  _bus_append "$log" "$(jq -nc --arg crew "$nudge_crew" --arg to "$nudge_sid" --arg branch "$nudge_branch" \
-    --arg pane "$nudge_pane" --arg state "$1" --arg result "$2" --arg rc "$3" --arg detail "$4" \
-    --argjson msg_ts "$nudge_ts" --argjson ts "$(_clock_now_ms)" \
-    '{ts:$ts, crew_id:$crew, kind:"nudge_wait", from:("dispatcher:" + $crew), to:$to, branch:$branch,
-      pane:$pane, msg_ts:$msg_ts, state:$state, result:$result, detail:$detail}
-      + (if $rc == "" then {} else {rc:($rc | tonumber)} end)')"
 }
 
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
@@ -2334,197 +1979,10 @@ fi
 
 case "$sub" in
 nudge)
-  # nudge <codename|branch|worker:<branch>#s…> [--crew ID] — type the constant
-  # $_nudge_line into a worker lead's idle input box, so a lead whose wake
-  # expired reads the directive already posted with `crew reply`. The pane is resolved from the window's dispatcher-anchored @crew_*
-  # stamps, never a pane id. Exit 0 accepted, 1 usage or resolution error, 2
-  # refused before typing, 3 typed but not accepted.
-  # --wait [SECONDS] (default 1800) loops _nudge_pane while the lead is on a
-  # live turn, one waiter per lead session (a second call joins and reports the
-  # first's outcome only when it covers the caller's msg); any other refusal
-  # is immediate, and a lead that reads the msg meanwhile ends the wait untyped (exit 0).
-  _nudge_fail() {
-    echo "crew: nudge: $*" >&2
-    exit 1
-  }
-  _nudge_refuse() {
-    echo "crew: nudge: $*" >&2
-    exit 2
-  }
-  # Typing into a sibling's pane is the dispatcher's call alone.
-  nudge_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
-    { [ -n "$nudge_top" ] && [ -f "$nudge_top/WORKER_TASK.md" ]; }; then
-    echo "crew: nudge is a dispatcher command" >&2
-    exit 2
-  fi
-  nudge_crew=$(_crew_id)
-  nudge_target=""
-  nudge_wait=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --crew)
-      [ -n "${2:-}" ] || _nudge_fail "--crew needs an id (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
-      nudge_crew="$2"
-      shift 2
-      ;;
-    --wait)
-      nudge_wait=1800
-      case "${2:-}" in
-      '' | *[!0-9]*) shift ;;
-      *)
-        nudge_wait="$2"
-        shift 2
-        ;;
-      esac
-      ;;
-    --*)
-      _nudge_fail "unknown flag '$1' (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
-      ;;
-    *)
-      [ -z "$nudge_target" ] || _nudge_fail "one target only (usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]])"
-      nudge_target="$1"
-      shift
-      ;;
-    esac
-  done
-  [ -n "$nudge_target" ] || _nudge_fail "usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]"
-  [ -n "$nudge_crew" ] || _nudge_fail "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>"
-  nudge_want=""
-  case "$nudge_target" in
-  '%'*) _nudge_fail "pass a codename, branch or worker id — a pane id is not an anchored address" ;;
-  worker:*)
-    nudge_target="${nudge_target#worker:}"
-    if _is_session_id "$nudge_target"; then
-      nudge_want="worker:$nudge_target"
-      nudge_target="${nudge_target%#*}"
-    fi
-    ;;
-  esac
-
-  nudge_wins=$(tmux list-windows -a -F $'#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}' 2>/dev/null) ||
-    _nudge_fail "cannot read tmux windows (is a tmux server running?)"
-  nudge_panes=$(tmux list-panes -a -F $'#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}' 2>/dev/null) ||
-    _nudge_fail "cannot read tmux panes (is a tmux server running?)"
-  nudge_cwins=$(printf '%s\n' "$nudge_wins" |
-    awk -F'\t' -v dir="$dir" -v crew="$nudge_crew" 'NF >= 5 && $2 != "" && $3 == dir && $4 == crew { print $1 "\t" $2 "\t" $5 }')
-  nudge_win=$(printf '%s\n' "$nudge_cwins" | awk -F'\t' -v b="$nudge_target" '$2 == b { print; exit }')
-  if [ -z "$nudge_win" ]; then
-    nudge_matches=$(printf '%s\n' "$nudge_cwins" | awk -F'\t' -v n="$nudge_target" '$3 == n { print }')
-    nudge_n=$(printf '%s\n' "$nudge_matches" | grep -c . || true)
-    [ "$nudge_n" -le 1 ] || _nudge_fail "ambiguous codename '$nudge_target' — matches $(printf '%s\n' "$nudge_matches" | cut -f2 | paste -sd, -); pass a branch"
-    nudge_win="$nudge_matches"
-  fi
-  if [ -z "$nudge_win" ]; then
-    nudge_dbr=$(_resolve_target "$nudge_target" "$nudge_crew" | cut -f1 | paste -sd, -)
-    case "$nudge_dbr" in
-    *,*) _nudge_fail "ambiguous target '$nudge_target' — matches $nudge_dbr; pass a branch" ;;
-    ?*) _nudge_fail "no live pane for '$nudge_target' (branch $nudge_dbr) — its window is gone" ;;
-    esac
-    _nudge_fail "no worker matches '$nudge_target'"
-  fi
-  nudge_wid=$(printf '%s' "$nudge_win" | cut -f1)
-  nudge_branch=$(printf '%s' "$nudge_win" | cut -f2)
-  nudge_pane=$(printf '%s\n' "$nudge_panes" | awk -F'\t' -v w="$nudge_wid" '$1 == w && $3 == "lead" { print $2; exit }')
-  [ -n "$nudge_pane" ] || nudge_pane=$(printf '%s\n' "$nudge_panes" | awk -F'\t' -v w="$nudge_wid" '$1 == w { print $2; exit }')
-  [ -n "$nudge_pane" ] || _nudge_fail "no pane in the window for '$nudge_target'"
-
-  nudge_last=$(_sessions "$nudge_branch" "$nudge_crew" | jq -c 'last // empty')
-  [ -n "$nudge_last" ] || _nudge_refuse "no session on $nudge_branch — dispatch a worker before nudging one"
-  [ "$(printf '%s' "$nudge_last" | jq -r .terminal)" != true ] ||
-    _nudge_refuse "newest session on $nudge_branch is $(printf '%s' "$nudge_last" | jq -r .state) — a stopped session never reads its inbox; re-dispatch with the context baked in"
-  [ "$(printf '%s' "$nudge_last" | jq -r .state)" != null ] ||
-    _nudge_refuse "lead has not posted its first status yet — wait for it to start"
-  [ "$(printf '%s' "$nudge_last" | jq -r .session)" != null ] ||
-    _nudge_refuse "$nudge_branch has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch"
-  nudge_sid=$(printf '%s' "$nudge_last" | jq -r .worker_id)
-  [ -z "$nudge_want" ] || [ "$nudge_want" = "$nudge_sid" ] ||
-    _nudge_refuse "$nudge_want is not the newest session on $nudge_branch ($nudge_sid)"
-  nudge_engine=$(jq -nRr --arg c "$nudge_crew" --arg w "$nudge_sid" '
-    [inputs | fromjson? | objects | select(.crew_id == $c and (.kind == "dispatch" or .kind == "resume") and .worker_id == $w)]
-    | last | .engine // empty' "$log" 2>/dev/null || true)
-  [ -n "$nudge_engine" ] || _nudge_refuse "no dispatch or resume row records $nudge_sid's engine"
-  nudge_ts=$(_unread_scan "$nudge_crew" "$nudge_branch" "worker:$nudge_branch" "$nudge_sid" 0 dispatcher | cut -d' ' -f2)
-  [ -n "$nudge_ts" ] ||
-    _nudge_refuse "no unread msg from dispatcher:$nudge_crew to $nudge_sid — post the directive first (crew reply), then nudge"
-
-  _frame_classifier
-  nudge_rc=0
-  if [ -z "$nudge_wait" ]; then
-    nudge_out=$(_nudge_pane "$nudge_pane" "$nudge_engine" "$nudge_sid" "$nudge_crew" "dispatcher:$nudge_crew" "$nudge_ts") || nudge_rc=$?
-    [ "$nudge_rc" -ne 2 ] || _nudge_refuse "refused — $nudge_out"
-    printf '%s\n' "$nudge_out"
-    exit "$nudge_rc"
-  fi
-
-  # <result> <rc> <detail> <line> — ends the wait: records the outcome once a
-  # waiting row exists, so a joiner can report it.
-  nudge_waiting=0
-  _nudge_wait_end() {
-    [ "$nudge_waiting" = 0 ] || _nudge_wait_row resolved "$1" "$2" "$3"
-    [ "$2" -ne 2 ] || _nudge_refuse "$4"
-    printf '%s\n' "$4"
-    exit "$2"
-  }
-  nudge_start=$(_clock_now)
-  nudge_start_ms=$(_clock_now_ms)
-  nudge_interval="${CREW_NUDGE_WAIT_INTERVAL:-15}"
-  nudge_ld="$dir/nudge-wait/$(printf '%s' "$nudge_sid" | tr -c 'A-Za-z0-9._-' '_').$(printf '%s' "$nudge_sid" | cksum | cut -d' ' -f1).d"
-  mkdir -p "$dir/nudge-wait"
-  nudge_joining=0
-  until _lock_acquire "$nudge_ld" $$; do
-    nudge_hpid=$(cat "$nudge_ld/pid" 2>/dev/null || true)
-    if [ "$nudge_joining" = 0 ]; then
-      nudge_joining=1
-      printf 'nudge joining: %s %s — another crew nudge --wait (pid %s) owns this lead'"'"'s wait\n' "$nudge_pane" "$nudge_sid" "$nudge_hpid"
-    fi
-    [ "$(_clock_now)" -lt $((nudge_start + nudge_wait)) ] ||
-      _nudge_refuse "refused — still waiting on another crew nudge --wait (pid $nudge_hpid)"
-    _clock_sleep "$nudge_interval"
-  done
-  trap '_lock_release "$nudge_ld"' EXIT
-  if [ "$nudge_joining" = 1 ]; then
-    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson t "$nudge_start_ms" --argjson m "$nudge_ts" '
-      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge_wait" and .state == "resolved" and .to == $to and .ts >= $t and (.msg_ts // 0) >= $m)] | last // empty')
-    if [ -n "$nudge_prev" ]; then
-      nudge_rc=$(printf '%s' "$nudge_prev" | jq -r .rc)
-      nudge_res=$(printf '%s' "$nudge_prev" | jq -r '"\(.result): \(.detail)"')
-      _nudge_wait_end joined "$nudge_rc" "$nudge_res" "nudge joined: $nudge_pane $nudge_sid — $nudge_res"
-    fi
-  fi
-
-  while :; do
-    nudge_prev=$(tail -n 2000 "$log" 2>/dev/null | jq -Rnc --arg c "$nudge_crew" --arg to "$nudge_sid" --argjson m "$nudge_ts" '
-      [inputs | fromjson? | objects | select(.crew_id == $c and .kind == "nudge" and .to == $to and (.msg_ts // 0) >= $m)] | last // empty')
-    if [ -n "$nudge_prev" ]; then
-      nudge_res=$(printf '%s' "$nudge_prev" | jq -r .result)
-      nudge_detail=$(printf '%s' "$nudge_prev" | jq -r .detail)
-      nudge_rc=3
-      [ "$nudge_res" != accepted ] || nudge_rc=0
-      _nudge_wait_end already "$nudge_rc" "$nudge_res: $nudge_detail" "nudge already typed: $nudge_pane $nudge_sid — $nudge_res: $nudge_detail"
-    fi
-    read -r nudge_old _ <<<"$(_unread_scan "$nudge_crew" "$nudge_branch" "worker:$nudge_branch" "$nudge_sid" 0 dispatcher)"
-    if [ -z "$nudge_old" ] || [ "$nudge_old" -gt "$nudge_ts" ]; then
-      _nudge_wait_end read 0 "the lead read the msg during the wait; nothing typed" \
-        "nudge not needed: $nudge_pane $nudge_sid — the lead read the msg during the wait; nothing typed"
-    fi
-    nudge_rc=0
-    nudge_out=$(_nudge_pane "$nudge_pane" "$nudge_engine" "$nudge_sid" "$nudge_crew" "dispatcher:$nudge_crew" "$nudge_ts") || nudge_rc=$?
-    if [ "$nudge_rc" -ne 2 ]; then
-      nudge_res="${nudge_out#nudge }"
-      _nudge_wait_end "${nudge_res%%:*}" "$nudge_rc" "${nudge_out#* — }" "$nudge_out"
-    fi
-    [ "$nudge_out" = "live turn or no idle input box" ] || _nudge_wait_end refused 2 "$nudge_out" "refused — $nudge_out"
-    if [ "$nudge_waiting" = 0 ]; then
-      nudge_waiting=1
-      _nudge_wait_row waiting "" "" "live turn"
-      printf 'nudge waiting: %s %s — live turn; re-checking every %ss for up to %ss\n' "$nudge_pane" "$nudge_sid" "$nudge_interval" "$nudge_wait"
-    fi
-    nudge_waited=$(($(_clock_now) - nudge_start))
-    [ "$nudge_waited" -lt "$nudge_wait" ] ||
-      _nudge_wait_end timeout 2 "$nudge_out (waited ${nudge_waited}s)" "refused — $nudge_out (waited ${nudge_waited}s)"
-    _clock_sleep "$nudge_interval"
-  done
+  # Ported to Go (crew/internal/nudge, docs/crew-go-port.md). This arm exports CREW_SH
+  # as well as execing: the Go side calls back for `_unread_scan` — the one helper that
+  # stayed here, shared with stall-watch — through `stall-watch --sh unread`.
+  CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
 crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
@@ -2699,13 +2157,14 @@ stall-watch)
   #                  never trip D2/D3, so this reads the bus (bounded tail,
   #                  4-tick cadence). Never escalates.
   #                  A sessioned claude/pi watchdog first auto-nudges an idle
-  #                  lead past an overdue dispatcher directive (_nudge_pane,
+  #                  lead past an overdue dispatcher directive (crew/internal/nudge,
   #                  once per newest directive); --no-nudge turns it off.
   #   D9 truncated:/provider-error:
   #                  a pi lead idle at an empty box under pi's `Response was
   #                  truncated before completion.` or `Error: ...` line gets one
-  #                  constant continue line after two samples (gated like the D6
-  #                  auto-nudge: lead only, pi panes only, refused on a
+  #                  constant continue line after two samples (typed through
+  #                  crew/internal/nudge, the same gate the D6 auto-nudge runs:
+  #                  lead only, pi panes only, refused on a
   #                  live turn, unsent input or a dialog, once per episode) and
   #                  posts `working "truncated: auto-continued - pane %N"` /
   #                  `provider-error: ...`; `blocked "... not resumed"` if the
@@ -2747,8 +2206,8 @@ stall-watch)
   #
   # The loop runs in Go (crew/internal/stall, docs/crew-go-port.md); the comments
   # above document the behaviour it implements. `--sh <op>` is the Go side's
-  # call-out into the bash helpers that stay here: release, nudge, continue,
-  # unread, budget (windows|limit) and local-model.
+  # call-out into the bash helpers that stay here: release, unread,
+  # budget (windows|limit) and local-model.
   # Every op exits its status + 10, so a failure before or around it — the
   # preamble's exit 1, a usage refusal, 127, a signal — never reads as a verdict.
   if [ "${1:-}" = --sh ]; then
@@ -2761,17 +2220,6 @@ stall-watch)
       say() { :; }
       note() { :; }
       _release_windows "$@" "" || rc=$?
-      ;;
-    nudge)
-      _frame_classifier
-      out=$(_nudge_pane "$1" "$2" "$3" "$4" watchdog "$5") || rc=$?
-      printf '%s\n' "$out"
-      ;;
-    continue)
-      _frame_classifier
-      _nudge_line=$_continue_line
-      out=$(_nudge_pane "$1" "$2" "$3" "$4" watchdog 0) || rc=$?
-      printf '%s\n' "$out"
       ;;
     unread) _unread_scan "$@" || rc=$? ;;
     budget)
@@ -3801,8 +3249,8 @@ PANES
             keep_reason="empty capture of $epane"
             break
           fi
-          colored=$(tmux capture-pane -e -p -t "$epane" 2>/dev/null || true)
-          if ! idle_reason=$(_pane_idle_reason "$capture" "$colored"); then
+          colored_frame=$(tmux capture-pane -e -p -t "$epane" 2>/dev/null || true)
+          if ! idle_reason=$(_pane_idle_reason "$capture" "$colored_frame"); then
             keep_reason="$idle_reason"
             break
           fi
@@ -3910,8 +3358,8 @@ PANES
       resample=""
       for i in "${!idle_panes[@]}"; do
         capture=$(tmux capture-pane -p -t "${idle_panes[i]}" 2>/dev/null || true)
-        colored=$(tmux capture-pane -e -p -t "${idle_panes[i]}" 2>/dev/null || true)
-        if [ "$capture" != "${idle_frames[i]}" ] || ! _pane_idle_reason "$capture" "$colored" >/dev/null; then
+        colored_frame=$(tmux capture-pane -e -p -t "${idle_panes[i]}" 2>/dev/null || true)
+        if [ "$capture" != "${idle_frames[i]}" ] || ! _pane_idle_reason "$capture" "$colored_frame" >/dev/null; then
           resample="pane changed between samples"
           break
         fi

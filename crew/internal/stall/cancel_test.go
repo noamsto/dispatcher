@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
@@ -107,20 +108,30 @@ func slowOp(cancel func(), finished *bool) func(ctx context.Context, op string, 
 	}
 }
 
+// slowNudge is a D6 type the signal arrives during. It must run to its end: the bash
+// `$(…)` child wrote its row after the arm died, so the in-process call runs on a
+// context the signal cannot reach.
+func slowNudge(cancel func(), finished *bool) func(context.Context, nudge.PaneRequest) (string, int) {
+	return func(ctx context.Context, req nudge.PaneRequest) (string, int) {
+		cancel()
+		select {
+		case <-ctx.Done():
+			return "", -1
+		case <-time.After(50 * time.Millisecond):
+			*finished = true
+			return "nudge accepted: %1 " + req.Session + " — ok", 0
+		}
+	}
+}
+
 func TestNudgeSurvivesCancel(t *testing.T) {
 	s := &d6Script{}
-	h, f, w := d6Watch(t, s)
+	h, _, w := d6Watch(t, s)
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	finished := false
-	nudge := slowOp(cancel, &finished)
-	f.shc = func(ctx context.Context, op string, args ...string) (string, int) {
-		if op == "nudge" {
-			return nudge(ctx, op, args...)
-		}
-		return s.sh(op, args...)
-	}
+	w.o.Nudge = slowNudge(cancel, &finished)
 	if code, ok := codeOf(pdTick(t, w, 0, 0, w.d6)); !ok || code != 143 {
 		t.Errorf("d6 = (%d, %v), want 143", code, ok)
 	}
@@ -169,8 +180,23 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 	wantRows(t, h)
 }
 
+// A type that has not started when the signal lands never starts: the arm died before
+// it typed, so nothing may type after it.
+func TestNudgeCallNotStartedAfterCancel(t *testing.T) {
+	f := newFake()
+	_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	ctx, cancel := sigterm(t)
+	cancel()
+	w.ctx = ctx
+	started := false
+	w.o.Nudge = func(context.Context, nudge.PaneRequest) (string, int) { started = true; return "", 0 }
+	if _, _, err := w.nudgeCall(nudge.PaneRequest{}); err == nil || started {
+		t.Errorf("nudgeCall = (%v) started %v, want an error and no type", err, started)
+	}
+}
+
 func TestShWriteNotStartedAfterCancel(t *testing.T) {
-	for _, op := range []string{"nudge", "continue", "release"} {
+	for _, op := range []string{"release"} {
 		t.Run(op, func(t *testing.T) {
 			f := newFake()
 			_, w := pdWatch(t, f, "feat/x", "--pane", "%1")

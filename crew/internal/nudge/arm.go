@@ -1,0 +1,521 @@
+// arm.go is the `crew nudge` command: resolve a dispatcher's target to one live lead
+// pane, then type into it once or wait for the lead to come idle. The decision it makes
+// about the pane itself is in nudge.go.
+
+package nudge
+
+import (
+	"context"
+	_ "embed"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/identity"
+	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/resolve"
+)
+
+//go:embed already.jq
+var alreadyProgram string
+
+//go:embed joined.jq
+var joinedProgram string
+
+const usage = "crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]"
+
+// waitTailLines is the arm's `tail -n 2000` over the log for both --wait folds.
+const waitTailLines = 2000
+
+// exitType is jq's status for a fold that fails on a row it cannot use — the arm's
+// `_sessions | jq` under `set -e`.
+const exitType = 5
+
+// Options is everything Run reaches beyond the bus and tmux. Deps carries the pane's
+// side effects (and its clock), so a test drives the whole arm with fakes.
+type Options struct {
+	Deps Deps
+	// CrewID is `_crew_id`: the checkout's WORKER_TASK.md crew_id, else $CREW_ID.
+	CrewID func() string
+	// Getenv is the environment: the two ids that mark a worker session, plus
+	// CREW_NUDGE_WAIT_INTERVAL.
+	Getenv func(string) string
+	// Toplevel is `git rev-parse --show-toplevel` and Exists the arm's
+	// `[ -f "$top/WORKER_TASK.md" ]`: a checkout with its own task file is a worker's,
+	// which is as much of a worker as an id in the environment is.
+	Toplevel func(ctx context.Context) string
+	Exists   func(path string) bool
+	// Unread is `_unread_scan <crew> <branch> worker:<branch> <sid> 0 dispatcher`: the
+	// "<oldest> <newest>" pair of the lead's unread directive. ok=false is a call-out
+	// that never ran — a different thing from an empty scan, which is a refusal.
+	Unread func(ctx context.Context, crew, branch, sid string) (string, bool)
+	// Rows reads the log's last maxLines lines with each line decoded on its own — the
+	// arm's `tail -n N | jq -R 'fromjson?'`. The engine lookup reads the whole log
+	// (maxLines 0, where the arm's `jq -Rr inputs` reads all of it) and the two --wait
+	// folds read its last 2000 lines.
+	Rows func(maxLines int) ([]jsonv.Value, bool)
+	// PID is the lock owner, the arm's `$$`.
+	PID int
+}
+
+// Run is the arm. Nothing about the target is typed: the pane comes from the window's
+// dispatcher-anchored @crew_* stamps, and the text is the package's own constant.
+func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	// Typing into a sibling's pane is the dispatcher's call alone: a session that
+	// carries a worker or role id, or sits in a checkout with its own WORKER_TASK.md,
+	// is a worker. Note this refusal prints without the `crew: nudge:` prefix and
+	// exits 2, unlike every other failure.
+	top := o.Toplevel(ctx)
+	if o.Getenv("CREW_WORKER_ID") != "" || o.Getenv("CREW_ROLE_ID") != "" ||
+		(top != "" && o.Exists(filepath.Join(top, "WORKER_TASK.md"))) {
+		say(stderr, "crew: nudge is a dispatcher command\n")
+		return exitRefused
+	}
+
+	a := &arm{ctx: ctx, paths: paths, o: o, stdout: stdout, stderr: stderr}
+	a.crew = o.CrewID()
+	target, wait := "", ""
+	for len(args) > 0 {
+		switch {
+		case args[0] == "--crew":
+			if len(args) < 2 || args[1] == "" {
+				return fail(stderr, "--crew needs an id (usage: "+usage+")")
+			}
+			a.crew, args = args[1], args[2:]
+		case args[0] == "--wait":
+			// A value is taken only when it is all digits, so `--wait nova` waits the
+			// default and leaves `nova` the target, and `--wait abc` becomes a second
+			// positional the loop below refuses.
+			wait = "1800"
+			if len(args) > 1 && allDigits(args[1]) {
+				wait, args = args[1], args[2:]
+			} else {
+				args = args[1:]
+			}
+		case strings.HasPrefix(args[0], "--"):
+			return fail(stderr, "unknown flag '"+args[0]+"' (usage: "+usage+")")
+		default:
+			if target != "" {
+				return fail(stderr, "one target only (usage: "+usage+")")
+			}
+			target, args = args[0], args[1:]
+		}
+	}
+	if target == "" {
+		return fail(stderr, "usage: "+usage)
+	}
+	if a.crew == "" {
+		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")
+	}
+
+	want := ""
+	if strings.HasPrefix(target, "%") {
+		return fail(stderr, "pass a codename, branch or worker id — a pane id is not an anchored address")
+	}
+	if strings.HasPrefix(target, "worker:") {
+		target = strings.TrimPrefix(target, "worker:")
+		if bus.IsSessionID(target) {
+			want, target = "worker:"+target, branchOf(target)
+		}
+	}
+
+	wins, ok := o.Deps.Tmux(ctx, "list-windows", "-a", "-F",
+		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}")
+	if !ok {
+		return fail(stderr, "cannot read tmux windows (is a tmux server running?)")
+	}
+	panes, ok := o.Deps.Tmux(ctx, "list-panes", "-a", "-F",
+		"#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
+	if !ok {
+		return fail(stderr, "cannot read tmux panes (is a tmux server running?)")
+	}
+
+	// Only this checkout's crew, and only windows that carry a branch: an unanchored
+	// window is somebody's shell, never a worker's.
+	var cwins [][]string
+	for _, r := range tsvRows(wins) {
+		if len(r) >= 5 && r[1] != "" && r[2] == paths.Dir && r[3] == a.crew {
+			cwins = append(cwins, r)
+		}
+	}
+	win := firstWhere(cwins, func(r []string) bool { return field(r, 1) == target })
+	if win == nil {
+		var matches [][]string
+		for _, r := range cwins {
+			if field(r, 4) == target {
+				matches = append(matches, r)
+			}
+		}
+		if len(matches) > 1 {
+			var branches []string
+			for _, r := range matches {
+				branches = append(branches, field(r, 1))
+			}
+			return fail(stderr, "ambiguous codename '"+target+"' — matches "+
+				strings.Join(branches, ",")+"; pass a branch")
+		}
+		win = first(matches)
+	}
+	if win == nil {
+		return a.resolveFallback(target, stderr)
+	}
+
+	a.branch = field(win, 1)
+	a.pane = field(firstWhere(tsvRows(panes),
+		func(r []string) bool { return field(r, 0) == field(win, 0) && field(r, 2) == "lead" }), 1)
+	if a.pane == "" {
+		a.pane = field(firstWhere(tsvRows(panes), func(r []string) bool { return field(r, 0) == field(win, 0) }), 1)
+	}
+	if a.pane == "" {
+		return fail(stderr, "no pane in the window for '"+target+"'")
+	}
+
+	if code := a.checkSession(want, stderr); code != 0 {
+		return code
+	}
+	if code := a.checkEngine(stderr); code != 0 {
+		return code
+	}
+	if code := a.checkUnread(stderr); code != 0 {
+		return code
+	}
+
+	if wait == "" {
+		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.o.Deps)
+		if rc == exitRefused {
+			return refuse(stderr, "refused — "+out)
+		}
+		say(stdout, "%s\n", out)
+		return rc
+	}
+	return a.wait(ctx, wait)
+}
+
+// arm is one resolved nudge: the target's address, plus the wait loop's state.
+type arm struct {
+	ctx    context.Context
+	paths  bus.Paths
+	o      Options
+	stdout io.Writer
+	stderr io.Writer
+	crew   string
+	branch string
+	sid    string
+	pane   string
+	engine string
+	ts     string
+	// waiting is the arm's nudge_waiting: once a `waiting` row exists, every end
+	// records a `resolved` row so a joiner can report the outcome.
+	waiting bool
+}
+
+func (a *arm) request(actor string) PaneRequest {
+	return PaneRequest{
+		Pane: a.pane, Engine: a.engine, Session: a.sid, Crew: a.crew, Actor: actor, MsgTS: a.ts,
+	}
+}
+
+// resolveFallback is the arm's `_resolve_target` step: the target names a branch on the
+// bus but no live window carries it.
+func (a *arm) resolveFallback(target string, stderr io.Writer) int {
+	var branches []string
+	for _, r := range resolve.Resolve(resolve.Rows(a.paths.Log), target, a.crew) {
+		branches = append(branches, r.Branch)
+	}
+	joined := strings.Join(branches, ",")
+	switch {
+	case strings.Contains(joined, ","):
+		return fail(stderr, "ambiguous target '"+target+"' — matches "+joined+"; pass a branch")
+	case joined != "":
+		return fail(stderr, "no live pane for '"+target+"' (branch "+joined+") — its window is gone")
+	}
+	return fail(stderr, "no worker matches '"+target+"'")
+}
+
+// checkSession is the arm's `_sessions` block: the branch's newest session has to be a
+// live, started, sessioned one, and the caller's own when it named one.
+func (a *arm) checkSession(want string, stderr io.Writer) int {
+	last, err := foldNewest(a.o.Deps, a.branch, a.crew)
+	if err != nil {
+		say(stderr, "crew: nudge: %s: %v\n", a.paths.Log, err)
+		return exitType
+	}
+	if last.IsNull() {
+		return refuse(stderr, "no session on "+a.branch+" — dispatch a worker before nudging one")
+	}
+	if isTrue(last, "terminal") {
+		return refuse(stderr, "newest session on "+a.branch+" is "+textOf(last, "state")+
+			" — a stopped session never reads its inbox; re-dispatch with the context baked in")
+	}
+	if isNull(last, "state") {
+		return refuse(stderr, "lead has not posted its first status yet — wait for it to start")
+	}
+	if isNull(last, "session") {
+		return refuse(stderr, a.branch+
+			" has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch")
+	}
+	a.sid = textOf(last, "worker_id")
+	if want != "" && want != a.sid {
+		return refuse(stderr, want+" is not the newest session on "+a.branch+" ("+a.sid+")")
+	}
+	return 0
+}
+
+// checkEngine is the arm's dispatch/resume lookup. The row is read tolerantly: a torn
+// tail line is skipped, exactly as the arm's `jq -Rr 'inputs | fromjson?'` skips it.
+func (a *arm) checkEngine(stderr io.Writer) int {
+	rows, ok := a.o.Rows(0)
+	if ok {
+		for _, r := range rows {
+			kind := textOf(r, "kind")
+			if textOf(r, "crew_id") == a.crew && (kind == "dispatch" || kind == "resume") &&
+				textOf(r, "worker_id") == a.sid {
+				a.engine = textOf(r, "engine")
+			}
+		}
+	}
+	if a.engine == "" {
+		return refuse(stderr, "no dispatch or resume row records "+a.sid+"'s engine")
+	}
+	return 0
+}
+
+// checkUnread is the arm's `_unread_scan`: the newest unread directive is what the nudge
+// row will point at, and an empty scan is the "post it first" refusal.
+func (a *arm) checkUnread(stderr io.Writer) int {
+	out, ok := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
+	if !ok {
+		return fail(stderr, "cannot scan the bus for unread msgs (unread helper failed)")
+	}
+	_, newest, _ := strings.Cut(out, " ")
+	a.ts = strings.TrimSpace(newest)
+	if a.ts == "" {
+		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" to "+a.sid+
+			" — post the directive first (crew reply), then nudge")
+	}
+	return 0
+}
+
+// unread is the same scan's oldest unread ts — the arm reads the first field, which is
+// empty when the lead has read the directive meanwhile.
+func (a *arm) unread() (string, bool) {
+	out, ok := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
+	if !ok {
+		return "", false
+	}
+	oldest, _, _ := strings.Cut(out, " ")
+	return strings.TrimSpace(oldest), true
+}
+
+// wait is the `--wait` loop: one waiter per lead session, and a joiner reports the
+// first waiter's outcome only when it covers the caller's own msg.
+func (a *arm) wait(ctx context.Context, wait string) int {
+	waitSecs, _ := strconv.Atoi(wait)
+	interval := a.o.Getenv("CREW_NUDGE_WAIT_INTERVAL")
+	if interval == "" {
+		interval = "15"
+	}
+	start := a.o.Deps.Clock.Seconds()
+	startMS := a.o.Deps.Clock.NowMS()
+
+	dir := filepath.Join(a.paths.Dir, "nudge-wait")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fail(a.stderr, err.Error())
+	}
+	lockDir := filepath.Join(dir, lockName(a.sid))
+	owner := strconv.Itoa(a.o.PID)
+	joining := false
+	for !lock.Acquire(lockDir, owner) {
+		holder := lock.Holder(lockDir)
+		if !joining {
+			joining = true
+			say(a.stdout, "nudge joining: %s %s — another crew nudge --wait (pid %s) owns this lead's wait\n",
+				a.pane, a.sid, holder)
+		}
+		if a.o.Deps.Clock.Seconds() >= start+int64(waitSecs) {
+			return refuse(a.stderr, "refused — still waiting on another crew nudge --wait (pid "+holder+")")
+		}
+		if err := a.o.Deps.Sleep(ctx, interval); err != nil {
+			return exitFailure
+		}
+	}
+	defer lock.Release(lockDir)
+
+	if joining {
+		if prev, ok := a.fold(joinedProgram, map[string]jsonv.Value{
+			"t": jsonv.Num(float64(startMS)), "m": jsonv.Num(float64(num(a.ts))),
+		}); ok {
+			res := textOf(prev, "result") + ": " + textOf(prev, "detail")
+			return a.end("joined", int(numOf(prev, "rc")), res, "nudge joined: "+a.pane+" "+a.sid+" — "+res)
+		}
+	}
+
+	for {
+		if prev, ok := a.fold(alreadyProgram, map[string]jsonv.Value{"m": jsonv.Num(float64(num(a.ts)))}); ok {
+			res := textOf(prev, "result")
+			rc := exitTyped
+			if res == "accepted" {
+				rc = 0
+			}
+			detail := res + ": " + textOf(prev, "detail")
+			return a.end("already", rc, detail, "nudge already typed: "+a.pane+" "+a.sid+" — "+detail)
+		}
+		oldest, ok := a.unread()
+		if !ok {
+			return fail(a.stderr, "cannot scan the bus for unread msgs (unread helper failed)")
+		}
+		if oldest == "" || num(oldest) > num(a.ts) {
+			return a.end("read", 0, "the lead read the msg during the wait; nothing typed",
+				"nudge not needed: "+a.pane+" "+a.sid+" — the lead read the msg during the wait; nothing typed")
+		}
+
+		out, rc := Pane(ctx, a.request("dispatcher:"+a.crew), a.o.Deps)
+		if rc != exitRefused {
+			res := strings.TrimPrefix(out, "nudge ")
+			_, detail, _ := strings.Cut(out, " — ")
+			return a.end(strings.SplitN(res, ":", 2)[0], rc, detail, out)
+		}
+		if out != "live turn or no idle input box" {
+			return a.end("refused", exitRefused, out, "refused — "+out)
+		}
+		if !a.waiting {
+			// Unlike the nudge row, a waiting row that cannot be written ends the wait at
+			// 1 with nothing printed: a joiner must never be told an outcome no row records.
+			if err := a.waitRow("waiting", "", "", "live turn"); err != nil {
+				return fail(a.stderr, err.Error())
+			}
+			a.waiting = true
+			say(a.stdout, "nudge waiting: %s %s — live turn; re-checking every %ss for up to %ss\n",
+				a.pane, a.sid, interval, wait)
+		}
+		waited := a.o.Deps.Clock.Seconds() - start
+		if waited >= int64(waitSecs) {
+			return a.end("timeout", exitRefused, out+" (waited "+strconv.FormatInt(waited, 10)+"s)",
+				"refused — "+out+" (waited "+strconv.FormatInt(waited, 10)+"s)")
+		}
+		if err := a.o.Deps.Sleep(ctx, interval); err != nil {
+			// The arm's `_clock_sleep` runs under `set -e`: a sleep that fails, or a
+			// signal that ends the command mid-wait, leaves with 1.
+			return exitFailure
+		}
+	}
+}
+
+// end is the arm's `_nudge_wait_end`: it records the outcome only once a waiting row
+// exists, and a refusal goes to stderr.
+func (a *arm) end(result string, rc int, detail, line string) int {
+	if a.waiting {
+		if err := a.waitRow("resolved", result, strconv.Itoa(rc), detail); err != nil {
+			return fail(a.stderr, err.Error())
+		}
+	}
+	if rc == exitRefused {
+		return refuse(a.stderr, line)
+	}
+	say(a.stdout, "%s\n", line)
+	return rc
+}
+
+// waitRow is the `nudge_wait` bookkeeping row. Its `ts` follows CREW_CLOCK while the
+// `nudge` row's stamp stays real time, and `rc` is absent until it is a number. A write
+// failure is returned rather than swallowed: a joiner must never be told an outcome no
+// row records.
+func (a *arm) waitRow(state, result, rc, detail string) error {
+	msgTS, _ := jsonv.ParseNumber(a.ts)
+	members := []jsonv.Member{
+		{Key: "ts", Val: jsonv.Num(float64(a.o.Deps.Clock.NowMS()))},
+		{Key: "crew_id", Val: jsonv.Str(a.crew)},
+		{Key: "kind", Val: jsonv.Str("nudge_wait")},
+		{Key: "from", Val: jsonv.Str("dispatcher:" + a.crew)},
+		{Key: "to", Val: jsonv.Str(a.sid)},
+		{Key: "branch", Val: jsonv.Str(a.branch)},
+		{Key: "pane", Val: jsonv.Str(a.pane)},
+		{Key: "msg_ts", Val: msgTS},
+		{Key: "state", Val: jsonv.Str(state)},
+		{Key: "result", Val: jsonv.Str(result)},
+		{Key: "detail", Val: jsonv.Str(detail)},
+	}
+	if rc != "" {
+		v, _ := jsonv.ParseNumber(rc)
+		members = append(members, jsonv.Member{Key: "rc", Val: v})
+	}
+	return a.o.Deps.Append(jsonv.Object(members...))
+}
+
+// fold runs one of the arm's two wait-loop programs over the log's tail. A missing row
+// is the fold's own `last // empty`: none, not a failure.
+func (a *arm) fold(prog string, vars map[string]jsonv.Value) (jsonv.Value, bool) {
+	rows, ok := a.o.Rows(waitTailLines)
+	if !ok {
+		return jsonv.Value{}, false
+	}
+	vars["c"] = jsonv.Str(a.crew)
+	vars["to"] = jsonv.Str(a.sid)
+	out, err := jqrun.Run(prog, rows, 0, vars)
+	if err != nil || out.IsNull() {
+		return jsonv.Value{}, false
+	}
+	return out, true
+}
+
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+
+func fail(w io.Writer, msg string) int {
+	say(w, "crew: nudge: %s\n", msg)
+	return exitFailure
+}
+
+func refuse(w io.Writer, msg string) int {
+	say(w, "crew: nudge: %s\n", msg)
+	return exitRefused
+}
+
+// lockName is the arm's lock dir: the session id with every character `tr -c
+// 'A-Za-z0-9._-' '_'` would replace, then the POSIX cksum that keeps two ids differing
+// only in that replaced set apart.
+func lockName(sid string) string {
+	name := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			return r
+		}
+		return '_'
+	}, sid)
+	return name + "." + strconv.FormatUint(uint64(identity.CKsum([]byte(sid))), 10) + ".d"
+}
+
+// num is the arm's `$((x))` on a ts it has already checked is digits; anything else is
+// zero, which is what an unset msg_ts compares as.
+func num(s string) int64 {
+	v, _ := strconv.ParseInt(s, 10, 64)
+	return v
+}
+
+func numOf(v jsonv.Value, key string) int64 {
+	x, _ := v.Get(key)
+	if n, ok := x.AsFloat(); ok {
+		return int64(n)
+	}
+	return 0
+}
+
+// PID is on Options because the arm's `$$` is the lock owner's text a joiner prints.
+
+func isNull(v jsonv.Value, key string) bool {
+	x, _ := v.Get(key)
+	return x.Kind() == jsonv.KindNull
+}
+
+func first(rows [][]string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	return rows[0]
+}

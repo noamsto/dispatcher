@@ -15,6 +15,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
@@ -26,12 +27,30 @@ type fake struct {
 	paneModel, paneCmd           string
 	sh                           func(op string, args ...string) (string, int)
 	shc                          func(ctx context.Context, op string, args ...string) (string, int) // wins over sh
-	shCalls                      []string
-	opts                         [][]string // tmux set-option argv, as the bash stub logs it
-	busRows                      func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool)
+	// nudge is D6's type, and nudgeHook logs it into shCalls: the D6 rows check
+	// "the scan, then the type" as one ordered list of the side effects that
+	// leave the process, which is how the bash `--sh nudge` op used to appear.
+	nudge   func(context.Context, nudge.PaneRequest) (string, int)
+	shCalls []string
+	opts    [][]string // tmux set-option argv, as the bash stub logs it
+	busRows func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool)
 }
 
 func newFake() *fake { return &fake{} }
+
+// nudgeHook is the fake's D6 type: it logs the argv the bash op used to receive, then
+// answers whatever the test scripted. A test that never scripts one is not checking
+// what was typed, so it reads accepted.
+func (f *fake) nudgeHook() func(context.Context, nudge.PaneRequest) (string, int) {
+	return func(ctx context.Context, req nudge.PaneRequest) (string, int) {
+		f.shCalls = append(f.shCalls,
+			"nudge "+req.Pane+" "+req.Engine+" "+req.Session+" "+req.Crew+" "+req.MsgTS)
+		if f.nudge == nil {
+			return "", 0
+		}
+		return f.nudge(ctx, req)
+	}
+}
 
 func (f *fake) probes() probe.Probes {
 	return probe.Probes{
@@ -115,6 +134,7 @@ func (h *harness) options() Options {
 			h.f.pane = pane
 			return h.f.probes()
 		},
+		Nudge:      h.f.nudgeHook(),
 		BudgetFile: h.paths.Common + "/engine-budget.json",
 		PID:        os.Getpid(),
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/log"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/register"
@@ -45,7 +46,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -78,7 +79,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "stall-watch", "status", "msg", "register", "deregister", "fleet", "discover-repos":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "discover-repos":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -226,6 +227,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
 		})
+	}
+
+	// nudge resolves its own target, runs its own frame checks and posts its own rows.
+	// Its bash arm exports CREW_SH for the `_unread_scan` call-back (docs/crew-go-port.md).
+	if sub == "nudge" {
+		return nudge.Run(ctx, args, paths, stdout, stderr,
+			nudge.Default(paths, stderr, os.Getpid(), func() string { return bus.CrewID(ctx, cwd) }))
 	}
 
 	// The two target readers own their run the way hold does: neither is a fold

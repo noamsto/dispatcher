@@ -5,6 +5,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,10 +44,9 @@ func (w *watch) probePre() error {
 	return nil
 }
 
-// shOffset is what the arm's `--sh` branch adds to every op's verdict, so the
-// child's own failures — crew.sh's preamble or usage refusal (1), a missing
-// file (127), a signal — can never read as one.
-const shOffset = 10
+// shOffset and shVerdict are the probe package's `--sh` decode under the names this
+// package's callers know it by; `nudge` reaches the same pair for its `unread` call-out.
+const shOffset = probe.ShOffset
 
 // shWriteTimeout bounds an op that runs on through a signal.
 const shWriteTimeout = 2 * time.Minute
@@ -53,12 +54,7 @@ const shWriteTimeout = 2 * time.Minute
 // shVerdict decodes an `--sh` exit status: ok=false means the helper failed to
 // run, so neither its status nor its output is the op's. 126 and up are the
 // shell's own not-executable, not-found and 128+signo statuses.
-func shVerdict(rc int) (int, bool) {
-	if rc < shOffset || rc >= 126 {
-		return 0, false
-	}
-	return rc - shOffset, true
-}
+func shVerdict(rc int) (int, bool) { return probe.ShVerdict(rc) }
 
 // shCall is an `--sh` call-out under the arm's signal semantics: a signal
 // killed the arm in the middle of a call-out, so a call that returns into a
@@ -67,11 +63,11 @@ func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok b
 	return w.shOn(w.ctx, op, args...)
 }
 
-// shWrite is shCall for an op that writes (nudge, continue, release). The arm's `$(…)`
-// child outlived the arm's death and finished its write, so a signal must not
-// tear one between the keystroke or kill and its bus row; the watch still
-// ends with 128+signo once the op returns. A write that has not started when
-// the signal lands never starts.
+// shWrite is shCall for an op that writes (`release`, and `nudge` until its helper
+// went away — see nudgeCall). The arm's `$(…)` child outlived the arm's death and
+// finished its write, so a signal must not tear one between the keystroke or kill and
+// its bus row; the watch still ends with 128+signo once the op returns. A write that
+// has not started when the signal lands never starts.
 func (w *watch) shWrite(op string, args ...string) (string, int, bool, error) {
 	if err := w.cancelled(); err != nil {
 		return "", 0, false, err
@@ -79,6 +75,22 @@ func (w *watch) shWrite(op string, args ...string) (string, int, bool, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
 	defer cancel()
 	return w.shOn(ctx, op, args...)
+}
+
+// nudgeCall is shWrite's signal contract around the in-process type: a nudge that has
+// not started when a signal lands never starts, and one that has runs on — bounded — so
+// its bus row lands, after which the watch still ends with 128+signo.
+func (w *watch) nudgeCall(req nudge.PaneRequest) (string, int, error) {
+	if err := w.cancelled(); err != nil {
+		return "", 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
+	defer cancel()
+	out, rc := w.o.Nudge(ctx, req)
+	if err := w.cancelled(); err != nil {
+		return "", 0, err
+	}
+	return out, rc, nil
 }
 
 func (w *watch) shOn(ctx context.Context, op string, args ...string) (string, int, bool, error) {
@@ -398,14 +410,14 @@ func (w *watch) unreadOldest() (int64, string, bool, error) {
 // autoNudge is D6's nudge half; true skips this tick's verdict.
 func (w *watch) autoNudge() (bool, error) {
 	pd := &w.pd
-	nudge := false
+	typing := false
 	switch w.bus.state {
 	case "", "working":
-		nudge = true
+		typing = true
 	case "blocked":
-		nudge = pd.d6At != 0 && w.bus.source == "watchdog" && strings.HasPrefix(w.bus.detail, "unread:")
+		typing = pd.d6At != 0 && w.bus.source == "watchdog" && strings.HasPrefix(w.bus.detail, "unread:")
 	}
-	if !nudge || !w.cfg.nudgeOn || pd.nudgeOff || w.cfg.fromID == w.cfg.me ||
+	if !typing || !w.cfg.nudgeOn || pd.nudgeOff || w.cfg.fromID == w.cfg.me ||
 		(w.cfg.engine != "claude" && w.cfg.engine != "pi") {
 		return false, nil
 	}
@@ -425,10 +437,11 @@ func (w *watch) autoNudge() (bool, error) {
 		pd.nudgedTS = dNew
 		return false, nil
 	}
-	out, rc, ran, err := w.shWrite("nudge", w.cfg.pane, w.cfg.engine, w.cfg.fromID, w.cfg.crew, b)
-	// A helper that failed to run is a refusal whose output is not the op's,
-	// so it never latches the anchor stop.
-	if err != nil || !ran {
+	out, rc, err := w.nudgeCall(nudge.PaneRequest{
+		Pane: w.cfg.pane, Engine: w.cfg.engine, Session: w.cfg.fromID,
+		Crew: w.cfg.crew, Actor: "watchdog", MsgTS: b,
+	})
+	if err != nil {
 		return false, err
 	}
 	switch rc {
