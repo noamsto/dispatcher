@@ -62,7 +62,13 @@ func emptyModel() jsonv.Value {
 // The rows come from `roster.Fold` in process — the arm re-entered the script for
 // `crew roster`, and this is the same fold, on the same wall clock. `nowSec` is
 // therefore real time and never CREW_CLOCK, exactly as that child read `jq now`.
-func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes) (jsonv.Value, error) {
+//
+// The fold is then cut to the rows `live` finds drawn. The cut happens here and
+// not in `modelProg` so the `dispatched` rows the merge synthesizes from a
+// pending dispatch survive — a session launched and not yet posting is live by
+// definition — and so the live count, the legend and the boxes speak of the same
+// rows.
+func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (jsonv.Value, error) {
 	events, err := bus.ReadEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return emptyModel(), nil
@@ -79,6 +85,12 @@ func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp r
 	if err != nil {
 		return jsonv.Value{}, err
 	}
+	kept := make([]jsonv.Value, 0, rows.Len())
+	for _, row := range rows.Elems() {
+		if live.Drawn(row) {
+			kept = append(kept, row)
+		}
+	}
 	pending, err := jqrun.Run(pendingProg, raws, nowSec, map[string]jsonv.Value{
 		"crew": jsonv.Str(crew),
 	})
@@ -90,7 +102,7 @@ func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp r
 		return jsonv.Value{}, err
 	}
 	out, err := jqrun.Run(modelProg,
-		[]jsonv.Value{rows, pending, identityIDs(raws, pending), holds, roleList(roleRows, paths.Dir)},
+		[]jsonv.Value{jsonv.Array(kept...), pending, identityIDs(raws, pending), holds, roleList(roleRows, paths.Dir)},
 		nowSec, nil)
 	if err != nil {
 		return jsonv.Value{}, err

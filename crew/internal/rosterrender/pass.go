@@ -5,9 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
+
+// passProbes is one pass's outside reads. The worktree list is shared because
+// the fold re-reads it for every `exited` row, and `sync.OnceValues` memoizes the
+// failure with the result, so `resolveExited` and the liveness rule see one probe
+// outcome per pass.
+func (o Options) passProbes() (roster.Probes, roster.Liveness) {
+	wt := sync.OnceValues(o.Roster.Worktrees)
+	windows := sync.OnceValue(func() map[string]bool { return roster.WindowBranches(o.Probes.Windows()) })
+	return roster.Probes{Panes: o.Roster.Panes, Worktrees: wt},
+		roster.Liveness{Windows: windows, Worktrees: wt}
+}
 
 // pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Write the
 // diagram when its text changed, publish when written or when the recorded pane
@@ -17,7 +30,8 @@ import (
 // is written, so a malformed bus can never replace a good diagram. A refused
 // `put` is not: it stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
-	m, err := model(paths, crew, float64(o.wallSec()), roleRows, o.Roster)
+	rp, rule := o.passProbes()
+	m, err := model(paths, crew, float64(o.wallSec()), roleRows, rp, rule)
 	if err != nil {
 		return 0, err
 	}

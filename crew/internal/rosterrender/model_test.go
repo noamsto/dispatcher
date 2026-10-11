@@ -41,6 +41,52 @@ var emptyRoster = roster.Probes{
 	Worktrees: func() (string, error) { return "", nil },
 }
 
+// live is the liveness rule with both reads stubbed: `windows` are the branches
+// stamped on a tmux window, and the worktree list names one per entry of
+// `worktrees`. Pair it with a `roster.Probes` whose Worktrees agrees.
+func live(windows []string, worktrees ...string) roster.Liveness {
+	return roster.Liveness{
+		Windows: func() map[string]bool {
+			set := map[string]bool{}
+			for _, b := range windows {
+				set[b] = true
+			}
+			return set
+		},
+		Worktrees: porcelain(worktrees...),
+	}
+}
+
+// porcelain is `git worktree list --porcelain` with one worktree per branch.
+func porcelain(branches ...string) func() (string, error) {
+	return func() (string, error) {
+		out := ""
+		for _, b := range branches {
+			out += "worktree /wt/" + b + "\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/" + b + "\n\n"
+		}
+		return out, nil
+	}
+}
+
+// emptyLive is no evidence of life anywhere: no window, no worktree.
+var emptyLive = live(nil)
+
+// rowStates is the model's rows as `branch state`, sorted by branch the way the
+// model leaves them.
+func rowStates(t *testing.T, m jsonv.Value) []string {
+	t.Helper()
+	rows, _ := m.Get("rows")
+	var out []string
+	for _, r := range rows.Elems() {
+		br, _ := r.Get("branch")
+		st, _ := r.Get("state")
+		b, _ := br.AsString()
+		s, _ := st.AsString()
+		out = append(out, b+" "+s)
+	}
+	return out
+}
+
 // TestModelWithoutABusIsTheArmsEmptyOne: a repo with no bus yet renders an empty
 // diagram rather than failing, and the arm said so with a literal.
 // compact is a model rendered the way a test reads it back: one line, no colour.
@@ -64,7 +110,7 @@ func decodeOne(t *testing.T, text string) jsonv.Value {
 func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	dir := t.TempDir()
 	p := bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"}
-	m, err := model(p, "c1", 1791360000, nil, emptyRoster)
+	m, err := model(p, "c1", 1791360000, nil, emptyRoster, emptyLive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +162,7 @@ func TestModelCarriesTheDispatchedRowUntilTheBranchSpeaks(t *testing.T) {
 		`{"ts":1791360100000,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","session":"s2","worker_id":"worker:feat/2-b#s2","engine":"codex","model":"gpt-5","tier":"deep","title":"Bravo","name":"atlas","color":"blue","tmux":"colour32"}`,
 		`{"ts":1791360200000,"crew_id":"c1","from":"worker:feat/1-a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}`,
 	)
-	m, err := model(p, "c1", 1791360300, nil, emptyRoster)
+	m, err := model(p, "c1", 1791360300, nil, emptyRoster, live([]string{"feat/1-a"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +187,53 @@ func TestModelCarriesTheDispatchedRowUntilTheBranchSpeaks(t *testing.T) {
 	// The base rides along on both, from the dispatch that named one.
 	if got := byBranch["feat/1-a"]["base"]; got != "main" {
 		t.Errorf("base = %v", got)
+	}
+}
+
+// TestModelDrawsOnlyLiveRows is the diagram's cut: of a bus holding live,
+// finished, awaiting-reap, reaped and unanswered-dispatch rows, the model keeps
+// the live one, the one whose worktree still waits for the reaper, and the
+// dispatch nothing has answered yet.
+func TestModelDrawsOnlyLiveRows(t *testing.T) {
+	events := func(branch, state string) []string {
+		out := []string{
+			`{"ts":1791360000000,"crew_id":"c1","kind":"dispatch","branch":"` + branch +
+				`","session":"s1","worker_id":"worker:` + branch + `#s1","engine":"claude","model":"sonnet","tier":"standard","title":"` + branch + `","name":"n","color":"green","tmux":"colour28"}`,
+		}
+		if state != "" {
+			out = append(out, `{"ts":1791360600000,"crew_id":"c1","from":"worker:`+branch+`#s1","to":"dispatcher:c1","kind":"status","body":{"state":"`+state+`"}}`)
+		}
+		return out
+	}
+	log := append(events("feat/1-live", "working"), events("feat/2-reap", "done")...)
+	log = append(log, events("feat/3-history", "done")...)
+	log = append(log, events("feat/4-stale", "pr_open")...)
+	log = append(log, events("feat/5-dead", "exited")...)
+	log = append(log, events("feat/6-reaped", "reaped")...)
+	log = append(log, events("feat/7-pending", "")...)
+
+	p, _ := modelFixture(t, log...)
+	// feat/1-live has a window; feat/2-reap is finished with its worktree still
+	// standing; nothing else has either.
+	m, err := model(p, "c1", 1791361200, nil,
+		roster.Probes{Panes: func() string { return "" }, Worktrees: porcelain("feat/2-reap")},
+		live([]string{"feat/1-live"}, "feat/2-reap"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"feat/1-live working", "feat/2-reap done", "feat/7-pending dispatched"}
+	if got := rowStates(t, m); len(got) != len(want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("row %d = %q, want %q", i, got[i], want[i])
+			}
+		}
+	}
+	// The live count is the diagram's own number, so it counts the rows it holds.
+	if n, err := liveCount(m); err != nil || n != 2 {
+		t.Errorf("liveCount = %d (%v), want 2", n, err)
 	}
 }
 

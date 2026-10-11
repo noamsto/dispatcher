@@ -36,6 +36,10 @@ output contract below), with each edit justified.
   `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
   crew.sh apart from documented patches) plus the Go glue: tmux/worktree
   probes, identity attachment, the crews pid-liveness and ancestor probes.
+  `roster` also owns the liveness rule of #999 — `Stale`, the flag `crew fleet`
+  already stamped its rows with and hid unless `--all`, and `Drawn`, what the
+  diagram keeps — because the two views have to agree on who is alive while each
+  reads its own probes.
 - `crew/internal/log`: the arm that runs no jq — `select(.crew_id==$crew)` is a
   member test, so it filters and re-encodes through jsonv, keeping `jq -c`'s
   torn-tail prefix via `bus.ReadEventsTolerant`.
@@ -393,6 +397,15 @@ output contract below), with each edit justified.
   the flock (`O_CLOEXEC`), and the new image's re-acquire adopts the record carrying its
   own pid; if another renderer took the flock in that instant it replaced the record and
   the hopping one's re-acquire refuses, so it exits quietly.
+  What reaches the renderer is the fold cut to `roster.Liveness` (#999): a running
+  row that is not stale, and a finished row only while its worktree still waits
+  for `crew reap` to take it — a crew that lives for days was stacking its whole
+  history beside the one or two workers that were running. The cut runs on the
+  folded rows before the model merges the pending dispatches, so a session
+  launched and not yet posting stays drawn as `dispatched`, and the live count,
+  the legend and the boxes all speak of the same rows. Fold and rule share one
+  worktree probe per pass, anchored at the common dir rather than the launch
+  directory, which a reap can take away under a running daemon.
 - `crew/internal/ledger`: the pure acceptance-ledger gate of `crew status <from>
 pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   CI-evidence rule and the dispatcher-waiver rule. It is hand-parsed, not run on

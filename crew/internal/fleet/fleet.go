@@ -38,13 +38,6 @@ type Options struct {
 	Colors *jsonv.Palette
 }
 
-// liveStates are the rows shown without --all.
-var liveStates = []string{"working", "blocked", "pr_open"}
-
-// staleAfter is how old a non-terminal row may be and still count as live
-// when only its worktree vouches for it.
-const staleAfter = 48 * time.Hour
-
 // Run lists the rows of every discovered bus. A repo it cannot read is noted
 // on stderr and skipped, so one bad bus never blinds the machine view.
 func Run(args []string, stdout, stderr io.Writer, o Options) int {
@@ -80,12 +73,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	var windows map[string]bool
 	windowBranches := func() map[string]bool {
 		if windows == nil {
-			windows = map[string]bool{}
-			for b := range strings.SplitSeq(o.Windows(), "\n") {
-				if b != "" {
-					windows[b] = true
-				}
-			}
+			windows = roster.WindowBranches(o.Windows())
 		}
 		return windows
 	}
@@ -116,6 +104,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 			raws[i] = e.Raw
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) })
+		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
 		repoRows, err := foldRepo(r.Common, events, raws, onlyCrew, nowSec, roster.Probes{
 			Panes:     livePanes,
 			Worktrees: worktrees,
@@ -128,8 +117,8 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		for _, row := range repoRows {
 			row.Val.Set("repo", jsonv.Str(name))
 			row.Val.Set("crew_id", jsonv.Str(row.crew))
-			nonTerminal := slices.Contains(liveStates, str(row.Val, "state"))
-			stale := nonTerminal && isStale(row.Val, windowBranches, worktrees)
+			nonTerminal := slices.Contains(roster.LiveStates, str(row.Val, "state"))
+			stale := nonTerminal && live.Stale(row.Val)
 			row.Val.Set("stale", jsonv.Bool(stale))
 			switch {
 			case !all && !nonTerminal:
@@ -155,24 +144,6 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		return write(stdout, stderr, buf.Bytes())
 	}
 	return write(stdout, stderr, table(rows))
-}
-
-// isStale reports a non-terminal row with no evidence of life: no tmux window
-// stamped with its branch, and no worktree for it with a row younger than
-// staleAfter. The worktree list is the one roster already probes per repo, so
-// this adds no read; a failing probe leaves the row shown, as unknown is not stale.
-func isStale(row jsonv.Value, windows func() map[string]bool, worktrees func() (string, error)) bool {
-	branch := str(row, "branch")
-	if windows()[branch] {
-		return false
-	}
-	v, _ := row.Get("age_s")
-	ageS, ok := v.AsFloat()
-	if !ok || time.Duration(ageS*float64(time.Second)) >= staleAfter {
-		return true
-	}
-	porcelain, err := worktrees()
-	return err == nil && roster.WorktreePath(porcelain, branch) == ""
 }
 
 type crewRow struct {
