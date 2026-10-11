@@ -14,6 +14,8 @@ setup() {
 }
 
 teardown() {
+  # A test may leave a legacy namespace unsearchable; rm -rf needs it back.
+  [ ! -d "${COMMON:-}/remotes" ] || chmod 700 "$COMMON/remotes"
   teardown_repo
 }
 
@@ -859,6 +861,180 @@ write_anchor() {
     [[ $rec == $'#covers\nredirect' ]] && found=1
   done
   [ "$found" -eq 1 ]
+}
+
+@test "baseline records regular legacy remotes and branches, and migration refuses existing entries" {
+  local found_remote=0 found_branch=0 found_mark=0
+  mkdir -p "$COMMON/remotes" "$COMMON/branches"
+  printf 'URL: https://origin.example/r.git\n' >"$COMMON/remotes/origin"
+  printf 'Branch: main\n' >"$COMMON/branches/main"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr == *branches/main* ]]
+  [[ $stderr != *'#'* ]]
+  local -a recs
+  local rec
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#legacy\nremotes\nfile\norigin\n'* ]] && found_remote=1
+    [[ $rec == $'#legacy\nbranches\nfile\nmain\n'* ]] && found_branch=1
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_remote" -eq 1 ]
+  [ "$found_branch" -eq 1 ]
+  [ "$found_mark" -eq 1 ]
+  cp "$BASELINE" "$BATS_TEST_TMPDIR/legacy-first"
+  _wt_cfg_baseline_init "$COMMON"
+  cmp "$BASELINE" "$BATS_TEST_TMPDIR/legacy-first"
+
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"legacy remotes or branches entries exist"* ]]
+  mapfile -d '' recs <"$BASELINE"
+  found_mark=0
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_mark" -eq 0 ]
+  mv "$COMMON/remotes" "$BATS_TEST_TMPDIR/remotes"
+  mv "$COMMON/branches" "$BATS_TEST_TMPDIR/branches"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+  done
+  [ "$found_mark" -eq 1 ]
+}
+
+@test "migration to legacy coverage never re-baselines redirect keys planted after #678" {
+  local -a recs
+  local rec found_mark=0 found_evil=0
+  add_origin
+  mkdir -p "${BASELINE%/*}"
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  git config url.https://evil.example/.insteadOf "$ORIGIN"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+    [[ $rec == url.https://evil.example/.insteadof* ]] && found_evil=1
+  done
+  [ "$found_mark" -eq 1 ]
+  [ "$found_evil" -eq 0 ]
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *insteadof* ]]
+}
+
+@test "explicit anchored fetch ignores URL-valued branch remote selection and push defaults" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config branch.main.remote 'https://branch.example/worker.git'
+  git config branch.main.pushRemote 'https://push.example/worker.git'
+  git config remote.pushDefault 'https://default-push.example/worker.git'
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 0 ]
+  git --git-dir="$COMMON" rev-parse --verify refs/remotes/origin/main
+}
+
+@test "explicit non-recursive anchored fetch ignores submodule URLs" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config submodule.worker.url 'https://submodule.example/worker.git'
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 0 ]
+  git --git-dir="$COMMON" rev-parse --verify refs/remotes/origin/main
+}
+
+@test "post-baseline legacy remotes and branches refuse fetch before transport" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes" "$COMMON/branches"
+  printf 'URL: https://user:legacy-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  printf 'Branch: main\n' >"$COMMON/branches/main"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* || $stderr == *branches/main* ]]
+  [[ $stderr != *legacy-secret* ]]
+  run ! git --git-dir="$COMMON" rev-parse --verify --quiet refs/remotes/origin/main
+}
+
+@test "changed baselined legacy remote refuses fetch before transport" {
+  add_origin
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: %s\n' "$ORIGIN" >"$COMMON/remotes/origin"
+  _wt_cfg_baseline_init "$COMMON"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 0 ]
+  printf 'URL: https://user:changed-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *changed-secret* ]]
+  run ! git --git-dir="$COMMON" rev-parse --verify --quiet refs/remotes/origin/main
+}
+
+@test "post-baseline symlinked legacy remote refuses fetch without following target" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:symlink-secret@example.invalid/r.git\n' >"$BATS_TEST_TMPDIR/legacy-target"
+  ln -s "$BATS_TEST_TMPDIR/legacy-target" "$COMMON/remotes/origin"
+  run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *symlink-secret* ]]
+  [ ! -e "$COMMON/refs/remotes/origin/main" ]
+}
+
+@test "an unreadable legacy namespace directory refuses the guard" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config --unset remote.origin.url
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:dir-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  chmod 300 "$COMMON/remotes"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  chmod 700 "$COMMON/remotes"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes* ]]
+  [[ $stderr != *dir-secret* ]]
+}
+
+@test "a baseline without legacy coverage refuses every regular legacy entry" {
+  mkdir -p "${BASELINE%/*}"
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:mark-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *mark-secret* ]]
+}
+
+@test "an unsafe legacy name is shown escaped exactly once" {
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes"
+  printf 'x\n' >"$COMMON/remotes/a b"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *'legacy unsafe-name entry '*'remotes/a\ b'* ]]
+  [[ $stderr != *'a\\\ b'* ]]
+}
+
+@test "guard with an empty git-dir argument still checks the common config" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath /evil
+  run --separate-stderr _wt_cfg_guard "$COMMON" ""
+  [ "$status" -eq 1 ]
+  [[ $stderr == *hookspath* ]]
 }
 
 fp8() { printf %s "$1" | sha256sum | cut -c1-8; }

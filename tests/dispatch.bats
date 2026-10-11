@@ -538,9 +538,12 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "post-upgrade dispatch"
   [ "$status" -eq 0 ]
   mapfile -d '' recs <"$TEST_REPO/.git/crew/git-config-baseline"
-  [ "${#recs[@]}" -eq 2 ]
-  [ "${recs[0]}" = $'#covers\nredirect' ]
-  [ "${recs[1]}" = "remote.origin.url"$'\n'"$TEST_REPO/origin.git" ]
+  # With no legacy remotes/ or branches/ entries the migration records the
+  # redirect class exactly as #678 did, plus the legacy-coverage marker.
+  [ "${#recs[@]}" -eq 3 ]
+  [ "${recs[0]}" = $'#covers\nlegacy' ]
+  [ "${recs[1]}" = $'#covers\nredirect' ]
+  [ "${recs[2]}" = "remote.origin.url"$'\n'"$TEST_REPO/origin.git" ]
 }
 
 # The separator's real job: stop option parsing before a flag-shaped FIRST
