@@ -425,6 +425,7 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `_publish_pane_state` set (state, detail cut to 40 characters, source), in that
   order. One copy shared by `stall` and `status`, so there is nothing to guard.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
+- `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
 folds that outgrew hand-translation run on jqrun.
@@ -622,7 +623,8 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
 Delete each only with its last caller. While two copies exist, guard drift:
 
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
-  match (skipped when crew.sh is absent, as in the Nix sandbox).
+  match (skipped when crew.sh is absent, as in the Nix sandbox; CI runs them
+  required — see Running the suite).
 
 The `_identity*` helpers lost their last caller with the `identity` arm (#981) and
 are gone; `crew/internal/identity` is now the only picker of a codename. The three
@@ -714,6 +716,10 @@ crew id.
   children inherit, keeping the build out of the measured per-case window.
 - `cd crew && go test ./... && go vet ./... && golangci-lint run ./...`.
   `exhaustive` is on: keep `switch` on `Kind` and `State` complete.
+- CI runs that same `go test ./...` from the checked-out repo with
+  `CREW_DRIFT_REQUIRED=1`, so a drift guard that cannot read its bash file fails
+  there instead of skipping (`nix build .#crew-go` still skips them: its sandbox
+  holds only `./crew`).
 - `scripts/bats-affected.sh` maps `crew/*` to the crew bats files.
 
 ## Flipping to direction (a)

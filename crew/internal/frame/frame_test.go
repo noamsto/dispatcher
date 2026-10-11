@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 const crewScript = "../../../adapters/core/crew.sh"
@@ -217,7 +219,7 @@ func bashScript(t *testing.T) string {
 	}
 	src, err := os.ReadFile(crewScript)
 	if os.IsNotExist(err) {
-		t.Skip("adapters/core/crew.sh not present")
+		drift.Missing(t, crewScript, err)
 	}
 	if err != nil {
 		t.Fatal(err)

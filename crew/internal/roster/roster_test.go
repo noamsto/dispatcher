@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
@@ -607,7 +608,7 @@ func TestEngineCommands(t *testing.T) {
 func TestEngineCommandsMatchCrewSh(t *testing.T) {
 	src, err := os.ReadFile(crewScript)
 	if err != nil {
-		t.Skipf("%s not present: %v", crewScript, err)
+		drift.Missing(t, crewScript, err)
 	}
 	var got []string
 	in := false
