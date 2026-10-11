@@ -671,6 +671,19 @@ assert_allow_relative() {
 }
 
 # bats test_tags=timing
+@test "secret-read-guard: #992 a 16 KB line of heredoc markers into cat allows, and a dump after it denies, in under 3.5 s" {
+  local line='cat' bodies='' cmd i
+  for i in $(seq 1 2700); do
+    line+=" <<'E$i'"
+    bodies+=$'\n'"env"$'\n'"E$i"
+  done
+  cmd="$line$bodies"
+  [ "${#line}" -ge 16384 ]
+  assert_allow_within 3500 "$(claude_bash "$cmd")"
+  assert_deny_within 3500 "$(claude_bash "$cmd"$'\n'"env")"
+}
+
+# bats test_tags=timing
 @test "secret-read-guard: 2000 nested command substitutions ahead of a credential read deny in under 3.5 s" {
   local opens closes
   opens=$(printf '$(%.0s' $(seq 1 2000))
@@ -1490,6 +1503,20 @@ allow_cmd() { # <command>
   assert_allow
 }
 
+deny_both() { # <command> — pi canonical pre_tool and Claude PreToolUse shapes
+  run run_guard <<<"$(pi_bash "$1")"
+  assert_deny_claude
+  run run_guard <<<"$(claude_bash "$1")"
+  assert_deny_claude
+}
+
+allow_both() { # <command> — pi canonical pre_tool and Claude PreToolUse shapes
+  run run_guard <<<"$(pi_bash "$1")"
+  assert_allow
+  run run_guard <<<"$(claude_bash "$1")"
+  assert_allow
+}
+
 @test "secret-read-guard: denies a dump after a comment with an apostrophe" {
   deny_cmd $'# what\'s configured?\nenv'
   deny_cmd $'echo hi # don\'t\nenv | sort'
@@ -1687,7 +1714,6 @@ ROWS
 }
 
 @test "secret-read-guard: denies a dump in a backticked command inside a quoted heredoc" {
-  deny_cmd $'cat <<\'EOF\'\n`env`\nEOF'
   deny_cmd $'bash <<\'EOF\'\n`env`\nEOF'
   deny_cmd $'bash <<\'EOF\'\necho hi `printenv`\nEOF'
   deny_cmd $'bash <<-\'EOF\'\n\t`set`\n\tEOF'
@@ -1958,14 +1984,13 @@ nested_backticks() {
   deny_cmd $'echo "`echo \\\\\\" x " ; env`"'
 }
 
-# Every heredoc body backtick is read as both a command start and a command
-# end so a stray backtick cannot hide a frame; the cost is that a dumper word
-# after a code span — at a line start, mid-line, or after a keyword like
-# then — or right before one at a line start, denies.
-@test "secret-read-guard: denies a dumper word next to a heredoc body backtick (accepted over-deny)" {
-  deny_cmd $'git commit -F - <<\'EOF\'\nexport `FOO` in your rc\nEOF'
-  deny_cmd $'git commit -F - <<\'EOF\'\nIt reads `DISPATCHER_X` env\nEOF'
-  deny_cmd $'git commit -F - <<\'EOF\'\nfix: read `FOO` then set `BAR` too\nEOF'
+# A quoted heredoc fed only to a text sink is text, so backticks in it are
+# prose and a dumper word beside them is allowed; a body that reaches a shell
+# still has every backtick read as code (see the #992 deny test).
+@test "secret-read-guard: #992 allows a dumper word next to a heredoc body backtick in a text-sink heredoc" {
+  allow_cmd $'git commit -F - <<\'EOF\'\nexport `FOO` in your rc\nEOF'
+  allow_cmd $'git commit -F - <<\'EOF\'\nIt reads `DISPATCHER_X` env\nEOF'
+  allow_cmd $'git commit -F - <<\'EOF\'\nfix: read `FOO` then set `BAR` too\nEOF'
 }
 
 @test "secret-read-guard: allows commit and PR heredoc bodies with prose backticks and a stray one" {
@@ -2135,6 +2160,93 @@ assert_allow_within_each_awk() {
   allow_cmd $'git commit -F - <<\'EOF\'\nThe variable was (re)set\nLeave PATH as the shell (already) set\n- `env -u X Y=<empty> bats`\nEOF'
   allow_cmd $'cat > s <<\'EOF\'\n#!/usr/bin/env bash\nEOF'
   allow_cmd $'cat > s <<\'EOF\'\n#!/usr/bin/env -S bash -e\nEOF'
+}
+
+@test "secret-read-guard: #992 denies eval and sudo option-value dumps" {
+  deny_both 'eval env'
+  deny_both 'eval -- env'
+  deny_both 'sudo -a 1 env'
+  deny_both 'sudo -c x env'
+  deny_both 'env FOO=1'
+  deny_both 'env FOO=$(pwd)'
+  deny_both '(env FOO=1)'
+  deny_both 'sudo -u root env'
+}
+
+# Quoted or substitution-free heredoc bodies fed only to text sinks (cat, gh,
+# git commit -F -, …) are text, not code.
+@test "secret-read-guard: #992 allows heredoc, comment and substitution text" {
+  allow_both 'env FOO=$(pwd) make'
+  allow_both '# use `env` here'
+  allow_both $'printf %s "$(cat <<\'EOF\'\nfix: x\n\nMentions `env` and `set`, don\'t "quote" it.\nenv\nEOF\n)"'
+  allow_both $'printf %s "$(cat <<\'EOF\'\nFix things\n\n1) first item mentions `env` handling\nEOF\n)"'
+  allow_both $'cat > s.sh <<\'EOF\'\nx `env` y\nEOF'
+  allow_both $'cat <<\'EOF\'\nrun $(env) or `env` here\nEOF'
+  allow_both $'cat <<"EOF"\nrun $(env) or `env` here\nEOF'
+  allow_both $'cat <<EOF\nenv\nEOF'
+  allow_both $'cat <<\'EOF\'\ndon\'t\nenv\nEOF'
+  allow_both $'gh pr create --body-file - <<\'EOF\'\nfix: don\'t\nenv\nEOF'
+  allow_both $'cat <<\'EOF\'\n`env`\nEOF'
+  allow_both $'msg=$(cat <<\'EOF\'\nfix: env\nenv\nEOF\n)'
+  allow_both $'git commit -F - <<\'EOF\' 2>&1\nenv\nEOF'
+}
+
+@test "secret-read-guard: #992 still denies heredoc bodies that reach a shell or are not heredocs" {
+  deny_both $'cat <<EOF\n$(env)\nEOF'
+  deny_both $'cat <<EOF\n`env`\nEOF'
+  deny_both $'bash <<EOF\nenv\nEOF'
+  deny_both $'bash <<\'EOF\'\nenv\nEOF'
+  deny_both $'sh <<EOF\nenv\nEOF'
+  deny_both $'sh <<\'EOF\'\nenv\nEOF'
+  deny_both $'cat <<\'EOF\' | bash\nenv\nEOF'
+  deny_both $'sh -s <<\'EOF\'\nenv\nEOF'
+  deny_both $'source /dev/stdin <<\'EOF\'\nenv\nEOF'
+  deny_both $'eval "$(cat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'bash -c "$(\ncat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'eval "$(\ncat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'source <(\ncat <<\'EOF\'\nenv\nEOF\n)'
+  deny_both $'sh -s <<\'A\' \\\n-x\nenv\nA'
+  deny_both $'{\ncat <<\'EOF\'\nenv\nEOF\n} | bash'
+  deny_both $'echo "$(cat <<\'EOF\'\nenv\nEOF\n)" | bash'
+  deny_both $'$(cat <<\'EOF\'\nenv\nEOF\n)'
+  deny_both $'while :; do\ncat <<\'EOF\'\nenv\nEOF\nbreak; done | sh'
+  deny_both $'"$(cat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'sudo "$(cat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'x= "$(cat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'GIT_EDITOR=sh git commit -e -F - <<\'EOF\'\nenv\nEOF'
+  deny_both $'gh alias import - <<\'EOF\'\nenv\nEOF'
+  deny_both $'`cat <<\'EOF\'\nenv\nEOF\n`'
+  deny_both $'echo ${x:-<<b}\nenv'
+  deny_both $'rg --pre sh "" /dev/stdin <<EOF\nenv\nEOF'
+  deny_both $'cat <<EOF > x\nenv\nEOF\nrg --pre sh "" x'
+  deny_both $'patch <<\'EOF\'\nenv\nEOF'
+  deny_both $'sort --compress-program=sh <<\'EOF\'\nenv\nEOF'
+  deny_both $'cat <<EOF > .git/hooks/pre-commit\n#!/bin/sh\nenv\nEOF\nchmod +x .git/hooks/pre-commit\ngit commit -q --allow-empty -m x'
+  deny_both $'echo ${a[1<<2]}\nenv'
+  deny_both $'echo $[1<<2]\nenv'
+  deny_both $'echo $((1<<X))\nenv\nX'
+  deny_both $'(( y = 1<<X ))\nenv\nX'
+  deny_both $'echo $((\n# `env`))'
+  deny_both $'echo ${x:-\n# `env`}'
+  deny_both $'echo $[\n# `env`]'
+  deny_both $'a=$(cat <<\'EOF\'\nx\nEOF)\nenv\nb=$(cat <<\'EOF\'\ny\nEOF\n)'
+  deny_both $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF)"\nenv\ngit commit --amend -m "$(cat <<\'EOF\'\nmsg2\nEOF\n)"'
+  deny_both $'a=$(cat <<EOF\nx\nEOF )\nenv\nb=$(cat <<EOF\ny\nEOF\n)'
+  deny_both $'cat - <<\'EOF\'; echo $(\nenv\n)\nEOF'
+  deny_both $'cat <<EOF $(\nenv\n)\nEOF'
+  deny_both $'cat <<\'EOF\' - "$(\nenv >&2\n)"\nEOF'
+  deny_both $'cat <<\'EOF\' - <(\nenv\n)\nEOF'
+  deny_both $'cat <<\'EOF\' - ${x:-$(\nenv\n)}\nEOF'
+  deny_both $'tee f <<\'EOF\' >/dev/null; ls $(\nenv\n)\nEOF'
+  deny_both $'cat > notes.md <<\'EOF\'; out=$(\n  env | grep FOO\n)\nhello\nEOF'
+  deny_both $'bash -c \'cat - <<EOF; echo $(\nenv\n)\nEOF\''
+  deny_both $': ${x:-"}"<<EOF}\nenv\nEOF}'
+  deny_both $'echo ${x:-"}"<<EOF}\nenv\nEOF}'
+  deny_both $'echo $[ "]"<<2 ]\nenv\n2'
+  deny_both $'git submodule foreach bash <<\'EOF\'\nenv\nEOF'
+  deny_both $'git config alias.zz \'!sh\'; git zz <<\'EOF\'\nenv\nEOF'
+  deny_both $'cp /bin/sh ./cat; ./cat <<\'EOF\'\nenv\nEOF'
+  deny_both $'jq -n -f /dev/stdin <<\'EOF\'\nenv\nEOF'
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
@@ -2771,6 +2883,26 @@ EOF
   [ "$status" -eq 1 ]
   [ -z "$output" ]
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
+}
+
+@test "secret-read-guard: #992 a failing heredoc text pass keeps heredoc bodies as code" {
+  local real_awk
+  real_awk=$(command -v awk)
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" = B=1 ] && exit 3
+done
+exec "$real_awk" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
+
+  local old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  deny_both $'bash <<\'EOF\'\nenv\nEOF'
+  deny_both $'cat <<\'EOF\'\nenv\nEOF'
+  PATH=$old_path
 }
 
 # ---------------------------------------------------------------------------
