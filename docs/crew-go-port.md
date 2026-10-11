@@ -82,9 +82,10 @@ output contract below), with each edit justified.
   windows and never across a gh call; `watch` holds it for its whole park and releases it on
   every exit path, including the SIGTERM/SIGINT/SIGHUP `stream` sends it. In-process
   re-acquire by the same owner succeeds and another owner is refused. Release acts only
-  while this process holds the lock: it retires the record (rename to `<dir>.stale`, then
-  remove) only while its `pid` is still the owner's and `<dir>.flock` is still the file it
-  locked, then unlinks `<dir>.flock`, then closes the fd; an acquirer that locked a file
+  while this process holds the lock, and touches paths only while `<dir>.flock` is still
+  the file it locked: it then retires the record (rename to `<dir>.stale`, re-check,
+  remove) if its `pid` is still the owner's, and unlinks `<dir>.flock`; it always closes
+  the fd; an acquirer that locked a file
   its holder had since unlinked sees the inode mismatch and retries. The `roster-render`
   exec hop drops the flock (`O_CLOEXEC`) and the new image adopts the record carrying its
   own pid.
@@ -96,7 +97,10 @@ output contract below), with each edit justified.
   renaming it back if an old acquirer published meanwhile. That keeps old builds out too:
   their `mkdir` fails on the record and they read a live pid. Residual windows, all
   transitional and closing when the last old-build lock user exits: two old-build
-  acquirers interleaving inside one retire can both hold; an old reclaimer that judged a
+  acquirers interleaving inside one retire can both hold (the retire renames `<dir>` away,
+  one reclaims by its compare-and-swap before the rename, another `mkdir`s the gap before
+  the restore); old builds can already double-hold among themselves by their own
+  protocol's gaps, so no new-side rule reaches zero while they run; an old reclaimer that judged a
   dead record before a new publish can briefly make `Holder` read empty for a live new
   holder (a `roster-render` poll there exits early and the next start re-acquires); and
   old builds keep their own pid-reuse wedge for records they write. After a switch,
@@ -159,9 +163,9 @@ output contract below), with each edit justified.
   (and the suite exports `CREW_CLOCK` for `await`'s sake, which is why this is
   worth saying). And the lock is held for the whole park and released on every
   exit path, including the SIGTERM/SIGINT/SIGHUP `stream` sends its inner watch
-  when it stops or retries: bash ran its `trap … EXIT` for those three, and a
-  leaked `watch.lock.d` would keep `stream` reading the dead pid as the holder until a
-  later watch replaced the record. The batch prints before the cursor moves, as the arm's `printf`
+  when it stops or retries: bash ran its `trap … EXIT` for those three. A watch killed
+  before it releases leaves only an inert record (its flock dies with it), which the next
+  watch replaces at once; only an old-build watch still judges that record by `kill -0`. The batch prints before the cursor moves, as the arm's `printf`
   preceded its `mv`.
 - `crew/internal/resolve`: `crew resolve-target`, and the fold `crew where` reads
   for one question. `resolve.jq` is `_resolve_target`'s program and `Rows` is its
@@ -370,7 +374,8 @@ output contract below), with each edit justified.
   against injection. Row folding is the one part that stops being a subprocess: the arm
   re-entered the script for `crew roster`, and Go calls `roster.Fold` in process on the
   same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
-  else, so the pid never changes hands and the lock is never released or inherited; the
+  else, so the pid never changes hands; the flock does not survive the exec (`O_CLOEXEC`),
+  and the new image re-acquires it and adopts the record carrying its own pid; the
   entry is followed whenever it names a build other than the running one, a rollback
   included, and only the running build is refused. PATH is restored to the value the
   daemon started with on every hop (`CREW_RR_START_PATH`, exported once), so N hops

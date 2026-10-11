@@ -724,9 +724,9 @@ _lock_publish_pid() {
 }
 
 # _lock_acquire <lockdir> <owner_pid> — mkdir gate with dead-PID reclaim.
-# Serves only bash's own locks (reap.lock.d, ratings.sweep.lock.d). Go's
-# crew/internal/lock holds a flock and reads these dirs only as the old format
-# of its own records.
+# Serves only bash's own locks (reap.lock.d, ratings.sweep.lock.d); Go never
+# takes these. crew/internal/lock (flock) reads a mkdir+pid dir only as an old
+# build's record on its own paths.
 # mkdir creates the dir; linking the pid file in is the gate (link refuses an
 # existing pid), for a fresh lock and a reclaim alike. Returns 0 (acquired) or 1
 # (held by a DIFFERENT live PID, an acquirer still writing its pid, or lost the
