@@ -184,7 +184,7 @@ func (w *watch) run() error {
 			haveText = false
 			w.lastChange = w.o.Clock.Seconds()
 			continue
-		case "exited":
+		case "exited", "reaped":
 			return exitCode(0)
 		}
 

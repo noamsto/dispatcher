@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -213,5 +214,48 @@ func TestOriginSlug(t *testing.T) {
 		if got := originSlug(url); got != want {
 			t.Errorf("originSlug(%q) = %q, want %q", url, got, want)
 		}
+	}
+}
+
+// sweepOne runs a sweep over one branch's events and returns its only row.
+func sweepOne(t *testing.T, seed func(f *fixture)) map[string]any {
+	t.Helper()
+	f := newFixture(t)
+	f.seedSettings()
+	seed(f)
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	rows := f.rows()
+	if len(rows) != 1 {
+		t.Fatalf("store has %d rows: %v", len(rows), rows)
+	}
+	return rows[0]
+}
+
+func (f *fixture) reaped(ts int64) {
+	f.event(`{"ts":` + strconv.FormatInt(ts, 10) + `,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"reaped","detail":"PR #8 MERGED","source":"reap"}}`)
+}
+
+func TestReapedRowIsNotTheTerminalState(t *testing.T) {
+	bare := sweepOne(t, func(f *fixture) { f.seedPRRow() })
+	reaped := sweepOne(t, func(f *fixture) {
+		f.seedPRRow()
+		f.reaped(1700)
+	})
+	if reaped["terminal_state"] != "done" || reaped["outcome"] != "pr_open" {
+		t.Errorf("terminal_state/outcome = %v/%v, want done/pr_open", reaped["terminal_state"], reaped["outcome"])
+	}
+	if reaped["wall_clock_ms"] == nil || reaped["wall_clock_ms"] != bare["wall_clock_ms"] {
+		t.Errorf("wall_clock_ms = %v, want %v (as without the reaped row)", reaped["wall_clock_ms"], bare["wall_clock_ms"])
+	}
+
+	failed := sweepOne(t, func(f *fixture) {
+		f.dispatch("feat/x", 1000, "sonnet", "medium")
+		f.status("worker:feat/x#s1", 1500, "failed")
+		f.reaped(1700)
+	})
+	if failed["terminal_state"] != "failed" || failed["outcome"] != "failed" {
+		t.Errorf("terminal_state/outcome = %v/%v, want failed/failed", failed["terminal_state"], failed["outcome"])
 	}
 }

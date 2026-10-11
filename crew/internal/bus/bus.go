@@ -97,13 +97,14 @@ const (
 	StateDone    State = "done"
 	StateFailed  State = "failed"
 	StateExited  State = "exited"
+	StateReaped  State = "reaped"
 )
 
 // Terminal reports whether a session in this state is finished, as crew.sh's
-// `["done","failed","exited"] | index(...)` does.
+// `["done","failed","exited"] | index(...)` does, plus reaped (posted only by `crew reap`).
 func (s State) Terminal() bool {
 	switch s {
-	case StateDone, StateFailed, StateExited:
+	case StateDone, StateFailed, StateExited, StateReaped:
 		return true
 	case StateWorking, StateBlocked, StatePROpen:
 		return false

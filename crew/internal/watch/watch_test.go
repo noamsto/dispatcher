@@ -188,6 +188,25 @@ func TestStatesNarrowTheWakeSet(t *testing.T) {
 	}
 }
 
+// `reaped` is the reap verb's own terminal row: outside the default wake set,
+// while the same setup with `done` wakes.
+func TestReapedStatusDoesNotWake(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "reaped", "PR #8 MERGED", "reap"))
+	stdout, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	if code != 0 || stdout != "" || stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+
+	p2 := fixture(t)
+	row := status(1785951264000, "worker:feat/x#s1-1", "done", "PR #8 MERGED", "reap")
+	writeLog(t, p2, row)
+	stdout, stderr, code, _ = run(t, p2, "--since", "0", "--timeout", "1", "--interval", "1")
+	if code != 0 || stderr != "" || stdout != want(t, 1785951264000, row) {
+		t.Fatalf("control: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+}
+
 // The `exited` gate (#396): the SessionEnd backstop wakes the park only as the
 // session's first terminal state.
 func TestExitedWakesOnlyAsFirstTerminalState(t *testing.T) {

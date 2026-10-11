@@ -275,6 +275,7 @@ func TestStateTerminal(t *testing.T) {
 		{StateDone, true},
 		{StateFailed, true},
 		{StateExited, true},
+		{StateReaped, true},
 		{State(""), false},
 		{State("DONE"), false},
 		{State("whatever"), false},
@@ -298,7 +299,7 @@ func TestConstValues(t *testing.T) {
 	}
 	for s, want := range map[State]string{
 		StateWorking: "working", StateBlocked: "blocked", StatePROpen: "pr_open",
-		StateDone: "done", StateFailed: "failed", StateExited: "exited",
+		StateDone: "done", StateFailed: "failed", StateExited: "exited", StateReaped: "reaped",
 	} {
 		if string(s) != want {
 			t.Errorf("State %q != %q", s, want)

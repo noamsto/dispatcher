@@ -153,9 +153,13 @@ parse:
 	from, state, detail, pr := at(0), at(1), at(2), at(3)
 
 	switch state {
-	case "working", "blocked", "pr_open", "done", "failed", "exited":
+	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped":
 	default:
-		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited (got '%s')\n", state)
+		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n", state)
+		return exitFailure
+	}
+	if state == "reaped" && (strings.HasPrefix(from, "worker:") || strings.HasPrefix(from, "role:")) {
+		say(stderr, "crew: status: reaped is posted only by crew reap\n")
 		return exitFailure
 	}
 	if restamp && state != "blocked" {
@@ -166,7 +170,7 @@ parse:
 	// Terminal states are posted once: a re-announced pr_open/done wakes `watch`
 	// twice with an identical batch.
 	switch state {
-	case "pr_open", "done", "failed", "exited":
+	case "pr_open", "done", "failed", "exited", "reaped":
 		if lastPosted(paths.Log, crew, from) == state+"\t"+pr {
 			return 0
 		}

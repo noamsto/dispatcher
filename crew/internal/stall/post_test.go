@@ -73,7 +73,7 @@ func TestPostRowMatchesArmJQ(t *testing.T) {
 }
 
 func TestPostAbortsOnTerminal(t *testing.T) {
-	for _, state := range []string{"done", "failed", "exited"} {
+	for _, state := range []string{"done", "failed", "exited", "reaped"} {
 		t.Run(state, func(t *testing.T) {
 			f := newFake()
 			h := newHarness(t, f)

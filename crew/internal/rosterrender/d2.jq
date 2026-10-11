@@ -36,7 +36,7 @@ def cap($n): (if type == "string" then . elif . == null then "" else tojson end)
     ($rows | to_entries | map(.value + {key: "w\(.key + 1)"})) as $w
     | cnt(["failed", "exited"]) as $f
     | "title: \"Crew roster\" {near: top-center; shape: text}",
-      "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
+      "legend: \"\(cnt(["working", "dispatched"])) active · \(cnt(["blocked"])) blocked · \(cnt(["pr_open", "done", "reaped"])) done\(if $f > 0 then " · \($f) failed" else "" end)\" {near: bottom-center; shape: text}",
       "dispatcher: \"dispatcher\" {style.bold: true}",
       ($w[] | .key as $k
         | (.detail | if type == "string" then . elif . == null then "" else tojson end) as $full
@@ -62,7 +62,7 @@ def cap($n): (if type == "string" then . elif . == null then "" else tojson end)
           "}",
           "dispatcher -> \($k)",
           ((.pr_url | cap(200)) as $u
-           | if (.state | among(["pr_open", "done"])) and $u != "" then
+           | if (.state | among(["pr_open", "done", "reaped"])) and $u != "" then
                first(($u | capture("/pull/(?<n>[0-9]+)") | .n), "") as $n
                | "\($k)_pr: \(if $n == "" then "PR" else "PR #" + $n end | q) {shape: page}",
                  "\($k) -> \($k)_pr\(if $n == "" then "" else ": " + ("#" + $n | q) end)"

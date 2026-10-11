@@ -1539,6 +1539,15 @@ STUB
   [[ "$output" == *"re-dispatch"* ]]
 }
 
+@test "reply: refuses when the newest session is reaped" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/x#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"reaped", detail:"PR #8 MERGED", source:"reap"}}' >>"$log"
+  CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"re-dispatch"* ]]
+}
+
 @test "reply: CREW_ID unset resolves the single crew with a live session (#302)" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
@@ -3187,6 +3196,112 @@ EOF
   [ ! -d "$wt_path" ]
   run ! git show-ref --verify --quiet refs/heads/feat/squash-me
   run ! grep -q '^wt ' "$STUB_LOG"
+}
+
+reap_merged_fixture() {
+  git commit -q --allow-empty -m init
+  git branch feat/reap-me
+  wt_path="$BATS_TEST_TMPDIR/reap-me-wt"
+  git worktree add -q "$wt_path" feat/reap-me
+  wt_path=$(cd "$wt_path" && pwd -P)
+  echo unique >"$wt_path/work.txt"
+  git -C "$wt_path" add work.txt
+  git -C "$wt_path" commit -q -m "reap-me work"
+  stub_tmux "" ""
+  cat >"$STUB_DIR/gh" <<'GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$*" in
+*state*) printf '%s\n' 'MERGED' ;;
+*closingIssuesReferences*) printf '%s\n' '99' ;;
+*headRefOid*) printf '%s\n' "$(git rev-parse refs/heads/feat/reap-me)" ;;
+esac
+exit 0
+GH
+  chmod +x "$STUB_DIR/gh"
+  cat >"$STUB_DIR/wt" <<'WT'
+#!/usr/bin/env bash
+printf 'wt %s\n' "$*" >>"$STUB_LOG"
+exit 1
+WT
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "reap: a merged pr_open worker gets one reaped status row; --dry-run writes none" {
+  reap_merged_fixture
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" pr_open "" "https://github.com/o/r/pull/8"
+  CREW_ID=c1 run run_crew reap --dry-run
+  [ "$status" -eq 0 ]
+  [ "$(jq -c 'select(.body.source? == "reap")' "$log" | wc -l)" -eq 0 ]
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [ "$(jq -c 'select(.body.source? == "reap")' "$log" | wc -l)" -eq 1 ]
+  jq -e 'select(.kind=="status" and .body.source=="reap" and .body.state=="reaped" and .from=="worker:feat/reap-me#s1-1" and .crew_id=="c1" and (.body.detail | contains("#8") and contains("MERGED")))' "$log" >/dev/null
+  CREW_ID=c1 run run_crew roster c1
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e 'any(.[]; .branch == "feat/reap-me" and .state == "reaped")' >/dev/null
+}
+
+reap_key_file() {
+  # Mirrors the crew's per-key file naming: sanitized key, then its cksum.
+  printf '%s.%s' "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+}
+
+reap_seed_records() {
+  local d=$1 b=$2 id=$3 f
+  mkdir -p "$d/grants/$(dirname "$b")" "$d/protocol-dirs/$(dirname "$b")" "$d/leads/$(dirname "$b")"
+  for f in grants protocol-dirs leads; do : >"$d/$f/$b"; done
+  mkdir -p "$d/await" "$d/await.lock" "$d/phase-status" "$d/directive-delivery"
+  : >"$d/await/$(reap_key_file "c1-$id")"
+  : >"$d/await.lock/$(reap_key_file "c1-$id")"
+  : >"$d/phase-status/$(reap_key_file "$id")"
+  printf '0\n%s\n' "$id" >"$d/directive-delivery/$(printf '%s' "$id" | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+reap_records_present() {
+  local d=$1 b=$2 id=$3
+  [ -e "$d/grants/$b" ] && [ -e "$d/protocol-dirs/$b" ] && [ -e "$d/leads/$b" ] &&
+    [ -e "$d/await/$(reap_key_file "c1-$id")" ] && [ -e "$d/await.lock/$(reap_key_file "c1-$id")" ] &&
+    [ -e "$d/phase-status/$(reap_key_file "$id")" ] &&
+    [ -e "$d/directive-delivery/$(printf '%s' "$id" | tr -c 'A-Za-z0-9._-' '_')" ]
+}
+
+@test "reap: removes the reaped branch's records, keeps artifacts and other branches'" {
+  reap_merged_fixture
+  d="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" pr_open "" "https://github.com/o/r/pull/8"
+  CREW_ID=c1 run_crew status "worker:feat/reap#s2-2" working
+  reap_seed_records "$d" feat/reap-me "worker:feat/reap-me#s1-1"
+  reap_seed_records "$d" feat/reap "worker:feat/reap#s2-2"
+  reap_seed_records "$d" feat/reap-me-too "worker:feat/reap-me-too#s3-3"
+  mkdir -p "$d/artifacts/feat/reap-me"
+  : >"$d/artifacts/feat/reap-me/x.patch"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  me="worker:feat/reap-me#s1-1"
+  [ ! -e "$d/grants/feat/reap-me" ]
+  [ ! -e "$d/protocol-dirs/feat/reap-me" ]
+  [ ! -e "$d/leads/feat/reap-me" ]
+  [ ! -e "$d/await/$(reap_key_file "c1-$me")" ]
+  [ ! -e "$d/await.lock/$(reap_key_file "c1-$me")" ]
+  [ ! -e "$d/phase-status/$(reap_key_file "$me")" ]
+  [ ! -e "$d/directive-delivery/$(printf '%s' "$me" | tr -c 'A-Za-z0-9._-' '_')" ]
+  [ -e "$d/artifacts/feat/reap-me/x.patch" ]
+  reap_records_present "$d" feat/reap "worker:feat/reap#s2-2"
+  reap_records_present "$d" feat/reap-me-too "worker:feat/reap-me-too#s3-3"
+}
+
+@test "reap: keeps a directive-delivery file whose recorded id is a different session" {
+  reap_merged_fixture
+  d="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  CREW_ID=c1 run_crew status "worker:feat/reap-me#s1-1" pr_open "" "https://github.com/o/r/pull/8"
+  mkdir -p "$d/directive-delivery"
+  f="$d/directive-delivery/$(printf '%s' "worker:feat/reap-me#s1-1" | tr -c 'A-Za-z0-9._-' '_')"
+  printf '0\n%s\n' "worker:feat/reap_me#s1-1" >"$f"
+  CREW_ID=c1 run run_crew reap --quiet
+  [ "$status" -eq 0 ]
+  [ -e "$f" ]
 }
 
 @test "reap: a merged worker's anchor record is pruned (#556)" {
@@ -9142,6 +9257,32 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "watch: a reaped status does not wake it" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/x#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"reaped", detail:"PR #8 MERGED", source:"reap"}}' >>"$log"
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "status: reaped from a worker is refused and writes nothing" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" reaped
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"posted only by crew reap"* ]]
+  [ ! -s "$log" ]
+}
+
+@test "watch: a done status wakes it (control for the reaped row)" {
+  CREW_ID=c1 run_crew status worker:feat/x#s1-1 done
+
+  run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
 }
 
 @test "watch: --crew uses that crew's cursor file and watch lock" {

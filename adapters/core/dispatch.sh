@@ -999,7 +999,7 @@ local_slot_cap() {
 # line per live lead pane on the machine: stamped @crew_branch, @crew_role empty
 # or `lead` (a grid lead; other roles are its role panes), and a pane still
 # running an engine (_is_engine_cmd) in a worktree that still exists. A lead whose
-# newest bus status on its branch is done, failed or exited is finished and
+# newest bus status on its branch is done, failed, exited or reaped is finished and
 # weighs 0; each repo's bus is read once. The tier is the `tier:` header of the
 # pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3); an unreadable
 # one counts as standard. Role panes add nothing: the tier weight already
@@ -1038,12 +1038,12 @@ _fleet_leads() {
 }
 
 # _fleet_finished <events.jsonl> — the branches whose newest worker status row
-# (in file order) is done, failed or exited, one per line.
+# (in file order) is done, failed, exited or reaped, one per line.
 _fleet_finished() {
   [ -r "$1" ] || return 0
   jq -r 'select(.kind == "status" and ((.from // "") | startswith("worker:")))
     | "\(.from | ltrimstr("worker:") | sub("#[^#]*$"; ""))\t\((.body? // {}) | (.state? // ""))"' "$1" 2>/dev/null |
-    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited)$/) print b }' || true
+    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited|reaped)$/) print b }' || true
 }
 
 # _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)

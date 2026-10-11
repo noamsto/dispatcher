@@ -73,7 +73,7 @@ _identity_bus_occ() {
     | (($all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch == $self) | .ts) | max) // 1e18) as $selfts
     | $all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch != $self))
     | group_by(.branch) | map(last)
-    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited") | not)
+    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited", "reaped") | not)
     | [.branch, (.name // "")] | @tsv' "$log" 2>/dev/null || true)
   printf '%s' "$occ"
 }
@@ -1370,7 +1370,7 @@ usage: crew status <from> <state> [detail] [pr] [--restamp] [--]
 Post or update a session's state on the crew bus.
 
   <from>     The posting session: worker:<branch>#s… or dispatcher:<crew>
-  <state>    working | blocked | pr_open | done | failed | exited
+  <state>    working | blocked | pr_open | done | failed | exited | reaped (only reap posts it)
   [detail]   Short context; put -- before one that starts with a dash
   [pr]       PR url, which pr_open names
   --restamp  blocked only: refresh liveness without re-delivering a reply
@@ -2698,6 +2698,62 @@ reap)
     label+=" CLOSED"
   }
 
+  # _reap_post_reaped — the terminal `reaped` status row for the branch's newest
+  # session. Reads the loop's branch session scrow mode pr pr_state label log;
+  # does nothing without a session and crew. Never aborts the sweep.
+  _reap_post_reaped() {
+    [ -n "$session" ] && [ -n "$scrow" ] || return 0
+    local detail="$label"
+    [ "$mode" != pr ] || detail="PR #${pr##*/} $pr_state"
+    local row
+    row=$(jq -nc --arg c "$scrow" --arg s "$session" --arg d "$detail" \
+      '{ts:(now*1000|floor), crew_id:$c, from:$s, to:("dispatcher:"+$c), kind:"status", body:{state:"reaped", detail:$d, source:"reap"}}') || return 0
+    _bus_append "$log" "$row" || true
+  }
+
+  # _reap_forget <branch> — drop the reaped branch's grants/protocol-dirs/leads
+  # files and its sessions' await marks, phase-status and directive-delivery
+  # records, by exact derived path. artifacts/<branch> stays: it can hold a
+  # --discard patch. Best-effort; always returns 0.
+  _reap_forget() {
+    local b="$1" cat leaf parent pairs c id key d
+    for cat in grants protocol-dirs leads; do
+      leaf="$dir/$cat/$b"
+      parent="${b%/*}"
+      [ "$parent" != "$b" ] || parent=""
+      ! _chain_bad "$dir/$cat" "$parent" >/dev/null || continue
+      { [ -f "$leaf" ] && [ ! -L "$leaf" ]; } || continue
+      rm -f -- "$leaf" || true
+    done
+
+    pairs=$(jq -rs --arg b "$b" '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$"; "");
+      [ (.[] | select((.kind == "status" or .kind == "msg") and ((.from // "") | type == "string")
+            and ((.from // "") | startswith("worker:")) and ((.from // "") | wid_branch) == $b)
+          | [.crew_id, .from]),
+        (.[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b
+            and ((.session // "") | type == "string") and (.session // "") != "")
+          | [.crew_id, "worker:" + $b + "#" + .session]),
+        (.[] | select(((.from // "") | type == "string") and ((.from // "") | startswith("role:" + $b + ":"))
+            and ((.from // "")[("role:" + $b + ":" | length):] | contains(":") | not))
+          | [.crew_id, .from]) ]
+      | map(select(.[0] != null and .[0] != "" and .[1] != ""))
+      | unique | .[] | @tsv' "$log" 2>/dev/null) || return 0
+    [ -n "$pairs" ] || return 0
+    while IFS=$'\t' read -r c id; do
+      [ -n "$c" ] && [ -n "$id" ] || continue
+      key=$(_await_state "$c" "$id")
+      rm -f -- "$key" "$dir/await.lock/${key##*/}" || true
+      key=$(printf '%s' "$id" | tr -c 'A-Za-z0-9._-' '_')
+      rm -f -- "$dir/phase-status/$key.$(printf '%s' "$id" | cksum | cut -d' ' -f1)" || true
+      d="$dir/directive-delivery/$key"
+      if [ -f "$d" ] && [ ! -L "$d" ] && [ "$(sed -n 2p "$d" 2>/dev/null)" = "$id" ]; then
+        rm -f -- "$d" || true
+      fi
+    done <<<"$pairs"
+    return 0
+  }
+
   # _reap_remove — the anchored removal tail shared by the candidate loop and
   # --discard. Reads the loop's branch wtpath admin state pr pr_state label
   # mode issues, plus discard discard_patch discard_st discard_tree (empty in
@@ -2843,6 +2899,8 @@ SCAFFOLD
         + (if $mode == "issue" then {issues: $ARGS.positional} else {} end)
         + (if $discard != "" then {discarded: $patch} else {} end)' --args "${issues[@]}")
       _bus_append "$log" "$line"
+      _reap_post_reaped
+      _reap_forget "$branch"
 
       # A squash-merged PR's branch is never an ancestor of main, so git
       # still reads it as unmerged — delete it deliberately now that
@@ -3031,7 +3089,8 @@ SCAFFOLD
   # out so a prior terminal status can resurface.
   # pr_open is a candidate here only, never for idle release. `later`: some
   # session of the branch posted after the terminal status, so it is not idle.
-  # Fields: branch state own earlier reaprow ts later. The three PR sources stay
+  # Fields: branch state own earlier reaprow ts later session crew (crew last: IFS
+  # tab collapses empty fields). The three PR sources stay
   # apart ("-" when absent) so _reap_pick_pr can validate each and decide pr_src:
   # own is the latest session's pr_url, earlier the newest of the branch's other
   # sessions, reaprow the newest reap row's.
@@ -3059,6 +3118,7 @@ SCAFFOLD
                 (max_by(.ts)) as $latest
                 | {branch: ($latest.from | wid_branch),
                    session: $latest.from,
+                   crew: $latest.crew_id,
                    ts: $latest.ts,
                    state: $latest.body.state,
                    pr_url: (map(.body.pr_url) | map(select(type == "string" and . != "")) | last)})
@@ -3070,16 +3130,17 @@ SCAFFOLD
         | .[] | . as $c
         | [.branch, (.state | if . == null or . == "" then "none" else . end), (.pr_url // "-"),
             ([$statprs[] | select(.branch == $c.branch and .from != $c.session)] | if length == 0 then "-" else max_by(.ts) | .pr end),
-            ($reapprs[.branch] // "-"), (.ts // 0), (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
+            ($reapprs[.branch] // "-"), (.ts // 0), (if ($last[.branch] // 0) > .ts then "1" else "0" end),
+            (.session // ""), (.crew // "")] | @tsv' "$log"
   }
 
-  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
-  # first offender, when a component from $dir/artifacts down to the branch's
-  # leaf is a symlink or exists as a non-directory.
-  _artifacts_dir_bad() {
-    local p="$dir/artifacts" part
+  # _chain_bad <root> <relpath> — succeed, printing the first offender, when a
+  # component from <root> down to <relpath> is a symlink or exists as a
+  # non-directory.
+  _chain_bad() {
+    local p="$1" part
     local -a parts
-    IFS=/ read -ra parts <<<"$1"
+    IFS=/ read -ra parts <<<"$2"
     for part in "" "${parts[@]}"; do
       p="$p${part:+/$part}"
       if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
@@ -3088,6 +3149,12 @@ SCAFFOLD
       fi
     done
     return 1
+  }
+
+  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: _chain_bad from
+  # $dir/artifacts down to the branch's leaf.
+  _artifacts_dir_bad() {
+    _chain_bad "$dir/artifacts" "$1"
   }
 
   # --discard <branch>: a human's explicit call to drop a finished worker's
@@ -3105,8 +3172,8 @@ SCAFFOLD
     latest=$(_reap_latest "$branch") || refuse "could not read the bus"
     state=none
     pr="-"
-    own="-" earlier="-" reaprow="-"
-    [ -z "$latest" ] || IFS=$'\t' read -r _ state own earlier reaprow _ _ <<<"$latest"
+    own="-" earlier="-" reaprow="-" session="" scrow=""
+    [ -z "$latest" ] || IFS=$'\t' read -r _ state own earlier reaprow _ _ session scrow <<<"$latest"
     case "$state" in
     done | failed | exited) ;;
     *) refuse "latest status is $state" ;;
@@ -3269,7 +3336,7 @@ EOF
   _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state own earlier reaprow cand_ts later; do
+  while IFS=$'\t' read -r branch state own earlier reaprow cand_ts later session scrow; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')
