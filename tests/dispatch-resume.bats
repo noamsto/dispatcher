@@ -112,23 +112,44 @@ write_anchor() {
   printf '%s\n%s\n%s\n%s\n' "$(realpath -e "$wt")" "$cdir" "$br" "$gdir" >"$path"
 }
 
-# A worktree that looks like a live worker's: its own branch, its own
-# directory, and a task document with a full header.
-setup_worker_wt() { # [extra header lines...]
-  git -C "$TEST_REPO" worktree add -q -b feat/7-a-thing "$TEST_REPO/wt" HEAD
-  WT="$TEST_REPO/wt"
+# _worker_task_doc <dir> <branch> [extra header lines...] — the task document a
+# live worker's worktree carries, as dispatch writes it.
+_worker_task_doc() {
+  local dir="$1" br="$2"
+  shift 2
   {
     printf 'tier: standard\nkind: implement\ndraft: false\n'
     printf 'engine: claude\nmodel: sonnet\neffort: medium\nmcp: \n'
     printf 'plan: required\ntitle: a thing\nCloses #7\n'
     printf 'dispatcher_pane: %%3\ncrew_dir: %s/.git/crew\ncrew_id: c1\n' "$TEST_REPO"
-    printf 'agent_name: iris\nworker_id: worker:feat/7-a-thing#s1-99\n'
+    printf 'agent_name: iris\nworker_id: worker:%s#s1-99\n' "$br"
     for extra in "$@"; do printf '%s\n' "$extra"; done
     printf '\n## Task\n\nthe original body\n'
-  } >"$WT/WORKER_TASK.md"
+  } >"$dir/WORKER_TASK.md"
+}
+
+# A worktree that looks like a live worker's: its own branch, its own
+# directory, and a task document with a full header.
+setup_worker_wt() { # [extra header lines...]
+  git -C "$TEST_REPO" worktree add -q -b feat/7-a-thing "$TEST_REPO/wt" HEAD
+  WT="$TEST_REPO/wt"
+  _worker_task_doc "$WT" feat/7-a-thing "$@"
   export WT
   write_anchor "$WT"
   seed_git_baseline
+}
+
+# setup_second_wt <branch> [extra header lines...] — a second worker worktree of
+# the same repo, for a test that needs two leads. Moves WT to it the way
+# setup_worker_wt does; both share one crew dir, as two worktrees of one repo do.
+setup_second_wt() {
+  local br="$1"
+  shift
+  WT="$TEST_REPO/wt-2"
+  git -C "$TEST_REPO" worktree add -q -b "$br" "$WT" HEAD
+  _worker_task_doc "$WT" "$br" "$@"
+  export WT
+  write_anchor "$WT"
 }
 
 # #817: `dispatch resume --help` is a grouped screen, not the one-line synopsis.
@@ -771,11 +792,14 @@ _assert_resume_bound() {
   while IFS='|' read -r eng model effort profile _bin _marker; do
     n=$((n + 1))
     sed -i -e "s/^engine: .*/engine: $eng/" -e "s|^model: .*|model: $model|" -e "s/^effort: .*/effort: $effort/" "$WT/WORKER_TASK.md"
+    # Each iteration stands in for its own worktree: the previous one's fresh
+    # launch recorded its engine, and the next would resume as an engine switch.
+    rm -f "$(lead_rec)"
     : >"$STUB_LOG"
     DISPATCH_PROFILE="$profile" run run_resume
     [ "$status" -eq 0 ]
     case "$eng" in
-    codex) _assert_resume_bound 'codex resume --last' ;;
+    codex) _assert_resume_bound '--profile worker' ;;
     cursor) _assert_resume_bound 'cursor-agent --continue' ;;
     pi) _assert_resume_bound 'pi --continue' ;;
     esac
@@ -1344,16 +1368,41 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$sid" ]
 }
 
-@test "codex resume launches resume --last" {
+# A codex lead's record holds `-` (its id cannot be pre-assigned): nothing
+# attributable, so resume launches fresh instead of reaching for `--last` (#940).
+@test "codex resume of a lead with no recorded session id launches fresh" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  record_lead 'codex -'
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no session id recorded for this lead"* ]]
+  grep -q -- 'codex  --profile worker' <(launch_log)
+  run grep -c -- 'codex resume' <(launch_log)
+  [ "$output" = 0 ]
+  # The fresh launch's reorient wording, not the one a restored conversation gets.
+  grep -q 'You are resuming an interrupted run on this branch' <(launch_log)
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = false ]
+  [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
+  [ "$(cat "$(lead_rec)")" = "codex -" ]
+}
+
+# The same hole with no record at all: a worker dispatched before records existed.
+@test "codex resume of a lead with no record launches fresh" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'codex resume --last' <(launch_log)
-  grep -q -- '--profile worker' <(launch_log)
-  [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
+  run grep -c -- 'codex resume' <(launch_log)
+  [ "$output" = 0 ]
+  grep -q 'You are resuming an interrupted run on this branch' <(launch_log)
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = false ]
+  # The fresh launch records its engine, so the next resume knows what ran.
+  [ "$(cat "$(lead_rec)")" = "codex -" ]
 }
 
 @test "codex --fresh drops the resume flag" {
@@ -1369,6 +1418,9 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
 }
 
+# cursor's --continue resolves inside the cwd's own session bucket
+# (<cursor-config>/chats/<md5(cwd)>), so it cannot name another worktree's
+# session the way codex's --last does.
 @test "cursor resume launches with --continue" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: cursor/' -e 's/^model: sonnet/model: composer-2.5/' "$WT/WORKER_TASK.md"
@@ -1688,7 +1740,8 @@ UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 LEAD_ID=aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa
 ROLE_ID=bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb
 
-lead_rec() { printf '%s/.git/crew/leads/feat/7-a-thing' "$TEST_REPO"; }
+lead_rec_for() { printf '%s/.git/crew/leads/%s' "$TEST_REPO" "$1"; }
+lead_rec() { lead_rec_for feat/7-a-thing; }
 
 # claude_transcript <id> <age-seconds> — a transcript for the worktree's project
 # dir, <age-seconds> old. Named claude_transcript so it cannot shadow a fixture.
@@ -1701,9 +1754,12 @@ claude_transcript() {
 }
 
 # record_lead <line> — plant the lead's session record as a dispatch would.
-record_lead() {
-  mkdir -p "$(dirname "$(lead_rec)")"
-  printf '%s\n' "$1" >"$(lead_rec)"
+record_lead() { record_lead_for feat/7-a-thing "$1"; }
+
+# record_lead_for <branch> <line> — same, for any branch of $TEST_REPO.
+record_lead_for() {
+  mkdir -p "$(dirname "$(lead_rec_for "$1")")"
+  printf '%s\n' "$2" >"$(lead_rec_for "$1")"
 }
 
 @test "claude resume attaches to the recorded lead session, not a newer role transcript" {
@@ -1855,16 +1911,49 @@ record_lead() {
   [ "$(cat "$(lead_rec)")" = "claude $sid" ]
 }
 
-@test "a codex lead record names the engine and resumes --last for a solo worker" {
+# The #940 incident, as two leads: both records hold `codex -`, A resumes first
+# (so its session is the newest codex has), and B — seconds later, in its own
+# worktree — must not be handed A's conversation.
+@test "a codex lead resumed after another codex lead launches fresh, never on the first's session (#940)" {
   setup_worker_wt
   sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
   stub_tmux_with_pane_at_wt '@4' '%8' iris
   record_lead 'codex -'
   cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  setup_second_wt feat/7-b-thing
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  record_lead 'codex -'
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  # Neither lead was offered codex's global latest.
+  run grep -c -- '--last' <(launch_log)
+  [ "$output" = 0 ]
+  run grep -c -- 'codex resume' <(launch_log)
+  [ "$output" = 0 ]
+  grep -q 'You are resuming an interrupted run on this branch' <(launch_log)
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | sort -u)" = false ]
+  [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | sort -u)" = null ]
+  [ "$(cat "$(lead_rec_for feat/7-b-thing)")" = "codex -" ]
+}
+
+@test "a codex lead record with a real session id resumes that id, never --last" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-sol/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  record_lead "codex $LEAD_ID"
+  cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q 'codex resume --last' <(launch_log)
-  [ "$(cat "$(lead_rec)")" = "codex -" ]
+  grep -q "codex resume $LEAD_ID --profile worker" <(launch_log)
+  run grep -c -- '--last' <(launch_log)
+  [ "$output" = 0 ]
+  [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = true ]
+  [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$LEAD_ID" ]
+  [ "$(cat "$(lead_rec)")" = "codex $LEAD_ID" ]
 }
 
 @test "a codex lead record with role panes relaunches fresh and keeps the record" {
